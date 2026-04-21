@@ -103,6 +103,7 @@ class TestContactAddedPayload:
         assert payload.id == "contact-123"
         assert payload.type == "User"
         assert payload.description is None
+        assert payload.is_remote is None
         assert payload.is_external is None
 
     def test_agent_contact(self):
@@ -113,11 +114,13 @@ class TestContactAddedPayload:
             name="Weather Bot",
             type="Agent",
             description="Provides weather forecasts",
+            is_remote=True,
             is_external=True,
             inserted_at="2026-02-09T10:35:00Z",
         )
         assert payload.type == "Agent"
         assert payload.description == "Provides weather forecasts"
+        assert payload.is_remote is True
         assert payload.is_external is True
 
     def test_internal_agent_contact(self):
@@ -127,9 +130,11 @@ class TestContactAddedPayload:
             handle="my-agent",
             name="My Agent",
             type="Agent",
+            is_remote=False,
             is_external=False,
             inserted_at="2026-02-09T10:35:00Z",
         )
+        assert payload.is_remote is False
         assert payload.is_external is False
 
     def test_missing_required_field(self):

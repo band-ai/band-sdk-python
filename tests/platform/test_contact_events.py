@@ -108,11 +108,13 @@ class TestContactAddedEvent:
             name="Weather Bot",
             type="Agent",
             description="Weather forecasts",
+            is_remote=True,
             is_external=True,
             inserted_at="2026-02-09T10:35:00Z",
         )
         event = ContactAddedEvent(payload=payload)
         assert event.payload.type == "Agent"
+        assert event.payload.is_remote is True
         assert event.payload.is_external is True
 
 
