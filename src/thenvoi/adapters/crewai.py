@@ -185,15 +185,15 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         goal = self.goal or agent_description or "Help users accomplish their tasks"
 
         if self.backstory:
-            # User provided full backstory -- append capability-gated platform
-            # instructions so the LLM knows about memory/contact tools if enabled.
+            # User provided full backstory -- prepend capability-gated platform
+            # instructions so Thenvoi rules land before custom backstory text.
             platform_prompt = render_system_prompt(
                 agent_name=agent_name,
                 agent_description=agent_description,
                 custom_section=self.custom_section or "",
                 features=self.features,
             )
-            backstory = f"{self.backstory}\n\n{platform_prompt}"
+            backstory = f"{platform_prompt}\n\n{self.backstory}"
         else:
             backstory = render_system_prompt(
                 agent_name=agent_name,

@@ -259,6 +259,24 @@ class TestOnStarted:
         assert "Expert researcher" in call_kwargs["backstory"]
 
     @pytest.mark.asyncio
+    async def test_prepends_platform_instructions_before_custom_backstory(
+        self, CrewAIAdapter, crewai_mocks
+    ):
+        crewai_mocks.Agent.reset_mock()
+
+        adapter = CrewAIAdapter(backstory="Custom backstory goes here.")
+        await adapter.on_started(agent_name="TestBot", agent_description="A test bot")
+
+        call_kwargs = crewai_mocks.Agent.call_args[1]
+        backstory = call_kwargs["backstory"]
+
+        assert "Multi-participant chat" in backstory
+        assert "Custom backstory goes here." in backstory
+        assert backstory.index("Multi-participant chat") < backstory.index(
+            "Custom backstory goes here."
+        )
+
+    @pytest.mark.asyncio
     async def test_uses_agent_name_as_default_role(self, CrewAIAdapter, crewai_mocks):
         crewai_mocks.Agent.reset_mock()
 
