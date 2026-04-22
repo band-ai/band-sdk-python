@@ -356,6 +356,76 @@ class TestOnMessage:
         assert len(adapter._message_history["room-123"]) >= 3
 
     @pytest.mark.asyncio
+    async def test_replays_full_history_to_kickoff(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+        adapter._message_history["room-123"] = [
+            {
+                "role": "user",
+                "content": "[Bob]: Step 1",
+                "sender": "Bob",
+                "sender_type": "User",
+            },
+            {
+                "role": "assistant",
+                "content": '[Tool Call] thenvoi_lookup_peers {"page": 1}',
+                "sender": "TestBot",
+                "sender_type": "Agent",
+            },
+            {
+                "role": "user",
+                "content": '[TestBot]: [Tool Result] thenvoi_lookup_peers: {"peers": []}',
+                "sender": "TestBot",
+                "sender_type": "Agent",
+            },
+        ]
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        call_args = mock_crewai_agent.kickoff_async.call_args
+        messages = call_args[0][0]
+
+        assert messages[0]["content"] == "[Bob]: Step 1"
+        assert "[Tool Call] thenvoi_lookup_peers" in messages[1]["content"]
+        assert "[Tool Result] thenvoi_lookup_peers" in messages[2]["content"]
+        assert messages[3]["content"] == "[Alice]: Hello, agent!"
+
+    @pytest.mark.asyncio
+    async def test_appends_system_updates_to_room_history(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg="Alice joined the room",
+            contacts_msg="[Contacts]: @alice is now a contact",
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        history = adapter._message_history["room-123"]
+        assert history[0]["content"] == "[System]: Alice joined the room"
+        assert history[1]["content"] == "[System]: [Contacts]: @alice is now a contact"
+        assert history[0]["sender"] == "System"
+        assert history[1]["sender"] == "System"
+
+    @pytest.mark.asyncio
     async def test_calls_kickoff_async(
         self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):

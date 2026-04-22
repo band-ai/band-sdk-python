@@ -438,7 +438,7 @@ class TestToolEventHandling:
     def test_tool_events_skipped_for_simple_converters(
         self, converter_config, make_converter, output
     ):
-        """CrewAI and Parlant skip tool_call/tool_result messages entirely."""
+        """Converters marked as text-only skip tool_call/tool_result messages entirely."""
         if not converter_config.skips_tool_events:
             pytest.skip(
                 f"{converter_config.display_name} processes tool events (tested below)"

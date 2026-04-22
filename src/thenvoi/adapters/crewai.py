@@ -305,9 +305,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         """Internal message processing logic."""
         if is_session_bootstrap:
             if history:
-                self._message_history[room_id] = [
-                    {"role": h["role"], "content": h["content"]} for h in history
-                ]
+                self._message_history[room_id] = [dict(h) for h in history]
                 logger.info(
                     "Room %s: Loaded %s historical messages",
                     room_id,
@@ -317,50 +315,43 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                 self._message_history[room_id] = []
                 logger.info("Room %s: No historical messages found", room_id)
         elif room_id not in self._message_history:
-            self._message_history[room_id] = []
-
-        messages = []
-
-        if is_session_bootstrap and self._message_history.get(room_id):
-            history_text = "\n".join(
-                f"{m['role']}: {m['content']}" for m in self._message_history[room_id]
-            )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": f"[Previous conversation:]\n{history_text}",
-                }
-            )
+            self._message_history[room_id] = [dict(h) for h in history]
 
         if participants_msg:
-            messages.append(
+            self._message_history[room_id].append(
                 {
                     "role": "user",
                     "content": f"[System]: {participants_msg}",
+                    "sender": "System",
+                    "sender_type": "System",
                 }
             )
             logger.info("Room %s: Participants updated", room_id)
 
         if contacts_msg:
-            messages.append(
+            self._message_history[room_id].append(
                 {
                     "role": "user",
                     "content": f"[System]: {contacts_msg}",
+                    "sender": "System",
+                    "sender_type": "System",
                 }
             )
             logger.info("Room %s: Contacts broadcast received", room_id)
 
         user_message = msg.format_for_llm()
-        messages.append({"role": "user", "content": user_message})
-
         self._message_history[room_id].append(
             {
                 "role": "user",
                 "content": user_message,
+                "sender": msg.sender_name,
+                "sender_type": msg.sender_type,
             }
         )
 
-        total_messages = len(self._message_history[room_id])
+        messages = [dict(m) for m in self._message_history[room_id]]
+
+        total_messages = len(messages)
         logger.info(
             "Room %s: Processing with %s messages (first_msg=%s)",
             room_id,

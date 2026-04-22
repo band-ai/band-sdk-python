@@ -3,8 +3,8 @@
 Tests for shared converter behavior (user messages, agent filtering, empty
 history, edge cases, output shape) live in
 tests/framework_conformance/test_converter_conformance.py.
-This file contains CrewAI-specific assistant message formatting and crew
-workflow tests.
+This file contains CrewAI-specific assistant message formatting, tool event
+replay, and crew workflow tests.
 """
 
 from thenvoi.converters.crewai import CrewAIHistoryConverter
@@ -110,3 +110,90 @@ class TestCrewWorkflow:
 
         assert result[0]["sender_type"] == "User"
         assert result[1]["sender_type"] == "Agent"
+
+
+class TestToolEventReplay:
+    """Tests for CrewAI tool event replay formatting."""
+
+    def test_converts_tool_call_to_assistant_replay_message(self):
+        converter = CrewAIHistoryConverter(agent_name="Router")
+        raw = [
+            {
+                "role": "assistant",
+                "content": '{"tool": "thenvoi_lookup_peers", "input": {"page": 1}}',
+                "sender_name": "Router",
+                "sender_type": "Agent",
+                "message_type": "tool_call",
+            }
+        ]
+
+        result = converter.convert(raw)
+
+        assert len(result) == 1
+        assert result[0]["role"] == "assistant"
+        assert result[0]["content"] == '[Tool Call] thenvoi_lookup_peers {"page": 1}'
+        assert result[0]["sender"] == "Router"
+        assert result[0]["sender_type"] == "Agent"
+
+    def test_converts_tool_result_to_user_replay_message(self):
+        converter = CrewAIHistoryConverter(agent_name="Router")
+        raw = [
+            {
+                "role": "assistant",
+                "content": '{"tool": "thenvoi_lookup_peers", "result": {"peers": ["a"]}}',
+                "sender_name": "Router",
+                "sender_type": "Agent",
+                "message_type": "tool_result",
+            }
+        ]
+
+        result = converter.convert(raw)
+
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        assert (
+            result[0]["content"]
+            == '[Router]: [Tool Result] thenvoi_lookup_peers: {"peers": ["a"]}'
+        )
+        assert result[0]["sender"] == "Router"
+        assert result[0]["sender_type"] == "Agent"
+
+    def test_converts_tool_error_to_user_replay_message(self):
+        converter = CrewAIHistoryConverter(agent_name="Router")
+        raw = [
+            {
+                "role": "assistant",
+                "content": '{"tool": "thenvoi_add_participant", "error": "No such peer"}',
+                "sender_name": "Router",
+                "sender_type": "Agent",
+                "message_type": "tool_result",
+            }
+        ]
+
+        result = converter.convert(raw)
+
+        assert len(result) == 1
+        assert result[0]["role"] == "user"
+        assert (
+            result[0]["content"]
+            == "[Router]: [Tool Error] thenvoi_add_participant: No such peer"
+        )
+
+    def test_skips_malformed_tool_events(self):
+        converter = CrewAIHistoryConverter()
+        raw = [
+            {
+                "role": "assistant",
+                "content": "not json",
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": '{"tool": "thenvoi_lookup_peers"}',
+                "message_type": "tool_result",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert result == []
