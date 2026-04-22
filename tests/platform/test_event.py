@@ -215,6 +215,23 @@ class TestParticipantEvents:
         assert event.payload.is_remote is True
         assert event.payload.is_external is True
 
+    def test_construct_participant_added_event_from_legacy_alias(self):
+        """Legacy participant payloads should still expose is_remote."""
+        payload = ParticipantAddedPayload(
+            id="user-123",
+            name="Test User",
+            type="User",
+            is_external=False,
+        )
+
+        event = ParticipantAddedEvent(
+            room_id="room-123",
+            payload=payload,
+        )
+
+        assert event.payload.is_remote is False
+        assert event.payload.is_external is False
+
     def test_construct_participant_removed_event(self):
         """Construct a ParticipantRemovedEvent with typed payload."""
         payload = ParticipantRemovedPayload(id="user-123")

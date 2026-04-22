@@ -117,6 +117,20 @@ class TestContactAddedEvent:
         assert event.payload.is_remote is True
         assert event.payload.is_external is True
 
+    def test_legacy_contact_alias_still_populates_primary_field(self):
+        """Legacy contact payloads should hydrate is_remote for consumers."""
+        payload = ContactAddedPayload(
+            id="contact-legacy",
+            handle="weather-bot",
+            name="Weather Bot",
+            type="Agent",
+            is_external=True,
+            inserted_at="2026-02-09T10:35:00Z",
+        )
+        event = ContactAddedEvent(payload=payload)
+        assert event.payload.is_remote is True
+        assert event.payload.is_external is True
+
 
 class TestContactRemovedEvent:
     """Tests for ContactRemovedEvent."""
