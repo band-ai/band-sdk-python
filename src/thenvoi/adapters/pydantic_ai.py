@@ -145,12 +145,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
         self._system_prompt = system
 
-        # output_type=None disables output validation - we respond via tools only
-        agent: Agent[AgentToolsProtocol, None] = Agent(  # type: ignore[call-overload]
+        # We respond via tools only, so the model output is unused. Using `str`
+        # (instead of `None`) keeps newer pydantic-ai-slim versions happy —
+        # 1.87+ rejects `output_type=None` with `UserError("At least one output
+        # type must be provided other than `None`")`.
+        agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
             system_prompt=system,
             deps_type=AgentToolsProtocol,
-            output_type=None,
+            output_type=str,
         )
 
         # Register platform tools dynamically from centralized definitions
