@@ -8301,6 +8301,7 @@ parlant = [
     { name = "werkzeug" },
 ]
 pydantic-ai = [
+    { name = "anthropic" },
     { name = "openai" },
     { name = "pydantic-ai-slim" },
 ]
@@ -8318,6 +8319,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
+    { name = "anthropic", marker = "extra == 'pydantic-ai'", specifier = ">=0.75.0" },
     { name = "beautifulsoup4", marker = "extra == 'dev'", specifier = ">=4.12.0" },
     { name = "beautifulsoup4", marker = "extra == 'langgraph'", specifier = ">=4.12.0" },
     { name = "boto3", marker = "extra == 'bridge-agentcore'", specifier = ">=1.35.0" },

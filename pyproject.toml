@@ -42,6 +42,7 @@ letta = [
 pydantic-ai = [
     "pydantic-ai-slim>=1.56.0",
     "openai>=1.0.0",
+    "anthropic>=0.75.0",  # required by examples/pydantic_ai/02_custom_instructions.py
 ]
 anthropic = [
     "anthropic>=0.75.0",
