@@ -121,7 +121,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self.custom_section = custom_section
         self._system_prompt: str | None = None
 
-        self._agent: Agent[AgentToolsProtocol, None] | None = None
+        self._agent: Agent[AgentToolsProtocol, str] | None = None
         # Conversation history per room (Pydantic AI is stateless, we maintain state)
         self._message_history: dict[str, list] = {}
         # Custom tools (PydanticAI-compatible functions)
@@ -135,7 +135,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         logger.info("Pydantic AI adapter started for agent: %s", agent_name)
 
     # --- Copied from ThenvoiPydanticAgent._create_agent ---
-    def _create_agent(self) -> Agent[AgentToolsProtocol, None]:
+    def _create_agent(self) -> Agent[AgentToolsProtocol, str]:
         """Create Pydantic AI Agent with platform tools."""
         system = self.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
