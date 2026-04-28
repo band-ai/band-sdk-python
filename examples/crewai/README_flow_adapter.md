@@ -76,11 +76,17 @@ await flow.kickoff_async(inputs)
 {
     "message": {
         "id": "msg-id",
-        "room_id": "room-id",
         "content": "user text",
         "sender_id": "user-or-agent-id",
         "sender_type": "User" | "Agent",
         "sender_name": "display name",
+        "message_type": "text",
+    },
+    "current_message": { ... },  # same shape as message
+    "requester": {
+        "id": "user-or-agent-id",
+        "name": "display name",
+        "type": "User" | "Agent",
     },
     "state": {
         "runs": {

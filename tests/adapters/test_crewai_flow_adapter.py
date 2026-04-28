@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -45,11 +46,11 @@ def _factory():
     return MagicMock()
 
 
-def _msg(*, id: str = "msg-1") -> PlatformMessage:
+def _msg(*, id: str = "msg-1", content: str = "hi") -> PlatformMessage:
     return PlatformMessage(
         id=id,
         room_id="room-1",
-        content="hi",
+        content=content,
         sender_id="user-1",
         sender_type="User",
         sender_name="Pat",
@@ -176,6 +177,50 @@ class TestValidation:
 # ---------------------------------------------------------------------------
 # on_started / namespace resolution
 # ---------------------------------------------------------------------------
+
+
+class TestFlowInputs:
+    @pytest.mark.asyncio
+    async def test_inputs_include_current_message_and_requester(self) -> None:
+        captured: dict[str, Any] = {}
+
+        class CapturingFlow:
+            async def kickoff_async(self, inputs: dict | None = None) -> dict:
+                captured.update(inputs or {})
+                return {"decision": "waiting", "reason": "captured"}
+
+        adapter = CrewAIFlowAdapter(
+            flow_factory=CapturingFlow,
+            state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
+        )
+        await adapter.on_started("router", "")
+        tools = FakeAgentTools()
+        msg = _msg(id="msg-request", content="build my brief")
+        await adapter.on_message(
+            msg=msg,
+            tools=tools,  # type: ignore[arg-type]
+            history=None,  # type: ignore[arg-type]
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        assert captured["message"] == captured["current_message"]
+        assert captured["current_message"] == {
+            "id": "msg-request",
+            "content": "build my brief",
+            "sender_id": "user-1",
+            "sender_name": "Pat",
+            "sender_type": "User",
+            "message_type": "text",
+            "created_at": msg.created_at.isoformat(),
+        }
+        assert captured["requester"] == {
+            "id": "user-1",
+            "name": "Pat",
+            "type": "User",
+        }
 
 
 class TestOnStartedAndNamespace:

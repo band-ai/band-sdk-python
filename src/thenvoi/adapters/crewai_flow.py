@@ -2333,19 +2333,15 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         contacts_msg: str | None,
         room_id: str,
     ) -> dict[str, Any]:
+        current_message = self._message_snapshot(msg)
         return {
             "room_id": room_id,
-            "message": {
-                "id": msg.id,
-                "content": msg.content,
-                "sender_id": msg.sender_id,
-                "sender_name": getattr(msg, "sender_name", None),
-                "sender_type": getattr(msg, "sender_type", None),
-                "created_at": (
-                    msg.created_at.isoformat()
-                    if getattr(msg, "created_at", None) is not None
-                    else None
-                ),
+            "message": current_message,
+            "current_message": current_message,
+            "requester": {
+                "id": msg.sender_id,
+                "name": getattr(msg, "sender_name", None),
+                "type": getattr(msg, "sender_type", None),
             },
             "state": state.model_dump(mode="json"),
             "agent": {
@@ -2355,6 +2351,22 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             "participants": [p.model_dump(mode="json") for p in participants],
             "participants_msg": participants_msg,
             "contacts_msg": contacts_msg,
+        }
+
+    @staticmethod
+    def _message_snapshot(msg: PlatformMessage) -> dict[str, Any]:
+        return {
+            "id": msg.id,
+            "content": msg.content,
+            "sender_id": msg.sender_id,
+            "sender_name": getattr(msg, "sender_name", None),
+            "sender_type": getattr(msg, "sender_type", None),
+            "message_type": getattr(msg, "message_type", None),
+            "created_at": (
+                msg.created_at.isoformat()
+                if getattr(msg, "created_at", None) is not None
+                else None
+            ),
         }
 
 
