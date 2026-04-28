@@ -244,16 +244,16 @@ The default state source is `RestCrewAIFlowStateSource`. It fetches room context
 
 ## Flow runtime helpers
 
-Inside a Flow, `get_current_flow_runtime()` exposes runtime helpers. Use `ensure_participant()` before delegating to a peer that may not already be in the room:
+Inside a Flow, `get_current_flow_runtime()` exposes runtime helpers. Use `ensure_participant()` with a peer UUID before delegating to a peer that may not already be in the room:
 
 ```python
 from thenvoi.adapters.crewai_flow import get_current_flow_runtime
 
 runtime = get_current_flow_runtime()
-await runtime.ensure_participant("@example/peer")
+participant = await runtime.ensure_participant("12345678-1234-1234-1234-123456789abc")
 ```
 
-This updates the adapter's participant snapshot for the current turn so a subsequent `delegate` decision can resolve the target.
+This updates the adapter's participant snapshot for the current turn so a subsequent `delegate` decision can resolve the target. Pass handles to `lookup_peers()` first if you need to discover the UUID.
 
 ## Sub-Crew tools
 

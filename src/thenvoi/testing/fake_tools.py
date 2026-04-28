@@ -87,8 +87,12 @@ class FakeAgentTools:
     async def add_participant(
         self, identifier: str, role: str = "member"
     ) -> dict[str, Any]:
+        try:
+            participant_id = str(uuid.UUID(identifier))
+        except ValueError:
+            participant_id = f"p-{identifier}"
         participant = {
-            "id": f"p-{identifier}",
+            "id": participant_id,
             "name": identifier,
             "role": role,
             "handle": identifier,

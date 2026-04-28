@@ -22,6 +22,7 @@ from collections.abc import Mapping
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Literal, Protocol, Union, runtime_checkable
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -585,24 +586,28 @@ class CrewAIFlowRuntimeTools:
         return result
 
     async def ensure_participant(
-        self, identifier: str, role: str = "member"
+        self, participant_id: str, role: str = "member"
     ) -> CrewAIFlowParticipantSnapshot:
-        """Ensure a peer is in the room and visible to same-turn delegation."""
-        if not isinstance(identifier, str) or not identifier.strip():
-            raise ValueError("identifier must be a non-empty string")
+        """Ensure a peer UUID is in the room and visible to same-turn delegation."""
+        if not isinstance(participant_id, str) or not participant_id.strip():
+            raise ValueError("participant_id must be a non-empty UUID string")
+        try:
+            participant_uuid = str(UUID(participant_id.strip()))
+        except ValueError as exc:
+            raise ValueError("participant_id must be a valid UUID") from exc
         if not isinstance(role, str) or not role.strip():
             raise ValueError("role must be a non-empty string")
 
-        await self._tools.add_participant(identifier.strip(), role.strip())
+        await self._tools.add_participant(participant_uuid, role.strip())
         self._refresh_participant_snapshot()
-        participant = self._find_participant(identifier)
+        participant = self._find_participant_by_id(participant_uuid)
         if participant is None:
             await self._tools.get_participants()
             self._refresh_participant_snapshot()
-            participant = self._find_participant(identifier)
+            participant = self._find_participant_by_id(participant_uuid)
         if participant is None:
             raise ValueError(
-                f"Participant '{identifier}' was added but is not visible in the room"
+                f"Participant '{participant_uuid}' was added but is not visible in the room"
             )
         return participant
 
@@ -633,23 +638,11 @@ class CrewAIFlowRuntimeTools:
 
         self._participants[:] = refreshed
 
-    def _find_participant(
-        self, identifier: str
+    def _find_participant_by_id(
+        self, participant_id: str
     ) -> CrewAIFlowParticipantSnapshot | None:
-        participant_dicts = [
-            {"id": p.participant_id, "handle": p.handle, "name": p.handle}
-            for p in self._participants
-        ]
-        try:
-            normalized = normalize_participant_key(
-                identifier,
-                participants=participant_dicts,
-            )
-        except CrewAIFlowAmbiguousIdentityError as exc:
-            raise ValueError(str(exc)) from exc
-
         for participant in self._participants:
-            if participant.normalized_key == normalized:
+            if participant.participant_id == participant_id:
                 return participant
         return None
 

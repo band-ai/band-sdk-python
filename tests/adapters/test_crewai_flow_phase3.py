@@ -504,16 +504,21 @@ class TestRuntimeTools:
                 async def kickoff_async(self, inputs: dict | None = None) -> Any:
                     rt = get_current_flow_runtime()
                     assert rt is not None
-                    participant = await rt.ensure_participant("@example/peer")
-                    assert participant.normalized_key == "peer"
+                    participant = await rt.ensure_participant(
+                        "12345678-1234-1234-1234-123456789abc"
+                    )
+                    assert (
+                        participant.participant_id
+                        == "12345678-1234-1234-1234-123456789abc"
+                    )
                     return {
                         "decision": "delegate",
                         "delegations": [
                             {
                                 "delegation_id": "d-peer",
-                                "target": "peer",
+                                "target": participant.participant_id,
                                 "content": "please help",
-                                "mentions": ["@example/peer"],
+                                "mentions": [participant.participant_id],
                             }
                         ],
                     }
@@ -527,16 +532,17 @@ class TestRuntimeTools:
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
 
+        participant_id = "12345678-1234-1234-1234-123456789abc"
         assert tools.participants_added == [
             {
-                "id": "p-@example/peer",
-                "name": "@example/peer",
+                "id": participant_id,
+                "name": participant_id,
                 "role": "member",
-                "handle": "@example/peer",
+                "handle": participant_id,
             }
         ]
         assert tools.messages_sent == [
-            {"id": "msg-0", "content": "please help", "mentions": ["@example/peer"]}
+            {"id": "msg-0", "content": "please help", "mentions": [participant_id]}
         ]
 
     @pytest.mark.asyncio
