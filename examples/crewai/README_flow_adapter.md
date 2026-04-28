@@ -236,9 +236,22 @@ The default state source is `RestCrewAIFlowStateSource`. It fetches room context
 
 `HistoryCrewAIFlowStateSource` is for tests and bootstrap-only deployments. Normal room lifecycles should use the REST source because default message history is not hydrated on every non-bootstrap turn.
 
+## Flow runtime helpers
+
+Inside a Flow, `get_current_flow_runtime()` exposes runtime helpers. Use `ensure_participant()` before delegating to a peer that may not already be in the room:
+
+```python
+from thenvoi.adapters.crewai_flow import get_current_flow_runtime
+
+runtime = get_current_flow_runtime()
+await runtime.ensure_participant("@example/peer")
+```
+
+This updates the adapter's participant snapshot for the current turn so a subsequent `delegate` decision can resolve the target.
+
 ## Sub-Crew tools
 
-Inside a Flow, `get_current_flow_runtime()` exposes a read-only runtime helper. Use it when a sub-Crew needs Thenvoi tools:
+Use the runtime when a sub-Crew needs Thenvoi tools:
 
 ```python
 from thenvoi.adapters.crewai_flow import get_current_flow_runtime

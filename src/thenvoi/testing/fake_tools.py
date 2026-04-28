@@ -87,8 +87,15 @@ class FakeAgentTools:
     async def add_participant(
         self, identifier: str, role: str = "member"
     ) -> dict[str, Any]:
-        participant = {"id": f"p-{identifier}", "name": identifier, "role": role}
+        participant = {
+            "id": f"p-{identifier}",
+            "name": identifier,
+            "role": role,
+            "handle": identifier,
+        }
         self.participants_added.append(participant)
+        if not any(p.get("id") == participant["id"] for p in self._participants):
+            self._participants.append(participant)
         return participant
 
     async def remove_participant(self, identifier: str) -> dict[str, Any]:

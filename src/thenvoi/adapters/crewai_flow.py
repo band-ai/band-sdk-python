@@ -524,10 +524,11 @@ class CrewAIFlowRuntimeTools:
     """Read-only Flow runtime surface.
 
     Flow code that needs to delegate, synthesize, fail, or wait expresses
-    that through the Flow's terminal return value. ``create_crewai_tools``
-    is the only escape hatch for sub-Crews; the tools it returns route
-    through the adapter-owned ``SideEffectExecutor`` so reserve-send-confirm
-    semantics apply uniformly.
+    that through the Flow's terminal return value. ``ensure_participant`` is
+    the narrow write surface for routing prerequisites; ``create_crewai_tools``
+    remains the escape hatch for sub-Crews, and those tools route through the
+    adapter-owned ``SideEffectExecutor`` so reserve-send-confirm semantics apply
+    uniformly.
     """
 
     def __init__(
@@ -579,7 +580,78 @@ class CrewAIFlowRuntimeTools:
         return await self._tools.lookup_peers(page=page, page_size=page_size)
 
     async def get_participants(self) -> Any:
-        return await self._tools.get_participants()
+        result = await self._tools.get_participants()
+        self._refresh_participant_snapshot()
+        return result
+
+    async def ensure_participant(
+        self, identifier: str, role: str = "member"
+    ) -> CrewAIFlowParticipantSnapshot:
+        """Ensure a peer is in the room and visible to same-turn delegation."""
+        if not isinstance(identifier, str) or not identifier.strip():
+            raise ValueError("identifier must be a non-empty string")
+        if not isinstance(role, str) or not role.strip():
+            raise ValueError("role must be a non-empty string")
+
+        await self._tools.add_participant(identifier.strip(), role.strip())
+        self._refresh_participant_snapshot()
+        participant = self._find_participant(identifier)
+        if participant is None:
+            await self._tools.get_participants()
+            self._refresh_participant_snapshot()
+            participant = self._find_participant(identifier)
+        if participant is None:
+            raise ValueError(
+                f"Participant '{identifier}' was added but is not visible in the room"
+            )
+        return participant
+
+    def _refresh_participant_snapshot(self) -> None:
+        participants_attr = getattr(self._tools, "participants", None)
+        raw = participants_attr() if callable(participants_attr) else participants_attr
+        if not isinstance(raw, list):
+            return
+
+        refreshed: list[CrewAIFlowParticipantSnapshot] = []
+        for p in raw:
+            if not isinstance(p, dict):
+                continue
+            participant_id = str(p.get("id") or "")
+            handle = p.get("handle") or p.get("name") or ""
+            if not participant_id:
+                continue
+            normalized = (handle or "").strip().lower().lstrip("@")
+            if "/" in normalized:
+                normalized = normalized.rsplit("/", 1)[-1]
+            refreshed.append(
+                CrewAIFlowParticipantSnapshot(
+                    participant_id=participant_id,
+                    handle=handle or None,
+                    normalized_key=normalized,
+                )
+            )
+
+        self._participants[:] = refreshed
+
+    def _find_participant(
+        self, identifier: str
+    ) -> CrewAIFlowParticipantSnapshot | None:
+        participant_dicts = [
+            {"id": p.participant_id, "handle": p.handle, "name": p.handle}
+            for p in self._participants
+        ]
+        try:
+            normalized = normalize_participant_key(
+                identifier,
+                participants=participant_dicts,
+            )
+        except CrewAIFlowAmbiguousIdentityError as exc:
+            raise ValueError(str(exc)) from exc
+
+        for participant in self._participants:
+            if participant.normalized_key == normalized:
+                return participant
+        return None
 
     def create_crewai_tools(
         self,

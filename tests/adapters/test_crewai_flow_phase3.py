@@ -492,7 +492,52 @@ class TestRuntimeTools:
             "remove_participant",
         ):
             assert forbidden not in public_attrs
+        assert "ensure_participant" in public_attrs
         assert "create_crewai_tools" in public_attrs
+
+    @pytest.mark.asyncio
+    async def test_ensure_participant_refreshes_snapshot_for_same_turn_delegation(
+        self,
+    ) -> None:
+        def factory():
+            class _Flow:
+                async def kickoff_async(self, inputs: dict | None = None) -> Any:
+                    rt = get_current_flow_runtime()
+                    assert rt is not None
+                    participant = await rt.ensure_participant("@example/peer")
+                    assert participant.normalized_key == "peer"
+                    return {
+                        "decision": "delegate",
+                        "delegations": [
+                            {
+                                "delegation_id": "d-peer",
+                                "target": "peer",
+                                "content": "please help",
+                                "mentions": ["@example/peer"],
+                            }
+                        ],
+                    }
+
+            return _Flow()
+
+        adapter = CrewAIFlowAdapter(
+            flow_factory=factory,
+            state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
+        )
+        tools = FakeAgentTools()
+        await _run_one_turn(adapter, tools, _msg())
+
+        assert tools.participants_added == [
+            {
+                "id": "p-@example/peer",
+                "name": "@example/peer",
+                "role": "member",
+                "handle": "@example/peer",
+            }
+        ]
+        assert tools.messages_sent == [
+            {"id": "msg-0", "content": "please help", "mentions": ["@example/peer"]}
+        ]
 
     @pytest.mark.asyncio
     async def test_create_crewai_tools_applies_adapter_feature_filters(
