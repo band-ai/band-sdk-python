@@ -129,6 +129,11 @@ class TestLocalMcpServer:
         finally:
             await server.stop()
 
+    # 30s default barely fits on GitHub Actions Python 3.12 runners — the
+    # streamable-HTTP loopback initialization spends most of that on uvicorn
+    # startup. Bump to 90s to absorb runner I/O variance (test passes in ~1s
+    # locally; this only widens the safety margin on CI).
+    @pytest.mark.timeout(90)
     @pytest.mark.asyncio
     async def test_serves_streamable_http_tools_on_localhost(self) -> None:
         async def execute(arguments: dict[str, str]) -> dict[str, str]:
