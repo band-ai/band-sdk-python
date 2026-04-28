@@ -1355,6 +1355,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             "require_delegation_before_final", "off"
         ] = "require_delegation_before_final",
         sequential_chains: Mapping[str, str] | None = None,
+        accept_agent_initiated: bool = False,
         history_converter: CrewAIFlowStateConverter | None = None,
         features: AdapterFeatures | None = None,
     ) -> None:
@@ -1443,6 +1444,10 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                         "sequential_chains keys and values must be strings"
                     )
 
+        # ---- accept_agent_initiated ----------------------------------------
+        if not isinstance(accept_agent_initiated, bool):
+            raise ThenvoiConfigError("accept_agent_initiated must be a bool")
+
         # ---- history_converter --------------------------------------------
         # Default converter picks up max_run_age and the namespace once
         # on_started resolves the namespace.
@@ -1464,6 +1469,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         )
         self._tagged_peer_policy = tagged_peer_policy
         self._sequential_chains: dict[str, str] = dict(sequential_chains or {})
+        self._accept_agent_initiated = accept_agent_initiated
 
         self._tool_loop: asyncio.AbstractEventLoop | None = None
 
@@ -1722,10 +1728,15 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             run_id = other_run_id
             executor = run_executor
 
-        # If no match, only User-typed senders start a new run; Agent-typed
-        # senders are discarded with a debug log.
+        # If no delegation matched, User-typed messages start a fresh run.
+        # Agent-typed messages can do the same only when this adapter is
+        # explicitly configured as a downstream router.
         sender_type = getattr(msg, "sender_type", "User")
-        if sender_type == "Agent" and matched is None:
+        if (
+            sender_type == "Agent"
+            and matched is None
+            and not self._accept_agent_initiated
+        ):
             logger.debug(
                 "Agent-typed sender %s did not match a pending delegation; discarding",
                 msg.sender_id,

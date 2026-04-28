@@ -70,6 +70,7 @@ class TestInit:
         assert isinstance(adapter._state_source, RestCrewAIFlowStateSource)
         assert adapter._max_delegation_rounds == 4
         assert adapter._max_run_age == timedelta(days=7)
+        assert adapter._accept_agent_initiated is False
         assert adapter.metadata_namespace == ""
 
     def test_init_does_not_call_flow_factory(self) -> None:
@@ -162,6 +163,13 @@ class TestValidation:
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 sequential_chains={"k": 123},  # type: ignore[dict-item]
+            )
+
+    def test_accept_agent_initiated_must_be_bool(self) -> None:
+        with pytest.raises(ThenvoiConfigError):
+            CrewAIFlowAdapter(
+                flow_factory=_factory,
+                accept_agent_initiated="yes",  # type: ignore[arg-type]
             )
 
 

@@ -637,7 +637,7 @@ class TestReplyMatching:
         assert len(tools.messages_sent) == 1
 
     @pytest.mark.asyncio
-    async def test_agent_typed_unmatched_is_discarded(self) -> None:
+    async def test_agent_typed_unmatched_is_discarded_by_default(self) -> None:
         flow = _flow(
             {"decision": "direct_response", "content": "should not run", "mentions": []}
         )
@@ -657,8 +657,31 @@ class TestReplyMatching:
             ),
         )
         assert tools.messages_sent == []
-        # No task events at all (Flow never ran).
         assert tools.events_sent == []
+
+    @pytest.mark.asyncio
+    async def test_agent_typed_unmatched_starts_new_run_when_enabled(self) -> None:
+        flow = _flow(
+            {"decision": "direct_response", "content": "agent routed", "mentions": []}
+        )
+        adapter = CrewAIFlowAdapter(
+            flow_factory=lambda: flow,
+            state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
+            accept_agent_initiated=True,
+        )
+        tools = FakeAgentTools(participants=[{"id": "p", "handle": "@example/x"}])
+        await _start(adapter)
+        await _turn(
+            adapter,
+            tools,
+            _msg(
+                sender_id="@example/some-agent",
+                sender_type="Agent",
+                sender_name="Some Agent",
+            ),
+        )
+        assert len(tools.messages_sent) == 1
+        assert tools.messages_sent[0]["content"] == "agent routed"
 
 
 # ---------------------------------------------------------------------------

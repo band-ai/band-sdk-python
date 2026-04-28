@@ -51,6 +51,17 @@ adapter = CrewAIFlowAdapter(
 
 `flow_factory` is called once per inbound message and must return an object with an async `kickoff_async(inputs)` method. A real CrewAI Flow can provide that method through CrewAI's Flow APIs. Tests and examples can also use a small object with the same method.
 
+By default, unmatched Agent-typed messages are ignored unless they match a pending delegation reply. Downstream router flows can opt into fresh agent-initiated runs:
+
+```python
+adapter = CrewAIFlowAdapter(
+    flow_factory=flow_factory,
+    accept_agent_initiated=True,
+)
+```
+
+Use this for router-to-router handoffs where another agent intentionally invokes this Flow as a new run.
+
 ## Inputs passed to the Flow
 
 The adapter calls:
