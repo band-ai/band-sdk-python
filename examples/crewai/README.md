@@ -24,6 +24,31 @@ In this repo, the CrewAI adapter lets those agents use Thenvoi rooms and Thenvoi
 | `05_tom_agent.py` | **Character agent** - Tom the cat with a custom character prompt. |
 | `06_jerry_agent.py` | **Character agent** - Jerry the mouse with a custom character prompt. |
 | `07_contact_and_memory_agent.py` | **Contacts + memory** - Shows CrewAI contact tools, memory tools, and broadcast contact updates. |
+| `08_flow_router.py` | **Flow router (experimental)** - Uses `CrewAIFlowAdapter` for room-native multi-turn orchestration with parallel join and sequential composition. |
+
+## Adapter choice
+
+Two CrewAI adapters ship in the SDK:
+
+- **`CrewAIAdapter`** — the default. Use it for normal CrewAI agent turns:
+  one agent in a room, single-hop delegation, bounded one-peer synthesis.
+  All seven non-flow examples above use this adapter.
+- **`CrewAIFlowAdapter`** — experimental in v1. Use it when you need a
+  room router that delegates to multiple peers in parallel, joins their
+  replies, composes peer outputs sequentially, or enforces tagged-peer
+  routing. The adapter stores all orchestration state in Thenvoi task
+  events and reconstructs it from the platform on every turn — peer
+  replies arrive as normal room messages and re-enter `on_message` with
+  the run's state intact.
+
+`CrewAIFlowAdapter` does not replace `CrewAIAdapter`. Pick the simpler
+adapter unless you have an actual parallel-join or sequential-handoff
+requirement; the flow adapter writes two task events per visible side
+effect (reservation + confirmation) and reads the room's task-event log
+on every turn.
+
+For the full decision contract, state model, side-effect behavior, and common
+failure modes, see [`README_flow_adapter.md`](README_flow_adapter.md).
 
 ## What was validated during `INT-245`
 
@@ -130,12 +155,16 @@ jerry_agent:
   api_key: "your-jerry-agent-api-key"
 ```
 
-Contact and memory example:
+Contact, memory, and flow-router examples:
 
 ```yaml
 crewai_contact_memory_agent:
   agent_id: "your-crewai-contact-memory-agent-id"
   api_key: "your-crewai-contact-memory-agent-api-key"
+
+crewai_flow_router:
+  agent_id: "your-crewai-flow-router-agent-id"
+  api_key: "your-crewai-flow-router-agent-api-key"
 ```
 
 ## Important runtime note

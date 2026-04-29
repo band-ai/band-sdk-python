@@ -216,6 +216,7 @@ class Agent:
         await self._runtime.initialize()
 
         # 2. Initialize adapter with agent metadata BEFORE message processing
+        setattr(self._adapter, "_thenvoi_agent_id", self._runtime.agent_id)
         await self._adapter.on_started(
             self._runtime.agent_name,
             self._runtime.agent_description,

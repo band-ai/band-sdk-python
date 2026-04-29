@@ -46,6 +46,7 @@ from .types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
 )
 from .retry_tracker import MessageRetryTracker
+from ._context_serialization import context_item_to_dict
 
 if TYPE_CHECKING:
     from thenvoi.platform.link import ThenvoiLink
@@ -550,21 +551,7 @@ class ExecutionContext:
             messages = []
             if context_response.data:
                 for item in context_response.data:
-                    sender_name = getattr(item, "sender_name", None) or getattr(
-                        item, "name", None
-                    )
-                    messages.append(
-                        {
-                            "id": item.id,
-                            "content": getattr(item, "content", ""),
-                            "sender_id": getattr(item, "sender_id", ""),
-                            "sender_type": getattr(item, "sender_type", ""),
-                            "sender_name": sender_name,
-                            "message_type": getattr(item, "message_type", "text"),
-                            "metadata": getattr(item, "metadata", {}),
-                            "created_at": getattr(item, "inserted_at", None),
-                        }
-                    )
+                    messages.append(context_item_to_dict(item))
 
             self._context_cache = ConversationContext(
                 room_id=self.room_id,

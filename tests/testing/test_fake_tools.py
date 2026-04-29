@@ -85,6 +85,9 @@ class TestParticipantOperations:
         assert tools.participants_added[0]["name"] == "Alice"
         assert tools.participants_added[0]["role"] == "admin"
         assert result["name"] == "Alice"
+        assert tools.participants == [
+            {"id": "p-Alice", "name": "Alice", "role": "admin", "handle": "Alice"}
+        ]
 
     async def test_tracks_removed_participants(self):
         """Should track removed participants."""

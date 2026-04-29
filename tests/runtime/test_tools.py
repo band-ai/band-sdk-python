@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
+from thenvoi.client.rest import DEFAULT_REQUEST_OPTIONS
 from thenvoi.runtime.tools import (
     TOOL_MODELS,
     AgentTools,
@@ -114,6 +115,77 @@ def participants():
         {"id": "user-1", "name": "User One", "type": "User", "handle": "@user-one"},
         {"id": "user-2", "name": "User Two", "type": "User", "handle": "@user-two"},
     ]
+
+
+class TestMemoryTools:
+    @pytest.mark.asyncio
+    async def test_list_memories_omits_none_filters(self, mock_rest_client) -> None:
+        response = MagicMock()
+        response.data = []
+        mock_rest_client.agent_api_memories.list_agent_memories = AsyncMock(
+            return_value=response
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await tools.list_memories(page_size=25)
+
+        mock_rest_client.agent_api_memories.list_agent_memories.assert_awaited_once_with(
+            page_size=25,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_memory_omits_none_fields(self, mock_rest_client) -> None:
+        response = MagicMock()
+        response.data = MagicMock()
+        mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock(
+            return_value=response
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await tools.store_memory(
+            content="remember this",
+            system="working",
+            type="semantic",
+            segment="user",
+            thought="useful later",
+        )
+
+        call_kwargs = (
+            mock_rest_client.agent_api_memories.create_agent_memory.call_args.kwargs
+        )
+        memory_payload = call_kwargs["memory"].model_dump(exclude_unset=True)
+        assert "subject_id" not in memory_payload
+        assert "metadata" not in memory_payload
+        assert call_kwargs["request_options"] is DEFAULT_REQUEST_OPTIONS
+
+    @pytest.mark.parametrize(
+        ("tool_method", "rest_method"),
+        [
+            ("get_memory", "get_agent_memory"),
+            ("supersede_memory", "supersede_agent_memory"),
+            ("archive_memory", "archive_agent_memory"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_memory_mutation_calls_use_default_request_options(
+        self,
+        mock_rest_client,
+        tool_method: str,
+        rest_method: str,
+    ) -> None:
+        response = MagicMock()
+        response.data = MagicMock()
+        rest_call = AsyncMock(return_value=response)
+        setattr(mock_rest_client.agent_api_memories, rest_method, rest_call)
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await getattr(tools, tool_method)("mem-123")
+
+        rest_call.assert_awaited_once_with(
+            id="mem-123",
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
 
 
 class TestAgentToolsConstruction:
