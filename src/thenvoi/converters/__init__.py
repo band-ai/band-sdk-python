@@ -45,6 +45,10 @@ if TYPE_CHECKING:
         CrewAIHistoryConverter as CrewAIHistoryConverter,
         CrewAIMessages as CrewAIMessages,
     )
+    from thenvoi.converters.crewai_flow import (
+        CrewAIFlowSessionState as CrewAIFlowSessionState,
+        CrewAIFlowStateConverter as CrewAIFlowStateConverter,
+    )
     from thenvoi.converters.a2a import (
         A2AHistoryConverter as A2AHistoryConverter,
     )
@@ -84,6 +88,8 @@ __all__ = [
     "ParlantMessages",
     "CrewAIHistoryConverter",
     "CrewAIMessages",
+    "CrewAIFlowSessionState",
+    "CrewAIFlowStateConverter",
     "A2AHistoryConverter",
     "GatewayHistoryConverter",
     "CodexHistoryConverter",
@@ -153,6 +159,16 @@ def __getattr__(name: str) -> type:
         if name == "CrewAIHistoryConverter":
             return CrewAIHistoryConverter
         return CrewAIMessages
+
+    elif name in ("CrewAIFlowStateConverter", "CrewAIFlowSessionState"):
+        from thenvoi.converters.crewai_flow import (
+            CrewAIFlowSessionState,
+            CrewAIFlowStateConverter,
+        )
+
+        if name == "CrewAIFlowStateConverter":
+            return CrewAIFlowStateConverter
+        return CrewAIFlowSessionState
 
     elif name == "A2AHistoryConverter":
         from thenvoi.converters.a2a import A2AHistoryConverter

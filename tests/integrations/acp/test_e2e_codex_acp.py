@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel
 
+from thenvoi.integrations.acp.client_profiles import NoopACPClientProfile
 from thenvoi.integrations.acp.client_types import ThenvoiACPClient
 from thenvoi.runtime.mcp_server import (
     LocalMCPServer,
@@ -54,7 +55,7 @@ class EchoInput(BaseModel):
 @pytest.fixture
 def acp_client() -> ThenvoiACPClient:
     """Create a fresh ThenvoiACPClient."""
-    return ThenvoiACPClient()
+    return ThenvoiACPClient(profile=NoopACPClientProfile())
 
 
 @pytest.mark.asyncio

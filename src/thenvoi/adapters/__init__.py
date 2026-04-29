@@ -29,6 +29,9 @@ if TYPE_CHECKING:
     from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter as ClaudeSDKAdapter
     from thenvoi.adapters.parlant import ParlantAdapter as ParlantAdapter
     from thenvoi.adapters.crewai import CrewAIAdapter as CrewAIAdapter
+    from thenvoi.adapters.crewai_flow import (
+        CrewAIFlowAdapter as CrewAIFlowAdapter,
+    )
     from thenvoi.adapters.a2a import A2AAdapter as A2AAdapter
     from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter as A2AGatewayAdapter
     from thenvoi.adapters.codex import CodexAdapter as CodexAdapter
@@ -52,6 +55,7 @@ __all__ = [
     "ClaudeSDKAdapter",
     "ParlantAdapter",
     "CrewAIAdapter",
+    "CrewAIFlowAdapter",
     "A2AAdapter",
     "A2AGatewayAdapter",
     "CodexAdapter",
@@ -94,6 +98,10 @@ def __getattr__(name: str) -> type:
         from thenvoi.adapters.crewai import CrewAIAdapter
 
         return CrewAIAdapter
+    elif name == "CrewAIFlowAdapter":
+        from thenvoi.adapters.crewai_flow import CrewAIFlowAdapter
+
+        return CrewAIFlowAdapter
     elif name == "A2AAdapter":
         from thenvoi.adapters.a2a import A2AAdapter
 

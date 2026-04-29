@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import acp.schema as acp_schema
 from acp import (
     Agent,
     InitializeResponse,
@@ -15,8 +16,6 @@ from acp.schema import (
     AgentCapabilities,
     AudioContentBlock,
     AuthenticateResponse,
-    AuthMethodAgent,
-    CloseSessionResponse,
     EmbeddedResourceContentBlock,
     ForkSessionResponse,
     ImageContentBlock,
@@ -79,6 +78,12 @@ class ACPServer(Agent):
         self._conn = conn
         self._adapter.set_acp_client(conn)
 
+    def _auth_method(self, **kwargs: Any) -> Any:
+        auth_method = getattr(acp_schema, "AuthMethod", None) or getattr(
+            acp_schema, "AuthMethodAgent"
+        )
+        return auth_method(**kwargs)
+
     async def initialize(
         self,
         protocol_version: int,
@@ -132,7 +137,7 @@ class ACPServer(Agent):
                 version=__version__,
             ),
             auth_methods=[
-                AuthMethodAgent(
+                self._auth_method(
                     id="api_key",
                     name="API Key",
                     description="Authenticate with THENVOI_API_KEY.",
@@ -300,7 +305,8 @@ class ACPServer(Agent):
         Validates API key by calling the Thenvoi identity endpoint.
 
         Args:
-            method_id: The authentication method (only "api_key" supported).
+            method_id: The authentication method. Supports "api_key" and the
+                Cursor compatibility alias "cursor_login".
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -481,6 +487,7 @@ class ACPServer(Agent):
         Returns:
             PromptResponse with stop reason.
         """
+        del message_id
         text = self._extract_text(prompt)
         logger.debug("ACP prompt for session %s: %s", session_id, text[:100])
         await self._adapter.handle_prompt(session_id, text)
@@ -498,9 +505,7 @@ class ACPServer(Agent):
         logger.info("ACP cancel for session %s", session_id)
         await self._adapter.cancel_prompt(session_id)
 
-    async def close_session(
-        self, session_id: str, **kwargs: Any
-    ) -> CloseSessionResponse | None:
+    async def close_session(self, session_id: str, **kwargs: Any) -> None:
         """Handle ACP close_session request.
 
         Cleans up all state for the session via the adapter.
@@ -510,7 +515,7 @@ class ACPServer(Agent):
             **kwargs: Additional keyword arguments.
 
         Returns:
-            CloseSessionResponse acknowledgement, or None if session not found.
+            None.
         """
         room_id = self._adapter.get_room_for_session(session_id)
         if room_id is None:
@@ -518,7 +523,7 @@ class ACPServer(Agent):
             return None
         logger.info("Closing ACP session %s (room %s)", session_id, room_id)
         await self._adapter.on_cleanup(room_id)
-        return CloseSessionResponse()
+        return None
 
     @staticmethod
     def _extract_text(prompt: list[Any]) -> str:

@@ -62,9 +62,9 @@ async def main() -> None:
     # Load credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("claude_sdk_agent")
 
-    # Create adapter with Claude SDK settings
+    # Create adapter with Claude SDK settings.  Omitting `model` lets the
+    # npm `claude` binary pick its own default (latest installed model).
     adapter = ClaudeSDKAdapter(
-        model="claude-sonnet-4-5-20250929",
         custom_section="You are a helpful assistant. Be concise and friendly.",
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
     )

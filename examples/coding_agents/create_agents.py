@@ -58,11 +58,13 @@ async def main() -> None:
 
         logger.info("  Created: %s (ID: %s)", agent.name, agent.id)
 
+        # Omit `model` so the runner falls back to None and the npm `claude`
+        # binary picks its own default.  Override per agent by adding
+        # `"model": "opus"` (or any alias / pinned ID) below.
         config = {
             "agent_id": agent.id,
             "api_key": credentials.api_key,
             "role": agent_def["role"],
-            "model": "claude-sonnet-4-5-20250929",
         }
 
         config_path = os.path.join(script_dir, agent_def["file"])

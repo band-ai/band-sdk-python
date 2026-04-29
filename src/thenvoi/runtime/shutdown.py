@@ -190,6 +190,19 @@ class GracefulShutdown:
             signum: The signal number received.
         """
         sig_name = signal.Signals(signum).name
+
+        # Guard FIRST — before any side effects. The documented contract is
+        # "subsequent signals are ignored", and user-provided on_signal callbacks
+        # (e.g. paging/alerting) may not be idempotent. _handle_signal runs in
+        # event-loop callback context and never yields between the flag set and
+        # create_task below, so checking the flag alone is sufficient.
+        if self._shutting_down:
+            logger.debug(
+                "Received %s but shutdown already in progress, ignoring", sig_name
+            )
+            return
+        self._shutting_down = True
+
         logger.info("Received %s, initiating graceful shutdown...", sig_name)
 
         # Call user callback if provided
@@ -202,13 +215,6 @@ class GracefulShutdown:
         # Set shutdown event to unblock any waiters
         if self._shutdown_event:
             self._shutdown_event.set()
-
-        # Guard against multiple signals triggering multiple shutdown tasks
-        # Use flag to prevent race between check and task creation
-        if self._shutting_down or self._shutdown_task is not None:
-            logger.debug("Shutdown already in progress, ignoring signal")
-            return
-        self._shutting_down = True
 
         # Schedule the shutdown coroutine.
         # Note: We store the reference to prevent garbage collection, but this task
@@ -227,11 +233,31 @@ class GracefulShutdown:
         logger.info("Shutting down agent (timeout: %ss)...", self.timeout)
 
         try:
-            graceful = await self.agent.stop(timeout=self.timeout)
+            # Shield agent.stop() so a cancellation propagating through the
+            # outer task (e.g. a parent run() being cancelled) doesn't interrupt
+            # cleanup mid-flight (WebSocket unsubscribe, state persistence, etc.).
+            # Caveat: asyncio.run() teardown calls _cancel_all_tasks(), which
+            # cancels the inner shielded task too — shield protects from the
+            # outer awaiter, not full loop teardown. Use the context-manager or
+            # await-stop patterns for guaranteed completion on process exit.
+            graceful = await asyncio.shield(self.agent.stop(timeout=self.timeout))
             if graceful:
                 logger.info("Agent shut down gracefully")
             else:
                 logger.warning("Agent shut down with processing interrupted")
+        except asyncio.CancelledError:
+            # CancelledError inherits from BaseException (Py3.8+), so the
+            # generic Exception handler below doesn't catch it. asyncio.shield
+            # keeps the inner agent.stop() running in the background, so we do
+            # NOT kick off a second concurrent stop here: AgentRuntime.stop
+            # iterates executions.keys() with no in-flight guard, and two
+            # concurrent stops would race on per-room teardown.
+            logger.warning(
+                "Shutdown was cancelled (timeout=%ss); shielded agent.stop "
+                "continues in background",
+                self.timeout,
+            )
+            raise
         except Exception as e:
             logger.error("Error during shutdown: %s", e, exc_info=True)
 

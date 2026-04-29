@@ -135,6 +135,7 @@ class AgentRuntime:
         self.presence.on_room_joined = self._on_room_joined
         self.presence.on_room_left = self._on_room_left
         self.presence.on_room_event = self._on_room_event
+        self.presence.on_reconnected = self._on_reconnected
 
     @property
     def active_sessions(self) -> dict[str, Execution]:
@@ -219,6 +220,28 @@ class AgentRuntime:
             await execution.on_event(event)
         else:
             logger.warning("No execution for room %s, event dropped", room_id)
+
+    async def _on_reconnected(self) -> None:
+        """Trigger /next resync on all active executions after WebSocket reconnect.
+
+        Messages may have arrived while the socket was down. Each execution
+        context re-polls /next to catch anything the server didn't push.
+        """
+        logger.info(
+            "AgentRuntime: Requesting /next resync for %d execution(s) after reconnect",
+            len(self.executions),
+        )
+        for room_id, execution in list(self.executions.items()):
+            if not hasattr(execution, "request_resync"):
+                logger.debug(
+                    "Execution for room %s does not support request_resync, skipping",
+                    room_id,
+                )
+                continue
+            try:
+                await execution.request_resync()
+            except Exception as e:
+                logger.warning("Failed to request resync for room %s: %s", room_id, e)
 
     # --- Execution management ---
 

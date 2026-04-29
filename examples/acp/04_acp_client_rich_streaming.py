@@ -25,7 +25,7 @@ as visible events (auto-allowed by default).
 Architecture:
     Thenvoi Platform (message arrives in room)
       -> ACPClientAdapter.on_message()
-        -> acp.spawn_agent_process
+        -> external ACP prompt/session handling
           -> External ACP Agent (e.g., Claude Code)
             -> session_update: thought -> tools.send_event("thought")
             -> session_update: tool_call -> tools.send_event("tool_call")

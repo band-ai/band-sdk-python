@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import warnings
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, ValidationError
@@ -70,6 +71,7 @@ class ToolDefinition:
     name: str
     input_model: type[BaseModel]
     method_name: str
+    surface: Literal["agent", "human"] = "agent"
 
 
 # --- Tool input models (single source of truth for schemas) ---
@@ -324,6 +326,316 @@ class ArchiveMemoryInput(BaseModel):
     memory_id: str = Field(..., description="Memory ID (UUID)")
 
 
+# --- Human-tool input models (copied from thenvoi-mcp/src/thenvoi_mcp/tools/human/*.py) ---
+#
+# These models mirror the current thenvoi-mcp human tool handler signatures
+# field-for-field. They are the canonical contract preserved by Phase 1 of
+# INT-338: the observable tool surface stays identical to today's MCP
+# behavior. Widening to full Fern parity is out of scope for this ticket.
+
+
+# human_agents.py
+
+
+class ListMyAgentsInput(BaseModel):
+    """List agents owned by the user."""
+
+    page: int | None = Field(None, description="Page number (optional).")
+    page_size: int | None = Field(None, description="Items per page (optional).")
+
+
+class RegisterMyAgentInput(BaseModel):
+    """Register a new external agent.
+
+    Returns the agent details including API key. Save the API key - it's only shown once!
+    """
+
+    name: str = Field(..., description="Agent name (required).")
+    description: str = Field(..., description="Agent description (required).")
+
+
+# human_chats.py
+
+
+class ListMyChatsInput(BaseModel):
+    """List chat rooms where the user is a participant."""
+
+    page: int | None = Field(None, description="Page number (optional).")
+    page_size: int | None = Field(None, description="Items per page (optional).")
+
+
+class GetMyChatRoomInput(BaseModel):
+    """Get a specific chat room by ID."""
+
+    chat_id: str = Field(..., description="The chat room ID (required).")
+
+
+class CreateMyChatRoomInput(BaseModel):
+    """Create a new chat room with the user as owner."""
+
+    task_id: str | None = Field(
+        None, description="Optional task ID to associate with the chat."
+    )
+
+
+# human_contacts.py
+
+
+class ListMyContactsInput(BaseModel):
+    """List the user's contacts.
+
+    Returns active contacts with their details including handle, email, and type.
+    """
+
+    page: int | None = Field(None, description="Page number for pagination (optional).")
+    page_size: int | None = Field(
+        None, description="Number of items per page (optional)."
+    )
+
+
+class CreateContactRequestInput(BaseModel):
+    """Send a contact request to another user."""
+
+    recipient_handle: str = Field(
+        ...,
+        description="Handle of the user to add (with or without @ prefix, required).",
+    )
+    message: str | None = Field(
+        None,
+        description="Optional message to include with the request (max 500 chars).",
+    )
+
+
+class ListReceivedContactRequestsInput(BaseModel):
+    """List contact requests received by the user.
+
+    Returns pending contact requests that need approval or rejection.
+    """
+
+    page: int | None = Field(None, description="Page number for pagination (optional).")
+    page_size: int | None = Field(
+        None, description="Number of items per page (optional)."
+    )
+
+
+class ListSentContactRequestsInput(BaseModel):
+    """List contact requests sent by the user."""
+
+    status: Literal["pending", "approved", "rejected", "cancelled", "all"] | None = (
+        Field(
+            None,
+            description=(
+                "Filter by status: 'pending', 'approved', 'rejected', "
+                "'cancelled', or 'all' (optional)."
+            ),
+        )
+    )
+    page: int | None = Field(None, description="Page number for pagination (optional).")
+    page_size: int | None = Field(
+        None, description="Number of items per page (optional)."
+    )
+
+
+class ApproveContactRequestInput(BaseModel):
+    """Approve a received contact request."""
+
+    request_id: str = Field(
+        ..., description="The contact request ID to approve (required)."
+    )
+
+
+class RejectContactRequestInput(BaseModel):
+    """Reject a received contact request."""
+
+    request_id: str = Field(
+        ..., description="The contact request ID to reject (required)."
+    )
+
+
+class CancelContactRequestInput(BaseModel):
+    """Cancel a sent contact request."""
+
+    request_id: str = Field(
+        ..., description="The contact request ID to cancel (required)."
+    )
+
+
+class ResolveHandleInput(BaseModel):
+    """Look up an entity by handle.
+
+    Resolves a handle to its entity details. Use this to verify a handle
+    exists before sending a contact request.
+    """
+
+    handle: str = Field(..., description="The handle to resolve (required).")
+
+
+class RemoveMyContactInput(BaseModel):
+    """Remove an existing contact.
+
+    Removes a contact by either contact_id or handle. At least one must be provided.
+    If both are provided, both are sent to the API (contact_id takes precedence).
+    """
+
+    contact_id: str | None = Field(
+        None,
+        description="The contact record ID (optional, provide this or handle).",
+    )
+    handle: str | None = Field(
+        None,
+        description="The contact's handle (optional, provide this or contact_id).",
+    )
+
+
+# human_messages.py
+
+
+class ListMyChatMessagesInput(BaseModel):
+    """List messages in a chat room."""
+
+    chat_id: str = Field(..., description="The chat room ID (required).")
+    page: int | None = Field(None, description="Page number (optional).")
+    page_size: int | None = Field(None, description="Items per page (optional).")
+    message_type: str | None = Field(
+        None,
+        description="Filter by type: 'text', 'tool_call', etc. (optional).",
+    )
+    since: str | None = Field(
+        None,
+        description="ISO 8601 timestamp to filter messages after (optional).",
+    )
+
+
+class SendMyChatMessageInput(BaseModel):
+    """Send a message in a chat room."""
+
+    chat_id: str = Field(..., description="The chat room ID (required).")
+    content: str = Field(..., description="Message text (required).")
+    recipients: str = Field(
+        ...,
+        description=(
+            "Non-empty comma-separated participant names to @mention (required). "
+            "Must contain at least one name; empty string is not accepted."
+        ),
+    )
+
+
+# human_participants.py
+
+
+class ListMyChatParticipantsInput(BaseModel):
+    """List participants in a chat room."""
+
+    chat_id: str = Field(..., description="The chat room ID (required).")
+    participant_type: str | None = Field(
+        None, description="Filter by type: 'User' or 'Agent' (optional)."
+    )
+
+
+class AddMyChatParticipantInput(BaseModel):
+    """Add a participant to a chat room."""
+
+    chat_id: str = Field(..., description="The chat room ID (required).")
+    participant_id: str = Field(
+        ..., description="ID of user or agent to add (required)."
+    )
+    role: str | None = Field(
+        None,
+        description="'owner', 'admin', or 'member' (optional, defaults to 'member').",
+    )
+
+
+class RemoveMyChatParticipantInput(BaseModel):
+    """Remove a participant from a chat room."""
+
+    chat_id: str = Field(..., description="The chat room ID (required).")
+    participant_id: str = Field(
+        ..., description="ID of participant to remove (required)."
+    )
+
+
+# human_memories.py
+
+
+class ListUserMemoriesInput(BaseModel):
+    """List memories available to the authenticated user."""
+
+    chat_room_id: str | None = Field(None, description="Filter by chat room ID.")
+    scope: str | None = Field(None, description="Filter by scope.")
+    system: str | None = Field(None, description="Filter by memory system.")
+    memory_type: str | None = Field(None, description="Filter by memory type.")
+    segment: str | None = Field(None, description="Filter by segment.")
+    content_query: str | None = Field(None, description="Full-text search query.")
+    page_size: int | None = Field(None, description="Number of results per page.")
+    status: str | None = Field(None, description="Filter by status.")
+
+
+class GetUserMemoryInput(BaseModel):
+    """Get a single user memory by ID."""
+
+    memory_id: str = Field(..., description="Memory ID (required).")
+
+
+class SupersedeUserMemoryInput(BaseModel):
+    """Mark a user memory as superseded."""
+
+    memory_id: str = Field(..., description="Memory ID (required).")
+
+
+class ArchiveUserMemoryInput(BaseModel):
+    """Archive a user memory."""
+
+    memory_id: str = Field(..., description="Memory ID (required).")
+
+
+class RestoreUserMemoryInput(BaseModel):
+    """Restore an archived user memory."""
+
+    memory_id: str = Field(..., description="Memory ID (required).")
+
+
+class DeleteUserMemoryInput(BaseModel):
+    """Delete a user memory permanently."""
+
+    memory_id: str = Field(..., description="Memory ID (required).")
+
+
+# human_profile.py / human_peers
+
+
+class GetMyProfileInput(BaseModel):
+    """Get the current user's profile details.
+
+    Returns your profile information including name, email, role, etc.
+    """
+
+    pass  # No parameters required.
+
+
+class UpdateMyProfileInput(BaseModel):
+    """Update the current user's profile."""
+
+    first_name: str | None = Field(None, description="New first name (optional).")
+    last_name: str | None = Field(None, description="New last name (optional).")
+
+
+class ListMyPeersInput(BaseModel):
+    """List entities you can interact with in chat rooms.
+
+    Peers include other users, your agents, and global agents.
+    """
+
+    not_in_chat: str | None = Field(
+        None,
+        description="Exclude entities already in this chat room (optional).",
+    )
+    peer_type: str | None = Field(
+        None, description="Filter by type: 'User' or 'Agent' (optional)."
+    )
+    page: int | None = Field(None, description="Page number (optional).")
+    page_size: int | None = Field(None, description="Items per page (optional).")
+
+
 # Registry mapping tool names to their schemas and bound AgentTools methods.
 TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "thenvoi_send_message": ToolDefinition(
@@ -411,10 +723,184 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         input_model=ArchiveMemoryInput,
         method_name="archive_memory",
     ),
+    # --- Human tools (surface="human") ---
+    # One entry per method in the Phase 1 human-tool mapping table.
+    # Method names match HumanTools attributes; hasattr(HumanTools, method_name)
+    # must resolve for every surface="human" definition.
+    "thenvoi_list_my_agents": ToolDefinition(
+        name="thenvoi_list_my_agents",
+        input_model=ListMyAgentsInput,
+        method_name="list_my_agents",
+        surface="human",
+    ),
+    "thenvoi_register_my_agent": ToolDefinition(
+        name="thenvoi_register_my_agent",
+        input_model=RegisterMyAgentInput,
+        method_name="register_my_agent",
+        surface="human",
+    ),
+    "thenvoi_list_my_chats": ToolDefinition(
+        name="thenvoi_list_my_chats",
+        input_model=ListMyChatsInput,
+        method_name="list_my_chats",
+        surface="human",
+    ),
+    "thenvoi_create_my_chat_room": ToolDefinition(
+        name="thenvoi_create_my_chat_room",
+        input_model=CreateMyChatRoomInput,
+        method_name="create_my_chat_room",
+        surface="human",
+    ),
+    "thenvoi_get_my_chat_room": ToolDefinition(
+        name="thenvoi_get_my_chat_room",
+        input_model=GetMyChatRoomInput,
+        method_name="get_my_chat_room",
+        surface="human",
+    ),
+    "thenvoi_list_my_contacts": ToolDefinition(
+        name="thenvoi_list_my_contacts",
+        input_model=ListMyContactsInput,
+        method_name="list_my_contacts",
+        surface="human",
+    ),
+    "thenvoi_create_contact_request": ToolDefinition(
+        name="thenvoi_create_contact_request",
+        input_model=CreateContactRequestInput,
+        method_name="create_contact_request",
+        surface="human",
+    ),
+    "thenvoi_list_received_contact_requests": ToolDefinition(
+        name="thenvoi_list_received_contact_requests",
+        input_model=ListReceivedContactRequestsInput,
+        method_name="list_received_contact_requests",
+        surface="human",
+    ),
+    "thenvoi_list_sent_contact_requests": ToolDefinition(
+        name="thenvoi_list_sent_contact_requests",
+        input_model=ListSentContactRequestsInput,
+        method_name="list_sent_contact_requests",
+        surface="human",
+    ),
+    "thenvoi_approve_contact_request": ToolDefinition(
+        name="thenvoi_approve_contact_request",
+        input_model=ApproveContactRequestInput,
+        method_name="approve_contact_request",
+        surface="human",
+    ),
+    "thenvoi_reject_contact_request": ToolDefinition(
+        name="thenvoi_reject_contact_request",
+        input_model=RejectContactRequestInput,
+        method_name="reject_contact_request",
+        surface="human",
+    ),
+    "thenvoi_cancel_contact_request": ToolDefinition(
+        name="thenvoi_cancel_contact_request",
+        input_model=CancelContactRequestInput,
+        method_name="cancel_contact_request",
+        surface="human",
+    ),
+    "thenvoi_resolve_handle": ToolDefinition(
+        name="thenvoi_resolve_handle",
+        input_model=ResolveHandleInput,
+        method_name="resolve_handle",
+        surface="human",
+    ),
+    "thenvoi_remove_my_contact": ToolDefinition(
+        name="thenvoi_remove_my_contact",
+        input_model=RemoveMyContactInput,
+        method_name="remove_my_contact",
+        surface="human",
+    ),
+    "thenvoi_list_my_chat_messages": ToolDefinition(
+        name="thenvoi_list_my_chat_messages",
+        input_model=ListMyChatMessagesInput,
+        method_name="list_my_chat_messages",
+        surface="human",
+    ),
+    "thenvoi_send_my_chat_message": ToolDefinition(
+        name="thenvoi_send_my_chat_message",
+        input_model=SendMyChatMessageInput,
+        method_name="send_my_chat_message",
+        surface="human",
+    ),
+    "thenvoi_list_my_chat_participants": ToolDefinition(
+        name="thenvoi_list_my_chat_participants",
+        input_model=ListMyChatParticipantsInput,
+        method_name="list_my_chat_participants",
+        surface="human",
+    ),
+    "thenvoi_add_my_chat_participant": ToolDefinition(
+        name="thenvoi_add_my_chat_participant",
+        input_model=AddMyChatParticipantInput,
+        method_name="add_my_chat_participant",
+        surface="human",
+    ),
+    "thenvoi_remove_my_chat_participant": ToolDefinition(
+        name="thenvoi_remove_my_chat_participant",
+        input_model=RemoveMyChatParticipantInput,
+        method_name="remove_my_chat_participant",
+        surface="human",
+    ),
+    "thenvoi_list_user_memories": ToolDefinition(
+        name="thenvoi_list_user_memories",
+        input_model=ListUserMemoriesInput,
+        method_name="list_user_memories",
+        surface="human",
+    ),
+    "thenvoi_get_user_memory": ToolDefinition(
+        name="thenvoi_get_user_memory",
+        input_model=GetUserMemoryInput,
+        method_name="get_user_memory",
+        surface="human",
+    ),
+    "thenvoi_supersede_user_memory": ToolDefinition(
+        name="thenvoi_supersede_user_memory",
+        input_model=SupersedeUserMemoryInput,
+        method_name="supersede_user_memory",
+        surface="human",
+    ),
+    "thenvoi_archive_user_memory": ToolDefinition(
+        name="thenvoi_archive_user_memory",
+        input_model=ArchiveUserMemoryInput,
+        method_name="archive_user_memory",
+        surface="human",
+    ),
+    "thenvoi_restore_user_memory": ToolDefinition(
+        name="thenvoi_restore_user_memory",
+        input_model=RestoreUserMemoryInput,
+        method_name="restore_user_memory",
+        surface="human",
+    ),
+    "thenvoi_delete_user_memory": ToolDefinition(
+        name="thenvoi_delete_user_memory",
+        input_model=DeleteUserMemoryInput,
+        method_name="delete_user_memory",
+        surface="human",
+    ),
+    "thenvoi_get_my_profile": ToolDefinition(
+        name="thenvoi_get_my_profile",
+        input_model=GetMyProfileInput,
+        method_name="get_my_profile",
+        surface="human",
+    ),
+    "thenvoi_update_my_profile": ToolDefinition(
+        name="thenvoi_update_my_profile",
+        input_model=UpdateMyProfileInput,
+        method_name="update_my_profile",
+        surface="human",
+    ),
+    "thenvoi_list_my_peers": ToolDefinition(
+        name="thenvoi_list_my_peers",
+        input_model=ListMyPeersInput,
+        method_name="list_my_peers",
+        surface="human",
+    ),
 }
 
 TOOL_MODELS: dict[str, type[BaseModel]] = {
-    name: definition.input_model for name, definition in TOOL_DEFINITIONS.items()
+    name: definition.input_model
+    for name, definition in TOOL_DEFINITIONS.items()
+    if definition.surface == "agent"
 }
 
 # Memory tools - optional, only available for enterprise customers.
@@ -444,6 +930,35 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
+# ``surface="human"`` side of the registry. Used by iter_tool_definitions()
+# to apply the ``include_memory`` filter uniformly across both surfaces.
+HUMAN_MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "thenvoi_list_user_memories",
+        "thenvoi_get_user_memory",
+        "thenvoi_supersede_user_memory",
+        "thenvoi_archive_user_memory",
+        "thenvoi_restore_user_memory",
+        "thenvoi_delete_user_memory",
+    }
+)
+
+# Human-surface contact tools - parallel to CONTACT_TOOL_NAMES.
+HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "thenvoi_list_my_contacts",
+        "thenvoi_create_contact_request",
+        "thenvoi_list_received_contact_requests",
+        "thenvoi_list_sent_contact_requests",
+        "thenvoi_approve_contact_request",
+        "thenvoi_reject_contact_request",
+        "thenvoi_cancel_contact_request",
+        "thenvoi_resolve_handle",
+        "thenvoi_remove_my_contact",
+    }
+)
+
 # Derived from TOOL_MODELS — single source of truth
 ALL_TOOL_NAMES: frozenset[str] = frozenset(TOOL_MODELS.keys())
 
@@ -453,6 +968,19 @@ if MEMORY_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown memory tools: {MEMORY_TOOL_NAMES - ALL_TOOL_NAMES}")
 if CONTACT_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown contact tools: {CONTACT_TOOL_NAMES - ALL_TOOL_NAMES}")
+
+# Human-surface registry membership is validated against TOOL_DEFINITIONS
+# (not TOOL_MODELS, which stays agent-only for back-compat).
+_ALL_DEFINITION_NAMES: frozenset[str] = frozenset(TOOL_DEFINITIONS.keys())
+if HUMAN_MEMORY_TOOL_NAMES - _ALL_DEFINITION_NAMES:
+    raise ValueError(
+        f"Unknown human memory tools: {HUMAN_MEMORY_TOOL_NAMES - _ALL_DEFINITION_NAMES}"
+    )
+if HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES:
+    raise ValueError(
+        "Unknown human contact tools: "
+        f"{HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES}"
+    )
 
 BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES
 CHAT_TOOL_NAMES: frozenset[str] = BASE_TOOL_NAMES - CONTACT_TOOL_NAMES
@@ -502,11 +1030,33 @@ def get_tool_description(name: str) -> str:
 
 
 def iter_tool_definitions(
-    *, include_memory: bool = False, include_contacts: bool = True
+    *,
+    surface: Literal["agent", "human"] | None = "agent",
+    include_memory: bool = False,
+    include_contacts: bool = True,
 ) -> list[ToolDefinition]:
     """Return built-in tool definitions with optional category filtering.
 
+    The three filters compose as independent predicates:
+
+    - ``surface``: when not ``None``, restrict to definitions whose
+      ``ToolDefinition.surface`` equals the given value. ``"agent"``
+      (default) yields only agent tools, ``"human"`` yields only human
+      tools, and ``None`` yields both surfaces. The default is pinned to
+      ``"agent"`` so existing callers (``claude_sdk``, ``opencode``,
+      ``acp``) that pipe the result straight into ``AgentTools``-shaped
+      backends don't silently gain ``HumanTools``-bound entries.
+    - ``include_memory``: if ``False`` (default), drop memory tools. This
+      applies to both the agent ``MEMORY_TOOL_NAMES`` set and the human
+      memory tools (``thenvoi_list_user_memories``, etc.).
+    - ``include_contacts``: if ``False``, drop contact tools. This applies
+      to both the agent ``CONTACT_TOOL_NAMES`` set and the human contact
+      tools (``thenvoi_list_my_contacts``, etc.).
+
     Args:
+        surface: Optional surface filter (``"agent"`` or ``"human"``).
+            Default ``"agent"``. Pass ``None`` explicitly to opt in to a
+            union view across both surfaces.
         include_memory: Include memory tools (enterprise). Default False.
         include_contacts: Include contact-management tools. Default True for
             backward compatibility. Pass False to gate contact tools behind
@@ -514,15 +1064,22 @@ def iter_tool_definitions(
             forces this to True regardless of adapter preference (see
             ``AgentTools.get_tool_schemas`` HUB_ROOM auto-enable rule).
     """
-    definitions = list(TOOL_DEFINITIONS.values())
     excluded: set[str] = set()
     if not include_memory:
         excluded |= MEMORY_TOOL_NAMES
+        excluded |= HUMAN_MEMORY_TOOL_NAMES
     if not include_contacts:
         excluded |= CONTACT_TOOL_NAMES
-    if not excluded:
-        return definitions
-    return [definition for definition in definitions if definition.name not in excluded]
+        excluded |= HUMAN_CONTACT_TOOL_NAMES
+
+    results: list[ToolDefinition] = []
+    for definition in TOOL_DEFINITIONS.values():
+        if surface is not None and definition.surface != surface:
+            continue
+        if definition.name in excluded:
+            continue
+        results.append(definition)
+    return results
 
 
 def format_tool_validation_error(tool_name: str, error: ValidationError) -> str:
@@ -752,6 +1309,47 @@ class AgentTools(AgentToolsProtocol):
         )
         return response.data.id
 
+    async def fetch_room_context(
+        self,
+        *,
+        room_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        """Fetch agent-relevant room messages, paginated.
+
+        Returns messages this agent sent or was mentioned in, ordered oldest
+        first. Used by state-reconstruction adapters (e.g. CrewAI Flow) to
+        rebuild durable run state from task events.
+        """
+        from thenvoi.runtime._context_serialization import context_item_to_dict
+
+        response = await self.rest.agent_api_context.get_agent_chat_context(
+            chat_id=room_id,
+            page=page,
+            page_size=page_size,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+        data = [context_item_to_dict(item) for item in (response.data or [])]
+        meta = getattr(response, "meta", None)
+        if meta is None:
+            meta_dict: dict[str, Any] = {
+                "page": page,
+                "page_size": page_size,
+                "total_count": len(data),
+                "total_pages": 1 if data else 0,
+            }
+        elif hasattr(meta, "model_dump"):
+            meta_dict = meta.model_dump()
+        else:
+            meta_dict = {
+                "page": getattr(meta, "page", page),
+                "page_size": getattr(meta, "page_size", page_size),
+                "total_count": getattr(meta, "total_count", len(data)),
+                "total_pages": getattr(meta, "total_pages", 1 if data else 0),
+            }
+        return {"data": data, "meta": meta_dict}
+
     async def add_participant(
         self, identifier: str, role: str = "member"
     ) -> dict[str, Any]:
@@ -778,15 +1376,11 @@ class AgentTools(AgentToolsProtocol):
         )
 
         # First check if participant is already in the room. Always prefer a
-        # fresh server snapshot to avoid stale-cache decisions after room updates.
-        fresh = await self.get_participants()
-        snapshot = [p.model_dump() if hasattr(p, "model_dump") else p for p in fresh]
-        if snapshot:
-            self._participants = snapshot
-        else:
-            snapshot = list(self._participants)
+        # fresh server snapshot to avoid stale-cache decisions after room
+        # updates — get_participants() refreshes self._participants for us.
+        await self.get_participants()
 
-        for cached in snapshot:
+        for cached in self._participants:
             if _matches_identifier(cached, identifier):
                 cached_id = cached.get("id")
                 if not cached_id:
@@ -858,17 +1452,13 @@ class AgentTools(AgentToolsProtocol):
         """
         logger.debug("Removing participant '%s' from room %s", identifier, self.room_id)
 
-        # Look up participant by identifier. Always prefer a fresh server snapshot
-        # to avoid stale-cache decisions after room updates.
-        fresh = await self.get_participants()
-        snapshot = [p.model_dump() if hasattr(p, "model_dump") else p for p in fresh]
-        if snapshot:
-            self._participants = snapshot
-        else:
-            snapshot = list(self._participants)
+        # Look up participant by identifier. Always prefer a fresh server
+        # snapshot to avoid stale-cache decisions after room updates —
+        # get_participants() refreshes self._participants for us.
+        await self.get_participants()
 
         participant: dict[str, Any] | None = None
-        for cached in snapshot:
+        for cached in self._participants:
             if _matches_identifier(cached, identifier):
                 participant = cached
                 break
@@ -947,9 +1537,45 @@ class AgentTools(AgentToolsProtocol):
             chat_id=self.room_id,
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
-        if not response.data:
+
+        # Treat ``data is None`` as a transient/unexpected response and preserve
+        # the existing cache — every room the agent is in should at minimum
+        # contain the agent itself, so ``None`` is not a legitimate "empty room".
+        if response.data is None:
+            logger.warning(
+                "list_agent_chat_participants returned None for room %s; "
+                "preserving cached participants",
+                self.room_id,
+            )
             return []
 
+        # Refresh the internal cache so _resolve_mentions() sees participants
+        # the LLM just discovered in this turn, even if they joined after
+        # AgentTools was constructed. Without this, the LLM can call
+        # get_participants, see a new participant, then fail to @mention them.
+        refreshed = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "type": p.type,
+                "handle": getattr(p, "handle", None),
+            }
+            for p in response.data
+        ]
+
+        # Sync diff back to ExecutionContext so the refresh survives turn
+        # boundaries. Without this, a new AgentTools built via from_context()
+        # on the next turn would revert to the old participant snapshot.
+        if self._ctx is not None:
+            old_ids = {p.get("id") for p in self._participants if p.get("id")}
+            new_ids = {p["id"] for p in refreshed if p["id"]}
+            for participant_id in old_ids - new_ids:
+                self._ctx.remove_participant(participant_id)
+            for participant in refreshed:
+                if participant["id"] and participant["id"] not in old_ids:
+                    self._ctx.add_participant(participant)
+
+        self._participants = refreshed
         return response.data
 
     # --- Contact management tools ---
@@ -1137,15 +1763,22 @@ class AgentTools(AgentToolsProtocol):
             scope,
             system,
         )
+        kwargs: dict[str, Any] = {"page_size": page_size}
+        optional_filters = {
+            "subject_id": subject_id,
+            "scope": scope,
+            "system": system,
+            "type": type,
+            "segment": segment,
+            "content_query": content_query,
+            "status": status,
+        }
+        kwargs.update(
+            {key: value for key, value in optional_filters.items() if value is not None}
+        )
         response = await self.rest.agent_api_memories.list_agent_memories(
-            subject_id=subject_id,
-            scope=scope,
-            system=system,
-            type=type,
-            segment=segment,
-            content_query=content_query,
-            page_size=page_size,
-            status=status,
+            **kwargs,
+            request_options=DEFAULT_REQUEST_OPTIONS,
         )
 
         return response
@@ -1187,17 +1820,21 @@ class AgentTools(AgentToolsProtocol):
             segment,
             scope,
         )
+        memory_kwargs: dict[str, Any] = {
+            "content": content,
+            "system": system,
+            "type": type,
+            "segment": segment,
+            "thought": thought,
+            "scope": scope,
+        }
+        if subject_id is not None:
+            memory_kwargs["subject_id"] = subject_id
+        if metadata is not None:
+            memory_kwargs["metadata"] = metadata
         response = await self.rest.agent_api_memories.create_agent_memory(
-            memory=MemoryCreateRequest(
-                content=content,
-                system=system,
-                type=type,
-                segment=segment,
-                thought=thought,
-                scope=scope,
-                subject_id=subject_id,
-                metadata=metadata,
-            )
+            memory=MemoryCreateRequest(**memory_kwargs),
+            request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:
             raise RuntimeError("Failed to store memory - no response data")
@@ -1215,7 +1852,10 @@ class AgentTools(AgentToolsProtocol):
             execute_tool_call() at the adapter boundary.
         """
         logger.debug("Getting memory: id=%s", memory_id)
-        response = await self.rest.agent_api_memories.get_agent_memory(id=memory_id)
+        response = await self.rest.agent_api_memories.get_agent_memory(
+            id=memory_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
         if not response.data:
             raise RuntimeError("Failed to get memory - no response data")
         return response.data
@@ -1233,7 +1873,8 @@ class AgentTools(AgentToolsProtocol):
         """
         logger.debug("Superseding memory: id=%s", memory_id)
         response = await self.rest.agent_api_memories.supersede_agent_memory(
-            id=memory_id
+            id=memory_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:
             raise RuntimeError("Failed to supersede memory - no response data")
@@ -1251,7 +1892,10 @@ class AgentTools(AgentToolsProtocol):
             execute_tool_call() at the adapter boundary.
         """
         logger.debug("Archiving memory: id=%s", memory_id)
-        response = await self.rest.agent_api_memories.archive_agent_memory(id=memory_id)
+        response = await self.rest.agent_api_memories.archive_agent_memory(
+            id=memory_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
         if not response.data:
             raise RuntimeError("Failed to archive memory - no response data")
         return response.data
@@ -1524,3 +2168,495 @@ class AgentTools(AgentToolsProtocol):
             raise
         except Exception as e:
             return f"Error executing {tool_name}: {e}"
+
+
+class HumanTools:
+    """User-scoped tools for Thenvoi platform interaction.
+
+    ``HumanTools`` is stateless per credential: one instance per user-scoped
+    ``AsyncRestClient``. Unlike ``AgentTools`` it is not bound to a room —
+    every chat/room-bound method takes its room identifier as a plain
+    ``chat_id`` argument.
+
+    Each method is a thin wrapper around a Fern ``human_api_*`` call. The
+    observable tool surface mirrors today's ``thenvoi-mcp`` human tool
+    handlers (Phase 1 of INT-338 copies those signatures verbatim); widening
+    to full Fern parity is explicitly out of scope.
+    """
+
+    def __init__(self, rest: "AsyncRestClient") -> None:
+        """Bind this HumanTools instance to a user-scoped REST client."""
+        self.rest = rest
+
+    # --- human_agents.py ---
+
+    async def list_my_agents(
+        self,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> Any:
+        """List agents owned by the user."""
+        logger.debug("Listing my agents: page=%s, page_size=%s", page, page_size)
+        return await self.rest.human_api_agents.list_my_agents(
+            page=page, page_size=page_size
+        )
+
+    async def register_my_agent(self, name: str, description: str) -> Any:
+        """Register a new external agent owned by the user."""
+        from thenvoi_rest import AgentRegisterRequest
+
+        logger.debug("Registering my agent: name=%s", name)
+        agent_request = AgentRegisterRequest(name=name, description=description)
+        return await self.rest.human_api_agents.register_my_agent(
+            agent=agent_request,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    # --- human_chats.py ---
+
+    async def list_my_chats(
+        self,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> Any:
+        """List chat rooms where the user is a participant."""
+        logger.debug("Listing my chats: page=%s, page_size=%s", page, page_size)
+        return await self.rest.human_api_chats.list_my_chats(
+            page=page, page_size=page_size
+        )
+
+    async def create_my_chat_room(self, task_id: str | None = None) -> Any:
+        """Create a new chat room with the user as owner."""
+        from thenvoi_rest import CreateMyChatRoomRequestChat
+
+        logger.debug("Creating my chat room: task_id=%s", task_id)
+        chat_request = (
+            CreateMyChatRoomRequestChat(task_id=task_id)
+            if task_id
+            else CreateMyChatRoomRequestChat()
+        )
+        return await self.rest.human_api_chats.create_my_chat_room(
+            chat=chat_request,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def get_my_chat_room(self, chat_id: str) -> Any:
+        """Get a specific chat room by ID."""
+        logger.debug("Getting my chat room: chat_id=%s", chat_id)
+        return await self.rest.human_api_chats.get_my_chat_room(id=chat_id)
+
+    # --- human_contacts.py ---
+
+    async def list_my_contacts(
+        self,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> Any:
+        """List the user's active contacts."""
+        logger.debug("Listing my contacts: page=%s, page_size=%s", page, page_size)
+        return await self.rest.human_api_contacts.list_my_contacts(
+            page=page, page_size=page_size
+        )
+
+    async def create_contact_request(
+        self, recipient_handle: str, message: str | None = None
+    ) -> Any:
+        """Send a contact request to another user."""
+        from thenvoi_rest import CreateContactRequestRequestContactRequest
+
+        logger.debug("Creating contact request to: %s", recipient_handle)
+        kwargs: dict[str, Any] = {"recipient_handle": recipient_handle}
+        if message is not None:
+            kwargs["message"] = message
+        contact_request = CreateContactRequestRequestContactRequest(**kwargs)
+        return await self.rest.human_api_contacts.create_contact_request(
+            contact_request=contact_request,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def list_received_contact_requests(
+        self,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> Any:
+        """List contact requests received by the user (pending)."""
+        logger.debug(
+            "Listing received contact requests: page=%s, page_size=%s", page, page_size
+        )
+        return await self.rest.human_api_contacts.list_received_contact_requests(
+            page=page, page_size=page_size
+        )
+
+    async def list_sent_contact_requests(
+        self,
+        status: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> Any:
+        """List contact requests sent by the user."""
+        logger.debug(
+            "Listing sent contact requests: status=%s, page=%s, page_size=%s",
+            status,
+            page,
+            page_size,
+        )
+        return await self.rest.human_api_contacts.list_sent_contact_requests(
+            status=status, page=page, page_size=page_size
+        )
+
+    async def approve_contact_request(self, request_id: str) -> Any:
+        """Approve a received contact request."""
+        logger.debug("Approving contact request: %s", request_id)
+        return await self.rest.human_api_contacts.approve_contact_request(
+            id=request_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def reject_contact_request(self, request_id: str) -> Any:
+        """Reject a received contact request."""
+        logger.debug("Rejecting contact request: %s", request_id)
+        return await self.rest.human_api_contacts.reject_contact_request(
+            id=request_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def cancel_contact_request(self, request_id: str) -> Any:
+        """Cancel a sent contact request."""
+        logger.debug("Cancelling contact request: %s", request_id)
+        return await self.rest.human_api_contacts.cancel_contact_request(
+            id=request_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def resolve_handle(self, handle: str) -> Any:
+        """Look up an entity by handle."""
+        logger.debug("Resolving handle: %s", handle)
+        return await self.rest.human_api_contacts.resolve_handle(handle=handle)
+
+    async def remove_my_contact(
+        self,
+        contact_id: str | None = None,
+        handle: str | None = None,
+    ) -> Any:
+        """Remove an existing contact by contact_id or handle.
+
+        Returns an ``"Error: ..."`` string (matching today's MCP handler
+        output verbatim) when neither ``contact_id`` nor ``handle`` is
+        provided, so the observable tool-surface error shape is preserved.
+        """
+        if not contact_id and not handle:
+            return "Error: Either contact_id or handle must be provided"
+
+        logger.debug("Removing contact: contact_id=%s, handle=%s", contact_id, handle)
+        # The Fern client uses OMIT for optional params; passing None sends
+        # null. Build kwargs dynamically so we only send populated fields.
+        kwargs: dict[str, Any] = {}
+        if contact_id is not None:
+            kwargs["contact_id"] = contact_id
+        if handle is not None:
+            kwargs["handle"] = handle
+        return await self.rest.human_api_contacts.remove_my_contact(
+            **kwargs,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    # --- human_messages.py ---
+
+    async def list_my_chat_messages(
+        self,
+        chat_id: str,
+        page: int | None = None,
+        page_size: int | None = None,
+        message_type: str | None = None,
+        since: str | None = None,
+    ) -> Any:
+        """List messages in a chat room.
+
+        ``since`` is an ISO 8601 timestamp string; the SDK converts it to a
+        ``datetime`` before calling the Fern client. This mirrors today's
+        MCP handler behavior.
+        """
+        logger.debug(
+            "Listing chat messages: chat_id=%s, page=%s, page_size=%s",
+            chat_id,
+            page,
+            page_size,
+        )
+        since_dt = None
+        if since:
+            since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
+        return await self.rest.human_api_messages.list_my_chat_messages(
+            chat_id=chat_id,
+            page=page,
+            page_size=page_size,
+            message_type=message_type,
+            since=since_dt,
+        )
+
+    async def send_my_chat_message(
+        self,
+        chat_id: str,
+        content: str,
+        recipients: str,
+    ) -> Any:
+        """Send a message in a chat room.
+
+        ``recipients`` is a comma-separated list of participant names; the
+        SDK resolves them against the chat participants. Empty input and
+        unknown names return an ``"Error: ..."`` string matching today's
+        MCP handler output verbatim (no exception raised) so the
+        observable tool-surface error shape is preserved.
+        """
+        from thenvoi_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
+
+        recipient_names = [
+            name.strip().lower() for name in recipients.split(",") if name.strip()
+        ]
+        if not recipient_names:
+            return "Error: recipients cannot be empty"
+
+        logger.debug(
+            "Sending chat message: chat_id=%s, recipients=%s", chat_id, recipient_names
+        )
+
+        participants_response = (
+            await self.rest.human_api_participants.list_my_chat_participants(
+                chat_id=chat_id
+            )
+        )
+        participants = participants_response.data or []
+
+        name_to_participant: dict[str, Any] = {}
+        for p in participants:
+            if getattr(p, "name", None):
+                name_to_participant[p.name.lower()] = p
+            if getattr(p, "username", None):
+                name_to_participant[p.username.lower()] = p
+            if getattr(p, "first_name", None):
+                name_to_participant[p.first_name.lower()] = p
+
+        mentions_list: list[ChatMessageRequestMentionsItem] = []
+        not_found: list[str] = []
+        for name in recipient_names:
+            participant = name_to_participant.get(name)
+            if participant:
+                display_name = getattr(participant, "name", None) or getattr(
+                    participant, "username", "Unknown"
+                )
+                mentions_list.append(
+                    ChatMessageRequestMentionsItem(id=participant.id, name=display_name)
+                )
+            else:
+                not_found.append(name)
+
+        if not_found:
+            available = list(name_to_participant.keys())
+            return (
+                f"Error: Not found: {', '.join(not_found)}. "
+                f"Available: {', '.join(available)}"
+            )
+
+        message_request = ChatMessageRequest(content=content, mentions=mentions_list)
+        return await self.rest.human_api_messages.send_my_chat_message(
+            chat_id=chat_id,
+            message=message_request,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    # --- human_participants.py ---
+
+    async def list_my_chat_participants(
+        self,
+        chat_id: str,
+        participant_type: str | None = None,
+    ) -> Any:
+        """List participants in a chat room."""
+        logger.debug(
+            "Listing my chat participants: chat_id=%s, participant_type=%s",
+            chat_id,
+            participant_type,
+        )
+        return await self.rest.human_api_participants.list_my_chat_participants(
+            chat_id=chat_id, participant_type=participant_type
+        )
+
+    async def add_my_chat_participant(
+        self,
+        chat_id: str,
+        participant_id: str,
+        role: str | None = None,
+    ) -> str:
+        """Add a participant to a chat room.
+
+        Returns ``f"Added participant: {participant_id}"`` (discards the
+        Fern response body) to match today's MCP handler output verbatim.
+        """
+        from thenvoi_rest import ParticipantRequest
+
+        logger.debug(
+            "Adding my chat participant: chat_id=%s, participant_id=%s, role=%s",
+            chat_id,
+            participant_id,
+            role,
+        )
+        participant = ParticipantRequest(
+            participant_id=participant_id, role=role or "member"
+        )
+        await self.rest.human_api_participants.add_my_chat_participant(
+            chat_id=chat_id,
+            participant=participant,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+        return f"Added participant: {participant_id}"
+
+    async def remove_my_chat_participant(
+        self,
+        chat_id: str,
+        participant_id: str,
+    ) -> str:
+        """Remove a participant from a chat room.
+
+        Returns ``f"Removed participant: {participant_id}"`` (discards the
+        Fern response body) to match today's MCP handler output verbatim.
+        """
+        logger.debug(
+            "Removing my chat participant: chat_id=%s, participant_id=%s",
+            chat_id,
+            participant_id,
+        )
+        await self.rest.human_api_participants.remove_my_chat_participant(
+            chat_id=chat_id,
+            id=participant_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+        return f"Removed participant: {participant_id}"
+
+    # --- human_memories.py ---
+
+    async def list_user_memories(
+        self,
+        chat_room_id: str | None = None,
+        scope: str | None = None,
+        system: str | None = None,
+        memory_type: str | None = None,
+        segment: str | None = None,
+        content_query: str | None = None,
+        page_size: int | None = None,
+        status: str | None = None,
+    ) -> Any:
+        """List memories available to the authenticated user."""
+        logger.debug(
+            "Listing user memories: chat_room_id=%s, scope=%s, system=%s",
+            chat_room_id,
+            scope,
+            system,
+        )
+        return await self.rest.human_api_memories.list_user_memories(
+            chat_room_id=chat_room_id,
+            scope=scope,
+            system=system,
+            type=memory_type,
+            segment=segment,
+            content_query=content_query,
+            page_size=page_size,
+            status=status,
+        )
+
+    async def get_user_memory(self, memory_id: str) -> Any:
+        """Get a single user memory by ID."""
+        logger.debug("Getting user memory: memory_id=%s", memory_id)
+        return await self.rest.human_api_memories.get_user_memory(memory_id)
+
+    async def supersede_user_memory(self, memory_id: str) -> Any:
+        """Mark a user memory as superseded."""
+        logger.debug("Superseding user memory: memory_id=%s", memory_id)
+        return await self.rest.human_api_memories.supersede_user_memory(
+            memory_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def archive_user_memory(self, memory_id: str) -> Any:
+        """Archive a user memory."""
+        logger.debug("Archiving user memory: memory_id=%s", memory_id)
+        return await self.rest.human_api_memories.archive_user_memory(
+            memory_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def restore_user_memory(self, memory_id: str) -> Any:
+        """Restore an archived user memory."""
+        logger.debug("Restoring user memory: memory_id=%s", memory_id)
+        return await self.rest.human_api_memories.restore_user_memory(
+            memory_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def delete_user_memory(self, memory_id: str) -> dict[str, Any]:
+        """Delete a user memory permanently.
+
+        The Fern endpoint returns no body; we return a structured
+        ``{"deleted": True, "id": memory_id}`` payload so the observable
+        return shape matches today's MCP handler.
+        """
+        logger.debug("Deleting user memory: memory_id=%s", memory_id)
+        await self.rest.human_api_memories.delete_user_memory(
+            memory_id,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+        return {"deleted": True, "id": memory_id}
+
+    # --- human_profile.py / human_peers ---
+
+    async def get_my_profile(self) -> Any:
+        """Get the current user's profile details."""
+        logger.debug("Getting my profile")
+        return await self.rest.human_api_profile.get_my_profile()
+
+    async def update_my_profile(
+        self,
+        first_name: str | None = None,
+        last_name: str | None = None,
+    ) -> Any:
+        """Update the current user's profile.
+
+        Returns an ``"Error: ..."`` string (matching today's MCP handler
+        output verbatim) when neither field is provided, so the observable
+        tool-surface error shape is preserved.
+        """
+        user_data: dict[str, Any] = {}
+        if first_name is not None:
+            user_data["first_name"] = first_name
+        if last_name is not None:
+            user_data["last_name"] = last_name
+        if not user_data:
+            return (
+                "Error: At least one field (first_name or last_name) must be provided"
+            )
+
+        logger.debug("Updating my profile: fields=%s", list(user_data.keys()))
+        return await self.rest.human_api_profile.update_my_profile(
+            user=cast(Any, user_data),
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    async def list_my_peers(
+        self,
+        not_in_chat: str | None = None,
+        peer_type: str | None = None,
+        page: int | None = None,
+        page_size: int | None = None,
+    ) -> Any:
+        """List entities the user can interact with in chat rooms."""
+        logger.debug(
+            "Listing my peers: not_in_chat=%s, peer_type=%s, page=%s, page_size=%s",
+            not_in_chat,
+            peer_type,
+            page,
+            page_size,
+        )
+        return await self.rest.human_api_peers.list_my_peers(
+            not_in_chat=not_in_chat,
+            type=peer_type,
+            page=page,
+            page_size=page_size,
+        )

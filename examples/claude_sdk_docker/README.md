@@ -102,8 +102,12 @@ docker compose up
 agent_id: "agt_abc123xyz"
 api_key: "sk_live_..."
 
-# Optional: customize your agent
-model: claude-sonnet-4-5-20250929
+# Optional: customize your agent.  Omit `model` to use the npm `claude`
+# binary's default; aliases like `opus` / `sonnet` / `haiku` resolve to the
+# latest of that family.  `fallback_model` is used by the binary when the
+# primary model is unavailable.
+# model: opus
+# fallback_model: sonnet
 prompt: |
   You are a helpful assistant that specializes in customer support.
   Be friendly, concise, and always offer to help further.
@@ -111,11 +115,11 @@ tools:
   - calculator
   - get_time
 
-# Optional: extended thinking (requires claude-sonnet-4-5-20250929 or newer)
+# Optional: extended thinking (requires Sonnet 4.5+ or any Opus)
 # thinking_tokens: 10000
 ```
 
-> **Note:** The `thinking_tokens` option enables extended thinking and requires Claude Sonnet 4.5 or newer models (e.g., `claude-sonnet-4-5-20250929`).
+> **Note:** The `thinking_tokens` option enables extended thinking and requires Sonnet 4.5 or newer (any Opus also works). Use `model: sonnet` or `model: opus` to always pick the latest available.
 
 ## Multiple Agents
 

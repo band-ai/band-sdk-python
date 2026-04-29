@@ -1,0 +1,19 @@
+{
+  "visible_messages": [
+    "ask peer A",
+    "ask peer B",
+    "partial from msg-reply-A\n\npartial from msg-reply-B"
+  ],
+  "task_statuses": [
+    "side_effect_reserved",
+    "delegated_pending",
+    "side_effect_reserved",
+    "delegated_pending",
+    "reply_recorded",
+    "waiting",
+    "reply_recorded",
+    "side_effect_reserved",
+    "finalized",
+    "waiting"
+  ]
+}

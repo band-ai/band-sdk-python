@@ -154,9 +154,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
     Example:
         adapter = ClaudeSDKAdapter(
-            model="claude-sonnet-4-5-20250929",
             custom_section="You are a helpful assistant.",
         )
+        # Or pin a model / family alias:
+        # adapter = ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
     """
@@ -172,7 +173,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str | None = None,
+        fallback_model: str | None = None,
         custom_section: str | None = None,
         max_thinking_tokens: int | None = None,
         permission_mode: PermissionMode = "acceptEdits",
@@ -194,7 +196,15 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         Initialize the Claude SDK adapter.
 
         Args:
-            model: Claude model to use
+            model: Claude model to use. Pass a full ID (e.g.
+                ``"claude-opus-4-7-20251224"``) or a family alias
+                (``"sonnet"`` / ``"opus"`` / ``"haiku"`` / ``"inherit"``).
+                When ``None`` (default), the npm ``claude`` binary picks
+                its own default — no ``--model`` flag is sent.
+            fallback_model: Optional fallback model passed to
+                ``ClaudeAgentOptions.fallback_model``. The npm ``claude``
+                binary uses it when the primary model is unavailable.
+                Aliases are accepted here too.
             custom_section: Custom instructions added to system prompt
             max_thinking_tokens: Max tokens for extended thinking (optional)
             permission_mode: SDK permission mode
@@ -281,6 +291,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         self.model = model
+        self.fallback_model = fallback_model
         self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
         self.permission_mode: ClaudeSDKAdapter.PermissionMode = permission_mode
@@ -337,9 +348,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features=self.features,
         )
 
-        # Build SDK options
+        # Build SDK options. Both model and fallback_model upstream default
+        # to None — passing None is equivalent to omitting them, which lets
+        # the npm `claude` binary pick its own default.
         sdk_options = ClaudeAgentOptions(
             model=self.model,
+            fallback_model=self.fallback_model,
             system_prompt=system_prompt,
             mcp_servers={"thenvoi": self._mcp_server},
             allowed_tools=self._mcp_backend.allowed_tools,
@@ -376,9 +390,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         logger.info(
-            "Claude SDK adapter started for agent: %s (model=%s, thinking=%s, approval=%s)",
+            "Claude SDK adapter started for agent: %s (model=%s, fallback_model=%s, thinking=%s, approval=%s)",
             agent_name,
-            self.model,
+            self.model or "auto",
+            self.fallback_model or "none",
             self.max_thinking_tokens,
             self.approval_mode,
         )
@@ -985,7 +1000,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         lines = [
             "**Claude SDK Status**",
-            f"- model: `{self.model}`",
+            f"- model: `{self.model or 'auto'}`",
+            f"- fallback_model: `{self.fallback_model or 'none'}`",
             f"- permission_mode: `{self.permission_mode}`",
             f"- approval_mode: `{self.approval_mode or 'disabled'}`",
             f"- pending_approvals: {pending_count}",

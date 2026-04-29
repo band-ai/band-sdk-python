@@ -156,9 +156,15 @@ class TestLangGraphToolDrift:
 
 
 class TestCrewAIToolDrift:
-    """CrewAI adapter (adapters/crewai.py)."""
+    """CrewAI tool classes (integrations/crewai/tools.py).
 
-    _FILE = _SRC_ROOT / "adapters" / "crewai.py"
+    The BaseTool subclasses were moved out of ``adapters/crewai.py`` into the
+    shared ``integrations/crewai/tools.py`` module so that both the legacy
+    ``CrewAIAdapter`` and the new ``CrewAIFlowAdapter`` consume one set of
+    wrappers. The drift check now scans the shared module.
+    """
+
+    _FILE = _SRC_ROOT / "integrations" / "crewai" / "tools.py"
 
     def test_all_tools_registered(self):
         """Every tool in TOOL_MODELS has a CrewAI tool class."""

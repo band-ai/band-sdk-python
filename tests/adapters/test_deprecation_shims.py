@@ -186,6 +186,39 @@ class TestUniversalBooleanShims:
                 features=AdapterFeatures(emit={Emit.EXECUTION}),
             )
 
+    def test_codex_default_config_has_task_events_without_warning(self) -> None:
+        """Default CodexAdapterConfig enables task events without firing a warning."""
+        import warnings as _warnings
+
+        from thenvoi.adapters.codex import CodexAdapter
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", DeprecationWarning)
+            adapter = CodexAdapter()
+        assert Emit.TASK_EVENTS in adapter.features.emit
+        assert Emit.EXECUTION not in adapter.features.emit
+        assert Emit.THOUGHTS not in adapter.features.emit
+
+    def test_codex_explicit_features_honored(self) -> None:
+        """Passing features= bypasses config-boolean mapping."""
+        import warnings as _warnings
+
+        from thenvoi.adapters.codex import CodexAdapter
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", DeprecationWarning)
+            adapter = CodexAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
+        assert Emit.EXECUTION in adapter.features.emit
+        assert Emit.TASK_EVENTS not in adapter.features.emit
+
+    def test_codex_supported_features_surface(self) -> None:
+        """SUPPORTED_EMIT advertises the three Codex-supported emit channels."""
+        from thenvoi.adapters.codex import CodexAdapter
+
+        assert CodexAdapter.SUPPORTED_EMIT == frozenset(
+            {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS}
+        )
+
 
 class TestSelectiveRenameShims:
     """Anthropic and Gemini get the api_key/prompt selective renames."""

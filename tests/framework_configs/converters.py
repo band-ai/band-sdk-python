@@ -253,6 +253,8 @@ def _build_gemini_config() -> ConverterConfig:
 # codex, letta, and opencode are metadata-only converters that extract session state
 # from task event metadata rather than converting message history. They don't implement
 # the standard convert() -> framework-format contract that conformance tests validate.
+# crewai_flow is a metadata-only converter for orchestration state reconstructed from
+# task events; same exception as codex/letta/opencode.
 CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
     {
         "_tool_parsing",
@@ -262,6 +264,7 @@ CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
         "acp_client",
         "acp_server",
         "codex",
+        "crewai_flow",
         "letta",
         "opencode",
     }
