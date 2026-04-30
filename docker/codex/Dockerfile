@@ -62,10 +62,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends npm \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy entrypoint, runner, and shared utilities.
+# Copy entrypoint and runner. Shared repo-init utilities are imported from /app/src.
 COPY docker/codex/entrypoint.sh /app/docker/codex/entrypoint.sh
 COPY docker/codex/runner.py /app/docker/codex/runner.py
-COPY docker/shared/repo_init.py /app/docker/codex/repo_init.py
 
 # Trust bind-mounted repo to avoid "dubious ownership" errors.
 # Additional dirs can be configured at runtime via GIT_SAFE_DIRS env var.

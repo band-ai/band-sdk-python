@@ -20,7 +20,7 @@ from collections import Counter
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Generator
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ValidationError, field_validator
@@ -272,6 +272,9 @@ def _ensure_repo(repo: RepoConfig, repo_path: Path) -> bool:
 
 
 def _clone_repo(repo: RepoConfig, repo_path: Path) -> None:
+    if repo.url is None:
+        raise ValueError("repo.url is required when cloning a repository")
+
     args = ["clone"]
     if repo.branch:
         args.extend(["--branch", repo.branch, "--single-branch"])
@@ -581,7 +584,7 @@ def _write_text_atomic(path: Path, content: str) -> None:
 
 
 @contextmanager
-def _locked_file(path: Path, *, timeout_s: float) -> Iterator[None]:
+def _locked_file(path: Path, *, timeout_s: float) -> Generator[None, None, None]:
     """Acquire an exclusive lock on a file for the duration of the context."""
     import fcntl
 
