@@ -68,7 +68,7 @@ from dotenv import load_dotenv
 
 from thenvoi import Agent
 from thenvoi.config import load_agent_config
-from thenvoi.core.types import AdapterFeatures, Emit
+from thenvoi.core.types import AdapterFeatures, Capability, Emit
 from thenvoi.platform.event import ContactRequestReceivedEvent, ContactEvent
 from thenvoi.runtime.contact_tools import ContactTools
 from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -149,12 +149,27 @@ PYDANTIC_AI_INSTRUCTIONS = """
 If you don't know something and can't delegate to another agent, say "I don't know" - never make up information.
 """
 
+PARLANT_DEFAULT_DESCRIPTION = """You are a helpful assistant in the Thenvoi multi-agent platform.
+Use Thenvoi tools to respond in the chat room, invite relevant peers, and manage
+contact requests when users ask for contact-related actions."""
+
 PARLANT_GUIDELINES = [
     {
-        "condition": "User asks for help",
-        "action": "Acknowledge and clarify before helping",
+        "condition": "User asks a question or needs help with something",
+        "action": "Answer directly with thenvoi_send_message. Use thenvoi_lookup_peers and thenvoi_add_participant when another available agent is better suited to help.",
     },
-    {"condition": "User says goodbye", "action": "Summarize and offer further help"},
+    {
+        "condition": "User asks who is in the room or asks about participants",
+        "action": "Use thenvoi_get_participants and summarize the current participants with thenvoi_send_message.",
+    },
+    {
+        "condition": "User asks to add or remove someone from the chat",
+        "action": "Use thenvoi_lookup_peers when needed, then call thenvoi_add_participant or thenvoi_remove_participant with the exact identifier.",
+    },
+    {
+        "condition": "User asks about contacts or contact requests",
+        "action": "Use the Thenvoi contact tools to list contacts, add contacts, remove contacts, or respond to pending contact requests.",
+    },
 ]
 
 CREWAI_DEFAULTS = {
@@ -175,7 +190,6 @@ _DEFAULT_MODELS: dict[str, str] = {
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "parlant": "gpt-4o",
     "crewai": "gpt-4o-mini",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
@@ -406,31 +420,61 @@ async def run_parlant_agent(
     api_key: str,
     rest_url: str,
     ws_url: str,
-    model: str,
+    model: str | None,
     custom_section: str,
     enable_streaming: bool,
     logger: logging.Logger,
 ) -> None:
-    """Run the Parlant agent."""
+    """Run the Parlant agent using the current SDK adapter API."""
+    import parlant.sdk as p
+
     from thenvoi.adapters import ParlantAdapter
+    from thenvoi.integrations.parlant.tools import create_parlant_tools
 
-    adapter = ParlantAdapter(
-        model=model,
-        custom_section=custom_section,
-        guidelines=PARLANT_GUIDELINES,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
+    if model:
+        logger.warning(
+            "--model is ignored for the Parlant example; configure the Parlant NLP service instead."
+        )
+    if enable_streaming:
+        logger.warning(
+            "--streaming is ignored for the Parlant example; ParlantAdapter does not emit execution events."
+        )
+
+    features = AdapterFeatures(capabilities={Capability.CONTACTS})
+    description = "\n\n".join(
+        part for part in (PARLANT_DEFAULT_DESCRIPTION, custom_section) if part
     )
 
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
+    async with p.Server(nlp_service=p.NLPServices.openai) as server:
+        parlant_tools = create_parlant_tools(features)
+        parlant_agent = await server.create_agent(
+            name="Thenvoi Parlant",
+            description=description,
+        )
+        for guideline in PARLANT_GUIDELINES:
+            await parlant_agent.create_guideline(
+                condition=guideline["condition"],
+                action=guideline["action"],
+                tools=parlant_tools,
+            )
 
-    logger.info("Starting Parlant agent with model: %s", model)
-    await agent.run()
+        adapter = ParlantAdapter(
+            server=server,
+            parlant_agent=parlant_agent,
+            custom_section=custom_section,
+            features=features,
+        )
+
+        agent = Agent.create(
+            adapter=adapter,
+            agent_id=agent_id,
+            api_key=api_key,
+            ws_url=ws_url,
+            rest_url=rest_url,
+        )
+
+        logger.info("Starting Parlant agent with %s tools", len(parlant_tools))
+        await agent.run()
 
 
 async def run_crewai_agent(
@@ -835,7 +879,6 @@ Examples:
   uv run python examples/run_agent.py --example claude_sdk --streaming    # With tool_call/tool_result events
   uv run python examples/run_agent.py --example claude_sdk --thinking     # With extended thinking
   uv run python examples/run_agent.py --example parlant                   # Parlant adapter
-  uv run python examples/run_agent.py --example parlant --streaming       # With tool visibility
   uv run python examples/run_agent.py --example crewai                    # CrewAI adapter
   uv run python examples/run_agent.py --example crewai --streaming        # With tool visibility
   uv run python examples/run_agent.py --example codex                     # Codex app-server adapter
@@ -919,7 +962,7 @@ Examples:
         "--streaming",
         "-s",
         action="store_true",
-        help="Enable tool call/result visibility for anthropic/claude_sdk/parlant/crewai (default: False)",
+        help="Enable tool call/result visibility for anthropic/claude_sdk/crewai (default: False)",
     )
     parser.add_argument(
         "--codex-transport",
