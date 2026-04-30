@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -34,34 +35,49 @@ class Emit(str, Enum):
     TASK_EVENTS = "task_events"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class AdapterFeatures:
     """Shared adapter feature settings. Framework-agnostic knobs only.
 
     Custom tools are NOT included -- they are adapter-local because each
     framework has its own tool type.
 
-    Accepts list/set inputs for convenience; normalizes to frozen types
+    Accepts any iterable inputs for convenience; stores frozen types
     internally.
     """
 
-    capabilities: frozenset[Capability] = frozenset()
-    emit: frozenset[Emit] = frozenset()
-    include_tools: tuple[str, ...] | None = None
-    exclude_tools: tuple[str, ...] | None = None
-    include_categories: tuple[str, ...] | None = None
+    capabilities: frozenset[Capability]
+    emit: frozenset[Emit]
+    include_tools: tuple[str, ...] | None
+    exclude_tools: tuple[str, ...] | None
+    include_categories: tuple[str, ...] | None
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "capabilities", frozenset(self.capabilities))
-        object.__setattr__(self, "emit", frozenset(self.emit))
-        if self.include_tools is not None:
-            object.__setattr__(self, "include_tools", tuple(self.include_tools))
-        if self.exclude_tools is not None:
-            object.__setattr__(self, "exclude_tools", tuple(self.exclude_tools))
-        if self.include_categories is not None:
-            object.__setattr__(
-                self, "include_categories", tuple(self.include_categories)
-            )
+    def __init__(
+        self,
+        *,
+        capabilities: Iterable[Capability] = (),
+        emit: Iterable[Emit] = (),
+        include_tools: Iterable[str] | None = None,
+        exclude_tools: Iterable[str] | None = None,
+        include_categories: Iterable[str] | None = None,
+    ) -> None:
+        object.__setattr__(self, "capabilities", frozenset(capabilities))
+        object.__setattr__(self, "emit", frozenset(emit))
+        object.__setattr__(
+            self,
+            "include_tools",
+            tuple(include_tools) if include_tools is not None else None,
+        )
+        object.__setattr__(
+            self,
+            "exclude_tools",
+            tuple(exclude_tools) if exclude_tools is not None else None,
+        )
+        object.__setattr__(
+            self,
+            "include_categories",
+            tuple(include_categories) if include_categories is not None else None,
+        )
 
 
 @dataclass(frozen=True)
