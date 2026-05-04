@@ -36,6 +36,11 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+# NOTE: This example auto-approves ALL contact requests. That's fine if intended,
+# but be aware that each accepted contact can send messages that trigger LLM
+# inference. Alternatives:
+# - Use HUB_ROOM strategy to let the agent's LLM decide per-request
+# - Write a filtering on_event callback (e.g., only approve handles in an allowlist)
 async def auto_approve_contacts(event: ContactEvent, tools: ContactTools) -> None:
     """Auto-approve all incoming contact requests."""
     if isinstance(event, ContactRequestReceivedEvent):

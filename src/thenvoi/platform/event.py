@@ -125,6 +125,20 @@ class ContactRemovedEvent:
     raw: dict[str, Any] | None = None
 
 
+@dataclass
+class ReconnectedEvent:
+    """Emitted when the WebSocket reconnects after a disconnection.
+
+    Signals RoomPresence to re-derive room state from the server
+    instead of relying on stale subscription state.
+    """
+
+    type: Literal["reconnected"] = "reconnected"
+    room_id: str | None = None
+    payload: None = None
+    raw: dict[str, Any] | None = None
+
+
 # Contact event union (for type narrowing)
 ContactEvent = (
     ContactRequestReceivedEvent
@@ -146,4 +160,5 @@ PlatformEvent = (
     | ContactRequestUpdatedEvent
     | ContactAddedEvent
     | ContactRemovedEvent
+    | ReconnectedEvent
 )

@@ -18,14 +18,12 @@ from dataclasses import dataclass
 from typing import Any
 
 try:
-    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-    from claude_agent_sdk.types import CanUseTool
-except ImportError as e:
-    raise ImportError(
-        "claude-agent-sdk is required for Claude SDK examples.\n"
-        "Install with: pip install claude-agent-sdk\n"
-        "Or: uv add claude-agent-sdk"
-    ) from e
+    from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions  # type: ignore[import-not-found]
+    from claude_agent_sdk.types import CanUseTool  # type: ignore[import-not-found]
+
+    _CLAUDE_SDK_AVAILABLE = True
+except ImportError:
+    _CLAUDE_SDK_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 

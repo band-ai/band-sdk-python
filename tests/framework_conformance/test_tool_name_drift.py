@@ -21,7 +21,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from thenvoi.integrations.claude_sdk.tools import build_thenvoi_sdk_tools
+import pytest
+from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from thenvoi.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -30,6 +31,9 @@ from thenvoi.runtime.tools import (
     MEMORY_TOOL_NAMES,
     iter_tool_definitions,
 )
+
+if _HAS_CLAUDE_SDK:
+    from thenvoi.integrations.claude_sdk.tools import build_thenvoi_sdk_tools
 
 _SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "thenvoi"
 if not _SRC_ROOT.is_dir():
@@ -81,6 +85,10 @@ class TestClaudeSDKAdapterToolDrift:
             "thenvoi.runtime.tools instead of hardcoding MCP tool names."
         )
 
+    @pytest.mark.skipif(
+        not _HAS_CLAUDE_SDK,
+        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+    )
     def test_shared_builder_covers_all_tools(self):
         """Every Thenvoi tool should be buildable for the Claude SDK adapter."""
         sdk_tools = build_thenvoi_sdk_tools(
@@ -148,9 +156,15 @@ class TestLangGraphToolDrift:
 
 
 class TestCrewAIToolDrift:
-    """CrewAI adapter (adapters/crewai.py)."""
+    """CrewAI tool classes (integrations/crewai/tools.py).
 
-    _FILE = _SRC_ROOT / "adapters" / "crewai.py"
+    The BaseTool subclasses were moved out of ``adapters/crewai.py`` into the
+    shared ``integrations/crewai/tools.py`` module so that both the legacy
+    ``CrewAIAdapter`` and the new ``CrewAIFlowAdapter`` consume one set of
+    wrappers. The drift check now scans the shared module.
+    """
+
+    _FILE = _SRC_ROOT / "integrations" / "crewai" / "tools.py"
 
     def test_all_tools_registered(self):
         """Every tool in TOOL_MODELS has a CrewAI tool class."""

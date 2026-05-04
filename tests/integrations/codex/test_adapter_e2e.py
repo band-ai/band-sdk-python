@@ -51,7 +51,13 @@ def _agent_input(
 
 
 class _ToolSchemaFakeTools(FakeAgentTools):
-    def get_openai_tool_schemas(self) -> list[dict[str, Any]]:
+    def get_openai_tool_schemas(
+        self,
+        *,
+        include_memory: bool = False,
+        include_contacts: bool = True,
+    ) -> list[dict[str, Any]]:
+        del include_memory, include_contacts
         return [
             {
                 "type": "function",

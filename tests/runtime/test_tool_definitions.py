@@ -84,19 +84,19 @@ class TestAddParticipantInput:
     """Tests for AddParticipantInput model."""
 
     def test_valid_add(self):
-        """Valid add with name should pass."""
-        add = AddParticipantInput(name="Bob")
-        assert add.name == "Bob"
+        """Valid add with identifier should pass."""
+        add = AddParticipantInput(identifier="Bob")
+        assert add.identifier == "Bob"
         assert add.role == "member"  # default
 
     def test_role_enum(self):
         """role must be one of the allowed values."""
         for valid_role in ["owner", "admin", "member"]:
-            add = AddParticipantInput(name="Bob", role=valid_role)
+            add = AddParticipantInput(identifier="Bob", role=valid_role)
             assert add.role == valid_role
 
         with pytest.raises(ValidationError):
-            AddParticipantInput(name="Bob", role="invalid")
+            AddParticipantInput(identifier="Bob", role="invalid")
 
 
 class TestLookupPeersInput:

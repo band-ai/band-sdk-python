@@ -360,12 +360,22 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         self._room_sessions: dict[str, str] = {}
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Render system prompt and create ADK agent after metadata is fetched."""
+        """Render system prompt and create ADK agent after metadata is fetched.
+
+        Prompt precedence (matches Anthropic/Gemini):
+          1. If ``system_prompt`` was provided at construction time, it wins —
+             ``custom_section`` and ``features``-based capability sections are
+             ignored. The override is passed through verbatim.
+          2. Otherwise, ``render_system_prompt`` renders the SDK base prompt
+             plus ``custom_section``, with capability sections gated on
+             ``features.capabilities``.
+        """
         await super().on_started(agent_name, agent_description)
         self._system_prompt = self._system_prompt_override or render_system_prompt(
             agent_name=agent_name,
             agent_description=agent_description,
             custom_section=self.custom_section or "",
+            features=self.features,
         )
 
         logger.info("Google ADK adapter started for agent: %s", agent_name)
@@ -374,7 +384,8 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         """Build ADK tool bridges from Thenvoi tool schemas."""
         ToolBridge = _get_tool_bridge_class()
         openai_schemas = tools.get_openai_tool_schemas(
-            include_memory=Capability.MEMORY in self.features.capabilities
+            include_memory=Capability.MEMORY in self.features.capabilities,
+            include_contacts=Capability.CONTACTS in self.features.capabilities,
         )
 
         adk_tools: list[Any] = []

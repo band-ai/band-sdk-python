@@ -16,12 +16,12 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 try:
-    from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool
+    from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool  # type: ignore[import-not-found]
 except ImportError as e:
     raise ImportError(
-        "claude-agent-sdk is required for Claude SDK examples.\n"
-        "Install with: pip install claude-agent-sdk\n"
-        "Or: uv add claude-agent-sdk"
+        "claude-agent-sdk is required for Claude SDK tools.\n"
+        "Install with: pip install thenvoi-sdk[claude_sdk]\n"
+        "Or: uv add thenvoi-sdk[claude_sdk]"
     ) from e
 
 from thenvoi.core.exceptions import ThenvoiToolError
@@ -132,14 +132,14 @@ def _format_success_payload(
         return {
             "status": "success",
             "message": (
-                f"Participant '{call_args['name']}' added as {call_args['role']}"
+                f"Participant '{call_args['identifier']}' added as {call_args['role']}"
             ),
             **result,
         }
     if tool_name == "thenvoi_remove_participant":
         return {
             "status": "success",
-            "message": f"Participant '{call_args['name']}' removed",
+            "message": f"Participant '{call_args['identifier']}' removed",
             **result,
         }
     if tool_name == "thenvoi_get_participants":

@@ -186,6 +186,10 @@ class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
         """Return the ACP session_id for a room, or None."""
         return self._room_to_session.get(room_id)
 
+    def get_room_for_session(self, session_id: str) -> str | None:
+        """Return the room_id for an ACP session, or None."""
+        return self._session_to_room.get(session_id)
+
     async def verify_credentials(self) -> bool:
         """Validate API key by calling the Thenvoi identity endpoint."""
         try:

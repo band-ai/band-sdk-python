@@ -108,13 +108,13 @@ class TestLocalMcpServer:
                     execute=execute,
                 )
             ],
-            port_min=55050,
-            port_max=55059,
+            port_min=0,
+            port_max=0,
         )
 
         await server.start()
         try:
-            assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:55")
+            assert server.url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
             async with sse_client(server.url) as (read_stream, write_stream):
                 async with ClientSession(read_stream, write_stream) as session:
@@ -129,6 +129,11 @@ class TestLocalMcpServer:
         finally:
             await server.stop()
 
+    # 30s default barely fits on GitHub Actions Python 3.12 runners — the
+    # streamable-HTTP loopback initialization spends most of that on uvicorn
+    # startup. Bump to 90s to absorb runner I/O variance (test passes in ~1s
+    # locally; this only widens the safety margin on CI).
+    @pytest.mark.timeout(90)
     @pytest.mark.asyncio
     async def test_serves_streamable_http_tools_on_localhost(self) -> None:
         async def execute(arguments: dict[str, str]) -> dict[str, str]:
@@ -144,13 +149,13 @@ class TestLocalMcpServer:
                     execute=execute,
                 )
             ],
-            port_min=55060,
-            port_max=55069,
+            port_min=0,
+            port_max=0,
         )
 
         await server.start()
         try:
-            assert server.http_url.startswith(f"http://{LOCAL_MCP_HOST}:55")
+            assert server.http_url.startswith(f"http://{LOCAL_MCP_HOST}:")
 
             async with streamablehttp_client(server.http_url) as (
                 read_stream,

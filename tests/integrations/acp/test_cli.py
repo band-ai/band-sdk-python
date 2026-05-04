@@ -27,8 +27,11 @@ class TestParseArgs:
         assert args.agent_id == "agent-123"
         assert args.api_key == "key-abc"
 
-    def test_parse_args_defaults(self) -> None:
+    def test_parse_args_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should use default values for optional args."""
+        monkeypatch.delenv("THENVOI_REST_URL", raising=False)
+        monkeypatch.delenv("THENVOI_WS_URL", raising=False)
+
         args = parse_args(
             [
                 "--agent-id",

@@ -45,6 +45,15 @@ from importlib.metadata import version as _get_version, PackageNotFoundError
 # Composition layer (new pattern)
 from .agent import Agent
 
+# Core types (v0.3.0)
+from .core.types import AdapterFeatures, Capability, Emit
+from .core.exceptions import (
+    ThenvoiError,
+    ThenvoiConfigError,
+    ThenvoiConnectionError,
+    ThenvoiToolError,
+)
+
 # Platform layer
 from .platform import ThenvoiLink, PlatformEvent
 
@@ -84,6 +93,14 @@ from .runtime import (
 __all__ = [
     # Composition
     "Agent",
+    # Core types (v0.3.0)
+    "AdapterFeatures",
+    "Capability",
+    "Emit",
+    "ThenvoiError",
+    "ThenvoiConfigError",
+    "ThenvoiConnectionError",
+    "ThenvoiToolError",
     # Platform
     "ThenvoiLink",
     "PlatformEvent",

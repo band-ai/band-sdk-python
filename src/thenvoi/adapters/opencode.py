@@ -208,6 +208,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             agent_description=agent_description,
             custom_section=self.config.custom_section,
             include_base_instructions=self.config.include_base_instructions,
+            features=self.features,
         ).strip()
         self._system_prompt = (
             f"{self._system_prompt}\n\n{_OPENCODE_SYSTEM_NOTE}".strip()
@@ -396,7 +397,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         tool_definitions = list(
             iter_tool_definitions(
-                include_memory=Capability.MEMORY in self.features.capabilities
+                include_memory=Capability.MEMORY in self.features.capabilities,
+                include_contacts=Capability.CONTACTS in self.features.capabilities,
             )
         )
         backend = await create_thenvoi_mcp_backend(

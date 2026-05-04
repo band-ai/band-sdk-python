@@ -18,6 +18,7 @@ import pytest
 
 from thenvoi.adapters.claude_sdk import (
     ClaudeSDKAdapter,
+    _CLAUDE_SDK_AVAILABLE,
     _PendingApproval,
     _pre_tool_use_continue_hook,
     THENVOI_ALL_TOOLS,
@@ -27,6 +28,11 @@ from thenvoi.adapters.claude_sdk import (
 from thenvoi.converters.claude_sdk import ClaudeSDKSessionState
 from thenvoi.runtime.tools import ALL_TOOL_NAMES
 from thenvoi.core.types import PlatformMessage
+
+pytestmark = pytest.mark.skipif(
+    not _CLAUDE_SDK_AVAILABLE,
+    reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+)
 
 
 @pytest.fixture
@@ -101,6 +107,64 @@ class TestOnStarted:
             assert adapter.agent_description == "A test bot"
             assert adapter._session_manager is not None
             assert adapter._mcp_server is not None
+
+    @pytest.mark.asyncio
+    async def test_default_options_have_no_model(self):
+        """Default ClaudeSDKAdapter() should pass model=None and fallback_model=None."""
+        adapter = ClaudeSDKAdapter()
+
+        with patch(
+            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.model is None
+            assert sdk_options.fallback_model is None
+
+    @pytest.mark.asyncio
+    async def test_explicit_model_is_forwarded(self):
+        """Explicit model= should land in ClaudeAgentOptions.model."""
+        adapter = ClaudeSDKAdapter(model="opus")
+
+        with patch(
+            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.model == "opus"
+            assert sdk_options.fallback_model is None
+
+    @pytest.mark.asyncio
+    async def test_fallback_model_is_forwarded(self):
+        """Both model and fallback_model must reach ClaudeAgentOptions.
+
+        Regression guard: catches a missed `fallback_model=self.fallback_model`
+        in the ClaudeAgentOptions construction in on_started().
+        """
+        adapter = ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
+
+        with patch(
+            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.model == "opus"
+            assert sdk_options.fallback_model == "sonnet"
 
 
 class TestOnMessage:
@@ -618,7 +682,18 @@ class TestCustomTools:
         assert backend is mock_backend
         mock_create_backend.assert_awaited_once()
         tool_definitions = mock_create_backend.await_args.kwargs["tool_definitions"]
-        assert len(tool_definitions) == 12
+        tool_names = [td.name for td in tool_definitions]
+        # Base platform tools registered
+        assert "thenvoi_send_message" in tool_names
+        assert "thenvoi_send_event" in tool_names
+        assert "thenvoi_add_participant" in tool_names
+        assert "thenvoi_remove_participant" in tool_names
+        assert "thenvoi_get_participants" in tool_names
+        assert "thenvoi_lookup_peers" in tool_names
+        assert "thenvoi_create_chatroom" in tool_names
+        # Memory and contacts excluded (no capabilities set)
+        assert "thenvoi_list_contacts" not in tool_names
+        assert "thenvoi_list_memories" not in tool_names
 
     @pytest.mark.asyncio
     async def test_custom_tools_registered_with_memory_tools_enabled(self):
@@ -651,7 +726,16 @@ class TestCustomTools:
         assert backend is mock_backend
         mock_create_backend.assert_awaited_once()
         tool_definitions = mock_create_backend.await_args.kwargs["tool_definitions"]
-        assert len(tool_definitions) == 17
+        tool_names = [td.name for td in tool_definitions]
+        # Base platform tools
+        assert "thenvoi_send_message" in tool_names
+        assert "thenvoi_create_chatroom" in tool_names
+        # Memory tools included
+        assert "thenvoi_list_memories" in tool_names
+        assert "thenvoi_store_memory" in tool_names
+        assert "thenvoi_get_memory" in tool_names
+        # Contacts excluded (not in capabilities)
+        assert "thenvoi_list_contacts" not in tool_names
 
     def test_tool_name_derived_from_input_model(self):
         """Tool name should be derived from Pydantic model class name."""

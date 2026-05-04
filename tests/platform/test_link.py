@@ -95,7 +95,13 @@ class TestThenvoiLinkConnection:
         link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
-        mock_ws_class.assert_called_once_with(link.ws_url, link.api_key, link.agent_id)
+        mock_ws_class.assert_called_once_with(
+            link.ws_url,
+            link.api_key,
+            link.agent_id,
+            on_reconnect=link._on_reconnected,
+            on_disconnect=link._on_disconnected,
+        )
         mock_ws_client.__aenter__.assert_called_once()
         assert link.is_connected is True
 
@@ -143,6 +149,15 @@ class TestThenvoiLinkConnection:
         await link.disconnect()
 
         assert link._subscribed_rooms == set()
+
+    async def test_reconnect_keeps_tracked_room_subscriptions(self):
+        """_on_reconnected() should preserve room tracking for PHX re-subscriptions."""
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link._subscribed_rooms.update({"room-1", "room-2"})
+
+        await link._on_reconnected()
+
+        assert link._subscribed_rooms == {"room-1", "room-2"}
 
     async def test_disconnect_when_not_connected_is_noop(self):
         """disconnect() when not connected should be a no-op."""

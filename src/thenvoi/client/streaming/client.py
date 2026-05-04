@@ -179,10 +179,19 @@ _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
 
 
 class WebSocketClient:
-    def __init__(self, ws_url: str, api_key: str, agent_id: str | None = None):
+    def __init__(
+        self,
+        ws_url: str,
+        api_key: str,
+        agent_id: str | None = None,
+        on_reconnect: Callable[[], Awaitable[None]] | None = None,
+        on_disconnect: Callable[[Exception | None], Awaitable[None]] | None = None,
+    ):
         self.ws_url = ws_url
         self.api_key = api_key
         self.agent_id = agent_id
+        self._on_reconnect = on_reconnect
+        self._on_disconnect = on_disconnect
         self._validation_error_count: int = 0
 
     @property
@@ -205,6 +214,8 @@ class WebSocketClient:
             self.ws_url,
             self.api_key,
             protocol_version=PhoenixChannelsProtocolVersion.V2,
+            on_reconnect=self._on_reconnect,
+            on_disconnect=self._on_disconnect,
         )
         if self.agent_id:
             self.client.channel_socket_url += f"&agent_id={self.agent_id}"

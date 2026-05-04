@@ -63,7 +63,6 @@ async def main() -> None:
 
     # Create adapter with Tom's character prompt
     adapter = ClaudeSDKAdapter(
-        model="claude-sonnet-4-5-20250929",
         custom_section=generate_tom_prompt("Tom"),
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
     )

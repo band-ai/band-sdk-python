@@ -13,6 +13,8 @@ Connect your AI agents to the Thenvoi collaborative platform.
 - **Gemini SDK** - Production ready (official `google-genai` adapter)
 - **Letta** - Production ready (Cloud or self-hosted with MCP tools)
 - **Google ADK** - Production ready (Gemini models via Agent Development Kit)
+- **ACP Client Adapter** - Bridge Thenvoi rooms to external ACP runtimes
+- **ACP Server** - Expose Thenvoi as an ACP agent for IDE clients
 - **A2A Adapter** - Call external A2A-compliant agents from Thenvoi
 - **A2A Gateway** - Expose Thenvoi peers as A2A protocol endpoints
 
@@ -221,7 +223,10 @@ from thenvoi import Agent
 from thenvoi.adapters import ClaudeSDKAdapter
 
 adapter = ClaudeSDKAdapter(
-    model="claude-sonnet-4-5-20250929",
+    # Omit `model` to use the npm `claude` binary's default, or pass a
+    # family alias (`"sonnet"` / `"opus"` / `"haiku"`) for latest-of-family.
+    model="opus",
+    fallback_model="sonnet",
     max_thinking_tokens=10000,  # Enable extended thinking
     enable_execution_reporting=True,
 )
@@ -455,6 +460,35 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 | `02_custom_instructions.py` | Custom system prompt with Gemini 2.5 Pro and execution reporting |
 | `03_custom_tools.py` | Custom tools (calculator, weather) via `additional_tools` |
 
+### ACP (`examples/acp/`)
+
+| File | Description |
+|------|-------------|
+| `01_basic_acp_server.py` | Basic ACP server: expose Thenvoi as an ACP agent |
+| `02_acp_client.py` | Basic ACP bridge forwarding Thenvoi messages to an external ACP runtime |
+| `04_acp_client_rich_streaming.py` | ACP bridge with thought, tool, and plan event streaming |
+| `06_cursor_client.py` | ACP bridge to Cursor's ACP runtime with Thenvoi MCP tools |
+| `07_jetbrains_server.py` | JetBrains ACP server integration |
+| `08_acp_bridge_architecture.py` | Refactored bridge/runtime architecture example for outbound ACP |
+
+### ACP vs A2A bridge model
+
+Both integrations use the same high-level layering: a protocol transport layer and a Thenvoi bridge layer that maps room/session/message state.
+
+The analogy holds in these pairs:
+
+- A2A outbound: `A2AAdapter` (Thenvoi bridge) -> remote A2A protocol peer.
+- ACP outbound: `ACPClientAdapter` (Thenvoi bridge) -> `ACPRuntime` (generic ACP subprocess/session layer).
+- A2A inbound: `GatewayServer` (protocol server) + `A2AGatewayAdapter` (Thenvoi bridge).
+- ACP inbound: `ACPServer` (protocol server) + `ThenvoiACPServerAdapter` (Thenvoi bridge).
+
+Where ACP differs from A2A:
+
+- A2A outbound always communicates with a remote endpoint over HTTP/SSE.
+- ACP outbound can spawn and manage a local ACP runtime process.
+- Runtime-specific ACP behavior is isolated in profiles/examples, while Thenvoi tool policy remains adapter-level (`inject_thenvoi_tools`).
+- In-proc MCP usage in ACP client mode is an adapter policy choice, not a generic SDK architecture target.
+
 ### A2A Adapter (`examples/a2a_bridge/`)
 
 | File | Description |
@@ -502,6 +536,12 @@ uv run python examples/run_agent.py --example codex --agent darter --codex-sandb
 
 # Codex via WebSocket transport (dev/diagnostics)
 uv run python examples/run_agent.py --example codex --agent darter --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
+
+# ACP Client (bridge Thenvoi rooms to an external ACP runtime)
+uv run examples/acp/02_acp_client.py
+
+# ACP bridge architecture example (explicit bridge/runtime split)
+uv run examples/acp/08_acp_bridge_architecture.py
 
 # A2A Adapter (call external A2A agents from Thenvoi)
 uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000

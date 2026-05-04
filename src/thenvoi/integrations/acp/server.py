@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+import acp.schema as acp_schema
 from acp import (
     Agent,
     InitializeResponse,
@@ -13,13 +14,16 @@ from acp import (
 )
 from acp.schema import (
     AgentCapabilities,
+    AudioContentBlock,
     AuthenticateResponse,
-    AuthMethod,
+    EmbeddedResourceContentBlock,
     ForkSessionResponse,
+    ImageContentBlock,
     Implementation,
     ListSessionsResponse,
     LoadSessionResponse,
     PromptCapabilities,
+    ResourceContentBlock,
     ResumeSessionResponse,
     SessionCapabilities,
     SessionForkCapabilities,
@@ -29,6 +33,7 @@ from acp.schema import (
     SetSessionConfigOptionResponse,
     SetSessionModeResponse,
     SetSessionModelResponse,
+    TextContentBlock,
 )
 
 from thenvoi import __version__
@@ -72,6 +77,12 @@ class ACPServer(Agent):
         """
         self._conn = conn
         self._adapter.set_acp_client(conn)
+
+    def _auth_method(self, **kwargs: Any) -> Any:
+        auth_method = getattr(acp_schema, "AuthMethod", None) or getattr(
+            acp_schema, "AuthMethodAgent"
+        )
+        return auth_method(**kwargs)
 
     async def initialize(
         self,
@@ -126,7 +137,7 @@ class ACPServer(Agent):
                 version=__version__,
             ),
             auth_methods=[
-                AuthMethod(
+                self._auth_method(
                     id="api_key",
                     name="API Key",
                     description="Authenticate with THENVOI_API_KEY.",
@@ -268,7 +279,7 @@ class ACPServer(Agent):
         self,
         config_id: str,
         session_id: str,
-        value: str,
+        value: str | bool,
         **kwargs: Any,
     ) -> SetSessionConfigOptionResponse | None:
         """Handle ACP set_config_option request.
@@ -294,7 +305,8 @@ class ACPServer(Agent):
         Validates API key by calling the Thenvoi identity endpoint.
 
         Args:
-            method_id: The authentication method (only "api_key" supported).
+            method_id: The authentication method. Supports "api_key" and the
+                Cursor compatibility alias "cursor_login".
             **kwargs: Additional keyword arguments.
 
         Returns:
@@ -450,8 +462,15 @@ class ACPServer(Agent):
 
     async def prompt(
         self,
-        prompt: list[Any],
+        prompt: list[
+            TextContentBlock
+            | ImageContentBlock
+            | AudioContentBlock
+            | ResourceContentBlock
+            | EmbeddedResourceContentBlock
+        ],
         session_id: str,
+        message_id: str | None = None,
         **kwargs: Any,
     ) -> PromptResponse:
         """Handle ACP prompt request.
@@ -462,11 +481,13 @@ class ACPServer(Agent):
         Args:
             prompt: List of ACP content blocks (TextContentBlock, etc.).
             session_id: The ACP session identifier.
+            message_id: Optional message identifier from the client.
             **kwargs: Additional keyword arguments.
 
         Returns:
             PromptResponse with stop reason.
         """
+        del message_id
         text = self._extract_text(prompt)
         logger.debug("ACP prompt for session %s: %s", session_id, text[:100])
         await self._adapter.handle_prompt(session_id, text)
@@ -483,6 +504,26 @@ class ACPServer(Agent):
         """
         logger.info("ACP cancel for session %s", session_id)
         await self._adapter.cancel_prompt(session_id)
+
+    async def close_session(self, session_id: str, **kwargs: Any) -> None:
+        """Handle ACP close_session request.
+
+        Cleans up all state for the session via the adapter.
+
+        Args:
+            session_id: The ACP session identifier.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            None.
+        """
+        room_id = self._adapter.get_room_for_session(session_id)
+        if room_id is None:
+            logger.debug("close_session: session %s not found", session_id)
+            return None
+        logger.info("Closing ACP session %s (room %s)", session_id, room_id)
+        await self._adapter.on_cleanup(room_id)
+        return None
 
     @staticmethod
     def _extract_text(prompt: list[Any]) -> str:

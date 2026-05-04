@@ -6,9 +6,18 @@ This module provides bidirectional ACP support:
    The "Super-Agent" pattern exposes a single ACP facade over multi-agent
    orchestration.
 
-2. **ACP Client Adapter** (Thenvoi -> External ACP Agent): Thenvoi forwards
-   messages to external ACP agents (Codex CLI, Gemini CLI, Claude Code, etc.)
-   as peers.
+2. **ACP Client Adapter** (Thenvoi -> External ACP Runtime): Thenvoi forwards
+   messages to external ACP runtimes (Codex CLI, Gemini CLI, Claude Code, etc.)
+   via a Thenvoi bridge layered over a generic ACP runtime.
+
+3. **Architectural analogy to A2A**:
+   - Outbound A2A: `A2AAdapter` bridges to a remote A2A peer.
+   - Outbound ACP: `ACPClientAdapter` bridges to `ACPRuntime` for subprocess/session plumbing.
+   - Inbound A2A: `GatewayServer` + `A2AGatewayAdapter`.
+   - Inbound ACP: `ACPServer` + `ThenvoiACPServerAdapter`.
+
+   Where ACP differs: outbound ACP can manage local subprocess lifecycle and keep
+   runtime-specific behavior in thin profiles; A2A outbound is always remote.
 
 Example (ACP Server):
     from thenvoi import Agent

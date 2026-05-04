@@ -1,5 +1,7 @@
 """Tests for RoomPresence."""
 
+from __future__ import annotations
+
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -7,6 +9,8 @@ import pytest
 from thenvoi.runtime.presence import RoomPresence
 
 # Import test helpers from conftest
+from thenvoi.platform.event import ReconnectedEvent
+
 from tests.conftest import (
     make_message_event,
     make_room_added_event,
@@ -123,7 +127,8 @@ class TestRoomPresenceStart:
         room2.id = "room-2"
         room2.model_dump.return_value = {"id": "room-2"}
         mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
-            data=[room1, room2]
+            data=[room1, room2],
+            metadata=MagicMock(total_pages=1),
         )
 
         presence = RoomPresence(mock_link, auto_subscribe_existing=True)
@@ -315,6 +320,87 @@ class TestRoomPresenceRoomRemoved:
         await presence._on_platform_event(event)
 
         assert left_rooms == ["room-123"]
+
+        await presence.stop()
+
+
+class TestRoomPresenceReconnect:
+    """Test reconnect reconciliation behavior."""
+
+    async def test_reconnect_unsubscribes_gone_rooms(self, mock_link):
+        """Reconnect should unsubscribe rooms missing from the API."""
+        room = MagicMock()
+        room.id = "room-2"
+        room.model_dump.return_value = {"id": "room-2"}
+        mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
+            data=[room],
+            metadata=MagicMock(total_pages=1),
+        )
+
+        presence = RoomPresence(mock_link, auto_subscribe_existing=True)
+        await presence.start()
+        mock_link.subscribe_room.reset_mock()
+        presence.rooms = {"room-1", "room-2"}
+
+        event = ReconnectedEvent()
+        await presence._on_platform_event(event)
+
+        mock_link.unsubscribe_room.assert_called_once_with("room-1")
+        assert presence.rooms == {"room-2"}
+
+        await presence.stop()
+
+    async def test_reconnect_subscribes_only_new_rooms(self, mock_link):
+        """Reconnect should only join rooms that are new from the API."""
+        room1 = MagicMock()
+        room1.id = "room-1"
+        room1.model_dump.return_value = {"id": "room-1"}
+        room2 = MagicMock()
+        room2.id = "room-2"
+        room2.model_dump.return_value = {"id": "room-2"}
+        mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
+            data=[room1, room2],
+            metadata=MagicMock(total_pages=1),
+        )
+
+        presence = RoomPresence(mock_link, auto_subscribe_existing=True)
+        await presence.start()
+        mock_link.subscribe_room.reset_mock()
+        mock_link.unsubscribe_room.reset_mock()
+        presence.rooms = {"room-1"}
+
+        event = ReconnectedEvent()
+        await presence._on_platform_event(event)
+
+        mock_link.subscribe_room.assert_called_once_with("room-2")
+        mock_link.unsubscribe_room.assert_not_called()
+        assert presence.rooms == {"room-1", "room-2"}
+
+        await presence.stop()
+
+    async def test_reconnect_notifies_left_for_gone_rooms(self, mock_link):
+        """Reconnect should fire on_room_left for rooms removed while offline."""
+        mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
+            data=[],
+            metadata=MagicMock(total_pages=1),
+        )
+        left_rooms = []
+
+        async def on_left(room_id):
+            left_rooms.append(room_id)
+
+        presence = RoomPresence(mock_link, auto_subscribe_existing=True)
+        presence.on_room_left = on_left
+        await presence.start()
+        presence.rooms = {"room-1"}
+        mock_link.unsubscribe_room.reset_mock()
+
+        event = ReconnectedEvent()
+        await presence._on_platform_event(event)
+
+        assert left_rooms == ["room-1"]
+        mock_link.unsubscribe_room.assert_called_once_with("room-1")
+        assert presence.rooms == set()
 
         await presence.stop()
 

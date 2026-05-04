@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from thenvoi.integrations.acp.client_adapter import ACPClientAdapter
+from thenvoi.integrations.acp.client_profiles import CursorACPClientProfile
+from thenvoi.integrations.acp.client_runtime import ACPCollectingClient
 from thenvoi.integrations.acp.client_types import (
     ACPClientSessionState,
     ThenvoiACPClient,
@@ -37,8 +39,8 @@ class TestACPClientAdapterInit:
         assert adapter._cwd == os.path.abspath(".")
         assert adapter._env is None
         assert adapter._mcp_servers == []
-        assert adapter._conn is None
-        assert adapter._client is None
+        assert adapter._runtime._conn is None
+        assert adapter._runtime._client is None
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
         assert adapter._thenvoi_mcp_backend is None
@@ -109,7 +111,7 @@ class TestACPClientAdapterLocalMcpConfig:
     async def test_get_or_start_thenvoi_mcp_server_returns_sse_config(self) -> None:
         """Should expose shared SSE when the ACP agent only supports SSE MCP."""
         adapter = ACPClientAdapter(command="codex")
-        adapter._agent_mcp_transport = "sse"
+        adapter._runtime._agent_mcp_transport = "sse"
         mock_server = MagicMock(sse_url="http://127.0.0.1:50000/sse")
         backend = MagicMock(local_server=mock_server)
 
@@ -184,7 +186,7 @@ class TestACPClientAdapterOnStarted:
         ):
             await adapter.on_started("Codex Bridge", "Bridge to Codex")
 
-        assert adapter._conn is mock_conn
+        assert adapter._runtime._conn is mock_conn
         mock_conn.initialize.assert_called_once_with(protocol_version=1)
 
     @pytest.mark.asyncio
@@ -248,7 +250,7 @@ class TestACPClientAdapterOnStarted:
         ):
             await adapter.on_started("Test Agent", "A test agent")
 
-        assert adapter._agent_mcp_transport == "http"
+        assert adapter._runtime._agent_mcp_transport == "http"
 
     @pytest.mark.asyncio
     async def test_on_started_uses_sse_mcp_when_http_missing(self) -> None:
@@ -272,7 +274,7 @@ class TestACPClientAdapterOnStarted:
         ):
             await adapter.on_started("Test Agent", "A test agent")
 
-        assert adapter._agent_mcp_transport == "sse"
+        assert adapter._runtime._agent_mcp_transport == "sse"
 
 
 class TestACPClientAdapterOnMessage:
@@ -284,14 +286,14 @@ class TestACPClientAdapterOnMessage:
         adapter = ACPClientAdapter(command="codex", inject_thenvoi_tools=False)
 
         # Mock ACP connection
-        adapter._conn = AsyncMock()
+        adapter._runtime._conn = AsyncMock()
         mock_session = MagicMock()
         mock_session.session_id = "acp-session-123"
-        adapter._conn.new_session = AsyncMock(return_value=mock_session)
-        adapter._conn.prompt = AsyncMock()
+        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        adapter._runtime._conn.prompt = AsyncMock()
 
         # Mock client with response text
-        adapter._client = ThenvoiACPClient()
+        adapter._runtime._client = ThenvoiACPClient()
 
         return adapter
 
@@ -313,7 +315,7 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        adapter_with_mocks._conn.new_session.assert_called_once()
+        adapter_with_mocks._runtime._conn.new_session.assert_called_once()
         assert adapter_with_mocks._room_to_session["room-123"] == "acp-session-123"
 
     @pytest.mark.asyncio
@@ -335,7 +337,7 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        adapter_with_mocks._conn.new_session.assert_not_called()
+        adapter_with_mocks._runtime._conn.new_session.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_on_message_sends_prompt(
@@ -355,8 +357,8 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        adapter_with_mocks._conn.prompt.assert_called_once()
-        call_kwargs = adapter_with_mocks._conn.prompt.call_args.kwargs
+        adapter_with_mocks._runtime._conn.prompt.assert_called_once()
+        call_kwargs = adapter_with_mocks._runtime._conn.prompt.call_args.kwargs
         assert call_kwargs["session_id"] == "acp-session-123"
 
     @pytest.mark.asyncio
@@ -368,11 +370,11 @@ class TestACPClientAdapterOnMessage:
         # Make prompt() populate the per-session buffer (simulating session_update)
         async def mock_prompt(**kwargs):
             session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._client._session_chunks[session_id] = [
+            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
                 CollectedChunk(chunk_type="text", content="The weather is sunny.")
             ]
 
-        adapter_with_mocks._conn.prompt = AsyncMock(side_effect=mock_prompt)
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
         tools = FakeAgentTools()
         msg = make_platform_message("Weather?", room_id="room-123")
@@ -399,11 +401,11 @@ class TestACPClientAdapterOnMessage:
 
         async def mock_prompt(**kwargs):
             session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._client._session_chunks[session_id] = [
+            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
                 CollectedChunk(chunk_type="thought", content="Let me think...")
             ]
 
-        adapter_with_mocks._conn.prompt = AsyncMock(side_effect=mock_prompt)
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
         tools = FakeAgentTools()
         msg = make_platform_message("Question?", room_id="room-123")
@@ -432,7 +434,7 @@ class TestACPClientAdapterOnMessage:
 
         async def mock_prompt(**kwargs):
             session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._client._session_chunks[session_id] = [
+            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
                 CollectedChunk(
                     chunk_type="tool_call",
                     content="search",
@@ -440,7 +442,7 @@ class TestACPClientAdapterOnMessage:
                 )
             ]
 
-        adapter_with_mocks._conn.prompt = AsyncMock(side_effect=mock_prompt)
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
         tools = FakeAgentTools()
         msg = make_platform_message("Find info", room_id="room-123")
@@ -469,11 +471,11 @@ class TestACPClientAdapterOnMessage:
 
         async def mock_prompt(**kwargs):
             session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._client._session_chunks[session_id] = [
+            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
                 CollectedChunk(chunk_type="plan", content="Step 1: Do stuff")
             ]
 
-        adapter_with_mocks._conn.prompt = AsyncMock(side_effect=mock_prompt)
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
         tools = FakeAgentTools()
         msg = make_platform_message("Plan it", room_id="room-123")
@@ -547,7 +549,7 @@ class TestACPClientAdapterOnMessage:
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
         """Should send error event when ACP agent fails."""
-        adapter_with_mocks._conn.prompt = AsyncMock(
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(
             side_effect=RuntimeError("Agent crashed")
         )
 
@@ -598,14 +600,14 @@ class TestACPClientAdapterPermissionHandler:
         adapter = ACPClientAdapter(command="codex", inject_thenvoi_tools=False)
 
         # Mock ACP connection
-        adapter._conn = AsyncMock()
+        adapter._runtime._conn = AsyncMock()
         mock_session = MagicMock()
         mock_session.session_id = "acp-session-123"
-        adapter._conn.new_session = AsyncMock(return_value=mock_session)
-        adapter._conn.prompt = AsyncMock()
+        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        adapter._runtime._conn.prompt = AsyncMock()
 
         # Mock client with response text
-        adapter._client = ThenvoiACPClient()
+        adapter._runtime._client = ThenvoiACPClient()
 
         return adapter
 
@@ -628,7 +630,7 @@ class TestACPClientAdapterPermissionHandler:
         )
 
         # Permission handler should have been set for this session
-        assert len(adapter_with_mocks._client._permission_handlers) > 0
+        assert len(adapter_with_mocks._runtime._client._permission_handlers) > 0
 
     @pytest.mark.asyncio
     async def test_permission_handler_posts_event(
@@ -645,14 +647,14 @@ class TestACPClientAdapterPermissionHandler:
             tool_call.title = "write_file"
             tool_call.tool_call_id = "tc-perm-1"
 
-            result = await adapter_with_mocks._client.request_permission(
+            result = await adapter_with_mocks._runtime._client.request_permission(
                 options={},
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
             assert result == {"outcome": {"outcome": "allowed"}}
 
-        adapter_with_mocks._conn.prompt = AsyncMock(side_effect=mock_prompt)
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
         await adapter_with_mocks.on_message(
             msg,
@@ -690,14 +692,14 @@ class TestACPClientAdapterPermissionHandler:
             tool_call.title = "read_file"
             tool_call.tool_call_id = "tc-read"
 
-            result = await adapter_with_mocks._client.request_permission(
+            result = await adapter_with_mocks._runtime._client.request_permission(
                 options={},
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
             captured_result.update(result)
 
-        adapter_with_mocks._conn.prompt = AsyncMock(side_effect=mock_prompt)
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
         await adapter_with_mocks.on_message(
             msg,
@@ -724,13 +726,13 @@ class TestACPClientAdapterPermissionHandler:
             tool_call.name = "bash"
             tool_call.tool_call_id = "tc-bash"
 
-            await adapter_with_mocks._client.request_permission(
+            await adapter_with_mocks._runtime._client.request_permission(
                 options={},
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
 
-        adapter_with_mocks._conn.prompt = AsyncMock(side_effect=mock_prompt)
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
         await adapter_with_mocks.on_message(
             msg,
@@ -801,9 +803,9 @@ class TestACPClientAdapterStop:
         adapter = ACPClientAdapter(command="codex")
         mock_ctx = MagicMock()
         mock_ctx.__aexit__ = AsyncMock(return_value=None)
-        adapter._ctx = mock_ctx
-        adapter._conn = AsyncMock()
-        adapter._client = ThenvoiACPClient()
+        adapter._runtime._ctx = mock_ctx
+        adapter._runtime._conn = AsyncMock()
+        adapter._runtime._client = ThenvoiACPClient()
         adapter._room_to_session["room-123"] = "session-123"
         adapter._room_tools["room-123"] = MagicMock()
         local_server = MagicMock()
@@ -818,9 +820,9 @@ class TestACPClientAdapterStop:
 
         mock_ctx.__aexit__.assert_called_once()
         backend.stop.assert_awaited_once()
-        assert adapter._ctx is None
-        assert adapter._conn is None
-        assert adapter._client is None
+        assert adapter._runtime._ctx is None
+        assert adapter._runtime._conn is None
+        assert adapter._runtime._client is None
         assert adapter._room_to_session == {}
         assert adapter._room_tools == {}
         assert adapter._thenvoi_mcp_backend is None
@@ -846,21 +848,23 @@ class TestACPClientAdapterStop:
     async def test_stop_handles_exit_error(self) -> None:
         """Should handle errors during shutdown."""
         adapter = ACPClientAdapter(command="codex")
-        adapter._ctx = AsyncMock()
-        adapter._ctx.__aexit__ = AsyncMock(side_effect=RuntimeError("Cleanup error"))
+        adapter._runtime._ctx = AsyncMock()
+        adapter._runtime._ctx.__aexit__ = AsyncMock(
+            side_effect=RuntimeError("Cleanup error")
+        )
 
         # Should not raise
         await adapter.stop()
-        assert adapter._ctx is None
+        assert adapter._runtime._ctx is None
 
 
-class TestThenvoiACPClientCursorExtensions:
-    """Tests for Cursor-specific extension handling in ThenvoiACPClient."""
+class TestACPCollectingClientCursorProfileExtensions:
+    """Tests for Cursor-specific extension handling via ACP client profiles."""
 
     @pytest.mark.asyncio
     async def test_ext_method_cursor_ask_question(self) -> None:
         """Should auto-select first option for cursor/ask_question."""
-        client = ThenvoiACPClient()
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         result = await client.ext_method(
             "cursor/ask_question",
@@ -878,7 +882,7 @@ class TestThenvoiACPClientCursorExtensions:
     @pytest.mark.asyncio
     async def test_ext_method_cursor_ask_question_empty_options(self) -> None:
         """Should cancel when no options provided."""
-        client = ThenvoiACPClient()
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         result = await client.ext_method("cursor/ask_question", {"options": []})
 
@@ -887,7 +891,7 @@ class TestThenvoiACPClientCursorExtensions:
     @pytest.mark.asyncio
     async def test_ext_method_cursor_create_plan(self) -> None:
         """Should auto-approve cursor/create_plan."""
-        client = ThenvoiACPClient()
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         result = await client.ext_method("cursor/create_plan", {"plan": "stuff"})
 
@@ -896,7 +900,7 @@ class TestThenvoiACPClientCursorExtensions:
     @pytest.mark.asyncio
     async def test_ext_method_unknown_returns_empty(self) -> None:
         """Should return empty dict for unknown extension methods."""
-        client = ThenvoiACPClient()
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         result = await client.ext_method("unknown/method", {})
 
@@ -905,7 +909,7 @@ class TestThenvoiACPClientCursorExtensions:
     @pytest.mark.asyncio
     async def test_ext_notification_cursor_update_todos(self) -> None:
         """Should collect todo updates as plan chunks."""
-        client = ThenvoiACPClient()
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         await client.ext_notification(
             "cursor/update_todos",
@@ -927,7 +931,7 @@ class TestThenvoiACPClientCursorExtensions:
     @pytest.mark.asyncio
     async def test_ext_notification_cursor_task(self) -> None:
         """Should collect task results as text chunks."""
-        client = ThenvoiACPClient()
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         await client.ext_notification(
             "cursor/task",
@@ -942,7 +946,7 @@ class TestThenvoiACPClientCursorExtensions:
     @pytest.mark.asyncio
     async def test_ext_notification_no_session_id_is_noop(self) -> None:
         """Should do nothing when no session_id is present."""
-        client = ThenvoiACPClient()
+        client = ACPCollectingClient(profile=CursorACPClientProfile())
 
         await client.ext_notification(
             "cursor/update_todos",
@@ -960,16 +964,18 @@ class TestACPClientAdapterDeadConnectionRecovery:
     async def test_prompt_error_clears_connection(self) -> None:
         """Should stop connection on prompt error so next message respawns."""
         adapter = ACPClientAdapter(command="codex", inject_thenvoi_tools=False)
-        adapter._conn = AsyncMock()
-        adapter._conn.prompt = AsyncMock(side_effect=RuntimeError("Process died"))
+        adapter._runtime._conn = AsyncMock()
+        adapter._runtime._conn.prompt = AsyncMock(
+            side_effect=RuntimeError("Process died")
+        )
         mock_session = MagicMock()
         mock_session.session_id = "sess-1"
-        adapter._conn.new_session = AsyncMock(return_value=mock_session)
-        adapter._client = ThenvoiACPClient()
+        adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
+        adapter._runtime._client = ThenvoiACPClient()
 
         mock_ctx = MagicMock()
         mock_ctx.__aexit__ = AsyncMock(return_value=None)
-        adapter._ctx = mock_ctx
+        adapter._runtime._ctx = mock_ctx
 
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-1")
@@ -985,8 +991,8 @@ class TestACPClientAdapterDeadConnectionRecovery:
         )
 
         # Connection should be cleared after error
-        assert adapter._conn is None
-        assert adapter._ctx is None
+        assert adapter._runtime._conn is None
+        assert adapter._runtime._ctx is None
 
         # Error event should be sent
         error_events = [

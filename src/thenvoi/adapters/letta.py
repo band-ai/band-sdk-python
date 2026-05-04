@@ -229,6 +229,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             agent_description=agent_description,
             custom_section=self.config.custom_section,
             include_base_instructions=self.config.include_base_instructions,
+            features=self.features,
         )
 
         try:

@@ -2,7 +2,19 @@
 Smoke tests - verify basic imports and setup work.
 """
 
-from thenvoi import ThenvoiLink, AgentRuntime, ExecutionContext, AgentTools
+from thenvoi import (
+    AdapterFeatures,
+    AgentRuntime,
+    AgentTools,
+    Capability,
+    Emit,
+    ExecutionContext,
+    ThenvoiConfigError,
+    ThenvoiConnectionError,
+    ThenvoiError,
+    ThenvoiLink,
+    ThenvoiToolError,
+)
 
 
 def test_can_import_runtime():
@@ -11,6 +23,52 @@ def test_can_import_runtime():
     assert AgentRuntime is not None
     assert ExecutionContext is not None
     assert AgentTools is not None
+
+
+def test_can_import_normalization_types():
+    """The v0.3.0 vocabulary types are exposed at the package root."""
+    assert Capability is not None
+    assert Emit is not None
+    assert AdapterFeatures is not None
+
+
+def test_capability_enum_values():
+    """Capability enum exports the expected members."""
+    assert Capability.MEMORY == "memory"
+    assert Capability.CONTACTS == "contacts"
+
+
+def test_emit_enum_values():
+    """Emit enum exports the expected members."""
+    assert Emit.EXECUTION == "execution"
+    assert Emit.THOUGHTS == "thoughts"
+    assert Emit.TASK_EVENTS == "task_events"
+
+
+def test_can_import_exception_hierarchy():
+    """The four-class exception hierarchy is exposed at the package root."""
+    assert ThenvoiError is not None
+    assert issubclass(ThenvoiConfigError, ThenvoiError)
+    assert issubclass(ThenvoiConnectionError, ThenvoiError)
+    assert issubclass(ThenvoiToolError, ThenvoiError)
+
+
+def test_adapter_features_constructible():
+    """AdapterFeatures default-constructs and accepts capabilities."""
+    empty = AdapterFeatures()
+    assert empty.capabilities == frozenset()
+    assert empty.emit == frozenset()
+
+    with_memory = AdapterFeatures(capabilities={Capability.MEMORY})
+    assert Capability.MEMORY in with_memory.capabilities
+
+
+def test_can_import_letta_adapter_via_lazy_loader():
+    """LettaAdapter resolves through the adapters lazy loader."""
+    from thenvoi.adapters import LettaAdapter, LettaAdapterConfig
+
+    assert LettaAdapter is not None
+    assert LettaAdapterConfig is not None
 
 
 def test_can_import_langgraph_integrations():

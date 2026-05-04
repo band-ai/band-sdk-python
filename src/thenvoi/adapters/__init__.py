@@ -29,6 +29,9 @@ if TYPE_CHECKING:
     from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter as ClaudeSDKAdapter
     from thenvoi.adapters.parlant import ParlantAdapter as ParlantAdapter
     from thenvoi.adapters.crewai import CrewAIAdapter as CrewAIAdapter
+    from thenvoi.adapters.crewai_flow import (
+        CrewAIFlowAdapter as CrewAIFlowAdapter,
+    )
     from thenvoi.adapters.a2a import A2AAdapter as A2AAdapter
     from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter as A2AGatewayAdapter
     from thenvoi.adapters.codex import CodexAdapter as CodexAdapter
@@ -44,6 +47,8 @@ if TYPE_CHECKING:
     from thenvoi.adapters.opencode import OpencodeAdapterConfig as OpencodeAdapterConfig
     from thenvoi.adapters.koreai import KoreAIAdapter as KoreAIAdapter
     from thenvoi.adapters.koreai import KoreAIConfig as KoreAIConfig
+    from thenvoi.adapters.letta import LettaAdapter as LettaAdapter
+    from thenvoi.adapters.letta import LettaAdapterConfig as LettaAdapterConfig
 
 __all__ = [
     "LangGraphAdapter",
@@ -52,6 +57,7 @@ __all__ = [
     "ClaudeSDKAdapter",
     "ParlantAdapter",
     "CrewAIAdapter",
+    "CrewAIFlowAdapter",
     "A2AAdapter",
     "A2AGatewayAdapter",
     "CodexAdapter",
@@ -65,6 +71,8 @@ __all__ = [
     "OpencodeAdapterConfig",
     "KoreAIAdapter",
     "KoreAIConfig",
+    "LettaAdapter",
+    "LettaAdapterConfig",
 ]
 
 
@@ -94,6 +102,10 @@ def __getattr__(name: str) -> type:
         from thenvoi.adapters.crewai import CrewAIAdapter
 
         return CrewAIAdapter
+    elif name == "CrewAIFlowAdapter":
+        from thenvoi.adapters.crewai_flow import CrewAIFlowAdapter
+
+        return CrewAIFlowAdapter
     elif name == "A2AAdapter":
         from thenvoi.adapters.a2a import A2AAdapter
 
@@ -146,4 +158,12 @@ def __getattr__(name: str) -> type:
         from thenvoi.adapters.koreai import KoreAIConfig
 
         return KoreAIConfig
+    elif name == "LettaAdapter":
+        from thenvoi.adapters.letta import LettaAdapter
+
+        return LettaAdapter
+    elif name == "LettaAdapterConfig":
+        from thenvoi.adapters.letta import LettaAdapterConfig
+
+        return LettaAdapterConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

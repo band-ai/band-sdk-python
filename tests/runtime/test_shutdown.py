@@ -152,6 +152,93 @@ class TestGracefulShutdownHandler:
         # Should not raise
         await shutdown._shutdown()
 
+    async def test_handle_signal_guards_before_callback(self, mock_agent):
+        """Second signal during shutdown must not re-invoke on_signal or re-set event."""
+        callback = MagicMock()
+        shutdown = GracefulShutdown(mock_agent, on_signal=callback)
+        shutdown._shutdown_event = asyncio.Event()
+
+        with patch("asyncio.create_task") as mock_create_task:
+            # Simulate create_task returning a sentinel so _shutdown_task is set.
+            sentinel_task = MagicMock()
+            mock_create_task.return_value = sentinel_task
+
+            # First signal: callback fires, event is set, task is scheduled.
+            shutdown._handle_signal(signal.SIGINT)
+            assert callback.call_count == 1
+            assert shutdown._shutdown_event.is_set()
+            assert mock_create_task.call_count == 1
+
+            # Reset event so we can detect if the guard lets the second signal
+            # re-set it (it must not).
+            shutdown._shutdown_event.clear()
+
+            # Second signal during shutdown: everything must be skipped.
+            shutdown._handle_signal(signal.SIGTERM)
+            assert callback.call_count == 1, (
+                "on_signal should not fire for duplicate signals"
+            )
+            assert not shutdown._shutdown_event.is_set(), (
+                "shutdown event must not be re-set for duplicate signals"
+            )
+            assert mock_create_task.call_count == 1, (
+                "no additional shutdown task should be created"
+            )
+
+    async def test_shutdown_shields_agent_stop_from_cancellation(self, mock_agent):
+        """_shutdown should let agent.stop finish even when the task is cancelled."""
+        stop_started = asyncio.Event()
+        stop_finished = asyncio.Event()
+
+        async def slow_stop(*, timeout):  # noqa: ARG001
+            stop_started.set()
+            # Multiple small sleeps give the cancellation a chance to arrive
+            # while agent.stop is mid-flight, which is the scenario under test.
+            for _ in range(5):
+                await asyncio.sleep(0.01)
+            stop_finished.set()
+            return True
+
+        mock_agent.stop = AsyncMock(side_effect=slow_stop)
+        shutdown = GracefulShutdown(mock_agent, timeout=1.0)
+
+        task = asyncio.create_task(shutdown._shutdown())
+        await stop_started.wait()
+
+        # Cancel the outer shutdown task mid-stop. Shielded agent.stop should
+        # still run to completion.
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Shielded stop should complete shortly after the outer task was cancelled.
+        try:
+            await asyncio.wait_for(stop_finished.wait(), timeout=1.0)
+        except asyncio.TimeoutError:
+            pytest.fail(
+                "agent.stop was cancelled mid-flight; asyncio.shield is missing"
+            )
+
+    async def test_shutdown_reraises_cancelled_error(self, mock_agent):
+        """_shutdown should log and re-raise CancelledError without a second stop."""
+        stop_calls: list[float] = []
+
+        async def tracking_stop(*, timeout):
+            stop_calls.append(timeout)
+            raise asyncio.CancelledError()
+
+        mock_agent.stop = AsyncMock(side_effect=tracking_stop)
+        shutdown = GracefulShutdown(mock_agent, timeout=5.0)
+
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown._shutdown()
+
+        # Only one call — the except CancelledError branch must not kick off a
+        # second concurrent agent.stop. (Here agent.stop raises directly, so
+        # no background task exists; the shield's keep-running-in-background
+        # behavior is covered by test_shutdown_shields_agent_stop_from_cancellation.)
+        assert stop_calls == [5.0]
+
 
 class TestGracefulShutdownWaitForShutdown:
     """Test wait_for_shutdown behavior."""

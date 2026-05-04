@@ -91,3 +91,23 @@ class TestThenvoiToolErrorImport:
                 "Available participants: ['@alice']. "
                 "Please retry with mentions specifying who this message is for."
             )
+
+
+class TestFakeAgentToolsIsHubRoom:
+    """FakeAgentTools must mirror AgentTools.is_hub_room for test parity."""
+
+    def test_default_is_not_hub_room(self) -> None:
+        tools = FakeAgentTools()
+        assert tools.is_hub_room is False
+
+    def test_is_hub_room_when_room_matches(self) -> None:
+        tools = FakeAgentTools(room_id="hub-1", hub_room_id="hub-1")
+        assert tools.is_hub_room is True
+
+    def test_is_not_hub_room_when_room_differs(self) -> None:
+        tools = FakeAgentTools(room_id="other-room", hub_room_id="hub-1")
+        assert tools.is_hub_room is False
+
+    def test_is_not_hub_room_without_hub_room_id(self) -> None:
+        tools = FakeAgentTools(room_id="room-1")
+        assert tools.is_hub_room is False

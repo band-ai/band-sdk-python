@@ -20,7 +20,7 @@ from pydantic_ai import (
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
 from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
-from thenvoi.core.types import PlatformMessage
+from thenvoi.core.types import AdapterFeatures, Capability, PlatformMessage
 
 
 def make_stream_events(
@@ -154,6 +154,21 @@ class TestOnStarted:
             )
 
         assert adapter._agent is not None
+
+    @pytest.mark.asyncio
+    async def test_persists_rendered_system_prompt(self):
+        """Should persist rendered prompt for capability-gating visibility."""
+        with patch("thenvoi.adapters.pydantic_ai.Agent"):
+            adapter = PydanticAIAdapter(
+                model="openai:gpt-4o",
+                features=AdapterFeatures(capabilities={Capability.MEMORY}),
+            )
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+        assert adapter._system_prompt is not None
+        assert "Memory Tools" in adapter._system_prompt
 
     @pytest.mark.asyncio
     async def test_agent_has_tools_registered(self, mock_pydantic_agent):
@@ -523,7 +538,7 @@ class TestExecutionReporting:
                 result_messages=[],
                 tool_calls=[
                     ("thenvoi_lookup_peers", {}, "call-1"),
-                    ("thenvoi_add_participant", {"name": "Helper"}, "call-2"),
+                    ("thenvoi_add_participant", {"identifier": "Helper"}, "call-2"),
                     ("thenvoi_send_message", {"content": "Done"}, "call-3"),
                 ],
                 tool_results=[

@@ -145,13 +145,23 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
     # --- Copied from ThenvoiAnthropicAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Render system prompt after agent metadata is fetched."""
+        """Render system prompt after agent metadata is fetched.
+
+        Prompt precedence:
+          1. If ``system_prompt`` was provided at construction time, it wins —
+             ``prompt``, ``include_base_instructions``, and ``features``-based
+             capability sections are all ignored.
+          2. Otherwise, ``render_system_prompt`` renders the SDK base prompt
+             (unless ``include_base_instructions=False``) plus ``prompt``, with
+             capability sections gated on ``features.capabilities``.
+        """
         await super().on_started(agent_name, agent_description)
         self._system_prompt = self.system_prompt or render_system_prompt(
             agent_name=agent_name,
             agent_description=agent_description,
             custom_section=self._prompt or "",
             include_base_instructions=self._include_base_instructions,
+            features=self.features,
         )
         logger.info("Anthropic adapter started for agent: %s", agent_name)
 
@@ -236,7 +246,11 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
         # Get tool schemas in Anthropic format (typed helper)
         include_memory = Capability.MEMORY in self.features.capabilities
-        tool_schemas = tools.get_anthropic_tool_schemas(include_memory=include_memory)
+        include_contacts = Capability.CONTACTS in self.features.capabilities
+        tool_schemas = tools.get_anthropic_tool_schemas(
+            include_memory=include_memory,
+            include_contacts=include_contacts,
+        )
         # Merge custom tool schemas
         if self._custom_tools:
             tool_schemas = list(tool_schemas)  # Make mutable copy

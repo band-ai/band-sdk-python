@@ -1,8 +1,9 @@
 version: 2
 updates:
-  # Python dependencies
-  - package-ecosystem: "pip"
+  # Python dependencies (uv)
+  - package-ecosystem: "uv"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -12,12 +13,12 @@ updates:
       - "dependencies"
       - "python"
     reviewers:
-      - "dan-naiger-thenvoi"
-      - "yael-avioz-thenvoi"
+      - "thenvoi/integrations-team"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
       day: "monday"

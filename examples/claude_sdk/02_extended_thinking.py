@@ -68,9 +68,12 @@ async def main() -> None:
     # Load credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("claude_sdk_agent")
 
-    # Create adapter with extended thinking enabled
+    # Create adapter with extended thinking enabled.  `model="opus"` is a
+    # family alias resolved by the npm `claude` binary at runtime — always
+    # the latest Opus on the installed CLI, no version pinning.
     adapter = ClaudeSDKAdapter(
-        model="claude-sonnet-4-5-20250929",
+        model="opus",
+        fallback_model="sonnet",
         custom_section="""You are a thoughtful AI assistant that excels at
 complex problem-solving. When faced with challenging questions:
 1. Break down the problem into smaller parts

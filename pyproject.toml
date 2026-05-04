@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "thenvoi-sdk"
-version = "0.2.6"
+version = "0.2.9"
 description = "A Python SDK for Thenvoi API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,17 +22,21 @@ classifiers = [
 ]
 
 dependencies = [
-    "thenvoi-client-rest==0.0.4",
+    "thenvoi-client-rest==0.0.7",
     "phoenix-channels-python-client>=0.1.5",
-    "python-dotenv>=1.1.1",
+    "python-dotenv>=1.2.2",
     "pyyaml>=6.0",
-    "claude-agent-sdk>=0.1.16",
     "cryptography>=46.0.5",
 ]
 
 [project.optional-dependencies]
 codex = [
     "websockets>=13.0",
+    # Pinned to ==0.2.0 because CodexSdkClient relies on the private
+    # AppServerClient._request_raw API, which has no stability contract.
+    # Bump only after verifying the private API still exists on the new
+    # release (or after migrating to a public request() upstream).
+    "codex-app-server-sdk==0.2.0; python_version >= '3.12'",
 ]
 opencode = [
     "httpx>=0.24.0",
@@ -63,7 +67,7 @@ langgraph = [
     "beautifulsoup4>=4.12.0",
 ]
 claude_sdk = [
-    "claude-agent-sdk>=0.1.0",  # Requires Node.js 20+ and @anthropic-ai/claude-code CLI
+    "claude-agent-sdk>=0.1.16",  # Requires Node.js 20+ and @anthropic-ai/claude-code CLI
 ]
 parlant = [
     "parlant>=3.0.0",
@@ -71,10 +75,8 @@ parlant = [
     "werkzeug>=3.1.6",
 ]
 crewai = [
-    # Upper bound due to reliance on kickoff_async message list behavior.
-    # TODO: Test against CrewAI 1.0 when released and update upper bound if compatible.
-    "crewai>=0.80.0,<2.0.0",
-    "openai>=1.0.0",
+    "crewai==1.14.3",
+    "openai>=2.0.0",  # crewai 1.14.3 requires openai>=2.0.0
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
 ]
@@ -82,14 +84,12 @@ gemini = [
     "google-genai>=1.43.0",  # httpx is a transitive dep used for retry exception types
 ]
 a2a = [
-    "a2a-sdk>=0.3.22",  # Official A2A Python SDK
-    "protobuf>=6.33.5",
+    "a2a-sdk>=0.3.22",  # Official A2A Python SDK; brings protobuf>=5.29.5 transitively
 ]
 a2a_gateway = [
-    "a2a-sdk>=0.3.22",  # Official A2A Python SDK
+    "a2a-sdk>=0.3.22",  # Official A2A Python SDK; brings protobuf>=5.29.5 transitively
     "starlette>=0.40.0",  # HTTP server framework
     "uvicorn>=0.32.0",  # ASGI server
-    "protobuf>=6.33.5",
     "python-multipart>=0.0.22",
 ]
 a2a_gateway_demo = [
@@ -101,20 +101,20 @@ a2a_gateway_demo = [
     "click>=8.0.0",         # CLI for demo orchestrator
 ]
 acp = [
-    "agent-client-protocol>=0.8.0",  # ACP Python SDK
+    "agent-client-protocol>=0.9.0",  # ACP Python SDK
     "mcp>=1.25.0",
     "starlette>=0.40.0",
     "uvicorn>=0.32.0",
 ]
 bridge = [
     "aiohttp>=3.9,<4",      # Health check HTTP server
-    "python-dotenv>=1.0",    # Environment variable loading
+    "python-dotenv>=1.2.2",    # Environment variable loading
 ]
 bridge_agentcore = [
     # Duplicates bridge deps intentionally — pip extras cannot depend on
     # sibling extras, so we list them explicitly here.
     "aiohttp>=3.9,<4",
-    "python-dotenv>=1.0",
+    "python-dotenv>=1.2.2",
     "boto3>=1.35.0",
 ]
 google_adk = [
@@ -124,6 +124,9 @@ bridge_langchain = [
     "httpx>=0.24.0",
 ]
 
+# dev extra includes ALL framework deps for testing EXCEPT parlant,
+# which conflicts with crewai 1.14.3 (see tool.uv.conflicts below).
+# To run parlant tests, install with: uv sync --extra dev-parlant
 dev = [
     "thenvoi-testing-python>=0.1.2",
     "pytest>=7.0.0",
@@ -147,8 +150,6 @@ dev = [
     "langchain-text-splitters>=0.3.0",
     "openai>=1.0.0",
     "beautifulsoup4>=4.12.0",
-    # Include parlant for testing
-    "parlant>=3.0.0",
     # Include a2a-sdk for testing
     "a2a-sdk>=0.3.22",
     # Include a2a_gateway deps for testing
@@ -157,10 +158,10 @@ dev = [
     # Include a2a_gateway_demo deps for testing
     "click>=8.0.0",
     # Include crewai for testing
-    "crewai>=0.80.0",
+    "crewai==1.14.3",
     "nest-asyncio>=1.6.0",  # Required for CrewAI adapter sync-to-async bridging
     # Include ACP deps for testing
-    "agent-client-protocol>=0.8.0",
+    "agent-client-protocol>=0.9.0",
     "mcp>=1.25.0",
     # Include Gemini SDK for testing
     "google-genai>=1.43.0",
@@ -168,9 +169,13 @@ dev = [
     "google-adk>=1.0.0,<2",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
-    "python-dotenv>=1.0",
+    "python-dotenv>=1.2.2",
     # Include bridge_agentcore deps for testing
     "boto3>=1.35.0",
+    # Include codex-app-server SDK for testing/linting (Python 3.12+).
+    # Must match the pin in [project.optional-dependencies].codex — see the
+    # comment there for why this is ==0.2.0 and not ~=0.2.0.
+    "codex-app-server-sdk==0.2.0; python_version >= '3.12'",
     # Development tools
     "pre-commit>=3.0.0",
     "ruff>=0.8.0",
@@ -178,8 +183,29 @@ dev = [
     "commitizen>=3.13.0",
 ]
 
+# Parlant-only dev extra for testing parlant adapter in isolation.
+# Cannot be combined with dev/crewai due to opentelemetry-sdk conflicts.
+dev-parlant = [
+    "thenvoi-testing-python>=0.1.2",
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+    "pytest-rerunfailures>=14.0.0",
+    "pytest-timeout>=2.4.0",
+    "httpx>=0.24.0",
+    # Parlant and its deps
+    "parlant>=3.0.0",
+    "openai>=1.0.0",
+    "werkzeug>=3.1.6",
+    # Development tools
+    "ruff>=0.8.0",
+    "pyrefly>=0.18.0",
+]
+
 [project.scripts]
 thenvoi-acp = "thenvoi.integrations.acp.cli:entry_point"
+thenvoi-trigger = "thenvoi.cli.trigger:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -211,6 +237,29 @@ required-environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
 ]
 
+# crewai 1.14.3 and parlant >=3.0.0 are fundamentally incompatible:
+#   - parlant <3.1 requires openai <2.0, but crewai 1.14.3 requires openai >=2.0
+#   - parlant >=3.1 requires opentelemetry-sdk >=1.37, but crewai 1.14.3 pins ~=1.34.0
+# Declaring them as conflicting extras lets uv resolve each in a separate fork.
+conflicts = [
+    [
+        { extra = "crewai" },
+        { extra = "parlant" },
+    ],
+    [
+        { extra = "dev" },
+        { extra = "parlant" },
+    ],
+    [
+        { extra = "dev" },
+        { extra = "dev-parlant" },
+    ],
+    [
+        { extra = "dev-parlant" },
+        { extra = "crewai" },
+    ],
+]
+
 [tool.pyrefly]
 project_includes = [
     "src/**/*.py",              # Only check source files
@@ -219,6 +268,12 @@ project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing
     "examples/**",              # Examples use local imports
     "thenvoi-bridge/**",        # Standalone bridge app, not in src/ import root
+]
+# Parlant is in a conflict group with crewai and not installed in the default
+# venv. Rather than excluding the files (which loses type coverage in a
+# dev-parlant venv), tell pyrefly to treat missing parlant modules as Any.
+ignore-missing-imports = [
+    "parlant.*",
 ]
 # Disable the default **/.[!/.]*/** exclude so pyrefly works inside
 # .claude/worktrees/ (git worktree paths contain a hidden directory).

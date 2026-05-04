@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from thenvoi.integrations.mcp.backends import create_thenvoi_mcp_backend
 from thenvoi.runtime.tools import iter_tool_definitions
 from thenvoi.testing import FakeAgentTools
@@ -11,6 +12,10 @@ from thenvoi.testing import FakeAgentTools
 
 class TestThenvoiMcpBackends:
     @pytest.mark.asyncio
+    @pytest.mark.skipif(
+        not _HAS_CLAUDE_SDK,
+        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+    )
     async def test_create_sdk_backend(self) -> None:
         tool_definitions = list(iter_tool_definitions(include_memory=False))[:1]
 

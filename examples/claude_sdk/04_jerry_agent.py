@@ -63,7 +63,6 @@ async def main() -> None:
 
     # Create adapter with Jerry's character prompt
     adapter = ClaudeSDKAdapter(
-        model="claude-sonnet-4-5-20250929",
         custom_section=generate_jerry_prompt("Jerry"),
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
     )

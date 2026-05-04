@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from thenvoi.core.exceptions import ThenvoiConfigError
 from thenvoi.core.types import AdapterFeatures, Capability, Emit
 
@@ -84,6 +85,10 @@ class TestUniversalBooleanShims:
             )
         assert Emit.EXECUTION in adapter.features.emit
 
+    @pytest.mark.skipif(
+        not _HAS_CLAUDE_SDK,
+        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+    )
     def test_claude_sdk_enable_execution_reporting_maps_to_execution_and_thoughts(
         self,
     ) -> None:
@@ -180,6 +185,39 @@ class TestUniversalBooleanShims:
                 config=config,
                 features=AdapterFeatures(emit={Emit.EXECUTION}),
             )
+
+    def test_codex_default_config_has_task_events_without_warning(self) -> None:
+        """Default CodexAdapterConfig enables task events without firing a warning."""
+        import warnings as _warnings
+
+        from thenvoi.adapters.codex import CodexAdapter
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", DeprecationWarning)
+            adapter = CodexAdapter()
+        assert Emit.TASK_EVENTS in adapter.features.emit
+        assert Emit.EXECUTION not in adapter.features.emit
+        assert Emit.THOUGHTS not in adapter.features.emit
+
+    def test_codex_explicit_features_honored(self) -> None:
+        """Passing features= bypasses config-boolean mapping."""
+        import warnings as _warnings
+
+        from thenvoi.adapters.codex import CodexAdapter
+
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("error", DeprecationWarning)
+            adapter = CodexAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
+        assert Emit.EXECUTION in adapter.features.emit
+        assert Emit.TASK_EVENTS not in adapter.features.emit
+
+    def test_codex_supported_features_surface(self) -> None:
+        """SUPPORTED_EMIT advertises the three Codex-supported emit channels."""
+        from thenvoi.adapters.codex import CodexAdapter
+
+        assert CodexAdapter.SUPPORTED_EMIT == frozenset(
+            {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS}
+        )
 
 
 class TestSelectiveRenameShims:

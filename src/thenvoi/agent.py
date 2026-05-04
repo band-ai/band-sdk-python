@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
+from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from thenvoi.core.protocols import FrameworkAdapter, Preprocessor
 from thenvoi.core.simple_adapter import SimpleAdapter
@@ -143,6 +144,41 @@ class Agent:
             preprocessor=preprocessor,
         )
 
+    @classmethod
+    def from_config(
+        cls,
+        name: str,
+        *,
+        adapter: FrameworkAdapter | SimpleAdapter,
+        config_path: str | Path | None = None,
+        **kwargs: Any,
+    ) -> "Agent":
+        """
+        Create an Agent from YAML config + a constructed adapter.
+
+        Loads agent_id and api_key from YAML configuration.
+        The adapter is constructed by the caller in Python code.
+
+        Args:
+            name: Agent key in the YAML config file.
+            adapter: Pre-constructed framework adapter.
+            config_path: Path to agent_config.yaml. If None, searches
+                         the default locations.
+            **kwargs: Additional keyword arguments passed to create().
+
+        Returns:
+            Configured Agent instance.
+        """
+        from thenvoi.config.loader import load_agent_config
+
+        agent_id, api_key = load_agent_config(name, config_path=config_path)
+        return cls.create(
+            adapter=adapter,
+            agent_id=agent_id,
+            api_key=api_key,
+            **kwargs,
+        )
+
     @property
     def runtime(self) -> PlatformRuntime:
         return self._runtime
@@ -180,6 +216,7 @@ class Agent:
         await self._runtime.initialize()
 
         # 2. Initialize adapter with agent metadata BEFORE message processing
+        setattr(self._adapter, "_thenvoi_agent_id", self._runtime.agent_id)
         await self._adapter.on_started(
             self._runtime.agent_name,
             self._runtime.agent_description,

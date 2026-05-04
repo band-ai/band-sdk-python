@@ -6,7 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from claude_agent_sdk import ClaudeAgentOptions
+from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
+
+if _HAS_CLAUDE_SDK:
+    from claude_agent_sdk import ClaudeAgentOptions
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_CLAUDE_SDK,
+    reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+)
 
 
 @pytest.fixture

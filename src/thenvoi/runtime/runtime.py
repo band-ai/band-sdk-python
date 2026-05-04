@@ -8,7 +8,7 @@ Framework-light users can use RoomPresence or ThenvoiLink directly.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
 
 from thenvoi.platform.event import PlatformEvent
 
@@ -25,8 +25,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Factory type for custom execution implementations
-ExecutionFactory = Callable[[str, "ThenvoiLink"], Execution]
+
+class ExecutionFactory(Protocol):
+    """Factory type for custom execution implementations.
+
+    Preferred signature supports hub-room propagation:
+        factory(room_id, link, hub_room_id=<id or None>)
+
+    Legacy two-argument factories are still supported for backward compatibility.
+    """
+
+    def __call__(
+        self,
+        room_id: str,
+        link: "ThenvoiLink",
+        *,
+        hub_room_id: str | None = None,
+    ) -> Execution: ...
 
 
 class AgentRuntime:
@@ -53,8 +68,13 @@ class AgentRuntime:
         await runtime.run()
 
     Example (custom execution factory):
-        def letta_factory(room_id: str, link: ThenvoiLink) -> Execution:
-            return LettaExecution(room_id, link)
+        def letta_factory(
+            room_id: str,
+            link: ThenvoiLink,
+            *,
+            hub_room_id: str | None = None,
+        ) -> Execution:
+            return LettaExecution(room_id, link, hub_room_id=hub_room_id)
 
         runtime = AgentRuntime(
             link,
@@ -100,6 +120,11 @@ class AgentRuntime:
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
 
+        # Hub room (set by PlatformRuntime when ContactEventStrategy.HUB_ROOM
+        # is active). Forwarded to ExecutionContext so AgentTools can
+        # auto-enable contact tools for the hub-room execution path.
+        self._hub_room_id: str | None = None
+
         # RoomPresence for cross-room management
         self.presence = RoomPresence(link, room_filter)
 
@@ -110,11 +135,22 @@ class AgentRuntime:
         self.presence.on_room_joined = self._on_room_joined
         self.presence.on_room_left = self._on_room_left
         self.presence.on_room_event = self._on_room_event
+        self.presence.on_reconnected = self._on_reconnected
 
     @property
     def active_sessions(self) -> dict[str, Execution]:
         """Get active execution contexts by room_id."""
         return self.executions.copy()
+
+    def set_hub_room_id(self, hub_room_id: str | None) -> None:
+        """Register the hub-room ID so future executions can auto-enable contact tools.
+
+        Called by PlatformRuntime when ContactEventStrategy.HUB_ROOM is active
+        and the hub room has been created. AgentTools constructed for the hub
+        room (room_id == hub_room_id) will force-include contact-management
+        tool schemas regardless of adapter feature settings.
+        """
+        self._hub_room_id = hub_room_id
 
     async def start(self) -> None:
         """
@@ -185,6 +221,28 @@ class AgentRuntime:
         else:
             logger.warning("No execution for room %s, event dropped", room_id)
 
+    async def _on_reconnected(self) -> None:
+        """Trigger /next resync on all active executions after WebSocket reconnect.
+
+        Messages may have arrived while the socket was down. Each execution
+        context re-polls /next to catch anything the server didn't push.
+        """
+        logger.info(
+            "AgentRuntime: Requesting /next resync for %d execution(s) after reconnect",
+            len(self.executions),
+        )
+        for room_id, execution in list(self.executions.items()):
+            if not hasattr(execution, "request_resync"):
+                logger.debug(
+                    "Execution for room %s does not support request_resync, skipping",
+                    room_id,
+                )
+                continue
+            try:
+                await execution.request_resync()
+            except Exception as e:
+                logger.warning("Failed to request resync for room %s: %s", room_id, e)
+
     # --- Execution management ---
 
     async def _create_execution(self, room_id: str) -> Execution:
@@ -195,7 +253,16 @@ class AgentRuntime:
 
         # Use factory if provided, otherwise create ExecutionContext
         if self._execution_factory:
-            execution = self._execution_factory(room_id, self.link)
+            try:
+                execution = self._execution_factory(
+                    room_id,
+                    self.link,
+                    hub_room_id=self._hub_room_id,
+                )
+            except TypeError:
+                # Backward compatibility: support legacy factories that
+                # accept only (room_id, link).
+                execution = self._execution_factory(room_id, self.link)
         else:
             execution = ExecutionContext(
                 room_id=room_id,
@@ -205,6 +272,7 @@ class AgentRuntime:
                 agent_id=self.agent_id,
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
+                hub_room_id=self._hub_room_id,
             )
 
         self.executions[room_id] = execution

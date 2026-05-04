@@ -65,12 +65,12 @@ class AgentToolsProtocol(Protocol):
         """Send an event (tool_call, tool_result, thought, error, task)."""
         ...
 
-    async def add_participant(self, name: str, role: str = "member") -> Any:
-        """Add a participant to the current room by name."""
+    async def add_participant(self, identifier: str, role: str = "member") -> Any:
+        """Add a participant to the current room by handle, name, or ID."""
         ...
 
-    async def remove_participant(self, name: str) -> Any:
-        """Remove a participant from the current room by name."""
+    async def remove_participant(self, identifier: str) -> Any:
+        """Remove a participant from the current room by handle, name, or ID."""
         ...
 
     @property
@@ -90,20 +90,41 @@ class AgentToolsProtocol(Protocol):
         """Create a new chat room."""
         ...
 
+    async def fetch_room_context(
+        self,
+        *,
+        room_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        """Fetch room context for state-reconstruction use cases.
+
+        Returns the platform's agent-context payload: messages this agent sent
+        or messages mentioning this agent, paginated, oldest first.
+        Implementations route through the platform REST surface; wrappers
+        (audit, rate limiting, PII redaction) intercept here. Response shape:
+        ``{"data": [<message dict>...], "meta": {...}}``.
+        """
+        ...
+
     def get_tool_schemas(
-        self, format: str, *, include_memory: bool = False
+        self,
+        format: str,
+        *,
+        include_memory: bool = False,
+        include_contacts: bool = True,
     ) -> list[dict[str, Any]] | list["ToolParam"]:
         """Get tool schemas in provider-specific format (openai/anthropic)."""
         ...
 
     def get_anthropic_tool_schemas(
-        self, *, include_memory: bool = False
+        self, *, include_memory: bool = False, include_contacts: bool = True
     ) -> list["ToolParam"]:
         """Get tool schemas in Anthropic format (strongly typed)."""
         ...
 
     def get_openai_tool_schemas(
-        self, *, include_memory: bool = False
+        self, *, include_memory: bool = False, include_contacts: bool = True
     ) -> list[dict[str, Any]]:
         """Get tool schemas in OpenAI format (strongly typed)."""
         ...

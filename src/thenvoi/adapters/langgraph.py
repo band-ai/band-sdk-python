@@ -145,6 +145,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             agent_name=agent_name,
             agent_description=agent_description,
             custom_section=self.custom_section,
+            features=self.features,
         )
         logger.info("LangGraph adapter started for agent: %s", agent_name)
 
@@ -171,6 +172,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             agent_tools_to_langchain(
                 tools,
                 include_memory_tools=Capability.MEMORY in self.features.capabilities,
+                include_contacts=Capability.CONTACTS in self.features.capabilities,
             )
             + self.additional_tools
         )

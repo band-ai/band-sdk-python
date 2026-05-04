@@ -7,7 +7,8 @@ Use the new composition-based pattern instead:
     from thenvoi import Agent
     from thenvoi.adapters import ClaudeSDKAdapter
 
-    adapter = ClaudeSDKAdapter(model="claude-sonnet-4-5-20250929")
+    adapter = ClaudeSDKAdapter()  # uses npm `claude` binary's default model
+    # Or: ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.run()
 

@@ -294,6 +294,10 @@ class PlatformRuntime:
             # The room_added WebSocket event will arrive and create ExecutionContext
             # We'll mark the hub room as ready when that happens
             self._pending_hub_room_id = hub_room_id
+            # Forward to AgentRuntime so the hub-room ExecutionContext gets it
+            # at construction time, which lets AgentTools auto-enable contact
+            # tools for that room.
+            self._runtime.set_hub_room_id(hub_room_id)
             logger.info("Hub room initialized at startup: %s", hub_room_id)
 
         logger.info(
