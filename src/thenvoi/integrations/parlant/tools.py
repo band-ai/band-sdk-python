@@ -108,8 +108,8 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
         List of Parlant ToolEntry objects
     """
     try:
-        import parlant.sdk as p
-        from parlant.core.tools import ToolContext, ToolResult
+        import parlant.sdk as p  # type: ignore[missing-import]
+        from parlant.core.tools import ToolContext, ToolResult  # type: ignore[missing-import]
     except ImportError:
         logger.warning("Parlant SDK not installed, skipping tool creation")
         return []

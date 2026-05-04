@@ -176,7 +176,8 @@ async def main() -> None:
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]
-    model = config.get("model", "claude-sonnet-4-5-20250929")
+    model = config.get("model")
+    fallback_model = config.get("fallback_model")
     custom_prompt = config.get("prompt", "")
     thinking_tokens = config.get("thinking_tokens")
     tool_names = config.get("tools", [])
@@ -222,6 +223,7 @@ async def main() -> None:
 
     adapter = ClaudeSDKAdapter(
         model=model,
+        fallback_model=fallback_model,
         custom_section=final_prompt,
         max_thinking_tokens=thinking_tokens,
         enable_execution_reporting=True,
@@ -238,7 +240,9 @@ async def main() -> None:
     )
 
     logger.info("Starting agent: %s", agent_id)
-    logger.info("Model: %s", model)
+    logger.info("Model: %s", model or "auto")
+    if fallback_model:
+        logger.info("Fallback model: %s", fallback_model)
     if role:
         logger.info("Role: %s", role)
     if workspace:

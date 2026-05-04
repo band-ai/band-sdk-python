@@ -25,7 +25,7 @@ For the reverse direction (IDE connects to Thenvoi), see:
 Architecture:
     Thenvoi Platform (message arrives in room)
       -> ACPClientAdapter
-        -> acp.spawn_agent_process("cursor", "agent", "acp")
+        -> Cursor ACP subprocess
           -> Cursor CLI Agent (with Thenvoi MCP tools injected)
             -> session_update responses streamed back
         -> Posts response to Thenvoi room
@@ -61,6 +61,7 @@ from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import ACPClientAdapter
 from thenvoi.config import load_agent_config
+from thenvoi.integrations.acp.client_profiles import CursorACPClientProfile
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -99,6 +100,7 @@ async def main() -> None:
         rest_url=rest_url,
         inject_thenvoi_tools=True,
         auth_method="cursor_login",
+        profile=CursorACPClientProfile(),
     )
 
     # Create and start agent

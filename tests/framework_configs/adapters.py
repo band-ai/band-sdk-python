@@ -125,6 +125,9 @@ _crewai_import_lock = threading.Lock()
 
 _CREWAI_AFFECTED_MODULES = (
     "thenvoi.adapters.crewai",
+    "thenvoi.integrations.crewai",
+    "thenvoi.integrations.crewai.runtime",
+    "thenvoi.integrations.crewai.tools",
     "crewai",
     "crewai.tools",
     "nest_asyncio",
@@ -372,6 +375,103 @@ def _build_crewai_config() -> AdapterConfig:
     )
 
 
+@functools.lru_cache(maxsize=1)
+def _get_crewai_flow_adapter_cls() -> type:
+    """Import CrewAIFlowAdapter with mocked crewai dependencies.
+
+    The flow adapter has its own optional crewai.flow.flow import. The
+    integration tools module (used by build_thenvoi_crewai_tools when a
+    sub-Crew is constructed at runtime) imports crewai.tools, so the same
+    mock pattern as ``_get_crewai_adapter_cls`` is reused.
+    """
+    import importlib
+    import sys
+    from unittest.mock import patch
+
+    adapter_module_name = "thenvoi.adapters.crewai_flow"
+    affected = _CREWAI_AFFECTED_MODULES + (
+        adapter_module_name,
+        "thenvoi.integrations.crewai",
+        "thenvoi.integrations.crewai.runtime",
+        "thenvoi.integrations.crewai.tools",
+    )
+
+    with _crewai_import_lock:
+        saved: dict[str, Any] = {}
+        _sentinel = object()
+        for mod in affected:
+            prev = sys.modules.get(mod, _sentinel)
+            if prev is not _sentinel:
+                saved[mod] = prev
+            sys.modules.pop(mod, None)
+
+        mock_crewai = MagicMock()
+        mock_crewai.Agent = MagicMock()
+        mock_crewai.LLM = MagicMock()
+        mock_crewai_tools = MagicMock()
+        mock_crewai_tools.BaseTool = _MockBaseTool
+        mock_flow_module = MagicMock()
+        mock_flow_module.Flow = type("Flow", (), {})
+
+        mock_entries = {
+            "crewai": mock_crewai,
+            "crewai.tools": mock_crewai_tools,
+            "crewai.flow": MagicMock(flow=mock_flow_module),
+            "crewai.flow.flow": mock_flow_module,
+            "nest_asyncio": MagicMock(),
+        }
+
+        with patch.dict(sys.modules, mock_entries):
+            cls = importlib.import_module(adapter_module_name).CrewAIFlowAdapter
+
+        for mod in affected:
+            if mod in saved:
+                sys.modules[mod] = saved[mod]
+            else:
+                sys.modules.pop(mod, None)
+
+    cls._CONFORMANCE_ONLY = True
+    return cls
+
+
+def _crewai_flow_factory(**kw: Any) -> Any:
+    cls = _get_crewai_flow_adapter_cls()
+    if "flow_factory" not in kw:
+        kw["flow_factory"] = lambda: MagicMock()
+    instance = cls(**kw)
+
+    async def _guard(*_a: Any, **_k: Any) -> None:
+        raise RuntimeError(
+            "CrewAIFlow conformance instance has mocked dependencies — "
+            "use tests/adapters/test_crewai_flow_*.py fixtures for runtime tests."
+        )
+
+    instance.on_message = _guard  # type: ignore[method-assign]
+    return instance
+
+
+def _build_crewai_flow_config() -> AdapterConfig:
+    flow_cls = _get_crewai_flow_adapter_cls()
+
+    return AdapterConfig(
+        framework_id="crewai_flow",
+        display_name="CrewAIFlow",
+        adapter_factory=_crewai_flow_factory,
+        expected_initial_values={
+            "_max_delegation_rounds": _default_from_init(
+                flow_cls, "max_delegation_rounds"
+            ),
+        },
+        custom_kwargs={
+            "max_delegation_rounds": 6,
+        },
+        custom_expected={
+            "_max_delegation_rounds": 6,
+        },
+        has_custom_tools_attr=False,
+    )
+
+
 def _build_claude_sdk_config() -> AdapterConfig | None:
     from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE, ClaudeSDKAdapter
 
@@ -384,6 +484,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
         adapter_factory=_claude_sdk_factory,
         expected_initial_values={
             "model": _default_from_init(ClaudeSDKAdapter, "model"),
+            "fallback_model": _default_from_init(ClaudeSDKAdapter, "fallback_model"),
             "custom_section": _default_from_init(ClaudeSDKAdapter, "custom_section"),
             "max_thinking_tokens": _default_from_init(
                 ClaudeSDKAdapter, "max_thinking_tokens"
@@ -392,12 +493,14 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
         },
         custom_kwargs={
             "model": "claude-opus-4-20250514",
+            "fallback_model": "sonnet",
             "custom_section": "Be helpful.",
             "max_thinking_tokens": 10000,
             "permission_mode": "bypassPermissions",
         },
         custom_expected={
             "model": "claude-opus-4-20250514",
+            "fallback_model": "sonnet",
             "custom_section": "Be helpful.",
             "max_thinking_tokens": 10000,
             "permission_mode": "bypassPermissions",
@@ -622,6 +725,7 @@ _ADAPTER_CONFIG_BUILDERS: list[Callable[[], AdapterConfig]] = [
     _build_anthropic_config,
     _build_langgraph_config,
     _build_crewai_config,
+    _build_crewai_flow_config,
     _build_claude_sdk_config,
     _build_pydantic_ai_config,
     _build_parlant_config,

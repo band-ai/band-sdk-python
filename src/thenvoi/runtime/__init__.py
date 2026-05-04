@@ -36,6 +36,7 @@ from .runtime import AgentRuntime
 # Tools
 from .tools import (
     AgentTools,
+    HumanTools,
     TOOL_MODELS,
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -72,6 +73,7 @@ __all__ = [
     "AgentRuntime",
     # Tools
     "AgentTools",
+    "HumanTools",
     "TOOL_MODELS",
     "ALL_TOOL_NAMES",
     "BASE_TOOL_NAMES",

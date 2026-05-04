@@ -7,7 +7,11 @@
 agent_id: "your-agent-id"
 api_key: "your-api-key"
 
-model: claude-sonnet-4-5-20250929
+# Optional model override.  Omit to let the npm `claude` binary pick its own
+# default.  Aliases (`sonnet` / `opus` / `haiku`) resolve to the latest of
+# that family on the installed binary, so they don't go stale.
+# model: opus
+# fallback_model: sonnet
 
 # Optional: use a predefined role profile
 # Available roles: planner, reviewer

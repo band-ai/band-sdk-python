@@ -138,6 +138,16 @@ editor_agent:
 # 05_tom_agent.py - see tom_agent in Shared Agents section
 # 06_jerry_agent.py - see jerry_agent in Shared Agents section
 
+# 07_contact_and_memory_agent.py
+crewai_contact_memory_agent:
+  agent_id: ""
+  api_key: ""
+
+# 08_flow_router.py
+crewai_flow_router:
+  agent_id: ""
+  api_key: ""
+
 # =============================================================================
 # Gemini Examples
 # =============================================================================

@@ -44,6 +44,16 @@ def crewai_mocks(monkeypatch):
     mock_crewai_module.LLM = MagicMock()
     mock_crewai_tools_module.BaseTool = MockBaseTool
 
+    # Evict any cached integration modules so they pick up the freshly-mocked
+    # `nest_asyncio`/`crewai.tools` from sys.modules on next import.
+    for mod in (
+        "thenvoi.adapters.crewai",
+        "thenvoi.integrations.crewai",
+        "thenvoi.integrations.crewai.runtime",
+        "thenvoi.integrations.crewai.tools",
+    ):
+        sys.modules.pop(mod, None)
+
     monkeypatch.setitem(sys.modules, "crewai", mock_crewai_module)
     monkeypatch.setitem(sys.modules, "crewai.tools", mock_crewai_tools_module)
     monkeypatch.setitem(sys.modules, "nest_asyncio", mock_nest_asyncio)
@@ -51,8 +61,14 @@ def crewai_mocks(monkeypatch):
     try:
         yield mock_crewai_module
     finally:
-        # Clean up the adapter module to force reimport on next test
-        sys.modules.pop("thenvoi.adapters.crewai", None)
+        # Clean up adapter + integration modules to force reimport on next test
+        for mod in (
+            "thenvoi.adapters.crewai",
+            "thenvoi.integrations.crewai",
+            "thenvoi.integrations.crewai.runtime",
+            "thenvoi.integrations.crewai.tools",
+        ):
+            sys.modules.pop(mod, None)
 
 
 @pytest.fixture
@@ -984,12 +1000,12 @@ class TestToolExecution:
         assert "identifier" in schema_fields
         assert "role" in schema_fields
 
-        # thenvoi_lookup_peers should have no user-facing parameters (pagination is hardcoded)
+        # thenvoi_lookup_peers should expose pagination, but NOT room_id
         lookup_peers = next(t for t in tools if t.name == "thenvoi_lookup_peers")
         schema_fields = lookup_peers.args_schema.model_fields
         assert "room_id" not in schema_fields
-        assert "page" not in schema_fields
-        assert "page_size" not in schema_fields
+        assert "page" in schema_fields
+        assert "page_size" in schema_fields
 
     @pytest.mark.asyncio
     async def test_send_event_message_type_validation(
@@ -1129,26 +1145,30 @@ class TestExecutionReporting:
     async def test_report_tool_call_403_does_not_crash(
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
-        """send_event 403 in _report_tool_call should not propagate."""
+        """send_event 403 in EmitExecutionReporter.report_call should not propagate."""
+        from thenvoi.integrations.crewai import EmitExecutionReporter
+
         adapter = CrewAIAdapter(enable_execution_reporting=True)
+        reporter = EmitExecutionReporter(adapter.features)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
         # Should not raise
-        await adapter._report_tool_call(mock_tools, "search", {"q": "test"})
+        await reporter.report_call(mock_tools, "search", {"q": "test"})
 
     @pytest.mark.asyncio
     async def test_report_tool_result_403_does_not_crash(
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
-        """send_event 403 in _report_tool_result should not propagate."""
+        """send_event 403 in EmitExecutionReporter.report_result should not propagate."""
+        from thenvoi.integrations.crewai import EmitExecutionReporter
+
         adapter = CrewAIAdapter(enable_execution_reporting=True)
+        reporter = EmitExecutionReporter(adapter.features)
         mock_tools.send_event.side_effect = Exception("403 Forbidden")
 
         # Should not raise
-        await adapter._report_tool_result(mock_tools, "search", "some result")
-        await adapter._report_tool_result(
-            mock_tools, "search", "some error", is_error=True
-        )
+        await reporter.report_result(mock_tools, "search", "some result")
+        await reporter.report_result(mock_tools, "search", "some error", is_error=True)
 
 
 class TestLazyNestAsyncio:
@@ -1157,6 +1177,8 @@ class TestLazyNestAsyncio:
         import sys
 
         sys.modules.pop("thenvoi.adapters.crewai", None)
+        sys.modules.pop("thenvoi.integrations.crewai", None)
+        sys.modules.pop("thenvoi.integrations.crewai.runtime", None)
 
         crewai_mocks_nest = sys.modules["nest_asyncio"]
         crewai_mocks_nest.reset_mock()
@@ -1169,7 +1191,7 @@ class TestLazyNestAsyncio:
         import importlib
         import sys
 
-        module = importlib.import_module("thenvoi.adapters.crewai")
+        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
 
         module._nest_asyncio_applied = False
         nest_mock = sys.modules["nest_asyncio"]
@@ -1181,11 +1203,11 @@ class TestLazyNestAsyncio:
         assert nest_mock.apply.call_count == 1
 
     def test_nest_asyncio_lock_exists(self, CrewAIAdapter, crewai_mocks):
-        """Module should have a threading lock for thread-safe nest_asyncio application."""
+        """The integrations.crewai.runtime module owns the threading lock."""
         import importlib
         import threading
 
-        module = importlib.import_module("thenvoi.adapters.crewai")
+        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
 
         assert hasattr(module, "_nest_asyncio_lock")
         assert isinstance(module._nest_asyncio_lock, type(threading.Lock()))
@@ -1196,7 +1218,7 @@ class TestLazyNestAsyncio:
         import importlib
         import sys
 
-        module = importlib.import_module("thenvoi.adapters.crewai")
+        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
 
         module._nest_asyncio_applied = False
         nest_mock = sys.modules["nest_asyncio"]
@@ -1216,7 +1238,7 @@ class TestRunAsync:
         import importlib
         import sys
 
-        module = importlib.import_module("thenvoi.adapters.crewai")
+        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
         module._nest_asyncio_applied = False
 
         nest_mock = sys.modules["nest_asyncio"]
@@ -1225,7 +1247,7 @@ class TestRunAsync:
         async def test_coro() -> str:
             return "result"
 
-        result = module._run_async(test_coro())
+        result = module.run_async(test_coro())
 
         assert result == "result"
         nest_mock.apply.assert_called_once()
@@ -1234,7 +1256,7 @@ class TestRunAsync:
         import importlib
         import sys
 
-        module = importlib.import_module("thenvoi.adapters.crewai")
+        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
         module._nest_asyncio_applied = True
 
         nest_mock = sys.modules["nest_asyncio"]
@@ -1243,7 +1265,7 @@ class TestRunAsync:
         async def test_coro() -> str:
             return "result"
 
-        result = module._run_async(test_coro())
+        result = module.run_async(test_coro())
 
         assert result == "result"
 

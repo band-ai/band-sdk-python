@@ -16,7 +16,7 @@ posted back to the chat.
 Architecture:
     Thenvoi Platform (message arrives in room)
       -> ACPClientAdapter
-        -> acp.spawn_agent_process (ACP SDK helper)
+        -> external ACP agent subprocess/session
           -> External ACP Agent (Codex CLI, Gemini CLI, etc.)
             -> session_update responses streamed back
         -> Posts response to Thenvoi room

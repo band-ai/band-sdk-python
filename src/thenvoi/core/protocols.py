@@ -90,6 +90,23 @@ class AgentToolsProtocol(Protocol):
         """Create a new chat room."""
         ...
 
+    async def fetch_room_context(
+        self,
+        *,
+        room_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        """Fetch room context for state-reconstruction use cases.
+
+        Returns the platform's agent-context payload: messages this agent sent
+        or messages mentioning this agent, paginated, oldest first.
+        Implementations route through the platform REST surface; wrappers
+        (audit, rate limiting, PII redaction) intercept here. Response shape:
+        ``{"data": [<message dict>...], "meta": {...}}``.
+        """
+        ...
+
     def get_tool_schemas(
         self,
         format: str,

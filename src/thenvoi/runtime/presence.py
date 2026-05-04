@@ -94,6 +94,7 @@ class RoomPresence:
             None
         )
         self.on_contact_event: ContactEventHandler | None = None
+        self.on_reconnected: Callable[[], Awaitable[None]] | None = None
 
         # Internal task for consuming events from link
         self._event_task: asyncio.Task | None = None
@@ -260,74 +261,99 @@ class RoomPresence:
         This method therefore syncs local room state against the API instead of
         replaying room joins, unsubscribing rooms that disappeared while the
         socket was down and only subscribing rooms that are newly discovered.
+
+        on_reconnected is always fired at the end so callers can trigger a
+        /next resync for already-active rooms even if room reconciliation hit a
+        transient API failure.
         """
         logger.info("Handling reconnection — syncing rooms from API")
         old_rooms = self.rooms.copy()
 
         try:
-            rooms_from_api = await self._list_existing_rooms()
-        except Exception as e:
-            logger.warning("Failed to sync rooms after reconnect: %s", e)
-            return
+            try:
+                rooms_from_api = await self._list_existing_rooms()
+            except Exception as e:
+                logger.warning("Failed to sync rooms after reconnect: %s", e)
+                return
 
-        current_room_ids = {room_id for room_id, _ in rooms_from_api}
-        self.rooms = old_rooms & current_room_ids
+            current_room_ids = {room_id for room_id, _ in rooms_from_api}
+            self.rooms = old_rooms & current_room_ids
 
-        gone_rooms = old_rooms - current_room_ids
-        for room_id in gone_rooms:
-            await self.link.unsubscribe_room(room_id)
-            self.rooms.discard(room_id)
-            if self.on_room_left:
+            gone_rooms = old_rooms - current_room_ids
+            for room_id in gone_rooms:
                 try:
-                    await self.on_room_left(room_id)
+                    await self.link.unsubscribe_room(room_id)
                 except Exception as e:
                     logger.warning(
-                        "on_room_left error for %s during reconnect: %s", room_id, e
+                        "Failed to unsubscribe room %s during reconnect: %s",
+                        room_id,
+                        e,
                     )
-
-        if not self.auto_subscribe_existing:
-            return
-
-        new_rooms = [
-            (room_id, payload)
-            for room_id, payload in rooms_from_api
-            if room_id not in old_rooms
-        ]
-        if not new_rooms:
-            return
-
-        async def safe_subscribe(room_id: str, payload: dict[str, Any]) -> bool:
-            """Subscribe to a single room discovered during reconnect."""
-            try:
-                await self.link.subscribe_room(room_id)
-                self.rooms.add(room_id)
-
-                if self.on_room_joined:
-                    await self.on_room_joined(room_id, payload)
-                return True
-            except Exception as e:
-                logger.warning(
-                    "Failed to subscribe to room %s during reconnect: %s",
-                    room_id,
-                    e,
-                )
                 self.rooms.discard(room_id)
-                return False
+                if self.on_room_left:
+                    try:
+                        await self.on_room_left(room_id)
+                    except Exception as e:
+                        logger.warning(
+                            "on_room_left error for %s during reconnect: %s",
+                            room_id,
+                            e,
+                        )
 
-        results = await asyncio.gather(
-            *[safe_subscribe(room_id, payload) for room_id, payload in new_rooms],
-        )
-        succeeded = sum(1 for result in results if result)
-        failed = len(results) - succeeded
+            if not self.auto_subscribe_existing:
+                return
 
-        if failed:
-            logger.warning(
-                "Subscribed to %s rooms during reconnect (%s failed)",
-                succeeded,
-                failed,
+            new_rooms = [
+                (room_id, payload)
+                for room_id, payload in rooms_from_api
+                if room_id not in old_rooms
+            ]
+            if not new_rooms:
+                return
+
+            async def safe_subscribe(room_id: str, payload: dict[str, Any]) -> bool:
+                """Subscribe to a single room discovered during reconnect."""
+                try:
+                    await self.link.subscribe_room(room_id)
+                    self.rooms.add(room_id)
+
+                    if self.on_room_joined:
+                        await self.on_room_joined(room_id, payload)
+                    return True
+                except Exception as e:
+                    logger.warning(
+                        "Failed to subscribe to room %s during reconnect: %s",
+                        room_id,
+                        e,
+                    )
+                    self.rooms.discard(room_id)
+                    return False
+
+            results = await asyncio.gather(
+                *[safe_subscribe(room_id, payload) for room_id, payload in new_rooms],
             )
-        else:
-            logger.info("Subscribed to %s rooms during reconnect", succeeded)
+            succeeded = sum(1 for result in results if result)
+            failed = len(results) - succeeded
+
+            if failed:
+                logger.warning(
+                    "Subscribed to %s rooms during reconnect (%s failed)",
+                    succeeded,
+                    failed,
+                )
+            else:
+                logger.info("Subscribed to %s rooms during reconnect", succeeded)
+
+        finally:
+            # Notify callers so they can resync /next for messages missed during downtime
+            if self.on_reconnected:
+                try:
+                    await self.on_reconnected()
+                except asyncio.CancelledError:
+                    # Preserve structured concurrency: never swallow cancellation.
+                    raise
+                except Exception as e:
+                    logger.warning("on_reconnected callback error: %s", e)
 
     async def _handle_room_event(self, event: PlatformEvent) -> None:
         """

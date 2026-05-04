@@ -452,6 +452,33 @@ class TestACPServerAuthenticate:
         assert response is None
 
 
+class TestACPServerCloseSession:
+    """Tests for ACPServer.close_session()."""
+
+    @pytest.mark.asyncio
+    async def test_close_session_cleans_up_room_and_returns_none(self) -> None:
+        adapter = ThenvoiACPServerAdapter()
+        adapter._session_to_room["session-1"] = "room-1"
+        adapter.on_cleanup = AsyncMock()
+        server = ACPServer(adapter)
+
+        response = await server.close_session(session_id="session-1")
+
+        assert response is None
+        adapter.on_cleanup.assert_called_once_with("room-1")
+
+    @pytest.mark.asyncio
+    async def test_close_session_unknown_session_returns_none(self) -> None:
+        adapter = ThenvoiACPServerAdapter()
+        adapter.on_cleanup = AsyncMock()
+        server = ACPServer(adapter)
+
+        response = await server.close_session(session_id="unknown")
+
+        assert response is None
+        adapter.on_cleanup.assert_not_called()
+
+
 class TestACPServerExtMethod:
     """Tests for ACPServer.ext_method()."""
 

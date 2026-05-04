@@ -33,6 +33,7 @@ class FakeAgentTools:
         contacts: list[dict[str, Any]] | None = None,
         room_id: str = "room-fake",
         hub_room_id: str | None = None,
+        room_context: list[dict[str, Any]] | None = None,
     ):
         self.room_id = room_id
         self._hub_room_id = hub_room_id
@@ -41,9 +42,11 @@ class FakeAgentTools:
         self._participants: list[dict[str, Any]] = participants or []
         self._peers: list[dict[str, Any]] = peers or []
         self._contacts: list[dict[str, Any]] = contacts or []
+        self._room_context: list[dict[str, Any]] = list(room_context or [])
         self.participants_added: list[dict[str, Any]] = []
         self.participants_removed: list[dict[str, Any]] = []
         self.tool_calls: list[dict[str, Any]] = []
+        self.context_calls: list[dict[str, Any]] = []
 
     @property
     def is_hub_room(self) -> bool:
@@ -84,8 +87,19 @@ class FakeAgentTools:
     async def add_participant(
         self, identifier: str, role: str = "member"
     ) -> dict[str, Any]:
-        participant = {"id": f"p-{identifier}", "name": identifier, "role": role}
+        try:
+            participant_id = str(uuid.UUID(identifier))
+        except ValueError:
+            participant_id = f"p-{identifier}"
+        participant = {
+            "id": participant_id,
+            "name": identifier,
+            "role": role,
+            "handle": identifier,
+        }
         self.participants_added.append(participant)
+        if not any(p.get("id") == participant["id"] for p in self._participants):
+            self._participants.append(participant)
         return participant
 
     async def remove_participant(self, identifier: str) -> dict[str, Any]:
@@ -112,6 +126,40 @@ class FakeAgentTools:
 
     async def create_chatroom(self, task_id: str | None = None) -> str:
         return f"room-{uuid.uuid4()}"
+
+    def set_room_context(self, messages: list[dict[str, Any]]) -> None:
+        """Replace the in-memory room context the fake paginates over."""
+        self._room_context = list(messages)
+
+    def append_room_context(self, message: dict[str, Any]) -> None:
+        """Append a single message dict to the room context."""
+        self._room_context.append(message)
+
+    async def fetch_room_context(
+        self,
+        *,
+        room_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> dict[str, Any]:
+        """Paginate over the configured room_context list."""
+        self.context_calls.append(
+            {"room_id": room_id, "page": page, "page_size": page_size}
+        )
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_data = self._room_context[start:end]
+        total = len(self._room_context)
+        total_pages = max(1, (total + page_size - 1) // page_size) if total else 0
+        return {
+            "data": page_data,
+            "meta": {
+                "page": page,
+                "page_size": page_size,
+                "total_count": total,
+                "total_pages": total_pages,
+            },
+        }
 
     async def list_contacts(self, page: int = 1, page_size: int = 50) -> dict[str, Any]:
         return {

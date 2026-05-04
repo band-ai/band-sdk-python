@@ -19,9 +19,9 @@ from thenvoi.runtime.custom_tools import CustomToolDef
 from thenvoi.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
-    import parlant.sdk as p
-    from parlant.core.application import Application
-    from parlant.core.sessions import SessionId
+    import parlant.sdk as p  # type: ignore[missing-import]
+    from parlant.core.application import Application  # type: ignore[missing-import]
+    from parlant.core.sessions import SessionId  # type: ignore[missing-import]
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         # Get Application from Parlant container
         try:
-            from parlant.core.application import Application
+            from parlant.core.application import Application  # type: ignore[missing-import]
 
             self._app = self._server.container[Application]
             logger.info(
@@ -194,8 +194,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         )
 
         try:
-            from parlant.core.app_modules.sessions import Moderation
-            from parlant.core.sessions import EventSource
+            from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]
+            from parlant.core.sessions import EventSource  # type: ignore[missing-import]
 
             # Create customer message event (triggers processing)
             logger.info("Room %s: Creating customer message event...", room_id)
@@ -304,8 +304,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             return 0
 
         app = self._app
-        from parlant.core.app_modules.sessions import Moderation
-        from parlant.core.sessions import EventKind, EventSource
+        from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]
+        from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]
 
         # First, filter to only complete exchanges
         # A user message is only injected if it has a following assistant response
@@ -399,8 +399,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         app = self._app
         session_id_str = str(session_id)
-        from parlant.core.async_utils import Timeout
-        from parlant.core.sessions import EventKind, EventSource
+        from parlant.core.async_utils import Timeout  # type: ignore[missing-import]
+        from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]
 
         current_offset = min_offset
         max_iterations = 10  # Safety limit to prevent infinite loops

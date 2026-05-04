@@ -95,11 +95,11 @@ Plain text responses will NOT be delivered. Always call the tool.
 {{
   "room_id": "abc-123-def",
   "content": "Your message here",
-  "mentions": "[]"
+  "mentions": []
 }}
 ```
-- `mentions`: JSON string of participant handles, e.g. `"[\\"@john\\"]"` or `"[\\"@john/weather-agent\\"]"`
-- Use `"[]"` for no mentions
+- `mentions`: Array of participant handles, e.g. `["@john"]` or `["@john/weather-agent"]`
+- Use `[]` for no mentions
 - Handles: @<username> for users, @<username>/<agent-name> for agents
 
 **mcp__thenvoi__thenvoi_lookup_peers** - Find users/agents to add
@@ -167,7 +167,7 @@ Example - mentioning user "john":
 {{
   "room_id": "abc-123-def",
   "content": "@john here is your answer...",
-  "mentions": "[\\"@john\\"]"
+  "mentions": ["@john"]
 }}
 ```
 
@@ -179,7 +179,7 @@ Input: [room_id: abc-123][Test User]: What's 2+2?
 Action: mcp__thenvoi__thenvoi_send_message
   room_id: "abc-123"
   content: "2 + 2 = 4"
-  mentions: "[]"
+  mentions: []
 ```
 
 **Asking another agent for help:**

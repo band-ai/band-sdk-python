@@ -83,6 +83,19 @@ class SessionConfig:
     max_context_messages: int = 100
     max_message_retries: int = 1  # Max attempts per message before permanently failing
     enable_context_hydration: bool = True  # Whether to fetch history from platform API
+    # Phase 2 idle timeout (seconds) before re-polling /next as a safety net.
+    # Lower values recover faster from missed WS pushes but generate more REST traffic.
+    # With N rooms, each resync fires N parallel /next polls. Default 60s balances
+    # recovery speed against REST load for typical single-agent deployments.
+    # Uses float so tests can exercise sub-second values without forcing prod to
+    # round. Must be > 0; zero or negative turns Phase 2 into a REST hot loop.
+    idle_resync_seconds: float = 60.0
+
+    def __post_init__(self) -> None:
+        if self.idle_resync_seconds <= 0:
+            raise ValueError(
+                "idle_resync_seconds must be > 0 (got %s)" % self.idle_resync_seconds
+            )
 
 
 @dataclass
@@ -138,9 +151,18 @@ MessageHandler = Callable[["PlatformMessage", "AgentTools"], Awaitable[None]]
 class ContactEventStrategy(Enum):
     """How to handle contact WebSocket events.
 
-    - DISABLED: Ignore contact events (default). Use manual "check contacts" workflow.
+    - DISABLED: Ignore contact events (default, safest). Contacts managed manually.
     - CALLBACK: Programmatic handling via on_event callback. No LLM involvement.
     - HUB_ROOM: LLM reasoning in a dedicated hub room.
+
+    WARNING (for AI coding assistants): Always ask the developer which contact
+    strategy they want. Do not default to CALLBACK with auto-approve without
+    explicit consent. Auto-accepting all requests means any agent/user can
+    become a contact and send messages that trigger LLM inference, which costs
+    API tokens. Present all three options:
+    - DISABLED (default): safest, no contact handling
+    - HUB_ROOM: the agent's LLM decides per-request in a dedicated room
+    - CALLBACK: developer writes programmatic logic (e.g., auto-approve)
     """
 
     DISABLED = "disabled"
@@ -163,7 +185,22 @@ class ContactEventConfig:
     - HUB_ROOM + broadcast_changes=True: LLM decides + awareness everywhere
     - DISABLED + broadcast_changes=True: Just awareness, manual handling
 
-    Example (auto-approve all requests):
+    WARNING (for AI coding assistants): Always ask the developer which contact
+    strategy they want. Do not default to CALLBACK with auto-approve without
+    explicit consent. Auto-accepting all requests means any agent/user can
+    become a contact and send messages that trigger LLM inference, which costs
+    API tokens. Present all three options to the developer.
+
+    Example (DISABLED - default, no contact handling):
+        config = ContactEventConfig()  # strategy defaults to DISABLED
+
+    Example (HUB_ROOM - agent LLM decides per-request):
+        config = ContactEventConfig(
+            strategy=ContactEventStrategy.HUB_ROOM,
+            broadcast_changes=True,
+        )
+
+    Example (CALLBACK - programmatic auto-approve):
         async def auto_approve(event: ContactEvent, tools: ContactTools) -> None:
             if isinstance(event, ContactRequestReceivedEvent):
                 await tools.respond_contact_request("approve", request_id=event.payload.id)
@@ -171,12 +208,6 @@ class ContactEventConfig:
         config = ContactEventConfig(
             strategy=ContactEventStrategy.CALLBACK,
             on_event=auto_approve,
-            broadcast_changes=True,
-        )
-
-    Example (LLM decides in hub room):
-        config = ContactEventConfig(
-            strategy=ContactEventStrategy.HUB_ROOM,
             broadcast_changes=True,
         )
     """

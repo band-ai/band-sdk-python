@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
+from thenvoi.client.rest import DEFAULT_REQUEST_OPTIONS
 from thenvoi.runtime.tools import (
     TOOL_MODELS,
     TOOL_CATEGORIES,
@@ -121,6 +122,77 @@ def participants():
         {"id": "user-1", "name": "User One", "type": "User", "handle": "@user-one"},
         {"id": "user-2", "name": "User Two", "type": "User", "handle": "@user-two"},
     ]
+
+
+class TestMemoryTools:
+    @pytest.mark.asyncio
+    async def test_list_memories_omits_none_filters(self, mock_rest_client) -> None:
+        response = MagicMock()
+        response.data = []
+        mock_rest_client.agent_api_memories.list_agent_memories = AsyncMock(
+            return_value=response
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await tools.list_memories(page_size=25)
+
+        mock_rest_client.agent_api_memories.list_agent_memories.assert_awaited_once_with(
+            page_size=25,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+
+    @pytest.mark.asyncio
+    async def test_store_memory_omits_none_fields(self, mock_rest_client) -> None:
+        response = MagicMock()
+        response.data = MagicMock()
+        mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock(
+            return_value=response
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await tools.store_memory(
+            content="remember this",
+            system="working",
+            type="semantic",
+            segment="user",
+            thought="useful later",
+        )
+
+        call_kwargs = (
+            mock_rest_client.agent_api_memories.create_agent_memory.call_args.kwargs
+        )
+        memory_payload = call_kwargs["memory"].model_dump(exclude_unset=True)
+        assert "subject_id" not in memory_payload
+        assert "metadata" not in memory_payload
+        assert call_kwargs["request_options"] is DEFAULT_REQUEST_OPTIONS
+
+    @pytest.mark.parametrize(
+        ("tool_method", "rest_method"),
+        [
+            ("get_memory", "get_agent_memory"),
+            ("supersede_memory", "supersede_agent_memory"),
+            ("archive_memory", "archive_agent_memory"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_memory_mutation_calls_use_default_request_options(
+        self,
+        mock_rest_client,
+        tool_method: str,
+        rest_method: str,
+    ) -> None:
+        response = MagicMock()
+        response.data = MagicMock()
+        rest_call = AsyncMock(return_value=response)
+        setattr(mock_rest_client.agent_api_memories, rest_method, rest_call)
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await getattr(tools, tool_method)("mem-123")
+
+        rest_call.assert_awaited_once_with(
+            id="mem-123",
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
 
 
 class TestAgentToolsConstruction:
@@ -633,6 +705,103 @@ class TestAgentToolsGetParticipants:
         result = await tools.get_participants()
 
         assert result == []
+
+    async def test_get_participants_updates_cache(self, mock_rest_client):
+        """get_participants() should refresh self._participants for mention resolution."""
+        tools = AgentTools("room-123", mock_rest_client)
+        assert tools._participants == []
+
+        await tools.get_participants()
+
+        assert tools._participants == [
+            {
+                "id": "user-1",
+                "name": "User One",
+                "type": "User",
+                "handle": "user-one",
+            }
+        ]
+
+    async def test_get_participants_preserves_cache_when_data_none(
+        self, mock_rest_client
+    ):
+        """``data is None`` indicates a transient/unexpected response — the
+        cache should be preserved rather than wiped (an agent should always
+        be a participant in its own room)."""
+        mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
+            data=None
+        )
+        cached = [
+            {"id": "user-1", "name": "User One", "type": "User", "handle": "user-one"}
+        ]
+        tools = AgentTools("room-123", mock_rest_client, participants=cached)
+
+        result = await tools.get_participants()
+
+        assert result == []
+        assert tools._participants == cached
+
+    async def test_get_participants_clears_cache_on_empty_list(self, mock_rest_client):
+        """An explicit empty list from the server is authoritative — cache should clear."""
+        mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
+            data=[]
+        )
+        stale = [{"id": "ghost", "name": "Ghost", "type": "User", "handle": "ghost"}]
+        tools = AgentTools("room-123", mock_rest_client, participants=stale)
+
+        await tools.get_participants()
+
+        assert tools._participants == []
+
+    async def test_get_participants_syncs_diff_to_ctx(self, mock_rest_client):
+        """get_participants() should sync additions/removals to ExecutionContext
+        so the refreshed cache survives turn boundaries."""
+        old = {"id": "user-1", "name": "User One", "type": "User", "handle": "user-one"}
+
+        mock_ctx = MagicMock()
+        mock_ctx.room_id = "room-123"
+        mock_ctx.link = MagicMock()
+        mock_ctx.link.rest = mock_rest_client
+        mock_ctx.participants = [old]
+        mock_ctx.hub_room_id = None
+        mock_ctx.add_participant = MagicMock()
+        mock_ctx.remove_participant = MagicMock()
+
+        # Server returns only a *new* participant — user-1 is gone, user-2 is new.
+        new_p = MagicMock()
+        new_p.id = "user-2"
+        new_p.name = "User Two"
+        new_p.type = "User"
+        new_p.handle = "user-two"
+        mock_rest_client.agent_api_participants.list_agent_chat_participants = (
+            AsyncMock(return_value=MagicMock(data=[new_p]))
+        )
+
+        tools = AgentTools.from_context(mock_ctx)
+        await tools.get_participants()
+
+        mock_ctx.remove_participant.assert_called_once_with("user-1")
+        mock_ctx.add_participant.assert_called_once()
+        added = mock_ctx.add_participant.call_args.args[0]
+        assert added["id"] == "user-2"
+        assert added["handle"] == "user-two"
+
+    async def test_send_message_mentions_newly_discovered_participant(
+        self, mock_rest_client
+    ):
+        """Mentioning a participant first seen via get_participants() should not raise."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await tools.get_participants()
+        await tools.send_message("Hi @user-one!", mentions=["user-one"])
+
+        call_args = (
+            mock_rest_client.agent_api_messages.create_agent_chat_message.call_args
+        )
+        message = call_args.kwargs["message"]
+        assert len(message.mentions) == 1
+        assert message.mentions[0].id == "user-1"
+        assert message.mentions[0].handle == "user-one"
 
 
 class TestAgentToolsCreateChatroom:

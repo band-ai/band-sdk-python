@@ -164,18 +164,20 @@ CREWAI_DEFAULTS = {
     "complex topics into understandable insights.",
 }
 
-# When --model is left at the default "openai:gpt-4o", these examples override
-# it to a framework-appropriate model. The user can always pass --model
-# explicitly to bypass this.
+# When --model is omitted, these per-example defaults kick in.  Examples not
+# listed here (e.g. langgraph, claude_sdk) flow through with model=None so the
+# adapter / underlying CLI picks its own default.  The user can always pass
+# --model to override.
 _DEFAULT_MODELS: dict[str, str] = {
+    "pydantic_ai": "openai:gpt-4o",  # preserve previous global-default behavior
     "pydantic_ai_contacts": "anthropic:claude-sonnet-4-5",
     "contacts_auto": "anthropic:claude-sonnet-4-5",
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "claude_sdk": "claude-sonnet-4-5-20250929",
     "parlant": "gpt-4o",
     "crewai": "gpt-4o-mini",
+    # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
 
 CONTACTS_INSTRUCTIONS = """
@@ -355,7 +357,8 @@ async def run_claude_sdk_agent(
     api_key: str,
     rest_url: str,
     ws_url: str,
-    model: str,
+    model: str | None,
+    fallback_model: str | None,
     custom_section: str,
     enable_thinking: bool,
     enable_streaming: bool,
@@ -367,6 +370,7 @@ async def run_claude_sdk_agent(
 
     adapter = ClaudeSDKAdapter(
         model=model,
+        fallback_model=fallback_model,
         custom_section=custom_section,
         max_thinking_tokens=10000 if enable_thinking else None,
         features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
@@ -388,8 +392,12 @@ async def run_claude_sdk_agent(
         options.append("execution reporting")
     if contact_config:
         options.append(f"contacts={contact_config.strategy.value}")
+    if fallback_model:
+        options.append(f"fallback_model={fallback_model}")
     options_str = f" with {', '.join(options)}" if options else ""
-    logger.info("Starting Claude SDK agent with model: %s%s", model, options_str)
+    logger.info(
+        "Starting Claude SDK agent with model: %s%s", model or "auto", options_str
+    )
     await agent.run()
 
 
@@ -874,8 +882,20 @@ Examples:
     parser.add_argument(
         "--model",
         "-m",
-        default="openai:gpt-4o",
-        help="Model for Pydantic AI/Anthropic examples (default: openai:gpt-4o)",
+        default=None,
+        help=(
+            "Model override; defaults vary by example (see _DEFAULT_MODELS). "
+            "Omit for claude_sdk to let the npm claude binary pick its own default."
+        ),
+    )
+    parser.add_argument(
+        "--fallback-model",
+        default=None,
+        help=(
+            "Fallback model passed to ClaudeAgentOptions.fallback_model "
+            "(claude_sdk example only; ignored elsewhere). "
+            "The npm claude binary uses it when the primary model is unavailable."
+        ),
     )
     parser.add_argument(
         "--custom-section",
@@ -1042,11 +1062,12 @@ Examples:
             contact_config.broadcast_changes,
         )
 
-    # Resolve model: override the CLI default when the user hasn't
-    # explicitly chosen a model and the example needs a different one.
+    # Resolve model: when the user didn't pass --model, use the per-example
+    # default if listed.  May stay None (e.g. for claude_sdk and langgraph),
+    # in which case the adapter / underlying CLI picks its own default.
     model = args.model
-    if model == "openai:gpt-4o" and args.example in _DEFAULT_MODELS:
-        model = _DEFAULT_MODELS[args.example]
+    if model is None:
+        model = _DEFAULT_MODELS.get(args.example)
 
     try:
         if args.example == "langgraph":
@@ -1125,6 +1146,7 @@ Examples:
                 rest_url=rest_url,
                 ws_url=ws_url,
                 model=model,
+                fallback_model=args.fallback_model,
                 custom_section=args.custom_section,
                 enable_thinking=args.thinking,
                 enable_streaming=args.streaming,

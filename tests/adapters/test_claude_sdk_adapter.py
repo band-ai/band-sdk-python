@@ -108,6 +108,64 @@ class TestOnStarted:
             assert adapter._session_manager is not None
             assert adapter._mcp_server is not None
 
+    @pytest.mark.asyncio
+    async def test_default_options_have_no_model(self):
+        """Default ClaudeSDKAdapter() should pass model=None and fallback_model=None."""
+        adapter = ClaudeSDKAdapter()
+
+        with patch(
+            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.model is None
+            assert sdk_options.fallback_model is None
+
+    @pytest.mark.asyncio
+    async def test_explicit_model_is_forwarded(self):
+        """Explicit model= should land in ClaudeAgentOptions.model."""
+        adapter = ClaudeSDKAdapter(model="opus")
+
+        with patch(
+            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.model == "opus"
+            assert sdk_options.fallback_model is None
+
+    @pytest.mark.asyncio
+    async def test_fallback_model_is_forwarded(self):
+        """Both model and fallback_model must reach ClaudeAgentOptions.
+
+        Regression guard: catches a missed `fallback_model=self.fallback_model`
+        in the ClaudeAgentOptions construction in on_started().
+        """
+        adapter = ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
+
+        with patch(
+            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+        ) as mock_manager_class:
+            mock_manager_class.return_value = MagicMock()
+
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+
+            sdk_options = mock_manager_class.call_args[0][0]
+            assert sdk_options.model == "opus"
+            assert sdk_options.fallback_model == "sonnet"
+
 
 class TestOnMessage:
     """Tests for on_message() method (bootstrap, history, invoke and response)."""
