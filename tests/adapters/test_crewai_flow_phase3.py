@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel, Field
 
 
 @pytest.fixture(autouse=True)
@@ -40,7 +42,7 @@ from thenvoi.adapters.crewai_flow import (  # noqa: E402
     get_current_flow_runtime,
 )
 from thenvoi.converters.crewai_flow import CrewAIFlowStateConverter  # noqa: E402
-from thenvoi.core.types import AdapterFeatures, Capability, PlatformMessage  # noqa: E402
+from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage  # noqa: E402
 from thenvoi.testing.fake_tools import FakeAgentTools  # noqa: E402
 
 
@@ -496,6 +498,128 @@ class TestRuntimeTools:
         assert "create_crewai_tools" in public_attrs
 
     @pytest.mark.asyncio
+    async def test_runtime_exposes_registered_custom_tool_by_attribute(self) -> None:
+        class EmailsInput(BaseModel):
+            """Return the user's recent emails."""
+
+        def emails() -> str:
+            return "inbox text"
+
+        def factory():
+            class _Flow:
+                async def kickoff_async(self, inputs: dict | None = None) -> Any:
+                    rt = get_current_flow_runtime()
+                    assert rt is not None
+                    result = await rt.tools.emails()
+                    assert result == "inbox text"
+                    assert rt.tools.names == ("emails",)
+                    assert rt.tools.anthropic_schemas[0]["name"] == "emails"
+                    return {
+                        "decision": "direct_response",
+                        "content": result,
+                        "mentions": [],
+                    }
+
+            return _Flow()
+
+        adapter = CrewAIFlowAdapter(
+            flow_factory=factory,
+            state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
+            additional_tools=[(EmailsInput, emails)],
+        )
+        tools = FakeAgentTools()
+        await _run_one_turn(adapter, tools, _msg())
+
+        assert tools.messages_sent == [
+            {"id": "msg-0", "content": "inbox text", "mentions": ["user-1"]}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_runtime_call_tool_validates_inputs_and_supports_async_handlers(
+        self,
+    ) -> None:
+        class EchoInput(BaseModel):
+            """Echo text."""
+
+            message: str = Field(description="Message to echo")
+
+        async def echo(args: EchoInput) -> str:
+            return f"Echo: {args.message}"
+
+        captured = {}
+
+        def factory():
+            class _Flow:
+                async def kickoff_async(self, inputs: dict | None = None) -> Any:
+                    rt = get_current_flow_runtime()
+                    assert rt is not None
+                    captured["result"] = await rt.call_tool(
+                        "echo", {"message": "hello"}
+                    )
+                    with pytest.raises(ValueError, match="message"):
+                        await rt.call_tool("echo", {})
+                    return {"decision": "waiting", "reason": "done"}
+
+            return _Flow()
+
+        adapter = CrewAIFlowAdapter(
+            flow_factory=factory,
+            state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
+            additional_tools=[(EchoInput, echo)],
+        )
+        tools = FakeAgentTools()
+        await _run_one_turn(adapter, tools, _msg())
+
+        assert captured["result"] == "Echo: hello"
+
+    @pytest.mark.asyncio
+    async def test_runtime_custom_tool_reports_execution_events(self) -> None:
+        class EchoInput(BaseModel):
+            """Echo text."""
+
+            message: str = Field(description="Message to echo")
+
+        def echo(args: EchoInput) -> str:
+            return f"Echo: {args.message}"
+
+        def factory():
+            class _Flow:
+                async def kickoff_async(self, inputs: dict | None = None) -> Any:
+                    rt = get_current_flow_runtime()
+                    assert rt is not None
+                    await rt.call_tool("echo", message="hello")
+                    return {"decision": "waiting", "reason": "done"}
+
+            return _Flow()
+
+        adapter = CrewAIFlowAdapter(
+            flow_factory=factory,
+            state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
+            additional_tools=[(EchoInput, echo)],
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+        )
+        tools = FakeAgentTools()
+        await _run_one_turn(adapter, tools, _msg())
+
+        tool_events = [
+            event
+            for event in tools.events_sent
+            if event["message_type"].startswith("tool_")
+        ]
+        assert [event["message_type"] for event in tool_events] == [
+            "tool_call",
+            "tool_result",
+        ]
+        assert json.loads(tool_events[0]["content"]) == {
+            "tool": "echo",
+            "input": {"message": "hello"},
+        }
+        assert json.loads(tool_events[1]["content"]) == {
+            "tool": "echo",
+            "result": "Echo: hello",
+        }
+
+    @pytest.mark.asyncio
     async def test_ensure_participant_refreshes_snapshot_for_same_turn_delegation(
         self,
     ) -> None:
@@ -544,6 +668,49 @@ class TestRuntimeTools:
         assert tools.messages_sent == [
             {"id": "msg-0", "content": "please help", "mentions": [participant_id]}
         ]
+
+    @pytest.mark.asyncio
+    async def test_create_crewai_tools_includes_adapter_registered_custom_tools(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        mock_tools_module = MagicMock()
+        mock_tools_module.BaseTool = type("BaseTool", (), {})
+        monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
+        for mod in (
+            "thenvoi.integrations.crewai",
+            "thenvoi.integrations.crewai.runtime",
+            "thenvoi.integrations.crewai.tools",
+        ):
+            sys.modules.pop(mod, None)
+
+        class EmailsInput(BaseModel):
+            """Return the user's recent emails."""
+
+        def emails() -> str:
+            return "inbox text"
+
+        captured = {}
+
+        def factory():
+            class _Flow:
+                async def kickoff_async(self, inputs: dict | None = None) -> Any:
+                    rt = get_current_flow_runtime()
+                    assert rt is not None
+                    captured["tool_names"] = {t.name for t in rt.create_crewai_tools()}
+                    return {"decision": "waiting", "reason": "checking tools"}
+
+            return _Flow()
+
+        adapter = CrewAIFlowAdapter(
+            flow_factory=factory,
+            state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
+            additional_tools=[(EmailsInput, emails)],
+        )
+        tools = FakeAgentTools()
+        await _run_one_turn(adapter, tools, _msg())
+
+        assert "thenvoi_send_message" in captured["tool_names"]
+        assert "emails" in captured["tool_names"]
 
     @pytest.mark.asyncio
     async def test_create_crewai_tools_applies_adapter_feature_filters(

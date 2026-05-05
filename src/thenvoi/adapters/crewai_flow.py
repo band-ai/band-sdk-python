@@ -18,7 +18,7 @@ import asyncio
 import inspect
 import logging
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Awaitable, Mapping
 from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Literal, Protocol, Union, runtime_checkable
@@ -50,6 +50,12 @@ from thenvoi.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+)
+from thenvoi.runtime.custom_tools import (
+    CustomToolDef,
+    custom_tools_to_schemas,
+    execute_custom_tool,
+    get_custom_tool_name,
 )
 
 try:  # pragma: no cover - optional dependency guard
@@ -521,6 +527,84 @@ class _RoomLockEntry:
         self.cleanup_requested = False
 
 
+class CrewAIFlowCustomTools:
+    """Runtime access to adapter-registered custom tools."""
+
+    def __init__(
+        self,
+        *,
+        custom_tools: Mapping[str, CustomToolDef],
+        tools: AgentToolsProtocol,
+        features: AdapterFeatures,
+    ) -> None:
+        from thenvoi.integrations.crewai import EmitExecutionReporter
+
+        self._custom_tools = custom_tools
+        self._tools = tools
+        self._reporter = EmitExecutionReporter(features)
+
+    def __dir__(self) -> list[str]:
+        return sorted({*super().__dir__(), *self._custom_tools})
+
+    def __getattr__(self, name: str) -> Callable[..., Awaitable[Any]]:
+        if name not in self._custom_tools:
+            raise AttributeError(name)
+
+        async def _call(**arguments: Any) -> Any:
+            return await self.call_tool(name, arguments)
+
+        return _call
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(sorted(self._custom_tools))
+
+    @property
+    def anthropic_schemas(self) -> list[dict[str, Any]]:
+        return custom_tools_to_schemas(
+            [tool for _, tool in sorted(self._custom_tools.items())],
+            "anthropic",
+        )
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        if arguments is not None and kwargs:
+            raise ValueError("pass either arguments or keyword arguments, not both")
+        tool = self._custom_tools.get(name)
+        if tool is None:
+            raise ValueError(f"Unknown custom tool: {name}")
+        input_data = dict(arguments or kwargs)
+        await self._report_call(name, input_data)
+        try:
+            result = await execute_custom_tool(tool, input_data)
+        except Exception as exc:
+            await self._report_result(name, str(exc), is_error=True)
+            raise
+        await self._report_result(name, result)
+        return result
+
+    async def _report_call(self, tool_name: str, input_data: dict[str, Any]) -> None:
+        await self._reporter.report_call(self._tools, tool_name, input_data)
+
+    async def _report_result(
+        self,
+        tool_name: str,
+        result: Any,
+        *,
+        is_error: bool = False,
+    ) -> None:
+        await self._reporter.report_result(
+            self._tools,
+            tool_name,
+            result,
+            is_error=is_error,
+        )
+
+
 class CrewAIFlowRuntimeTools:
     """Read-only Flow runtime surface.
 
@@ -544,6 +628,7 @@ class CrewAIFlowRuntimeTools:
         run_id: str,
         state: CrewAIFlowSessionState,
         features: AdapterFeatures,
+        custom_tools: Mapping[str, CustomToolDef],
         fallback_loop: asyncio.AbstractEventLoop | None,
     ) -> None:
         self._room_id = room_id
@@ -555,6 +640,12 @@ class CrewAIFlowRuntimeTools:
         self._run_id = run_id
         self._state = state
         self._features = features
+        self._custom_tool_defs = dict(custom_tools)
+        self._custom_tools = CrewAIFlowCustomTools(
+            custom_tools=self._custom_tool_defs,
+            tools=tools,
+            features=features,
+        )
         self._fallback_loop = fallback_loop
 
     @property
@@ -576,6 +667,18 @@ class CrewAIFlowRuntimeTools:
     @property
     def run_id(self) -> str:
         return self._run_id
+
+    @property
+    def tools(self) -> CrewAIFlowCustomTools:
+        return self._custom_tools
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        return await self._custom_tools.call_tool(name, arguments, **kwargs)
 
     async def lookup_peers(self, page: int = 1, page_size: int = 50) -> Any:
         return await self._tools.lookup_peers(page=page, page_size=page_size)
@@ -681,11 +784,16 @@ class CrewAIFlowRuntimeTools:
         def _get_context() -> CrewAIToolContext:
             return ctx
 
+        effective_custom_tools = (
+            custom_tools
+            if custom_tools is not None
+            else list(self._custom_tool_defs.values())
+        )
         return build_thenvoi_crewai_tools(
             get_context=_get_context,
             reporter=reporter,
             features=features,
-            custom_tools=custom_tools,
+            custom_tools=effective_custom_tools,
             fallback_loop=self._fallback_loop,
         )
 
@@ -1422,6 +1530,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         sequential_chains: Mapping[str, str] | None = None,
         accept_agent_initiated: bool = False,
         history_converter: CrewAIFlowStateConverter | None = None,
+        additional_tools: list[CustomToolDef] | None = None,
         features: AdapterFeatures | None = None,
     ) -> None:
         # ---- flow_factory -------------------------------------------------
@@ -1513,6 +1622,27 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         if not isinstance(accept_agent_initiated, bool):
             raise ThenvoiConfigError("accept_agent_initiated must be a bool")
 
+        # ---- additional_tools ----------------------------------------------
+        custom_tools_by_name: dict[str, CustomToolDef] = {}
+        for tool in additional_tools or []:
+            if not isinstance(tool, tuple) or len(tool) != 2:
+                raise ThenvoiConfigError(
+                    "additional_tools must be a list of (InputModel, callable) tuples"
+                )
+            input_model, handler = tool
+            if not isinstance(input_model, type) or not issubclass(
+                input_model, BaseModel
+            ):
+                raise ThenvoiConfigError(
+                    "additional_tools InputModel values must be Pydantic BaseModel subclasses"
+                )
+            if not callable(handler):
+                raise ThenvoiConfigError("additional_tools handlers must be callable")
+            tool_name = get_custom_tool_name(input_model)
+            if tool_name in custom_tools_by_name:
+                raise ThenvoiConfigError(f"Duplicate custom tool name: {tool_name}")
+            custom_tools_by_name[tool_name] = tool
+
         # ---- history_converter --------------------------------------------
         # Default converter picks up max_run_age and the namespace once
         # on_started resolves the namespace.
@@ -1535,6 +1665,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         self._tagged_peer_policy = tagged_peer_policy
         self._sequential_chains: dict[str, str] = dict(sequential_chains or {})
         self._accept_agent_initiated = accept_agent_initiated
+        self._custom_tools = custom_tools_by_name
 
         self._tool_loop: asyncio.AbstractEventLoop | None = None
 
@@ -1854,6 +1985,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
             run_id=run_id,
             state=state,
             features=self.features,
+            custom_tools=self._custom_tools,
             fallback_loop=self._tool_loop,
         )
         token = _current_flow_runtime.set(runtime)
