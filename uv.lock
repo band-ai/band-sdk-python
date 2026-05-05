@@ -1000,19 +1000,6 @@ wheels = [
 ]
 
 [[package]]
-name = "codex-app-server-sdk"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic", marker = "python_full_version >= '3.12' or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-parlant')" },
-    { name = "websockets", version = "16.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-parlant')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7e/32/09a7ebe4c8dac1f1ec3c48d0e0c101bad02940d2c3723e201498f718f430/codex_app_server_sdk-0.2.0.tar.gz", hash = "sha256:8736982aa44ef2471f1554e55514f665df9e5844a1467fb893b513500a918f5a", size = 134139, upload-time = "2026-02-24T22:11:41.921Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/24/25d5b73fec89a374c52c4ac05ead04bdc27ff854feec5d1b1788b78c56d8/codex_app_server_sdk-0.2.0-py3-none-any.whl", hash = "sha256:b204f76f808451579fa0ecbc3b590009c9d418eab43687793d67c3506f9d0c41", size = 52353, upload-time = "2026-02-24T22:11:40.593Z" },
-]
-
-[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -8220,7 +8207,6 @@ claude-sdk = [
     { name = "claude-agent-sdk" },
 ]
 codex = [
-    { name = "codex-app-server-sdk", marker = "python_full_version >= '3.12' or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-parlant')" },
     { name = "websockets", version = "15.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12' or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-parlant')" },
     { name = "websockets", version = "16.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12' or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-parlant')" },
 ]
@@ -8238,7 +8224,6 @@ dev = [
     { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" } },
-    { name = "codex-app-server-sdk", marker = "python_full_version >= '3.12'" },
     { name = "commitizen" },
     { name = "crewai" },
     { name = "google-adk", version = "1.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version >= '3.12' and extra == 'extra-11-thenvoi-sdk-dev') or (python_full_version < '3.12' and extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (python_full_version < '3.12' and extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra != 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra != 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra != 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra != 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-parlant')" },
@@ -8340,8 +8325,6 @@ requires-dist = [
     { name = "claude-agent-sdk", marker = "extra == 'claude-sdk'", specifier = ">=0.1.16" },
     { name = "click", marker = "extra == 'a2a-gateway-demo'", specifier = ">=8.0.0" },
     { name = "click", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "codex-app-server-sdk", marker = "python_full_version >= '3.12' and extra == 'codex'", specifier = "==0.2.0" },
-    { name = "codex-app-server-sdk", marker = "python_full_version >= '3.12' and extra == 'dev'", specifier = "==0.2.0" },
     { name = "commitizen", marker = "extra == 'dev'", specifier = ">=3.13.0" },
     { name = "crewai", marker = "extra == 'crewai'", specifier = "==1.14.3" },
     { name = "crewai", marker = "extra == 'dev'", specifier = "==1.14.3" },
