@@ -325,6 +325,7 @@ class TestOnMessage:
         mock_create.assert_called_once_with(
             model=mock_llm,
             tools=[platform_tool, additional_tool],
+            system_prompt=adapter._system_prompt,
             checkpointer=mock_checkpointer,
         )
 
@@ -497,39 +498,6 @@ class TestOnMessage:
         assert "TestBot" in seen_prompts[0]
 
     @pytest.mark.asyncio
-    async def test_includes_system_prompt_on_bootstrap(
-        self, sample_message, mock_tools, mock_llm, mock_checkpointer
-    ):
-        """Should include system prompt on session bootstrap."""
-        adapter = LangGraphAdapter(
-            llm=mock_llm,
-            checkpointer=mock_checkpointer,
-        )
-        await adapter.on_started("TestBot", "Test bot")
-
-        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
-        adapter.graph_factory = MagicMock(return_value=mock_graph)
-
-        with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
-        ) as mock_convert:
-            mock_convert.return_value = []
-
-            await adapter.on_message(
-                msg=sample_message,
-                tools=mock_tools,
-                history=[],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-
-            messages = captured_inputs[0].get("messages", [])
-            system_msg = [m for m in messages if m[0] == "system"]
-            assert system_msg == [("system", adapter._system_prompt)]
-
-    @pytest.mark.asyncio
     async def test_injects_history_on_bootstrap(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
@@ -607,12 +575,14 @@ class TestOnMessage:
     async def test_no_extra_system_messages_with_history_and_participants(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
-        """Regression: participants_msg must not create additional system messages.
+        """Regression: participants_msg must not be injected as a system role message.
 
-        When is_session_bootstrap=True with history AND participants_msg, the old code
-        produced [system, user, assistant, system, user] which Anthropic rejects.
-        The fix injects metadata as user messages with [System]: prefix so only the
-        initial system prompt is a system-role message.
+        Anthropic rejects multiple system messages and many providers lose prompt
+        cache savings when extra system messages appear mid-conversation. The
+        adapter delivers the system prompt out-of-band (via
+        ``create_agent(system_prompt=...)`` or
+        ``THENVOI_SYSTEM_PROMPT_CONFIG_KEY``) and inlines metadata as user
+        messages with a ``[System]:`` prefix.
         """
         adapter = LangGraphAdapter(
             llm=mock_llm,
@@ -645,11 +615,11 @@ class TestOnMessage:
 
             messages = captured_inputs[0].get("messages", [])
 
-            # Only the system prompt should be a system message
+            # No system-role messages in the input; create_agent prepends one.
             system_msgs = [
                 m for m in messages if isinstance(m, tuple) and m[0] == "system"
             ]
-            assert len(system_msgs) == 1  # just the system prompt
+            assert len(system_msgs) == 0
 
             # Participants info should be a user message with prefix
             user_msgs = [m for m in messages if isinstance(m, tuple) and m[0] == "user"]
@@ -708,11 +678,12 @@ class TestOnMessage:
     async def test_no_duplicate_system_prompt_on_re_bootstrap(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
-        """Regression: re-bootstrap must not inject duplicate bootstrap context.
+        """Regression: re-bootstrap must not re-hydrate history.
 
-        When an agent reconnects, a new ExecutionContext triggers is_session_bootstrap
-        again, but the checkpointer already has the system prompt and prior turns
-        from the first bootstrap. Injecting either again would duplicate graph state.
+        When an agent reconnects, a new ExecutionContext triggers
+        is_session_bootstrap again, but the checkpointer already has prior
+        turns from the first bootstrap. Re-pushing history would duplicate
+        graph state.
         """
         adapter = LangGraphAdapter(
             llm=mock_llm,
@@ -728,11 +699,11 @@ class TestOnMessage:
         ) as mock_convert:
             mock_convert.return_value = []
 
-            # First bootstrap - should include system prompt
+            # First bootstrap with history.
             await adapter.on_message(
                 msg=sample_message,
                 tools=mock_tools,
-                history=[],
+                history=[HumanMessage(content="hydrated prior turn")],
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=True,
@@ -740,11 +711,12 @@ class TestOnMessage:
             )
 
             first_messages = captured_inputs[0]["messages"]
-            system_msgs = [m for m in first_messages if m[0] == "system"]
-            assert len(system_msgs) == 1
+            assert any(
+                getattr(m, "content", None) == "hydrated prior turn"
+                for m in first_messages
+            )
 
-            # Second bootstrap (reconnection) should not inject system prompt or
-            # hydrated history because the checkpointer already has prior state.
+            # Second bootstrap (reconnection) should not re-hydrate history.
             await adapter.on_message(
                 msg=sample_message,
                 tools=mock_tools,
@@ -756,10 +728,6 @@ class TestOnMessage:
             )
 
             second_messages = captured_inputs[1]["messages"]
-            system_msgs = [m for m in second_messages if m[0] == "system"]
-            assert len(system_msgs) == 0, (
-                f"Re-bootstrap should not inject system prompt, got: {system_msgs}"
-            )
             assert all(
                 getattr(m, "content", None) != "hydrated prior turn"
                 for m in second_messages
@@ -989,7 +957,8 @@ class TestStaticGraph:
 
     @pytest.mark.asyncio
     async def test_static_graph_with_participants_msg(self, sample_message, mock_tools):
-        """Should inject system prompt and participants with static graph."""
+        """Static graph default: adapter should NOT inject its own system prompt
+        (the user's graph owns the prompt). Participants and user message still go in."""
         mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
 
         adapter = LangGraphAdapter(graph=mock_graph)
@@ -1015,9 +984,8 @@ class TestStaticGraph:
             system_msgs = [
                 m for m in messages if isinstance(m, tuple) and m[0] == "system"
             ]
-            assert len(system_msgs) == 1
+            assert len(system_msgs) == 0
 
             user_msgs = [m for m in messages if isinstance(m, tuple) and m[0] == "user"]
             assert len(user_msgs) == 2
             assert "[System]: Alice joined" in user_msgs[0][1]
-            assert "Hello, agent!" in user_msgs[1][1]

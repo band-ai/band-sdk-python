@@ -15,6 +15,9 @@ from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from thenvoi.converters.langchain import LangChainHistoryConverter, LangChainMessages
+from thenvoi.integrations.langgraph.config_keys import (
+    THENVOI_SYSTEM_PROMPT_CONFIG_KEY,
+)
 from thenvoi.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
@@ -25,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 _BOOTSTRAP_TRACKING_WARN_THRESHOLD = 1000
-THENVOI_SYSTEM_PROMPT_CONFIG_KEY = "thenvoi_system_prompt"
 
 
 class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
@@ -46,6 +48,20 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             return create_agent(llm, tools, checkpointer=checkpointer)
 
         adapter = LangGraphAdapter(graph_factory=graph_factory)
+
+    System prompt:
+        The adapter renders a system prompt from ``prompt_template`` /
+        ``custom_section`` / agent metadata in :meth:`on_started`.
+
+        - Simple pattern: the prompt is passed straight to
+          ``create_agent(system_prompt=...)``, which prepends it on every
+          model call. Nothing special to do.
+        - Advanced pattern (``graph=`` / ``graph_factory=``): your graph owns
+          its prompt. The adapter still surfaces the rendered prompt on
+          ``config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY]`` so a
+          custom node can read and inject it if you want the Band-rendered
+          prompt without re-implementing :func:`render_system_prompt`. See
+          ``examples/langgraph/09_research_ops_orchestrator.py``.
 
     Example:
         from langchain_openai import ChatOpenAI
@@ -103,22 +119,27 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             features=features,
         )
 
-        # Simple pattern: create graph_factory from llm + checkpointer
+        # Simple pattern: build a graph_factory that delegates to create_agent
+        # and forwards the adapter-rendered system prompt via system_prompt=,
+        # which create_agent prepends fresh on every model call. The factory
+        # is invoked once per room (then cached by graph caching upstream),
+        # by which point on_started has populated self._system_prompt.
         if llm is not None and graph_factory is None and graph is None:
             from langchain.agents import create_agent
 
             additional = additional_tools or []
+            adapter_self = self
 
-            def _make_graph_factory(llm, checkpointer, additional):
-                def factory(thenvoi_tools: List[Any]) -> Pregel:
-                    all_tools = thenvoi_tools + additional
-                    return create_agent(
-                        model=llm, tools=all_tools, checkpointer=checkpointer
-                    )
+            def factory(thenvoi_tools: List[Any]) -> Pregel:
+                all_tools = thenvoi_tools + additional
+                return create_agent(
+                    model=llm,
+                    tools=all_tools,
+                    system_prompt=adapter_self._system_prompt or None,
+                    checkpointer=checkpointer,
+                )
 
-                return factory
-
-            graph_factory = _make_graph_factory(llm, checkpointer, additional)
+            graph_factory = factory
             # Clear additional_tools since they're now baked into the factory
             additional_tools = []
 
@@ -134,9 +155,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         self.additional_tools = additional_tools or []
         self.recursion_limit = recursion_limit
         self._system_prompt: str = ""
-        # Track rooms that have already been bootstrapped to avoid injecting
-        # duplicate system prompts when the checkpointer retains state across
-        # reconnections (on_cleanup doesn't clear checkpointer state).
+        # Track rooms that have already had hydrated history pushed in, so
+        # reconnects that re-deliver bootstrap don't duplicate messages on
+        # top of the checkpointer's already-stored state.
         self._bootstrapped_rooms: OrderedDict[str, None] = OrderedDict()
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -191,11 +212,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # Build messages
         messages: list[Any] = []
 
-        # Session bootstrap: inject system prompt and any hydrated history.
-        # Only inject the system prompt once per room so reconnects do not
-        # duplicate the adapter-owned prompt in graph state.
+        # Session bootstrap: hydrate any history we have from the platform
+        # exactly once per room. After that, the LangGraph checkpointer owns
+        # conversation state and we just append the new turn. The system
+        # prompt is delivered to the model via create_agent(system_prompt=...)
+        # for the simple pattern (re-applied fresh on every model call by
+        # langchain) and via THENVOI_SYSTEM_PROMPT_CONFIG_KEY in config for
+        # custom graphs that want to read it themselves.
         if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
-            messages.append(("system", self._system_prompt))
             if history:
                 messages.extend(history)  # Already converted by history_converter
             if len(self._bootstrapped_rooms) >= _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
@@ -242,7 +266,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             try:
                 await tools.send_event(content=f"Error: {e}", message_type="error")
             except Exception:
-                pass
+                logger.exception("Failed to report error event for message %s", msg.id)
             raise
 
     async def _handle_stream_event(
