@@ -268,6 +268,29 @@ class TestOnMessage:
         assert "TestBot" in configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY]
 
     @pytest.mark.asyncio
+    async def test_graph_factory_receives_adapter_system_prompt_config(
+        self, sample_message, mock_tools
+    ):
+        mock_graph, _captured_inputs, captured_kwargs = make_capture_graph()
+        adapter = LangGraphAdapter(graph_factory=MagicMock(return_value=mock_graph))
+        await adapter.on_started("TestBot", "Test bot")
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        configurable = captured_kwargs[0]["config"]["configurable"]
+        assert configurable["thread_id"] == "room-123"
+        assert configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY] == adapter._system_prompt
+        assert "TestBot" in configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY]
+
+    @pytest.mark.asyncio
     async def test_simple_factory_passes_platform_and_additional_tools(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
@@ -502,10 +525,9 @@ class TestOnMessage:
                 room_id="room-123",
             )
 
-            # System prompt should be in messages
             messages = captured_inputs[0].get("messages", [])
             system_msg = [m for m in messages if m[0] == "system"]
-            assert len(system_msg) >= 1
+            assert system_msg == [("system", adapter._system_prompt)]
 
     @pytest.mark.asyncio
     async def test_injects_history_on_bootstrap(

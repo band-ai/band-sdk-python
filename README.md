@@ -395,6 +395,8 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 | `04_calculator_as_tool.py` | Wraps a LangGraph as a tool using `graph_as_tool()` |
 | `05_rag_as_tool.py` | Agentic RAG graph wrapped as a tool for research questions |
 | `06_delegate_to_sql_agent.py` | SQL agent with its own LLM and database tools as a subgraph |
+| `07_tom_agent.py` | Character agent that can look up and invite another agent into the room |
+| `08_jerry_agent.py` | Paired character agent for multi-agent room demos |
 | `09_research_ops_orchestrator.py` | Custom multi-node graph with platform events, calculator delegation, and SQL delegation |
 
 LangGraph examples that use OpenAI default to `gpt-4o`; set `OPENAI_MODEL` to use a different OpenAI-compatible model.
@@ -637,9 +639,11 @@ Edit `.env` and `agent_config.yaml` with your actual values.
 # LangGraph examples
 docker compose up langgraph-01-simple
 docker compose up langgraph-02-custom-tools
+docker compose up langgraph-03-custom-personality
 docker compose up langgraph-04-calculator
 docker compose up langgraph-05-rag
 docker compose up langgraph-06-sql-agent
+docker compose up langgraph-09-research-ops
 
 # Rebuild after changes
 docker compose up --build langgraph-01-simple

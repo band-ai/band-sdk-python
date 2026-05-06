@@ -79,7 +79,6 @@ def get_weather(city: str) -> str:
 
 async def main() -> None:
     load_dotenv()
-
     ws_url = os.getenv("THENVOI_WS_URL")
     rest_url = os.getenv("THENVOI_REST_URL")
 

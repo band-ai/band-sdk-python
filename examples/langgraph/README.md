@@ -40,8 +40,6 @@ agent = Agent.create(
     adapter=adapter,
     agent_id="your-agent-id",
     api_key="your-api-key",
-    ws_url="wss://app.thenvoi.com/api/v1/socket/websocket",
-    rest_url="https://app.thenvoi.com",
 )
 await agent.run()
 ```
@@ -65,6 +63,13 @@ await agent.run()
 | `04_calculator_as_tool.py` | **Calculator sub-graph** - Delegates math to calculator sub-graph using `graph_as_tool()`. |
 | `05_rag_as_tool.py` | **RAG sub-graph** - Delegates research to RAG sub-graph with vector search. |
 | `06_delegate_to_sql_agent.py` | **SQL sub-agent** - Delegates database queries to SQL expert. |
+
+### Multi-Agent and Custom Graphs
+
+| File | Description |
+|------|-------------|
+| `07_tom_agent.py` | Character agent that can look up and invite another agent into the room. |
+| `08_jerry_agent.py` | Paired character agent for multi-agent room demos. |
 | `09_research_ops_orchestrator.py` | **Custom operations graph** - Multi-node graph with platform events, calculator delegation, and SQL delegation. |
 
 **Supporting files:** `standalone_calculator.py`, `standalone_rag.py`, `standalone_sql_agent.py`
@@ -180,6 +185,10 @@ uv run --extra langgraph python examples/langgraph/05_rag_as_tool.py
 
 # SQL sub-agent
 uv run --extra langgraph python examples/langgraph/06_delegate_to_sql_agent.py
+
+# Multi-agent character demos
+uv run --extra langgraph python examples/langgraph/07_tom_agent.py
+uv run --extra langgraph python examples/langgraph/08_jerry_agent.py
 
 # Custom operations graph with platform reporting and subgraph delegation
 uv run --extra langgraph python examples/langgraph/09_research_ops_orchestrator.py

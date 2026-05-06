@@ -39,10 +39,7 @@ from standalone_sql_agent import create_sql_agent, download_chinook_db
 from thenvoi import Agent
 from thenvoi.adapters import LangGraphAdapter
 from thenvoi.config import load_agent_config
-from thenvoi.integrations.langgraph import (
-    THENVOI_SYSTEM_PROMPT_CONFIG_KEY,
-    graph_as_tool,
-)
+from thenvoi.integrations.langgraph import graph_as_tool
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -100,19 +97,7 @@ def build_orchestrator_factory(llm: BaseChatModel) -> Any:
         all_tools = thenvoi_tools + [calculator_tool, sql_tool]
         model_with_tools = llm.bind_tools(all_tools)
 
-        def inject_adapter_prompt(state: MessagesState, config: dict[str, Any]) -> dict:
-            adapter_prompt = config.get("configurable", {}).get(
-                THENVOI_SYSTEM_PROMPT_CONFIG_KEY, ""
-            )
-            messages = state.get("messages", [])
-            if not adapter_prompt or any(
-                isinstance(message, SystemMessage) and message.content == adapter_prompt
-                for message in messages
-            ):
-                return {"messages": []}
-            return {"messages": [SystemMessage(content=adapter_prompt)]}
-
-        async def analyst(state: MessagesState) -> dict:
+        async def analyst(state: MessagesState) -> dict[str, list[Any]]:
             messages = [SystemMessage(content=ORCHESTRATOR_INSTRUCTIONS)] + state[
                 "messages"
             ]
@@ -120,11 +105,9 @@ def build_orchestrator_factory(llm: BaseChatModel) -> Any:
             return {"messages": [response]}
 
         builder = StateGraph(MessagesState)
-        builder.add_node("inject_adapter_prompt", inject_adapter_prompt)
         builder.add_node("analyst", analyst)
         builder.add_node("tools", ToolNode(all_tools))
-        builder.add_edge(START, "inject_adapter_prompt")
-        builder.add_edge("inject_adapter_prompt", "analyst")
+        builder.add_edge(START, "analyst")
         builder.add_conditional_edges(
             "analyst",
             tools_condition,
