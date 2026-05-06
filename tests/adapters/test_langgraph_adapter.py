@@ -9,6 +9,7 @@ patterns, system prompt rendering, stream event handling, and error handling.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -769,10 +770,9 @@ class TestOnCleanup:
         )
         await adapter.on_started("TestBot", "Test bot")
 
-        # Pre-fill rooms one below threshold
-        adapter._bootstrapped_rooms = {
-            f"room-{i}" for i in range(_BOOTSTRAP_TRACKING_WARN_THRESHOLD - 1)
-        }
+        adapter._bootstrapped_rooms = OrderedDict(
+            (f"room-{i}", None) for i in range(_BOOTSTRAP_TRACKING_WARN_THRESHOLD)
+        )
 
         mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
@@ -785,7 +785,7 @@ class TestOnCleanup:
         ):
             mock_convert.return_value = []
 
-            # Bootstrap a new room that hits the threshold exactly
+            # Bootstrap a new room after the tracking cache is full
             await adapter.on_message(
                 msg=sample_message,
                 tools=mock_tools,
@@ -797,15 +797,16 @@ class TestOnCleanup:
             )
 
             mock_logger.warning.assert_any_call(
-                "Bootstrap tracking has %d rooms; "
-                "on_cleanup may not be called for all rooms",
+                "Bootstrap tracking reached %d rooms; evicting oldest room %s",
                 _BOOTSTRAP_TRACKING_WARN_THRESHOLD,
+                "room-0",
             )
 
-            # No eviction — all rooms should still be tracked
             assert (
                 len(adapter._bootstrapped_rooms) == _BOOTSTRAP_TRACKING_WARN_THRESHOLD
             )
+            assert "room-0" not in adapter._bootstrapped_rooms
+            assert "room-new" in adapter._bootstrapped_rooms
 
     @pytest.mark.asyncio
     async def test_cleanup_resets_bootstrap_tracking(self, mock_llm, mock_checkpointer):
@@ -815,7 +816,7 @@ class TestOnCleanup:
             checkpointer=mock_checkpointer,
         )
 
-        adapter._bootstrapped_rooms.add("room-123")
+        adapter._bootstrapped_rooms["room-123"] = None
         await adapter.on_cleanup("room-123")
         assert "room-123" not in adapter._bootstrapped_rooms
 

@@ -8,33 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from thenvoi.integrations.langgraph.langchain_tools import agent_tools_to_langchain
-
-
-BASE_TOOL_NAMES = {
-    "thenvoi_send_message",
-    "thenvoi_add_participant",
-    "thenvoi_remove_participant",
-    "thenvoi_lookup_peers",
-    "thenvoi_get_participants",
-    "thenvoi_create_chatroom",
-    "thenvoi_send_event",
-}
-
-CONTACT_TOOL_NAMES = {
-    "thenvoi_list_contacts",
-    "thenvoi_add_contact",
-    "thenvoi_remove_contact",
-    "thenvoi_list_contact_requests",
-    "thenvoi_respond_contact_request",
-}
-
-MEMORY_TOOL_NAMES = {
-    "thenvoi_list_memories",
-    "thenvoi_store_memory",
-    "thenvoi_get_memory",
-    "thenvoi_supersede_memory",
-    "thenvoi_archive_memory",
-}
+from thenvoi.runtime.tools import CHAT_TOOL_NAMES, CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 
 
 def make_tools() -> MagicMock:
@@ -69,7 +43,7 @@ def test_base_tools_are_always_exposed() -> None:
         for tool in agent_tools_to_langchain(make_tools(), include_contacts=False)
     }
 
-    assert BASE_TOOL_NAMES <= tool_names
+    assert CHAT_TOOL_NAMES <= tool_names
     assert CONTACT_TOOL_NAMES.isdisjoint(tool_names)
     assert MEMORY_TOOL_NAMES.isdisjoint(tool_names)
 

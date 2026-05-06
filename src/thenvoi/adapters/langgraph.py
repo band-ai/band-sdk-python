@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import warnings
+from collections import OrderedDict
 from typing import ClassVar, TYPE_CHECKING, Any, Callable, List
 
 from langgraph.pregel import Pregel
@@ -135,7 +136,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # Track rooms that have already been bootstrapped to avoid injecting
         # duplicate system prompts when the checkpointer retains state across
         # reconnections (on_cleanup doesn't clear checkpointer state).
-        self._bootstrapped_rooms: set[str] = set()
+        self._bootstrapped_rooms: OrderedDict[str, None] = OrderedDict()
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render system prompt after agent metadata is fetched."""
@@ -195,13 +196,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         if is_session_bootstrap:
             if self.graph_factory and room_id not in self._bootstrapped_rooms:
                 messages.append(("system", self._system_prompt))
-                self._bootstrapped_rooms.add(room_id)
-                if len(self._bootstrapped_rooms) == _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
+                if len(self._bootstrapped_rooms) >= _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
+                    evicted_room_id, _ = self._bootstrapped_rooms.popitem(last=False)
                     logger.warning(
-                        "Bootstrap tracking has %d rooms; "
-                        "on_cleanup may not be called for all rooms",
-                        len(self._bootstrapped_rooms),
+                        "Bootstrap tracking reached %d rooms; evicting oldest room %s",
+                        _BOOTSTRAP_TRACKING_WARN_THRESHOLD,
+                        evicted_room_id,
                     )
+                self._bootstrapped_rooms[room_id] = None
             if history:
                 messages.extend(history)  # Already converted by history_converter
 
@@ -273,7 +275,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up LangGraph state for a room."""
-        self._bootstrapped_rooms.discard(room_id)
+        self._bootstrapped_rooms.pop(room_id, None)
         if not self.graph_factory:
             return
         # Future graph_factory-specific cleanup (e.g. checkpointer) goes here
