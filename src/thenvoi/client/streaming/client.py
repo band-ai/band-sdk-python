@@ -99,6 +99,10 @@ class RoomDeletedPayload(BaseModel):
     id: str
 
 
+async def _noop_room_deleted(_: RoomDeletedPayload) -> None:
+    return None
+
+
 class ParticipantAddedPayload(BaseModel):
     """Payload for participant_added events."""
 
@@ -332,7 +336,9 @@ class WebSocketClient:
         chat_room_id: str,
         on_participant_added: Callable[[ParticipantAddedPayload], Awaitable[None]],
         on_participant_removed: Callable[[ParticipantRemovedPayload], Awaitable[None]],
-        on_room_deleted: Callable[[RoomDeletedPayload], Awaitable[None]],
+        on_room_deleted: Callable[
+            [RoomDeletedPayload], Awaitable[None]
+        ] = _noop_room_deleted,
     ):
         """Subscribe to room participants topic with async callbacks"""
         topic = f"room_participants:{chat_room_id}"

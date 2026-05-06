@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -355,6 +356,67 @@ async def test_accepts_valid_participant_removed_payload():
     await client._handle_events(MockMessage(), {"participant_removed": test_callback})
     assert isinstance(received_payload, ParticipantRemovedPayload)
     assert received_payload.id == "p-123"
+
+
+async def test_join_room_participants_channel_allows_omitted_room_deleted_handler():
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    client.client = AsyncMock()
+
+    async def on_participant_added(payload):
+        pass
+
+    async def on_participant_removed(payload):
+        pass
+
+    await client.join_room_participants_channel(
+        "room-123",
+        on_participant_added=on_participant_added,
+        on_participant_removed=on_participant_removed,
+    )
+
+    client.client.subscribe_to_topic.assert_awaited_once()
+    topic, message_handler = client.client.subscribe_to_topic.await_args.args
+    assert topic == "room_participants:room-123"
+
+    class MockMessage:
+        event = "room_deleted"
+        payload = {"id": "room-123"}
+
+    await message_handler(MockMessage())
+
+
+async def test_join_room_participants_channel_routes_room_deleted_handler():
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    client.client = AsyncMock()
+    received_payload = None
+
+    async def on_participant_added(payload):
+        pass
+
+    async def on_participant_removed(payload):
+        pass
+
+    async def on_room_deleted(payload):
+        nonlocal received_payload
+        received_payload = payload
+
+    await client.join_room_participants_channel(
+        "room-123",
+        on_participant_added=on_participant_added,
+        on_participant_removed=on_participant_removed,
+        on_room_deleted=on_room_deleted,
+    )
+
+    _, message_handler = client.client.subscribe_to_topic.await_args.args
+
+    class MockMessage:
+        event = "room_deleted"
+        payload = {"id": "room-123"}
+
+    await message_handler(MockMessage())
+
+    assert isinstance(received_payload, RoomDeletedPayload)
+    assert received_payload.id == "room-123"
 
 
 @pytest.mark.parametrize(
