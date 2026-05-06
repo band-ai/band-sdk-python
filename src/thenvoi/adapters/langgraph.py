@@ -15,9 +15,6 @@ from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from thenvoi.converters.langchain import LangChainHistoryConverter, LangChainMessages
-from thenvoi.integrations.langgraph.config_keys import (
-    THENVOI_SYSTEM_PROMPT_CONFIG_KEY,
-)
 from thenvoi.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
@@ -60,10 +57,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
           ``state["messages"]`` directly.
         - Advanced pattern (``graph=`` / ``graph_factory=``): your graph
           should also read ``state["messages"]`` (or whatever your state
-          schema names them). The rendered prompt is also surfaced on
-          ``config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY]`` as a
-          secondary escape hatch for graphs whose state is not
-          ``MessagesState``-shaped. See
+          schema names them). See
           ``examples/langgraph/09_research_ops_orchestrator.py``.
 
     Example:
@@ -215,9 +209,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # Session bootstrap: prepend the rendered system prompt and hydrate
         # platform history exactly once per room. After that, the LangGraph
         # checkpointer carries the system message and prior turns forward and
-        # we just append the new user turn. The prompt is also surfaced on
-        # config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY] for graphs
-        # whose state is not MessagesState-shaped.
+        # we just append the new user turn.
         if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
             if self._system_prompt:
                 messages.append(("system", self._system_prompt))
@@ -252,7 +244,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 config={
                     "configurable": {
                         "thread_id": room_id,
-                        THENVOI_SYSTEM_PROMPT_CONFIG_KEY: self._system_prompt,
                     },
                     "recursion_limit": self.recursion_limit,
                 },

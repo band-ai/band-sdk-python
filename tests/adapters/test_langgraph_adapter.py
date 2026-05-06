@@ -17,10 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from thenvoi.adapters.langgraph import (
-    THENVOI_SYSTEM_PROMPT_CONFIG_KEY,
-    LangGraphAdapter,
-)
+from thenvoi.adapters.langgraph import LangGraphAdapter
 from thenvoi.core.types import PlatformMessage
 
 
@@ -239,16 +236,15 @@ class TestOnMessage:
         assert captured_kwargs[0]["config"] == {
             "configurable": {
                 "thread_id": "room-123",
-                THENVOI_SYSTEM_PROMPT_CONFIG_KEY: adapter._system_prompt,
             },
             "recursion_limit": 17,
         }
 
     @pytest.mark.asyncio
-    async def test_static_graph_receives_adapter_system_prompt_config(
+    async def test_static_graph_receives_bootstrap_system_prompt(
         self, sample_message, mock_tools
     ):
-        mock_graph, _captured_inputs, captured_kwargs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter = LangGraphAdapter(graph=mock_graph)
         await adapter.on_started("TestBot", "Test bot")
 
@@ -262,16 +258,15 @@ class TestOnMessage:
             room_id="room-123",
         )
 
-        configurable = captured_kwargs[0]["config"]["configurable"]
-        assert configurable["thread_id"] == "room-123"
-        assert configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY] == adapter._system_prompt
-        assert "TestBot" in configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY]
+        messages = captured_inputs[0]["messages"]
+        assert messages[0] == ("system", adapter._system_prompt)
+        assert "TestBot" in messages[0][1]
 
     @pytest.mark.asyncio
-    async def test_graph_factory_receives_adapter_system_prompt_config(
+    async def test_graph_factory_receives_bootstrap_system_prompt(
         self, sample_message, mock_tools
     ):
-        mock_graph, _captured_inputs, captured_kwargs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter = LangGraphAdapter(graph_factory=MagicMock(return_value=mock_graph))
         await adapter.on_started("TestBot", "Test bot")
 
@@ -285,10 +280,9 @@ class TestOnMessage:
             room_id="room-123",
         )
 
-        configurable = captured_kwargs[0]["config"]["configurable"]
-        assert configurable["thread_id"] == "room-123"
-        assert configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY] == adapter._system_prompt
-        assert "TestBot" in configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY]
+        messages = captured_inputs[0]["messages"]
+        assert messages[0] == ("system", adapter._system_prompt)
+        assert "TestBot" in messages[0][1]
 
     @pytest.mark.asyncio
     async def test_simple_factory_passes_platform_and_additional_tools(
@@ -457,21 +451,18 @@ class TestOnMessage:
         assert "tool_result" in message_types
 
     @pytest.mark.asyncio
-    async def test_real_compiled_graph_receives_adapter_prompt_config(
+    async def test_real_compiled_graph_receives_bootstrap_system_prompt(
         self, sample_message, mock_tools
     ):
-        from langchain_core.runnables import RunnableConfig
+        from langchain_core.messages import SystemMessage
         from langgraph.graph import END, START, MessagesState, StateGraph
 
         seen_prompts: list[str] = []
 
-        def capture_prompt(
-            state: MessagesState, config: RunnableConfig
-        ) -> dict[str, list]:
-            _ = state
-            seen_prompts.append(
-                config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY]
-            )
+        def capture_prompt(state: MessagesState) -> dict[str, list]:
+            for m in state["messages"]:
+                if isinstance(m, SystemMessage):
+                    seen_prompts.append(m.content)
             return {"messages": []}
 
         builder = StateGraph(MessagesState)
