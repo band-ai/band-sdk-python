@@ -133,7 +133,7 @@ User: "tell nvidia about reward hacking"
 
     # Create adapter with RAG tool
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-4o"),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o")),
         checkpointer=InMemorySaver(),
         additional_tools=[rag_tool],
         custom_section=rag_instructions,

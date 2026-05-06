@@ -72,7 +72,7 @@ But speak like a PIRATE while doin' it! Arrr!
 
     # Create adapter with pirate personality
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-4o"),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o")),
         checkpointer=InMemorySaver(),
         custom_section=pirate_personality,
     )

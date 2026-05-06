@@ -396,6 +396,8 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 | `05_rag_as_tool.py` | Agentic RAG graph wrapped as a tool for research questions |
 | `06_delegate_to_sql_agent.py` | SQL agent with its own LLM and database tools as a subgraph |
 
+LangGraph examples that use OpenAI default to `gpt-4o`; set `OPENAI_MODEL` to use a different OpenAI-compatible model.
+
 ### Pydantic AI (`examples/pydantic_ai/`)
 
 | File | Description |

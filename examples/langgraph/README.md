@@ -16,7 +16,7 @@ uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[langgraph]"
 ```
 
 **Configuration:**
-- Set `OPENAI_API_KEY` for LangGraph examples that use OpenAI models.
+- Set `OPENAI_API_KEY` for LangGraph examples that use OpenAI models. Optionally set `OPENAI_MODEL` to override the default `gpt-4o` model.
 - Set `THENVOI_REST_URL=https://app.thenvoi.com` and `THENVOI_WS_URL=wss://app.thenvoi.com/api/v1/socket/websocket` for live production runs.
 - Configure agent credentials in `agent_config.yaml` using the keys shown in `agent_config.yaml.example`.
 
