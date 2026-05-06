@@ -122,14 +122,6 @@ def build_orchestrator_factory(llm: BaseChatModel) -> Any:
 
 async def main() -> None:
     load_dotenv()
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
-
-    if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
-
     agent_id, api_key = load_agent_config("research_ops_agent")
     model = os.getenv("OPENAI_MODEL", "gpt-4o")
 
@@ -145,8 +137,6 @@ async def main() -> None:
         adapter=adapter,
         agent_id=agent_id,
         api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting custom LangGraph operations orchestrator...")
