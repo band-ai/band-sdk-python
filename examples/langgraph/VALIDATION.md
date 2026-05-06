@@ -94,13 +94,13 @@ If the model endpoint is OpenAI-compatible but not direct OpenAI, describe it as
 | Lint | `uv run ruff check .` | local | PASS | 2026-05-06 | All checks passed. |
 | Type check | `uv run pyrefly check` | local | PASS | 2026-05-06 | 0 errors. |
 | Standalone calculator | `standalone_calculator.py` | local runtime | PASS | 2026-05-06 | Addition, multiplication, and divide-by-zero path exercised. |
-| Standalone RAG | direct `create_rag_graph()` invoke | OpenAI-compatible hosted endpoint | BLOCKED | 2026-05-06 | Embeddings request returned retryable HTTP 502 from hosted endpoint. |
+| Standalone RAG | direct `create_rag_graph()` invoke | direct OpenAI key for embeddings/chat | PASS | 2026-05-06 | Built vector store and returned `AIMessage` answer about reward hacking. OpenAI-compatible hosted endpoint separately returned retryable HTTP 502 for embeddings. |
 | Standalone SQL | `standalone_sql_agent.py` | OpenAI-compatible hosted endpoint | PASS | 2026-05-06 | HTTP 200 model calls; listed tables, Employee columns, and employee count. |
 | Docker config | `docker compose config` | Docker | PASS | 2026-05-06 | Compose renders all LangGraph services, including research ops. |
 | Production E2E | `tests/e2e/adapters/ -k langgraph` | production | PASS | 2026-05-06 | 2 passed, 10 deselected; REST auth and WebSocket agent runtime exercised. |
-| Live RAG example | `05_rag_as_tool.py` | production | TODO | TODO | TODO |
-| Live SQL example | `06_delegate_to_sql_agent.py` | production | TODO | TODO | TODO |
-| Live operations orchestrator | `09_research_ops_orchestrator.py` | production | TODO | TODO | TODO |
+| Live RAG example | `05_rag_as_tool.py` | production | NOT RUN | 2026-05-06 | Direct graph smoke passed; long-running room example still needs a manual trigger if required. |
+| Live SQL example | `06_delegate_to_sql_agent.py` | production | COVERED BY COMPLEX SMOKE | 2026-05-06 | Production nested-graph smoke used SQL graph-as-tool and platform send-message. |
+| Live operations orchestrator | `09_research_ops_orchestrator.py` | production | NOT RUN | 2026-05-06 | Example compiles; production E2E and previous complex nested graph smoke cover the same adapter/tool surfaces. |
 
 ## Production evidence fields
 
