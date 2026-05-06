@@ -18,7 +18,6 @@ one platform tool surface.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 import logging
 from dataclasses import dataclass
@@ -48,7 +47,11 @@ from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.tool_filter import filter_tool_schemas
 from thenvoi.core.types import AdapterFeatures, Capability, Emit
 from thenvoi.integrations.crewai.runtime import run_async
-from thenvoi.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from thenvoi.runtime.custom_tools import (
+    CustomToolDef,
+    execute_custom_tool,
+    get_custom_tool_name,
+)
 from thenvoi.runtime.tools import get_tool_description
 
 logger = logging.getLogger(__name__)
@@ -959,14 +962,8 @@ def _make_custom_tools(
                 def _run(self, *_args: Any, **kwargs: Any) -> Any:
                     async def execute(_tools: AgentToolsProtocol) -> str:
                         try:
-                            validated = model.model_validate(kwargs)
                             await reporter.report_call(_tools, _tool_name, kwargs)
-
-                            if inspect.iscoroutinefunction(handler):
-                                result = await handler(validated)
-                            else:
-                                result = handler(validated)
-
+                            result = await execute_custom_tool((model, handler), kwargs)
                             await reporter.report_result(_tools, _tool_name, result)
                             if isinstance(result, str):
                                 return json.dumps(
