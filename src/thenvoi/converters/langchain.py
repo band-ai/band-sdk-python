@@ -78,7 +78,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
                     tool_name = event.get("name", "unknown")
                     output = event.get("data", {}).get("output", "")
 
-                    tool_call_id = self._extract_tool_call_id(str(output))
+                    tool_call_id = self._extract_tool_call_id(output)
                     if not tool_call_id:
                         tool_call_id = event.get("run_id", "unknown")
 
@@ -127,8 +127,37 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
 
         return messages
 
-    @staticmethod
-    def _extract_tool_call_id(output: str) -> str | None:
-        """Extract tool_call_id from tool output string."""
-        match = re.search(r"tool_call_id='([^']+)'", output)
+    @classmethod
+    def _extract_tool_call_id(cls, output: Any) -> str | None:
+        """Extract tool_call_id from current structured outputs or older string reprs."""
+        if isinstance(output, dict):
+            value = output.get("tool_call_id")
+            if isinstance(value, str):
+                return value
+
+            messages = output.get("messages")
+            if isinstance(messages, list):
+                for message in messages:
+                    extracted = cls._extract_tool_call_id(message)
+                    if extracted:
+                        return extracted
+
+            nested_output = output.get("output")
+            if nested_output is not None:
+                return cls._extract_tool_call_id(nested_output)
+
+            return None
+
+        if isinstance(output, list):
+            for item in output:
+                extracted = cls._extract_tool_call_id(item)
+                if extracted:
+                    return extracted
+            return None
+
+        value = getattr(output, "tool_call_id", None)
+        if isinstance(value, str):
+            return value
+
+        match = re.search(r"tool_call_id='([^']+)'", str(output))
         return match.group(1) if match else None

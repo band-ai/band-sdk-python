@@ -65,6 +65,45 @@ class TestToolCallPairing:
         assert isinstance(result[1], ToolMessage)
         assert result[1].tool_call_id == "call_abc123"
 
+    def test_pairs_tool_call_with_structured_tool_result(self):
+        converter = LangChainHistoryConverter()
+        raw = [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "thenvoi_send_message",
+                        "run_id": "run-123",
+                        "data": {"input": {"content": "Hello!", "mentions": []}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_end",
+                        "name": "thenvoi_send_message",
+                        "run_id": "run-456",
+                        "data": {
+                            "output": {
+                                "content": "OK",
+                                "tool_call_id": "call_structured",
+                            },
+                        },
+                    }
+                ),
+                "message_type": "tool_result",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert result[0].tool_calls[0]["id"] == "call_structured"
+        assert result[1].tool_call_id == "call_structured"
+
     def test_uses_run_id_when_tool_call_id_not_found(self):
         """Should fall back to run_id when tool_call_id not in output."""
         converter = LangChainHistoryConverter()
@@ -251,6 +290,35 @@ class TestExtractToolCallId:
         result = LangChainHistoryConverter._extract_tool_call_id(output)
 
         assert result == "call_123abc"
+
+    def test_extracts_tool_call_id_from_structured_output(self):
+        output = {"content": "OK", "tool_call_id": "call_structured"}
+
+        result = LangChainHistoryConverter._extract_tool_call_id(output)
+
+        assert result == "call_structured"
+
+    def test_extracts_tool_call_id_from_nested_structured_output(self):
+        output = {"messages": [{"content": "OK", "tool_call_id": "call_nested"}]}
+
+        result = LangChainHistoryConverter._extract_tool_call_id(output)
+
+        assert result == "call_nested"
+
+    def test_ignores_unrelated_id_fields(self):
+        output = {"id": "message-id", "content": "OK"}
+
+        result = LangChainHistoryConverter._extract_tool_call_id(output)
+
+        assert result is None
+
+    def test_extracts_tool_call_id_from_message_like_object(self):
+        class ToolOutput:
+            tool_call_id = "call_object"
+
+        result = LangChainHistoryConverter._extract_tool_call_id(ToolOutput())
+
+        assert result == "call_object"
 
 
 class TestMixedHistory:

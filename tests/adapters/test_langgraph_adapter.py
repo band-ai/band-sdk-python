@@ -25,21 +25,22 @@ from thenvoi.core.types import PlatformMessage
 # ---------------------------------------------------------------------------
 
 
-def make_capture_graph() -> tuple[MagicMock, list[dict[str, Any]]]:
-    """Create a mock graph that captures inputs sent to ``astream_events``.
-
-    Returns the mock graph and a list that will collect each call's input dict.
-    """
+def make_capture_graph() -> tuple[
+    MagicMock, list[dict[str, Any]], list[dict[str, Any]]
+]:
+    """Create a mock graph that captures inputs and kwargs sent to ``astream_events``."""
     captured_inputs: list[dict[str, Any]] = []
+    captured_kwargs: list[dict[str, Any]] = []
 
     async def capture_astream_events(graph_input: dict, **kwargs: Any):
         captured_inputs.append(dict(graph_input))
+        captured_kwargs.append(dict(kwargs))
         return
         yield  # make it an async generator
 
     mock_graph = MagicMock()
     mock_graph.astream_events = capture_astream_events
-    return mock_graph, captured_inputs
+    return mock_graph, captured_inputs, captured_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +179,7 @@ class TestOnMessage:
         )
         await adapter.on_started("TestBot", "Test bot")
 
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         # Patch at the module where it's imported
@@ -202,6 +203,207 @@ class TestOnMessage:
             assert "messages" in captured_inputs[0]
 
     @pytest.mark.asyncio
+    async def test_forwards_stream_config_and_version(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            recursion_limit=17,
+        )
+        await adapter.on_started("TestBot", "Test bot")
+
+        mock_graph, _captured_inputs, captured_kwargs = make_capture_graph()
+        adapter.graph_factory = MagicMock(return_value=mock_graph)
+
+        with patch(
+            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+        ) as mock_convert:
+            mock_convert.return_value = []
+
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert captured_kwargs[0]["version"] == "v2"
+        assert captured_kwargs[0]["config"] == {
+            "configurable": {"thread_id": "room-123"},
+            "recursion_limit": 17,
+        }
+
+    @pytest.mark.asyncio
+    async def test_simple_factory_passes_platform_and_additional_tools(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        additional_tool = MagicMock(name="additional_tool")
+        created_graph, _captured_inputs, _captured_kwargs = make_capture_graph()
+
+        with patch("langchain.agents.create_agent") as mock_create:
+            mock_create.return_value = created_graph
+            adapter = LangGraphAdapter(
+                llm=mock_llm,
+                checkpointer=mock_checkpointer,
+                additional_tools=[additional_tool],
+            )
+            await adapter.on_started("TestBot", "Test bot")
+
+            with patch(
+                "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            ) as mock_convert:
+                platform_tool = MagicMock(name="platform_tool")
+                mock_convert.return_value = [platform_tool]
+
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        mock_create.assert_called_once_with(
+            model=mock_llm,
+            tools=[platform_tool, additional_tool],
+            checkpointer=mock_checkpointer,
+        )
+
+    @pytest.mark.asyncio
+    async def test_feature_capabilities_control_tool_groups(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        from thenvoi.core.types import AdapterFeatures, Capability
+
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            features=AdapterFeatures(
+                capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY})
+            ),
+        )
+        await adapter.on_started("TestBot", "Test bot")
+
+        mock_graph, _captured_inputs, _captured_kwargs = make_capture_graph()
+        adapter.graph_factory = MagicMock(return_value=mock_graph)
+
+        with patch(
+            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+        ) as mock_convert:
+            mock_convert.return_value = []
+
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        mock_convert.assert_called_once_with(
+            mock_tools,
+            include_memory_tools=True,
+            include_contacts=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_enable_memory_tools_shim_enables_memory_capability(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        with pytest.warns(DeprecationWarning):
+            adapter = LangGraphAdapter(
+                llm=mock_llm,
+                checkpointer=mock_checkpointer,
+                enable_memory_tools=True,
+            )
+        await adapter.on_started("TestBot", "Test bot")
+
+        mock_graph, _captured_inputs, _captured_kwargs = make_capture_graph()
+        adapter.graph_factory = MagicMock(return_value=mock_graph)
+
+        with patch(
+            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+        ) as mock_convert:
+            mock_convert.return_value = []
+
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        assert mock_convert.call_args.kwargs["include_memory_tools"] is True
+
+    @pytest.mark.asyncio
+    async def test_real_compiled_graph_emits_tool_events(
+        self, sample_message, mock_tools
+    ):
+        from langchain_core.tools import tool
+        from langgraph.graph import END, START, MessagesState, StateGraph
+        from langgraph.prebuilt import ToolNode
+
+        @tool
+        async def record_value(value: str) -> str:
+            """Record a value and return it."""
+            return f"recorded:{value}"
+
+        def request_tool(state: MessagesState) -> dict[str, list[AIMessage]]:
+            return {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "call-real-langgraph",
+                                "name": "record_value",
+                                "args": {"value": "ok"},
+                            }
+                        ],
+                    )
+                ]
+            }
+
+        builder = StateGraph(MessagesState)
+        builder.add_node("request_tool", request_tool)
+        builder.add_node("tools", ToolNode([record_value]))
+        builder.add_edge(START, "request_tool")
+        builder.add_edge("request_tool", "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+
+        adapter = LangGraphAdapter(graph=graph)
+        await adapter.on_started("TestBot", "Test bot")
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        message_types = [
+            call.kwargs["message_type"]
+            for call in mock_tools.send_event.await_args_list
+        ]
+        assert "tool_call" in message_types
+        assert "tool_result" in message_types
+
+    @pytest.mark.asyncio
     async def test_includes_system_prompt_on_bootstrap(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
@@ -212,7 +414,7 @@ class TestOnMessage:
         )
         await adapter.on_started("TestBot", "Test bot")
 
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
@@ -251,7 +453,7 @@ class TestOnMessage:
             AIMessage(content="Previous answer"),
         ]
 
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
@@ -284,7 +486,7 @@ class TestOnMessage:
         )
         await adapter.on_started("TestBot", "Test bot")
 
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
@@ -331,7 +533,7 @@ class TestOnMessage:
             AIMessage(content="Previous answer"),
         ]
 
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
@@ -378,7 +580,7 @@ class TestOnMessage:
         )
         await adapter.on_started("TestBot", "Test bot")
 
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
@@ -426,7 +628,7 @@ class TestOnMessage:
         )
         await adapter.on_started("TestBot", "Test bot")
 
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
@@ -572,7 +774,7 @@ class TestOnCleanup:
             f"room-{i}" for i in range(_BOOTSTRAP_TRACKING_WARN_THRESHOLD - 1)
         }
 
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with (
@@ -666,7 +868,7 @@ class TestStaticGraph:
     @pytest.mark.asyncio
     async def test_uses_static_graph_when_provided(self, sample_message, mock_tools):
         """Should use static graph instead of factory when provided."""
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
 
         adapter = LangGraphAdapter(graph=mock_graph)
         await adapter.on_started("TestBot", "Test bot")
@@ -696,7 +898,7 @@ class TestStaticGraph:
         Static graphs don't inject a system prompt (no graph_factory).
         participants_msg is injected as a user message with [System]: prefix.
         """
-        mock_graph, captured_inputs = make_capture_graph()
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
 
         adapter = LangGraphAdapter(graph=mock_graph)
         await adapter.on_started("TestBot", "Test bot")

@@ -14,7 +14,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg, tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from pydantic import BaseModel
 
 try:
@@ -153,11 +153,11 @@ Always be helpful and provide clear responses to the user."""
         self.memory = MemorySaver()
         self.tools = [call_peer_agent]
 
-        self.graph = create_react_agent(
+        self.graph = create_agent(
             self.model,
             tools=self.tools,
             checkpointer=self.memory,
-            prompt=system_prompt,
+            system_prompt=system_prompt,
             response_format=(self.FORMAT_INSTRUCTION, ResponseFormat),
         )
 

@@ -391,7 +391,7 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 |------|-------------|
 | `01_simple_agent.py` | Minimal setup with `Agent.create()` and LangGraphAdapter |
 | `02_custom_tools.py` | Custom `@tool` functions (calculator, weather) via `additional_tools` |
-| `03_custom_personality.py` | Custom behavior via `custom_instructions` |
+| `03_custom_personality.py` | Custom behavior via `custom_section` |
 | `04_calculator_as_tool.py` | Wraps a LangGraph as a tool using `graph_as_tool()` |
 | `05_rag_as_tool.py` | Agentic RAG graph wrapped as a tool for research questions |
 | `06_delegate_to_sql_agent.py` | SQL agent with its own LLM and database tools as a subgraph |
@@ -634,6 +634,9 @@ Edit `.env` and `agent_config.yaml` with your actual values.
 # LangGraph examples
 docker compose up langgraph-01-simple
 docker compose up langgraph-02-custom-tools
+docker compose up langgraph-04-calculator
+docker compose up langgraph-05-rag
+docker compose up langgraph-06-sql-agent
 
 # Rebuild after changes
 docker compose up --build langgraph-01-simple
@@ -853,8 +856,12 @@ All adapters automatically have access to:
 | `thenvoi_send_message` | Send a message to the chat room |
 | `thenvoi_add_participant` | Add a user or agent to the room |
 | `thenvoi_remove_participant` | Remove a participant from the room |
-| `thenvoi_get_participants` | List current room participants |
 | `thenvoi_lookup_peers` | List users/agents that can be added |
+| `thenvoi_get_participants` | List current room participants |
+| `thenvoi_create_chatroom` | Create a new chat room |
+| `thenvoi_send_event` | Send a non-message event such as thought, task, or error |
+
+Contact and memory tools are available for adapters that enable the corresponding capabilities.
 
 ---
 
@@ -921,7 +928,12 @@ from thenvoi.integrations.langgraph import graph_as_tool
 calculator_tool = graph_as_tool(
     calculator_graph,
     name="calculator",
-    description="Evaluates math expressions"
+    description="Evaluates math expressions",
+    input_schema={
+        "operation": "add, subtract, multiply, or divide",
+        "a": "First number",
+        "b": "Second number",
+    },
 )
 
 adapter = LangGraphAdapter(

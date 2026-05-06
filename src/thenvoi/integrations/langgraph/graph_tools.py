@@ -1,11 +1,13 @@
 """Utilities for wrapping LangGraph graphs as tools."""
 
-import uuid
+from __future__ import annotations
+
 import json
 import logging
-from typing import Any, Callable, Dict, Optional
+import uuid
+from typing import Annotated, Any, Callable
 from pydantic import create_model
-from langchain_core.tools import BaseTool, tool
+from langchain_core.tools import BaseTool, InjectedToolArg, tool
 from langchain_core.runnables import RunnableConfig
 from langgraph.pregel import Pregel
 
@@ -16,8 +18,8 @@ def graph_as_tool(
     graph: Pregel,
     name: str,
     description: str,
-    input_schema: Dict[str, Any],
-    result_formatter: Optional[Callable[[Dict], Any]] = None,
+    input_schema: dict[str, Any],
+    result_formatter: Callable[[dict[str, Any]], Any] | None = None,
     isolate_thread: bool = True,
 ) -> BaseTool:
     """
@@ -43,7 +45,7 @@ def graph_as_tool(
                      The LLM will be instructed to provide values for these parameters,
                      which are then passed directly to graph.ainvoke(kwargs)
         result_formatter: Optional function to transform the graph's final state into a useful result
-                         for the main agent. Signature: (state: Dict) -> Any
+                         for the main agent. Signature: (state: dict) -> Any
 
                          **Why use this?**
                          Graphs return their entire final state, which often contains internal details
@@ -145,9 +147,11 @@ def graph_as_tool(
     full_description = f"{description}\n\nParameters:\n{schema_desc}"
 
     # Create the wrapper function with the proper name
-    async def graph_tool_wrapper(**kwargs) -> str:
-        # Extract config (contains room context from main agent)
-        config: RunnableConfig = kwargs.pop("config", {})
+    async def graph_tool_wrapper(
+        config: Annotated[RunnableConfig, InjectedToolArg], **kwargs
+    ) -> str:
+        # LangChain injects RunnableConfig for tool calls when the wrapper accepts
+        # a config parameter. This carries the main room's thread_id.
         main_thread_id = config.get("configurable", {}).get("thread_id")
 
         logger.debug("[%s] Invoking subgraph with inputs: %s", name, kwargs)

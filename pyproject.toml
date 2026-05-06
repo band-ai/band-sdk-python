@@ -88,6 +88,7 @@ a2a_gateway_demo = [
     "starlette>=0.40.0",    # HTTP server
     "uvicorn>=0.32.0",      # ASGI server
     "langgraph>=1.0.0",     # LangGraph for orchestrator agent
+    "langchain>=1.0.0",      # create_agent API
     "langchain-openai>=0.3.0",  # OpenAI model for LLM
     "click>=8.0.0",         # CLI for demo orchestrator
 ]

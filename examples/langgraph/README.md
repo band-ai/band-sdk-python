@@ -16,8 +16,9 @@ uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[langgraph]"
 ```
 
 **Configuration:**
-- Set `OPENAI_API_KEY` environment variable
-- Configure agent credentials (see main [README](../../README.md#creating-external-agents-on-thenvoi-platform))
+- Set `OPENAI_API_KEY` for LangGraph examples that use OpenAI models.
+- Set `THENVOI_REST_URL=https://app.thenvoi.com` and `THENVOI_WS_URL=wss://app.thenvoi.com/api/v1/socket/websocket` for live production runs.
+- Configure agent credentials in `agent_config.yaml` using the keys shown in `agent_config.yaml.example`.
 
 ---
 
@@ -56,7 +57,7 @@ await agent.run()
 |------|-------------|
 | `01_simple_agent.py` | **Minimal setup** - Just LLM + platform tools. Great starting point. |
 | `02_custom_tools.py` | **Custom tools** - Built-in agent + calculator and weather tools using `additional_tools`. |
-| `03_custom_personality.py` | **Custom personality** - Built-in agent + pirate personality using `custom_instructions`. |
+| `03_custom_personality.py` | Custom personality - built-in agent plus pirate behavior using `custom_section`. |
 
 ### Advanced: Delegating to Sub-Agents
 
@@ -108,7 +109,12 @@ calculator_graph = create_calculator_graph()
 calculator_tool = graph_as_tool(
     calculator_graph,
     name="calculator",
-    description="Evaluates math expressions"
+    description="Evaluates math expressions",
+    input_schema={
+        "operation": "add, subtract, multiply, or divide",
+        "a": "First number",
+        "b": "Second number",
+    },
 )
 
 # Add to main agent
@@ -142,10 +148,14 @@ All LangGraph agents automatically have access to:
 | `thenvoi_send_message` | Send a message to the chat room |
 | `thenvoi_add_participant` | Add a user or agent to the room |
 | `thenvoi_remove_participant` | Remove a participant from the room |
-| `thenvoi_get_participants` | List current room participants |
 | `thenvoi_lookup_peers` | List users/agents that can be added |
+| `thenvoi_get_participants` | List current room participants |
+| `thenvoi_create_chatroom` | Create a new chat room |
+| `thenvoi_send_event` | Send a non-message event such as thought, task, or error |
 
-**Note:** All tools automatically know which room they're operating in (via `thread_id`). No need to pass room IDs manually.
+Contact tools are available when `Capability.CONTACTS` is enabled. Memory tools are available when `Capability.MEMORY` is enabled.
+
+All tools automatically know which room they're operating in through the LangGraph `thread_id`; do not pass room IDs manually.
 
 ---
 

@@ -41,7 +41,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
     2. Advanced (custom graph):
         def graph_factory(tools):
-            return create_react_agent(llm, tools, checkpointer=checkpointer)
+            return create_agent(llm, tools, checkpointer=checkpointer)
 
         adapter = LangGraphAdapter(graph_factory=graph_factory)
 
@@ -103,14 +103,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         # Simple pattern: create graph_factory from llm + checkpointer
         if llm is not None and graph_factory is None and graph is None:
-            from langgraph.prebuilt import create_react_agent
+            from langchain.agents import create_agent
 
             additional = additional_tools or []
 
             def _make_graph_factory(llm, checkpointer, additional):
                 def factory(thenvoi_tools: List[Any]) -> Pregel:
                     all_tools = thenvoi_tools + additional
-                    return create_react_agent(
+                    return create_agent(
                         model=llm, tools=all_tools, checkpointer=checkpointer
                     )
 
