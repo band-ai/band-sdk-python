@@ -22,12 +22,15 @@ Utility functions are still available:
 - MessageFormatter: Protocol for message formatting
 """
 
+from thenvoi.adapters.langgraph import THENVOI_SYSTEM_PROMPT_CONFIG_KEY
+
 from .langchain_tools import agent_tools_to_langchain
 from .graph_tools import graph_as_tool
 from .message_formatters import MessageFormatter, default_messages_state_formatter
 
 __all__ = [
     # Utilities (still available)
+    "THENVOI_SYSTEM_PROMPT_CONFIG_KEY",
     "agent_tools_to_langchain",
     "graph_as_tool",
     "MessageFormatter",

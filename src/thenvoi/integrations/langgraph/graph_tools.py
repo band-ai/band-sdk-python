@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Annotated, Any, Callable
+from typing import Annotated, Any, Callable, cast
 from pydantic import create_model
 from langchain_core.tools import BaseTool, InjectedToolArg, tool
 from langchain_core.runnables import RunnableConfig
@@ -78,7 +78,7 @@ def graph_as_tool(
         LangChain tool function that can be added to agent's tools
 
     Example:
-        >>> from examples.langgraph.standalone_calculator_graph import create_calculator_graph
+        >>> from examples.langgraph.standalone_calculator import create_calculator_graph
         >>> calculator = create_calculator_graph()
         >>> calc_tool = graph_as_tool(
         ...     graph=calculator,
@@ -91,11 +91,10 @@ def graph_as_tool(
         ...     },
         ...     result_formatter=lambda state: f"Result: {state['result']}"
         ... )
-        >>> agent = await create_langgraph_agent(
-        ...     name="Assistant",
+        >>> adapter = LangGraphAdapter(
         ...     llm=llm,
         ...     checkpointer=checkpointer,
-        ...     additional_tools=[calc_tool]
+        ...     additional_tools=[calc_tool],
         ... )
 
     Thread Isolation Explained:
@@ -172,9 +171,19 @@ def graph_as_tool(
         # Invoke the subgraph - let errors bubble up
         # Even though we use ainvoke, the main agent's astream_events will still
         # see all the subgraph's internal events because of how LangGraph works
+        subgraph_config = cast(
+            RunnableConfig,
+            {
+                **config,
+                "configurable": {
+                    **config.get("configurable", {}),
+                    "thread_id": subgraph_thread,
+                },
+            },
+        )
         result = await graph.ainvoke(
             kwargs,  # Pass user parameters to subgraph
-            {"configurable": {"thread_id": subgraph_thread}},
+            subgraph_config,
         )
 
         logger.debug("[%s] Subgraph execution completed", name)

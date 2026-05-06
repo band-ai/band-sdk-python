@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 _BOOTSTRAP_TRACKING_WARN_THRESHOLD = 1000
+THENVOI_SYSTEM_PROMPT_CONFIG_KEY = "thenvoi_system_prompt"
 
 
 class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
@@ -193,19 +194,18 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # Session bootstrap: inject system prompt and any hydrated history.
         # Only inject the system prompt once per room so reconnects do not
         # duplicate the adapter-owned prompt in graph state.
-        if is_session_bootstrap:
-            if room_id not in self._bootstrapped_rooms:
-                messages.append(("system", self._system_prompt))
-                if len(self._bootstrapped_rooms) >= _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
-                    evicted_room_id, _ = self._bootstrapped_rooms.popitem(last=False)
-                    logger.warning(
-                        "Bootstrap tracking reached %d rooms; evicting oldest room %s",
-                        _BOOTSTRAP_TRACKING_WARN_THRESHOLD,
-                        evicted_room_id,
-                    )
-                self._bootstrapped_rooms[room_id] = None
+        if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
+            messages.append(("system", self._system_prompt))
             if history:
                 messages.extend(history)  # Already converted by history_converter
+            if len(self._bootstrapped_rooms) >= _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
+                evicted_room_id, _ = self._bootstrapped_rooms.popitem(last=False)
+                logger.warning(
+                    "Bootstrap tracking reached %d rooms; evicting oldest room %s",
+                    _BOOTSTRAP_TRACKING_WARN_THRESHOLD,
+                    evicted_room_id,
+                )
+            self._bootstrapped_rooms[room_id] = None
 
         # Inject metadata updates as user messages with [System]: prefix.
         # Many LLM providers (including Anthropic) require a single system
@@ -225,7 +225,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             async for event in graph.astream_events(
                 graph_input,
                 config={
-                    "configurable": {"thread_id": room_id},
+                    "configurable": {
+                        "thread_id": room_id,
+                        THENVOI_SYSTEM_PROMPT_CONFIG_KEY: self._system_prompt,
+                    },
                     "recursion_limit": self.recursion_limit,
                 },
                 version="v2",

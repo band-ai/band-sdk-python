@@ -17,7 +17,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
-from thenvoi.adapters.langgraph import LangGraphAdapter
+from thenvoi.adapters.langgraph import (
+    THENVOI_SYSTEM_PROMPT_CONFIG_KEY,
+    LangGraphAdapter,
+)
 from thenvoi.core.types import PlatformMessage
 
 
@@ -234,9 +237,35 @@ class TestOnMessage:
 
         assert captured_kwargs[0]["version"] == "v2"
         assert captured_kwargs[0]["config"] == {
-            "configurable": {"thread_id": "room-123"},
+            "configurable": {
+                "thread_id": "room-123",
+                THENVOI_SYSTEM_PROMPT_CONFIG_KEY: adapter._system_prompt,
+            },
             "recursion_limit": 17,
         }
+
+    @pytest.mark.asyncio
+    async def test_static_graph_receives_adapter_system_prompt_config(
+        self, sample_message, mock_tools
+    ):
+        mock_graph, _captured_inputs, captured_kwargs = make_capture_graph()
+        adapter = LangGraphAdapter(graph=mock_graph)
+        await adapter.on_started("TestBot", "Test bot")
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        configurable = captured_kwargs[0]["config"]["configurable"]
+        assert configurable["thread_id"] == "room-123"
+        assert configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY] == adapter._system_prompt
+        assert "TestBot" in configurable[THENVOI_SYSTEM_PROMPT_CONFIG_KEY]
 
     @pytest.mark.asyncio
     async def test_simple_factory_passes_platform_and_additional_tools(
@@ -403,6 +432,46 @@ class TestOnMessage:
         ]
         assert "tool_call" in message_types
         assert "tool_result" in message_types
+
+    @pytest.mark.asyncio
+    async def test_real_compiled_graph_receives_adapter_prompt_config(
+        self, sample_message, mock_tools
+    ):
+        from langchain_core.runnables import RunnableConfig
+        from langgraph.graph import END, START, MessagesState, StateGraph
+
+        seen_prompts: list[str] = []
+
+        def capture_prompt(
+            state: MessagesState, config: RunnableConfig
+        ) -> dict[str, list]:
+            _ = state
+            seen_prompts.append(
+                config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY]
+            )
+            return {"messages": []}
+
+        builder = StateGraph(MessagesState)
+        builder.add_node("capture_prompt", capture_prompt)
+        builder.add_edge(START, "capture_prompt")
+        builder.add_edge("capture_prompt", END)
+        graph = builder.compile()
+
+        adapter = LangGraphAdapter(graph=graph)
+        await adapter.on_started("TestBot", "Test bot")
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        assert len(seen_prompts) == 1
+        assert "TestBot" in seen_prompts[0]
 
     @pytest.mark.asyncio
     async def test_includes_system_prompt_on_bootstrap(
@@ -617,11 +686,11 @@ class TestOnMessage:
     async def test_no_duplicate_system_prompt_on_re_bootstrap(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
-        """Regression: re-bootstrap must not inject duplicate system prompt.
+        """Regression: re-bootstrap must not inject duplicate bootstrap context.
 
         When an agent reconnects, a new ExecutionContext triggers is_session_bootstrap
-        again, but the checkpointer already has the system prompt from the first
-        bootstrap. Injecting another would create non-consecutive system messages.
+        again, but the checkpointer already has the system prompt and prior turns
+        from the first bootstrap. Injecting either again would duplicate graph state.
         """
         adapter = LangGraphAdapter(
             llm=mock_llm,
@@ -652,12 +721,12 @@ class TestOnMessage:
             system_msgs = [m for m in first_messages if m[0] == "system"]
             assert len(system_msgs) == 1
 
-            # Second bootstrap (reconnection) - should NOT include system prompt
-            # because checkpointer already has it
+            # Second bootstrap (reconnection) should not inject system prompt or
+            # hydrated history because the checkpointer already has prior state.
             await adapter.on_message(
                 msg=sample_message,
                 tools=mock_tools,
-                history=[],
+                history=[HumanMessage(content="hydrated prior turn")],
                 participants_msg=None,
                 contacts_msg=None,
                 is_session_bootstrap=True,
@@ -668,6 +737,10 @@ class TestOnMessage:
             system_msgs = [m for m in second_messages if m[0] == "system"]
             assert len(system_msgs) == 0, (
                 f"Re-bootstrap should not inject system prompt, got: {system_msgs}"
+            )
+            assert all(
+                getattr(m, "content", None) != "hydrated prior turn"
+                for m in second_messages
             )
 
 

@@ -72,3 +72,13 @@ services:
       - ./agent_config.yaml:/app/agent_config.yaml
     command: ["uv", "run", "--extra", "langgraph", "python", "examples/langgraph/06_delegate_to_sql_agent.py"]
 
+  langgraph-09-research-ops:
+    build:
+      <<: *common-build
+      target: langgraph
+    environment:
+      <<: *common-env
+    volumes:
+      - ./agent_config.yaml:/app/agent_config.yaml
+    command: ["uv", "run", "--extra", "langgraph", "python", "examples/langgraph/09_research_ops_orchestrator.py"]
+

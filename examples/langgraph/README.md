@@ -65,6 +65,7 @@ await agent.run()
 | `04_calculator_as_tool.py` | **Calculator sub-graph** - Delegates math to calculator sub-graph using `graph_as_tool()`. |
 | `05_rag_as_tool.py` | **RAG sub-graph** - Delegates research to RAG sub-graph with vector search. |
 | `06_delegate_to_sql_agent.py` | **SQL sub-agent** - Delegates database queries to SQL expert. |
+| `09_research_ops_orchestrator.py` | **Custom operations graph** - Multi-node graph with platform events, calculator delegation, and SQL delegation. |
 
 **Supporting files:** `standalone_calculator.py`, `standalone_rag.py`, `standalone_sql_agent.py`
 
@@ -179,6 +180,9 @@ uv run --extra langgraph python examples/langgraph/05_rag_as_tool.py
 
 # SQL sub-agent
 uv run --extra langgraph python examples/langgraph/06_delegate_to_sql_agent.py
+
+# Custom operations graph with platform reporting and subgraph delegation
+uv run --extra langgraph python examples/langgraph/09_research_ops_orchestrator.py
 ```
 
 **Using as external library:**
@@ -217,6 +221,10 @@ rag_agent:
 sql_agent:
   agent_id: "agent_246"
   api_key: "key_135"
+
+research_ops_agent:
+  agent_id: "agent_ops"
+  api_key: "key_ops"
 
 # Also used by multi-agent examples:
 tom_agent:

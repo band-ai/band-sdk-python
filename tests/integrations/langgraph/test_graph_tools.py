@@ -23,7 +23,10 @@ async def test_graph_as_tool_invokes_subgraph_with_isolated_thread() -> None:
 
     result = await wrapped.ainvoke(
         {"query": "hello"},
-        config={"configurable": {"thread_id": "room-123"}},
+        config={
+            "configurable": {"thread_id": "room-123", "tenant": "demo"},
+            "tags": ["parent-run"],
+        },
     )
 
     assert result == "done"
@@ -32,6 +35,8 @@ async def test_graph_as_tool_invokes_subgraph_with_isolated_thread() -> None:
     assert graph_input == {"query": "hello"}
     thread_id = graph_config["configurable"]["thread_id"]
     assert thread_id.startswith("subgraph:research:room-123:")
+    assert graph_config["configurable"]["tenant"] == "demo"
+    assert graph_config["tags"] == ["parent-run"]
 
 
 @pytest.mark.asyncio
@@ -49,11 +54,19 @@ async def test_graph_as_tool_can_share_main_thread() -> None:
 
     await wrapped.ainvoke(
         {"query": "hello"},
-        config={"configurable": {"thread_id": "room-123"}},
+        config={
+            "configurable": {"thread_id": "room-123", "tenant": "demo"},
+            "tags": ["parent-run"],
+            "metadata": {"room": "room-123"},
+            "recursion_limit": 25,
+        },
     )
 
     _graph_input, graph_config = graph.ainvoke.await_args.args
-    assert graph_config == {"configurable": {"thread_id": "room-123"}}
+    assert graph_config["configurable"] == {"thread_id": "room-123", "tenant": "demo"}
+    assert graph_config["tags"] == ["parent-run"]
+    assert graph_config["metadata"] == {"room": "room-123"}
+    assert graph_config["recursion_limit"] == 25
 
 
 @pytest.mark.asyncio
