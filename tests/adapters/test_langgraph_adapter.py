@@ -325,7 +325,6 @@ class TestOnMessage:
         mock_create.assert_called_once_with(
             model=mock_llm,
             tools=[platform_tool, additional_tool],
-            system_prompt=adapter._system_prompt,
             checkpointer=mock_checkpointer,
         )
 
@@ -575,14 +574,12 @@ class TestOnMessage:
     async def test_no_extra_system_messages_with_history_and_participants(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
-        """Regression: participants_msg must not be injected as a system role message.
+        """Regression: participants_msg must not produce a second system message.
 
-        Anthropic rejects multiple system messages and many providers lose prompt
-        cache savings when extra system messages appear mid-conversation. The
-        adapter delivers the system prompt out-of-band (via
-        ``create_agent(system_prompt=...)`` or
-        ``THENVOI_SYSTEM_PROMPT_CONFIG_KEY``) and inlines metadata as user
-        messages with a ``[System]:`` prefix.
+        Anthropic rejects multiple system messages and many providers lose
+        prompt-cache savings when extra system messages appear mid-conversation.
+        Bootstrap injects exactly one ``("system", ...)`` (the rendered prompt)
+        and inlines metadata as ``("user", "[System]: ...")``.
         """
         adapter = LangGraphAdapter(
             llm=mock_llm,
@@ -615,13 +612,14 @@ class TestOnMessage:
 
             messages = captured_inputs[0].get("messages", [])
 
-            # No system-role messages in the input; create_agent prepends one.
+            # Exactly one system-role message: the rendered Band prompt.
             system_msgs = [
                 m for m in messages if isinstance(m, tuple) and m[0] == "system"
             ]
-            assert len(system_msgs) == 0
+            assert len(system_msgs) == 1
+            assert system_msgs[0][1] == adapter._system_prompt
 
-            # Participants info should be a user message with prefix
+            # Participants info is a user message with prefix.
             user_msgs = [m for m in messages if isinstance(m, tuple) and m[0] == "user"]
             assert len(user_msgs) == 2
             assert "[System]: Alice joined" in user_msgs[0][1]
@@ -957,8 +955,11 @@ class TestStaticGraph:
 
     @pytest.mark.asyncio
     async def test_static_graph_with_participants_msg(self, sample_message, mock_tools):
-        """Static graph default: adapter should NOT inject its own system prompt
-        (the user's graph owns the prompt). Participants and user message still go in."""
+        """Static graph: adapter prepends the rendered system prompt on bootstrap.
+
+        Same convention as every other Band adapter — the SDK forces its prompt
+        at the top, the user's graph just reads ``state["messages"]``.
+        """
         mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
 
         adapter = LangGraphAdapter(graph=mock_graph)
@@ -984,7 +985,8 @@ class TestStaticGraph:
             system_msgs = [
                 m for m in messages if isinstance(m, tuple) and m[0] == "system"
             ]
-            assert len(system_msgs) == 0
+            assert len(system_msgs) == 1
+            assert system_msgs[0][1] == adapter._system_prompt
 
             user_msgs = [m for m in messages if isinstance(m, tuple) and m[0] == "user"]
             assert len(user_msgs) == 2

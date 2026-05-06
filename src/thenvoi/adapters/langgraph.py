@@ -51,16 +51,19 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
     System prompt:
         The adapter renders a system prompt from ``prompt_template`` /
-        ``custom_section`` / agent metadata in :meth:`on_started`.
+        ``custom_section`` / agent metadata in :meth:`on_started`, then
+        prepends it as the first ``("system", ...)`` message on session
+        bootstrap. The LangGraph checkpointer carries it forward across
+        turns, so every model call sees exactly one SystemMessage.
 
-        - Simple pattern: the prompt is passed straight to
-          ``create_agent(system_prompt=...)``, which prepends it on every
-          model call. Nothing special to do.
-        - Advanced pattern (``graph=`` / ``graph_factory=``): your graph owns
-          its prompt. The adapter still surfaces the rendered prompt on
-          ``config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY]`` so a
-          custom node can read and inject it if you want the Band-rendered
-          prompt without re-implementing :func:`render_system_prompt`. See
+        - Simple pattern: nothing special to do; ``create_agent`` reads
+          ``state["messages"]`` directly.
+        - Advanced pattern (``graph=`` / ``graph_factory=``): your graph
+          should also read ``state["messages"]`` (or whatever your state
+          schema names them). The rendered prompt is also surfaced on
+          ``config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY]`` as a
+          secondary escape hatch for graphs whose state is not
+          ``MessagesState``-shaped. See
           ``examples/langgraph/09_research_ops_orchestrator.py``.
 
     Example:
@@ -119,23 +122,20 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             features=features,
         )
 
-        # Simple pattern: build a graph_factory that delegates to create_agent
-        # and forwards the adapter-rendered system prompt via system_prompt=,
-        # which create_agent prepends fresh on every model call. The factory
-        # is invoked once per room (then cached by graph caching upstream),
-        # by which point on_started has populated self._system_prompt.
+        # Simple pattern: build a graph_factory that delegates to create_agent.
+        # We do NOT pass system_prompt= here; the adapter prepends a single
+        # ("system", ...) message on bootstrap and the checkpointer carries it
+        # forward, matching the pattern used by every other Band adapter.
         if llm is not None and graph_factory is None and graph is None:
             from langchain.agents import create_agent
 
             additional = additional_tools or []
-            adapter_self = self
 
             def factory(thenvoi_tools: List[Any]) -> Pregel:
                 all_tools = thenvoi_tools + additional
                 return create_agent(
                     model=llm,
                     tools=all_tools,
-                    system_prompt=adapter_self._system_prompt or None,
                     checkpointer=checkpointer,
                 )
 
@@ -212,14 +212,15 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # Build messages
         messages: list[Any] = []
 
-        # Session bootstrap: hydrate any history we have from the platform
-        # exactly once per room. After that, the LangGraph checkpointer owns
-        # conversation state and we just append the new turn. The system
-        # prompt is delivered to the model via create_agent(system_prompt=...)
-        # for the simple pattern (re-applied fresh on every model call by
-        # langchain) and via THENVOI_SYSTEM_PROMPT_CONFIG_KEY in config for
-        # custom graphs that want to read it themselves.
+        # Session bootstrap: prepend the rendered system prompt and hydrate
+        # platform history exactly once per room. After that, the LangGraph
+        # checkpointer carries the system message and prior turns forward and
+        # we just append the new user turn. The prompt is also surfaced on
+        # config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY] for graphs
+        # whose state is not MessagesState-shaped.
         if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
+            if self._system_prompt:
+                messages.append(("system", self._system_prompt))
             if history:
                 messages.extend(history)  # Already converted by history_converter
             if len(self._bootstrapped_rooms) >= _BOOTSTRAP_TRACKING_WARN_THRESHOLD:

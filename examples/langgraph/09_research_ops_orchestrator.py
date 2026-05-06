@@ -29,8 +29,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage
-from langchain_core.runnables import RunnableConfig
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
@@ -43,10 +41,7 @@ from standalone_sql_agent import create_sql_agent, download_chinook_db
 from thenvoi import Agent
 from thenvoi.adapters import LangGraphAdapter
 from thenvoi.config import load_agent_config
-from thenvoi.integrations.langgraph import (
-    THENVOI_SYSTEM_PROMPT_CONFIG_KEY,
-    graph_as_tool,
-)
+from thenvoi.integrations.langgraph import graph_as_tool
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -69,11 +64,11 @@ ask the user for room IDs.
 def build_orchestrator_factory(llm: BaseChatModel) -> Any:
     """Build a graph_factory compatible with LangGraphAdapter.
 
-    The analyst node reads the adapter-rendered system prompt from
-    ``config["configurable"][THENVOI_SYSTEM_PROMPT_CONFIG_KEY]`` and prepends
-    it (together with this example's own orchestrator instructions) on every
-    turn. This way Band still owns the agent-identity / capabilities prompt
-    and this graph just adds its own orchestration instructions on top.
+    The analyst node reads ``state["messages"]`` directly. The adapter
+    prepends the Band-rendered system prompt (which already contains
+    :data:`ORCHESTRATOR_INSTRUCTIONS` because it was passed via
+    ``custom_section``) on session bootstrap, and the LangGraph
+    checkpointer carries it forward across turns.
     """
     checkpointer = InMemorySaver()
     compiled_graph: Pregel | None = None
@@ -111,19 +106,8 @@ def build_orchestrator_factory(llm: BaseChatModel) -> Any:
         all_tools = thenvoi_tools + [calculator_tool, sql_tool]
         model_with_tools = llm.bind_tools(all_tools)
 
-        async def analyst(
-            state: MessagesState, config: RunnableConfig
-        ) -> dict[str, list[Any]]:
-            adapter_prompt = config.get("configurable", {}).get(
-                THENVOI_SYSTEM_PROMPT_CONFIG_KEY, ""
-            )
-            system_blocks = [
-                block for block in (adapter_prompt, ORCHESTRATOR_INSTRUCTIONS) if block
-            ]
-            system_message = SystemMessage(content="\n\n".join(system_blocks))
-            response = await model_with_tools.ainvoke(
-                [system_message] + state["messages"]
-            )
+        async def analyst(state: MessagesState) -> dict[str, list[Any]]:
+            response = await model_with_tools.ainvoke(state["messages"])
             return {"messages": [response]}
 
         builder = StateGraph(MessagesState)
@@ -152,7 +136,7 @@ async def main() -> None:
     )
     adapter = LangGraphAdapter(
         graph_factory=build_orchestrator_factory(ChatOpenAI(model=model)),
-        custom_section="Always use the custom operations graph to plan, delegate, and report through Band tools.",
+        custom_section=ORCHESTRATOR_INSTRUCTIONS,
     )
 
     agent = Agent.create(
