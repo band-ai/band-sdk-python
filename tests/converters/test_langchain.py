@@ -203,6 +203,81 @@ class TestToolCallPairing:
         assert result[0].tool_calls[0]["name"] == "tool_a"
         assert result[2].tool_calls[0]["name"] == "tool_b"
 
+    def test_pairs_same_name_tool_calls_by_run_id(self):
+        converter = LangChainHistoryConverter()
+        raw = [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "lookup",
+                        "run_id": "run-first",
+                        "data": {"input": {"query": "first"}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "lookup",
+                        "run_id": "run-second",
+                        "data": {"input": {"query": "second"}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_end",
+                        "name": "lookup",
+                        "run_id": "run-second",
+                        "data": {"output": "second result tool_call_id='call_second'"},
+                    }
+                ),
+                "message_type": "tool_result",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_end",
+                        "name": "lookup",
+                        "run_id": "run-first",
+                        "data": {"output": "first result tool_call_id='call_first'"},
+                    }
+                ),
+                "message_type": "tool_result",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert result[0].tool_calls[0]["id"] == "call_second"
+        assert result[0].tool_calls[0]["args"] == {"query": "second"}
+        assert result[2].tool_calls[0]["id"] == "call_first"
+        assert result[2].tool_calls[0]["args"] == {"query": "first"}
+
+    def test_falls_back_to_lifo_by_name_without_run_id_match(self):
+        pending = [
+            {"name": "lookup", "data": {"input": {"query": "first"}}},
+            {"name": "lookup", "data": {"input": {"query": "second"}}},
+        ]
+
+        match = LangChainHistoryConverter._pop_matching_tool_call(
+            pending,
+            tool_name="lookup",
+            run_id=None,
+        )
+
+        assert match == {"name": "lookup", "data": {"input": {"query": "second"}}}
+        assert pending == [{"name": "lookup", "data": {"input": {"query": "first"}}}]
+
 
 class TestErrorHandling:
     """Tests for error handling."""

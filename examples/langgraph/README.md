@@ -201,6 +201,31 @@ simple_agent:
 custom_tools_agent:
   agent_id: "agent_789"
   api_key: "key_012"
+
+custom_personality_agent:
+  agent_id: "agent_345"
+  api_key: "key_678"
+
+calculator_agent:
+  agent_id: "agent_901"
+  api_key: "key_234"
+
+rag_agent:
+  agent_id: "agent_567"
+  api_key: "key_890"
+
+sql_agent:
+  agent_id: "agent_246"
+  api_key: "key_135"
+
+# Also used by multi-agent examples:
+tom_agent:
+  agent_id: "agent_tom"
+  api_key: "key_tom"
+
+jerry_agent:
+  agent_id: "agent_jerry"
+  api_key: "key_jerry"
 ```
 
 Load config in your code:

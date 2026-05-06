@@ -191,10 +191,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         messages: list[Any] = []
 
         # Session bootstrap: inject system prompt and any hydrated history.
-        # Only inject the system prompt once per room to avoid duplicate system
-        # messages when the checkpointer retains state across reconnections.
+        # Only inject the system prompt once per room so reconnects do not
+        # duplicate the adapter-owned prompt in graph state.
         if is_session_bootstrap:
-            if self.graph_factory and room_id not in self._bootstrapped_rooms:
+            if room_id not in self._bootstrapped_rooms:
                 messages.append(("system", self._system_prompt))
                 if len(self._bootstrapped_rooms) >= _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
                     evicted_room_id, _ = self._bootstrapped_rooms.popitem(last=False)

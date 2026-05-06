@@ -656,6 +656,7 @@ docker run --rm \
   -e THENVOI_REST_URL="${THENVOI_REST_URL}" \
   -e THENVOI_WS_URL="${THENVOI_WS_URL}" \
   -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+  -e OPENAI_MODEL="${OPENAI_MODEL:-gpt-4o}" \
   -v ./agent_config.yaml:/app/agent_config.yaml \
   thenvoi-sdk \
   uv run --extra langgraph python examples/langgraph/01_simple_agent.py

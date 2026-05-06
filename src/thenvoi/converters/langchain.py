@@ -82,12 +82,11 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
                     if not tool_call_id:
                         tool_call_id = event.get("run_id", "unknown")
 
-                    # Match with pending tool call
-                    matching_call = None
-                    for i, call in enumerate(pending_tool_calls):
-                        if call.get("name") == tool_name:
-                            matching_call = pending_tool_calls.pop(i)
-                            break
+                    matching_call = self._pop_matching_tool_call(
+                        pending_tool_calls,
+                        tool_name=tool_name,
+                        run_id=event.get("run_id"),
+                    )
 
                     if matching_call:
                         tool_input = matching_call.get("data", {}).get("input", {})
@@ -126,6 +125,24 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
             )
 
         return messages
+
+    @staticmethod
+    def _pop_matching_tool_call(
+        pending_tool_calls: list[dict[str, Any]],
+        *,
+        tool_name: str,
+        run_id: str | None,
+    ) -> dict[str, Any] | None:
+        if run_id:
+            for i, call in enumerate(pending_tool_calls):
+                if call.get("run_id") == run_id:
+                    return pending_tool_calls.pop(i)
+
+        for i in range(len(pending_tool_calls) - 1, -1, -1):
+            if pending_tool_calls[i].get("name") == tool_name:
+                return pending_tool_calls.pop(i)
+
+        return None
 
     @classmethod
     def _extract_tool_call_id(cls, output: Any) -> str | None:

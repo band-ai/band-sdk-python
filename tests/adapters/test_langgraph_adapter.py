@@ -894,11 +894,7 @@ class TestStaticGraph:
 
     @pytest.mark.asyncio
     async def test_static_graph_with_participants_msg(self, sample_message, mock_tools):
-        """Should inject participants as user message with static graph.
-
-        Static graphs don't inject a system prompt (no graph_factory).
-        participants_msg is injected as a user message with [System]: prefix.
-        """
+        """Should inject system prompt and participants with static graph."""
         mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
 
         adapter = LangGraphAdapter(graph=mock_graph)
@@ -921,11 +917,10 @@ class TestStaticGraph:
 
             messages = captured_inputs[0]["messages"]
 
-            # No system messages with static graph
             system_msgs = [
                 m for m in messages if isinstance(m, tuple) and m[0] == "system"
             ]
-            assert len(system_msgs) == 0
+            assert len(system_msgs) == 1
 
             user_msgs = [m for m in messages if isinstance(m, tuple) and m[0] == "user"]
             assert len(user_msgs) == 2
