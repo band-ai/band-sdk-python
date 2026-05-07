@@ -37,6 +37,24 @@ SYNTHETIC_CONTACT_EVENTS_SENDER_ID = "contact-events"
 # messages. Used in MessageEvent.payload.sender_name.
 SYNTHETIC_CONTACT_EVENTS_SENDER_NAME = "Contact Events"
 
+# Sender ID for synthetic kickoff messages — bootstrap_room_message / kickoff()
+# inject these to start an agent in a room with an initial message that did not
+# come from the platform. Treated like contact-event synthetics: ExecutionContext
+# skips mark_processing/mark_processed/retry tracking for them.
+SYNTHETIC_KICKOFF_SENDER_ID = "kickoff"
+SYNTHETIC_KICKOFF_SENDER_NAME = "Kickoff"
+
+# Closed set of recognized synthetic sender ids. ExecutionContext requires BOTH
+# sender_type == SYNTHETIC_SENDER_TYPE AND sender_id in this set before
+# treating a message as synthetic — never broaden to type alone, since real
+# platform "System" messages must keep full mark_* lifecycle.
+SYNTHETIC_SENDER_IDS: frozenset[str] = frozenset(
+    {
+        SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+        SYNTHETIC_KICKOFF_SENDER_ID,
+    }
+)
+
 
 def normalize_handle(handle: str | None) -> str | None:
     """

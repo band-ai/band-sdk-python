@@ -18,6 +18,7 @@ from thenvoi.runtime.types import (
     ContactEventStrategy,
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
+    PlatformMessage,
     SessionConfig,
 )
 from thenvoi_rest.core.api_error import ApiError
@@ -203,6 +204,18 @@ class PlatformRuntime:
         """Run until interrupted."""
         if self._link:
             await self._link.run_forever()
+
+    async def bootstrap_room_message(
+        self, room_id: str, message: PlatformMessage
+    ) -> None:
+        """Inject a synthetic kickoff message into ``room_id``.
+
+        Forwards to ``AgentRuntime.bootstrap_room_message``. Requires the
+        runtime to be started; raises ``RuntimeError`` otherwise.
+        """
+        if self._runtime is None:
+            raise RuntimeError("Runtime not started")
+        await self._runtime.bootstrap_room_message(room_id, message)
 
     async def _fetch_agent_metadata(self) -> None:
         """Fetch agent metadata from platform."""

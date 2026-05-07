@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import uuid
+from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
 from pathlib import Path
@@ -17,7 +19,11 @@ from thenvoi.runtime.types import (
     ContactEventConfig,
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
+    PlatformMessage,
     SessionConfig,
+    SYNTHETIC_KICKOFF_SENDER_ID,
+    SYNTHETIC_KICKOFF_SENDER_NAME,
+    SYNTHETIC_SENDER_TYPE,
 )
 from thenvoi.preprocessing.default import DefaultPreprocessor
 
@@ -328,6 +334,101 @@ class Agent:
                 await agent.stop()
         """
         await self._runtime.run_forever()
+
+    async def bootstrap_room_message(
+        self, room_id: str, message: PlatformMessage
+    ) -> None:
+        """
+        Kick the agent off in ``room_id`` with an initial message that did NOT
+        come from the platform.
+
+        Low-level primitive behind :meth:`kickoff`. Use this when you want
+        full control over the synthetic ``PlatformMessage`` — in particular
+        its ``id``. External systems often pass stable ids (e.g.
+        ``"daily-standup:2026-05-06"`` or ``"webhook:{event_id}"``) so they
+        can dedupe retries and replays.
+
+        The message is delivered to the adapter exactly like a real chat
+        message but is NOT persisted on the platform: nothing is written to
+        the database, no mark_processing / mark_processed lifecycle, and
+        other participants never see it.
+
+        Requires :meth:`start` to have been called.
+        """
+        if not self._started:
+            raise RuntimeError("Agent not started")
+        await self._runtime.bootstrap_room_message(room_id, message)
+
+    async def kickoff(
+        self,
+        content: str,
+        *,
+        room_id: str | None = None,
+        task_id: str | None = None,
+        sender_id: str | None = None,
+        sender_name: str | None = None,
+        message_type: str = "message",
+        metadata: dict[str, Any] | None = None,
+        message_id: str | None = None,
+    ) -> str:
+        """
+        Start the agent on its own with an initial message that did NOT come
+        through the platform.
+
+        If ``room_id`` is omitted, a fresh chat room is created (optionally
+        linked to ``task_id``). The message is delivered to the agent's
+        adapter as a synthetic ``MessageEvent`` — no platform persistence,
+        no mark_processing/mark_processed lifecycle.
+
+        Args:
+            content: The initial message content for the agent.
+            room_id: Existing room to inject into. If None, a new room is
+                created via REST.
+            task_id: Optional task association when creating a new room.
+            sender_id: Override the synthetic sender id (defaults to
+                ``"kickoff"``). Most callers should leave this as the default.
+            sender_name: Display name for the synthetic sender.
+            message_type: Platform message type. Defaults to ``"message"``.
+            metadata: Optional metadata dict (mentions/status are filled in
+                if missing).
+            message_id: Stable id for the synthetic message. Defaults to a
+                generated ``"kickoff:{uuid4}"``. Provide your own when an
+                external system needs to dedupe by id.
+
+        Returns:
+            The room id the kickoff was injected into (newly created when
+            ``room_id`` was None).
+        """
+        if not self._started:
+            raise RuntimeError("Agent not started")
+
+        link = self._runtime.link
+
+        if room_id is None:
+            from thenvoi.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
+
+            response = await link.rest.agent_api_chats.create_agent_chat(
+                chat=ChatRoomRequest(task_id=task_id),
+                request_options=DEFAULT_REQUEST_OPTIONS,
+            )
+            if not response.data:
+                raise RuntimeError("Failed to create chat room for kickoff")
+            room_id = response.data.id
+            logger.info("Kickoff created new room: %s", room_id)
+
+        message = PlatformMessage(
+            id=message_id or f"kickoff:{uuid.uuid4()}",
+            room_id=room_id,
+            content=content,
+            sender_id=sender_id or SYNTHETIC_KICKOFF_SENDER_ID,
+            sender_type=SYNTHETIC_SENDER_TYPE,
+            sender_name=sender_name or SYNTHETIC_KICKOFF_SENDER_NAME,
+            message_type=message_type,
+            metadata=metadata or {},
+            created_at=datetime.now(timezone.utc),
+        )
+        await self.bootstrap_room_message(room_id, message)
+        return room_id
 
     async def _on_execute(
         self,

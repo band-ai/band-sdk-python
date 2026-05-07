@@ -17,6 +17,7 @@ from .presence import RoomPresence
 from .types import (
     ParticipantAddedCallback,
     ParticipantRemovedCallback,
+    PlatformMessage,
     SessionConfig,
 )
 
@@ -244,6 +245,48 @@ class AgentRuntime:
                 logger.warning("Failed to request resync for room %s: %s", room_id, e)
 
     # --- Execution management ---
+
+    async def bootstrap_room_message(
+        self, room_id: str, message: PlatformMessage
+    ) -> None:
+        """
+        Kick the agent off in ``room_id`` with an initial message that did NOT
+        come from the platform.
+
+        Use this to start an agent on its own. Common examples: a webhook
+        handler that creates a fresh chat room and wants the agent to begin
+        work immediately with full context, a scheduled cron job that wakes
+        an agent at 9am to file a daily report, or a self-starting demo
+        agent. The message is delivered to the adapter exactly like a real
+        chat message, but lives only in memory: nothing is written to the
+        platform, no mark_processing / mark_processed lifecycle, no retry
+        tracking, no other participants ever see it.
+
+        The caller's ``message.id`` is preserved so external systems can use
+        stable ids (e.g. ``"daily-standup:2026-05-06"`` or
+        ``"webhook:{event_id}"``) for idempotency across retries.
+
+        If the agent has not yet joined ``room_id``, this also subscribes to
+        the room and creates its execution context, so future real messages
+        flow through the normal presence pipeline afterwards.
+        """
+        if room_id not in self.presence.rooms:
+            await self.link.subscribe_room(room_id)
+            self.presence.rooms.add(room_id)
+            logger.debug(
+                "Bootstrap subscribed to room %s outside presence flow", room_id
+            )
+
+        execution = self.executions.get(room_id)
+        if execution is None:
+            execution = await self._create_execution(room_id)
+
+        bootstrap = getattr(execution, "bootstrap_message", None)
+        if bootstrap is None:
+            raise RuntimeError(
+                f"Execution for room {room_id} does not support bootstrap_message"
+            )
+        await bootstrap(message)
 
     async def _create_execution(self, room_id: str) -> Execution:
         """Create and start execution context for a room."""
