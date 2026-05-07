@@ -98,12 +98,12 @@ def build_orchestrator_factory(llm: BaseChatModel) -> Any:
         isolate_thread=False,
     )
 
-    def graph_factory(thenvoi_tools: list[Any]) -> Pregel:
+    def graph_factory(band_tools: list[Any]) -> Pregel:
         nonlocal compiled_graph
         if compiled_graph is not None:
             return compiled_graph
 
-        all_tools = thenvoi_tools + [calculator_tool, sql_tool]
+        all_tools = band_tools + [calculator_tool, sql_tool]
         model_with_tools = llm.bind_tools(all_tools)
 
         async def analyst(state: MessagesState) -> dict[str, list[Any]]:

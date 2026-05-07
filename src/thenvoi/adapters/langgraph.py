@@ -125,8 +125,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
             additional = additional_tools or []
 
-            def factory(thenvoi_tools: List[Any]) -> Pregel:
-                all_tools = thenvoi_tools + additional
+            def factory(band_tools: List[Any]) -> Pregel:
+                all_tools = band_tools + additional
                 return create_agent(
                     model=llm,
                     tools=all_tools,
