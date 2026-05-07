@@ -36,14 +36,17 @@ class TestRenderSystemPromptDefaults:
         assert "A helpful assistant" in prompt
 
     def test_includes_custom_section(self):
-        """Should include custom section in Developer Instructions."""
+        """Custom section should lead the prompt so persona dominates."""
         prompt = render_system_prompt(
             agent_name="TestBot",
             custom_section="Focus on Python programming.",
         )
 
         assert "Focus on Python programming." in prompt
-        assert "## Developer Instructions" in prompt
+        # custom_section must precede the agent identity line
+        assert prompt.index("Focus on Python programming.") < prompt.index(
+            "You are TestBot"
+        )
 
 
 class TestRenderSystemPromptWithoutBaseInstructions:
@@ -83,7 +86,7 @@ class TestRenderSystemPromptWithoutBaseInstructions:
         assert "Custom behavior instructions here." in prompt
 
     def test_minimal_prompt_format(self):
-        """Minimal prompt should have expected format."""
+        """Minimal prompt should have expected format with custom_section leading."""
         prompt = render_system_prompt(
             agent_name="Bot",
             agent_description="helper",
@@ -91,8 +94,8 @@ class TestRenderSystemPromptWithoutBaseInstructions:
             include_base_instructions=False,
         )
 
-        assert prompt.startswith("You are Bot, helper.")
-        assert "Be helpful." in prompt
+        assert prompt.startswith("Be helpful.")
+        assert "You are Bot, helper." in prompt
 
     def test_empty_custom_section_when_disabled(self):
         """Should handle empty custom section gracefully."""

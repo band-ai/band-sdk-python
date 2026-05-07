@@ -80,9 +80,8 @@ and `thenvoi_respond_contact_request` to handle incoming requests.
 # Prefer calling render_system_prompt() directly.
 TEMPLATES: dict[str, str] = {
     "default": (
-        "You are {agent_name}, {agent_description}.\n\n"
-        + BASE_INSTRUCTIONS.strip()
-        + "\n\n## Developer Instructions\n\n{custom_section}"
+        "{custom_section}\n\n"
+        "You are {agent_name}, {agent_description}.\n\n" + BASE_INSTRUCTIONS.strip()
     ),
 }
 
@@ -96,12 +95,15 @@ def render_system_prompt(
     features: AdapterFeatures | None = None,
 ) -> str:
     """
-    Render system prompt: agent identity + custom section + optionally base instructions.
+    Render system prompt: custom section + agent identity + optionally base instructions.
+
+    The developer's ``custom_section`` leads so persona/role instructions dominate
+    over the registered agent identity and SDK plumbing.
 
     Args:
         agent_name: Agent's name
         agent_description: Agent's description
-        custom_section: User's custom instructions
+        custom_section: User's custom instructions (leads the prompt)
         template: Template name (default: "default")
         include_base_instructions: Whether to include SDK's BASE_INSTRUCTIONS.
                                    Set False if providing fully custom behavior.
@@ -113,13 +115,17 @@ def render_system_prompt(
     identity = f"You are {agent_name}, {agent_description}."
 
     if not include_base_instructions:
-        # Minimal prompt: identity + custom section only
-        parts = [identity]
+        # Minimal prompt: custom section leads, identity follows
+        parts: list[str] = []
         if custom_section:
             parts.append(custom_section)
+        parts.append(identity)
         return "\n\n".join(parts)
 
-    parts = [identity]
+    parts = []
+    if custom_section:
+        parts.append(custom_section)
+    parts.append(identity)
     parts.append(BASE_INSTRUCTIONS.strip())
 
     # Capability-gated sections
@@ -128,9 +134,5 @@ def render_system_prompt(
             parts.append(MEMORY_SECTION.strip())
         if Capability.CONTACTS in features.capabilities:
             parts.append(CONTACT_SECTION.strip())
-
-    # Developer instructions at the end
-    if custom_section:
-        parts.append(f"## Developer Instructions\n\n{custom_section}")
 
     return "\n\n".join(parts)
