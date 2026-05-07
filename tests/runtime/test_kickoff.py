@@ -216,8 +216,8 @@ class TestAgentRuntimeBootstrap:
             await runtime.executions[room_id].stop()
 
 
-class TestAgentKickoff:
-    """Agent.kickoff and Agent.bootstrap_room_message public-entry tests."""
+class TestAgentBootstrap:
+    """Agent.bootstrap_room_message public-entry tests (string + PlatformMessage)."""
 
     @pytest.fixture
     def started_agent(self, mock_link):
@@ -233,8 +233,6 @@ class TestAgentKickoff:
         handler = AsyncMock()
         agent_runtime = AgentRuntime(mock_link, "agent-123", on_execute=handler)
 
-        # Build a PlatformRuntime stand-in that delegates bootstrap to the
-        # real AgentRuntime so the full call chain is exercised.
         platform_runtime = MagicMock()
         platform_runtime.link = mock_link
         platform_runtime.bootstrap_room_message = AsyncMock(
@@ -247,12 +245,12 @@ class TestAgentKickoff:
         adapter.on_cleanup = AsyncMock()
 
         agent = Agent(runtime=platform_runtime, adapter=adapter)
-        agent._started = True  # simulate post-start state without WS connect
+        agent._started = True
 
         return agent, agent_runtime, handler
 
     @pytest.mark.asyncio
-    async def test_kickoff_creates_room_when_not_provided(
+    async def test_string_creates_room_and_delivers_to_adapter(
         self, started_agent, mock_link
     ):
         agent, agent_runtime, handler = started_agent
@@ -264,15 +262,12 @@ class TestAgentKickoff:
             return_value=MagicMock(data=created)
         )
 
-        room_id = await agent.kickoff("go!", task_id="task-7")
+        room_id = await agent.bootstrap_room_message("go!", task_id="task-7")
 
         assert room_id == "fresh-room-9"
         mock_link.rest.agent_api_chats.create_agent_chat.assert_awaited_once()
-        agent.runtime.bootstrap_room_message.assert_awaited_once()
         assert "fresh-room-9" in agent_runtime.executions
 
-        # Confirm the synthetic message reached the adapter, not just that
-        # the room was created and execution started.
         await asyncio.wait_for(_wait_for_handler(handler), timeout=2.0)
         delivered = handler.await_args.args[1]
         assert delivered.payload.content == "go!"
@@ -282,27 +277,26 @@ class TestAgentKickoff:
             await agent_runtime.executions[r].stop()
 
     @pytest.mark.asyncio
-    async def test_kickoff_raises_specific_error_when_create_chat_returns_no_data(
+    async def test_string_raises_when_create_chat_returns_no_data(
         self, started_agent, mock_link
     ):
-        agent, agent_runtime, _handler = started_agent
+        agent, _agent_runtime, _handler = started_agent
         mock_link.rest.agent_api_chats = MagicMock()
         mock_link.rest.agent_api_chats.create_agent_chat = AsyncMock(
             return_value=MagicMock(data=None)
         )
         with pytest.raises(RuntimeError, match="task_id='task-9'"):
-            await agent.kickoff("go!", task_id="task-9")
+            await agent.bootstrap_room_message("go!", task_id="task-9")
 
     @pytest.mark.asyncio
-    async def test_bootstrap_room_message_preserves_caller_id_end_to_end(
+    async def test_platform_message_preserves_caller_id_end_to_end(
         self, started_agent, mock_link
     ):
-        """Public-entry test through Agent.bootstrap_room_message: a caller-
-        supplied PlatformMessage id must reach the adapter unchanged."""
+        """Caller-supplied PlatformMessage id must reach the adapter unchanged."""
         agent, agent_runtime, handler = started_agent
 
         message = _platform_message(msg_id="webhook:event-xyz", content="run report")
-        await agent.bootstrap_room_message("room-42", message)
+        await agent.bootstrap_room_message(message, room_id="room-42")
 
         await asyncio.wait_for(_wait_for_handler(handler), timeout=2.0)
         delivered = handler.await_args.args[1]
@@ -313,7 +307,13 @@ class TestAgentKickoff:
             await agent_runtime.executions[r].stop()
 
     @pytest.mark.asyncio
-    async def test_kickoff_raises_when_agent_not_started(self, mock_link):
+    async def test_platform_message_requires_room_id(self, started_agent):
+        agent, _agent_runtime, _handler = started_agent
+        with pytest.raises(ValueError, match="room_id is required"):
+            await agent.bootstrap_room_message(_platform_message())
+
+    @pytest.mark.asyncio
+    async def test_raises_when_agent_not_started(self):
         from thenvoi.agent import Agent
 
         adapter = MagicMock()
@@ -322,20 +322,10 @@ class TestAgentKickoff:
         # _started defaults to False
 
         with pytest.raises(RuntimeError, match="Agent not started"):
-            await agent.kickoff("nope")
-
-    @pytest.mark.asyncio
-    async def test_bootstrap_room_message_raises_when_agent_not_started(
-        self, mock_link
-    ):
-        from thenvoi.agent import Agent
-
-        adapter = MagicMock()
-        platform_runtime = MagicMock()
-        agent = Agent(runtime=platform_runtime, adapter=adapter)
+            await agent.bootstrap_room_message("nope")
 
         with pytest.raises(RuntimeError, match="Agent not started"):
-            await agent.bootstrap_room_message("room-1", _platform_message())
+            await agent.bootstrap_room_message(_platform_message(), room_id="room-1")
 
 
 class TestRoomAddedDedupe:

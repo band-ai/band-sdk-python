@@ -336,35 +336,8 @@ class Agent:
         await self._runtime.run_forever()
 
     async def bootstrap_room_message(
-        self, room_id: str, message: PlatformMessage
-    ) -> None:
-        """
-        Kick the agent off in ``room_id`` with an initial message that did NOT
-        come from the platform.
-
-        Low-level primitive behind :meth:`kickoff`. Use this when you want
-        full control over the synthetic ``PlatformMessage`` — in particular
-        its ``id``. External systems often pass stable ids (e.g.
-        ``"daily-standup:2026-05-06"`` or ``"webhook:{event_id}"``) so they
-        can dedupe retries and replays.
-
-        The message is delivered to the adapter exactly like a real chat
-        message but is NOT persisted on the platform: nothing is written to
-        the database, no mark_processing / mark_processed lifecycle, and
-        other participants never see it.
-
-        Returns as soon as the message is enqueued. The adapter processes it
-        asynchronously on the execution context's loop.
-
-        Requires :meth:`start` to have been called.
-        """
-        if not self._started:
-            raise RuntimeError("Agent not started")
-        await self._runtime.bootstrap_room_message(room_id, message)
-
-    async def kickoff(
         self,
-        content: str,
+        content: str | PlatformMessage,
         *,
         room_id: str | None = None,
         task_id: str | None = None,
@@ -376,43 +349,64 @@ class Agent:
         Start the agent on its own with an initial message that did NOT come
         through the platform.
 
-        If ``room_id`` is omitted, a fresh chat room is created (optionally
-        linked to ``task_id``). The message is delivered to the agent's
-        adapter as a synthetic ``MessageEvent`` — no platform persistence,
-        no mark_processing/mark_processed lifecycle.
-
-        Safe to call repeatedly: each call with ``room_id=None`` creates a
-        new room. The returned room id is ready to use immediately with the
-        rest of the Agent / AgentTools API.
+        If ``room_id`` is omitted, a fresh chat room is created (linked to
+        ``task_id`` when provided). The message is delivered to the adapter
+        exactly like a real chat message but is NOT persisted on the
+        platform: nothing is written to the database, no
+        mark_processing / mark_processed lifecycle, and other participants
+        never see it.
 
         Returns as soon as the message is enqueued. The adapter processes it
         asynchronously on the execution context's loop.
 
+        Two calling shapes:
+
+        - ``bootstrap_room_message("do the thing")`` — pass a plain string.
+          The message id, sender identity, and timestamp are filled in.
+        - ``bootstrap_room_message(PlatformMessage(...), room_id=...)`` —
+          pass a fully-constructed ``PlatformMessage`` when you need
+          control over the message ``id`` (external systems often want
+          stable ids like ``"daily-standup:2026-05-06"`` or
+          ``"webhook:{event_id}"`` for retry / replay idempotency). The
+          ``room_id`` arg is required in this shape.
+
         Args:
-            content: The initial message content for the agent.
-            room_id: Existing room to inject into. If None, a new room is
-                created via REST.
+            content: The initial message — either a plain string or a
+                fully-constructed ``PlatformMessage``.
+            room_id: Existing room to inject into. Required when ``content``
+                is a ``PlatformMessage``. When omitted with a string, a new
+                room is created via REST.
             task_id: Optional task association when creating a new room.
+                Ignored when ``content`` is a ``PlatformMessage`` or
+                ``room_id`` is given.
             message_type: Platform message type. Defaults to ``"message"``.
+                Ignored when ``content`` is a ``PlatformMessage``.
             metadata: Optional metadata dict (mentions/status are filled in
-                if missing).
+                if missing). Ignored when ``content`` is a
+                ``PlatformMessage``.
             message_id: Stable id for the synthetic message. Defaults to a
-                generated ``"kickoff:{uuid4}"``. Provide your own when an
-                external system needs to dedupe by id.
+                generated ``"kickoff:{uuid4}"``. Ignored when ``content`` is
+                a ``PlatformMessage`` (use ``message.id`` instead).
 
         Returns:
-            The room id the kickoff was injected into (newly created when
+            The room id the message was injected into (newly created when
             ``room_id`` was None; otherwise the same id that was passed in).
         """
         if not self._started:
             raise RuntimeError("Agent not started")
 
-        link = self._runtime.link
+        if isinstance(content, PlatformMessage):
+            if room_id is None:
+                raise ValueError(
+                    "room_id is required when content is a PlatformMessage"
+                )
+            await self._runtime.bootstrap_room_message(room_id, content)
+            return room_id
 
         if room_id is None:
             from thenvoi.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 
-            response = await link.rest.agent_api_chats.create_agent_chat(
+            response = await self._runtime.link.rest.agent_api_chats.create_agent_chat(
                 chat=ChatRoomRequest(task_id=task_id),
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
@@ -421,7 +415,7 @@ class Agent:
                     f"create_agent_chat returned no data for task_id={task_id!r}"
                 )
             room_id = response.data.id
-            logger.info("Kickoff created new room: %s", room_id)
+            logger.info("Bootstrap created new room: %s", room_id)
 
         # Sender identity is intentionally fixed to the synthetic constants —
         # ExecutionContext relies on (sender_type=System, sender_id=kickoff)
@@ -438,7 +432,7 @@ class Agent:
             metadata=metadata or {},
             created_at=datetime.now(timezone.utc),
         )
-        await self.bootstrap_room_message(room_id, message)
+        await self._runtime.bootstrap_room_message(room_id, message)
         return room_id
 
     async def _on_execute(

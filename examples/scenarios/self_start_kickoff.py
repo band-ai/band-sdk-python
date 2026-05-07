@@ -6,22 +6,21 @@
 # thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
-Self-starting agent example using ``Agent.kickoff()``.
+Self-starting agent example using ``Agent.bootstrap_room_message()``.
 
 Most agents react to messages from the platform. Sometimes you want the
 opposite: the agent should start working on its own, with an initial
 message that did NOT come from a real user — for example, a webhook that
 just received an event, or a cron job that wakes the agent every morning.
 
-``Agent.kickoff(content)`` does exactly that. It optionally creates a
-fresh chat room, then injects a synthetic in-memory message so the
-adapter starts processing as if the user had typed it. The message is
-NOT persisted on the platform and other participants never see it.
+``Agent.bootstrap_room_message(content)`` does exactly that. Pass a
+plain string and it creates a fresh chat room, then injects a synthetic
+in-memory message so the adapter starts processing as if the user had
+typed it. The message is NOT persisted on the platform and other
+participants never see it.
 
-This example shows the kickoff message dropping the agent into a fresh
-room and telling it to use platform tools (peer lookup, contacts, room
-participants) to recruit collaborators rather than answering alone — the
-collaborative behavior is the point of Thenvoi.
+For external systems that need stable ids for retry/replay idempotency,
+pass a ``PlatformMessage`` with your own ``id`` and a ``room_id``.
 
 Run with:
     uv run examples/scenarios/self_start_kickoff.py
@@ -96,8 +95,8 @@ async def main() -> None:
     )
 
     async with agent:
-        room_id = await agent.kickoff(KICKOFF_MESSAGE)
-        logger.info("Kicked off in room %s", room_id)
+        room_id = await agent.bootstrap_room_message(KICKOFF_MESSAGE)
+        logger.info("Bootstrapped agent in room %s", room_id)
         # Stay running so the agent can iterate with the peers it invites.
         await agent.run_forever()
 
