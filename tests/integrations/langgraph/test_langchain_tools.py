@@ -13,23 +13,18 @@ from thenvoi.runtime.tools import CHAT_TOOL_NAMES, CONTACT_TOOL_NAMES, MEMORY_TO
 
 def make_tools() -> MagicMock:
     tools = MagicMock()
-    tools.send_message = AsyncMock(return_value={"status": "sent"})
-    tools.add_participant = AsyncMock(return_value={"id": "participant-1"})
-    tools.remove_participant = AsyncMock(return_value={"status": "removed"})
-    tools.lookup_peers = AsyncMock(return_value={"peers": []})
-    tools.get_participants = AsyncMock(return_value=[])
-    tools.create_chatroom = AsyncMock(return_value="room-1")
-    tools.send_event = AsyncMock(return_value={"status": "event-sent"})
-    tools.list_contacts = AsyncMock(return_value={"contacts": []})
-    tools.add_contact = AsyncMock(return_value={"id": "contact-1"})
-    tools.remove_contact = AsyncMock(return_value={"status": "removed"})
-    tools.list_contact_requests = AsyncMock(return_value={"requests": []})
-    tools.respond_contact_request = AsyncMock(return_value={"status": "approved"})
-    tools.list_memories = AsyncMock(return_value={"memories": []})
-    tools.store_memory = AsyncMock(return_value={"id": "memory-1"})
-    tools.get_memory = AsyncMock(return_value={"id": "memory-1"})
-    tools.supersede_memory = AsyncMock(return_value={"status": "superseded"})
-    tools.archive_memory = AsyncMock(return_value={"status": "archived"})
+    tools.is_hub_room = False
+
+    async def execute_tool_call(tool_name: str, arguments: dict[str, Any]) -> Any:
+        results = {
+            "thenvoi_send_message": {"status": "sent"},
+            "thenvoi_send_event": {"status": "event-sent"},
+            "thenvoi_add_contact": {"id": "contact-1"},
+            "thenvoi_store_memory": {"id": "memory-1"},
+        }
+        return results.get(tool_name, {"status": "ok"})
+
+    tools.execute_tool_call = AsyncMock(side_effect=execute_tool_call)
     return tools
 
 
@@ -82,38 +77,72 @@ async def test_wrappers_call_agent_tools_methods() -> None:
     assert await wrapped["thenvoi_send_message"].ainvoke(
         {"content": "hello", "mentions": ["@alice"]}
     ) == {"status": "sent"}
-    tools.send_message.assert_awaited_once_with("hello", ["@alice"])
+    tools.execute_tool_call.assert_any_await(
+        "thenvoi_send_message", {"content": "hello", "mentions": ["@alice"]}
+    )
 
     assert await wrapped["thenvoi_send_event"].ainvoke(
         {"content": "working", "message_type": "thought"}
     ) == {"status": "event-sent"}
-    tools.send_event.assert_awaited_once_with("working", "thought", None)
+    tools.execute_tool_call.assert_any_await(
+        "thenvoi_send_event",
+        {"content": "working", "message_type": "thought", "metadata": None},
+    )
+
+    assert await wrapped["thenvoi_add_participant"].ainvoke(
+        {"identifier": "Helper"}
+    ) == {"status": "ok"}
+    tools.execute_tool_call.assert_any_await(
+        "thenvoi_add_participant", {"identifier": "Helper", "role": "member"}
+    )
 
     assert await wrapped["thenvoi_add_contact"].ainvoke(
         {"handle": "@bob", "message": "hi"}
     ) == {"id": "contact-1"}
-    tools.add_contact.assert_awaited_once_with("@bob", "hi")
+    tools.execute_tool_call.assert_any_await(
+        "thenvoi_add_contact", {"handle": "@bob", "message": "hi"}
+    )
 
     assert await wrapped["thenvoi_store_memory"].ainvoke(
         {
             "content": "prefers concise answers",
-            "system": "thenvoi",
-            "type": "preference",
+            "system": "long_term",
+            "type": "semantic",
             "segment": "user",
             "thought": "user stated preference",
         }
     ) == {"id": "memory-1"}
-    tools.store_memory.assert_awaited_once()
+    tools.execute_tool_call.assert_any_await(
+        "thenvoi_store_memory",
+        {
+            "content": "prefers concise answers",
+            "system": "long_term",
+            "type": "semantic",
+            "segment": "user",
+            "thought": "user stated preference",
+            "scope": "subject",
+            "subject_id": None,
+            "metadata": None,
+        },
+    )
+
+
+def test_add_participant_schema_exposes_identifier_and_role() -> None:
+    wrapped = by_name(agent_tools_to_langchain(make_tools()))
+    schema_fields = wrapped["thenvoi_add_participant"].args_schema.model_fields
+
+    assert "identifier" in schema_fields
+    assert "role" in schema_fields
 
 
 @pytest.mark.asyncio
 async def test_wrapper_errors_are_returned_to_model() -> None:
     tools = make_tools()
-    tools.send_message.side_effect = RuntimeError("platform unavailable")
+    tools.execute_tool_call.side_effect = RuntimeError("platform unavailable")
     wrapped = by_name(agent_tools_to_langchain(tools))
 
     result = await wrapped["thenvoi_send_message"].ainvoke(
         {"content": "hello", "mentions": []}
     )
 
-    assert result == "Error sending message: platform unavailable"
+    assert result == "Error executing thenvoi_send_message: platform unavailable"

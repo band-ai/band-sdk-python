@@ -263,20 +263,20 @@ class TestToolCallPairing:
         assert result[2].tool_calls[0]["id"] == "call_first"
         assert result[2].tool_calls[0]["args"] == {"query": "first"}
 
-    def test_falls_back_to_lifo_by_name_without_run_id_match(self):
+    def test_falls_back_to_lifo_by_name_without_tool_call_id_match(self):
         pending = [
-            {"name": "lookup", "data": {"input": {"query": "first"}}},
-            {"name": "lookup", "data": {"input": {"query": "second"}}},
+            {"name": "lookup", "args": {"query": "first"}},
+            {"name": "lookup", "args": {"query": "second"}},
         ]
 
         match = LangChainHistoryConverter._pop_matching_tool_call(
             pending,
             tool_name="lookup",
-            run_id=None,
+            tool_call_id=None,
         )
 
-        assert match == {"name": "lookup", "data": {"input": {"query": "second"}}}
-        assert pending == [{"name": "lookup", "data": {"input": {"query": "first"}}}]
+        assert match == {"name": "lookup", "args": {"query": "second"}}
+        assert pending == [{"name": "lookup", "args": {"query": "first"}}]
 
 
 class TestErrorHandling:
@@ -313,8 +313,8 @@ class TestErrorHandling:
 
         assert len(result) == 0
 
-    def test_handles_tool_result_without_matching_call(self):
-        """Should still create ToolMessage even without matching call."""
+    def test_skips_tool_result_without_matching_call(self):
+        """Should skip orphaned tool results that would violate LangChain pairing."""
         converter = LangChainHistoryConverter()
         raw = [
             {
@@ -333,10 +333,7 @@ class TestErrorHandling:
 
         result = converter.convert(raw)
 
-        # Should still create ToolMessage (no AIMessage since no matching call)
-        assert len(result) == 1
-        assert isinstance(result[0], ToolMessage)
-        assert result[0].tool_call_id == "call_orphan"
+        assert result == []
 
 
 class TestExtractToolCallId:

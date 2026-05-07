@@ -15,6 +15,7 @@ except ImportError as e:
         "Install with: uv add thenvoi-sdk[langgraph]"
     ) from e
 
+from thenvoi.converters._tool_parsing import parse_tool_call, parse_tool_result
 from thenvoi.core.protocols import HistoryConverter
 
 logger = logging.getLogger(__name__)
@@ -66,48 +67,64 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
             sender_name = hist.get("sender_name", "")
 
             if message_type == "tool_call":
-                try:
-                    event = json.loads(content)
-                    pending_tool_calls.append(event)
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse tool_call: %s", content[:100])
+                parsed_call = parse_tool_call(content)
+                if parsed_call:
+                    pending_tool_calls.append(
+                        {
+                            "name": parsed_call.name,
+                            "args": parsed_call.args,
+                            "tool_call_id": parsed_call.tool_call_id,
+                            "run_id": parsed_call.tool_call_id,
+                        }
+                    )
+                    continue
+
+                legacy_call = self._parse_legacy_tool_call(content)
+                if legacy_call:
+                    pending_tool_calls.append(legacy_call)
 
             elif message_type == "tool_result":
-                try:
-                    event = json.loads(content)
-                    tool_name = event.get("name", "unknown")
-                    output = event.get("data", {}).get("output", "")
+                parsed_result = parse_tool_result(content)
+                if parsed_result:
+                    tool_name = parsed_result.name
+                    output = parsed_result.output
+                    tool_call_id = parsed_result.tool_call_id
+                else:
+                    legacy_result = self._parse_legacy_tool_result(content)
+                    if not legacy_result:
+                        continue
+                    tool_name = legacy_result["name"]
+                    output = legacy_result["output"]
+                    tool_call_id = legacy_result["tool_call_id"]
 
-                    tool_call_id = self._extract_tool_call_id(output)
-                    if not tool_call_id:
-                        tool_call_id = event.get("run_id", "unknown")
+                matching_call = self._pop_matching_tool_call(
+                    pending_tool_calls,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                )
 
-                    matching_call = self._pop_matching_tool_call(
-                        pending_tool_calls,
-                        tool_name=tool_name,
-                        run_id=event.get("run_id"),
+                if not matching_call:
+                    logger.warning(
+                        "Skipping tool_result without matching tool_call: %s",
+                        tool_name,
                     )
+                    continue
 
-                    if matching_call:
-                        tool_input = matching_call.get("data", {}).get("input", {})
-                        messages.append(
-                            AIMessage(
-                                content="",
-                                tool_calls=[
-                                    {
-                                        "id": tool_call_id,
-                                        "name": tool_name,
-                                        "args": tool_input,
-                                    }
-                                ],
-                            )
-                        )
-
-                    messages.append(
-                        ToolMessage(content=str(output), tool_call_id=tool_call_id)
+                messages.append(
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": tool_call_id,
+                                "name": tool_name,
+                                "args": matching_call.get("args", {}),
+                            }
+                        ],
                     )
-                except json.JSONDecodeError:
-                    logger.warning("Failed to parse tool_result: %s", content[:100])
+                )
+                messages.append(
+                    ToolMessage(content=str(output), tool_call_id=tool_call_id)
+                )
 
             elif message_type == "text":
                 if role == "assistant" and sender_name == self._agent_name:
@@ -131,11 +148,11 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
         pending_tool_calls: list[dict[str, Any]],
         *,
         tool_name: str,
-        run_id: str | None,
+        tool_call_id: str | None,
     ) -> dict[str, Any] | None:
-        if run_id:
+        if tool_call_id:
             for i, call in enumerate(pending_tool_calls):
-                if call.get("run_id") == run_id:
+                if tool_call_id in (call.get("tool_call_id"), call.get("run_id")):
                     return pending_tool_calls.pop(i)
 
         for i in range(len(pending_tool_calls) - 1, -1, -1):
@@ -143,6 +160,64 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
                 return pending_tool_calls.pop(i)
 
         return None
+
+    @classmethod
+    def _parse_legacy_tool_call(cls, content: str) -> dict[str, Any] | None:
+        try:
+            event = json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse tool_call: %s", content[:100])
+            return None
+
+        if not isinstance(event, dict):
+            logger.warning("Skipping non-object tool_call: %s", content[:100])
+            return None
+
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        tool_name = event.get("name")
+        if not isinstance(tool_name, str):
+            logger.warning("Skipping tool_call with missing name: %s", content[:100])
+            return None
+
+        tool_input = data.get("input", {})
+        if not isinstance(tool_input, dict):
+            tool_input = {}
+
+        run_id = event.get("run_id")
+        return {
+            "name": tool_name,
+            "args": tool_input,
+            "tool_call_id": run_id,
+            "run_id": run_id,
+        }
+
+    @classmethod
+    def _parse_legacy_tool_result(cls, content: str) -> dict[str, Any] | None:
+        try:
+            event = json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse tool_result: %s", content[:100])
+            return None
+
+        if not isinstance(event, dict):
+            logger.warning("Skipping non-object tool_result: %s", content[:100])
+            return None
+
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        tool_name = event.get("name")
+        if not isinstance(tool_name, str):
+            logger.warning("Skipping tool_result with missing name: %s", content[:100])
+            return None
+
+        output = data.get("output", "")
+        tool_call_id = cls._extract_tool_call_id(output) or event.get("run_id")
+        if not isinstance(tool_call_id, str):
+            logger.warning(
+                "Skipping tool_result with missing tool_call_id: %s", content[:100]
+            )
+            return None
+
+        return {"name": tool_name, "output": output, "tool_call_id": tool_call_id}
 
     @classmethod
     def _extract_tool_call_id(cls, output: Any) -> str | None:

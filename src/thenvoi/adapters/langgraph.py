@@ -72,7 +72,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -90,25 +90,34 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         custom_section: str = "",
         additional_tools: List[Any] | None = None,
         enable_memory_tools: bool = False,
+        enable_execution_reporting: bool = False,
         history_converter: LangChainHistoryConverter | None = None,
         recursion_limit: int = 50,
         features: AdapterFeatures | None = None,
     ):
         # --- Deprecation shim: boolean → features migration ---
-        if enable_memory_tools and features is not None:
+        if (enable_memory_tools or enable_execution_reporting) and features is not None:
             raise ThenvoiConfigError(
-                "Cannot pass both 'enable_memory_tools' and 'features'. "
-                "Use features=AdapterFeatures(capabilities={Capability.MEMORY}) instead."
+                "Cannot pass both 'features' and legacy boolean params "
+                "(enable_memory_tools, enable_execution_reporting)."
             )
 
-        if enable_memory_tools:
+        if enable_memory_tools or enable_execution_reporting:
             warnings.warn(
-                "enable_memory_tools is deprecated. "
-                "Use features=AdapterFeatures(capabilities={Capability.MEMORY}) instead.",
+                "enable_memory_tools/enable_execution_reporting are deprecated. "
+                "Use features=AdapterFeatures(...) instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            features = AdapterFeatures(capabilities=frozenset({Capability.MEMORY}))
+            capabilities = (
+                frozenset({Capability.MEMORY}) if enable_memory_tools else frozenset()
+            )
+            emit = (
+                frozenset({Emit.EXECUTION})
+                if enable_execution_reporting
+                else frozenset()
+            )
+            features = AdapterFeatures(capabilities=capabilities, emit=emit)
 
         # Use default LangChain converter if not provided
         super().__init__(
@@ -210,19 +219,13 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # platform history exactly once per room. After that, the LangGraph
         # checkpointer carries the system message and prior turns forward and
         # we just append the new user turn.
+        should_mark_bootstrapped = False
         if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
             if self._system_prompt:
                 messages.append(("system", self._system_prompt))
             if history:
                 messages.extend(history)  # Already converted by history_converter
-            if len(self._bootstrapped_rooms) >= _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
-                evicted_room_id, _ = self._bootstrapped_rooms.popitem(last=False)
-                logger.warning(
-                    "Bootstrap tracking reached %d rooms; evicting oldest room %s",
-                    _BOOTSTRAP_TRACKING_WARN_THRESHOLD,
-                    evicted_room_id,
-                )
-            self._bootstrapped_rooms[room_id] = None
+            should_mark_bootstrapped = True
 
         # Inject metadata updates as user messages with [System]: prefix.
         # Many LLM providers (including Anthropic) require a single system
@@ -251,6 +254,16 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             ):
                 await self._handle_stream_event(event, room_id, tools)
 
+            if should_mark_bootstrapped:
+                self._bootstrapped_rooms[room_id] = None
+                if len(self._bootstrapped_rooms) > _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
+                    oldest_room_id, _ = self._bootstrapped_rooms.popitem(last=False)
+                    logger.warning(
+                        "Bootstrap tracking reached %d rooms; evicting oldest room %s",
+                        _BOOTSTRAP_TRACKING_WARN_THRESHOLD,
+                        oldest_room_id,
+                    )
+
             logger.info("[DONE] Message %s processed successfully", msg.id)
 
         except Exception as e:
@@ -271,22 +284,41 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         event_type = event.get("event")
 
         if event_type == "on_tool_start":
+            if Emit.EXECUTION not in self.features.emit:
+                return
+
             tool_name = event.get("name", "unknown")
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            payload = {
+                "name": tool_name,
+                "args": data.get("input", {}),
+                "tool_call_id": event.get("run_id", "unknown"),
+            }
             logger.info("[STREAM] on_tool_start: %s", tool_name)
             try:
                 await tools.send_event(
-                    content=json.dumps(event, default=str),
+                    content=json.dumps(payload, default=str),
                     message_type="tool_call",
                 )
             except Exception as e:
                 logger.warning("Failed to send tool_call event: %s", e)
 
         elif event_type == "on_tool_end":
+            if Emit.EXECUTION not in self.features.emit:
+                return
+
             tool_name = event.get("name", "unknown")
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            payload = {
+                "name": tool_name,
+                "output": data.get("output", ""),
+                "tool_call_id": event.get("run_id", "unknown"),
+                "is_error": False,
+            }
             logger.info("[STREAM] on_tool_end: %s", tool_name)
             try:
                 await tools.send_event(
-                    content=json.dumps(event, default=str),
+                    content=json.dumps(payload, default=str),
                     message_type="tool_result",
                 )
             except Exception as e:

@@ -120,15 +120,15 @@ When someone asks a question about AI topics:
 
 ### "Tell X about Y" Pattern:
 When a user says "tell [Person/Agent] about [Topic]":
-1. Get their info: `thenvoi_get_participants()` to find their ID and username
+1. Get their info: `thenvoi_get_participants()` to find their participant ID and display name
 2. Research topic: `research_ai_topics` to get information about the topic
-3. Send with mention: `thenvoi_send_message` with "@Username, [information]" and mentions parameter
+3. Send with mention: `thenvoi_send_message` with "@DisplayName, [information]" and `mentions=[participant_id]`
 
 **Example:**
 User: "tell nvidia about reward hacking"
-1. thenvoi_get_participants() → find Nvidia_Agent
+1. thenvoi_get_participants() → find Nvidia_Agent's participant ID
 2. research_ai_topics(messages=[{'role': 'user', 'content': 'What is reward hacking?'}]) → get answer
-3. thenvoi_send_message(content="@Nvidia_Agent, [answer from research]", mentions='[{"id":"xxx","username":"Nvidia_Agent"}]')
+3. thenvoi_send_message(content="@Nvidia_Agent, [answer from research]", mentions=["participant-id-from-get-participants"])
 """
 
     # Create adapter with RAG tool

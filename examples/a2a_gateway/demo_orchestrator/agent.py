@@ -146,7 +146,12 @@ Always be helpful and provide clear responses to the user."""
         else:
             peers_list = "(Peers will be discovered dynamically from the gateway)"
 
-        system_prompt = self.SYSTEM_INSTRUCTION.format(peers_list=peers_list)
+        system_prompt = "\n\n".join(
+            [
+                self.SYSTEM_INSTRUCTION.format(peers_list=peers_list),
+                self.FORMAT_INSTRUCTION,
+            ]
+        )
 
         # Create LangGraph agent
         self.model = ChatOpenAI(model=model)
@@ -158,7 +163,7 @@ Always be helpful and provide clear responses to the user."""
             tools=self.tools,
             checkpointer=self.memory,
             system_prompt=system_prompt,
-            response_format=(self.FORMAT_INSTRUCTION, ResponseFormat),
+            response_format=ResponseFormat,
         )
 
     async def stream(

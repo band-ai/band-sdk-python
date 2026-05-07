@@ -18,7 +18,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from thenvoi.adapters.langgraph import LangGraphAdapter
-from thenvoi.core.types import PlatformMessage
+from thenvoi.core.types import AdapterFeatures, Emit, PlatformMessage
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +326,7 @@ class TestOnMessage:
     async def test_feature_capabilities_control_tool_groups(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
-        from thenvoi.core.types import AdapterFeatures, Capability
+        from thenvoi.core.types import Capability
 
         adapter = LangGraphAdapter(
             llm=mock_llm,
@@ -430,7 +430,10 @@ class TestOnMessage:
         builder.add_edge("tools", END)
         graph = builder.compile()
 
-        adapter = LangGraphAdapter(graph=graph)
+        adapter = LangGraphAdapter(
+            graph=graph,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+        )
         await adapter.on_started("TestBot", "Test bot")
 
         await adapter.on_message(
@@ -732,6 +735,7 @@ class TestStreamEventHandling:
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
         )
 
         event = {
@@ -753,6 +757,7 @@ class TestStreamEventHandling:
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
         )
 
         event = {
