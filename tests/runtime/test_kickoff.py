@@ -255,7 +255,7 @@ class TestAgentKickoff:
     async def test_kickoff_creates_room_when_not_provided(
         self, started_agent, mock_link
     ):
-        agent, agent_runtime, _handler = started_agent
+        agent, agent_runtime, handler = started_agent
 
         created = MagicMock()
         created.id = "fresh-room-9"
@@ -271,8 +271,27 @@ class TestAgentKickoff:
         agent.runtime.bootstrap_room_message.assert_awaited_once()
         assert "fresh-room-9" in agent_runtime.executions
 
+        # Confirm the synthetic message reached the adapter, not just that
+        # the room was created and execution started.
+        await asyncio.wait_for(_wait_for_handler(handler), timeout=2.0)
+        delivered = handler.await_args.args[1]
+        assert delivered.payload.content == "go!"
+        assert delivered.payload.sender_id == SYNTHETIC_KICKOFF_SENDER_ID
+
         for r in list(agent_runtime.executions.keys()):
             await agent_runtime.executions[r].stop()
+
+    @pytest.mark.asyncio
+    async def test_kickoff_raises_specific_error_when_create_chat_returns_no_data(
+        self, started_agent, mock_link
+    ):
+        agent, agent_runtime, _handler = started_agent
+        mock_link.rest.agent_api_chats = MagicMock()
+        mock_link.rest.agent_api_chats.create_agent_chat = AsyncMock(
+            return_value=MagicMock(data=None)
+        )
+        with pytest.raises(RuntimeError, match="task_id='task-9'"):
+            await agent.kickoff("go!", task_id="task-9")
 
     @pytest.mark.asyncio
     async def test_bootstrap_room_message_preserves_caller_id_end_to_end(
@@ -304,6 +323,53 @@ class TestAgentKickoff:
 
         with pytest.raises(RuntimeError, match="Agent not started"):
             await agent.kickoff("nope")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_room_message_raises_when_agent_not_started(
+        self, mock_link
+    ):
+        from thenvoi.agent import Agent
+
+        adapter = MagicMock()
+        platform_runtime = MagicMock()
+        agent = Agent(runtime=platform_runtime, adapter=adapter)
+
+        with pytest.raises(RuntimeError, match="Agent not started"):
+            await agent.bootstrap_room_message("room-1", _platform_message())
+
+
+class TestRoomAddedDedupe:
+    """Regression: WS room_added for a kickoff-claimed room must not double-subscribe."""
+
+    @pytest.mark.asyncio
+    async def test_room_added_skips_subscribe_when_room_already_tracked(
+        self, mock_link
+    ):
+        from thenvoi.client.streaming import RoomAddedPayload
+        from thenvoi.platform.event import RoomAddedEvent
+        from thenvoi.runtime.presence import RoomPresence
+
+        presence = RoomPresence(mock_link)
+        # Simulate kickoff having already claimed and subscribed to the room.
+        presence.rooms.add("claimed-room")
+        on_joined = AsyncMock()
+        presence.on_room_joined = on_joined
+
+        event = RoomAddedEvent(
+            room_id="claimed-room",
+            payload=RoomAddedPayload(
+                id="claimed-room",
+                inserted_at="2024-01-01T00:00:00Z",
+                updated_at="2024-01-01T00:00:00Z",
+            ),
+        )
+        await presence._handle_room_added(event)
+
+        # subscribe_room must not be called a second time, and on_room_joined
+        # should not re-fire (execution would already exist anyway, but the
+        # callback contract is "once per join").
+        mock_link.subscribe_room.assert_not_called()
+        on_joined.assert_not_called()
 
 
 # --- helpers ---

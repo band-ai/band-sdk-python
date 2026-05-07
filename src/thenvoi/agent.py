@@ -353,6 +353,9 @@ class Agent:
         the database, no mark_processing / mark_processed lifecycle, and
         other participants never see it.
 
+        Returns as soon as the message is enqueued. The adapter processes it
+        asynchronously on the execution context's loop.
+
         Requires :meth:`start` to have been called.
         """
         if not self._started:
@@ -365,8 +368,6 @@ class Agent:
         *,
         room_id: str | None = None,
         task_id: str | None = None,
-        sender_id: str | None = None,
-        sender_name: str | None = None,
         message_type: str = "message",
         metadata: dict[str, Any] | None = None,
         message_id: str | None = None,
@@ -384,14 +385,14 @@ class Agent:
         new room. The returned room id is ready to use immediately with the
         rest of the Agent / AgentTools API.
 
+        Returns as soon as the message is enqueued. The adapter processes it
+        asynchronously on the execution context's loop.
+
         Args:
             content: The initial message content for the agent.
             room_id: Existing room to inject into. If None, a new room is
                 created via REST.
             task_id: Optional task association when creating a new room.
-            sender_id: Override the synthetic sender id (defaults to
-                ``"kickoff"``). Most callers should leave this as the default.
-            sender_name: Display name for the synthetic sender.
             message_type: Platform message type. Defaults to ``"message"``.
             metadata: Optional metadata dict (mentions/status are filled in
                 if missing).
@@ -401,7 +402,7 @@ class Agent:
 
         Returns:
             The room id the kickoff was injected into (newly created when
-            ``room_id`` was None).
+            ``room_id`` was None; otherwise the same id that was passed in).
         """
         if not self._started:
             raise RuntimeError("Agent not started")
@@ -416,17 +417,23 @@ class Agent:
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             if not response.data:
-                raise RuntimeError("Failed to create chat room for kickoff")
+                raise RuntimeError(
+                    f"create_agent_chat returned no data for task_id={task_id!r}"
+                )
             room_id = response.data.id
             logger.info("Kickoff created new room: %s", room_id)
 
+        # Sender identity is intentionally fixed to the synthetic constants —
+        # ExecutionContext relies on (sender_type=System, sender_id=kickoff)
+        # to skip platform persistence. ExecutionContext.bootstrap_message
+        # forces these regardless of what is set here.
         message = PlatformMessage(
             id=message_id or f"kickoff:{uuid.uuid4()}",
             room_id=room_id,
             content=content,
-            sender_id=sender_id or SYNTHETIC_KICKOFF_SENDER_ID,
+            sender_id=SYNTHETIC_KICKOFF_SENDER_ID,
             sender_type=SYNTHETIC_SENDER_TYPE,
-            sender_name=sender_name or SYNTHETIC_KICKOFF_SENDER_NAME,
+            sender_name=SYNTHETIC_KICKOFF_SENDER_NAME,
             message_type=message_type,
             metadata=metadata or {},
             created_at=datetime.now(timezone.utc),

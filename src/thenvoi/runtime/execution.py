@@ -132,6 +132,23 @@ class Execution(Protocol):
         """Handle a platform event for this room."""
         ...
 
+    async def bootstrap_message(self, message: PlatformMessage) -> None:
+        """Inject a synthetic kickoff message into this execution.
+
+        .. versionchanged:: 0.3.0
+            Custom ``Execution`` implementations should add ``bootstrap_message()``.
+            ``AgentRuntime`` falls back safely for legacy implementations that do
+            not provide it (raises ``RuntimeError`` at the bootstrap call site),
+            but typed protocol conformance now includes this method.
+
+        Called by ``Agent.kickoff`` and ``Agent.bootstrap_room_message`` to start
+        the agent on its own with an initial message that did not come through
+        the platform. The supplied ``PlatformMessage`` is wrapped as a synthetic
+        ``MessageEvent`` and delivered to the adapter without platform
+        persistence, retry tracking, or other-participant visibility.
+        """
+        ...
+
     async def request_resync(self) -> None:
         """Signal the process loop to re-poll /next immediately.
 
