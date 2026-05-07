@@ -6,7 +6,7 @@ import json
 import logging
 import warnings
 from collections import OrderedDict
-from typing import ClassVar, TYPE_CHECKING, Any, Callable, List
+from typing import ClassVar, TYPE_CHECKING, Any, Callable
 
 from langgraph.pregel import Pregel
 
@@ -83,12 +83,12 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         llm: "BaseChatModel | None" = None,
         checkpointer: "BaseCheckpointSaver | None" = None,
         # Advanced pattern: provide a graph factory or static graph
-        graph_factory: Callable[[List[Any]], Pregel] | None = None,
+        graph_factory: Callable[[list[Any]], Pregel] | None = None,
         graph: Pregel | None = None,
         # Common options
         prompt_template: str = "default",
         custom_section: str = "",
-        additional_tools: List[Any] | None = None,
+        additional_tools: list[Any] | None = None,
         enable_memory_tools: bool = False,
         enable_execution_reporting: bool = False,
         history_converter: LangChainHistoryConverter | None = None,
@@ -134,7 +134,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
             additional = additional_tools or []
 
-            def factory(band_tools: List[Any]) -> Pregel:
+            def factory(band_tools: list[Any]) -> Pregel:
                 all_tools = band_tools + additional
                 return create_agent(
                     model=llm,
@@ -266,10 +266,17 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
             logger.info("[DONE] Message %s processed successfully", msg.id)
 
-        except Exception as e:
-            logger.error("Error processing message %s: %s", msg.id, e, exc_info=True)
+        except Exception:
+            logger.exception("Error processing message %s", msg.id)
             try:
-                await tools.send_event(content=f"Error: {e}", message_type="error")
+                # Keep the user-facing payload generic; the full traceback is
+                # in the agent log via logger.exception above. Tool/error
+                # internals can include DB strings, paths, and tokens that
+                # should not surface in chat.
+                await tools.send_event(
+                    content="Internal error while processing message; see agent logs.",
+                    message_type="error",
+                )
             except Exception:
                 logger.exception("Failed to report error event for message %s", msg.id)
             raise

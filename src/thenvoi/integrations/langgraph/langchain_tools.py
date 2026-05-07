@@ -7,12 +7,15 @@ LangChain's StructuredTool format for use with LangGraph.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from langchain_core.tools import StructuredTool
 
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.runtime.tools import get_tool_description, iter_tool_definitions
+
+logger = logging.getLogger(__name__)
 
 
 def agent_tools_to_langchain(
@@ -54,8 +57,13 @@ def agent_tools_to_langchain(
         ) -> Any:
             try:
                 return await tools.execute_tool_call(_tool_name, kwargs)
-            except Exception as e:
-                return f"Error executing {_tool_name}: {e}"
+            except Exception:
+                # Tool errors feed back into the LLM transcript and may be
+                # relayed to chat. Keep the message generic; the full
+                # traceback (with paths, DB strings, tokens, etc.) only
+                # lives in the agent log.
+                logger.exception("Error executing platform tool %s", _tool_name)
+                return f"Error executing {_tool_name}: see agent logs."
 
         execute_definition.__name__ = f"{definition.method_name}_wrapper"
         execute_definition.__doc__ = description

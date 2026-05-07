@@ -145,4 +145,5 @@ async def test_wrapper_errors_are_returned_to_model() -> None:
         {"content": "hello", "mentions": []}
     )
 
-    assert result == "Error executing thenvoi_send_message: platform unavailable"
+    assert result == "Error executing thenvoi_send_message: see agent logs."
+    assert "platform unavailable" not in result
