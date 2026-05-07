@@ -217,19 +217,46 @@ class TestAgentRuntimeBootstrap:
 
 
 class TestAgentKickoff:
-    """Agent.kickoff helper end-to-end with mocked runtime."""
+    """Agent.kickoff and Agent.bootstrap_room_message public-entry tests."""
 
-    @pytest.mark.asyncio
-    async def test_kickoff_creates_room_when_not_provided(self, mock_link):
+    @pytest.fixture
+    def started_agent(self, mock_link):
+        """Build a started Agent backed by a real AgentRuntime + mock link.
+
+        Avoids reaching into private attributes — uses the public Agent
+        constructor with a stubbed PlatformRuntime, then flips the started
+        flag the same way Agent.start() would.
+        """
         from thenvoi.agent import Agent
         from thenvoi.runtime.runtime import AgentRuntime
 
-        # Wire a real AgentRuntime around the mock link so bootstrap goes
-        # through the real subscription/execution path.
         handler = AsyncMock()
-        runtime = AgentRuntime(mock_link, "agent-123", on_execute=handler)
+        agent_runtime = AgentRuntime(mock_link, "agent-123", on_execute=handler)
 
-        # Mock the chat-creation REST call
+        # Build a PlatformRuntime stand-in that delegates bootstrap to the
+        # real AgentRuntime so the full call chain is exercised.
+        platform_runtime = MagicMock()
+        platform_runtime.link = mock_link
+        platform_runtime.bootstrap_room_message = AsyncMock(
+            side_effect=agent_runtime.bootstrap_room_message
+        )
+
+        adapter = MagicMock()
+        adapter.on_started = AsyncMock()
+        adapter.on_event = AsyncMock()
+        adapter.on_cleanup = AsyncMock()
+
+        agent = Agent(runtime=platform_runtime, adapter=adapter)
+        agent._started = True  # simulate post-start state without WS connect
+
+        return agent, agent_runtime, handler
+
+    @pytest.mark.asyncio
+    async def test_kickoff_creates_room_when_not_provided(
+        self, started_agent, mock_link
+    ):
+        agent, agent_runtime, _handler = started_agent
+
         created = MagicMock()
         created.id = "fresh-room-9"
         mock_link.rest.agent_api_chats = MagicMock()
@@ -237,27 +264,46 @@ class TestAgentKickoff:
             return_value=MagicMock(data=created)
         )
 
-        # Build an Agent with the runtime stubbed in
-        agent = Agent.__new__(Agent)
-        agent._adapter = MagicMock()
-        agent._preprocessor = MagicMock()
-        agent._started = True
-        agent._runtime = MagicMock()
-        agent._runtime.link = mock_link
-
-        async def _forward(room_id: str, message) -> None:
-            await runtime.bootstrap_room_message(room_id, message)
-
-        agent._runtime.bootstrap_room_message = AsyncMock(side_effect=_forward)
-
         room_id = await agent.kickoff("go!", task_id="task-7")
+
         assert room_id == "fresh-room-9"
         mock_link.rest.agent_api_chats.create_agent_chat.assert_awaited_once()
-        agent._runtime.bootstrap_room_message.assert_awaited_once()
+        agent.runtime.bootstrap_room_message.assert_awaited_once()
+        assert "fresh-room-9" in agent_runtime.executions
 
-        # Cleanup any executions started by the runtime
-        for r in list(runtime.executions.keys()):
-            await runtime.executions[r].stop()
+        for r in list(agent_runtime.executions.keys()):
+            await agent_runtime.executions[r].stop()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_room_message_preserves_caller_id_end_to_end(
+        self, started_agent, mock_link
+    ):
+        """Public-entry test through Agent.bootstrap_room_message: a caller-
+        supplied PlatformMessage id must reach the adapter unchanged."""
+        agent, agent_runtime, handler = started_agent
+
+        message = _platform_message(msg_id="webhook:event-xyz", content="run report")
+        await agent.bootstrap_room_message("room-42", message)
+
+        await asyncio.wait_for(_wait_for_handler(handler), timeout=2.0)
+        delivered = handler.await_args.args[1]
+        assert delivered.payload.id == "webhook:event-xyz"
+        assert delivered.payload.content == "run report"
+
+        for r in list(agent_runtime.executions.keys()):
+            await agent_runtime.executions[r].stop()
+
+    @pytest.mark.asyncio
+    async def test_kickoff_raises_when_agent_not_started(self, mock_link):
+        from thenvoi.agent import Agent
+
+        adapter = MagicMock()
+        platform_runtime = MagicMock()
+        agent = Agent(runtime=platform_runtime, adapter=adapter)
+        # _started defaults to False
+
+        with pytest.raises(RuntimeError, match="Agent not started"):
+            await agent.kickoff("nope")
 
 
 # --- helpers ---

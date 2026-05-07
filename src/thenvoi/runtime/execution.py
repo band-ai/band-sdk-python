@@ -1236,7 +1236,10 @@ class ExecutionContext:
                 and payload.sender_id in SYNTHETIC_SENDER_IDS
             )
             if is_synthetic:
-                logger.debug("Processing synthetic contact event message")
+                logger.debug(
+                    "Processing synthetic message (sender_id=%s)",
+                    payload.sender_id,
+                )
                 msg_id = None  # Clear to skip message marking later
                 # Skip all tracking for synthetic messages - go directly to processing
             else:

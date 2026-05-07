@@ -380,6 +380,10 @@ class Agent:
         adapter as a synthetic ``MessageEvent`` — no platform persistence,
         no mark_processing/mark_processed lifecycle.
 
+        Safe to call repeatedly: each call with ``room_id=None`` creates a
+        new room. The returned room id is ready to use immediately with the
+        rest of the Agent / AgentTools API.
+
         Args:
             content: The initial message content for the agent.
             room_id: Existing room to inject into. If None, a new room is

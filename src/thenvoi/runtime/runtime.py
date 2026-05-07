@@ -271,8 +271,14 @@ class AgentRuntime:
         flow through the normal presence pipeline afterwards.
         """
         if room_id not in self.presence.rooms:
-            await self.link.subscribe_room(room_id)
+            # Claim the slot before awaiting subscribe_room so concurrent
+            # bootstrap calls for the same room don't double-subscribe.
             self.presence.rooms.add(room_id)
+            try:
+                await self.link.subscribe_room(room_id)
+            except Exception:
+                self.presence.rooms.discard(room_id)
+                raise
             logger.debug(
                 "Bootstrap subscribed to room %s outside presence flow", room_id
             )
