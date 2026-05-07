@@ -64,14 +64,22 @@ ask the user for room IDs.
 def build_orchestrator_factory(llm: BaseChatModel) -> Any:
     """Build a graph_factory compatible with LangGraphAdapter.
 
+    The adapter calls ``graph_factory(band_tools)`` on every ``on_message``
+    with the tool wrappers bound to the *current room*. We rebuild the graph
+    every call so each room gets its own ``ToolNode`` with its own wrappers.
+    The compiled graph is cheap to rebuild; the ``InMemorySaver`` checkpointer
+    is the one piece we deliberately keep across calls so multi-turn state and
+    the bootstrap-once system prompt survive.
+
     The analyst node reads ``state["messages"]`` directly. The adapter
     prepends the Band-rendered system prompt (which already contains
     :data:`ORCHESTRATOR_INSTRUCTIONS` because it was passed via
     ``custom_section``) on session bootstrap, and the LangGraph
     checkpointer carries it forward across turns.
+
+    Subgraph tools (calculator, SQL) are room-independent and built once.
     """
     checkpointer = InMemorySaver()
-    compiled_graph: Pregel | None = None
     calculator_tool = graph_as_tool(
         graph=create_calculator_graph(),
         name="calculator_math",
@@ -99,10 +107,10 @@ def build_orchestrator_factory(llm: BaseChatModel) -> Any:
     )
 
     def graph_factory(band_tools: list[Any]) -> Pregel:
-        nonlocal compiled_graph
-        if compiled_graph is not None:
-            return compiled_graph
-
+        # Rebuild on every call so each room's tool wrappers (which carry
+        # that room's AgentTools) are the ones bound into this graph's
+        # ToolNode. Caching here would pin the first room's wrappers and
+        # silently route every other room's tool calls back to room A.
         all_tools = band_tools + [calculator_tool, sql_tool]
         model_with_tools = llm.bind_tools(all_tools)
 
@@ -120,8 +128,7 @@ def build_orchestrator_factory(llm: BaseChatModel) -> Any:
             {"tools": "tools", END: END},
         )
         builder.add_edge("tools", "analyst")
-        compiled_graph = builder.compile(checkpointer=checkpointer)
-        return compiled_graph
+        return builder.compile(checkpointer=checkpointer)
 
     return graph_factory
 
