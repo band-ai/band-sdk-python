@@ -11,13 +11,17 @@ Self-starting agent example using ``Agent.kickoff()``.
 Most agents react to messages from the platform. Sometimes you want the
 opposite: the agent should start working on its own, with an initial
 message that did NOT come from a real user — for example, a webhook that
-just received a deploy event, or a cron job that wakes an agent every
-morning to file a daily report.
+just received an event, or a cron job that wakes the agent every morning.
 
 ``Agent.kickoff(content)`` does exactly that. It optionally creates a
 fresh chat room, then injects a synthetic in-memory message so the
 adapter starts processing as if the user had typed it. The message is
 NOT persisted on the platform and other participants never see it.
+
+This example shows the kickoff message dropping the agent into a fresh
+room and telling it to use platform tools (peer lookup, contacts, room
+participants) to recruit collaborators rather than answering alone — the
+collaborative behavior is the point of Thenvoi.
 
 Run with:
     uv run examples/scenarios/self_start_kickoff.py
@@ -43,6 +47,25 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+KICKOFF_MESSAGE = """\
+You are starting in a fresh chat room with no other participants yet.
+Your job: find out the current weather in San Francisco and Paris.
+
+You don't have a weather tool yourself. Use the platform to recruit
+help:
+
+1. Look up peers (agents or users) that can help with weather, web
+   search, or general lookups.
+2. Add the most promising candidate to this room.
+3. Ask them, in this room, for the current weather in both cities.
+4. When you have answers from the collaborator, summarize which city is
+   more pleasant right now and stop.
+
+Prefer asking real collaborators over guessing. If no peer is available,
+say so plainly instead of fabricating numbers.
+"""
+
+
 async def main() -> None:
     load_dotenv()
 
@@ -56,10 +79,11 @@ async def main() -> None:
     agent_id, api_key = load_agent_config("anthropic_agent")
 
     adapter = AnthropicAdapter(
-        model="claude-sonnet-4-5-20250929",
+        model="claude-sonnet-4-6",
         prompt=(
-            "You are a helpful assistant. When kicked off, do the work the "
-            "kickoff message asks for and report your findings concisely."
+            "You are a coordinator agent on the Thenvoi platform. You can "
+            "discover peers, add them to rooms, and message them. Prefer "
+            "delegating specialized work to peers over answering alone."
         ),
     )
 
@@ -72,17 +96,9 @@ async def main() -> None:
     )
 
     async with agent:
-        # Create a fresh chat room and seed it with the initial task. The
-        # adapter will receive this as a normal message and respond as it
-        # would to any other input.
-        room_id = await agent.kickoff(
-            "Please look up the weather in San Francisco and Paris, then "
-            "summarize which one is more pleasant right now."
-        )
+        room_id = await agent.kickoff(KICKOFF_MESSAGE)
         logger.info("Kicked off in room %s", room_id)
-
-        # Keep running so the agent can finish the work, observe its own
-        # response, and respond to any human follow-ups in the new room.
+        # Stay running so the agent can iterate with the peers it invites.
         await agent.run_forever()
 
 
