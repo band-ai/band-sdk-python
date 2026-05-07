@@ -404,6 +404,37 @@ class TestRoomPresenceReconnect:
 
         await presence.stop()
 
+    async def test_reconnect_forwards_event_to_surviving_rooms(self, mock_link):
+        """Reconnect should notify surviving rooms even when no rooms are newly joined."""
+        room = MagicMock()
+        room.id = "room-1"
+        room.model_dump.return_value = {"id": "room-1"}
+        mock_link.rest.agent_api_chats.list_agent_chats.return_value = MagicMock(
+            data=[room],
+            metadata=MagicMock(total_pages=1),
+        )
+        received = []
+
+        async def on_event(room_id, event):
+            received.append((room_id, event))
+
+        presence = RoomPresence(mock_link, auto_subscribe_existing=True)
+        presence.on_room_event = on_event
+        await presence.start()
+        mock_link.subscribe_room.reset_mock()
+        mock_link.unsubscribe_room.reset_mock()
+        presence.rooms = {"room-1"}
+
+        await presence._on_platform_event(ReconnectedEvent())
+
+        assert mock_link.subscribe_room.call_count == 0
+        assert mock_link.unsubscribe_room.call_count == 0
+        assert len(received) == 1
+        assert received[0][0] == "room-1"
+        assert isinstance(received[0][1], ReconnectedEvent)
+
+        await presence.stop()
+
 
 class TestRoomPresenceRoomEvents:
     """Test room-specific event handling."""
