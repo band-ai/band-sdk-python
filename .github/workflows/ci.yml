@@ -94,6 +94,10 @@ jobs:
       run: uv sync --extra dev-parlant
 
     - name: Run parlant tests
+      env:
+        # dev-parlant venv lacks langgraph/anthropic/crewai/etc.; tolerate
+        # missing framework adapter/converter configs instead of failing fast.
+        THENVOI_ALLOW_MISSING_FRAMEWORKS: "1"
       run: |
         uv run pytest \
           tests/adapters/test_parlant_adapter.py \

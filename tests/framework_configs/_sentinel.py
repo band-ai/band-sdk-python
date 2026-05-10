@@ -17,3 +17,9 @@ class _MissingSentinel:
 MISSING = _MissingSentinel()
 
 IN_CI = bool(environ.get("CI") or environ.get("GITHUB_ACTIONS"))
+
+# Strict CI mode: framework config builders raise on import failure instead of
+# warning. Opt out via THENVOI_ALLOW_MISSING_FRAMEWORKS=1 for partial-deps CI
+# environments (e.g. the dev-parlant matrix job, which only has parlant
+# installed and cannot import langgraph/anthropic/crewai/etc.).
+STRICT_CI = IN_CI and not environ.get("THENVOI_ALLOW_MISSING_FRAMEWORKS")
