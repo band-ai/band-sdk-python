@@ -298,11 +298,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     async def _handle_a2a_request(
         self, peer_id: str, message: A2AMessage
     ) -> AsyncIterator[TaskStatusUpdateEvent]:
-        """Handle incoming A2A request from external agent.
+        """Handle incoming A2A request from remote agent.
 
         Args:
             peer_id: Target peer slug or UUID.
-            message: A2A message from external agent.
+            message: A2A message from remote agent.
 
         Yields:
             TaskStatusUpdateEvent for SSE streaming.

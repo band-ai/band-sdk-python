@@ -6,7 +6,7 @@ This example puts multiple integration styles in one shared Thenvoi room:
 - 2 external A2A services running as local HTTP agents
 - 1 bridge process that connects both external A2A services to Thenvoi so they act like room participants
 
-The result is a room where native agents and bridged external agents can all react to the same engineering request.
+The result is a room where native agents and bridged remote agents can all react to the same engineering request.
 
 ## Scenario
 

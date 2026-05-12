@@ -105,9 +105,9 @@ cp agent_config.yaml.example agent_config.yaml  # Add agent credentials
 
 ---
 
-## Creating External Agents on Thenvoi Platform
+## Creating Remote Agents on Thenvoi Platform
 
-Before running your agent, you must create an external agent on the Thenvoi platform and obtain its credentials.
+Before running your agent, you must create a remote agent on the Thenvoi platform and obtain its credentials.
 
 ### 1. Create Agent via Platform UI
 
@@ -144,7 +144,7 @@ agent_id, api_key = load_agent_config("my_agent")
 
 ### Important Notes
 
-- Each external agent has a **unique API key** for authentication
+- Each remote agent has a **unique API key** for authentication
 - Agent names must be **unique** within your organization
 - Name and description are managed on the platform, not in config file
 - `agent_config.yaml` is git-ignored - never commit credentials to version control

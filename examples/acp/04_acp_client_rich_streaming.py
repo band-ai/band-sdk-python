@@ -16,7 +16,7 @@ chunks from external ACP agents. Beyond plain text, it captures:
   - Plans: Task plans with status tracking
 
 All rich events are posted back to the Thenvoi platform with full type
-fidelity, so other participants can see exactly what the external agent
+fidelity, so other participants can see exactly what the remote agent
 is doing.
 
 Permission requests from the ACP agent are also posted to the platform
