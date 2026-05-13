@@ -12,7 +12,7 @@
 
 # CrewAI coordinator for the engineering review room
 mixed_strategy_agent:
-  agent_id: ""  # External agent ID from Thenvoi
+  agent_id: ""  # Remote agent ID from Thenvoi
   api_key: ""   # Agent-specific API key from Thenvoi
 
 # CrewAI writer that produces the final engineering handoff note
