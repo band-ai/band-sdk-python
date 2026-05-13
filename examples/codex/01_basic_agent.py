@@ -71,12 +71,15 @@ async def main() -> None:
 
     codex_bin = shutil.which("codex")
     if codex_bin is None:
-        logger.error("Codex CLI not found on PATH. Install it: npm install -g @openai/codex")
+        logger.error(
+            "Codex CLI not found on PATH. Install it: npm install -g @openai/codex"
+        )
         sys.exit(1)
 
     login_check = subprocess.run(
         [codex_bin, "login", "status"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if login_check.returncode != 0:
         print("Codex is not logged in.")
