@@ -35,7 +35,7 @@ class Emit(str, Enum):
     TASK_EVENTS = "task_events"
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class AdapterFeatures:
     """Shared adapter feature settings. Framework-agnostic knobs only.
 
