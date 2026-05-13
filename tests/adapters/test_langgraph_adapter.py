@@ -285,6 +285,64 @@ class TestOnMessage:
         assert "TestBot" in messages[0][1]
 
     @pytest.mark.asyncio
+    async def test_graph_factory_rebinds_tools_per_room(self, sample_message):
+        """Advanced graph factories must not reuse room-bound tool wrappers."""
+        tools_room_a = MagicMock(name="tools_room_a")
+        tools_room_b = MagicMock(name="tools_room_b")
+        platform_tool_a = MagicMock(name="platform_tool_a")
+        platform_tool_b = MagicMock(name="platform_tool_b")
+        graph_a, _inputs_a, kwargs_a = make_capture_graph()
+        graph_b, _inputs_b, kwargs_b = make_capture_graph()
+        factory_tools: list[list[Any]] = []
+
+        def graph_factory(band_tools: list[Any]):
+            factory_tools.append(list(band_tools))
+            return graph_a if len(factory_tools) == 1 else graph_b
+
+        adapter = LangGraphAdapter(graph_factory=graph_factory)
+        await adapter.on_started("TestBot", "Test bot")
+
+        room_b_message = PlatformMessage(
+            id="msg-456",
+            room_id="room-B",
+            content="Hello from room B",
+            sender_id="user-456",
+            sender_type="User",
+            sender_name="Alice",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+
+        with patch(
+            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+        ) as mock_convert:
+            mock_convert.side_effect = [[platform_tool_a], [platform_tool_b]]
+
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools_room_a,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-A",
+            )
+            await adapter.on_message(
+                msg=room_b_message,
+                tools=tools_room_b,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-B",
+            )
+
+        assert factory_tools == [[platform_tool_a], [platform_tool_b]]
+        assert kwargs_a[0]["config"]["configurable"]["thread_id"] == "room-A"
+        assert kwargs_b[0]["config"]["configurable"]["thread_id"] == "room-B"
+
+    @pytest.mark.asyncio
     async def test_simple_factory_passes_platform_and_additional_tools(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
