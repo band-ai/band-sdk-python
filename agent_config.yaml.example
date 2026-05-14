@@ -148,6 +148,11 @@ crewai_flow_router:
   agent_id: ""
   api_key: ""
 
+# 09_flow_custom_tools.py
+crewai_flow_custom_tools:
+  agent_id: ""
+  api_key: ""
+
 # =============================================================================
 # Gemini Examples
 # =============================================================================
@@ -208,6 +213,11 @@ acp_client_agent:
 
 # 06_cursor_client.py
 cursor_agent:
+  agent_id: ""
+  api_key: ""
+
+# 07_jetbrains_server.py
+jetbrains_acp_agent:
   agent_id: ""
   api_key: ""
 
