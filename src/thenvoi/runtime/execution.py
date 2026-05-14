@@ -34,6 +34,7 @@ from thenvoi.platform.event import (
     ParticipantAddedEvent,
     ParticipantRemovedEvent,
     PlatformEvent,
+    ReconnectedEvent,
 )
 
 from .types import (
@@ -223,7 +224,7 @@ class ExecutionContext:
 
         # Dedupe cache (LRU for detecting duplicates during sync)
         self._processed_ids: OrderedDict[str, bool] = OrderedDict()
-        self._max_processed_ids: int = 5
+        self._max_processed_ids: int = 500
 
         # Crash recovery: sync point marker and retry tracking
         self._first_ws_msg_id: str | None = None  # First WS message = sync point
@@ -239,6 +240,7 @@ class ExecutionContext:
 
         # Pending system messages to inject (e.g., contact broadcasts)
         self._pending_system_messages: list[str] = []
+        self._reconnect_sync_requested = False
 
     @property
     def thread_id(self) -> str:
@@ -370,11 +372,28 @@ class ExecutionContext:
 
     async def on_event(self, event: PlatformEvent) -> None:
         """
-        Handle a platform event - add to queue.
+        Handle a platform event.
 
         Called by RoomPresence/AgentRuntime when an event arrives.
         Tracks first WebSocket message ID for crash recovery sync.
+        Reconnect events trigger a fresh /next synchronization immediately.
         """
+        if isinstance(event, ReconnectedEvent):
+            logger.info(
+                "ExecutionContext %s: Reconnected, scheduling synchronization",
+                self.room_id,
+            )
+            if self._reconnect_sync_requested:
+                logger.debug(
+                    "ExecutionContext %s: Reconnect sync already pending",
+                    self.room_id,
+                )
+                return
+            self._reconnect_sync_requested = True
+            self.queue.put_nowait(event)
+            logger.debug("Event %s enqueued for room %s", event.type, self.room_id)
+            return
+
         # Track first WebSocket message ID for sync point
         if isinstance(event, MessageEvent) and self._first_ws_msg_id is None:
             msg_id = event.payload.id if event.payload else None
@@ -1116,6 +1135,18 @@ class ExecutionContext:
         4. Execute handler
         5. Mark as processed (success) or failed (exception)
         """
+        if isinstance(event, ReconnectedEvent):
+            self._set_state("processing")
+            logger.debug("Processing %s in room %s", event.type, self.room_id)
+            try:
+                if self._reconnect_sync_requested:
+                    self._reconnect_sync_requested = False
+                    await self._synchronize_with_next()
+                logger.debug("Event %s processed successfully", event.type)
+            finally:
+                self._set_state("idle")
+            return
+
         payload = event.payload if isinstance(event, MessageEvent) else None
         msg_id = payload.id if payload else None
 

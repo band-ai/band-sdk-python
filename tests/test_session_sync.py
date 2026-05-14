@@ -13,6 +13,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timezone
 
+from thenvoi.platform.event import ReconnectedEvent
 from thenvoi.runtime.execution import ExecutionContext
 from thenvoi.runtime.types import PlatformMessage, SessionConfig
 
@@ -152,43 +153,37 @@ class TestLruDedupeCache:
     @pytest.mark.asyncio
     async def test_lru_cache_evicts_oldest(self, ctx):
         """LRU cache should evict oldest entries when full."""
-        # _max_processed_ids is 5
+        limit = ctx._max_processed_ids
 
-        # Process 5 events
-        for i in range(5):
+        for i in range(limit):
             event = make_message_event(msg_id=f"msg-{i:03d}")
             await ctx._process_event(event)
 
-        assert len(ctx._processed_ids) == 5
+        assert len(ctx._processed_ids) == limit
         assert "msg-000" in ctx._processed_ids
 
-        # Process 6th event - should evict msg-000
-        event6 = make_message_event(msg_id="msg-005")
-        await ctx._process_event(event6)
+        event_overflow = make_message_event(msg_id=f"msg-{limit:03d}")
+        await ctx._process_event(event_overflow)
 
-        assert len(ctx._processed_ids) == 5
+        assert len(ctx._processed_ids) == limit
         assert "msg-000" not in ctx._processed_ids
-        assert "msg-005" in ctx._processed_ids
+        assert f"msg-{limit:03d}" in ctx._processed_ids
 
     @pytest.mark.asyncio
     async def test_duplicate_refreshes_lru_position(self, ctx):
         """Accessing duplicate should refresh its LRU position."""
-        # Process 3 events
-        for i in range(3):
+        limit = ctx._max_processed_ids
+
+        for i in range(limit):
             event = make_message_event(msg_id=f"msg-{i:03d}")
             await ctx._process_event(event)
 
-        # Access msg-000 again (duplicate) - should move to end
         event0_dup = make_message_event(msg_id="msg-000")
         await ctx._process_event(event0_dup)
 
-        # Process 3 more to fill and overflow
-        for i in range(3, 6):
-            event = make_message_event(msg_id=f"msg-{i:03d}")
-            await ctx._process_event(event)
+        event_overflow = make_message_event(msg_id=f"msg-{limit:03d}")
+        await ctx._process_event(event_overflow)
 
-        # msg-000 should still be there (was refreshed)
-        # msg-001 should be evicted (oldest after refresh)
         assert "msg-000" in ctx._processed_ids
         assert "msg-001" not in ctx._processed_ids
 
@@ -304,6 +299,45 @@ class TestSynchronizeWithNext:
 
         # Handler should NOT be called
         ctx._handler_mock.assert_not_called()
+
+
+class TestReconnectSync:
+    """Tests for reconnect-triggered resynchronization."""
+
+    @pytest.fixture
+    def ctx(self, mock_link):
+        """Create ExecutionContext with mocked dependencies."""
+        handler = AsyncMock()
+        ctx = ExecutionContext(
+            room_id="room-123",
+            link=mock_link,
+            on_execute=handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+        ctx._handler_mock = handler
+        return ctx
+
+    @pytest.mark.asyncio
+    async def test_reconnected_event_is_enqueued_for_serialized_sync(self, ctx):
+        """Reconnect events should be serialized through the room queue."""
+        ctx._synchronize_with_next = AsyncMock()
+
+        await ctx.on_event(ReconnectedEvent())
+
+        assert ctx._reconnect_sync_requested is True
+        queued = ctx.queue.get_nowait()
+        assert isinstance(queued, ReconnectedEvent)
+
+    @pytest.mark.asyncio
+    async def test_reconnected_event_runs_sync_when_processed(self, ctx):
+        """Queued reconnect events should run sync inside the execution loop."""
+        ctx._synchronize_with_next = AsyncMock()
+        ctx._reconnect_sync_requested = True
+
+        await ctx._process_event(ReconnectedEvent())
+
+        ctx._synchronize_with_next.assert_awaited_once_with()
+        assert ctx._reconnect_sync_requested is False
 
 
 class TestCrashRecovery:
