@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel
 
 
 # Mock crewai imports BEFORE importing the adapter module so the optional
@@ -91,6 +92,20 @@ class TestInit:
         )
         assert isinstance(adapter._state_source, HistoryCrewAIFlowStateSource)
 
+    def test_init_accepts_additional_tools(self) -> None:
+        class EmailsInput(BaseModel):
+            pass
+
+        def emails() -> str:
+            return "inbox"
+
+        adapter = CrewAIFlowAdapter(
+            flow_factory=_factory,
+            additional_tools=[(EmailsInput, emails)],
+        )
+
+        assert list(adapter._custom_tools) == ["emails"]
+
 
 # ---------------------------------------------------------------------------
 # Validation
@@ -101,6 +116,26 @@ class TestValidation:
     def test_flow_factory_must_be_callable(self) -> None:
         with pytest.raises(ThenvoiConfigError):
             CrewAIFlowAdapter(flow_factory="not callable")  # type: ignore[arg-type]
+
+    def test_additional_tools_requires_pydantic_model(self) -> None:
+        with pytest.raises(ThenvoiConfigError):
+            CrewAIFlowAdapter(
+                flow_factory=_factory,
+                additional_tools=[(object, lambda: None)],  # type: ignore[list-item]
+            )
+
+    def test_additional_tools_rejects_duplicate_names(self) -> None:
+        class EmailsInput(BaseModel):
+            pass
+
+        with pytest.raises(ThenvoiConfigError, match="Duplicate custom tool name"):
+            CrewAIFlowAdapter(
+                flow_factory=_factory,
+                additional_tools=[
+                    (EmailsInput, lambda: None),
+                    (EmailsInput, lambda: None),
+                ],
+            )
 
     def test_state_source_must_have_load_task_events(self) -> None:
         with pytest.raises(ThenvoiConfigError):

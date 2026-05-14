@@ -66,7 +66,7 @@ async def main() -> None:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
     # Load credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("claude_sdk_agent")
+    agent_id, api_key = load_agent_config("claude_sdk_extended_thinking")
 
     # Create adapter with extended thinking enabled.  `model="opus"` is a
     # family alias resolved by the npm `claude` binary at runtime — always
