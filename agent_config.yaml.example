@@ -148,6 +148,11 @@ crewai_flow_router:
   agent_id: ""
   api_key: ""
 
+# 09_flow_custom_tools.py
+crewai_flow_custom_tools:
+  agent_id: ""
+  api_key: ""
+
 # =============================================================================
 # Gemini Examples
 # =============================================================================
@@ -162,6 +167,15 @@ gemini_agent:
 
 # 01_basic_agent.py, 02_custom_instructions.py
 google_adk_agent:
+  agent_id: ""
+  api_key: ""
+
+# =============================================================================
+# Letta Examples
+# =============================================================================
+
+# 01_basic_agent.py
+letta_agent:
   agent_id: ""
   api_key: ""
 
@@ -194,6 +208,25 @@ acp_server_agent:
 
 # 02_acp_client.py
 acp_client_agent:
+  agent_id: ""
+  api_key: ""
+
+# 06_cursor_client.py
+cursor_agent:
+  agent_id: ""
+  api_key: ""
+
+# 07_jetbrains_server.py
+jetbrains_acp_agent:
+  agent_id: ""
+  api_key: ""
+
+# =============================================================================
+# Codex / OpenCode Examples
+# =============================================================================
+
+# 01_basic_agent.py (default AGENT_KEY for both codex and opencode)
+darter:
   agent_id: ""
   api_key: ""
 

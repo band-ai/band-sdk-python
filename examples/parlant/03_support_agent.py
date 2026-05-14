@@ -113,7 +113,7 @@ async def main() -> None:
     agent_id, api_key = load_agent_config("support_agent")
 
     # Start Parlant server
-    async with p.Server() as server:
+    async with p.Server(nlp_service=p.NLPServices.openai) as server:
         # Create support agent with guidelines
         parlant_agent = await setup_support_agent(server)
         logger.info("Support agent created: %s", parlant_agent.id)

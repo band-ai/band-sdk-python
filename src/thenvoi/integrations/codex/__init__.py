@@ -26,7 +26,6 @@ __all__ = [
     "ApprovalAuditEntry",
     "CodexJsonRpcError",
     "CodexPlanStep",
-    "CodexSdkClient",
     "CodexSessionState",
     "CodexStdioClient",
     "CodexTokenUsage",
@@ -36,11 +35,3 @@ __all__ = [
     "build_structured_error_metadata",
     "parse_plan_steps",
 ]
-
-
-def __getattr__(name: str) -> object:
-    if name == "CodexSdkClient":
-        from .sdk_client import CodexSdkClient
-
-        return CodexSdkClient
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
