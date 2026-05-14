@@ -207,21 +207,27 @@ This proves the current Parlant adapter can start with a real OpenAI provider, c
 
 After registering the missing local `parlant_agent` and `support_agent` entries with the Human API and storing the returned one-time agent keys only in ignored local `agent_config.yaml`, I ran every standalone Parlant example as its actual script. Each run used production Band URLs, an `sk-` OpenAI provider key from an approved local env file outside this repo, and `OPENAI_BASE_URL` / `OPENAI_API_BASE` unset. For each script, the proof harness waited for the example process to start, created a live Band room for that configured agent, added the user participant, sent a user-authored @mention to the example agent, and observed a text response over the user WebSocket.
 
-Sanitized result:
+Sanitized API/session result:
 
 ```text
 OPENAI_API_KEY_present=True
 OPENAI_API_KEY_shape=sk
 OPENAI_BASE_URL_present=False
 OPENAI_API_BASE_present=False
-EXAMPLE_PROOF example=01_basic_agent.py config=parlant_agent openai_initialized=True agent_started=True agent_id_present=True room_id_present=True response_observed=True response_contains_token=True
-EXAMPLE_PROOF example=02_with_guidelines.py config=parlant_agent openai_initialized=True agent_started=True agent_id_present=True room_id_present=True response_observed=True response_contains_token=True
-EXAMPLE_PROOF example=03_support_agent.py config=support_agent openai_initialized=True agent_started=True agent_id_present=True room_id_present=True response_observed=True response_contains_token=True
-EXAMPLE_PROOF example=04_tom_agent.py config=tom_agent openai_initialized=True agent_started=True agent_id_present=True room_id_present=True response_observed=True response_contains_token=True
-EXAMPLE_PROOF example=05_jerry_agent.py config=jerry_agent openai_initialized=True agent_started=True agent_id_present=True room_id_present=True response_observed=True response_contains_token=True
+EXAMPLE_API_PROOF example=01_basic_agent.py config=parlant_agent agent_me_id=f392c10f-ab30-48b1-8214-c0aaac6ee319 agent_me_name=Parlant_Example_Agent parlant_openai_initialized=True process_agent_started=True room_id=15e6ba4d-4dd8-4f62-887c-ed69e05fb84a participant_added=True trigger_message_id=37db260f-0ef1-4341-9be6-b326dae41d3d response_message_id=b3d32976-76ef-40b7-a9aa-ef0894b3cb00 response_sender_id=f392c10f-ab30-48b1-8214-c0aaac6ee319 response_token=BASIC-PARLANT response_contains_token=True
+EXAMPLE_API_PROOF example=02_with_guidelines.py config=parlant_agent agent_me_id=f392c10f-ab30-48b1-8214-c0aaac6ee319 agent_me_name=Parlant_Example_Agent parlant_openai_initialized=True process_agent_started=True room_id=0013abda-0bb8-47f5-8f00-3f954babc44b participant_added=True trigger_message_id=85e0bfce-cef2-497b-85d8-8e97b4acd2ee response_message_id=c520e917-d3ee-4431-9be1-3b59fbcb7668 response_sender_id=f392c10f-ab30-48b1-8214-c0aaac6ee319 response_token=GUIDELINES-PARLANT response_contains_token=True
+EXAMPLE_API_PROOF example=03_support_agent.py config=support_agent agent_me_id=d3f4424a-ce5f-4c1f-82d0-8cefe778e83b agent_me_name=Parlant_Support_Agent parlant_openai_initialized=True process_agent_started=True room_id=7e3ee6ad-6a28-49b4-9ffc-5dfef98b06d6 participant_added=True trigger_message_id=f63261ba-a8aa-41fe-8a7c-349550006415 response_message_id=bd0afb93-0140-46ab-a41c-71c5476c7836 response_sender_id=d3f4424a-ce5f-4c1f-82d0-8cefe778e83b response_token=SUPPORT-PARLANT response_contains_token=True
 ```
 
-This proves the standalone Parlant examples are not just syntactically valid: they start with OpenAI-backed Parlant, connect to production Band as real agents, process live @mentions, and send observable Band messages.
+The first Tom/Jerry proof run showed that the local ignored `agent_config.yaml` had `tom_agent` and `jerry_agent` pointing at the same Band identity. I registered distinct Tom and Jerry agents with the Human API, updated only the ignored local config, and reran those two examples. Final Tom/Jerry API/session proof:
+
+```text
+tom_jerry_same_identity=False
+EXAMPLE_API_PROOF example=04_tom_agent.py config=tom_agent agent_me_id=46da018a-70d5-41f5-968b-f0c119224816 agent_me_name=Parlant_Tom_Agent parlant_openai_initialized=True process_agent_started=True room_id=d3c05ebe-dabc-45e5-a99c-98cdb69cab62 participant_added=True trigger_message_id=c7ec59bd-f8cd-4da8-8b32-6d44dbab8374 response_message_id=652266c3-3908-48a2-9052-01b03cb4ef75 response_sender_id=46da018a-70d5-41f5-968b-f0c119224816 response_token=TOM-PARLANT response_contains_token=True
+EXAMPLE_API_PROOF example=05_jerry_agent.py config=jerry_agent agent_me_id=5f9e127d-f01a-47cb-9b30-deb170549232 agent_me_name=Parlant_Jerry_Agent parlant_openai_initialized=True process_agent_started=True room_id=c977997b-9454-4f37-b782-753098b25ff9 participant_added=True trigger_message_id=cb7da22f-2b22-4c2c-b9e0-d2dcee4f6071 response_message_id=387f6465-af3e-463d-acb6-8f2b49b51713 response_sender_id=5f9e127d-f01a-47cb-9b30-deb170549232 response_token=JERRY-PARLANT response_contains_token=True
+```
+
+This proves the standalone Parlant examples are not just syntactically valid: they start with OpenAI-backed Parlant, connect to production Band as real agents, create live rooms, add the user participant, process live user @mentions, and send observable Band messages with persisted message IDs.
 
 ### Final local checks
 
