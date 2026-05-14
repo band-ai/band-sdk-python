@@ -20,7 +20,7 @@ In this repo, the CrewAI adapter lets those agents use Thenvoi rooms and Thenvoi
 | `01_basic_agent.py` | **Minimal setup** - Smallest working CrewAI + Thenvoi example. |
 | `02_role_based_agent.py` | **Role definition** - Shows how role, goal, and backstory shape behavior. |
 | `03_coordinator_agent.py` | **Coordinator** - Uses Thenvoi tools to discover peers and manage participation in a room. |
-| `04_research_crew.py` | **Research crew** - Three agents collaborate in the same room. |
+| `04_research_crew.py` | **Research crew** - Three agents collaborate in the same room. Requires a `<role>` argument: `researcher`, `writer`, or `editor`. |
 | `05_tom_agent.py` | **Character agent** - Tom the cat with a custom character prompt. |
 | `06_jerry_agent.py` | **Character agent** - Jerry the mouse with a custom character prompt. |
 | `07_contact_and_memory_agent.py` | **Contacts + memory** - Shows CrewAI contact tools, memory tools, and broadcast contact updates. |
