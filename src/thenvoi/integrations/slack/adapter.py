@@ -1,0 +1,749 @@
+"""Slack bridge adapter — wrapping shape.
+
+Wraps an inner framework adapter (the agent's brain) and adds Slack
+ingress/egress. One process, one Thenvoi identity, two transports:
+
+- **Thenvoi WS path** (normal): platform delivers ``on_message`` →
+  ``SlackAdapter.on_message`` delegates to ``inner.on_message``. If the
+  room is bound to a Slack thread, the tools are wrapped so the brain's
+  outgoing ``send_message`` is also posted to Slack.
+- **Slack webhook path**: ``SlackAdapter`` synthesises a
+  ``PlatformMessage`` from the Slack event and invokes
+  ``inner.on_message`` directly with REST-backed tools that tee replies
+  back to the originating Slack thread.
+
+See INT-461 for the full design.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+from collections.abc import Callable
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from thenvoi.client.rest import (
+    AsyncRestClient,
+    ChatEventRequest,
+    ChatRoomRequest,
+    DEFAULT_REQUEST_OPTIONS,
+)
+from thenvoi.converters.slack import SlackHistoryConverter
+from thenvoi.core.protocols import AgentToolsProtocol
+from thenvoi.core.simple_adapter import SimpleAdapter
+from thenvoi.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+)
+from thenvoi.integrations.slack.block_kit import (
+    DEFAULT_WRITE_TOOL_NAMES,
+    PlanState,
+    PlanTask,
+    TaskState,
+    humanize_tool_name,
+    plan_fallback_text,
+    render_plan_blocks,
+)
+from thenvoi.integrations.slack.server import build_router
+from thenvoi.integrations.slack.types import SlackApp, SlackRoomBinding
+from thenvoi.runtime.tools import AgentTools
+
+if TYPE_CHECKING:
+    from slack_sdk.web.async_client import AsyncWebClient
+    from starlette.routing import Router
+
+logger = logging.getLogger(__name__)
+
+# Factory signature: takes a SlackApp config and returns the AsyncWebClient
+# to use for outbound Slack API calls. Exposed for test injection.
+WebClientFactory = Callable[[SlackApp], "AsyncWebClient"]
+
+# Status string shown via ``assistant.threads.setStatus`` while the
+# brain is working. Empty string clears the status.
+STATUS_THINKING = "is thinking…"
+
+# Name of the Slack-only outbound tool exposed to the brain when the
+# room is bound to a Slack thread.
+SLACK_SEND_MESSAGE_TOOL_NAME = "slack_send_message"
+
+_SLACK_SEND_MESSAGE_DESCRIPTION = (
+    "Send a plain-text reply to the Slack user who triggered this "
+    "conversation. The message is posted into the originating Slack thread. "
+    "Use this for the final answer and any user-facing updates. Does not "
+    "post to the Thenvoi room.\n\n"
+    "Use thenvoi_send_message (which requires @mentions) to talk to other "
+    "Thenvoi peers in the room."
+)
+
+_SLACK_SEND_MESSAGE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "content": {
+            "type": "string",
+            "description": "The plain-text message to send to the Slack user.",
+        },
+    },
+    "required": ["content"],
+}
+
+SLACK_CONTEXT_NOTE = (
+    "[Slack] This conversation originated from Slack. The triggering user is "
+    "not a Thenvoi peer and cannot be @-mentioned. To reply to them, call "
+    f"{SLACK_SEND_MESSAGE_TOOL_NAME}(content=...). "
+    "Use thenvoi_send_message(content, mentions=[...]) only to coordinate "
+    "with other Thenvoi peers in this room."
+)
+
+
+def _merge_context_note(existing: str | None, note: str) -> str:
+    """Combine an existing participants_msg (if any) with the Slack note.
+
+    Returns ``note`` if there is no existing message; otherwise prepends
+    ``note`` followed by a blank line so the upstream message stays
+    readable to the brain.
+    """
+    if not existing:
+        return note
+    return f"{note}\n\n{existing}"
+
+
+class _SlackTeeingTools(AgentTools):
+    """``AgentTools`` subclass that adds a Slack-only ``slack_send_message`` tool.
+
+    The brain sees two outbound options:
+
+    - ``thenvoi_send_message`` (inherited, unchanged) — real Thenvoi message
+      to peers in the current room. Still requires ≥1 mention.
+    - ``slack_send_message`` (new) — posts directly to the bound Slack thread
+      via ``chat.postMessage``. Bypasses Thenvoi entirely.
+
+    The brain decides which to use based on intent. The system-prompt
+    note (passed via ``participants_msg``) tells it when to pick each.
+    """
+
+    def __init__(
+        self,
+        *,
+        wrap: AgentTools,
+        slack: AsyncWebClient,
+        binding: SlackRoomBinding,
+        write_tool_names: frozenset[str] | set[str] | None = None,
+        show_tool_progress: bool = True,
+    ) -> None:
+        super().__init__(
+            room_id=wrap.room_id,
+            rest=wrap.rest,
+            participants=list(wrap.participants),
+            hub_room_id=wrap._hub_room_id,
+        )
+        # Carry ExecutionContext over so any tool methods that lean on
+        # it (e.g. lookup_peers) keep working.
+        self._ctx = wrap._ctx
+        self._slack = slack
+        self._binding = binding
+        self._write_tool_names: frozenset[str] = (
+            frozenset(write_tool_names)
+            if write_tool_names is not None
+            else DEFAULT_WRITE_TOOL_NAMES
+        )
+        self._show_tool_progress = show_tool_progress
+        self._plan = PlanState()
+
+    async def _upsert_plan_message(self) -> None:
+        blocks = render_plan_blocks(self._plan)
+        fallback = plan_fallback_text(self._plan)
+        try:
+            if self._plan.message_ts is None:
+                response = await self._slack.chat_postMessage(
+                    channel=self._binding.channel,
+                    thread_ts=self._binding.thread_ts,
+                    blocks=blocks,
+                    text=fallback,
+                )
+                # slack-sdk's SlackResponse is dict-like; AsyncMock returns dict.
+                ts: str | None = None
+                try:
+                    ts = response["ts"]  # type: ignore[index]
+                except (KeyError, TypeError):
+                    ts = getattr(response, "ts", None)
+                if ts:
+                    self._plan.message_ts = ts
+            else:
+                await self._slack.chat_update(
+                    channel=self._binding.channel,
+                    ts=self._plan.message_ts,
+                    blocks=blocks,
+                    text=fallback,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to upsert Slack plan message (channel=%s thread_ts=%s)",
+                self._binding.channel,
+                self._binding.thread_ts,
+            )
+
+    async def slack_send_message(self, content: str) -> dict[str, Any]:
+        """Post a plain-text reply to the bound Slack thread.
+
+        Returns ``{"ok": True}`` on success, ``{"ok": False, "error": ...}``
+        on failure — the LLM can inspect the result and react if posting
+        failed (e.g. the channel was deleted, the bot was kicked).
+        """
+        try:
+            await self._slack.chat_postMessage(
+                channel=self._binding.channel,
+                text=content,
+                thread_ts=self._binding.thread_ts,
+            )
+        except Exception as exc:
+            logger.exception(
+                "slack_send_message failed (channel=%s thread_ts=%s)",
+                self._binding.channel,
+                self._binding.thread_ts,
+            )
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True}
+
+    # ── Schema injection ────────────────────────────────────────────
+
+    def get_tool_schemas(
+        self,
+        format: str,
+        *,
+        include_memory: bool = False,
+        include_contacts: bool = True,
+    ) -> list[dict[str, Any]] | list[Any]:
+        """Return the base schemas plus our ``slack_send_message`` entry."""
+        base = super().get_tool_schemas(
+            format,
+            include_memory=include_memory,
+            include_contacts=include_contacts,
+        )
+        if format == "openai":
+            slack_schema: dict[str, Any] = {
+                "type": "function",
+                "function": {
+                    "name": SLACK_SEND_MESSAGE_TOOL_NAME,
+                    "description": _SLACK_SEND_MESSAGE_DESCRIPTION,
+                    "parameters": _SLACK_SEND_MESSAGE_INPUT_SCHEMA,
+                },
+            }
+        else:  # anthropic
+            slack_schema = {
+                "name": SLACK_SEND_MESSAGE_TOOL_NAME,
+                "description": _SLACK_SEND_MESSAGE_DESCRIPTION,
+                "input_schema": _SLACK_SEND_MESSAGE_INPUT_SCHEMA,
+            }
+        return [*base, slack_schema]
+
+    # ── Dispatch ────────────────────────────────────────────────────
+
+    async def execute_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        """Route ``slack_send_message`` to our handler; render plan blocks
+        in Slack as a side effect of every other tool call.
+
+        Plan rendering is observed directly here (not by intercepting
+        ``send_event``) so it's independent of the brain's
+        ``Emit.EXECUTION`` setting. The two emit/visibility knobs are
+        fully orthogonal:
+
+        - Brain's ``Emit.EXECUTION`` → controls Thenvoi-side recording
+          of ``tool_call``/``tool_result`` events.
+        - ``SlackAdapter.show_tool_progress`` → controls Slack-side
+          plan-block rendering. Lives on this object as
+          ``_show_tool_progress``.
+        """
+        # Our own Slack-only tool — not a "progress task" because it IS
+        # the user-facing reply, not work-in-progress.
+        if tool_name == SLACK_SEND_MESSAGE_TOOL_NAME:
+            content = arguments.get("content")
+            if not isinstance(content, str) or not content:
+                return (
+                    f"Error: {SLACK_SEND_MESSAGE_TOOL_NAME} requires a "
+                    "non-empty 'content' string."
+                )
+            return await self.slack_send_message(content)
+
+        # Mark in_progress before executing, mark completed/error after.
+        task: PlanTask | None = None
+        if self._show_tool_progress:
+            task = PlanTask(
+                id=str(uuid.uuid4()),
+                label=humanize_tool_name(tool_name),
+                state=TaskState.IN_PROGRESS,
+                is_write=tool_name in self._write_tool_names,
+            )
+            self._plan.tasks.append(task)
+            self._plan.tasks_by_id[task.id] = task
+            await self._upsert_plan_message()
+
+        try:
+            result = await super().execute_tool_call(tool_name, arguments)
+        except Exception as exc:
+            if task is not None:
+                task.state = TaskState.ERROR
+                task.error_message = str(exc)
+                await self._upsert_plan_message()
+            raise
+
+        if task is not None:
+            if isinstance(result, str) and result.startswith("Error:"):
+                task.state = TaskState.ERROR
+                task.error_message = result[len("Error:") :].strip()
+            else:
+                task.state = TaskState.COMPLETED
+            await self._upsert_plan_message()
+        return result
+
+
+class SlackAdapter(SimpleAdapter[Any]):
+    """Wraps an inner framework adapter and adds Slack I/O.
+
+    Example:
+        from thenvoi import Agent
+        from thenvoi.adapters import AnthropicAdapter
+        from thenvoi.integrations.slack import SlackAdapter, SlackApp
+
+        brain = AnthropicAdapter(model="claude-sonnet-4-6")
+        slack = SlackAdapter(
+            inner=brain,
+            apps=[
+                SlackApp(
+                    slug="dev",
+                    signing_secret="...",
+                    bot_token="xoxb-...",
+                ),
+            ],
+            api_key="...",
+        )
+        agent = Agent.create(adapter=slack, agent_id="...", api_key="...")
+        # mount slack.router into your ASGI app on the side, e.g.:
+        #   starlette_app.mount("/slack", slack.router)
+        await agent.run()
+    """
+
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
+
+    def __init__(
+        self,
+        *,
+        inner: SimpleAdapter[Any],
+        apps: list[SlackApp],
+        rest_url: str = "https://app.thenvoi.com",
+        api_key: str = "",
+        port: int = 3000,
+        web_client_factory: WebClientFactory | None = None,
+        rest_client: AsyncRestClient | None = None,
+        features: AdapterFeatures | None = None,
+        write_tool_names: frozenset[str] | set[str] | None = None,
+        show_tool_progress: bool = True,
+    ) -> None:
+        """Initialize the Slack adapter.
+
+        Args:
+            inner: The framework adapter that does the actual reasoning
+                (e.g. ``AnthropicAdapter``, ``LangGraphAdapter``).
+            apps: One or more ``SlackApp`` configurations.
+            rest_url: Base URL for the Thenvoi REST API.
+            api_key: API key for the Thenvoi agent (same key passed to
+                ``Agent.create``). Used to mirror Slack messages into
+                Thenvoi rooms.
+            port: TCP port for the HTTP server (used in Step 9).
+            web_client_factory: Optional factory for injecting mock
+                ``AsyncWebClient`` instances in tests.
+            rest_client: Optional ``AsyncRestClient`` injection seam.
+            features: Optional override for adapter features. Defaults
+                to the inner adapter's features so the brain's
+                capabilities flow through unchanged.
+
+        Raises:
+            ImportError: If ``slack-sdk`` is not installed.
+            ValueError: If ``apps`` is empty.
+        """
+        try:
+            import slack_sdk  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "slack-sdk is required for SlackAdapter. "
+                "Install with: uv add thenvoi-sdk[slack]"
+            ) from exc
+
+        if not apps:
+            raise ValueError("SlackAdapter requires at least one SlackApp config")
+
+        # Use the inner adapter's history converter and feature settings
+        # so the brain sees its native history type and capabilities.
+        super().__init__(
+            history_converter=inner.history_converter or SlackHistoryConverter(),
+            features=features or inner.features,
+        )
+        self._inner = inner
+        self.apps = apps
+        self._rest_url = rest_url
+        self._api_key = api_key
+        self._port = port
+        self._router: Router | None = None
+        self._web_client_factory: WebClientFactory = (
+            web_client_factory or self._default_web_client_factory
+        )
+        self._web_clients: dict[str, AsyncWebClient] = {}
+        self._background_tasks: set[asyncio.Task[None]] = set()
+        self._write_tool_names: frozenset[str] = (
+            frozenset(write_tool_names)
+            if write_tool_names is not None
+            else DEFAULT_WRITE_TOOL_NAMES
+        )
+        self._show_tool_progress = show_tool_progress
+
+        # Thenvoi-side state.
+        self._rest: AsyncRestClient | None = rest_client
+        self._apps_by_slug: dict[str, SlackApp] = {a.slug: a for a in apps}
+        self._thread_to_room: dict[str, str] = {}
+        self._room_to_binding: dict[str, SlackRoomBinding] = {}
+
+    @property
+    def inner(self) -> SimpleAdapter[Any]:
+        """The wrapped framework adapter (the brain)."""
+        return self._inner
+
+    @property
+    def router(self) -> Router:
+        """Starlette router serving the configured Slack apps."""
+        if self._router is None:
+            self._router = build_router(self.apps, dispatcher=self._dispatch_event)
+        return self._router
+
+    async def wait_idle(self) -> None:
+        """Wait for all background event handlers to complete."""
+        while self._background_tasks:
+            tasks = list(self._background_tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def on_started(self, agent_name: str, agent_description: str) -> None:
+        """Build the REST client and start the inner adapter."""
+        await super().on_started(agent_name, agent_description)
+
+        if self._rest is None:
+            if not self._api_key:
+                raise ValueError(
+                    "SlackAdapter requires api_key to reach the Thenvoi REST API; "
+                    "pass it via SlackAdapter(api_key=...)."
+                )
+            self._rest = AsyncRestClient(base_url=self._rest_url, api_key=self._api_key)
+
+        # Propagate the agent identity to the inner adapter. ``Agent.start``
+        # sets ``_thenvoi_agent_id`` on us before calling ``on_started``;
+        # the inner adapter needs it too so it can dedup own messages.
+        own_id = getattr(self, "_thenvoi_agent_id", None)
+        if own_id is not None:
+            setattr(self._inner, "_thenvoi_agent_id", own_id)
+
+        await self._inner.on_started(agent_name, agent_description)
+
+        logger.info(
+            "Slack adapter started: %s (apps=%d)",
+            agent_name,
+            len(self.apps),
+        )
+
+    async def on_message(
+        self,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: Any,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
+        """Delegate to the inner brain, teeing replies to Slack if bound."""
+        binding = self._room_to_binding.get(room_id)
+        slack_client: AsyncWebClient | None = None
+        if binding is not None and isinstance(tools, AgentTools):
+            app = self._apps_by_slug.get(binding.app_slug)
+            if app is not None:
+                slack_client = self._get_client(app)
+                tools = _SlackTeeingTools(
+                    wrap=tools,
+                    slack=slack_client,
+                    binding=binding,
+                    write_tool_names=self._write_tool_names,
+                    show_tool_progress=self._show_tool_progress,
+                )
+            else:
+                logger.warning(
+                    "Room %s bound to unknown app %s; not teeing",
+                    room_id,
+                    binding.app_slug,
+                )
+
+        # Status indicator only meaningful in Slack-bound rooms.
+        # Prepend the Slack-context note to participants_msg so the brain
+        # knows which outbound tool to use for the user-facing reply.
+        if slack_client is not None and binding is not None:
+            await self._set_status(
+                slack_client, binding.channel, binding.thread_ts, STATUS_THINKING
+            )
+            participants_msg = _merge_context_note(participants_msg, SLACK_CONTEXT_NOTE)
+        try:
+            await self._inner.on_message(
+                msg,
+                tools,
+                history,
+                participants_msg,
+                contacts_msg,
+                is_session_bootstrap=is_session_bootstrap,
+                room_id=room_id,
+            )
+        finally:
+            if slack_client is not None and binding is not None:
+                await self._set_status(
+                    slack_client, binding.channel, binding.thread_ts, ""
+                )
+
+    async def on_cleanup(self, room_id: str) -> None:
+        """Drop per-room state and forward to the inner adapter."""
+        binding = self._room_to_binding.pop(room_id, None)
+        if binding is not None:
+            thread_key = self._thread_key(binding.channel, binding.thread_ts)
+            self._thread_to_room.pop(thread_key, None)
+        await self._inner.on_cleanup(room_id)
+
+    # ── Slack ingress (HTTP webhook) ──────────────────────────────────
+
+    async def _dispatch_event(self, app: SlackApp, payload: dict[str, Any]) -> None:
+        """Schedule a Slack event for background processing and return.
+
+        Slack requires HTTP 200 within 3 seconds; we fire the actual
+        work into a task so the route handler can ack immediately.
+        """
+        task = asyncio.create_task(self._handle_event(app, payload))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+
+    def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.exception("Slack background event handler crashed", exc_info=exc)
+
+    async def _handle_event(self, app: SlackApp, payload: dict[str, Any]) -> None:
+        event = payload.get("event") or {}
+        event_type = event.get("type")
+
+        if event.get("bot_id") or event.get("subtype") == "bot_message":
+            return
+
+        if event_type == "app_mention":
+            await self._invoke_brain_for_slack_event(app, event)
+        elif event_type == "message" and event.get("channel_type") == "im":
+            await self._invoke_brain_for_slack_event(app, event)
+        # assistant_thread_started is handled in Step 6.
+
+    async def _invoke_brain_for_slack_event(
+        self, app: SlackApp, event: dict[str, Any]
+    ) -> None:
+        """Synthesize a ``PlatformMessage`` and call ``inner.on_message``."""
+        text = event.get("text", "")
+        channel = event.get("channel")
+        slack_user = event.get("user", "")
+        ts = event.get("ts", "")
+        thread_ts = event.get("thread_ts") or ts
+
+        if not channel or not text or not thread_ts:
+            logger.debug(
+                "Skipping Slack event for app %s: missing channel/text/thread_ts",
+                app.slug,
+            )
+            return
+
+        room_id, is_new_room = await self._get_or_create_room(
+            app=app,
+            channel=channel,
+            thread_ts=thread_ts,
+            slack_user=slack_user,
+        )
+
+        binding = self._room_to_binding[room_id]
+        assert self._rest is not None
+        synthesized = PlatformMessage(
+            id=f"slack:{ts}",
+            room_id=room_id,
+            content=text,
+            sender_id=f"slack:{slack_user}",
+            sender_type="user",
+            sender_name=slack_user or "slack-user",
+            message_type="text",
+            metadata={
+                "slack_app_slug": app.slug,
+                "slack_channel_id": channel,
+                "slack_thread_ts": thread_ts,
+                "slack_user_id": slack_user,
+            },
+            created_at=datetime.now(timezone.utc),
+        )
+
+        slack_client = self._get_client(app)
+        real_tools = AgentTools(room_id=room_id, rest=self._rest, participants=[])
+        tools = _SlackTeeingTools(
+            wrap=real_tools,
+            slack=slack_client,
+            binding=binding,
+            write_tool_names=self._write_tool_names,
+            show_tool_progress=self._show_tool_progress,
+        )
+
+        # Empty history for v1; multi-turn relies on the inner adapter's
+        # own state (LangGraph checkpointers, etc.). Persisting + replaying
+        # full room history through the converter is a follow-up.
+        empty_history = (
+            self._inner.history_converter.convert([])
+            if self._inner.history_converter is not None
+            else None
+        )
+
+        await self._set_status(slack_client, channel, thread_ts, STATUS_THINKING)
+        try:
+            await self._inner.on_message(
+                synthesized,
+                tools,
+                empty_history,
+                SLACK_CONTEXT_NOTE,
+                None,
+                is_session_bootstrap=is_new_room,
+                room_id=room_id,
+            )
+        finally:
+            await self._set_status(slack_client, channel, thread_ts, "")
+
+    # ── Room management ──────────────────────────────────────────────
+
+    @staticmethod
+    def _thread_key(channel: str, thread_ts: str) -> str:
+        return f"{channel}:{thread_ts}"
+
+    async def _get_or_create_room(
+        self,
+        *,
+        app: SlackApp,
+        channel: str,
+        thread_ts: str,
+        slack_user: str,
+    ) -> tuple[str, bool]:
+        """Return ``(room_id, is_new_room)`` for the given Slack thread."""
+        thread_key = self._thread_key(channel, thread_ts)
+        existing = self._thread_to_room.get(thread_key)
+        if existing is not None:
+            return existing, False
+
+        assert self._rest is not None
+        response = await self._rest.agent_api_chats.create_agent_chat(
+            chat=ChatRoomRequest(),
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+        room_id = response.data.id
+
+        # Persist Slack thread context as a ``task`` event so Step 8's
+        # SlackHistoryConverter can rehydrate ``thread_to_room`` after
+        # the agent restarts.
+        await self._emit_context_event(
+            room_id=room_id,
+            app=app,
+            channel=channel,
+            thread_ts=thread_ts,
+            slack_user=slack_user,
+        )
+
+        self._thread_to_room[thread_key] = room_id
+        self._room_to_binding[room_id] = SlackRoomBinding(
+            app_slug=app.slug,
+            channel=channel,
+            thread_ts=thread_ts,
+        )
+
+        logger.info(
+            "Created Thenvoi room %s for Slack thread %s (app=%s)",
+            room_id,
+            thread_key,
+            app.slug,
+        )
+        return room_id, True
+
+    async def _emit_context_event(
+        self,
+        *,
+        room_id: str,
+        app: SlackApp,
+        channel: str,
+        thread_ts: str,
+        slack_user: str,
+    ) -> None:
+        assert self._rest is not None
+        await self._rest.agent_api_events.create_agent_chat_event(
+            chat_id=room_id,
+            event=ChatEventRequest(
+                content="Slack thread context",
+                message_type="task",
+                metadata={
+                    "slack_app_slug": app.slug,
+                    "slack_channel_id": channel,
+                    "slack_thread_ts": thread_ts,
+                    "slack_user_id": slack_user,
+                },
+            ),
+        )
+
+    # ── Slack assistant-pane status indicators ────────────────────────
+
+    @staticmethod
+    async def _set_status(
+        slack: AsyncWebClient,
+        channel: str,
+        thread_ts: str,
+        status: str,
+    ) -> None:
+        """Set or clear the Slack assistant-pane status indicator.
+
+        ``assistant.threads.setStatus`` only takes effect in the Slack
+        Agents & AI Apps assistant pane (and requires the
+        ``assistant:write`` scope). For DMs/channels outside that
+        surface, Slack returns an error which we swallow at DEBUG —
+        the bot still works, the user just doesn't see "thinking…".
+        """
+        try:
+            await slack.assistant_threads_setStatus(
+                channel_id=channel,
+                thread_ts=thread_ts,
+                status=status,
+            )
+        except Exception:
+            logger.debug(
+                "assistant.threads.setStatus failed (status=%r channel=%s thread_ts=%s)",
+                status,
+                channel,
+                thread_ts,
+                exc_info=True,
+            )
+
+    # ── Slack web client management ──────────────────────────────────
+
+    @staticmethod
+    def _default_web_client_factory(app: SlackApp) -> AsyncWebClient:
+        from slack_sdk.web.async_client import AsyncWebClient
+
+        return AsyncWebClient(token=app.bot_token)
+
+    def _get_client(self, app: SlackApp) -> AsyncWebClient:
+        client = self._web_clients.get(app.slug)
+        if client is None:
+            client = self._web_client_factory(app)
+            self._web_clients[app.slug] = client
+        return client

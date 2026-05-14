@@ -7888,6 +7888,15 @@ wheels = [
 ]
 
 [[package]]
+name = "slack-sdk"
+version = "3.41.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/22/35/fc009118a13187dd9731657c60138e5a7c2dea88681a7f04dc406af5da7d/slack_sdk-3.41.0.tar.gz", hash = "sha256:eb61eb12a65bebeca9cb5d36b3f799e836ed2be21b456d15df2627cfe34076ca", size = 250568, upload-time = "2026-03-12T16:10:11.381Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/df/2e4be347ff98281b505cc0ccf141408cdd25eb5ca9f3830deb361b2472d3/slack_sdk-3.41.0-py2.py3-none-any.whl", hash = "sha256:bb18dcdfff1413ec448e759cf807ec3324090993d8ab9111c74081623b692a89", size = 313885, upload-time = "2026-03-12T16:10:09.811Z" },
+]
+
+[[package]]
 name = "sniffio"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -8251,6 +8260,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "slack-sdk" },
     { name = "starlette" },
     { name = "thenvoi-testing-python" },
     { name = "uvicorn" },
@@ -8303,6 +8313,11 @@ parlant = [
 pydantic-ai = [
     { name = "openai" },
     { name = "pydantic-ai-slim" },
+]
+slack = [
+    { name = "slack-sdk" },
+    { name = "starlette" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -8393,10 +8408,13 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "ruff", marker = "extra == 'dev-parlant'", specifier = ">=0.8.0" },
+    { name = "slack-sdk", marker = "extra == 'dev'", specifier = ">=3.27.0" },
+    { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3.27.0" },
     { name = "starlette", marker = "extra == 'a2a-gateway'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'a2a-gateway-demo'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
+    { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
     { name = "thenvoi-client-rest", specifier = "==0.0.7" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev'", specifier = ">=0.1.2" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev-parlant'", specifier = ">=0.1.2" },
@@ -8404,11 +8422,12 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'a2a-gateway-demo'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'acp'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.32.0" },
+    { name = "uvicorn", marker = "extra == 'slack'", specifier = ">=0.32.0" },
     { name = "websockets", marker = "extra == 'codex'", specifier = ">=13.0" },
     { name = "werkzeug", marker = "extra == 'dev-parlant'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "bridge", "bridge-agentcore", "google-adk", "bridge-langchain", "dev", "dev-parlant"]
+provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "google-adk", "bridge-langchain", "dev", "dev-parlant"]
 
 [[package]]
 name = "thenvoi-testing-python"

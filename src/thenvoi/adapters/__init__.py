@@ -15,6 +15,7 @@ Install the extra you need::
     uv add thenvoi-sdk[codex]
     uv add thenvoi-sdk[google_adk]
     uv add thenvoi-sdk[opencode]
+    uv add thenvoi-sdk[slack]
 """
 
 from __future__ import annotations
@@ -47,6 +48,9 @@ if TYPE_CHECKING:
     from thenvoi.adapters.opencode import OpencodeAdapterConfig as OpencodeAdapterConfig
     from thenvoi.adapters.letta import LettaAdapter as LettaAdapter
     from thenvoi.adapters.letta import LettaAdapterConfig as LettaAdapterConfig
+    from thenvoi.adapters.slack import SlackAdapter as SlackAdapter
+    from thenvoi.adapters.slack import SlackApp as SlackApp
+    from thenvoi.adapters.slack import SlackSessionState as SlackSessionState
 
 __all__ = [
     "LangGraphAdapter",
@@ -69,6 +73,9 @@ __all__ = [
     "OpencodeAdapterConfig",
     "LettaAdapter",
     "LettaAdapterConfig",
+    "SlackAdapter",
+    "SlackApp",
+    "SlackSessionState",
 ]
 
 
@@ -154,4 +161,12 @@ def __getattr__(name: str) -> type:
         from thenvoi.adapters.letta import LettaAdapterConfig
 
         return LettaAdapterConfig
+    elif name in ("SlackAdapter", "SlackApp", "SlackSessionState"):
+        from thenvoi.adapters.slack import SlackAdapter, SlackApp, SlackSessionState
+
+        if name == "SlackAdapter":
+            return SlackAdapter
+        elif name == "SlackApp":
+            return SlackApp
+        return SlackSessionState
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
