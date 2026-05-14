@@ -311,26 +311,36 @@ await agent.run()
 ### Parlant
 
 ```python
+import parlant.sdk as p
+
 from thenvoi import Agent
 from thenvoi.adapters import ParlantAdapter
+from thenvoi.integrations.parlant.tools import create_parlant_tools
 
-adapter = ParlantAdapter(
-    model="gpt-4o",
-    custom_section="You are a helpful customer support agent.",
-    guidelines=[
-        {
-            "condition": "Customer asks about refunds",
-            "action": "Check order status first to see if eligible",
-        },
-    ],
-)
+async with p.Server(nlp_service=p.NLPServices.openai) as server:
+    parlant_tools = create_parlant_tools()
+    parlant_agent = await server.create_agent(
+        name="Support",
+        description="A helpful customer support agent.",
+    )
+    await parlant_agent.create_guideline(
+        condition="Customer asks about refunds",
+        action="Check order status first to see if eligible, then respond with thenvoi_send_message.",
+        tools=parlant_tools,
+    )
 
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
+    adapter = ParlantAdapter(
+        server=server,
+        parlant_agent=parlant_agent,
+        custom_section="Keep responses concise and mention the user you are replying to.",
+    )
+
+    agent = Agent.create(
+        adapter=adapter,
+        agent_id=agent_id,
+        api_key=api_key,
+    )
+    await agent.run()
 ```
 
 ### Google ADK
@@ -442,9 +452,11 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | Simple agent with ParlantAdapter |
-| `02_with_guidelines.py` | Behavioral guidelines (condition/action rules) |
-| `03_support_agent.py` | Realistic customer support agent |
+| `01_basic_agent.py` | Simple OpenAI-backed Parlant SDK agent with Band platform tools |
+| `02_with_guidelines.py` | Behavioral guidelines (condition/action rules) with Band platform tools |
+| `03_support_agent.py` | Customer support handoff flow using lookup, add participant, and @mention |
+| `04_tom_agent.py` | Tom character agent using Parlant guidelines and Band messages |
+| `05_jerry_agent.py` | Jerry character agent using Parlant guidelines and Band messages |
 
 ### Letta (`examples/letta/`)
 

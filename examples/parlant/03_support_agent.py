@@ -14,6 +14,8 @@ behavioral guidelines using the Parlant SDK directly.
 Run with:
     uv run examples/parlant/03_support_agent.py
 
+Requires `OPENAI_API_KEY` because this example starts Parlant with OpenAI.
+
 See also: https://github.com/emcie-co/parlant/blob/develop/examples/travel_voice_agent.py
 """
 
@@ -22,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from typing import Any
 
 import parlant.sdk as p
 from dotenv import load_dotenv
@@ -30,6 +33,7 @@ from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import ParlantAdapter
 from thenvoi.config import load_agent_config
+from thenvoi.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -57,7 +61,7 @@ Remember:
 """
 
 
-async def setup_support_agent(server: p.Server) -> p.Agent:
+async def setup_support_agent(server: p.Server, tools: list[Any]) -> p.Agent:
     """Create and configure a customer support agent with guidelines."""
     agent = await server.create_agent(
         name="Support",
@@ -82,7 +86,8 @@ async def setup_support_agent(server: p.Server) -> p.Agent:
 
     await agent.create_guideline(
         condition="Issue cannot be resolved by this agent",
-        action="Explain the limitation clearly and offer to escalate to a specialist by adding them to the conversation",
+        action="Use thenvoi_lookup_peers to find a specialist, then thenvoi_add_participant to add them, then thenvoi_send_message to @mention them with the customer context.",
+        tools=tools,
     )
 
     await agent.create_guideline(
@@ -113,9 +118,11 @@ async def main() -> None:
     agent_id, api_key = load_agent_config("support_agent")
 
     # Start Parlant server
-    async with p.Server() as server:
+    async with p.Server(nlp_service=p.NLPServices.openai) as server:
+        parlant_tools = create_parlant_tools()
+
         # Create support agent with guidelines
-        parlant_agent = await setup_support_agent(server)
+        parlant_agent = await setup_support_agent(server, parlant_tools)
         logger.info("Support agent created: %s", parlant_agent.id)
 
         # Create adapter using Parlant SDK directly

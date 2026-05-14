@@ -175,7 +175,6 @@ _DEFAULT_MODELS: dict[str, str] = {
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "parlant": "gpt-4o",
     "crewai": "gpt-4o-mini",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
@@ -406,31 +405,63 @@ async def run_parlant_agent(
     api_key: str,
     rest_url: str,
     ws_url: str,
-    model: str,
+    model: str | None,
     custom_section: str,
     enable_streaming: bool,
     logger: logging.Logger,
 ) -> None:
     """Run the Parlant agent."""
+    import parlant.sdk as p
+
     from thenvoi.adapters import ParlantAdapter
+    from thenvoi.integrations.parlant.tools import create_parlant_tools
 
-    adapter = ParlantAdapter(
-        model=model,
-        custom_section=custom_section,
-        guidelines=PARLANT_GUIDELINES,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
-    )
+    if model:
+        logger.warning(
+            "Parlant uses the provider configured by p.NLPServices.openai; ignoring --model=%s",
+            model,
+        )
+    if enable_streaming:
+        logger.warning(
+            "Parlant adapter does not support execution-report streaming; ignoring --streaming"
+        )
 
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
+    description = custom_section or "A helpful Band collaboration agent using Parlant."
 
-    logger.info("Starting Parlant agent with model: %s", model)
-    await agent.run()
+    async with p.Server(nlp_service=p.NLPServices.openai) as server:
+        parlant_tools = create_parlant_tools()
+        parlant_agent = await server.create_agent(
+            name="Parlant",
+            description=description,
+        )
+        await parlant_agent.create_guideline(
+            condition="User sends a message or asks for help",
+            action="Respond by calling thenvoi_send_message with the user's name or handle in mentions. If another specialist is needed, call thenvoi_lookup_peers, then thenvoi_add_participant, then mention that specialist with context.",
+            tools=parlant_tools,
+        )
+        for guideline in PARLANT_GUIDELINES:
+            await parlant_agent.create_guideline(
+                condition=guideline["condition"],
+                action=guideline["action"],
+                tools=parlant_tools,
+            )
+
+        adapter = ParlantAdapter(
+            server=server,
+            parlant_agent=parlant_agent,
+            custom_section=custom_section,
+        )
+
+        agent = Agent.create(
+            adapter=adapter,
+            agent_id=agent_id,
+            api_key=api_key,
+            ws_url=ws_url,
+            rest_url=rest_url,
+        )
+
+        logger.info("Starting Parlant agent with OpenAI NLP service")
+        await agent.run()
 
 
 async def run_crewai_agent(
