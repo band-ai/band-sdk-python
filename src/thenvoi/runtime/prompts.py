@@ -122,11 +122,18 @@ def render_system_prompt(
         parts.append(identity)
         return "\n\n".join(parts)
 
-    parts = []
-    if custom_section:
-        parts.append(custom_section)
-    parts.append(identity)
-    parts.append(BASE_INSTRUCTIONS.strip())
+    try:
+        template_text = TEMPLATES[template]
+    except KeyError as exc:
+        raise ValueError(f"Unknown system prompt template: {template}") from exc
+
+    parts = [
+        template_text.format(
+            custom_section=custom_section,
+            agent_name=agent_name,
+            agent_description=agent_description,
+        ).strip()
+    ]
 
     # Capability-gated sections
     if features:

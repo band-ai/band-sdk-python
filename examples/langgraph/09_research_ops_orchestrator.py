@@ -144,6 +144,7 @@ async def main() -> None:
     adapter = LangGraphAdapter(
         graph_factory=build_orchestrator_factory(ChatOpenAI(model=model)),
         custom_section=ORCHESTRATOR_INSTRUCTIONS,
+        inject_system_prompt=True,
     )
 
     agent = Agent.create(

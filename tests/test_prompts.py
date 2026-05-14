@@ -9,7 +9,7 @@ Tests cover:
 """
 
 from thenvoi.core.types import AdapterFeatures, Capability
-from thenvoi.runtime.prompts import BASE_INSTRUCTIONS, render_system_prompt
+from thenvoi.runtime.prompts import BASE_INSTRUCTIONS, TEMPLATES, render_system_prompt
 
 
 class TestRenderSystemPromptDefaults:
@@ -108,6 +108,37 @@ class TestRenderSystemPromptWithoutBaseInstructions:
 
         assert "Bot" in prompt
         assert "helper" in prompt
+
+
+class TestPromptTemplates:
+    """Test template lookup behavior."""
+
+    def test_uses_named_template_from_public_templates(self):
+        """The public template= argument should affect rendered output."""
+        original = TEMPLATES.get("minimal_test")
+        TEMPLATES["minimal_test"] = "CUSTOM {agent_name}: {custom_section}"
+        try:
+            prompt = render_system_prompt(
+                agent_name="Bot",
+                custom_section="be brief",
+                template="minimal_test",
+            )
+        finally:
+            if original is None:
+                del TEMPLATES["minimal_test"]
+            else:
+                TEMPLATES["minimal_test"] = original
+
+        assert prompt == "CUSTOM Bot: be brief"
+
+    def test_unknown_template_raises(self):
+        """Unknown template names should fail instead of silently no-oping."""
+        try:
+            render_system_prompt(template="missing-template")
+        except ValueError as exc:
+            assert "missing-template" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError for unknown template")
 
 
 class TestBaseInstructionsConstant:

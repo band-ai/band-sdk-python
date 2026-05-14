@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import warnings
@@ -48,17 +49,16 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
     System prompt:
         The adapter renders a system prompt from ``prompt_template`` /
-        ``custom_section`` / agent metadata in :meth:`on_started`, then
-        prepends it as the first ``("system", ...)`` message on session
-        bootstrap. The LangGraph checkpointer carries it forward across
-        turns, so every model call sees exactly one SystemMessage.
+        ``custom_section`` / agent metadata in :meth:`on_started`. In the
+        simple ``llm=`` pattern, it prepends that prompt as the first
+        ``("system", ...)`` message on session bootstrap and the LangGraph
+        checkpointer carries it forward across turns.
 
-        - Simple pattern: nothing special to do; ``create_agent`` reads
-          ``state["messages"]`` directly.
-        - Advanced pattern (``graph=`` / ``graph_factory=``): your graph
-          should also read ``state["messages"]`` (or whatever your state
-          schema names them). See
-          ``examples/langgraph/09_research_ops_orchestrator.py``.
+        Advanced ``graph=`` / ``graph_factory=`` callers often manage their
+        own system messages, so prompt injection is opt-in there via
+        ``inject_system_prompt=True``. If enabled, the graph should read
+        ``state["messages"]`` (or whatever your state schema names them).
+        See ``examples/langgraph/09_research_ops_orchestrator.py``.
 
     Example:
         from langchain_openai import ChatOpenAI
@@ -94,6 +94,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         history_converter: LangChainHistoryConverter | None = None,
         recursion_limit: int = 50,
         features: AdapterFeatures | None = None,
+        inject_system_prompt: bool | None = None,
     ):
         # --- Deprecation shim: boolean → features migration ---
         if (enable_memory_tools or enable_execution_reporting) and features is not None:
@@ -125,11 +126,15 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             features=features,
         )
 
+        uses_simple_pattern = (
+            llm is not None and graph_factory is None and graph is None
+        )
+
         # Simple pattern: build a graph_factory that delegates to create_agent.
         # We do NOT pass system_prompt= here; the adapter prepends a single
         # ("system", ...) message on bootstrap and the checkpointer carries it
         # forward, matching the pattern used by every other Band adapter.
-        if llm is not None and graph_factory is None and graph is None:
+        if uses_simple_pattern:
             from langchain.agents import create_agent
 
             additional = additional_tools or []
@@ -157,7 +162,14 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         self.custom_section = custom_section
         self.additional_tools = additional_tools or []
         self.recursion_limit = recursion_limit
+        self._inject_system_prompt = (
+            uses_simple_pattern
+            if inject_system_prompt is None
+            else inject_system_prompt
+        )
         self._system_prompt: str = ""
+        self._simple_checkpointer = checkpointer
+        self._room_checkpointers: dict[str, Any] = {}
         # Track rooms that have already had hydrated history pushed in, so
         # reconnects that re-deliver bootstrap don't duplicate messages on
         # top of the checkpointer's already-stored state.
@@ -212,6 +224,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         if not graph:
             raise RuntimeError("No graph available")
 
+        checkpointer = getattr(graph, "checkpointer", None) or self._simple_checkpointer
+        if checkpointer is not None:
+            self._room_checkpointers[room_id] = checkpointer
+
         # Build messages
         messages: list[Any] = []
 
@@ -221,7 +237,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # we just append the new user turn.
         should_mark_bootstrapped = False
         if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
-            if self._system_prompt:
+            if self._inject_system_prompt and self._system_prompt:
                 messages.append(("system", self._system_prompt))
             if history:
                 messages.extend(history)  # Already converted by history_converter
@@ -288,6 +304,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         tools: AgentToolsProtocol,
     ) -> None:
         """Handle streaming events from LangGraph."""
+        if not isinstance(event, dict):
+            logger.warning("Ignoring malformed LangGraph stream event: %r", event)
+            return
+
         event_type = event.get("event")
 
         if event_type == "on_tool_start":
@@ -334,6 +354,25 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up LangGraph state for a room."""
         self._bootstrapped_rooms.pop(room_id, None)
-        if not self.graph_factory:
+        checkpointer = self._room_checkpointers.pop(room_id, None)
+        if checkpointer is None and self._static_graph is not None:
+            checkpointer = getattr(self._static_graph, "checkpointer", None)
+        if checkpointer is None:
+            checkpointer = self._simple_checkpointer
+        if checkpointer is None:
             return
-        # Future graph_factory-specific cleanup (e.g. checkpointer) goes here
+
+        config = {"configurable": {"thread_id": room_id}}
+        for method_name, argument in (
+            ("adelete_thread", room_id),
+            ("delete_thread", room_id),
+            ("adelete_for_runs", config),
+            ("delete_for_runs", config),
+        ):
+            method = getattr(checkpointer, method_name, None)
+            if not callable(method):
+                continue
+            result = method(argument)
+            if inspect.isawaitable(result):
+                await result
+            return

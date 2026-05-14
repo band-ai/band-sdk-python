@@ -15,7 +15,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from thenvoi.adapters.langgraph import LangGraphAdapter
 from thenvoi.core.types import AdapterFeatures, Emit, PlatformMessage
@@ -241,7 +241,7 @@ class TestOnMessage:
         }
 
     @pytest.mark.asyncio
-    async def test_static_graph_receives_bootstrap_system_prompt(
+    async def test_static_graph_does_not_inject_system_prompt_by_default(
         self, sample_message, mock_tools
     ):
         mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
@@ -259,15 +259,38 @@ class TestOnMessage:
         )
 
         messages = captured_inputs[0]["messages"]
-        assert messages[0] == ("system", adapter._system_prompt)
-        assert "TestBot" in messages[0][1]
+        assert all(not (isinstance(m, tuple) and m[0] == "system") for m in messages)
 
     @pytest.mark.asyncio
-    async def test_graph_factory_receives_bootstrap_system_prompt(
+    async def test_graph_factory_does_not_inject_system_prompt_by_default(
         self, sample_message, mock_tools
     ):
         mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
         adapter = LangGraphAdapter(graph_factory=MagicMock(return_value=mock_graph))
+        await adapter.on_started("TestBot", "Test bot")
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        messages = captured_inputs[0]["messages"]
+        assert all(not (isinstance(m, tuple) and m[0] == "system") for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_advanced_graph_can_opt_into_bootstrap_system_prompt(
+        self, sample_message, mock_tools
+    ):
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
+        adapter = LangGraphAdapter(
+            graph_factory=MagicMock(return_value=mock_graph),
+            inject_system_prompt=True,
+        )
         await adapter.on_started("TestBot", "Test bot")
 
         await adapter.on_message(
@@ -512,7 +535,7 @@ class TestOnMessage:
         assert "tool_result" in message_types
 
     @pytest.mark.asyncio
-    async def test_real_compiled_graph_receives_bootstrap_system_prompt(
+    async def test_real_compiled_graph_can_opt_into_bootstrap_system_prompt(
         self, sample_message, mock_tools
     ):
         from langchain_core.messages import SystemMessage
@@ -532,7 +555,7 @@ class TestOnMessage:
         builder.add_edge("capture_prompt", END)
         graph = builder.compile()
 
-        adapter = LangGraphAdapter(graph=graph)
+        adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
         await adapter.on_started("TestBot", "Test bot")
 
         await adapter.on_message(
@@ -848,6 +871,54 @@ class TestStreamEventHandling:
 
         mock_tools.send_event.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_ignores_malformed_events(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """Malformed stream payloads should not crash event handling."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+        )
+
+        await adapter._handle_stream_event(["not", "a", "dict"], "room-123", mock_tools)
+
+        mock_tools.send_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_when_execution_feature_off(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """Execution stream events are gated by Emit.EXECUTION."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+        )
+
+        event = {
+            "event": "on_tool_start",
+            "name": "thenvoi_send_message",
+            "run_id": "run-123",
+            "data": {"input": {"content": "Hello"}},
+        }
+
+        await adapter._handle_stream_event(event, "room-123", mock_tools)
+
+        mock_tools.send_event.assert_not_awaited()
+
+    def test_enable_execution_reporting_shim_enables_execution_emit(
+        self, mock_llm, mock_checkpointer
+    ):
+        """Legacy execution-reporting flag maps to Emit.EXECUTION."""
+        with pytest.warns(DeprecationWarning):
+            adapter = LangGraphAdapter(
+                llm=mock_llm,
+                checkpointer=mock_checkpointer,
+                enable_execution_reporting=True,
+            )
+
+        assert Emit.EXECUTION in adapter.features.emit
+
 
 class TestOnCleanup:
     """Tests for on_cleanup() method."""
@@ -935,6 +1006,59 @@ class TestOnCleanup:
         await adapter.on_cleanup("room-123")
         assert "room-123" not in adapter._bootstrapped_rooms
 
+    @pytest.mark.asyncio
+    async def test_cleanup_clears_checkpointer_thread(self, sample_message, mock_tools):
+        """Cleanup must remove saved graph state before room re-entry.
+
+        Otherwise a room_added -> cleanup -> room_added lifecycle replays the
+        hydrated history into the existing checkpointer thread and duplicates
+        SystemMessages, which hard-fails ChatAnthropic.
+        """
+        from langgraph.checkpoint.memory import InMemorySaver
+        from langgraph.graph import END, START, MessagesState, StateGraph
+
+        checkpointer = InMemorySaver()
+        seen_system_counts: list[int] = []
+
+        def capture_systems(state: MessagesState) -> dict[str, list[Any]]:
+            seen_system_counts.append(
+                sum(isinstance(m, SystemMessage) for m in state["messages"])
+            )
+            return {"messages": []}
+
+        builder = StateGraph(MessagesState)
+        builder.add_node("capture", capture_systems)
+        builder.add_edge(START, "capture")
+        builder.add_edge("capture", END)
+        graph = builder.compile(checkpointer=checkpointer)
+
+        adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
+        await adapter.on_started("TestBot", "Test bot")
+
+        for content in ("first lifecycle", "second lifecycle"):
+            await adapter.on_message(
+                msg=PlatformMessage(
+                    id=f"msg-{content}",
+                    room_id="room-123",
+                    content=content,
+                    sender_id="user-456",
+                    sender_type="User",
+                    sender_name="Alice",
+                    message_type="text",
+                    metadata={},
+                    created_at=datetime.now(timezone.utc),
+                ),
+                tools=mock_tools,
+                history=[HumanMessage(content="hydrated prior turn")],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+            await adapter.on_cleanup("room-123")
+
+        assert seen_system_counts == [1, 1]
+
 
 class TestErrorHandling:
     """Tests for error handling."""
@@ -1015,10 +1139,10 @@ class TestStaticGraph:
 
     @pytest.mark.asyncio
     async def test_static_graph_with_participants_msg(self, sample_message, mock_tools):
-        """Static graph: adapter prepends the rendered system prompt on bootstrap.
+        """Static graph metadata updates stay user-role by default.
 
-        Same convention as every other Band adapter — the SDK forces its prompt
-        at the top, the user's graph just reads ``state["messages"]``.
+        Static graphs may already inject their own system prompt. The adapter
+        therefore does not add a Band system message unless the caller opts in.
         """
         mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
 
@@ -1045,8 +1169,7 @@ class TestStaticGraph:
             system_msgs = [
                 m for m in messages if isinstance(m, tuple) and m[0] == "system"
             ]
-            assert len(system_msgs) == 1
-            assert system_msgs[0][1] == adapter._system_prompt
+            assert system_msgs == []
 
             user_msgs = [m for m in messages if isinstance(m, tuple) and m[0] == "user"]
             assert len(user_msgs) == 2
@@ -1281,7 +1404,7 @@ class TestSystemPromptCrossTurn:
         builder.add_edge("echo", END)
         graph = builder.compile(checkpointer=checkpointer)
 
-        adapter = LangGraphAdapter(graph=graph)
+        adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
         await adapter.on_started("TestBot", "Test bot")
 
         with patch(
