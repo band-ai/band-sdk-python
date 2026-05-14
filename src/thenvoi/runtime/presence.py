@@ -300,49 +300,27 @@ class RoomPresence:
                             e,
                         )
 
-            if not self.auto_subscribe_existing:
-                return
+            surviving_room_ids = sorted(self.rooms)
 
-            new_rooms = [
-                (room_id, payload)
-                for room_id, payload in rooms_from_api
-                if room_id not in old_rooms
-            ]
-            if not new_rooms:
-                return
+            if self.auto_subscribe_existing:
+                new_rooms = [
+                    (room_id, payload)
+                    for room_id, payload in rooms_from_api
+                    if room_id not in old_rooms
+                ]
+                await self._subscribe_rooms(new_rooms, context="reconnect")
 
-            async def safe_subscribe(room_id: str, payload: dict[str, Any]) -> bool:
-                """Subscribe to a single room discovered during reconnect."""
-                try:
-                    await self.link.subscribe_room(room_id)
-                    self.rooms.add(room_id)
-
-                    if self.on_room_joined:
-                        await self.on_room_joined(room_id, payload)
-                    return True
-                except Exception as e:
-                    logger.warning(
-                        "Failed to subscribe to room %s during reconnect: %s",
-                        room_id,
-                        e,
-                    )
-                    self.rooms.discard(room_id)
-                    return False
-
-            results = await asyncio.gather(
-                *[safe_subscribe(room_id, payload) for room_id, payload in new_rooms],
-            )
-            succeeded = sum(1 for result in results if result)
-            failed = len(results) - succeeded
-
-            if failed:
-                logger.warning(
-                    "Subscribed to %s rooms during reconnect (%s failed)",
-                    succeeded,
-                    failed,
-                )
-            else:
-                logger.info("Subscribed to %s rooms during reconnect", succeeded)
+            if self.on_room_event:
+                reconnect_event = ReconnectedEvent()
+                for room_id in surviving_room_ids:
+                    try:
+                        await self.on_room_event(room_id, reconnect_event)
+                    except Exception as e:
+                        logger.warning(
+                            "on_room_event error for %s during reconnect: %s",
+                            room_id,
+                            e,
+                        )
 
         finally:
             # Notify callers so they can resync /next for messages missed during downtime
@@ -424,6 +402,51 @@ class RoomPresence:
 
         return rooms
 
+    async def _subscribe_rooms(
+        self,
+        rooms_to_join: list[tuple[str, dict[str, Any]]],
+        *,
+        context: str,
+    ) -> None:
+        """Subscribe to rooms in parallel and report aggregate success/failure."""
+        if not rooms_to_join:
+            return
+
+        async def safe_subscribe(room_id: str, payload: dict[str, Any]) -> bool:
+            """Subscribe to a single room, returning True on success."""
+            try:
+                await self.link.subscribe_room(room_id)
+                self.rooms.add(room_id)
+
+                if self.on_room_joined:
+                    await self.on_room_joined(room_id, payload)
+                return True
+            except Exception as e:
+                logger.warning(
+                    "Failed to subscribe to room %s during %s: %s",
+                    room_id,
+                    context,
+                    e,
+                )
+                self.rooms.discard(room_id)
+                return False
+
+        results = await asyncio.gather(
+            *[safe_subscribe(room_id, payload) for room_id, payload in rooms_to_join],
+        )
+        succeeded = sum(1 for result in results if result)
+        failed = len(results) - succeeded
+
+        if failed:
+            logger.warning(
+                "Subscribed to %s rooms during %s (%s failed)",
+                succeeded,
+                context,
+                failed,
+            )
+        else:
+            logger.info("Subscribed to %s rooms during %s", succeeded, context)
+
     async def _subscribe_to_existing_rooms(self) -> None:
         """
         Subscribe to all rooms where agent is a participant.
@@ -436,38 +459,6 @@ class RoomPresence:
 
         try:
             rooms_to_join = await self._list_existing_rooms()
-            if not rooms_to_join:
-                return
-
-            async def safe_subscribe(room_id: str, payload: dict[str, Any]) -> bool:
-                """Subscribe to a single room, returning True on success."""
-                try:
-                    await self.link.subscribe_room(room_id)
-                    self.rooms.add(room_id)
-
-                    if self.on_room_joined:
-                        await self.on_room_joined(room_id, payload)
-                    return True
-                except Exception as e:
-                    logger.warning("Failed to subscribe to room %s: %s", room_id, e)
-                    self.rooms.discard(room_id)
-                    return False
-
-            # Join all rooms in parallel to avoid starving the heartbeat
-            results = await asyncio.gather(
-                *[safe_subscribe(rid, payload) for rid, payload in rooms_to_join],
-            )
-            succeeded = sum(1 for r in results if r)
-            failed = len(results) - succeeded
-
-            if failed:
-                logger.warning(
-                    "Subscribed to %s existing rooms (%s failed)",
-                    succeeded,
-                    failed,
-                )
-            else:
-                logger.info("Subscribed to %s existing rooms", succeeded)
-
+            await self._subscribe_rooms(rooms_to_join, context="startup")
         except Exception as e:
             logger.warning("Failed to subscribe to existing rooms: %s", e)

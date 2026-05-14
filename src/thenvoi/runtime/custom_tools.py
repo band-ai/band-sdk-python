@@ -8,7 +8,9 @@ and execute custom tools with validation.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+from functools import lru_cache
 from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
@@ -146,6 +148,14 @@ def find_custom_tool(
     return None
 
 
+@lru_cache(maxsize=256)
+def _custom_tool_accepts_input(func: Callable[..., Any]) -> bool:
+    try:
+        return len(inspect.signature(func).parameters) > 0
+    except (TypeError, ValueError):
+        return True
+
+
 async def execute_custom_tool(
     tool: CustomToolDef,
     arguments: dict[str, Any],
@@ -179,6 +189,14 @@ async def execute_custom_tool(
             f"Invalid arguments for {tool_name}: {', '.join(errors)}"
         ) from e
 
+    accepts_input = _custom_tool_accepts_input(func)
+    if not accepts_input and (arguments or model.model_fields):
+        tool_name = get_custom_tool_name(model)
+        raise ValueError(
+            f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
+        )
+    args = (validated,) if accepts_input else ()
+
     if asyncio.iscoroutinefunction(func):
-        return await func(validated)
-    return func(validated)
+        return await func(*args)
+    return func(*args)

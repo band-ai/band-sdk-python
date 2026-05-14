@@ -35,6 +35,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -65,6 +68,34 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
+
+    codex_bin = shutil.which("codex")
+    if codex_bin is None:
+        logger.error(
+            "Codex CLI not found on PATH. Install it: npm install -g @openai/codex"
+        )
+        sys.exit(1)
+
+    login_check = subprocess.run(
+        [codex_bin, "login", "status"],
+        capture_output=True,
+        text=True,
+    )
+    if login_check.returncode != 0:
+        print("Codex is not logged in.")
+        try:
+            answer = input("Run 'codex login' now? [Y/n] ").strip().lower()
+        except EOFError:
+            print("Non-interactive shell. Run 'codex login' manually, then retry.")
+            sys.exit(1)
+        if answer in ("", "y", "yes"):
+            result = subprocess.run([codex_bin, "login"], check=False)
+            if result.returncode != 0:
+                print("Login failed. Check the output above and retry.")
+                sys.exit(1)
+        else:
+            print("Exiting. Run 'codex login' manually, then retry.")
+            sys.exit(1)
 
     agent_key = os.getenv("AGENT_KEY", "darter")
     agent_id, api_key = load_agent_config(agent_key)
