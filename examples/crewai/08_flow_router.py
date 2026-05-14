@@ -140,7 +140,7 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    agent_config = load_agent_config("crewai_flow_router")
+    agent_id, api_key = load_agent_config("crewai_flow_router")
 
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
@@ -150,8 +150,8 @@ async def main() -> None:
 
     agent = Agent.create(
         adapter=adapter,
-        agent_id=agent_config["agent_id"],
-        api_key=agent_config["api_key"],
+        agent_id=agent_id,
+        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

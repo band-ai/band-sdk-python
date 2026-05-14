@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import time as _time
@@ -50,7 +49,7 @@ from thenvoi.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
 
-TransportKind = Literal["stdio", "ws", "sdk"]
+TransportKind = Literal["stdio", "ws"]
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
 _REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
@@ -199,15 +198,6 @@ class _TurnResult:
 @dataclass
 class CodexAdapterConfig:
     """Runtime configuration for Codex adapter sessions.
-
-    Notes on ``transport``:
-        - ``"stdio"`` and ``"ws"`` work on all supported Python versions.
-        - ``"sdk"`` requires the optional ``codex-app-server`` dependency,
-          which only publishes wheels for Python >= 3.12.  On 3.11 and
-          below, ``pip install thenvoi-sdk[codex]`` silently omits it and
-          constructing an ``"sdk"``-transport adapter raises ``ImportError``
-          at ``on_started()``.  Use ``"stdio"`` / ``"ws"`` on older
-          interpreters.
 
     Turn task events:
         ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
@@ -393,12 +383,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._session_approved: dict[str, OrderedDict[str, None]] = {}
         # Per-room sandbox overrides (set via /sandbox command)
         self._sandbox_overrides: dict[str, str] = {}
-        # SDK transport: context for async server-request handling.
-        # Only set via _sdk_request_scope() context manager which guarantees
-        # cleanup.  Must only be entered while _rpc_lock is held.
-        self._sdk_request_context: (
-            tuple[AgentToolsProtocol, PlatformMessage, str] | None
-        ) = None
         # Single client receive queue means turn processing must be serialized
         # — the lock is adapter-wide, not per-room.  A pending manual approval
         # in room A therefore blocks turn processing in every other room for
@@ -643,15 +627,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
             _turn_start = _time.monotonic()
             try:
-                async with self._sdk_request_scope(tools, msg, room_id):
-                    result = await self._process_turn_events(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id or None,
-                        turn_start=_turn_start,
-                    )
+                result = await self._process_turn_events(
+                    tools=tools,
+                    msg=msg,
+                    room_id=room_id,
+                    thread_id=thread_id,
+                    turn_id=turn_id or None,
+                    turn_start=_turn_start,
+                )
             except Exception:
                 logger.exception(
                     "Unexpected error during Codex turn event processing "
@@ -677,32 +660,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 saw_send_message_tool=result.saw_send_message_tool,
                 duration_s=_turn_duration_s,
             )
-
-    @contextlib.asynccontextmanager
-    async def _sdk_request_scope(
-        self,
-        tools: AgentToolsProtocol,
-        msg: PlatformMessage,
-        room_id: str,
-    ):
-        """Set SDK request context for the duration of the turn event loop.
-
-        Must only be entered while ``_rpc_lock`` is held.  The context
-        manager guarantees cleanup even on exceptions, preventing stale
-        context from routing server requests to the wrong room.  The
-        single-slot ``_sdk_request_context`` assumes serialized turns;
-        the assertion below catches any regression that introduces
-        concurrent entry (e.g. a future per-room lock).
-        """
-        if self._sdk_request_context is not None:
-            raise RuntimeError(
-                "_sdk_request_scope re-entered; _rpc_lock must serialize turns"
-            )
-        self._sdk_request_context = (tools, msg, room_id)
-        try:
-            yield
-        finally:
-            self._sdk_request_context = None
 
     async def _process_turn_events(
         self,
@@ -1073,74 +1030,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if config.transport == "ws":
             return CodexWebSocketClient(ws_url=config.codex_ws_url)
 
-        if config.transport == "sdk":
-            return self._build_sdk_client(config)
-
         return CodexStdioClient(
             command=config.codex_command,
             cwd=config.cwd,
             env=config.codex_env,
-        )
-
-    def _build_sdk_client(self, config: CodexAdapterConfig) -> _CodexClientProtocol:
-        """Build a client backed by the official ``codex-app-server`` SDK."""
-        from thenvoi.integrations.codex.sdk_client import CodexSdkClient
-
-        codex_bin: str | None = None
-        if config.codex_command:
-            codex_bin = config.codex_command[0]
-
-        env_dict: dict[str, str] | None = (
-            dict(config.codex_env) if config.codex_env else None
-        )
-
-        # Give the SDK bridge enough headroom to outlive the adapter's
-        # manual-approval wait.  A 30s margin covers event-loop latency and
-        # the couple of notifications that follow the approval resolution.
-        bridge_timeout_s = config.approval_wait_timeout_s + 30.0
-
-        sdk_client = CodexSdkClient(
-            cwd=config.cwd,
-            env=env_dict,
-            codex_bin=codex_bin,
-            client_name=config.client_name,
-            client_title=config.client_title,
-            client_version=config.client_version,
-            experimental_api=config.experimental_api,
-            server_request_timeout_s=bridge_timeout_s,
-        )
-        sdk_client.set_request_handler(self._handle_sdk_server_request)
-        return sdk_client
-
-    async def _handle_sdk_server_request(self, event: RpcEvent) -> None:
-        """Adapter callback used by :class:`CodexSdkClient` to process
-        server-initiated requests (tool calls, approvals).
-
-        This runs on the main event loop (scheduled via
-        ``asyncio.run_coroutine_threadsafe``).  It must call
-        ``self._client.respond()`` to unblock the SDK thread.
-        """
-        if self._sdk_request_context is None:
-            logger.warning(
-                "SDK server request received but no request context set (method=%s)",
-                event.method,
-            )
-            if self._client is not None and event.id is not None:
-                # Default to ``decline`` for approval methods so a missing
-                # context can never silent-accept a command or file change.
-                default = (
-                    {"decision": "decline"}
-                    if event.method in CODEX_APPROVAL_METHODS
-                    else {}
-                )
-                await self._client.respond(event.id, default)
-            return
-        tools, msg, room_id = self._sdk_request_context
-        await self._handle_server_request(
-            tools=tools,
-            msg=msg,
-            room_id=room_id,
-            event=event,
         )
 
     async def _select_model(self) -> str:
@@ -1430,14 +1323,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         Concurrency model: this coroutine mutates adapter state
         (``_pending_approvals``, ``_session_approved``, ``_approval_audit``,
         ``_task_titles_by_id``) without an explicit lock.  It is safe
-        because the only two call sites both run on the single adapter
-        event loop:
-
-        1. The turn-processing loop in ``_process_turn_events`` (stdio / ws
-           transports) which is already serialized by ``_rpc_lock``.
-        2. The SDK bridge's ``_handle_sdk_server_request``, which is
-           scheduled via ``asyncio.run_coroutine_threadsafe`` on the same
-           loop while a turn is awaiting ``recv_event``.
+        because the only call site is the turn-processing loop in
+        ``_process_turn_events``, which is already serialized by
+        ``_rpc_lock``.
 
         Because asyncio runs one coroutine at a time, every synchronous
         span inside this method is atomic.  If a new caller is ever added
