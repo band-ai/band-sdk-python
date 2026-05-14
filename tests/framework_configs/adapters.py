@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from unittest.mock import MagicMock
 
-from tests.framework_configs._sentinel import IN_CI, MISSING, _MissingSentinel
+from tests.framework_configs._sentinel import MISSING, STRICT_CI, _MissingSentinel
 from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 
 __all__ = ["AdapterConfig", "ADAPTER_CONFIGS", "ADAPTER_EXCLUDED_MODULES"]
@@ -755,7 +755,7 @@ def _build_adapter_configs() -> list[AdapterConfig]:
             if result is not None:
                 configs.append(result)
         except Exception as exc:
-            if IN_CI:
+            if STRICT_CI:
                 raise RuntimeError(
                     f"Adapter config builder {builder.__name__} failed in CI: {exc}"
                 ) from exc

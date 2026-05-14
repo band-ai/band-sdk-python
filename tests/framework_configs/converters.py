@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Callable
 if TYPE_CHECKING:
     from tests.framework_configs.output_adapters import OutputAdapter
 
-from tests.framework_configs._sentinel import IN_CI
+from tests.framework_configs._sentinel import STRICT_CI
 
 __all__ = [
     "ConverterConfig",
@@ -314,7 +314,7 @@ def _build_converter_configs() -> list[ConverterConfig]:
         try:
             configs.append(builder())
         except Exception as exc:
-            if IN_CI:
+            if STRICT_CI:
                 raise RuntimeError(
                     f"Converter config builder {builder.__name__} failed in CI: {exc}"
                 ) from exc

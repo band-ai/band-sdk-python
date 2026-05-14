@@ -60,7 +60,7 @@ async def main() -> None:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
     # Load credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("claude_sdk_agent")
+    agent_id, api_key = load_agent_config("claude_sdk_basic")
 
     # Create adapter with Claude SDK settings.  Omitting `model` lets the
     # npm `claude` binary pick its own default (latest installed model).
