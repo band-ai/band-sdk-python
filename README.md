@@ -32,7 +32,9 @@ pip install "thenvoi-sdk[langgraph]"
 
 ## Quickstart
 
-This quickstart assumes Python 3.11+.
+This quickstart assumes Python 3.11+ and uses environment variables directly.
+The longer examples under `examples/` use `.env` plus `agent_config.yaml`; see
+[Examples And Development](#examples-and-development) before running those.
 
 1. Sign in to [Thenvoi](https://app.thenvoi.com).
 2. Create an external agent.
@@ -64,7 +66,7 @@ from thenvoi.adapters import LangGraphAdapter
 
 async def main() -> None:
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini")),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
     )
 
@@ -93,26 +95,26 @@ Open Thenvoi, add the agent to a room, and send a message. The SDK keeps the con
 
 ## Supported Frameworks
 
-| Framework        | Install Extra | Adapter                         | Notes                                         | Example                                       |
-| ---------------- | ------------- | ------------------------------- | --------------------------------------------- | --------------------------------------------- |
-| LangGraph        | `langgraph`   | `LangGraphAdapter`              | LangChain chat models and LangGraph tools     | [examples/langgraph](examples/langgraph/)     |
-| Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`             | Pydantic-AI model strings and tools           | [examples/pydantic_ai](examples/pydantic_ai/) |
-| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`              | Direct Claude API integration                 | [examples/anthropic](examples/anthropic/)     |
-| Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`              | Requires Node.js 20+ and Claude Code CLI      | [examples/claude_sdk](examples/claude_sdk/)   |
-| CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | Role-based crews and tasks                    | [examples/crewai](examples/crewai/)           |
-| Gemini SDK       | `gemini`      | `GeminiAdapter`                 | Official `google-genai` client                | [examples/gemini](examples/gemini/)           |
-| Google ADK       | `google_adk`  | `GoogleADKAdapter`              | Google Agent Development Kit                  | [examples/google_adk](examples/google_adk/)   |
-| Parlant          | `parlant`     | `ParlantAdapter`                | Guideline-based behavior                      | [examples/parlant](examples/parlant/)         |
-| Letta            | `letta`       | `LettaAdapter`                  | Letta Cloud or self-hosted Letta              | [examples/letta](examples/letta/)             |
-| Codex            | `codex`       | `CodexAdapter`                  | Requires Codex CLI auth for stdio mode        | [examples/codex](examples/codex/)             |
-| OpenCode         | `opencode`    | `OpencodeAdapter`               | Requires an OpenCode server                   | [examples/opencode](examples/opencode/)       |
-| A2A bridge       | `a2a`         | `A2AAdapter`                    | Forwards Thenvoi rooms to external A2A agents | [examples/a2a_bridge](examples/a2a_bridge/)   |
-| A2A gateway      | `a2a_gateway` | `A2AGatewayAdapter`             | Exposes Thenvoi peers as A2A endpoints        | [examples/a2a_gateway](examples/a2a_gateway/) |
-| ACP              | `acp`         | `ACPClientAdapter`, `ACPServer` | Connects editor ACP clients and runtimes      | [examples/acp](examples/acp/)                 |
+| Framework        | Install Extra | Adapter                         | Example                                       | `examples/run_agent.py` |
+| ---------------- | ------------- | ------------------------------- | --------------------------------------------- | ----------------------- |
+| LangGraph        | `langgraph`   | `LangGraphAdapter`              | [examples/langgraph](examples/langgraph/)     | Yes                     |
+| Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`             | [examples/pydantic_ai](examples/pydantic_ai/) | Yes                     |
+| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`              | [examples/anthropic](examples/anthropic/)     | Yes                     |
+| Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`              | [examples/claude_sdk](examples/claude_sdk/)   | Yes                     |
+| CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | [examples/crewai](examples/crewai/)           | Yes                     |
+| Gemini SDK       | `gemini`      | `GeminiAdapter`                 | [examples/gemini](examples/gemini/)           | Standalone script       |
+| Google ADK       | `google_adk`  | `GoogleADKAdapter`              | [examples/google_adk](examples/google_adk/)   | Standalone script       |
+| Parlant          | `parlant`     | `ParlantAdapter`                | [examples/parlant](examples/parlant/)         | Yes                     |
+| Letta            | `letta`       | `LettaAdapter`                  | [examples/letta](examples/letta/)             | Standalone script       |
+| Codex            | `codex`       | `CodexAdapter`                  | [examples/codex](examples/codex/)             | Yes                     |
+| OpenCode         | `opencode`    | `OpencodeAdapter`               | [examples/opencode](examples/opencode/)       | Standalone script       |
+| A2A bridge       | `a2a`         | `A2AAdapter`                    | [examples/a2a_bridge](examples/a2a_bridge/)   | Yes                     |
+| A2A gateway      | `a2a_gateway` | `A2AGatewayAdapter`             | [examples/a2a_gateway](examples/a2a_gateway/) | Yes                     |
+| ACP              | `acp`         | `ACPClientAdapter`, `ACPServer` | [examples/acp](examples/acp/)                 | Standalone scripts      |
 
 ## Try Another Framework
 
-Every adapter follows the quickstart shape: install the matching extra from the table above, initialize the adapter, pass it to `Agent.create()`, and call `run()`. Only the adapter import and initialization line change across frameworks:
+Every adapter follows the quickstart shape: install the matching extra from the table above, initialize the adapter, pass it to `Agent.create()`, and call `run()`. The snippets below are partial examples; reuse the `Agent.create()` and `agent.run()` wrapper from the quickstart.
 
 ```python
 from thenvoi.adapters import AnthropicAdapter
@@ -129,7 +131,9 @@ For example:
 ```python
 from thenvoi.adapters import PydanticAIAdapter
 adapter = PydanticAIAdapter(model="openai:gpt-4o")
+```
 
+```python
 from thenvoi.adapters import GeminiAdapter
 adapter = GeminiAdapter(model="gemini-2.5-flash")
 ```
@@ -142,7 +146,7 @@ Some integrations can wrap an agent you already built instead of constructing on
 
 ### LangGraph
 
-Pass a graph factory that receives Thenvoi's platform tools as LangChain tools. The SDK calls the factory with room-scoped tools, so your graph can combine your own nodes and vertices with Thenvoi actions like sending messages, looking up peers, or managing contacts.
+Pass a graph factory that receives Thenvoi's platform tools as LangChain tools. The SDK calls the factory with room-scoped tools, so your graph can combine your own nodes and edges with Thenvoi actions like sending messages, looking up peers, or managing contacts.
 
 ```python
 from langchain_openai import ChatOpenAI
@@ -169,6 +173,9 @@ adapter = LangGraphAdapter(graph_factory=graph_factory)
 ```
 
 ### Parlant
+
+The Parlant adapter wraps an existing Parlant server and agent. Create those
+with Parlant's SDK first, then pass them to `ParlantAdapter`.
 
 ```python
 from thenvoi.adapters import ParlantAdapter
@@ -240,7 +247,10 @@ LangGraph also accepts native LangChain tools through `additional_tools`; Pydant
 
 ## Contact Management
 
-Incoming contact requests are configured with `ContactEventConfig`. 
+Incoming contact requests are configured with `ContactEventConfig`.
+
+Treat contact acceptance as an access-control decision. Once someone becomes a
+contact, they can add your agent to rooms and trigger LLM usage.
 
 
 | Strategy   | Behavior                                                                 | Use When                                            |
@@ -257,6 +267,7 @@ from thenvoi import Agent
 from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
 
 
+# Assumes `adapter` was initialized using one of the framework examples above.
 agent = Agent.create(
     adapter=adapter,
     agent_id=os.environ["THENVOI_AGENT_ID"],
@@ -288,6 +299,7 @@ async def handle_contact(event, tools) -> None:
     await tools.respond_contact_request(action, request_id=event.payload.id)
 
 
+# Assumes `adapter` was initialized using one of the framework examples above.
 agent = Agent.create(
     adapter=adapter,
     agent_id=os.environ["THENVOI_AGENT_ID"],
@@ -353,7 +365,7 @@ async def main() -> None:
 
     agent = Agent.create(
         adapter=adapter,
-        agent_id=os.getenv("THENVOI_AGENT_ID", "a2a-gateway"),
+        agent_id=os.environ["THENVOI_AGENT_ID"],
         api_key=api_key,
     )
 
@@ -364,7 +376,9 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-Test a running gateway:
+Test a running gateway after `agent.run()` has started the HTTP server and the
+gateway has discovered peers. Replace `weather-agent` with a real peer slug from
+the `/peers` response.
 
 ```bash
 curl http://localhost:10000/peers
@@ -413,21 +427,38 @@ async def run_agent() -> None:
 
 ## Examples And Development
 
-Runnable examples live in [examples/](examples/README.md). Most examples use `agent_config.yaml` and `.env`:
+Runnable examples live in [examples/](examples/README.md). Before running them,
+make sure you have:
+
+- Thenvoi external-agent credentials in `agent_config.yaml`.
+- `THENVOI_REST_URL` and `THENVOI_WS_URL` in `.env` or your shell environment.
+- The provider key required by the selected adapter, such as `OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or `GOOGLE_API_KEY`.
+- Any adapter-specific service or CLI listed in `examples/README.md`, such as
+  Claude Code, Codex CLI, Letta, OpenCode, or an external A2A agent.
+
+Most examples use `agent_config.yaml` and `.env`:
 
 ```bash
 cp .env.example .env
 cp agent_config.yaml.example agent_config.yaml
 ```
 
-For local SDK development, start with [CONTRIBUTING.md](CONTRIBUTING.md), then run:
+For local SDK development, start with [CONTRIBUTING.md](CONTRIBUTING.md), then
+run the checks that match the extras installed in your environment. Scope format
+commands to repository source paths so local worktrees or scratch files are not
+rewritten accidentally:
 
 ```bash
 uv sync --extra dev
 uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 uv run ruff check .
-uv run ruff format .
+uv run ruff format src tests examples
 ```
+
+If the full optional-adapter test suite fails during collection, run the
+framework-specific tests for the adapter you changed and check CI for the
+cross-adapter matrix.
 
 For Parlant-specific development, use the isolated extra:
 
