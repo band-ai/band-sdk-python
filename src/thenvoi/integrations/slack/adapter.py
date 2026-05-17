@@ -405,6 +405,11 @@ class SlackAdapter(SimpleAdapter[Any]):
         self._apps_by_slug: dict[str, SlackApp] = {a.slug: a for a in apps}
         self._thread_to_room: dict[str, str] = {}
         self._room_to_binding: dict[str, SlackRoomBinding] = {}
+        # Threads we've already pulled history for via conversations.replies.
+        # Keyed by ``_thread_key(channel, thread_ts)``. Survives only within
+        # a single process; Step 8 rehydration is what brings this back
+        # after a restart.
+        self._history_fetched: set[str] = set()
 
     @property
     def inner(self) -> SimpleAdapter[Any]:
@@ -513,6 +518,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         if binding is not None:
             thread_key = self._thread_key(binding.channel, binding.thread_ts)
             self._thread_to_room.pop(thread_key, None)
+            self._history_fetched.discard(thread_key)
         await self._inner.on_cleanup(room_id)
 
     # ── Slack ingress (HTTP webhook) ──────────────────────────────────
@@ -601,21 +607,33 @@ class SlackAdapter(SimpleAdapter[Any]):
             show_tool_progress=self._show_tool_progress,
         )
 
-        # Empty history for v1; multi-turn relies on the inner adapter's
-        # own state (LangGraph checkpointers, etc.). Persisting + replaying
-        # full room history through the converter is a follow-up.
-        empty_history = (
-            self._inner.history_converter.convert([])
-            if self._inner.history_converter is not None
-            else None
-        )
+        # Backfill prior Slack thread context the first time the bot wakes
+        # in a given thread. The trigger message itself is excluded (the
+        # brain receives it as ``synthesized``). For fresh threads where
+        # ``thread_ts == ts`` (top-level mention in a channel, brand-new
+        # DM) we skip the fetch — the trigger IS the whole context.
+        raw_history: list[dict[str, Any]] = []
+        thread_key = self._thread_key(channel, thread_ts)
+        if is_new_room and thread_ts != ts and thread_key not in self._history_fetched:
+            raw_history = await self._fetch_thread_history(
+                slack=slack_client,
+                channel=channel,
+                thread_ts=thread_ts,
+                exclude_ts=ts,
+            )
+            self._history_fetched.add(thread_key)
+
+        if self._inner.history_converter is not None:
+            history = self._inner.history_converter.convert(raw_history)
+        else:
+            history = None
 
         await self._set_status(slack_client, channel, thread_ts, STATUS_THINKING)
         try:
             await self._inner.on_message(
                 synthesized,
                 tools,
-                empty_history,
+                history,
                 SLACK_CONTEXT_NOTE,
                 None,
                 is_session_bootstrap=is_new_room,
@@ -700,6 +718,86 @@ class SlackAdapter(SimpleAdapter[Any]):
                 },
             ),
         )
+
+    # ── Slack thread history backfill ────────────────────────────────
+
+    async def _fetch_thread_history(
+        self,
+        *,
+        slack: AsyncWebClient,
+        channel: str,
+        thread_ts: str,
+        exclude_ts: str,
+    ) -> list[dict[str, Any]]:
+        """Pull a Slack thread's prior messages via ``conversations.replies``.
+
+        Returns raw history dicts in the same shape as
+        ``format_history_for_llm()`` output, so the inner adapter's
+        ``history_converter`` can ingest them with no special-casing.
+
+        Bot replies (any message with ``bot_id`` set or ``subtype ==
+        "bot_message"``) are emitted as ``sender_type="Agent"`` /
+        ``role="assistant"`` with ``sender_name`` equal to this agent's
+        configured name, so converters treat them as the brain's prior
+        turns and the LLM sees true multi-turn history.
+
+        Requires the Slack ``channels:history`` (public channels) and
+        ``groups:history`` (private channels) scopes for non-DM mentions.
+        If the call fails (missing scope, deleted channel, etc.) we log
+        and return an empty list — backfill is best-effort, not a hard
+        requirement for replying to the trigger.
+        """
+        try:
+            response = await slack.conversations_replies(
+                channel=channel,
+                ts=thread_ts,
+            )
+        except Exception:
+            logger.exception(
+                "conversations.replies failed (channel=%s thread_ts=%s)",
+                channel,
+                thread_ts,
+            )
+            return []
+
+        try:
+            messages: list[dict[str, Any]] = list(response["messages"])  # type: ignore[index]
+        except (KeyError, TypeError):
+            messages = list(getattr(response, "messages", []) or [])
+
+        raw: list[dict[str, Any]] = []
+        agent_name = self.agent_name or "agent"
+        for m in messages:
+            if m.get("ts") == exclude_ts:
+                continue
+            text = m.get("text", "") or ""
+            if not text:
+                continue
+            is_bot = bool(m.get("bot_id")) or m.get("subtype") == "bot_message"
+            if is_bot:
+                sender_name = agent_name
+                sender_type = "Agent"
+                role = "assistant"
+            else:
+                slack_user = m.get("user") or "slack-user"
+                sender_name = f"slack:{slack_user}"
+                sender_type = "user"
+                role = "user"
+            raw.append(
+                {
+                    "role": role,
+                    "content": text,
+                    "sender_name": sender_name,
+                    "sender_type": sender_type,
+                    "message_type": "text",
+                    "metadata": {
+                        "slack_channel_id": channel,
+                        "slack_thread_ts": thread_ts,
+                        "slack_ts": m.get("ts"),
+                    },
+                }
+            )
+        return raw
 
     # ── Slack assistant-pane status indicators ────────────────────────
 

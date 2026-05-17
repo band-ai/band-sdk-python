@@ -46,6 +46,17 @@ from thenvoi.runtime.tools import AgentTools
 # ── Test doubles ─────────────────────────────────────────────────────────────
 
 
+class _RawHistoryConverter:
+    """Identity converter — returns the raw history list unchanged.
+
+    Lets tests inspect exactly what the SlackAdapter synthesized for the
+    brain before any framework-specific reshaping.
+    """
+
+    def convert(self, raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return list(raw)
+
+
 class _SlackReplyBrain(SimpleAdapter[Any]):
     """Brain that replies to Slack via the new ``slack_send_message`` tool.
 
@@ -53,8 +64,12 @@ class _SlackReplyBrain(SimpleAdapter[Any]):
     a real framework adapter would dispatch the tool the LLM picked.
     """
 
-    def __init__(self, reply: str | None = "Here is the answer.") -> None:
-        super().__init__(history_converter=None)
+    def __init__(
+        self,
+        reply: str | None = "Here is the answer.",
+        history_converter: Any = None,
+    ) -> None:
+        super().__init__(history_converter=history_converter)
         self.reply = reply
         self.invocations: list[dict[str, Any]] = []
         self.started: tuple[str, str] | None = None
@@ -140,6 +155,9 @@ def _make_adapter(
         client = AsyncMock()
         client.chat_postMessage = AsyncMock(return_value={"ok": True, "ts": "x"})
         client.assistant_threads_setStatus = AsyncMock(return_value={"ok": True})
+        # Default: thread has no prior messages. Tests can override per
+        # client (e.g. ``web_mocks["dev"].conversations_replies = ...``).
+        client.conversations_replies = AsyncMock(return_value={"messages": []})
         web_mocks[app.slug] = client
 
     rest = _make_rest_mock(room_ids)
@@ -733,3 +751,237 @@ async def test_send_message_no_longer_overridden_uses_real_thenvoi_path():
         await tools.send_message("hi", mentions=None)
     # No Slack tee for thenvoi_send_message path.
     slack.chat_postMessage.assert_not_awaited()
+
+
+# ── Step 7.5: channel-mention coverage + thread history backfill ────────────
+
+
+@pytest.mark.asyncio
+async def test_channel_top_level_mention_does_not_fetch_thread_history():
+    """(a) Top-level @mention in a channel: thread_ts == ts, no backfill."""
+    brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
+    adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(channel="C123", ts="100.0", text="<@U001> hi"),
+    )
+    await adapter.wait_idle()
+
+    web_mocks[app.slug].conversations_replies.assert_not_awaited()
+    assert isinstance(inner, _SlackReplyBrain)
+    assert inner.invocations[0]["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_channel_mention_in_existing_thread_pulls_history():
+    """(b) @mention inside an existing thread: pull conversations.replies once."""
+    brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
+    adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    # Slack returns the full thread when we ask. Includes a human-only
+    # exchange that happened before the trigger plus the trigger itself
+    # (which we must filter out).
+    web_mocks[app.slug].conversations_replies = AsyncMock(
+        return_value={
+            "messages": [
+                {"ts": "100.0", "user": "U001", "text": "hey team"},
+                {"ts": "101.0", "user": "U002", "text": "anyone seen the report?"},
+                {"ts": "102.0", "user": "U003", "text": "<@BOT> summarize"},
+            ]
+        }
+    )
+
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(
+            channel="C123",
+            ts="102.0",
+            thread_ts="100.0",
+            text="<@BOT> summarize",
+            user="U003",
+        ),
+    )
+    await adapter.wait_idle()
+
+    web_mocks[app.slug].conversations_replies.assert_awaited_once_with(
+        channel="C123",
+        ts="100.0",
+    )
+
+    assert isinstance(inner, _SlackReplyBrain)
+    history = inner.invocations[0]["history"]
+    # Trigger excluded; remaining pre-mention turns preserved in order.
+    assert [h["content"] for h in history] == ["hey team", "anyone seen the report?"]
+    assert all(h["role"] == "user" for h in history)
+    assert all(h["sender_type"] == "user" for h in history)
+    assert [h["sender_name"] for h in history] == ["slack:U001", "slack:U002"]
+
+
+@pytest.mark.asyncio
+async def test_subsequent_mention_in_same_thread_does_not_refetch_history():
+    """(c) Second @mention in the same thread reuses the room and skips the API."""
+    brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
+    adapter, _, web_mocks, _ = _make_adapter(
+        inner=brain,
+        room_ids=["room-1", "room-2"],
+    )
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    web_mocks[app.slug].conversations_replies = AsyncMock(
+        return_value={
+            "messages": [
+                {"ts": "50.0", "user": "U001", "text": "earlier discussion"},
+                {"ts": "100.0", "user": "U002", "text": "<@BOT> first mention"},
+            ]
+        }
+    )
+
+    # First mention mid-thread → fetch.
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(
+            channel="C1",
+            ts="100.0",
+            thread_ts="50.0",
+            text="<@BOT> first mention",
+            user="U002",
+        ),
+    )
+    await adapter.wait_idle()
+    assert web_mocks[app.slug].conversations_replies.await_count == 1
+
+    # Second mention in the same thread → cache hit, no refetch.
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(
+            channel="C1",
+            ts="200.0",
+            thread_ts="50.0",
+            text="<@BOT> follow up",
+            user="U002",
+        ),
+    )
+    await adapter.wait_idle()
+    assert web_mocks[app.slug].conversations_replies.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_bot_replies_in_thread_history_become_assistant_role():
+    """Self-replies in the fetched thread are tagged as assistant turns."""
+    brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
+    adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    web_mocks[app.slug].conversations_replies = AsyncMock(
+        return_value={
+            "messages": [
+                {"ts": "100.0", "user": "U001", "text": "hi bot"},
+                {
+                    "ts": "101.0",
+                    "user": "UBOT",
+                    "bot_id": "B999",
+                    "text": "hello, how can I help?",
+                },
+                {"ts": "102.0", "user": "U001", "text": "<@BOT> what time is it?"},
+            ]
+        }
+    )
+
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(
+            channel="C1",
+            ts="102.0",
+            thread_ts="100.0",
+            text="<@BOT> what time is it?",
+            user="U001",
+        ),
+    )
+    await adapter.wait_idle()
+
+    assert isinstance(inner, _SlackReplyBrain)
+    history = inner.invocations[0]["history"]
+    assert len(history) == 2
+    user_turn, bot_turn = history
+    assert user_turn["role"] == "user"
+    assert user_turn["sender_type"] == "user"
+    assert user_turn["content"] == "hi bot"
+    # Bot turn is preserved as assistant context, labeled with this agent's
+    # name so framework converters route it as a prior self-turn.
+    assert bot_turn["role"] == "assistant"
+    assert bot_turn["sender_type"] == "Agent"
+    assert bot_turn["sender_name"] == "MyBot"
+    assert bot_turn["content"] == "hello, how can I help?"
+
+
+@pytest.mark.asyncio
+async def test_fresh_dm_does_not_fetch_thread_history():
+    """A brand-new DM (thread_ts == ts, new room) must not call replies."""
+    brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
+    adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    await _post_slack_event(
+        adapter,
+        app,
+        {
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "channel_type": "im",
+                "channel": "D1",
+                "ts": "1700000000.0",
+                "text": "ping",
+                "user": "U999",
+            },
+        },
+    )
+    await adapter.wait_idle()
+
+    web_mocks[app.slug].conversations_replies.assert_not_awaited()
+    assert isinstance(inner, _SlackReplyBrain)
+    assert inner.invocations[0]["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_thread_history_fetch_failure_falls_back_to_empty_history():
+    """A failed conversations.replies must not break the trigger reply."""
+    brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
+    adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    web_mocks[app.slug].conversations_replies = AsyncMock(
+        side_effect=RuntimeError("missing_scope: channels:history")
+    )
+
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(
+            channel="C1",
+            ts="200.0",
+            thread_ts="100.0",
+            text="<@BOT> summarize",
+            user="U001",
+        ),
+    )
+    await adapter.wait_idle()
+
+    web_mocks[app.slug].conversations_replies.assert_awaited_once()
+    assert isinstance(inner, _SlackReplyBrain)
+    assert len(inner.invocations) == 1
+    assert inner.invocations[0]["history"] == []
