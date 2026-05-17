@@ -14,16 +14,26 @@ class SlackApp:
     multi-tenant setups); each gets its own HTTP route at
     ``/{slug}/events``.
 
+    Required fields depend on the adapter's transport. The adapter
+    validates this at construction time; passing the wrong combination
+    raises ``ValueError``.
+
     Attributes:
         slug: URL-safe identifier; used as the HTTP route segment.
         signing_secret: The Slack app's signing secret (HMAC verification).
+            Required for HTTP transport, ignored in Socket Mode where
+            Slack authenticates the websocket via ``app_token``.
         bot_token: The Slack app's bot token (``xoxb-...``) for outbound
-            ``chat.postMessage`` etc.
+            ``chat.postMessage`` etc. Always required.
+        app_token: The Slack app-level token (``xapp-...``) used to open
+            a Socket Mode websocket. Required when the adapter is built
+            with ``transport="socket"``; unused in HTTP transport.
     """
 
     slug: str
-    signing_secret: str
     bot_token: str
+    signing_secret: str = ""
+    app_token: str = ""
 
 
 @dataclass

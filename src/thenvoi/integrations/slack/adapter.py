@@ -22,7 +22,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from thenvoi.client.rest import (
     AsyncRestClient,
@@ -56,6 +56,11 @@ from thenvoi.runtime.tools import AgentTools
 if TYPE_CHECKING:
     from slack_sdk.web.async_client import AsyncWebClient
     from starlette.routing import Router
+
+    from thenvoi.integrations.slack.socket import SlackSocketListener
+
+
+SlackTransport = Literal["http", "socket"]
 
 logger = logging.getLogger(__name__)
 
@@ -338,6 +343,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         rest_url: str = "https://app.thenvoi.com",
         api_key: str = "",
         port: int = 3000,
+        transport: SlackTransport = "http",
         web_client_factory: WebClientFactory | None = None,
         rest_client: AsyncRestClient | None = None,
         features: AdapterFeatures | None = None,
@@ -355,6 +361,12 @@ class SlackAdapter(SimpleAdapter[Any]):
                 ``Agent.create``). Used to mirror Slack messages into
                 Thenvoi rooms.
             port: TCP port for the HTTP server (used in Step 9).
+            transport: ``"http"`` (default) serves events via a mountable
+                Starlette router; the developer points their Slack app's
+                Event Subscriptions URL at the bridge. ``"socket"`` opens
+                a Socket Mode websocket to Slack per app — no public URL
+                or signing secret is needed; each ``SlackApp`` must supply
+                ``app_token`` (``xapp-...``).
             web_client_factory: Optional factory for injecting mock
                 ``AsyncWebClient`` instances in tests.
             rest_client: Optional ``AsyncRestClient`` injection seam.
@@ -364,7 +376,8 @@ class SlackAdapter(SimpleAdapter[Any]):
 
         Raises:
             ImportError: If ``slack-sdk`` is not installed.
-            ValueError: If ``apps`` is empty.
+            ValueError: If ``apps`` is empty, or a per-app token required
+                by the chosen transport is missing.
         """
         try:
             import slack_sdk  # noqa: F401
@@ -377,6 +390,27 @@ class SlackAdapter(SimpleAdapter[Any]):
         if not apps:
             raise ValueError("SlackAdapter requires at least one SlackApp config")
 
+        if transport == "http":
+            missing = [a.slug for a in apps if not a.signing_secret or not a.bot_token]
+            if missing:
+                raise ValueError(
+                    "SlackAdapter(transport='http') requires signing_secret "
+                    "and bot_token on every SlackApp; missing for: "
+                    f"{', '.join(missing)}"
+                )
+        elif transport == "socket":
+            missing = [a.slug for a in apps if not a.app_token or not a.bot_token]
+            if missing:
+                raise ValueError(
+                    "SlackAdapter(transport='socket') requires app_token "
+                    "(xapp-...) and bot_token on every SlackApp; missing "
+                    f"for: {', '.join(missing)}"
+                )
+        else:
+            raise ValueError(
+                f"Unknown transport={transport!r}; expected 'http' or 'socket'"
+            )
+
         # Use the inner adapter's history converter and feature settings
         # so the brain sees its native history type and capabilities.
         super().__init__(
@@ -388,7 +422,9 @@ class SlackAdapter(SimpleAdapter[Any]):
         self._rest_url = rest_url
         self._api_key = api_key
         self._port = port
+        self._transport: SlackTransport = transport
         self._router: Router | None = None
+        self._socket_listeners: list[SlackSocketListener] = []
         self._web_client_factory: WebClientFactory = (
             web_client_factory or self._default_web_client_factory
         )
@@ -413,8 +449,23 @@ class SlackAdapter(SimpleAdapter[Any]):
         return self._inner
 
     @property
+    def transport(self) -> SlackTransport:
+        """Which inbound transport this adapter was configured with."""
+        return self._transport
+
+    @property
     def router(self) -> Router:
-        """Starlette router serving the configured Slack apps."""
+        """Starlette router serving the configured Slack apps.
+
+        Only meaningful for ``transport="http"``. In Socket Mode the
+        bridge has no HTTP surface to mount, so accessing ``router`` is
+        almost certainly a misconfiguration.
+        """
+        if self._transport != "http":
+            raise RuntimeError(
+                "SlackAdapter.router is only available for transport='http'; "
+                f"this adapter is using transport={self._transport!r}."
+            )
         if self._router is None:
             self._router = build_router(self.apps, dispatcher=self._dispatch_event)
         return self._router
@@ -446,11 +497,44 @@ class SlackAdapter(SimpleAdapter[Any]):
 
         await self._inner.on_started(agent_name, agent_description)
 
+        if self._transport == "socket":
+            # Lazy import so HTTP-only installs don't pay the aiohttp /
+            # Socket Mode import cost.
+            from thenvoi.integrations.slack.socket import (
+                start_socket_listeners,
+            )
+
+            self._socket_listeners = await start_socket_listeners(
+                apps=self.apps,
+                web_client_factory=self._get_client,
+                dispatcher=self._dispatch_event,
+            )
+
         logger.info(
-            "Slack adapter started: %s (apps=%d)",
+            "Slack adapter started: %s (apps=%d, transport=%s)",
             agent_name,
             len(self.apps),
+            self._transport,
         )
+
+    async def close(self) -> None:
+        """Tear down transport-owned resources.
+
+        For Socket Mode this disconnects each per-app websocket client.
+        For HTTP it's a no-op — the developer's ASGI server owns the
+        HTTP lifecycle. Safe to call multiple times.
+        """
+        if self._socket_listeners:
+            listeners = self._socket_listeners
+            self._socket_listeners = []
+            for listener in listeners:
+                try:
+                    await listener.stop()
+                except Exception:
+                    logger.exception(
+                        "Failed to stop Slack Socket Mode listener (app=%s)",
+                        listener.app.slug,
+                    )
 
     async def on_event(self, inp: AgentInput) -> None:
         """Rehydrate Slack binding on bootstrap, then delegate as normal.
