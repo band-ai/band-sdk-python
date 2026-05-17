@@ -503,6 +503,25 @@ Where ACP differs from A2A:
 | `01_basic_gateway.py` | Exposes Thenvoi peers as A2A protocol endpoints |
 | `02_with_demo_agent.py` | Gateway + LangGraph demo orchestrator |
 
+### Slack (`examples/slack/`)
+
+| File | Description |
+|------|-------------|
+| `01_basic_bot.py` | Wraps an Anthropic brain with `SlackAdapter`. Defaults to Socket Mode; flip `SLACK_TRANSPORT=http` to mount under your own ASGI app. |
+
+The Slack bridge expects an installed Slack app with the right scopes. A maintained manifest lives at `src/thenvoi/integrations/slack/templates/manifest.yaml` — paste it into Slack's "Create from manifest" flow when registering the app. The manifest declares:
+
+- **AI App** (`assistant_view` + `assistant:write`) so the assistant pane, status indicators, and Block Kit plan/task blocks render.
+- All scopes needed for thread context: `app_mentions:read`, `im:history`, `channels:history`, `groups:history`, `chat:write`, `users:read`.
+- Events `app_mention`, `message.im`, `assistant_thread_started`.
+- `delayed_events_enabled: true` so Slack keeps retrying for up to 24h while the bridge is offline (default is 2h).
+- Socket Mode enabled — no public URL, no signing secret needed for the example.
+
+Two operational gotchas worth surfacing:
+
+- **Bot must be a channel member.** `/invite @your-bot` in any channel you want it to read. `channels:history` alone doesn't grant access to channels it isn't in.
+- **HTTP vs Socket Mode.** Socket Mode (default) opens a websocket to Slack and works behind any NAT/firewall. HTTP transport needs a public URL that Slack can POST to and requires `SLACK_SIGNING_SECRET`. Both share the same downstream pipeline, so behavior (status indicators, plan blocks, thread backfill, rehydration) is identical.
+
 ---
 
 ## Running Examples

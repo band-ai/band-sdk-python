@@ -198,6 +198,17 @@ acp_client_agent:
   api_key: ""
 
 # =============================================================================
+# Slack Examples
+# =============================================================================
+
+# 01_basic_bot.py — bridges a Thenvoi agent into a Slack app via Socket
+# Mode (or HTTP). Register the Slack app from the bundled manifest at
+# src/thenvoi/integrations/slack/templates/manifest.yaml.
+slack_basic_bot:
+  agent_id: ""
+  api_key: ""
+
+# =============================================================================
 # 20 Questions Arena Examples
 # =============================================================================
 
