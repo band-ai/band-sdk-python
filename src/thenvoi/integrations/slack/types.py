@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
@@ -28,19 +28,21 @@ class SlackApp:
 
 @dataclass
 class SlackSessionState:
-    """Session state for the Slack adapter.
+    """Per-room session state recovered from platform history.
 
-    Repopulated by ``SlackHistoryConverter`` when the agent rejoins a
-    room. The mapping is what lets the adapter route inner-brain replies
-    back to the right Slack thread.
+    Platform history is fetched and converted per-room, so the converter
+    only ever sees the events for one room at a time. The room_id itself
+    comes from ``inp.room_id``; the converter just needs to surface the
+    Slack thread identity stored in the room's bootstrap context event.
 
     Attributes:
-        thread_to_room: ``"{channel_id}:{thread_ts}"`` keys → Thenvoi
-            room IDs. Keys are flattened to strings so the state round-
-            trips through history-event metadata.
+        binding: Slack thread bound to this room, or ``None`` if the
+            history contains no ``slack_app_slug`` task event (e.g. the
+            room wasn't created by this bridge, or the bootstrap event
+            was scrubbed).
     """
 
-    thread_to_room: dict[str, str] = field(default_factory=dict)
+    binding: SlackRoomBinding | None = None
 
 
 @dataclass(frozen=True)

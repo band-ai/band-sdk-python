@@ -31,7 +31,7 @@ import pytest
 from httpx import ASGITransport
 
 from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.core.types import PlatformMessage
+from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
 from thenvoi.integrations.slack.adapter import (
     SLACK_CONTEXT_NOTE,
     SLACK_SEND_MESSAGE_TOOL_NAME,
@@ -991,3 +991,248 @@ async def test_thread_history_fetch_failure_falls_back_to_empty_history():
     assert isinstance(inner, _SlackReplyBrain)
     assert len(inner.invocations) == 1
     assert inner.invocations[0]["history"] == []
+
+
+# ── Step 8: session rehydration via history ─────────────────────────────────
+
+
+def _slack_bootstrap_task_event(
+    *,
+    app_slug: str = "dev",
+    channel: str = "C1",
+    thread_ts: str = "100.0",
+    room_id: str = "room-1",
+) -> dict[str, Any]:
+    return {
+        "role": "user",
+        "content": "Slack thread context",
+        "sender_name": "agent",
+        "sender_type": "Agent",
+        "message_type": "task",
+        "metadata": {
+            "slack_app_slug": app_slug,
+            "slack_channel_id": channel,
+            "slack_thread_ts": thread_ts,
+            "slack_user_id": "U1",
+            "slack_room_id": room_id,
+        },
+    }
+
+
+def _agent_input_with_history(
+    *,
+    room_id: str,
+    raw_history: list[dict[str, Any]],
+    bootstrap: bool,
+    tools: AgentTools,
+) -> AgentInput:
+    msg = PlatformMessage(
+        id="m-bootstrap",
+        room_id=room_id,
+        content="peer reply",
+        sender_id="peer-x",
+        sender_type="peer",
+        sender_name="Peer X",
+        message_type="text",
+        metadata={},
+        created_at=datetime.now(timezone.utc),
+    )
+    return AgentInput(
+        msg=msg,
+        tools=tools,
+        history=HistoryProvider(raw=raw_history),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=bootstrap,
+        room_id=room_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_event_rehydrates_room_binding_on_bootstrap():
+    """First WS-delivered message in a previously-bridged room restores state."""
+    adapter, inner, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
+    await adapter.on_started("MyBot", "")
+
+    inp = _agent_input_with_history(
+        room_id="room-resumed",
+        raw_history=[
+            _slack_bootstrap_task_event(
+                app_slug="dev",
+                channel="C42",
+                thread_ts="999.5",
+                room_id="room-resumed",
+            ),
+        ],
+        bootstrap=True,
+        tools=AgentTools(room_id="room-resumed", rest=rest, participants=[]),
+    )
+
+    await adapter.on_event(inp)
+
+    assert adapter._thread_to_room == {"C42:999.5": "room-resumed"}
+    assert adapter._room_to_binding["room-resumed"] == SlackRoomBinding(
+        app_slug="dev", channel="C42", thread_ts="999.5"
+    )
+    # Delegation still happens — the inner brain saw the bootstrap message.
+    assert isinstance(inner, _SlackReplyBrain)
+    assert len(inner.invocations) == 1
+    assert inner.invocations[0]["room_id"] == "room-resumed"
+
+
+@pytest.mark.asyncio
+async def test_on_event_does_not_rehydrate_when_not_bootstrap():
+    """Non-bootstrap messages must never replay history rehydration."""
+    adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
+    await adapter.on_started("MyBot", "")
+
+    inp = _agent_input_with_history(
+        room_id="room-99",
+        raw_history=[
+            _slack_bootstrap_task_event(
+                app_slug="dev", channel="C99", thread_ts="9.0", room_id="room-99"
+            ),
+        ],
+        bootstrap=False,
+        tools=AgentTools(room_id="room-99", rest=rest, participants=[]),
+    )
+
+    await adapter.on_event(inp)
+
+    assert "C99:9.0" not in adapter._thread_to_room
+    assert "room-99" not in adapter._room_to_binding
+
+
+@pytest.mark.asyncio
+async def test_on_event_rehydrate_is_noop_without_slack_context():
+    """A bootstrap on a room that has no Slack history must leave state untouched."""
+    adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
+    await adapter.on_started("MyBot", "")
+
+    inp = _agent_input_with_history(
+        room_id="non-slack-room",
+        raw_history=[
+            {
+                "role": "user",
+                "content": "hi",
+                "sender_name": "alice",
+                "sender_type": "user",
+                "message_type": "text",
+                "metadata": {},
+            }
+        ],
+        bootstrap=True,
+        tools=AgentTools(room_id="non-slack-room", rest=rest, participants=[]),
+    )
+
+    await adapter.on_event(inp)
+
+    assert adapter._thread_to_room == {}
+    assert "non-slack-room" not in adapter._room_to_binding
+
+
+@pytest.mark.asyncio
+async def test_rehydration_then_slack_event_reuses_room_without_new_chat():
+    """After rehydration, a Slack event in that thread must NOT create a
+    new Thenvoi room or emit a new bootstrap context event. Thread
+    history is still refetched — that's Slack's recommended pattern and
+    is independent of room reuse."""
+    adapter, inner, _, rest = _make_adapter(
+        inner=_SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter()),
+    )
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    # Simulate restart: WS delivers a bootstrap message in an existing
+    # Slack-bridged room. Rehydration restores the binding.
+    bootstrap_inp = _agent_input_with_history(
+        room_id="room-resumed",
+        raw_history=[
+            _slack_bootstrap_task_event(
+                app_slug=app.slug,
+                channel="C77",
+                thread_ts="500.0",
+                room_id="room-resumed",
+            ),
+        ],
+        bootstrap=True,
+        tools=AgentTools(room_id="room-resumed", rest=rest, participants=[]),
+    )
+    await adapter.on_event(bootstrap_inp)
+
+    # Reset Thenvoi REST mocks so we can assert no new chat is created.
+    rest.agent_api_chats.create_agent_chat.reset_mock()
+    rest.agent_api_events.create_agent_chat_event.reset_mock()
+
+    # Slack event lands in the rehydrated thread.
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(
+            channel="C77",
+            ts="600.0",
+            thread_ts="500.0",
+            text="<@BOT> still there?",
+            user="U7",
+        ),
+    )
+    await adapter.wait_idle()
+
+    rest.agent_api_chats.create_agent_chat.assert_not_awaited()
+    rest.agent_api_events.create_agent_chat_event.assert_not_awaited()
+    # Brain saw the Slack-triggered event in the rehydrated room.
+    assert isinstance(inner, _SlackReplyBrain)
+    slack_invocations = [i for i in inner.invocations if i["room_id"] == "room-resumed"]
+    assert any(inv["msg"].content == "<@BOT> still there?" for inv in slack_invocations)
+
+
+@pytest.mark.asyncio
+async def test_rehydrate_does_not_overwrite_existing_binding():
+    """If the in-memory state already has a binding for the room, history
+    rehydration must defer to it."""
+    adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
+    await adapter.on_started("MyBot", "")
+
+    live = SlackRoomBinding(app_slug="dev", channel="C-live", thread_ts="1.0")
+    adapter._room_to_binding["room-X"] = live
+    adapter._thread_to_room["C-live:1.0"] = "room-X"
+
+    inp = _agent_input_with_history(
+        room_id="room-X",
+        raw_history=[
+            _slack_bootstrap_task_event(
+                app_slug="dev",
+                channel="C-stale",
+                thread_ts="9.0",
+                room_id="room-X",
+            ),
+        ],
+        bootstrap=True,
+        tools=AgentTools(room_id="room-X", rest=rest, participants=[]),
+    )
+    await adapter.on_event(inp)
+
+    assert adapter._room_to_binding["room-X"] == live
+    assert "C-stale:9.0" not in adapter._thread_to_room
+
+
+@pytest.mark.asyncio
+async def test_context_event_metadata_includes_slack_room_id():
+    """The bootstrap task event must carry ``slack_room_id`` so the converter
+    can recover the binding from history alone."""
+    adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(channel="C123", ts="100.0", text="<@BOT> hi"),
+    )
+    await adapter.wait_idle()
+
+    event_arg = rest.agent_api_events.create_agent_chat_event.await_args.kwargs["event"]
+    assert event_arg.metadata["slack_room_id"] == "room-1"
+    assert event_arg.metadata["slack_app_slug"] == app.slug
+    assert event_arg.metadata["slack_channel_id"] == "C123"
+    assert event_arg.metadata["slack_thread_ts"] == "100.0"

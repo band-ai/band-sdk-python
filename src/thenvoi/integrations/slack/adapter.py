@@ -35,6 +35,7 @@ from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import (
     AdapterFeatures,
+    AgentInput,
     Capability,
     Emit,
     PlatformMessage,
@@ -451,6 +452,49 @@ class SlackAdapter(SimpleAdapter[Any]):
             len(self.apps),
         )
 
+    async def on_event(self, inp: AgentInput) -> None:
+        """Rehydrate Slack binding on bootstrap, then delegate as normal.
+
+        The wrapped inner adapter (Anthropic, LangGraph, ...) owns its own
+        history converter for the brain. To recover the Slack ↔ Thenvoi
+        thread mapping after a restart we run :class:`SlackHistoryConverter`
+        over the same raw history first, fold any recovered binding into
+        ``_thread_to_room`` + ``_room_to_binding``, then hand off to
+        ``SimpleAdapter.on_event`` so the inner converter still runs and
+        ``on_message`` sees the brain's native history type.
+        """
+        if inp.is_session_bootstrap:
+            self._rehydrate_room(inp.room_id, inp.history.raw)
+        await super().on_event(inp)
+
+    def _rehydrate_room(self, room_id: str, raw_history: list[dict[str, Any]]) -> None:
+        """Restore ``_thread_to_room`` and ``_room_to_binding`` for one room.
+
+        No-op when the history has no Slack bootstrap event (e.g. the
+        room was created outside this bridge), and when the recovered
+        binding points at an app slug we no longer have configured we
+        still record the binding so other diagnostics surface the
+        mismatch — :py:meth:`on_message` already gates outbound calls
+        on ``_apps_by_slug``.
+        """
+        state = SlackHistoryConverter().convert(raw_history)
+        if state.binding is None:
+            return
+        if room_id in self._room_to_binding:
+            return
+        binding = state.binding
+        thread_key = self._thread_key(binding.channel, binding.thread_ts)
+        # Don't trample an active mapping for the same thread — the
+        # live in-memory binding is authoritative.
+        self._thread_to_room.setdefault(thread_key, room_id)
+        self._room_to_binding[room_id] = binding
+        logger.info(
+            "Rehydrated Slack binding: room=%s app=%s thread=%s",
+            room_id,
+            binding.app_slug,
+            thread_key,
+        )
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -712,6 +756,7 @@ class SlackAdapter(SimpleAdapter[Any]):
                     "slack_channel_id": channel,
                     "slack_thread_ts": thread_ts,
                     "slack_user_id": slack_user,
+                    "slack_room_id": room_id,
                 },
             ),
         )
