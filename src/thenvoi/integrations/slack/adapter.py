@@ -405,11 +405,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         self._apps_by_slug: dict[str, SlackApp] = {a.slug: a for a in apps}
         self._thread_to_room: dict[str, str] = {}
         self._room_to_binding: dict[str, SlackRoomBinding] = {}
-        # Threads we've already pulled history for via conversations.replies.
-        # Keyed by ``_thread_key(channel, thread_ts)``. Survives only within
-        # a single process; Step 8 rehydration is what brings this back
-        # after a restart.
-        self._history_fetched: set[str] = set()
 
     @property
     def inner(self) -> SimpleAdapter[Any]:
@@ -518,7 +513,6 @@ class SlackAdapter(SimpleAdapter[Any]):
         if binding is not None:
             thread_key = self._thread_key(binding.channel, binding.thread_ts)
             self._thread_to_room.pop(thread_key, None)
-            self._history_fetched.discard(thread_key)
         await self._inner.on_cleanup(room_id)
 
     # ── Slack ingress (HTTP webhook) ──────────────────────────────────
@@ -607,21 +601,24 @@ class SlackAdapter(SimpleAdapter[Any]):
             show_tool_progress=self._show_tool_progress,
         )
 
-        # Backfill prior Slack thread context the first time the bot wakes
-        # in a given thread. The trigger message itself is excluded (the
-        # brain receives it as ``synthesized``). For fresh threads where
-        # ``thread_ts == ts`` (top-level mention in a channel, brand-new
-        # DM) we skip the fetch — the trigger IS the whole context.
+        # Pull thread context from Slack on every event that lands inside
+        # an existing thread (``thread_ts != ts``). Slack does NOT deliver
+        # prior turns with the event payload, and its own Bolt JS
+        # reference implementation calls ``conversations.replies`` per
+        # user message for exactly this reason — see
+        # https://docs.slack.dev/tools/bolt-js/tutorials/ai-assistant/.
+        # Caching the fetched result across turns would break stateless
+        # brains (Anthropic, etc.) on every follow-up message. Top-level
+        # mentions and brand-new DMs (``thread_ts == ts``) have no prior
+        # context to fetch.
         raw_history: list[dict[str, Any]] = []
-        thread_key = self._thread_key(channel, thread_ts)
-        if is_new_room and thread_ts != ts and thread_key not in self._history_fetched:
+        if thread_ts != ts:
             raw_history = await self._fetch_thread_history(
                 slack=slack_client,
                 channel=channel,
                 thread_ts=thread_ts,
                 exclude_ts=ts,
             )
-            self._history_fetched.add(thread_key)
 
         if self._inner.history_converter is not None:
             history = self._inner.history_converter.convert(raw_history)
@@ -747,16 +744,37 @@ class SlackAdapter(SimpleAdapter[Any]):
         and return an empty list — backfill is best-effort, not a hard
         requirement for replying to the trigger.
         """
+        logger.info(
+            "Fetching Slack thread history (channel=%s thread_ts=%s)",
+            channel,
+            thread_ts,
+        )
         try:
             response = await slack.conversations_replies(
                 channel=channel,
                 ts=thread_ts,
             )
-        except Exception:
+        except Exception as exc:
+            # Pull the Slack-level error code out of SlackApiError so the
+            # diagnosis ("missing_scope, needed: groups:history") shows up
+            # on the headline log line instead of buried in the traceback.
+            slack_err: dict[str, Any] = {}
+            response_obj = getattr(exc, "response", None)
+            if response_obj is not None:
+                data = getattr(response_obj, "data", None)
+                if isinstance(data, dict):
+                    slack_err = {
+                        k: data.get(k) for k in ("error", "needed", "provided")
+                    }
             logger.exception(
-                "conversations.replies failed (channel=%s thread_ts=%s)",
+                "conversations.replies FAILED (channel=%s thread_ts=%s) "
+                "slack_error=%s — usually means missing scope "
+                "(channels:history for public channels, groups:history "
+                "for private channels, im:history for DMs, mpim:history "
+                "for group DMs) or the bot is not a member of the channel",
                 channel,
                 thread_ts,
+                slack_err or "<unknown>",
             )
             return []
 
@@ -764,6 +782,12 @@ class SlackAdapter(SimpleAdapter[Any]):
             messages: list[dict[str, Any]] = list(response["messages"])  # type: ignore[index]
         except (KeyError, TypeError):
             messages = list(getattr(response, "messages", []) or [])
+        logger.info(
+            "conversations.replies returned %d message(s) for thread %s:%s",
+            len(messages),
+            channel,
+            thread_ts,
+        )
 
         raw: list[dict[str, Any]] = []
         agent_name = self.agent_name or "agent"
@@ -797,6 +821,14 @@ class SlackAdapter(SimpleAdapter[Any]):
                     },
                 }
             )
+        logger.info(
+            "Slack thread backfill: %d message(s) kept for brain "
+            "(channel=%s thread_ts=%s, trigger ts=%s excluded)",
+            len(raw),
+            channel,
+            thread_ts,
+            exclude_ts,
+        )
         return raw
 
     # ── Slack assistant-pane status indicators ────────────────────────

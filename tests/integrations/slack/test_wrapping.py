@@ -825,10 +825,13 @@ async def test_channel_mention_in_existing_thread_pulls_history():
 
 
 @pytest.mark.asyncio
-async def test_subsequent_mention_in_same_thread_does_not_refetch_history():
-    """(c) Second @mention in the same thread reuses the room and skips the API."""
+async def test_subsequent_mention_in_same_thread_refetches_history():
+    """(c) Slack does not deliver thread context with each event; the adapter
+    must refetch on every threaded mention so stateless brains see the
+    growing conversation. Slack's own Bolt JS reference does the same.
+    The same Thenvoi room is reused (no second ``create_agent_chat``)."""
     brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
-    adapter, _, web_mocks, _ = _make_adapter(
+    adapter, _, web_mocks, rest = _make_adapter(
         inner=brain,
         room_ids=["room-1", "room-2"],
     )
@@ -859,7 +862,8 @@ async def test_subsequent_mention_in_same_thread_does_not_refetch_history():
     await adapter.wait_idle()
     assert web_mocks[app.slug].conversations_replies.await_count == 1
 
-    # Second mention in the same thread → cache hit, no refetch.
+    # Second mention in the same thread → refetch (Slack's recommended
+    # pattern), but same Thenvoi room.
     await _post_slack_event(
         adapter,
         app,
@@ -872,7 +876,9 @@ async def test_subsequent_mention_in_same_thread_does_not_refetch_history():
         ),
     )
     await adapter.wait_idle()
-    assert web_mocks[app.slug].conversations_replies.await_count == 1
+    assert web_mocks[app.slug].conversations_replies.await_count == 2
+    # Only one Thenvoi room created across both mentions.
+    assert rest.agent_api_chats.create_agent_chat.await_count == 1
 
 
 @pytest.mark.asyncio
