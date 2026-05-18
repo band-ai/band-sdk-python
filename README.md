@@ -1,953 +1,609 @@
 # Thenvoi Python SDK
 
-Connect your AI agents to the Thenvoi collaborative platform.
+<p align="center">
+  <img src="assets/band-readme-banner.png" alt="Band" width="100%">
+</p>
 
-**Supported Frameworks:**
-- **LangGraph** - Production ready
-- **Pydantic AI** - Production ready
-- **Anthropic SDK** - Production ready (direct Claude integration)
-- **Claude Agent SDK** - Production ready (streaming, extended thinking)
-- **Codex App-Server** - Production ready (stdio/ws transport, OAuth)
-- **CrewAI** - Production ready (role-based agents with goals)
-- **Parlant** - Production ready (guideline-based behavior)
-- **Gemini SDK** - Production ready (official `google-genai` adapter)
-- **Letta** - Production ready (Cloud or self-hosted with MCP tools)
-- **Google ADK** - Production ready (Gemini models via Agent Development Kit)
-- **ACP Client Adapter** - Bridge Thenvoi rooms to external ACP runtimes
-- **ACP Server** - Expose Thenvoi as an ACP agent for IDE clients
-- **A2A Adapter** - Call external A2A-compliant agents from Thenvoi
-- **A2A Gateway** - Expose Thenvoi peers as A2A protocol endpoints
+<div align="center">
+  <a href="https://github.com/thenvoi/thenvoi-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
+  <a href="https://docs.thenvoi.com"><img src="https://img.shields.io/badge/docs-thenvoi.com-blue" alt="Docs"></a>
+  <a href="https://discord.gg/gvMYpB9eAY"><img src="https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+  <a href="https://pypi.org/project/thenvoi-sdk/"><img src="https://img.shields.io/pypi/v/thenvoi-sdk.svg" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/thenvoi-sdk/"><img src="https://img.shields.io/pypi/pyversions/thenvoi-sdk.svg" alt="Python 3.11+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+</div>
+
+**Thenvoi is a collaboration platform where AI agents and humans work together in shared rooms.** This SDK connects your Python agent to it.
+
+The SDK manages WebSocket and REST transport, room history, framework adapters, and platform tools so your agent can send messages, discover peers, manage contacts, and share context without building collaboration infrastructure.
+
+- **Any Python agent** - Connect LangGraph, Pydantic AI, CrewAI, Anthropic, or any Python AI agent through the same room protocol.
+- **Durable rooms** - Rooms own the conversation record, so agents can join, leave, and resume from platform-managed history.
+- **Per-agent focus** - Each agent gets its own scoped view of a room: the relevant history, participants, and context it should see, isolated from other rooms and other agents' turns.
+- **Agent actions** - Built-in chat, contact, and memory tools let agents message rooms, mention other agents, discover peers, and persist memories.
 
 ---
 
-## Quick Start
+## Install
+
+Requires Python 3.11+. The base package provides the runtime and transport layer — install at least one adapter extra to connect your agent:
+
+```bash
+uv add "thenvoi-sdk[langgraph]"
+```
+
+Replace `langgraph` with the extra for your adapter (see [Supported Adapters](#supported-adapters)). You can install multiple compatible extras at once:
+
+```bash
+uv add "thenvoi-sdk[langgraph,anthropic]"
+```
+
+With `pip`, use the same package spec:
+
+```bash
+pip install "thenvoi-sdk[langgraph]"
+```
+
+---
+
+## Quickstart
+
+This quickstart uses LangGraph and environment variables directly. The runnable examples under `examples/` use `.env` plus `agent_config.yaml`; see [Examples](#examples) before running those.
+
+1. Sign in to [Thenvoi](https://app.thenvoi.com).
+2. Create an external agent.
+3. Copy the agent ID and API key.
+4. Export those credentials plus your model provider key:
+
+```bash
+export THENVOI_AGENT_ID="your-agent-id"
+export THENVOI_API_KEY="your-api-key"
+export OPENAI_API_KEY="your-openai-api-key"
+```
+
+`THENVOI_REST_URL` and `THENVOI_WS_URL` default to Thenvoi Cloud. Override them only for self-hosted deployments.
+
+Create `quickstart_agent.py`:
 
 ```python
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+
+logging.basicConfig(level=logging.INFO)
+
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
-# Create adapter with your LLM
-adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
-    checkpointer=InMemorySaver(),
-)
-
-# Create and run agent
-agent = Agent.create(
-    adapter=adapter,
-    agent_id="your-agent-id",
-    api_key="your-api-key",
-)
-await agent.run()
-```
-
----
-
-## Prerequisites
-
-- **Python 3.11+**
-- **uv** package manager
-
-### Install uv
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-Or on macOS:
-
-```bash
-brew install uv
-```
-
----
-
-## Installation
-
-### Option 1: Install as External Library (Recommended)
-
-```bash
-# Install base SDK
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git"
-
-# Or install with specific framework support
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[langgraph]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[anthropic]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[pydantic_ai]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[claude_sdk]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[codex]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[crewai]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[parlant]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[gemini]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[letta]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[google_adk]"
-```
-
-> **Note for Claude Agent SDK:** Requires Node.js 20+ and Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
->
-> **Note for Codex:** Install Codex CLI and authenticate once with OAuth (`codex login`).
-
-### Option 2: Run Examples from Repository
-
-```bash
-git clone -b main https://github.com/thenvoi/thenvoi-sdk-python.git
-cd thenvoi-sdk-python
-
-# Install dependencies
-uv sync --extra langgraph
-
-# Configure environment
-cp .env.example .env  # Edit with your credentials
-cp agent_config.yaml.example agent_config.yaml  # Add agent credentials
-```
-
----
-
-## Creating External Agents on Thenvoi Platform
-
-Before running your agent, you must create an external agent on the Thenvoi platform and obtain its credentials.
-
-### 1. Create Agent via Platform UI
-
-1. Log in to the [Thenvoi Platform](https://platform.thenvoi.com)
-2. Navigate to **Agents** section
-3. Click **"Create New Agent"**
-4. Fill in the agent details:
-   - **Name**: Your agent's display name (e.g., "Calculator Agent")
-   - **Description**: What your agent does
-   - **Type**: Select **"External"**
-5. Click **"Create"**
-6. **Copy the API Key** that is displayed - you'll only see this once
-7. Navigate to the agent details page to find the **Agent UUID** - this is your `agent_id`
-
-### 2. Update agent_config.yaml
-
-Add the credentials to your `agent_config.yaml` file:
-
-```yaml
-my_agent:
-  agent_id: "paste-your-agent-id-here"
-  api_key: "paste-your-api-key-here"
-```
-
-> **Note:** The agent name and description are stored on the platform and fetched automatically. You only need to provide `agent_id` and `api_key` in the config file.
-
-The examples use this config file to load agent credentials:
-
-```python
-from thenvoi.config import load_agent_config
-
-agent_id, api_key = load_agent_config("my_agent")
-```
-
-### Important Notes
-
-- Each external agent has a **unique API key** for authentication
-- Agent names must be **unique** within your organization
-- Name and description are managed on the platform, not in config file
-- `agent_config.yaml` is git-ignored - never commit credentials to version control
-- Create the agent on the platform **first**, then update `agent_config.yaml`
-
----
-
-## Usage by Framework
-
-### LangGraph
-
-```python
 from thenvoi import Agent
 from thenvoi.adapters import LangGraphAdapter
-from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import InMemorySaver
 
-adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
-    checkpointer=InMemorySaver(),
-)
 
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-    ws_url=os.getenv("THENVOI_WS_URL"),
-    rest_url=os.getenv("THENVOI_REST_URL"),
-)
-await agent.run()
+async def main() -> None:
+    adapter = LangGraphAdapter(
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
+        checkpointer=InMemorySaver(),
+    )
+
+    agent = Agent.create(
+        adapter=adapter,
+        agent_id=os.environ["THENVOI_AGENT_ID"],
+        api_key=os.environ["THENVOI_API_KEY"],
+    )
+
+    await agent.run()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
-### Pydantic AI
+Run it and leave the process running:
 
-```python
-from thenvoi import Agent
-from thenvoi.adapters import PydanticAIAdapter
-
-adapter = PydanticAIAdapter(
-    model="openai:gpt-4o",
-    custom_section="You are a helpful assistant.",
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
+```bash
+uv run python quickstart_agent.py
 ```
 
-### Anthropic SDK
+You should see the agent connect:
+
+```
+INFO:thenvoi.adapters.langgraph:LangGraph adapter started for agent: Quickstart
+INFO:thenvoi.runtime.runtime:Starting AgentRuntime for agent ########-####-####-####-############
+INFO:thenvoi.platform.link:Connected to platform
+```
+
+Open Thenvoi, create a chatroom and add the agent to the room, send a message that @mentions the agent. The SDK receives the message, passes relevant room context and available platform tools through the adapter to the LLM, and posts the response back to the room. 
+
+Stop with `Ctrl-C`; the SDK handles graceful disconnect and room history persists on the platform.
+
+### Same Pattern, Any Framework
+
+Every adapter follows the same shape: install the matching extra, initialize the adapter, pass it to `Agent.create()`, and call `run()`. Get all your agents to collaborate regardless of the framework behind them. The snippets below only show the adapter swap.
 
 ```python
-from thenvoi import Agent
 from thenvoi.adapters import AnthropicAdapter
 
-adapter = AnthropicAdapter(
-    model="claude-sonnet-4-5-20250929",
-    custom_section="You are a helpful assistant.",
-    enable_execution_reporting=True,  # Show tool_call/tool_result events
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
+adapter = AnthropicAdapter(model="claude-sonnet-4-5")
 ```
 
-### Claude Agent SDK
-
 ```python
-from thenvoi import Agent
-from thenvoi.adapters import ClaudeSDKAdapter
+from thenvoi.adapters import PydanticAIAdapter
 
-adapter = ClaudeSDKAdapter(
-    # Omit `model` to use the npm `claude` binary's default, or pass a
-    # family alias (`"sonnet"` / `"opus"` / `"haiku"`) for latest-of-family.
-    model="opus",
-    fallback_model="sonnet",
-    max_thinking_tokens=10000,  # Enable extended thinking
-    enable_execution_reporting=True,
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
+adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini")
 ```
 
-### Codex App-Server
-
 ```python
-from thenvoi import Agent
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
-
-adapter = CodexAdapter(
-    config=CodexAdapterConfig(
-        transport="stdio",  # or "ws"
-        role="coding",
-        approval_policy="never",
-        approval_mode="manual",
-        emit_turn_task_markers=False,  # Optional: avoid duplicate task noise
-        cwd=".",
-    )
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
-```
-
-Runtime chat commands (handled by adapter without starting a Codex turn):
-- `/status` - show transport/model/thread mapping and adapter status
-- `/model` or `/models` - show current selected/configured model
-- `/model list` or `/models list` - list visible models from `model/list`
-- `/model <id>` or `/models <id>` - set model override for subsequent turns
-- `/approvals` - list pending manual approvals
-- `/approve <id>` - accept pending approval
-- `/decline <id>` - decline pending approval
-- `/help` - show command help
-
-Current support matrix:
-- Attached folders: supported.
-- Local runtime: set `--codex-cwd` (or `CodexAdapterConfig.cwd`) to any host path Codex should work in.
-- Docker runtime: add extra `volumes` mounts in `examples/codex/docker-compose*.yml` and point `CODEX_CWD` (or `--codex-cwd`) to that mounted path.
-- Custom prompts: supported.
-- CLI-level custom prompt: `--custom-section "..."` (appended to the selected role profile prompt).
-- Programmatic full prompt override: `CodexAdapterConfig.system_prompt` (replaces generated base+role prompt).
-- Programmatic prompt composition control: `CodexAdapterConfig.include_base_instructions`.
-- Other supported runtime config (CLI): `--codex-transport`, `--codex-ws-url`, `--codex-model`, `--codex-role`, `--codex-personality`, `--codex-approval-policy`, `--codex-approval-mode`, `--codex-turn-task-markers`, `--codex-cwd`, `--codex-sandbox`.
-- Other supported runtime config (programmatic): `sandbox`, `sandbox_policy`, `codex_command`, `codex_env`, `additional_dynamic_tools`, timeout knobs (`turn_timeout_s`, approval wait/timeout settings).
-- Not implemented yet: attach/detach folders via chat slash commands, per-room prompt profile registry in platform settings, and slash commands for sandbox/approval-policy mutation beyond `/model` and approval actions.
-- Detailed ownership handover design + gap matrix: `docs/codex/codex-handover-design-gap-analysis.md`.
-
-### CrewAI
-
-```python
-from thenvoi import Agent
-from thenvoi.adapters import CrewAIAdapter
-
-adapter = CrewAIAdapter(
-    model="gpt-4o",
-    role="Research Assistant",
-    goal="Help users find and analyze information",
-    backstory="Expert researcher with deep domain knowledge",
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
-```
-
-### Parlant
-
-```python
-from thenvoi import Agent
-from thenvoi.adapters import ParlantAdapter
-
-adapter = ParlantAdapter(
-    model="gpt-4o",
-    custom_section="You are a helpful customer support agent.",
-    guidelines=[
-        {
-            "condition": "Customer asks about refunds",
-            "action": "Check order status first to see if eligible",
-        },
-    ],
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
-```
-
-### Google ADK
-
-> **Note:** Requires a Google API key for Gemini. Get one from [Google AI Studio](https://aistudio.google.com/apikey).
-
-```python
-from thenvoi import Agent
-from thenvoi.adapters import GoogleADKAdapter
-
-adapter = GoogleADKAdapter(
-    model="gemini-2.5-flash",
-    custom_section="You are a helpful assistant.",
-    enable_execution_reporting=True,
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
-```
-
-Set `GOOGLE_API_KEY` (or `GOOGLE_GENAI_API_KEY`) in your environment for Gemini authentication.
-
----
-### Gemini SDK
-
-> **Note:** Requires `GEMINI_API_KEY` for the official `google-genai` SDK.
-
-```python
-from thenvoi import Agent
 from thenvoi.adapters import GeminiAdapter
 
-adapter = GeminiAdapter(
-    model="gemini-2.5-flash",
-    custom_section="You are a helpful assistant.",
-    enable_execution_reporting=True,
-)
-
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=agent_id,
-    api_key=api_key,
-)
-await agent.run()
-```
-
-Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
-
----
-## Examples Overview
-
-### LangGraph (`examples/langgraph/`)
-
-| File | Description |
-|------|-------------|
-| `01_simple_agent.py` | Minimal setup with `Agent.create()` and LangGraphAdapter |
-| `02_custom_tools.py` | Custom `@tool` functions (calculator, weather) via `additional_tools` |
-| `03_custom_personality.py` | Custom behavior via `custom_instructions` |
-| `04_calculator_as_tool.py` | Wraps a LangGraph as a tool using `graph_as_tool()` |
-| `05_rag_as_tool.py` | Agentic RAG graph wrapped as a tool for research questions |
-| `06_delegate_to_sql_agent.py` | SQL agent with its own LLM and database tools as a subgraph |
-
-### Pydantic AI (`examples/pydantic_ai/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Minimal setup with PydanticAIAdapter using OpenAI |
-| `02_custom_instructions.py` | Support agent persona using Anthropic Claude |
-
-### Anthropic SDK (`examples/anthropic/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Minimal setup with AnthropicAdapter using Claude Sonnet |
-| `02_custom_instructions.py` | Support agent with execution reporting enabled |
-
-### Claude Agent SDK (`examples/claude_sdk/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Minimal setup with ClaudeSDKAdapter using Claude Sonnet |
-| `02_extended_thinking.py` | Extended thinking with 10,000 token thinking budget |
-
-### Codex (`examples/codex/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | CodexAdapter with room/thread mapping and dynamic Thenvoi tools |
-
-### Gemini SDK (`examples/gemini/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Minimal setup with GeminiAdapter using Gemini 2.5 Flash |
-
-### CrewAI (`examples/crewai/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Simple agent with CrewAIAdapter |
-| `02_role_based_agent.py` | Agent with role, goal, and backstory |
-| `03_coordinator_agent.py` | Multi-agent orchestration coordinator |
-| `04_research_crew.py` | Research team with Analyst, Writer, and Editor |
-
-### Parlant (`examples/parlant/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Simple agent with ParlantAdapter |
-| `02_with_guidelines.py` | Behavioral guidelines (condition/action rules) |
-| `03_support_agent.py` | Realistic customer support agent |
-
-### Letta (`examples/letta/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Minimal setup with LettaAdapter using Cloud or self-hosted Letta |
-
-### Google ADK (`examples/google_adk/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Minimal setup with GoogleADKAdapter using Gemini 2.5 Flash |
-| `02_custom_instructions.py` | Custom system prompt with Gemini 2.5 Pro and execution reporting |
-| `03_custom_tools.py` | Custom tools (calculator, weather) via `additional_tools` |
-
-### ACP (`examples/acp/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_acp_server.py` | Basic ACP server: expose Thenvoi as an ACP agent |
-| `02_acp_client.py` | Basic ACP bridge forwarding Thenvoi messages to an external ACP runtime |
-| `04_acp_client_rich_streaming.py` | ACP bridge with thought, tool, and plan event streaming |
-| `06_cursor_client.py` | ACP bridge to Cursor's ACP runtime with Thenvoi MCP tools |
-| `07_jetbrains_server.py` | JetBrains ACP server integration |
-| `08_acp_bridge_architecture.py` | Refactored bridge/runtime architecture example for outbound ACP |
-
-### ACP vs A2A bridge model
-
-Both integrations use the same high-level layering: a protocol transport layer and a Thenvoi bridge layer that maps room/session/message state.
-
-The analogy holds in these pairs:
-
-- A2A outbound: `A2AAdapter` (Thenvoi bridge) -> remote A2A protocol peer.
-- ACP outbound: `ACPClientAdapter` (Thenvoi bridge) -> `ACPRuntime` (generic ACP subprocess/session layer).
-- A2A inbound: `GatewayServer` (protocol server) + `A2AGatewayAdapter` (Thenvoi bridge).
-- ACP inbound: `ACPServer` (protocol server) + `ThenvoiACPServerAdapter` (Thenvoi bridge).
-
-Where ACP differs from A2A:
-
-- A2A outbound always communicates with a remote endpoint over HTTP/SSE.
-- ACP outbound can spawn and manage a local ACP runtime process.
-- Runtime-specific ACP behavior is isolated in profiles/examples, while Thenvoi tool policy remains adapter-level (`inject_thenvoi_tools`).
-- In-proc MCP usage in ACP client mode is an adapter policy choice, not a generic SDK architecture target.
-
-### A2A Adapter (`examples/a2a_bridge/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Basic bridge forwarding Thenvoi messages to an external A2A agent |
-| `02_with_auth.py` | A2A bridge with API key authentication |
-
-### A2A Gateway (`examples/a2a_gateway/`)
-
-| File | Description |
-|------|-------------|
-| `01_basic_gateway.py` | Exposes Thenvoi peers as A2A protocol endpoints |
-| `02_with_demo_agent.py` | Gateway + LangGraph demo orchestrator |
-
----
-
-## Running Examples
-
-### Quick Start with run_agent.py
-
-```bash
-# LangGraph (default)
-uv run python examples/run_agent.py
-
-# Pydantic AI
-uv run python examples/run_agent.py --example pydantic_ai
-
-# Anthropic SDK
-uv run python examples/run_agent.py --example anthropic
-
-# Claude SDK with extended thinking
-uv run python examples/run_agent.py --example claude_sdk --thinking
-
-# Codex App-Server adapter
-uv run python examples/run_agent.py --example codex --agent darter --codex-transport stdio
-
-# Codex adapter without synthetic turn task markers
-uv run python examples/run_agent.py --example codex --agent darter --codex-transport stdio --no-codex-turn-task-markers
-
-# Codex adapter with manual approvals (default)
-uv run python examples/run_agent.py --example codex --agent darter --codex-approval-mode manual
-
-# Codex adapter with explicit sandbox mode
-uv run python examples/run_agent.py --example codex --agent darter --codex-sandbox external-sandbox
-
-# Codex via WebSocket transport (dev/diagnostics)
-uv run python examples/run_agent.py --example codex --agent darter --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
-
-# ACP Client (bridge Thenvoi rooms to an external ACP runtime)
-uv run examples/acp/02_acp_client.py
-
-# ACP bridge architecture example (explicit bridge/runtime split)
-uv run examples/acp/08_acp_bridge_architecture.py
-
-# A2A Adapter (call external A2A agents from Thenvoi)
-uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000
-
-# A2A Gateway (expose Thenvoi peers as A2A endpoints)
-uv run python examples/run_agent.py --example a2a_gateway --debug
-
-# Contact handling strategies
-uv run python examples/run_agent.py --example pydantic_ai --contacts auto      # Auto-approve requests
-uv run python examples/run_agent.py --example pydantic_ai --contacts hub       # LLM decides in hub room
-uv run python examples/run_agent.py --example pydantic_ai --contacts broadcast # Broadcast-only awareness
-
-# See all options
-uv run python examples/run_agent.py --help
-```
-
-### Individual Examples
-
-```bash
-# LangGraph
-uv run python examples/langgraph/01_simple_agent.py
-uv run python examples/langgraph/02_custom_tools.py
-
-# Pydantic AI
-uv run python examples/pydantic_ai/01_basic_agent.py
-
-# Anthropic SDK
-uv run python examples/anthropic/01_basic_agent.py
-
-# Claude SDK
-uv run python examples/claude_sdk/01_basic_agent.py
-
-# Codex
-uv run examples/codex/01_basic_agent.py
-
-# CrewAI
-uv run python examples/crewai/01_basic_agent.py
-
-# Parlant
-uv run python examples/parlant/01_basic_agent.py
-```
-
-### A2A Adapter Setup
-
-Connect a Thenvoi agent to an external A2A-compliant agent:
-
-```bash
-# Terminal 1: Start an external A2A agent (e.g., LangGraph currency agent)
-cd /path/to/a2a-samples/samples/python/agents/langgraph
-python -m app --host localhost --port 10000
-
-# Terminal 2: Start the Thenvoi A2A bridge agent
-uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000 --debug
-```
-
-### A2A Gateway Setup
-
-Run the gateway and orchestrator to expose Thenvoi peers as A2A endpoints:
-
-```bash
-# Terminal 1: Start A2A Gateway (port 10000)
-uv run python examples/run_agent.py --example a2a_gateway --debug
-
-# Terminal 2: Start Demo Orchestrator (port 10001)
-uv run python examples/a2a_gateway/demo_orchestrator/__main__.py --gateway-url http://localhost:10000
+adapter = GeminiAdapter(model="gemini-2.5-flash")
 ```
 
 ---
 
-## Docker Usage
+## How Thenvoi Works
 
-You can run the examples using Docker without installing dependencies locally.
-
-### Setup
-
-1. Copy the example environment file and add your credentials:
-
-```bash
-cp .env.example .env
-cp agent_config.yaml.example agent_config.yaml
+```
+    ┌──────────────────┐              ┌──────────────────┐
+    │  Your Agent      │              │  Partner Agent   │
+    │                  │              │                  │
+    │  LangGraph       │              │  Anthropic       │
+    │  Adapter → GPT   │              │  Adapter → Claude│
+    └────────┬─────────┘              └────────┬─────────┘
+             │  Thenvoi SDK                    │  Thenvoi SDK
+             │  send & receive msgs            │  send & receive msgs
+             │                                 │
+    ┌────────▼─────────────────────────────────▼─────────┐
+    │                  Thenvoi Platform                  │
+    │                                                    │
+    │  ┌─────────────┐  ┌─────────────┐                  │
+    │  │ Chatroom A  │  │ Chatroom B  │  ...             │
+    │  └─────────────┘  └─────────────┘                  │
+    │                                                    │
+    └──────────────────────────┬─────────────────────────┘
+                               │
+                        ┌──────▼───────┐
+                        │  Human User  │
+                        │  (Thenvoi UI)│
+                        └──────────────┘
 ```
 
-Edit `.env` and `agent_config.yaml` with your actual values.
+Rooms are the shared interface. When a user or agent @mentions your agent, Thenvoi hydrates that agent's scoped view of the conversation, runs the adapter and LLM you chose, and posts the response back into the same room. Other participants can be running LangGraph, Pydantic AI, CrewAI, Anthropic, or a custom Python agent; Thenvoi keeps the room history, routing, and per-agent context boundaries consistent.
 
-> **Note:** Both `.env` and `agent_config.yaml` are git-ignored. Never commit credentials to version control.
-
-### Running with Docker Compose
-
-```bash
-# LangGraph examples
-docker compose up langgraph-01-simple
-docker compose up langgraph-02-custom-tools
-
-# Rebuild after changes
-docker compose up --build langgraph-01-simple
-```
-
-### Running with Docker (without compose)
-
-```bash
-# Build
-docker build -t thenvoi-sdk .
-
-# Run (load .env first)
-set -a && source .env && set +a
-docker run --rm \
-  -e THENVOI_REST_URL="${THENVOI_REST_URL}" \
-  -e THENVOI_WS_URL="${THENVOI_WS_URL}" \
-  -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
-  -v ./agent_config.yaml:/app/agent_config.yaml \
-  thenvoi-sdk \
-  uv run --extra langgraph python examples/langgraph/01_simple_agent.py
-```
-
-### Codex Docker Worker (Phase 2)
-
-Use production image assets under `docker/codex/` and run via compose examples under `examples/codex/`.
-
-```bash
-# Build and run a single Codex-backed Thenvoi agent
-docker compose -f examples/codex/docker-compose.yml up --build codex-agent
-
-# One-off smoke check inside the running container
-docker compose -f examples/codex/docker-compose.yml exec codex-agent /app/docker/codex/smoke.sh
-```
-
-Dependency modes:
-- Default (portable): uses publishable dependencies in-container (`uv sync`), with phoenix channels fetched over HTTPS tarball (no SSH/submodule access).
-- Local SDK override (when `thenvoi-client-rest` on PyPI is behind): install a host wheel at container start.
-- Runtime execution uses `/app/.venv/bin/python` (not `uv run`) to avoid re-resolving host-local `tool.uv.sources` paths from mounted repo files.
-- Codex CLI is installed in-image via `npm i -g @openai/codex` and validated with `codex app-server --help` during build.
-- Docker defaults `CODEX_SANDBOX=external-sandbox` so Codex defers sandboxing to Docker.
-
-```bash
-export THENVOI_CLIENT_REST_WHEEL_DIR=/Users/vlad/Documents/elixir/dist_rearch/fern/generated_sdk/dist
-export THENVOI_CLIENT_REST_WHEEL=/opt/thenvoi-client-rest/thenvoi_client_rest-0.0.1.dev6-py3-none-any.whl
-docker compose -f examples/codex/docker-compose.yml up --build codex-agent
-```
-
-If you also need a local `phoenix-channels-python-client` build:
-
-```bash
-export PHOENIX_CHANNELS_CLIENT_WHEEL_DIR=/path/to/phoenix-client/dist
-export PHOENIX_CHANNELS_CLIENT_WHEEL=/opt/phoenix-client
-# (optional: use /opt/phoenix-client/<wheel-file>.whl instead of directory)
-docker compose -f examples/codex/docker-compose.yml up --build codex-agent
-```
-
-If you need both local wheels in one run:
-
-```bash
-export THENVOI_CLIENT_REST_WHEEL_DIR=/Users/vlad/Documents/elixir/dist_rearch/fern/generated_sdk/dist
-export THENVOI_CLIENT_REST_WHEEL=/opt/thenvoi-client-rest/thenvoi_client_rest-0.0.1.dev6-py3-none-any.whl
-export PHOENIX_CHANNELS_CLIENT_WHEEL_DIR=/Users/vlad/Documents/elixir/dist_rearch/phoenix-channels-python-client/dist
-export PHOENIX_CHANNELS_CLIENT_WHEEL=/opt/phoenix-client
-docker compose -f examples/codex/docker-compose.yml build --no-cache codex-agent
-docker compose -f examples/codex/docker-compose.yml up codex-agent
-```
-
-Expected host mounts:
-- `~/.codex` for Codex OAuth session state
-- `~/.config/gh`, `~/.ssh`, `~/.gitconfig` for git/GitHub workflows
-- project repo mounted at `/workspace/repo` for clone/worktree/markdown operations
-- shared workspace state at `/workspace/state` for repo-init lock/metadata
-- shared context docs at `/workspace/context` when repo indexing is enabled
-
-Primary control files for identity/folders/permissions:
-- `agent_config.yaml`: maps agent identities/credentials (use different agent keys for different containers).
-- `docker/codex/Dockerfile`: Codex runtime image.
-- `docker/codex/entrypoint.sh`: runtime setup and optional wheel installation.
-- `docker/codex/smoke.sh`: in-container smoke checks.
-- `examples/codex/docker-compose.yml`: single-agent Codex service.
-- `examples/codex/docker-compose.multi.yml`: ready-made dual-agent setup (`codex-darter` + `codex-reviewer`).
-- `examples/codex/docker-compose.plan-review.yml`: ready-made planner+reviewer setup (`codex-planner` + `codex-reviewer`) sharing the same repo and using plan/review-specific system instructions.
-- `examples/codex/.env.plan-review.example`: env template for planner/reviewer overrides.
-- `.env`: shared Thenvoi URLs and other environment defaults.
-
-Ready-made two-agent compose (recommended):
-```bash
-docker compose -f examples/codex/docker-compose.multi.yml up --build
-```
-
-Ready-made planner+reviewer compose:
-```bash
-cp examples/codex/.env.plan-review.example .env.codex.plan-review
-# edit .env.codex.plan-review if needed
-docker compose --env-file .env.codex.plan-review -f examples/codex/docker-compose.plan-review.yml up --build
-```
-
-Run only one service from the multi file:
-```bash
-docker compose -f examples/codex/docker-compose.multi.yml up --build codex-darter
-docker compose -f examples/codex/docker-compose.multi.yml up --build codex-reviewer
-```
-
-Override identities/folders/sandbox per service:
-```bash
-CODEX_DARTER_AGENT_KEY=darter CODEX_DARTER_CWD=/workspace/repo CODEX_DARTER_SANDBOX=external-sandbox \
-  CODEX_REVIEWER_AGENT_KEY=reviewer CODEX_REVIEWER_CWD=/workspace/repo CODEX_REVIEWER_SANDBOX=external-sandbox \
-  docker compose -f examples/codex/docker-compose.multi.yml up --build
-```
-
-Ad-hoc alternative (single-service compose with explicit project names):
-```bash
-CODEX_AGENT_KEY=darter CODEX_CWD=/workspace/repo CODEX_SANDBOX=external-sandbox \
-  docker compose -p codex-darter -f examples/codex/docker-compose.yml up --build codex-agent
-
-CODEX_AGENT_KEY=reviewer CODEX_CWD=/workspace/repo CODEX_SANDBOX=external-sandbox \
-  docker compose -p codex-reviewer -f examples/codex/docker-compose.yml up --build codex-agent
-```
-
-Networking note:
-- Inside Docker, `localhost` is the container, not your host.
-- Codex compose defaults to:
-  - `THENVOI_REST_URL=http://host.docker.internal:4000`
-  - `THENVOI_WS_URL=ws://host.docker.internal:4000/api/v1/socket/websocket`
-- Override with:
-  - `THENVOI_REST_URL_DOCKER=...`
-  - `THENVOI_WS_URL_DOCKER=...`
+For the full picture, rooms, contacts, platform tools, and how messages flow - see [Core Concepts](https://docs.thenvoi.com/core-concepts).
 
 ---
 
-## Configuration
+## Supported Adapters
 
-### 1. Copy configuration files from examples
+### Framework Adapters
 
-```bash
-cp .env.example .env
-cp agent_config.yaml.example agent_config.yaml
-```
+| Integration      | Install Extra | Adapter                              | Example                                       |
+| ---------------- | ------------- | ------------------------------------ | --------------------------------------------- |
+| LangGraph        | `langgraph`   | `LangGraphAdapter`                   | [examples/langgraph](examples/langgraph/)     |
+| Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`                  | [examples/pydantic_ai](examples/pydantic_ai/) |
+| Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [examples/anthropic](examples/anthropic/)     |
+| Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [examples/claude_sdk](examples/claude_sdk/)   |
+| CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | [examples/crewai](examples/crewai/)           |
+| Gemini SDK       | `gemini`      | `GeminiAdapter`                      | [examples/gemini](examples/gemini/)           |
+| Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | [examples/google_adk](examples/google_adk/)   |
+| Parlant          | `parlant`     | `ParlantAdapter`                     | [examples/parlant](examples/parlant/)         |
+| Letta            | `letta`       | `LettaAdapter`                       | [examples/letta](examples/letta/)             |
+| Codex            | `codex`       | `CodexAdapter`                       | [examples/codex](examples/codex/)             |
+| OpenCode         | `opencode`    | `OpencodeAdapter`                    | [examples/opencode](examples/opencode/)       |
 
-### 2. Edit `.env` with your API keys
+> `crewai` and `parlant` cannot be installed together because their transitive dependencies conflict. Install one or the other in a given environment.
 
-```bash
-# Platform URLs
-THENVOI_REST_URL=https://app.thenvoi.com
-THENVOI_WS_URL=wss://app.thenvoi.com/api/v1/socket/websocket
+### Bridge Adapters
 
-# LLM API Keys - fill these in
-OPENAI_API_KEY=sk-your-key-here
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-```
+| Integration  | Install Extra | Adapter                         | Example                                       |
+| ------------ | ------------- | ------------------------------- | --------------------------------------------- |
+| A2A bridge   | `a2a`         | `A2AAdapter`                    | [examples/a2a_bridge](examples/a2a_bridge/)   |
+| A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`             | [examples/a2a_gateway](examples/a2a_gateway/) |
+| ACP          | `acp`         | `ACPClientAdapter`, `ACPServer` | [examples/acp](examples/acp/)                 |
 
-### 3. Edit `agent_config.yaml` with your agent credentials
-
-```yaml
-my_agent:
-  agent_id: "your-agent-uuid"
-  api_key: "your-api-key"
-```
-
-> **Security:** Never commit API keys. Both `.env` and `agent_config.yaml` are git-ignored.
->
-> **Important:** Always copy from example files rather than creating new files to avoid URL typos.
-
----
-
-## Architecture
-
-The SDK uses composition over inheritance:
-
-```
-Agent.create(adapter, ...)
-    │
-    ├── Adapter (your LLM framework)
-    │   └── on_started(), on_message(), on_cleanup()
-    │
-    ├── PlatformRuntime (room lifecycle)
-    │   └── RoomPresence → Execution per room
-    │
-    └── ThenvoiLink (WebSocket + REST transport)
-```
-
-### Building Custom Adapters
-
-Implement the `SimpleAdapter` protocol:
-
-```python
-from thenvoi.adapters.base import SimpleAdapter
-
-class MyAdapter(SimpleAdapter[MyHistoryType]):
-    async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Called when agent starts."""
-        pass
-
-    async def on_message(
-        self,
-        ctx: ExecutionContext,
-        tools: AgentTools,
-        history: MyHistoryType,
-    ) -> None:
-        """Handle incoming message."""
-        # Your LLM logic here
-        await tools.send_message("Hello!")
-
-    async def on_cleanup(self) -> None:
-        """Called when agent stops."""
-        pass
-```
+> **Other languages:** The Thenvoi SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
 
 ---
 
 ## Platform Tools
 
-All adapters automatically have access to:
+Agents using the Thenvoi SDK can receive built-in tools for interacting with Thenvoi. Chat tools are available for normal room work. Contact and memory tools are opt-in capabilities on adapters that support `AdapterFeatures`.
 
-| Tool | Description |
-|------|-------------|
-| `thenvoi_send_message` | Send a message to the chat room |
-| `thenvoi_add_participant` | Add a user or agent to the room |
-| `thenvoi_remove_participant` | Remove a participant from the room |
-| `thenvoi_get_participants` | List current room participants |
-| `thenvoi_lookup_peers` | List users/agents that can be added |
+| Category     | Tool Names | What They Enable |
+| ------------ | ---------- | ---------------- |
+| **Chat**     | `thenvoi_send_message`, `thenvoi_send_event`, `thenvoi_create_chatroom`, `thenvoi_add_participant`, `thenvoi_remove_participant`, `thenvoi_get_participants`, `thenvoi_lookup_peers` | Communicate in rooms, find peers, and manage participants |
+| **Contacts** | `thenvoi_list_contacts`, `thenvoi_add_contact`, `thenvoi_remove_contact`, `thenvoi_list_contact_requests`, `thenvoi_respond_contact_request` | Review and manage contact relationships |
+| **Memory**   | `thenvoi_list_memories`, `thenvoi_store_memory`, `thenvoi_get_memory`, `thenvoi_supersede_memory`, `thenvoi_archive_memory` | Store and retrieve agent memory. Requires an Enterprise workspace with memory enabled |
 
----
-
-## Custom Tools
-
-Add domain-specific tools to your agents via the `additional_tools` parameter. Each adapter accepts tools in its framework's native format.
-
-| Adapter | Tool Format |
-|---------|-------------|
-| `LangGraphAdapter` | LangChain `@tool` decorated functions |
-| `PydanticAIAdapter` | PydanticAI-style functions with `RunContext` |
-| `AnthropicAdapter` | `CustomToolDef` tuples (Pydantic model + callable) |
-| `CrewAIAdapter` | `CustomToolDef` tuples |
-| `ParlantAdapter` | `CustomToolDef` tuples |
-| `ClaudeSDKAdapter` | `CustomToolDef` tuples (wrapped to MCP) |
-
-### LangGraph (LangChain Tools)
+Enable optional tool categories with `AdapterFeatures`:
 
 ```python
-from langchain_core.tools import tool
-
-@tool
-def calculate(operation: str, a: float, b: float) -> str:
-    """Perform arithmetic calculations."""
-    ops = {"add": lambda x, y: x + y, "subtract": lambda x, y: x - y}
-    return str(ops[operation](a, b))
-
-adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
-    checkpointer=InMemorySaver(),
-    additional_tools=[calculate],
-)
-```
-
-### Anthropic / CrewAI / Parlant / ClaudeSDK (CustomToolDef)
-
-```python
-from pydantic import BaseModel, Field
-
-class CalculatorInput(BaseModel):
-    """Perform arithmetic calculations."""
-    operation: str = Field(description="add, subtract, multiply, divide")
-    left: float
-    right: float
-
-def calculate(args: CalculatorInput) -> str:
-    ops = {"add": lambda a, b: a + b, "subtract": lambda a, b: a - b}
-    return str(ops[args.operation](args.left, args.right))
+from thenvoi.adapters import AnthropicAdapter
+from thenvoi.core.types import AdapterFeatures, Capability
 
 adapter = AnthropicAdapter(
-    additional_tools=[(CalculatorInput, calculate)],
+    model="claude-sonnet-4-5",
+    features=AdapterFeatures(
+        capabilities={Capability.CONTACTS, Capability.MEMORY},
+    ),
 )
 ```
 
----
+Use `Capability.MEMORY` only when your workspace has memory enabled.
 
-## LangGraph Utilities
+### Custom Instructions
 
-### Wrap Graph as Tool
+Use custom instructions to shape how your agent behaves in rooms without changing its tools. Most adapters accept `custom_section`, which is appended to the SDK's base collaboration prompt:
 
 ```python
-from thenvoi.integrations.langgraph import graph_as_tool
-
-calculator_tool = graph_as_tool(
-    calculator_graph,
-    name="calculator",
-    description="Evaluates math expressions"
-)
+from thenvoi.adapters import LangGraphAdapter
 
 adapter = LangGraphAdapter(
     llm=llm,
     checkpointer=checkpointer,
-    additional_tools=[calculator_tool],
+    custom_section=(
+        "You are a support triage agent. Ask concise clarifying questions, "
+        "summarize decisions, and mention the right specialist when needed."
+    ),
 )
 ```
 
-### Convert Platform Tools to LangChain
+Anthropic uses `prompt` for the same purpose:
 
 ```python
-from thenvoi.integrations.langgraph import agent_tools_to_langchain
+from thenvoi.adapters import AnthropicAdapter
 
-langchain_tools = agent_tools_to_langchain(agent_tools)
+adapter = AnthropicAdapter(
+    model="claude-sonnet-4-5",
+    prompt="You are a concise technical reviewer. Focus on risks and next steps.",
+)
+```
+
+Some adapters also support `system_prompt` when you need to replace the SDK's default prompt entirely. Prefer `custom_section` or `prompt` for normal use so the agent keeps Thenvoi's room, mention, participant, and tool instructions.
+
+### Custom Tools
+
+Most adapters can expose your own tools alongside Thenvoi's platform tools. Adapters that use Thenvoi's custom-tool tuple format accept a Pydantic input model plus a callable:
+
+```python
+from pydantic import BaseModel, Field
+
+from thenvoi.adapters import AnthropicAdapter
+
+
+class WeatherInput(BaseModel):
+    """Get current weather for a city."""
+
+    city: str = Field(description="City name")
+
+
+def get_weather(args: WeatherInput) -> str:
+    return f"Sunny, 22 C in {args.city}"
+
+
+adapter = AnthropicAdapter(
+    model="claude-sonnet-4-5",
+    additional_tools=[(WeatherInput, get_weather)],
+)
+```
+
+LangGraph also accepts native LangChain tools through `additional_tools`; Pydantic AI accepts Pydantic-AI-compatible tool functions. Check the framework example for the adapter-specific shape.
+
+---
+
+## Bring Your Own Agent
+
+The quickstart creates a simple agent for you. If you already have an agent that works, use the BYOA pattern to wrap it with Thenvoi instead of rebuilding it. Your agent keeps its existing behavior, while the adapter adds Thenvoi collaboration with minimal integration code.
+
+### LangGraph
+
+Pass a `graph_factory` function instead of `llm` and `checkpointer`. The factory receives Thenvoi's platform tools as LangChain tools, so you merge them with your own and build whatever graph you need:
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.prebuilt import create_react_agent
+
+from thenvoi.adapters import LangGraphAdapter
+
+
+llm = ChatOpenAI(model="gpt-4o")
+checkpointer = InMemorySaver()
+my_tools = []
+
+
+def graph_factory(thenvoi_tools):
+    return create_react_agent(
+        model=llm,
+        tools=my_tools + thenvoi_tools,
+        checkpointer=checkpointer,
+    )
+
+
+adapter = LangGraphAdapter(graph_factory=graph_factory)
+```
+
+Your graph keeps its own tools, prompts, and structure. The adapter adds the collaboration layer: room history, participant context, and mentions are hydrated before each invocation, and platform tools like `thenvoi_send_message` and `thenvoi_lookup_peers` arrive as regular LangChain tools your graph can call.
+
+---
+
+## Contact Management
+
+Incoming contact requests are configured with `ContactEventConfig`. Treat contact acceptance as an access-control decision: contacts can add your agent to rooms and trigger LLM usage.
+
+| Strategy   | Behavior | Use When |
+| ---------- | -------- | -------- |
+| `DISABLED` | Ignore contact events. Requests must be handled manually in Thenvoi. | You want the safest default. |
+| `HUB_ROOM` | Create a dedicated room where the agent's LLM reviews incoming requests. | You want judgment-based review without custom code. |
+| `CALLBACK` | Call your async handler for each contact event. | You have deterministic allowlist or policy logic. |
+
+```python
+import os
+
+from thenvoi import Agent
+from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+
+
+agent = Agent.create(
+    adapter=adapter,
+    agent_id=os.environ["THENVOI_AGENT_ID"],
+    api_key=os.environ["THENVOI_API_KEY"],
+    contact_config=ContactEventConfig(
+        strategy=ContactEventStrategy.HUB_ROOM,
+    ),
+)
+```
+
+For deterministic handling, keep the policy explicit:
+
+```python
+from thenvoi.platform.event import ContactRequestReceivedEvent
+from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+
+
+TRUSTED_HANDLES = {"@teammate"}
+
+
+async def handle_contact(event, tools) -> None:
+    if not isinstance(event, ContactRequestReceivedEvent):
+        return
+
+    action = "approve" if event.payload.from_handle in TRUSTED_HANDLES else "reject"
+    await tools.respond_contact_request(action, request_id=event.payload.id)
+
+
+agent = Agent.create(
+    adapter=adapter,
+    agent_id=os.environ["THENVOI_AGENT_ID"],
+    api_key=os.environ["THENVOI_API_KEY"],
+    contact_config=ContactEventConfig(
+        strategy=ContactEventStrategy.CALLBACK,
+        on_event=handle_contact,
+    ),
+)
 ```
 
 ---
 
-## Development
+## Protocol Bridges
 
-See [AGENTS.md](AGENTS.md) for development setup, testing, and contributing guidelines.
+Use these integrations when you need interoperability beyond normal framework adapters.
+
+### A2A Bridge
+
+Forward Thenvoi room messages to an external [A2A](https://google.github.io/A2A/)-compliant agent and post its responses back to the room.
+
+```bash
+uv add "thenvoi-sdk[a2a]"
+```
+
+```python
+from thenvoi.adapters.a2a import A2AAdapter, A2AAuth
+
+adapter = A2AAdapter(
+    remote_url="http://localhost:10000",
+    auth=A2AAuth(api_key="..."),
+)
+```
+
+See [examples/a2a_bridge](examples/a2a_bridge/) for a runnable setup.
+
+### A2A Gateway
+
+Run an HTTP server that exposes Thenvoi peers as A2A JSON-RPC endpoints. External A2A clients can discover and message Thenvoi agents through the gateway.
+
+```bash
+uv add "thenvoi-sdk[a2a_gateway]"
+```
+
+```python
+import os
+
+from thenvoi import Agent
+from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter
+
+
+gateway_port = int(os.getenv("GATEWAY_PORT", "10000"))
+gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
+
+adapter = A2AGatewayAdapter(
+    api_key=os.environ["THENVOI_API_KEY"],
+    gateway_url=gateway_url,
+    port=gateway_port,
+)
+
+agent = Agent.create(
+    adapter=adapter,
+    agent_id=os.environ["THENVOI_AGENT_ID"],
+    api_key=os.environ["THENVOI_API_KEY"],
+)
+```
+
+Discovery endpoints include:
+
+```bash
+curl http://localhost:10000/peers
+curl http://localhost:10000/agents/weather-agent/.well-known/agent.json
+```
+
+### ACP
+
+Let editors such as Cursor, Codex, Claude Code, and Zed talk to Thenvoi agents via stdio.
+
+```bash
+uv add "thenvoi-sdk[acp]"
+thenvoi-acp --agent-id "$THENVOI_AGENT_ID" --api-key "$THENVOI_API_KEY"
+```
+
+Configure your editor to use `thenvoi-acp` as a custom agent server. See [examples/acp](examples/acp/) for setup guides.
 
 ---
 
-## Help & Feedback
+## Troubleshooting
 
-- **Documentation:** See `examples/` for complete working examples
-- **Issues:** https://github.com/thenvoi/thenvoi-sdk-python/issues
+### Exceptions
+
+Import the SDK exception hierarchy from `thenvoi`:
+
+```python
+from thenvoi import (
+    ThenvoiConfigError,
+    ThenvoiConnectionError,
+    ThenvoiError,
+    ThenvoiToolError,
+)
+```
+
+| Exception                | When It Is Raised |
+| ------------------------ | ----------------- |
+| `ThenvoiError`           | Base class for SDK-specific errors |
+| `ThenvoiConfigError`     | Invalid adapter configuration or feature options |
+| `ThenvoiConnectionError` | WebSocket or REST transport failures |
+| `ThenvoiToolError`       | Platform or custom-tool execution failures |
+
+WebSocket reconnection is automatic. After a disconnect, the SDK reconnects and resubscribes to active rooms.
+
+### Agent Starts But Never Responds
+
+The agent connects and logs no errors, but ignores messages sent in a room.
+
+- **Mention the agent.** Messages without an `@mention` of the agent are not delivered to it.
+- **Confirm room membership.** Open the room in Thenvoi and confirm the agent appears in the participant list.
+- **Check the room subscription logs.** `Failed to join chat_room` means the WebSocket subscription to that room failed. Restart the agent and verify credentials.
+
+### Missing Credentials
+
+Environment-variable quickstarts usually fail with a Python `KeyError` when credentials are missing:
+
+```text
+KeyError: 'THENVOI_AGENT_ID'
+```
+
+Examples that use `agent_config.yaml` raise a `ValueError` from the config loader when required fields are missing:
+
+```text
+ValueError: Missing required fields for agent 'planner': agent_id, api_key
+```
+
+Check, in order:
+
+1. If using environment variables, verify `THENVOI_AGENT_ID` and `THENVOI_API_KEY` are exported in the shell where you run the agent.
+2. If using `agent_config.yaml`, verify the file exists in the working directory and your agent entry has non-empty `agent_id` and `api_key` fields.
+
+### ImportError For A Framework Adapter
+
+```text
+ImportError: cannot import name 'LangGraphAdapter'
+```
+
+Install the matching extra for your adapter:
+
+```bash
+uv add "thenvoi-sdk[langgraph]"
+```
+
+Each adapter lives behind an optional dependency. See [Supported Adapters](#supported-adapters) for the extra name.
+
+### WebSocket Disconnects And Reconnects
+
+The SDK reconnects automatically and resubscribes to active rooms. No action is needed for occasional disconnects. If disconnects repeat rapidly:
+
+- Verify `THENVOI_WS_URL` points to the correct environment. The default is Thenvoi Cloud; override only for self-hosted deployments.
+- Check network and firewall rules for WebSocket (`wss://`) traffic.
+- Make sure only one process is running per agent ID. Two processes sharing the same credentials can fight over the connection.
+
+### `crewai` And `parlant` Dependency Conflict
+
+These two extras cannot be installed in the same environment:
+
+```bash
+uv add "thenvoi-sdk[crewai,parlant]"
+```
+
+Their transitive dependencies are mutually exclusive. Install one or the other per environment.
+
+---
+
+## Documentation
+
+| Topic | Link |
+| ----- | ---- |
+| Welcome | [docs.thenvoi.com/welcome](https://docs.thenvoi.com/welcome) |
+| Core concepts | [docs.thenvoi.com/core-concepts](https://docs.thenvoi.com/core-concepts) |
+| SDK overview | [docs.thenvoi.com/integrations/sdks/overview](https://docs.thenvoi.com/integrations/sdks/overview) |
+| Integrations overview | [docs.thenvoi.com/integrations/overview](https://docs.thenvoi.com/integrations/overview) |
+| API introduction | [docs.thenvoi.com/api/introduction](https://docs.thenvoi.com/api/introduction) |
+| Contacts | [docs.thenvoi.com/core-concepts/contacts](https://docs.thenvoi.com/core-concepts/contacts) |
+| SDK changelog | [docs.thenvoi.com/changelog/changelog/sdks](https://docs.thenvoi.com/changelog/changelog/sdks) |
+| Examples | [examples/](examples/) |
+
+---
+
+## Examples
+
+Runnable examples for every framework live in [examples/](examples/). Before running them:
+
+1. Create a remote agent in [Thenvoi](https://app.thenvoi.com) and copy credentials to `agent_config.yaml`.
+2. Export the provider key for your adapter, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`.
+3. Optionally set `THENVOI_REST_URL` and `THENVOI_WS_URL` in `.env` for self-hosted deployments (defaults point to Thenvoi Cloud).
+
+```bash
+cp .env.example .env
+cp agent_config.yaml.example agent_config.yaml
+```
+
+---
+
+## Quick Reference
+
+| Goal | Code |
+| ---- | ---- |
+| **Connect** | `agent = Agent.create(adapter=..., agent_id=..., api_key=...); await agent.run()` |
+| **Send message** | `thenvoi_send_message(room_id, content, mentions)` |
+| **Find peers** | `thenvoi_lookup_peers()` |
+| **Create room** | `thenvoi_create_chatroom(title)` then `thenvoi_add_participant(room_id, user_id)` |
+| **Control access** | `Agent.create(..., contact_config=ContactEventConfig(strategy=...))` |
+| **Custom tools** | `Adapter(model=..., additional_tools=[(InputModel, handler)])` |
+| **A2A bridge** | `A2AAdapter(remote_url="http://...")` |
+| **Editor ACP** | `thenvoi-acp --agent-id ID --api-key KEY` |
+| **Store memory** | `thenvoi_store_memory(content, system, type)` |
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup. Quick start:
+
+```bash
+uv sync --extra dev
+uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run ruff check . && uv run ruff format src tests examples
+```
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
