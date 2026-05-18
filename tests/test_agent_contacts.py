@@ -329,8 +329,13 @@ class TestPlatformRuntimeContactSetup:
         assert runtime.is_contacts_subscribed is True
 
     @pytest.mark.asyncio
-    async def test_stop_unsubscribes_when_subscribed(self):
-        """PlatformRuntime.stop() should unsubscribe from contacts."""
+    async def test_stop_clears_contacts_subscribed_flag(self):
+        """PlatformRuntime.stop() should clear contacts flag without explicit unsubscribe.
+
+        The PHX client's shutdown already unsubscribes all topics before
+        stop() runs, so an explicit unsubscribe races with that cleanup
+        and produces a spurious warning. Socket close handles the rest.
+        """
         runtime = PlatformRuntime(
             agent_id="test-agent-id",
             api_key="test-api-key",
@@ -348,30 +353,9 @@ class TestPlatformRuntimeContactSetup:
 
         await runtime.stop()
 
-        mock_link.unsubscribe_agent_contacts.assert_called_once()
-        assert runtime.is_contacts_subscribed is False
-
-    @pytest.mark.asyncio
-    async def test_stop_skips_unsubscribe_when_not_subscribed(self):
-        """PlatformRuntime.stop() should not unsubscribe if not subscribed."""
-        runtime = PlatformRuntime(
-            agent_id="test-agent-id",
-            api_key="test-api-key",
-        )
-
-        mock_link = MagicMock()
-        mock_link.unsubscribe_agent_contacts = AsyncMock()
-        mock_link.disconnect = AsyncMock()
-        runtime._link = mock_link
-        runtime._contacts_subscribed = False
-
-        mock_internal = MagicMock()
-        mock_internal.stop = AsyncMock(return_value=True)
-        runtime._runtime = mock_internal
-
-        await runtime.stop()
-
         mock_link.unsubscribe_agent_contacts.assert_not_called()
+        mock_link.disconnect.assert_called_once()
+        assert runtime.is_contacts_subscribed is False
 
 
 class TestStartupOrder:

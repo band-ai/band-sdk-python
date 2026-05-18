@@ -188,13 +188,8 @@ class PlatformRuntime:
         if self._runtime:
             graceful = await self._runtime.stop(timeout=timeout)
 
-        # Unsubscribe from contacts channel before disconnecting
-        if self._link and self._contacts_subscribed:
-            await self._link.unsubscribe_agent_contacts()
-            self._contacts_subscribed = False
-            logger.debug("Unsubscribed from contacts channel")
-
         if self._link:
+            self._contacts_subscribed = False
             await self._link.disconnect()
         logger.info("Platform runtime stopped")
         return graceful
