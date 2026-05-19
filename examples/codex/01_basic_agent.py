@@ -49,11 +49,13 @@ from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
 
 async def main() -> None:
     load_dotenv()
@@ -143,6 +145,7 @@ async def main() -> None:
         codex_role or "none",
     )
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

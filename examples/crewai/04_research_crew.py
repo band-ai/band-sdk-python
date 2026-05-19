@@ -120,6 +120,7 @@ Your workflow:
     },
 }
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -170,6 +171,7 @@ async def main() -> None:
 
     logger.info("Starting %s...", member["role"])
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

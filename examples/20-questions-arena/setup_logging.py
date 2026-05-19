@@ -9,6 +9,7 @@ from pathlib import Path
 _ARENA_DIR = Path(__file__).resolve().parent
 _LOG_DIR = _ARENA_DIR / "logs"
 
+
 def setup_logging(level=logging.INFO, agent_tag: str | None = None):
     """Configure logging to console + rotating file.
 

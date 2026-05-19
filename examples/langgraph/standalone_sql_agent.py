@@ -29,10 +29,12 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import ToolNode
 
+
 class MessagesState(TypedDict):
     """State for the SQL agent."""
 
     messages: Annotated[list, add_messages]
+
 
 def create_sql_agent(db_path: str = "Chinook.db"):
     """
@@ -95,6 +97,7 @@ def create_sql_agent(db_path: str = "Chinook.db"):
     # Compile with checkpointer for conversation memory
     return workflow.compile(checkpointer=InMemorySaver())
 
+
 def download_chinook_db():
     """Download the Chinook sample database if not present."""
     import logging
@@ -148,6 +151,7 @@ def download_chinook_db():
         conn.close()
         logger.info("Created minimal test database at %s", db_path)
         return db_path
+
 
 # Export for easy import
 if __name__ == "__main__":

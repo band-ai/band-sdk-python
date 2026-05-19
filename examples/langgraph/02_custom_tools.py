@@ -33,6 +33,7 @@ from thenvoi.adapters import LangGraphAdapter
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 # Define custom tools
 @tool
 def calculate(operation: str, left: float, right: float) -> str:
@@ -63,6 +64,7 @@ def calculate(operation: str, left: float, right: float) -> str:
     except Exception as e:
         return f"Error: {e}"
 
+
 @tool
 def get_weather(city: str) -> str:
     """Get weather for a city (mock implementation).
@@ -72,6 +74,7 @@ def get_weather(city: str) -> str:
     """
     # In real implementation, call weather API
     return f"Weather in {city}: Sunny, 72°F"
+
 
 async def main() -> None:
     load_dotenv()
@@ -108,6 +111,7 @@ async def main() -> None:
 
     logger.info("Starting agent with custom tools...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

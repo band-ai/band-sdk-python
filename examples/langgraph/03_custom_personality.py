@@ -29,6 +29,7 @@ from thenvoi.adapters import LangGraphAdapter
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 async def main() -> None:
     load_dotenv()
     ws_url = os.getenv("THENVOI_WS_URL")
@@ -81,6 +82,7 @@ But speak like a PIRATE while doin' it! Arrr!
 
     logger.info("Starting pirate agent...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -27,10 +27,12 @@ logger = logging.getLogger(__name__)
 # Global gateway client instance (set by OrchestratorAgent)
 _gateway_client: GatewayClient | None = None
 
+
 def set_gateway_client(client: GatewayClient) -> None:
     """Set the global gateway client for tools to use."""
     global _gateway_client
     _gateway_client = client
+
 
 @tool
 async def call_peer_agent(
@@ -69,11 +71,13 @@ async def call_peer_agent(
         logger.error("Error calling peer '%s': %s", peer_id, e)
         return f"Error calling peer '{peer_id}': {e}"
 
+
 class ResponseFormat(BaseModel):
     """Response format for the orchestrator agent."""
 
     status: Literal["input_required", "completed", "error"] = "input_required"
     message: str
+
 
 class OrchestratorAgent:
     """Orchestrator agent that routes requests to A2A Gateway peers.

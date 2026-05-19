@@ -40,12 +40,14 @@ from thenvoi.core.types import AdapterFeatures, Capability
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 def get_required_env(name: str) -> str:
     """Return a required environment variable or raise a clear error."""
     value = os.getenv(name)
     if not value:
         raise ValueError(f"{name} environment variable is required")
     return value
+
 
 async def main() -> None:
     load_dotenv()
@@ -90,6 +92,7 @@ async def main() -> None:
 
     logger.info("Starting CrewAI contact-and-memory example agent")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

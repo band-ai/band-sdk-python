@@ -95,6 +95,7 @@ GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", "10000"))
 ORCHESTRATOR_HOST = "localhost"
 ORCHESTRATOR_PORT = int(os.getenv("ORCHESTRATOR_PORT", "10001"))
 
+
 def _load_gateway_credentials() -> tuple[str, str]:
     """Load gateway credentials from env or agent_config.yaml."""
     try:
@@ -108,6 +109,7 @@ def _load_gateway_credentials() -> tuple[str, str]:
             "THENVOI_API_KEY and THENVOI_AGENT_ID environment variables"
         ) from exc
 
+
 def _require_openai_api_key() -> str:
     """Ensure the orchestrator model API key is configured."""
     api_key = os.getenv("OPENAI_API_KEY")
@@ -116,6 +118,7 @@ def _require_openai_api_key() -> str:
             "OPENAI_API_KEY environment variable is required for the demo orchestrator"
         )
     return api_key
+
 
 async def run_gateway() -> None:
     """Run the A2A Gateway that exposes Thenvoi peers."""
@@ -144,6 +147,7 @@ async def run_gateway() -> None:
 
     logger.info("Starting A2A Gateway on %s...", gateway_url)
     await agent.run()
+
 
 def run_orchestrator() -> None:
     """Run the Demo Orchestrator that calls gateway peers."""
@@ -202,6 +206,7 @@ def run_orchestrator() -> None:
     # Run uvicorn (blocking)
     uvicorn.run(server.build(), host=ORCHESTRATOR_HOST, port=ORCHESTRATOR_PORT)
 
+
 async def main() -> None:
     """Run both gateway and orchestrator concurrently."""
     _load_gateway_credentials()
@@ -240,6 +245,7 @@ async def main() -> None:
         await gateway_task
     except asyncio.CancelledError:
         logger.info("Shutting down...")
+
 
 if __name__ == "__main__":
     try:

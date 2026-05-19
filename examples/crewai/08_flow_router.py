@@ -41,6 +41,7 @@ from thenvoi.adapters import CrewAIFlowAdapter  # noqa: E402
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 class ToyRouterFlow:
     """Minimal stand-in for a real ``crewai.flow.flow.Flow``.
 
@@ -122,9 +123,11 @@ class ToyRouterFlow:
                 return run
         return None
 
+
 def flow_factory() -> ToyRouterFlow:
     """Constructor passed to the adapter; called once per inbound message."""
     return ToyRouterFlow()
+
 
 async def main() -> None:
     load_dotenv()
@@ -149,6 +152,7 @@ async def main() -> None:
     )
     logger.info("CrewAI Flow router agent starting")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

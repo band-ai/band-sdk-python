@@ -37,6 +37,7 @@ from thenvoi.adapters import PydanticAIAdapter
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -65,6 +66,7 @@ async def main() -> None:
 
     logger.info("Jerry is cozy in his hole, watching for Tom...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

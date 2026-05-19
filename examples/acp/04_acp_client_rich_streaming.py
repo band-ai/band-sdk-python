@@ -65,6 +65,7 @@ from thenvoi.adapters import ACPClientAdapter
 setup_logging(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -98,6 +99,7 @@ async def main() -> None:
     logger.info("Command: %s", " ".join(acp_command))
     logger.info("Thoughts, tool calls, and plans will be posted to the platform.")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

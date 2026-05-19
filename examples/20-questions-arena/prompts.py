@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
+
 def create_llm() -> BaseChatModel:
     """Select an LLM based on available API keys.
 
@@ -40,6 +41,7 @@ def create_llm() -> BaseChatModel:
         return ChatOpenAI(model="gpt-5.2")
     else:
         raise ValueError("Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set")
+
 
 def create_llm_by_name(model: str) -> BaseChatModel:
     """Create a LangChain chat model for a specific model name.
@@ -74,6 +76,7 @@ def create_llm_by_name(model: str) -> BaseChatModel:
         from langchain_openai import ChatOpenAI
 
         return ChatOpenAI(model=model)
+
 
 def generate_thinker_prompt(agent_name: str = "Thinker") -> str:
     """Generate the Thinker agent's game prompt.
@@ -279,6 +282,7 @@ Guesser: Is it an octopus?
 [If all guessers are done, announce final results to ALL guessers]
 [Then STOP and wait for the user to start a new game]
 ```"""
+
 
 def generate_guesser_prompt(agent_name: str = "Guesser") -> str:
     """Generate the Guesser agent's game prompt.

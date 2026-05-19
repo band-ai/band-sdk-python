@@ -34,6 +34,7 @@ from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 # NOTE: This example auto-approves ALL contact requests. That's fine if intended,
 # but be aware that each accepted contact can send messages that trigger LLM
 # inference. Alternatives:
@@ -44,6 +45,7 @@ async def auto_approve_contacts(event: ContactEvent, tools: ContactTools) -> Non
     if isinstance(event, ContactRequestReceivedEvent):
         logger.info("Auto-approving contact request from %s", event.payload.from_handle)
         await tools.respond_contact_request("approve", request_id=event.payload.id)
+
 
 async def main() -> None:
     load_dotenv()
@@ -80,6 +82,7 @@ async def main() -> None:
 
     logger.info("Starting Anthropic agent with contact management...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

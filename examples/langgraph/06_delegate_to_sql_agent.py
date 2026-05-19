@@ -45,6 +45,7 @@ from thenvoi.integrations.langgraph import graph_as_tool
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 async def main() -> None:
     load_dotenv()
     ws_url = os.getenv("THENVOI_WS_URL")
@@ -104,6 +105,7 @@ async def main() -> None:
 
     logger.info("Starting agent with SQL tool...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

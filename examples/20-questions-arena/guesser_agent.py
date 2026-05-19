@@ -45,6 +45,7 @@ from thenvoi.adapters import LangGraphAdapter
 
 logger = logging.getLogger(__name__)
 
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Guesser agent for 20 Questions Arena")
     parser.add_argument(
@@ -61,6 +62,7 @@ def _parse_args() -> argparse.Namespace:
         "If omitted, auto-detects from env vars.",
     )
     return parser.parse_args()
+
 
 async def main() -> None:
     load_dotenv()
@@ -116,6 +118,7 @@ async def main() -> None:
 
     logger.info("Guesser is ready -- waiting to be invited to a game...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

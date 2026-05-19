@@ -39,6 +39,7 @@ from thenvoi.adapters import CrewAIAdapter
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 def parse_args() -> argparse.Namespace:
     """Parse optional character-name overrides for the example."""
     parser = argparse.ArgumentParser(description="Run the Jerry CrewAI example agent")
@@ -53,6 +54,7 @@ def parse_args() -> argparse.Namespace:
         help="Display name of the Tom agent to look up on Thenvoi",
     )
     return parser.parse_args()
+
 
 async def main() -> None:
     load_dotenv()
@@ -83,6 +85,7 @@ async def main() -> None:
 
     logger.info("Jerry is cozy in his hole, watching for Tom...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

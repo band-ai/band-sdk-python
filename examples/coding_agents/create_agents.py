@@ -28,6 +28,7 @@ AGENTS = [
     {"name": "Reviewer", "role": "reviewer", "file": "reviewer.yaml"},
 ]
 
+
 async def main() -> None:
     api_key = os.environ.get("THENVOI_API_KEY")
     if not api_key:
@@ -93,6 +94,7 @@ async def main() -> None:
         for a in created:
             f.write(f"{a['id']}\n")
     logger.info("\nAgent IDs saved to .agent_ids.txt for cleanup")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -33,6 +33,7 @@ from thenvoi.core.types import AdapterFeatures, Emit
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
 
+
 async def main() -> None:
     setup_logging()
     load_dotenv()
@@ -79,6 +80,7 @@ Do not try to coordinate the room. Your job is to synthesize.
 
     logger.info("Starting mixed-example engineering handoff writer...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

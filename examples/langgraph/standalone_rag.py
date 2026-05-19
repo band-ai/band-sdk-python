@@ -28,6 +28,7 @@ from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain_core.tools import tool
 from langchain_core.messages import SystemMessage
 
+
 def create_rag_graph():
     """
     Creates a compiled Agentic RAG graph.

@@ -59,6 +59,7 @@ You are a collaborative assistant in the Thenvoi multi-agent platform.
 4. Use thenvoi_send_event with type='thought' before complex actions
 """
 
+
 async def setup_agent_with_guidelines(
     server: p.Server,
     tools: list,
@@ -130,6 +131,7 @@ async def setup_agent_with_guidelines(
 
     return agent
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -172,6 +174,7 @@ async def main() -> None:
             "Starting Thenvoi agent with Parlant SDK and comprehensive guidelines..."
         )
         await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

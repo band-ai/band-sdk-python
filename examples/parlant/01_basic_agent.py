@@ -64,6 +64,7 @@ AGENT_DESCRIPTION = """You are a helpful, knowledgeable assistant in the Thenvoi
 - For new discussions: Use thenvoi_create_chatroom to create a dedicated space
 """
 
+
 async def setup_agent_with_guidelines(
     server: p.Server,
     tools: list,
@@ -111,6 +112,7 @@ async def setup_agent_with_guidelines(
 
     return agent
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -151,6 +153,7 @@ async def main() -> None:
 
         logger.info("Starting Thenvoi agent with Parlant SDK (full tools)...")
         await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

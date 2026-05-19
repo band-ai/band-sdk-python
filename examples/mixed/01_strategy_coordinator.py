@@ -34,6 +34,7 @@ from thenvoi.core.types import AdapterFeatures, Emit
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
 
+
 async def main() -> None:
     setup_logging()
     load_dotenv()
@@ -89,6 +90,7 @@ Keep messages short, explicit, and coordination-focused.
 
     logger.info("Starting mixed-example strategy coordinator...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

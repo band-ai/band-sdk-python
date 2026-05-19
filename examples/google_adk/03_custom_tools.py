@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 # Custom tool definitions (Pydantic model + handler function)
 # ---------------------------------------------------------------------------
 
+
 class CalculatorInput(BaseModel):
     """Perform a mathematical calculation."""
 
@@ -52,6 +53,7 @@ class CalculatorInput(BaseModel):
     )
     left: float = Field(description="The first number")
     right: float = Field(description="The second number")
+
 
 def calculator(operation: str, left: float, right: float) -> str:
     """Execute a calculator operation."""
@@ -67,14 +69,17 @@ def calculator(operation: str, left: float, right: float) -> str:
     result = fn(left, right)
     return str(result)
 
+
 class WeatherInput(BaseModel):
     """Get current weather for a city (mock)."""
 
     city: str = Field(description="Name of the city")
 
+
 def weather(city: str) -> str:
     """Return mock weather data."""
     return f"Weather in {city}: Sunny, 22 °C"
+
 
 async def main() -> None:
     load_dotenv()
@@ -109,6 +114,7 @@ async def main() -> None:
 
     logger.info("Starting Google ADK agent with custom tools...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

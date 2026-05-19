@@ -43,11 +43,14 @@ USER_INBOX_TEXT = """Recent emails:
 - Priya shared the draft onboarding deck.
 """
 
+
 class EmailsInput(BaseModel):
     """Return the user's recent emails."""
 
+
 def emails() -> str:
     return USER_INBOX_TEXT
+
 
 class InboxAwareFlow:
     async def kickoff_async(
@@ -81,8 +84,10 @@ class InboxAwareFlow:
             "mentions": [],
         }
 
+
 def flow_factory() -> InboxAwareFlow:
     return InboxAwareFlow()
+
 
 async def main() -> None:
     load_dotenv()
@@ -107,6 +112,7 @@ async def main() -> None:
     )
     logger.info("CrewAI Flow custom tools agent starting")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -52,6 +52,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def validate_mounts() -> None:
     """Validate required mount points exist (NFR-007a).
 
@@ -65,6 +66,7 @@ def validate_mounts() -> None:
             f"{', '.join(f'{m} (rw)' for m in REQUIRED_MOUNTS)}. "
             "See README.md for mount contract details."
         )
+
 
 def load_config(config_path: str) -> dict[str, Any]:
     """Load agent configuration from YAML file.
@@ -89,6 +91,7 @@ def load_config(config_path: str) -> dict[str, Any]:
         raise ValueError("Config file is empty")
 
     return config
+
 
 def load_custom_tools(tools_dir: Path, config_dir: Path, tool_names: list[str]) -> list:
     """Load custom tools from tools directory.
@@ -135,11 +138,13 @@ def load_custom_tools(tools_dir: Path, config_dir: Path, tool_names: list[str]) 
         logger.warning("Could not load custom tools: %s", e)
         return []
 
+
 def _handle_signal(sig: signal.Signals) -> None:
     """Handle shutdown signals (SIGTERM, SIGINT)."""
     logger.info("Received %s, initiating graceful shutdown...", sig.name)
     if _shutdown_event:
         _shutdown_event.set()
+
 
 async def main() -> None:
     """Run the agent from YAML configuration."""
@@ -317,6 +322,7 @@ async def main() -> None:
     except Exception as e:
         logger.warning("Error during agent cleanup: %s", e)
     logger.info("Agent stopped")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

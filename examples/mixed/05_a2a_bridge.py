@@ -35,6 +35,7 @@ from thenvoi.adapters import A2AAdapter
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
 
+
 def _load_platform_urls() -> tuple[str, str]:
     """Load Thenvoi URLs, defaulting to the hosted platform."""
     ws_url = os.getenv(
@@ -43,6 +44,7 @@ def _load_platform_urls() -> tuple[str, str]:
     rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
 
     return ws_url, rest_url
+
 
 def _build_bridge_agent(
     *,
@@ -61,6 +63,7 @@ def _build_bridge_agent(
         ws_url=ws_url,
         rest_url=rest_url,
     )
+
 
 async def main() -> None:
     setup_logging()
@@ -90,6 +93,7 @@ async def main() -> None:
         fact_bridge.run(),
         risk_bridge.run(),
     )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -54,6 +54,7 @@ Remember:
 - Always follow up on commitments
 """
 
+
 async def setup_support_agent(server: p.Server) -> p.Agent:
     """Create and configure a customer support agent with guidelines."""
     agent = await server.create_agent(
@@ -94,6 +95,7 @@ async def setup_support_agent(server: p.Server) -> p.Agent:
 
     return agent
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -126,6 +128,7 @@ async def main() -> None:
 
         logger.info("Starting customer support agent with Parlant SDK...")
         await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

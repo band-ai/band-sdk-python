@@ -45,6 +45,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 @click.command()
 @click.option("--host", default="localhost", help="Host to bind to")
 @click.option("--port", default=10001, help="Port to bind to")
@@ -162,6 +163,7 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
     except Exception as e:
         logger.error("Error starting server: %s", e)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

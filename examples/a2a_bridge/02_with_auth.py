@@ -37,6 +37,7 @@ from thenvoi.integrations.a2a import A2AAuth
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -109,6 +110,7 @@ async def main() -> None:
 
     logger.info("Starting A2A bridge agent (forwarding to %s)...", a2a_url)
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

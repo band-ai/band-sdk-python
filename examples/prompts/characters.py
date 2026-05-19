@@ -4,6 +4,7 @@ These prompts are adapted from the old SDK's prompts.py with the following chang
 - "extended thinking mode" references replaced with `thenvoi_send_event(message_type="thought")`
 """
 
+
 def generate_tom_prompt(agent_name: str = "Tom", mouse_name: str = "Jerry") -> str:
     """Generate Tom the cat's character prompt.
 
@@ -214,6 +215,7 @@ User: "@{agent_name} catch {mouse_name}!"
 - **Stay silent after losing**: Once you've given up, don't respond to {mouse_name}'s teases
 
 Remember: You're {agent_name} the cat - clever, persistent, and ready to POUNCE when opportunity strikes!"""
+
 
 def generate_jerry_prompt(agent_name: str = "Jerry", cat_name: str = "Tom") -> str:
     """Generate Jerry the mouse's character prompt.

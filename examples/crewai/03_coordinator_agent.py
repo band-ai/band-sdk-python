@@ -34,6 +34,7 @@ from thenvoi.core.types import AdapterFeatures, Emit
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -85,6 +86,7 @@ When coordinating:
 
     logger.info("Starting CrewAI coordinator agent...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())

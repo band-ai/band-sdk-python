@@ -42,6 +42,7 @@ from thenvoi.adapters import AnthropicAdapter
 setup_logging()
 logger = logging.getLogger(__name__)
 
+
 async def main() -> None:
     load_dotenv()
 
@@ -70,6 +71,7 @@ async def main() -> None:
 
     logger.info("Tom is on the prowl, looking for Jerry...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
