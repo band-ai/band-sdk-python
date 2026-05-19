@@ -8,7 +8,7 @@ These tests do NOT call LLMs or the live platform.
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
@@ -94,10 +94,13 @@ class TestQuickstartLangGraph:
 
         assert LangGraphAdapter is not None
 
-    @patch.dict(os.environ, {
-        "QUICKSTART_AGENT_ID": "test-agent-id",
-        "QUICKSTART_API_KEY": "test-api-key",
-    })
+    @patch.dict(
+        os.environ,
+        {
+            "QUICKSTART_AGENT_ID": "test-agent-id",
+            "QUICKSTART_API_KEY": "test-api-key",
+        },
+    )
     def test_quickstart_instantiation(self) -> None:
         from thenvoi import Agent
         from thenvoi.adapters import LangGraphAdapter
@@ -377,6 +380,7 @@ class TestCustomToolsSnippets:
 
         class WeatherInput(BaseModel):
             """Get current weather for a city."""
+
             city: str = Field(description="City name")
 
         def get_weather(args: WeatherInput) -> str:
@@ -401,9 +405,9 @@ class TestBYOASnippet:
     def test_graph_factory_pattern(self) -> None:
         from thenvoi.adapters import LangGraphAdapter
 
-        llm = MagicMock()
-        checkpointer = MagicMock()
-        my_tools: list = []
+        _llm = MagicMock()
+        _checkpointer = MagicMock()
+        _my_tools: list = []
 
         def graph_factory(thenvoi_tools):
             mock_graph = MagicMock()
@@ -423,16 +427,19 @@ class TestContactManagementSnippets:
     """README shows ContactEventConfig with HUB_ROOM and CALLBACK strategies."""
 
     def test_contact_event_imports(self) -> None:
-        from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+        from thenvoi.runtime.types import ContactEventStrategy
 
         assert ContactEventStrategy.DISABLED is not None
         assert ContactEventStrategy.HUB_ROOM is not None
         assert ContactEventStrategy.CALLBACK is not None
 
-    @patch.dict(os.environ, {
-        "QUICKSTART_AGENT_ID": "test-agent-id",
-        "QUICKSTART_API_KEY": "test-api-key",
-    })
+    @patch.dict(
+        os.environ,
+        {
+            "QUICKSTART_AGENT_ID": "test-agent-id",
+            "QUICKSTART_API_KEY": "test-api-key",
+        },
+    )
     def test_hub_room_config(self) -> None:
         """README snippet: Agent.create with HUB_ROOM strategy."""
         from thenvoi import Agent
@@ -451,10 +458,13 @@ class TestContactManagementSnippets:
 
         assert agent is not None
 
-    @patch.dict(os.environ, {
-        "QUICKSTART_AGENT_ID": "test-agent-id",
-        "QUICKSTART_API_KEY": "test-api-key",
-    })
+    @patch.dict(
+        os.environ,
+        {
+            "QUICKSTART_AGENT_ID": "test-agent-id",
+            "QUICKSTART_API_KEY": "test-api-key",
+        },
+    )
     def test_callback_config(self) -> None:
         """README snippet: Agent.create with CALLBACK strategy + handler."""
         from thenvoi import Agent
@@ -466,7 +476,9 @@ class TestContactManagementSnippets:
         async def handle_contact(event, tools) -> None:
             if not isinstance(event, ContactRequestReceivedEvent):
                 return
-            action = "approve" if event.payload.from_handle in TRUSTED_HANDLES else "reject"
+            action = (
+                "approve" if event.payload.from_handle in TRUSTED_HANDLES else "reject"
+            )
             await tools.respond_contact_request(action, request_id=event.payload.id)
 
         adapter = MagicMock()
@@ -526,10 +538,13 @@ class TestA2ABridgeSnippet:
 class TestA2AGatewaySnippet:
     """README snippet: A2AGatewayAdapter(api_key=..., gateway_url=..., port=...)."""
 
-    @patch.dict(os.environ, {
-        "GATEWAY_AGENT_ID": "test-agent-id",
-        "GATEWAY_API_KEY": "test-api-key",
-    })
+    @patch.dict(
+        os.environ,
+        {
+            "GATEWAY_AGENT_ID": "test-agent-id",
+            "GATEWAY_API_KEY": "test-api-key",
+        },
+    )
     def test_gateway_full_snippet(self) -> None:
         from thenvoi import Agent
         from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter
@@ -593,10 +608,13 @@ class TestExceptionHierarchy:
 class TestQuickReferenceSnippets:
     """README quick reference table shows connect/create patterns."""
 
-    @patch.dict(os.environ, {
-        "AGENT_ID": "test-agent-id",
-        "API_KEY": "test-api-key",
-    })
+    @patch.dict(
+        os.environ,
+        {
+            "AGENT_ID": "test-agent-id",
+            "API_KEY": "test-api-key",
+        },
+    )
     def test_agent_create_and_run_signature(self) -> None:
         from thenvoi import Agent
 

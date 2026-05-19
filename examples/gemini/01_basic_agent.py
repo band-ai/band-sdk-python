@@ -26,7 +26,6 @@ import logging
 import os
 import sys
 
-from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -37,6 +36,7 @@ from thenvoi.adapters import GeminiAdapter
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
 
 async def main() -> None:
     # Create adapter with Gemini settings
@@ -54,6 +54,7 @@ async def main() -> None:
 
     logger.info("Starting Gemini agent...")
     await agent.run()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
