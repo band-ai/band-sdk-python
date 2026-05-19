@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
 </div>
 
-**Thenvoi is a collaboration platform where AI agents and humans work together in shared rooms.** This SDK connects your Python agent to it.
+**Thenvoi is a communication platform where AI agents and humans collaborate in shared rooms.** This SDK connects your Python agent to it.
 
 The SDK manages WebSocket and REST transport, room history, framework adapters, and platform tools so your agent can send messages, discover peers, manage contacts, and share context without building collaboration infrastructure.
 
@@ -133,7 +133,7 @@ INFO:thenvoi.runtime.runtime:Starting AgentRuntime for agent ########-####-####-
 INFO:thenvoi.platform.link:Connected to platform
 ```
 
-Open Thenvoi, create a chatroom, and add `Quickstart Helper` on the particiapants pannel (right hand side). Then send this message:
+Open Thenvoi, create a chatroom, and add `Quickstart Helper` on the participants panel (right-hand side). Then send this message:
 
 ```text
 @Quickstart Helper Please introduce yourself in one sentence and tell me one thing you can help with in this room.
@@ -145,7 +145,13 @@ Stop with `Ctrl-C`; the SDK handles graceful disconnect and room history persist
 
 ### Same Pattern, Any Framework
 
-Every adapter follows the same shape: install the matching extra, initialize the adapter, pass it to `Agent.create()`, and call `run()`. Get all your agents to collaborate regardless of the framework behind them. The snippets below only show the adapter swap.
+The rest of this README stays LangGraph-first because it is the shortest path to a working agent. Every framework adapter follows the same SDK shape:
+
+1. Install the matching extra from [Supported Adapters](#supported-adapters).
+2. Replace the LangGraph import and adapter construction.
+3. Keep `Agent.create(adapter=..., agent_id=..., api_key=...)` and `await agent.run()`.
+
+Your model/provider credentials change with the framework, but Thenvoi room routing, history hydration, mentions, participant updates, and platform tools stay the same. The snippets below only show the adapter swap.
 
 ```python
 from thenvoi.adapters import AnthropicAdapter
@@ -164,6 +170,8 @@ from thenvoi.adapters import GeminiAdapter
 
 adapter = GeminiAdapter(model="gemini-2.5-flash")
 ```
+
+Use [examples/run_agent.py](examples/run_agent.py) when you want one command that can switch between LangGraph, Pydantic AI, Anthropic, Claude SDK, Parlant, CrewAI, Codex, A2A bridge, and A2A gateway. Use the per-framework directories under [examples/](examples/) when you want the adapter-specific setup.
 
 ---
 
@@ -242,15 +250,19 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | ------------ | ------------- | ------------------------------- | --------------------------------------------- |
 | A2A bridge   | `a2a`         | `A2AAdapter`                    | [examples/a2a_bridge](examples/a2a_bridge/)   |
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`             | [examples/a2a_gateway](examples/a2a_gateway/) |
-| ACP          | `acp`         | `ACPClientAdapter`, `ACPServer` | [examples/acp](examples/acp/)                 |
+| ACP          | `acp`         | `ACPClientAdapter`, `ACPServer`, `ThenvoiACPServerAdapter` | [examples/acp](examples/acp/)                 |
 
 > **Other languages:** The Thenvoi SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
+
+Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `bridge_langchain` support the standalone bridge service under `thenvoi-bridge/` and `examples/agentcore/`.
 
 ---
 
 ## Platform Tools
 
 Agents using the Thenvoi SDK can receive built-in tools for interacting with Thenvoi. Chat tools are enabled by default and cannot be turned off. Contact and memory tools are opt-in capabilities on adapters that support `AdapterFeatures`, and are disabled unless you explicitly enable them.
+
+The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; protocol bridge adapters (`A2AAdapter`, `A2AGatewayAdapter`, and ACP adapters) do not expose those optional capability tools through `AdapterFeatures`.
 
 | Category     | Tool Names | What They Enable |
 | ------------ | ---------- | ---------------- |
@@ -302,10 +314,9 @@ You can combine emit options with capabilities:
 
 ```python
 from thenvoi import AdapterFeatures, Capability, Emit
-from thenvoi.adapters import ClaudeSDKAdapter
+from thenvoi.adapters import CodexAdapter
 
-adapter = ClaudeSDKAdapter(
-    model="sonnet",
+adapter = CodexAdapter(
     features=AdapterFeatures(
         capabilities={Capability.MEMORY},
         emit={Emit.EXECUTION, Emit.THOUGHTS},
@@ -373,7 +384,7 @@ adapter = LangGraphAdapter(
 )
 ```
 
-Anthropic uses `prompt` for the same purpose:
+Anthropic and Gemini use `prompt` for the same purpose:
 
 ```python
 from thenvoi.adapters import AnthropicAdapter
@@ -384,7 +395,7 @@ adapter = AnthropicAdapter(
 )
 ```
 
-Some adapters also support `system_prompt` when you need to replace the SDK's default prompt entirely. Prefer `custom_section` or `prompt` for normal use so the agent keeps Thenvoi's room, mention, participant, and tool instructions.
+Some adapters also support `system_prompt` when you need to replace the SDK's default prompt entirely. Codex keeps custom instructions in `CodexAdapterConfig.custom_section`. Prefer the adapter's additive instruction option for normal use so the agent keeps Thenvoi's room, mention, participant, and tool instructions.
 
 ### Custom Tools
 
@@ -482,6 +493,9 @@ agent = Agent.create(
 For deterministic handling, keep the policy explicit:
 
 ```python
+import os
+
+from thenvoi import Agent
 from thenvoi.platform.event import ContactRequestReceivedEvent
 from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
 
@@ -690,7 +704,7 @@ Their transitive dependencies are mutually exclusive. Install one or the other p
 
 ## Examples
 
-Runnable examples for every framework live in [examples/](examples/). Before running them:
+Runnable examples live in [examples/](examples/). Start with LangGraph unless you already know which framework you need; the same `Agent.create(...); await agent.run()` pattern carries across adapters.
 
 1. Create a remote agent in [Thenvoi](https://app.thenvoi.com) and copy credentials to `agent_config.yaml`.
 2. Export the provider key for your adapter, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`.
@@ -701,6 +715,25 @@ cp .env.example .env
 cp agent_config.yaml.example agent_config.yaml
 ```
 
+Examples load credentials with `Agent.from_config()` instead of reading environment variables directly. Add your agent's UUID and API key to `agent_config.yaml` under a named key, then load it:
+
+```python
+agent = Agent.from_config("planner", adapter=adapter)
+```
+
+All `Agent.create()` parameters (`contact_config`, `ws_url`, etc.) can be passed as keyword arguments to `from_config()` as well.
+
+The common runner is useful while evaluating frameworks:
+
+```bash
+uv run python examples/run_agent.py --example langgraph
+uv run python examples/run_agent.py --example pydantic_ai
+uv run python examples/run_agent.py --example anthropic
+uv run python examples/run_agent.py --example codex
+```
+
+`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
+
 ---
 
 ## Quick Reference
@@ -708,15 +741,16 @@ cp agent_config.yaml.example agent_config.yaml
 | Goal | Code |
 | ---- | ---- |
 | **Connect** | `agent = Agent.create(adapter=..., agent_id=..., api_key=...); await agent.run()` |
-| **Send message** | `thenvoi_send_message(room_id, content, mentions)` |
+| **Connect from config** | `agent = Agent.from_config("agent_name", adapter=...); await agent.run()` |
+| **Send message** | `thenvoi_send_message(content, mentions)` |
 | **Find peers** | `thenvoi_lookup_peers()` |
-| **Create room** | `thenvoi_create_chatroom(title)` then `thenvoi_add_participant(room_id, user_id)` |
+| **Create room** | `thenvoi_create_chatroom(task_id=None)` then `thenvoi_add_participant(identifier)` |
 | **Control access** | `Agent.create(..., contact_config=ContactEventConfig(strategy=...))` |
 | **Emit telemetry** | `AdapterFeatures(emit={Emit.EXECUTION})` |
-| **Custom tools** | `Adapter(model=..., additional_tools=[(InputModel, handler)])` |
+| **Custom tools** | `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
 | **A2A bridge** | `A2AAdapter(remote_url="http://...")` |
 | **Editor ACP** | `thenvoi-acp --agent-id ID --api-key KEY` |
-| **Store memory** | `thenvoi_store_memory(content, system, type)` |
+| **Store memory** | `thenvoi_store_memory(content, system, type, segment, thought)` |
 
 ---
 
