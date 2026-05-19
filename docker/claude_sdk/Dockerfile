@@ -60,10 +60,9 @@ RUN CLAUDE_BIN=/app/.venv/lib/python3.12/site-packages/claude_agent_sdk/_bundled
     && test -f "$CLAUDE_BIN" \
     && chmod +x "$CLAUDE_BIN"
 
-# Copy entrypoint, runner, and shared utilities.
+# Copy entrypoint and runner. Shared repo-init utilities are imported from /app/src.
 COPY docker/claude_sdk/entrypoint.sh /app/docker/claude_sdk/entrypoint.sh
 COPY docker/claude_sdk/runner.py /app/docker/claude_sdk/runner.py
-COPY docker/shared/repo_init.py /app/docker/claude_sdk/repo_init.py
 
 # Trust bind-mounted repo to avoid "dubious ownership" errors.
 # Additional dirs can be configured at runtime via GIT_SAFE_DIRS env var.
