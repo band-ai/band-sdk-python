@@ -12,9 +12,15 @@ import logging
 from unittest.mock import AsyncMock
 
 import pytest
+from websockets.datastructures import Headers
+from websockets.exceptions import InvalidStatus
+from websockets.http11 import Response
 
 from thenvoi.client.streaming import (
     MessageCreatedPayload,
+    SupersedePayload,
+    WebSocketDisconnectReason,
+    WebSocketUpgradeError,
     ParticipantAddedPayload,
     ParticipantRemovedPayload,
     RoomAddedPayload,
@@ -39,6 +45,19 @@ VALID_MESSAGE_CREATED_PAYLOAD: dict = {
     "inserted_at": "2025-11-17T11:20:10.284136Z",
     "updated_at": "2025-11-17T11:20:10.284136Z",
 }
+
+
+def _upgrade_exception(
+    status_code: int, body: bytes, headers: dict[str, str] | None = None
+):
+    return InvalidStatus(
+        Response(
+            status_code=status_code,
+            reason_phrase="error",
+            headers=Headers(headers or {}),
+            body=body,
+        )
+    )
 
 
 # --- Invalid payload tests: verify graceful handling (log + skip) ---
@@ -204,6 +223,101 @@ async def test_skips_invalid_participant_removed_payload(caplog):
 
     assert not callback_called, "Callback should not be called for invalid payload"
     assert "Invalid participant_removed payload" in caplog.text
+
+
+async def test_supersede_event_records_terminal_reason_and_disables_reconnect():
+    """agent_control supersede should record the server reason and stop reconnects."""
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    client.client = type("MockPhoenix", (), {"auto_reconnect": True})()
+    received_payload = None
+
+    async def on_supersede(payload: SupersedePayload):
+        nonlocal received_payload
+        received_payload = payload
+        client.record_terminal_disconnect(payload.to_disconnect_reason())
+
+    class MockMessage:
+        event = "supersede"
+        payload = {
+            "reason": "session.already_connected",
+            "message": "This connection has been superseded by a newer session for this agent.",
+            "retryable": False,
+            "retry_after": 15,
+            "target_socket_id": "agent_socket:agent-123",
+            "correlation_id": "evict-123",
+        }
+
+    await client._handle_events(MockMessage(), {"supersede": on_supersede})
+
+    assert isinstance(received_payload, SupersedePayload)
+    assert client.client.auto_reconnect is False
+    assert client.last_disconnect_reason == WebSocketDisconnectReason(
+        reason="session.already_connected",
+        message="This connection has been superseded by a newer session for this agent.",
+        retryable=False,
+        retry_after=15,
+        target_socket_id="agent_socket:agent-123",
+        correlation_id="evict-123",
+    )
+
+
+def test_parses_distinct_upgrade_errors_from_http_json_response():
+    cases = [
+        (
+            409,
+            b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
+            "connection_conflict",
+            None,
+        ),
+        (
+            400,
+            b'{"error":{"code":"invalid_on_conflict","message":"bad on_conflict","request_id":"req-400"}}',
+            "invalid_on_conflict",
+            None,
+        ),
+        (
+            503,
+            b'{"error":{"code":"tracking_failed","message":"tracking unavailable","request_id":"req-503"}}',
+            "tracking_failed",
+            None,
+        ),
+        (
+            429,
+            b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-429","retry_after":12}}',
+            "too_many_requests",
+            12,
+        ),
+    ]
+
+    for status_code, body, code, retry_after in cases:
+        err = WebSocketUpgradeError.from_exception(
+            _upgrade_exception(status_code, body, {"Retry-After": "30"})
+        )
+
+        assert err is not None
+        assert err.status_code == status_code
+        assert err.code == code
+        assert err.request_id == f"req-{status_code}"
+        assert err.retry_after == retry_after
+
+
+def test_uses_retry_after_header_for_429_upgrade_error():
+    err = WebSocketUpgradeError.from_exception(
+        _upgrade_exception(
+            429,
+            b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-header"}}',
+            {"Retry-After": "30"},
+        )
+    )
+
+    assert err is not None
+    assert err.retry_after == 30
+
+
+def test_ignores_generic_auth_upgrade_error_without_json_contract():
+    err = WebSocketUpgradeError.from_exception(_upgrade_exception(403, b""))
+
+    assert err is None
 
 
 # --- Valid payload tests ---

@@ -8,6 +8,8 @@ Usage:
 
 from thenvoi.client.streaming.client import (
     WebSocketClient,
+    WebSocketDisconnectReason,
+    WebSocketUpgradeError,
     MessageCreatedPayload,
     RoomAddedPayload,
     RoomRemovedPayload,
@@ -20,10 +22,13 @@ from thenvoi.client.streaming.client import (
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
+    SupersedePayload,
 )
 
 __all__ = [
     "WebSocketClient",
+    "WebSocketDisconnectReason",
+    "WebSocketUpgradeError",
     "MessageCreatedPayload",
     "RoomAddedPayload",
     "RoomRemovedPayload",
@@ -36,4 +41,5 @@ __all__ = [
     "ContactRequestUpdatedPayload",
     "ContactAddedPayload",
     "ContactRemovedPayload",
+    "SupersedePayload",
 ]
