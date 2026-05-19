@@ -27,14 +27,12 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import AnthropicAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.platform.event import ContactEvent, ContactRequestReceivedEvent
 from thenvoi.runtime.contact_tools import ContactTools
 from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 # NOTE: This example auto-approves ALL contact requests. That's fine if intended,
 # but be aware that each accepted contact can send messages that trigger LLM
@@ -47,7 +45,6 @@ async def auto_approve_contacts(event: ContactEvent, tools: ContactTools) -> Non
         logger.info("Auto-approving contact request from %s", event.payload.from_handle)
         await tools.respond_contact_request("approve", request_id=event.payload.id)
 
-
 async def main() -> None:
     load_dotenv()
 
@@ -58,9 +55,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    agent_id, api_key = load_agent_config("anthropic_agent")
-
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
         prompt=(
@@ -76,10 +70,9 @@ async def main() -> None:
         broadcast_changes=True,
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "anthropic_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
         contact_config=contact_config,
@@ -87,7 +80,6 @@ async def main() -> None:
 
     logger.info("Starting Anthropic agent with contact management...")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

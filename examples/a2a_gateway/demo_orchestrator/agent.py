@@ -27,12 +27,10 @@ logger = logging.getLogger(__name__)
 # Global gateway client instance (set by OrchestratorAgent)
 _gateway_client: GatewayClient | None = None
 
-
 def set_gateway_client(client: GatewayClient) -> None:
     """Set the global gateway client for tools to use."""
     global _gateway_client
     _gateway_client = client
-
 
 @tool
 async def call_peer_agent(
@@ -71,13 +69,11 @@ async def call_peer_agent(
         logger.error("Error calling peer '%s': %s", peer_id, e)
         return f"Error calling peer '{peer_id}': {e}"
 
-
 class ResponseFormat(BaseModel):
     """Response format for the orchestrator agent."""
 
     status: Literal["input_required", "completed", "error"] = "input_required"
     message: str
-
 
 class OrchestratorAgent:
     """Orchestrator agent that routes requests to A2A Gateway peers.
@@ -124,14 +120,14 @@ Always be helpful and provide clear responses to the user."""
         self,
         gateway_url: str,
         available_peers: list[str] | None = None,
-        model: str = "gpt-4o",
+        model: str = "gpt-5.4-mini",
     ):
         """Initialize the orchestrator agent.
 
         Args:
             gateway_url: Base URL of the A2A Gateway
             available_peers: List of available peer IDs (optional, will be shown in system prompt)
-            model: OpenAI model to use (default: gpt-4o)
+            model: OpenAI model to use (default: gpt-5.4-mini)
         """
         self.gateway_url = gateway_url
         self.available_peers = available_peers or []

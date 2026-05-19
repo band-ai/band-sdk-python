@@ -28,7 +28,6 @@ from typing import Any
 
 import yaml
 
-from thenvoi.config.loader import load_agent_config
 from thenvoi.core.types import AdapterFeatures, Emit
 
 # Global flag for graceful shutdown
@@ -53,7 +52,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 def validate_mounts() -> None:
     """Validate required mount points exist (NFR-007a).
 
@@ -68,14 +66,12 @@ def validate_mounts() -> None:
             "See README.md for mount contract details."
         )
 
-
 def load_config(config_path: str) -> dict[str, Any]:
     """Load agent configuration from YAML file.
 
-    Credentials (agent_id, api_key) are validated via the SDK's
-    ``load_agent_config()`` so all examples follow a single path
-    for credential loading.  Additional fields (role, model, prompt,
-    etc.) are returned as-is for the runner to consume.
+    Returns the YAML contents as a dict.  Credentials (agent_id, api_key)
+    are expected in the YAML and used by ``Agent.from_config()`` at startup.
+    Additional fields (role, model, prompt, etc.) are consumed by the runner.
     """
     path = Path(config_path).resolve()
     if not path.exists():
@@ -92,13 +88,7 @@ def load_config(config_path: str) -> dict[str, Any]:
     if config is None:
         raise ValueError("Config file is empty")
 
-    # Validate credentials via the SDK config loader (supports flat YAML format)
-    agent_id, api_key = load_agent_config("agent", config_path=path)
-    config["agent_id"] = agent_id
-    config["api_key"] = api_key
-
     return config
-
 
 def load_custom_tools(tools_dir: Path, config_dir: Path, tool_names: list[str]) -> list:
     """Load custom tools from tools directory.
@@ -145,13 +135,11 @@ def load_custom_tools(tools_dir: Path, config_dir: Path, tool_names: list[str]) 
         logger.warning("Could not load custom tools: %s", e)
         return []
 
-
 def _handle_signal(sig: signal.Signals) -> None:
     """Handle shutdown signals (SIGTERM, SIGINT)."""
     logger.info("Received %s, initiating graceful shutdown...", sig.name)
     if _shutdown_event:
         _shutdown_event.set()
-
 
 async def main() -> None:
     """Run the agent from YAML configuration."""
@@ -190,7 +178,6 @@ async def main() -> None:
 
     # Extract config values
     agent_id = config["agent_id"]
-    api_key = config["api_key"]
     model = config.get("model")
     fallback_model = config.get("fallback_model")
     custom_prompt = config.get("prompt", "")
@@ -248,10 +235,10 @@ async def main() -> None:
     )
 
     # Create agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "agent",
+        config_path=config_path,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
@@ -330,7 +317,6 @@ async def main() -> None:
     except Exception as e:
         logger.warning("Error during agent cleanup: %s", e)
     logger.info("Agent stopped")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -26,12 +26,10 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import AnthropicAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 CUSTOM_PROMPT = """
 You are a technical support agent for a software company.
@@ -49,7 +47,6 @@ When helping users:
 4. Confirm the issue is resolved before closing
 """
 
-
 async def main() -> None:
     load_dotenv()
 
@@ -60,10 +57,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("support_agent")
-
     # Create adapter with custom instructions and execution reporting
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
@@ -73,17 +66,15 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "support_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting support agent...")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

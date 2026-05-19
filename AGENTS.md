@@ -187,7 +187,7 @@ The SDK supports the [A2A (Agent-to-Agent) protocol](https://google.github.io/A2
 from thenvoi.adapters.a2a import A2AAdapter, A2AAuth
 
 adapter = A2AAdapter(
-    a2a_url="http://localhost:10000",
+    remote_url="http://localhost:10000",
     auth=A2AAuth(api_key="..."),  # optional
 )
 ```

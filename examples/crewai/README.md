@@ -318,7 +318,7 @@ A typical adapter configuration looks like this:
 
 ```python
 adapter = CrewAIAdapter(
-    model="gpt-4o-mini",
+    model="gpt-5.4-mini",
     role="Research Assistant",
     goal="Help users find and analyze information",
     backstory="Expert researcher with deep domain knowledge",
@@ -369,8 +369,8 @@ The adapter uses an OpenAI-compatible model interface.
 
 That includes:
 
-- `gpt-4o`
-- `gpt-4o-mini`
+- `gpt-5.4-mini`
+- `gpt-5.4-mini`
 - `gpt-4-turbo`
 - other OpenAI-compatible models
 

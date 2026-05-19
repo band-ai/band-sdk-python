@@ -45,7 +45,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 @click.command()
 @click.option("--host", default="localhost", help="Host to bind to")
 @click.option("--port", default=10001, help="Port to bind to")
@@ -61,7 +60,7 @@ logger = logging.getLogger(__name__)
 )
 @click.option(
     "--model",
-    default=os.getenv("OPENAI_MODEL", "gpt-4o"),
+    default=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
     help="OpenAI model to use",
 )
 def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None:
@@ -163,7 +162,6 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
     except Exception as e:
         logger.error("Error starting server: %s", e)
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

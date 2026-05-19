@@ -29,12 +29,10 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import ParlantAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 CUSTOM_DESCRIPTION = """
 You are a collaborative assistant in the Thenvoi multi-agent platform.
@@ -60,7 +58,6 @@ You are a collaborative assistant in the Thenvoi multi-agent platform.
 3. Always confirm actions taken with the user
 4. Use thenvoi_send_event with type='thought' before complex actions
 """
-
 
 async def setup_agent_with_guidelines(
     server: p.Server,
@@ -133,7 +130,6 @@ async def setup_agent_with_guidelines(
 
     return agent
 
-
 async def main() -> None:
     load_dotenv()
 
@@ -144,10 +140,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("parlant_agent")
-
     # Start Parlant server with OpenAI
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
         # Create Parlant tools INSIDE server context
@@ -169,10 +161,9 @@ async def main() -> None:
         )
 
         # Create and start Thenvoi agent
-        agent = Agent.create(
+        agent = Agent.from_config(
+            "parlant_agent",
             adapter=adapter,
-            agent_id=agent_id,
-            api_key=api_key,
             ws_url=ws_url,
             rest_url=rest_url,
         )
@@ -181,7 +172,6 @@ async def main() -> None:
             "Starting Thenvoi agent with Parlant SDK and comprehensive guidelines..."
         )
         await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

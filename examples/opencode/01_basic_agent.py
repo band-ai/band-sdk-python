@@ -33,12 +33,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from setup_logging import setup_logging  # pyrefly: ignore[missing-import]
 from thenvoi import Agent
 from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from thenvoi.config import load_agent_config
 from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 async def main() -> None:
     load_dotenv()
@@ -51,8 +49,6 @@ async def main() -> None:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
     agent_key = os.getenv("AGENT_KEY", "darter")
-    agent_id, api_key = load_agent_config(agent_key)
-
     adapter = OpencodeAdapter(
         config=OpencodeAdapterConfig(
             base_url=os.getenv("OPENCODE_BASE_URL", "http://127.0.0.1:4096"),
@@ -65,17 +61,15 @@ async def main() -> None:
         )
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        agent_key,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting OpenCode agent: %s", agent_key)
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

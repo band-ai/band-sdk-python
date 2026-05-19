@@ -28,11 +28,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import LangGraphAdapter
-from thenvoi.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 async def main() -> None:
     load_dotenv()
@@ -45,27 +43,22 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("simple_agent")
-
     # Create adapter with LLM and checkpointer
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-4o"),
+        llm=ChatOpenAI(model="gpt-5.4-mini"),
         checkpointer=InMemorySaver(),
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "simple_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting LangGraph agent...")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

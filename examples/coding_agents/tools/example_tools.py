@@ -41,7 +41,6 @@ _FUNCTIONS = {
     "pow": pow,
 }
 
-
 # Maximum recursion depth for expression evaluation
 _MAX_DEPTH = 50
 
@@ -51,7 +50,6 @@ _MAX_POW_EXPONENT = 100
 
 # Maximum expression length to prevent DoS via very long strings
 _MAX_EXPRESSION_LENGTH = 1000
-
 
 def _safe_eval(node: ast.AST, depth: int = 0) -> float | int:
     """Safely evaluate an AST node containing only math operations."""
@@ -104,7 +102,6 @@ def _safe_eval(node: ast.AST, depth: int = 0) -> float | int:
     else:
         raise ValueError(f"Unsupported expression type: {type(node).__name__}")
 
-
 def safe_math_eval(expression: str) -> float | int:
     """Safely evaluate a mathematical expression string."""
     if len(expression) > _MAX_EXPRESSION_LENGTH:
@@ -113,7 +110,6 @@ def safe_math_eval(expression: str) -> float | int:
         )
     tree = ast.parse(expression, mode="eval")
     return _safe_eval(tree)
-
 
 @tool("calculator", "Evaluate math expressions", {"expression": str})
 async def calculator(args: dict[str, Any]) -> dict[str, Any]:
@@ -124,12 +120,10 @@ async def calculator(args: dict[str, Any]) -> dict[str, Any]:
     except (ValueError, SyntaxError, TypeError, KeyError, ZeroDivisionError) as e:
         return {"content": [{"type": "text", "text": f"Error: {e}"}], "is_error": True}
 
-
 @tool("get_time", "Get current date/time", {})
 async def get_time(_args: dict[str, Any]) -> dict[str, Any]:
     """Returns current time in ISO format."""
     return {"content": [{"type": "text", "text": datetime.now().isoformat()}]}
-
 
 @tool("random_number", "Generate random number", {"min": int, "max": int})
 async def random_number(args: dict[str, Any]) -> dict[str, Any]:

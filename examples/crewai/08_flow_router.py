@@ -37,11 +37,9 @@ from setup_logging import setup_logging  # noqa: E402
 
 from thenvoi import Agent  # noqa: E402
 from thenvoi.adapters import CrewAIFlowAdapter  # noqa: E402
-from thenvoi.config import load_agent_config  # noqa: E402
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 class ToyRouterFlow:
     """Minimal stand-in for a real ``crewai.flow.flow.Flow``.
@@ -124,11 +122,9 @@ class ToyRouterFlow:
                 return run
         return None
 
-
 def flow_factory() -> ToyRouterFlow:
     """Constructor passed to the adapter; called once per inbound message."""
     return ToyRouterFlow()
-
 
 async def main() -> None:
     load_dotenv()
@@ -139,25 +135,20 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    agent_id, api_key = load_agent_config("crewai_flow_router")
-
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
         join_policy="all",
         sequential_chains={"data-fetcher": "presenter"},
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "crewai_flow_router",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
     logger.info("CrewAI Flow router agent starting")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
