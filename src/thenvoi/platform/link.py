@@ -158,7 +158,7 @@ class ThenvoiLink:
 
         Extracted from ThenvoiAgent.stop() lines 193-195.
         """
-        if not self._is_connected or not self._ws:
+        if not self._ws:
             return
 
         try:
@@ -314,6 +314,7 @@ class ThenvoiLink:
         """Handle terminal supersede event before the platform closes the socket."""
         reason = payload.to_disconnect_reason()
         self._last_disconnect_reason = reason
+        self._is_connected = False
         if self._ws:
             self._ws.record_terminal_disconnect(reason)
         logger.warning(

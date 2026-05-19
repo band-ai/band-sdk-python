@@ -201,6 +201,7 @@ class TestThenvoiLinkConnection:
         """supersede records the platform reason and disables reconnect before close."""
         link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
         link._ws = mock_ws_client
+        link._is_connected = True
         payload = SupersedePayload(
             reason="session.already_connected",
             message="This connection has been superseded by a newer session for this agent.",
@@ -215,11 +216,37 @@ class TestThenvoiLinkConnection:
         mock_ws_client.record_terminal_disconnect.assert_called_once_with(
             link.last_disconnect_reason
         )
+        assert link.is_connected is False
         assert link.last_disconnect_reason is not None
         assert link.last_disconnect_reason.reason == "session.already_connected"
         event = await link.__anext__()
         assert isinstance(event, WebSocketDisconnectedEvent)
         assert event.payload == link.last_disconnect_reason
+
+    async def test_disconnect_after_supersede_still_cleans_up_websocket(
+        self, mock_ws_client
+    ):
+        """disconnect() should clean up the websocket even after terminal state flips."""
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link._ws = mock_ws_client
+        link._is_connected = True
+        link._subscribed_rooms.add("room-1")
+        payload = SupersedePayload(
+            reason="session.already_connected",
+            message="This connection has been superseded by a newer session for this agent.",
+            retryable=False,
+            retry_after=15,
+            target_socket_id="agent_socket:agent-123",
+            correlation_id="evict-123",
+        )
+
+        await link._on_supersede(payload)
+        await link.disconnect()
+
+        mock_ws_client.__aexit__.assert_called_once_with(None, None, None)
+        assert link.is_connected is False
+        assert link._ws is None
+        assert link._subscribed_rooms == set()
 
     async def test_close_without_supersede_leaves_disconnect_reason_empty(self):
         """An empty Phoenix close should not invent a terminal reason."""
