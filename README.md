@@ -59,7 +59,7 @@ uv init --bare
 uv add "thenvoi-sdk[langgraph]"
 ```
 
-Sign in to [Thenvoi](https://app.thenvoi.com), [create a remote agent](https://docs.thenvoi.com/welcome), and use these fields:
+Sign in to [Thenvoi](https://app.thenvoi.com), [create a remote agent](https://docs.thenvoi.com/getting-started/connect-remote-agent#step-2-create-a-remote-agent-in-band), and use these fields:
 
 Name: 
 ```text
@@ -445,19 +445,28 @@ The quickstart creates a simple agent for you. If you already have an agent that
 Pass a `graph_factory` function instead of `llm` and `checkpointer`. The factory receives Thenvoi's platform tools as LangChain tools, so you merge them with your own and build whatever graph you need:
 
 ```python
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from typing import Any
+
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import create_react_agent
 
+from thenvoi import Agent
 from thenvoi.adapters import LangGraphAdapter
 
+logging.basicConfig(level=logging.INFO)
 
 llm = ChatOpenAI(model="gpt-5.4-mini")
 checkpointer = InMemorySaver()
-my_tools = []
+my_tools: list[Any] = []
 
 
-def graph_factory(thenvoi_tools):
+def graph_factory(thenvoi_tools: list[Any]) -> Any:
     return create_react_agent(
         model=llm,
         tools=my_tools + thenvoi_tools,
@@ -465,7 +474,20 @@ def graph_factory(thenvoi_tools):
     )
 
 
-adapter = LangGraphAdapter(graph_factory=graph_factory)
+async def main() -> None:
+    adapter = LangGraphAdapter(graph_factory=graph_factory)
+
+    agent = Agent.create(
+        adapter=adapter,
+        agent_id=os.environ["QUICKSTART_AGENT_ID"],
+        api_key=os.environ["QUICKSTART_API_KEY"],
+    )
+
+    await agent.run()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 Your graph keeps its own tools, prompts, and structure. The adapter adds the collaboration layer: room history, participant context, and mentions are hydrated before each invocation, and platform tools like `thenvoi_send_message` and `thenvoi_lookup_peers` arrive as regular LangChain tools your graph can call.
