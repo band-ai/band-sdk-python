@@ -6,9 +6,9 @@
 # thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
-ACP Client example - Use an external ACP agent from Thenvoi.
+ACP Client example - Use a remote ACP agent from Thenvoi.
 
-This example connects to an external ACP-compliant agent (Codex CLI, Gemini CLI,
+This example connects to a remote ACP-compliant agent (Codex CLI, Gemini CLI,
 Claude Code, Goose, etc.) and makes it available as a Thenvoi platform agent.
 Messages from the platform are forwarded to the ACP agent, and responses are
 posted back to the chat.
@@ -16,8 +16,8 @@ posted back to the chat.
 Architecture:
     Thenvoi Platform (message arrives in room)
       -> ACPClientAdapter
-        -> external ACP agent subprocess/session
-          -> External ACP Agent (Codex CLI, Gemini CLI, etc.)
+        -> remote ACP agent subprocess/session
+          -> Remote ACP Agent (Codex CLI, Gemini CLI, etc.)
             -> session_update responses streamed back
         -> Posts response to Thenvoi room
 
@@ -28,7 +28,7 @@ Prerequisites:
        - ACP_AGENT_COMMAND: Command to spawn the ACP agent
          (default: "npx @zed-industries/codex-acp")
 
-    2. Have the external ACP agent installed and available in PATH
+    2. Have the remote ACP agent installed and available in PATH
 
 Run with:
     uv run examples/acp/02_acp_client.py
@@ -66,7 +66,7 @@ async def main() -> None:
     # Load agent credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("acp_client_agent")
 
-    # Command to spawn the external ACP agent
+    # Command to spawn the remote ACP agent
     acp_command = shlex.split(
         os.getenv("ACP_AGENT_COMMAND", "npx @zed-industries/codex-acp")
     )
@@ -74,7 +74,7 @@ async def main() -> None:
     # Working directory for ACP sessions
     acp_cwd = os.getenv("ACP_AGENT_CWD", ".")
 
-    # Create adapter pointing to external ACP agent
+    # Create adapter pointing to remote ACP agent
     adapter = ACPClientAdapter(
         command=acp_command,
         cwd=acp_cwd,

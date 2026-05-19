@@ -4,7 +4,7 @@
 #   examples/mixed/agents.yaml
 #
 # Then fill in the agent_id and api_key for the four Thenvoi-facing agents used
-# by the mixed example. The two external A2A services do not need Thenvoi
+# by the mixed example. The two remote A2A services do not need Thenvoi
 # credentials. They run locally and become room participants only through the
 # bridge process.
 #

@@ -1,4 +1,4 @@
-"""ACP adapter that bridges Thenvoi rooms to an external ACP runtime."""
+"""ACP adapter that bridges Thenvoi rooms to a remote ACP runtime."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 
 
 class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
-    """Adapter that forwards Thenvoi messages to an external ACP agent.
+    """Adapter that forwards Thenvoi messages to a remote ACP agent.
 
     The adapter owns Thenvoi bridge concerns such as room-to-session mapping,
     session rehydration, system-context bootstrapping, Thenvoi MCP injection,

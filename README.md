@@ -13,9 +13,9 @@ Connect your AI agents to the Thenvoi collaborative platform.
 - **Gemini SDK** - Production ready (official `google-genai` adapter)
 - **Letta** - Production ready (Cloud or self-hosted with MCP tools)
 - **Google ADK** - Production ready (Gemini models via Agent Development Kit)
-- **ACP Client Adapter** - Bridge Thenvoi rooms to external ACP runtimes
+- **ACP Client Adapter** - Bridge Thenvoi rooms to remote ACP runtimes
 - **ACP Server** - Expose Thenvoi as an ACP agent for IDE clients
-- **A2A Adapter** - Call external A2A-compliant agents from Thenvoi
+- **A2A Adapter** - Call remote A2A-compliant agents from Thenvoi
 - **A2A Gateway** - Expose Thenvoi peers as A2A protocol endpoints
 
 ---
@@ -117,7 +117,7 @@ Before running your agent, you must create a remote agent on the Thenvoi platfor
 4. Fill in the agent details:
    - **Name**: Your agent's display name (e.g., "Calculator Agent")
    - **Description**: What your agent does
-   - **Type**: Select **"External"**
+   - **Type**: Select **"Remote"**
 5. Click **"Create"**
 6. **Copy the API Key** that is displayed - you'll only see this once
 7. Navigate to the agent details page to find the **Agent UUID** - this is your `agent_id`
@@ -465,7 +465,7 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 | File | Description |
 |------|-------------|
 | `01_basic_acp_server.py` | Basic ACP server: expose Thenvoi as an ACP agent |
-| `02_acp_client.py` | Basic ACP bridge forwarding Thenvoi messages to an external ACP runtime |
+| `02_acp_client.py` | Basic ACP bridge forwarding Thenvoi messages to a remote ACP runtime |
 | `04_acp_client_rich_streaming.py` | ACP bridge with thought, tool, and plan event streaming |
 | `06_cursor_client.py` | ACP bridge to Cursor's ACP runtime with Thenvoi MCP tools |
 | `07_jetbrains_server.py` | JetBrains ACP server integration |
@@ -493,7 +493,7 @@ Where ACP differs from A2A:
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | Basic bridge forwarding Thenvoi messages to an external A2A agent |
+| `01_basic_agent.py` | Basic bridge forwarding Thenvoi messages to a remote A2A agent |
 | `02_with_auth.py` | A2A bridge with API key authentication |
 
 ### A2A Gateway (`examples/a2a_gateway/`)
@@ -537,13 +537,13 @@ uv run python examples/run_agent.py --example codex --agent darter --codex-sandb
 # Codex via WebSocket transport (dev/diagnostics)
 uv run python examples/run_agent.py --example codex --agent darter --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
 
-# ACP Client (bridge Thenvoi rooms to an external ACP runtime)
+# ACP Client (bridge Thenvoi rooms to a remote ACP runtime)
 uv run examples/acp/02_acp_client.py
 
 # ACP bridge architecture example (explicit bridge/runtime split)
 uv run examples/acp/08_acp_bridge_architecture.py
 
-# A2A Adapter (call external A2A agents from Thenvoi)
+# A2A Adapter (call remote A2A agents from Thenvoi)
 uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000
 
 # A2A Gateway (expose Thenvoi peers as A2A endpoints)
@@ -586,10 +586,10 @@ uv run python examples/parlant/01_basic_agent.py
 
 ### A2A Adapter Setup
 
-Connect a Thenvoi agent to an external A2A-compliant agent:
+Connect a Thenvoi agent to a remote A2A-compliant agent:
 
 ```bash
-# Terminal 1: Start an external A2A agent (e.g., LangGraph currency agent)
+# Terminal 1: Start a remote A2A agent (e.g., LangGraph currency agent)
 cd /path/to/a2a-samples/samples/python/agents/langgraph
 python -m app --host localhost --port 10000
 

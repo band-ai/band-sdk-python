@@ -64,8 +64,8 @@ async def main() -> None:
         needs to know before shipping.""",
         custom_section="""
 Room shape:
-- The fact checker bridge forwards requests to an external A2A contract-checking service.
-- The risk reviewer bridge forwards requests to an external A2A rollout-risk service.
+- The fact checker bridge forwards requests to a remote A2A contract-checking service.
+- The risk reviewer bridge forwards requests to a remote A2A rollout-risk service.
 - The writer turns the room's findings into the final engineering handoff note.
 
 When a user posts a request:

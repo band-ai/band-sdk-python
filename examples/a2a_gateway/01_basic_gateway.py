@@ -9,7 +9,7 @@
 Basic A2A Gateway adapter example.
 
 This example creates a gateway that exposes Thenvoi platform peers as A2A
-endpoints. External A2A-compliant agents can connect to this gateway and
+endpoints. Remote A2A-compliant agents can connect to this gateway and
 interact with Thenvoi peers via standard A2A protocol.
 
 Use Case:
