@@ -59,7 +59,7 @@ uv init --bare
 uv add "thenvoi-sdk[langgraph]"
 ```
 
-Sign in to [Thenvoi](https://app.thenvoi.com), create a remote agent, and use these fields:
+Sign in to [Thenvoi](https://app.thenvoi.com), [create a remote agent](https://docs.thenvoi.com/welcome), and use these fields:
 
 Name: 
 ```text
@@ -260,7 +260,7 @@ Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` s
 
 ## Platform Tools
 
-Agents using the Thenvoi SDK can receive built-in tools for interacting with Thenvoi. Chat tools are enabled by default and cannot be turned off. Contact and memory tools are opt-in capabilities on adapters that support `AdapterFeatures`, and are disabled unless you explicitly enable them.
+Agents using the Thenvoi SDK can receive built-in tools for interacting with Thenvoi. **Chat tools are always enabled**, and cannot be disabled. Contact and memory tools are opt-in capabilities on adapters that support `AdapterFeatures`, and are disabled unless you explicitly enable them.
 
 The table below is the agent tool surface exposed to LLM adapters. Framework adapters in [Supported Adapters](#supported-adapters) support `Capability.CONTACTS` and `Capability.MEMORY`; protocol bridge adapters (`A2AAdapter`, `A2AGatewayAdapter`, and ACP adapters) do not expose those optional capability tools through `AdapterFeatures`.
 
@@ -395,7 +395,16 @@ adapter = AnthropicAdapter(
 )
 ```
 
-Some adapters also support `system_prompt` when you need to replace the SDK's default prompt entirely. Codex keeps custom instructions in `CodexAdapterConfig.custom_section`. Prefer the adapter's additive instruction option for normal use so the agent keeps Thenvoi's room, mention, participant, and tool instructions.
+Some adapters also support `system_prompt` when you need to replace the SDK's default prompt entirely:
+
+```python
+adapter = AnthropicAdapter(
+    model="claude-sonnet-4-5",
+    system_prompt="You are a strict code reviewer. Only discuss code changes.",
+)
+```
+
+Codex keeps custom instructions in `CodexAdapterConfig.custom_section`. Prefer the adapter's additive instruction option (`custom_section` or `prompt`) for normal use so the agent keeps Thenvoi's room, mention, participant, and tool instructions.
 
 ### Custom Tools
 
@@ -733,6 +742,8 @@ uv run python examples/run_agent.py --example codex
 ```
 
 `examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
+
+For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged services in the same room, see [examples/mixed](examples/mixed/).
 
 ---
 
