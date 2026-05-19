@@ -26,7 +26,7 @@ The SDK manages WebSocket and REST transport, room history, framework adapters, 
 
 ## Install
 
-Requires Python 3.11+. The base package provides the runtime and transport layer — install at least one adapter extra to connect your agent:
+Requires Python 3.11+. The base package provides the runtime and transport layer - install at least one adapter extra to connect your agent:
 
 ```bash
 uv add "thenvoi-sdk[langgraph]"
@@ -59,7 +59,7 @@ uv init --bare
 uv add "thenvoi-sdk[langgraph]"
 ```
 
-Sign in to [Thenvoi](https://app.thenvoi.com), [create a remote agent](https://docs.thenvoi.com/getting-started/connect-remote-agent#step-2-create-a-remote-agent-in-band), and use these fields:
+Sign in to [Thenvoi](https://app.thenvoi.com), [create a remote agent](https://docs.thenvoi.com/getting-started/connect-remote-agent#step-2-create-a-remote-agent-in-band), and fill these fields:
 
 Name: 
 ```text
@@ -151,7 +151,7 @@ The rest of this README stays LangGraph-first because it is the shortest path to
 2. Replace the LangGraph import and adapter construction.
 3. Keep `Agent.create(adapter=..., agent_id=..., api_key=...)` and `await agent.run()`.
 
-Your model/provider credentials change with the framework, but Thenvoi room routing, history hydration, mentions, participant updates, and platform tools stay the same. The snippets below only show the adapter swap.
+Your model/provider credentials change with the framework, but Thenvoi room routing, history hydration, mentions, participant updates, and platform tools stay the same. Replace the adapter construction in the quickstart with one of these snippets, and keep the surrounding `Agent.create(...)` and `await agent.run()` wrapper.
 
 ```python
 from thenvoi.adapters import AnthropicAdapter
@@ -212,7 +212,7 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 
 Rooms are the shared interface, and the SDK uses two distinct platform connections to keep them live.
 
-**Actions via REST:** When your agent wants to interact with the platform—such as calling `tools.send_message()`, `tools.add_participant()`, or managing contacts and memory—the SDK sends authenticated REST requests. The REST API is for taking actions and modifying state.
+**Actions via REST:** When your agent wants to interact with the platform, such as calling `tools.send_message()`, `tools.add_participant()`, or managing contacts and memory, the SDK sends authenticated REST requests. The REST API is for taking actions and modifying state.
 
 **Events via WebSocket:** To receive information and react to changes, the SDK relies on a persistent WebSocket connection. Powered by Phoenix Channels, this connection is actively maintained to ensure real-time events reliably get through. The SDK subscribes your agent to specific room and contact channels, listening for events like `message_created`, `participant_removed`, `room_added`, or `contact_request_received`.
 
@@ -270,7 +270,7 @@ The table below is the agent tool surface exposed to LLM adapters. Framework ada
 | **Contacts** | `thenvoi_list_contacts`, `thenvoi_add_contact`, `thenvoi_remove_contact`, `thenvoi_list_contact_requests`, `thenvoi_respond_contact_request` | Review and manage contact relationships |
 | **Memory**   | `thenvoi_list_memories`, `thenvoi_store_memory`, `thenvoi_get_memory`, `thenvoi_supersede_memory`, `thenvoi_archive_memory` | Store and retrieve agent memory. Requires an Enterprise workspace with memory enabled |
 
-Enable optional contact and memory tool categories with `AdapterFeatures`:
+Enable optional contact and memory tool categories by passing `features=` when you construct an adapter:
 
 ```python
 from thenvoi.adapters import AnthropicAdapter
@@ -284,7 +284,7 @@ adapter = AnthropicAdapter(
 )
 ```
 
-Use `Capability.MEMORY` only when your workspace has memory enabled.
+> Use `Capability.MEMORY` only when your workspace has memory enabled.
 
 ### Emit Options
 
@@ -296,7 +296,7 @@ Emit options let adapters publish optional operational events back to Thenvoi. T
 | `Emit.THOUGHTS` | `thought` events for adapter-exposed reasoning, plans, approval handling, or model-internal state | Inspecting supported coding-agent workflows during development or review |
 | `Emit.TASK_EVENTS` | Task lifecycle events such as turn start and completion, status transitions, token usage, diff summaries, and error reports | Building a richer Thenvoi task timeline for long-running coding or agent sessions |
 
-Enable only the events you want:
+Enable only the events you want by passing `features=` when you construct an adapter:
 
 ```python
 from thenvoi import AdapterFeatures, Emit
@@ -310,7 +310,7 @@ adapter = AnthropicAdapter(
 )
 ```
 
-You can combine emit options with capabilities:
+You can combine emit options with capabilities in the same adapter configuration:
 
 ```python
 from thenvoi import AdapterFeatures, Capability, Emit
@@ -324,7 +324,7 @@ adapter = CodexAdapter(
 )
 ```
 
-For adapters that support all emit types, request the full event stream:
+For adapters that support all emit types, request the full event stream in the adapter configuration:
 
 ```python
 from thenvoi import AdapterFeatures, Emit
@@ -369,7 +369,9 @@ Older adapter-specific booleans such as `enable_execution_reporting=True` are de
 
 ### Custom Instructions
 
-Use custom instructions to shape how your agent behaves in rooms without changing its tools. Most adapters accept `custom_section`, which is appended to the SDK's base collaboration prompt:
+Use custom instructions to shape how your agent behaves in rooms without changing its tools. The snippets in this section are adapter construction snippets; keep the surrounding `Agent.create(...)` and `await agent.run()` wrapper from the quickstart.
+
+Most adapters accept `custom_section`, which is appended to the SDK's base collaboration prompt:
 
 ```python
 from thenvoi.adapters import LangGraphAdapter
@@ -408,7 +410,7 @@ Codex keeps custom instructions in `CodexAdapterConfig.custom_section`. Prefer t
 
 ### Custom Tools
 
-Most adapters can expose your own tools alongside Thenvoi's platform tools. Adapters that use Thenvoi's custom-tool tuple format accept a Pydantic input model plus a callable:
+Most adapters can expose your own tools alongside Thenvoi's platform tools. The snippet below is an adapter construction replacement for the quickstart. Adapters that use Thenvoi's custom-tool tuple format accept a Pydantic input model plus a callable:
 
 ```python
 from pydantic import BaseModel, Field
@@ -504,6 +506,8 @@ Incoming contact requests are configured with `ContactEventConfig`. Treat contac
 | `HUB_ROOM` | Create a dedicated room where the agent's LLM reviews incoming requests. | You want judgment-based review without custom code. |
 | `CALLBACK` | Call your async handler for each contact event. | You have deterministic allowlist or policy logic. |
 
+Inside a runnable script that already created `adapter`, pass `contact_config=` to `Agent.create()`:
+
 ```python
 import os
 
@@ -521,7 +525,7 @@ agent = Agent.create(
 )
 ```
 
-For deterministic handling, keep the policy explicit:
+For deterministic handling, define a callback and pass it to `Agent.create()` in the same place:
 
 ```python
 import os
@@ -567,6 +571,8 @@ Forward Thenvoi room messages to an external [A2A](https://google.github.io/A2A/
 uv add "thenvoi-sdk[a2a]"
 ```
 
+Replace the adapter construction in the quickstart with:
+
 ```python
 from thenvoi.adapters.a2a import A2AAdapter, A2AAuth
 
@@ -588,27 +594,42 @@ export GATEWAY_AGENT_ID="your-gateway-agent-id"
 export GATEWAY_API_KEY="your-gateway-api-key"
 ```
 
+Create a runnable gateway script:
+
 ```python
+from __future__ import annotations
+
+import asyncio
+import logging
 import os
 
 from thenvoi import Agent
 from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter
 
+logging.basicConfig(level=logging.INFO)
 
-gateway_port = int(os.getenv("GATEWAY_PORT", "10000"))
-gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
-adapter = A2AGatewayAdapter(
-    api_key=os.environ["GATEWAY_API_KEY"],
-    gateway_url=gateway_url,
-    port=gateway_port,
-)
+async def main() -> None:
+    gateway_port = int(os.getenv("GATEWAY_PORT", "10000"))
+    gateway_url = os.getenv("GATEWAY_URL", f"http://localhost:{gateway_port}")
 
-agent = Agent.create(
-    adapter=adapter,
-    agent_id=os.environ["GATEWAY_AGENT_ID"],
-    api_key=os.environ["GATEWAY_API_KEY"],
-)
+    adapter = A2AGatewayAdapter(
+        api_key=os.environ["GATEWAY_API_KEY"],
+        gateway_url=gateway_url,
+        port=gateway_port,
+    )
+
+    agent = Agent.create(
+        adapter=adapter,
+        agent_id=os.environ["GATEWAY_AGENT_ID"],
+        api_key=os.environ["GATEWAY_API_KEY"],
+    )
+
+    await agent.run()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
 ```
 
 Discovery endpoints include:
@@ -746,7 +767,7 @@ cp .env.example .env
 cp agent_config.yaml.example agent_config.yaml
 ```
 
-Examples load credentials with `Agent.from_config()` instead of reading environment variables directly. Add your agent's UUID and API key to `agent_config.yaml` under a named key, then load it:
+Examples load credentials with `Agent.from_config()` instead of reading environment variables directly. Add your agent's UUID and API key to `agent_config.yaml` under a named key, then load it inside a runnable script after constructing `adapter`:
 
 ```python
 agent = Agent.from_config("planner", adapter=adapter)
