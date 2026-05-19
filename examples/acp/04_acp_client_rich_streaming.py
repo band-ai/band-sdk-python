@@ -61,11 +61,9 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import ACPClientAdapter
-from thenvoi.config import load_agent_config
 
 setup_logging(logging.DEBUG)
 logger = logging.getLogger(__name__)
-
 
 async def main() -> None:
     load_dotenv()
@@ -74,10 +72,6 @@ async def main() -> None:
         "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
     )
     rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("acp_client_agent")
-
     # Command to spawn the external ACP agent
     acp_command = shlex.split(
         os.getenv("ACP_AGENT_COMMAND", "npx @zed-industries/codex-acp")
@@ -93,10 +87,9 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "acp_client_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
@@ -105,7 +98,6 @@ async def main() -> None:
     logger.info("Command: %s", " ".join(acp_command))
     logger.info("Thoughts, tool calls, and plans will be posted to the platform.")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -2,7 +2,6 @@
 
 import logging
 
-
 def setup_logging(level=logging.INFO, a2a_debug: bool = False):
     """Configure logging to show only thenvoi logs, hiding noisy dependencies.
 

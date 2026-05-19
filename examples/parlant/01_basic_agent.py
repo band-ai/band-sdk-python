@@ -29,7 +29,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import ParlantAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
@@ -64,7 +63,6 @@ AGENT_DESCRIPTION = """You are a helpful, knowledgeable assistant in the Thenvoi
 - When asked about the room: Use thenvoi_get_participants to see who's here
 - For new discussions: Use thenvoi_create_chatroom to create a dedicated space
 """
-
 
 async def setup_agent_with_guidelines(
     server: p.Server,
@@ -113,7 +111,6 @@ async def setup_agent_with_guidelines(
 
     return agent
 
-
 async def main() -> None:
     load_dotenv()
 
@@ -124,10 +121,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("parlant_agent")
-
     # Start Parlant server with OpenAI (requires OPENAI_API_KEY env var)
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
         # Create Parlant tools INSIDE server context
@@ -149,17 +142,15 @@ async def main() -> None:
         )
 
         # Create and start Thenvoi agent
-        agent = Agent.create(
+        agent = Agent.from_config(
+            "parlant_agent",
             adapter=adapter,
-            agent_id=agent_id,
-            api_key=api_key,
             ws_url=ws_url,
             rest_url=rest_url,
         )
 
         logger.info("Starting Thenvoi agent with Parlant SDK (full tools)...")
         await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

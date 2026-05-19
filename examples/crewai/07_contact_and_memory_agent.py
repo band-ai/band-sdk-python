@@ -34,13 +34,11 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import CrewAIAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
 from thenvoi.core.types import AdapterFeatures, Capability
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 def get_required_env(name: str) -> str:
     """Return a required environment variable or raise a clear error."""
@@ -49,16 +47,13 @@ def get_required_env(name: str) -> str:
         raise ValueError(f"{name} environment variable is required")
     return value
 
-
 async def main() -> None:
     load_dotenv()
 
     ws_url = get_required_env("THENVOI_WS_URL")
     rest_url = get_required_env("THENVOI_REST_URL")
-    agent_id, api_key = load_agent_config("crewai_contact_memory_agent")
-
     adapter = CrewAIAdapter(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         role="Contact-aware relationship manager",
         goal=(
             "Help users manage contacts, keep track of relationship context, "
@@ -85,10 +80,9 @@ async def main() -> None:
         broadcast_changes=True,
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "crewai_contact_memory_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
         contact_config=contact_config,
@@ -96,7 +90,6 @@ async def main() -> None:
 
     logger.info("Starting CrewAI contact-and-memory example agent")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

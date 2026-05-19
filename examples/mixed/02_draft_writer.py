@@ -28,12 +28,10 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import CrewAIAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.core.types import AdapterFeatures, Emit
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
-
 
 async def main() -> None:
     setup_logging()
@@ -43,14 +41,8 @@ async def main() -> None:
         "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
     )
     rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
-
-    agent_id, api_key = load_agent_config(
-        "mixed_writer_agent",
-        config_path=CONFIG_PATH,
-    )
-
     adapter = CrewAIAdapter(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+        model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
         role="Engineering Handoff Writer",
         goal=(
             "Turn room input into a final engineering note that reflects the "
@@ -77,17 +69,16 @@ Do not try to coordinate the room. Your job is to synthesize.
         verbose=True,
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "mixed_writer_agent",
+        config_path=CONFIG_PATH,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting mixed-example engineering handoff writer...")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

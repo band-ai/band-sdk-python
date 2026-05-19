@@ -34,7 +34,6 @@ _system_prompt = os.environ.get(
     "Be concise and friendly. Respond directly to what the user asks.",
 )
 
-
 def _get_client() -> anthropic.Anthropic:
     """Return the Anthropic client, creating it lazily on first use."""
     global _client  # noqa: PLW0603
@@ -44,7 +43,6 @@ def _get_client() -> anthropic.Anthropic:
             raise ValueError("ANTHROPIC_API_KEY environment variable is required")
         _client = anthropic.Anthropic(api_key=api_key)
     return _client
-
 
 @mcp.tool()
 def chat(message: str) -> str:
@@ -69,7 +67,6 @@ def chat(message: str) -> str:
     reply = response.content[0].text
     logger.info("Response: %s", reply[:100])
     return reply
-
 
 if __name__ == "__main__":
     mcp.run(transport="streamable-http", host="0.0.0.0", port=8000)

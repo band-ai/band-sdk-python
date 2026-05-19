@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 
-
 def setup_logging(level=logging.INFO):
     """Configure logging to show only thenvoi logs, hiding noisy dependencies."""
     logging.basicConfig(

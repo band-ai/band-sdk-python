@@ -53,7 +53,7 @@ That is what makes the external services bidirectional participants instead of i
 You need:
 
 - `OPENAI_API_KEY` for the CrewAI agents
-- optional: `OPENAI_MODEL` if you do not want the default `gpt-4o`
+- optional: `OPENAI_MODEL` if you do not want the default `gpt-5.4-mini`
 - four Thenvoi agent credentials in `examples/mixed/agents.yaml`
 
 The mixed examples default to the hosted Thenvoi URLs:

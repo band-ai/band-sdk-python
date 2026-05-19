@@ -50,7 +50,6 @@ from setup_logging import setup_logging
 
 logger = logging.getLogger(__name__)
 
-
 def _fact_check_response(request_text: str) -> str:
     """Build a deterministic contract-checking response."""
     return "\n".join(
@@ -64,7 +63,6 @@ def _fact_check_response(request_text: str) -> str:
             "- Hand-off: the writer should include a short implementation-facts section in the final note.",
         ]
     )
-
 
 class FactCheckerExecutor(AgentExecutor):
     """A2A executor that returns deterministic contract-checking guidance."""
@@ -102,7 +100,6 @@ class FactCheckerExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         raise ServerError(error=UnsupportedOperationError())
-
 
 def main() -> None:
     """Run the fact checker A2A server."""
@@ -146,7 +143,6 @@ def main() -> None:
 
     logger.info("Starting mixed contract checker A2A server on %s", base_url)
     uvicorn.run(app, host=host, port=port, log_level="warning")
-
 
 if __name__ == "__main__":
     main()

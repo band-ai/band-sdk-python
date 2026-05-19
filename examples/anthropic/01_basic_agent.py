@@ -26,11 +26,9 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import AnthropicAdapter
-from thenvoi.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 async def main() -> None:
     load_dotenv()
@@ -42,10 +40,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("anthropic_agent")
-
     # Create adapter with framework-specific settings
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
@@ -53,17 +47,15 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "anthropic_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting Anthropic agent...")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

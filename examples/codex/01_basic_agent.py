@@ -42,18 +42,15 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
-from thenvoi.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 def _env_bool(name: str, default: bool) -> bool:
     value = os.getenv(name)
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
-
 
 async def main() -> None:
     load_dotenv()
@@ -67,8 +64,6 @@ async def main() -> None:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
     agent_key = os.getenv("AGENT_KEY", "darter")
-    agent_id, api_key = load_agent_config(agent_key)
-
     codex_transport = os.getenv("CODEX_TRANSPORT", "stdio")
     if codex_transport not in {"stdio", "ws"}:
         raise ValueError("CODEX_TRANSPORT must be 'stdio' or 'ws'")
@@ -103,10 +98,9 @@ async def main() -> None:
         )
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        agent_key,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
@@ -118,7 +112,6 @@ async def main() -> None:
         codex_role or "none",
     )
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

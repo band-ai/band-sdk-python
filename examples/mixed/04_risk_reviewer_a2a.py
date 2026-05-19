@@ -50,7 +50,6 @@ from setup_logging import setup_logging
 
 logger = logging.getLogger(__name__)
 
-
 def _risk_review_response(request_text: str) -> str:
     """Build a deterministic risk review response."""
     return "\n".join(
@@ -65,7 +64,6 @@ def _risk_review_response(request_text: str) -> str:
             "- Hand-off: the writer should include a risks and mitigations section in the final note.",
         ]
     )
-
 
 class RiskReviewerExecutor(AgentExecutor):
     """A2A executor that returns deterministic rollout-risk guidance."""
@@ -103,7 +101,6 @@ class RiskReviewerExecutor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         raise ServerError(error=UnsupportedOperationError())
-
 
 def main() -> None:
     """Run the risk reviewer A2A server."""
@@ -145,7 +142,6 @@ def main() -> None:
 
     logger.info("Starting mixed risk reviewer A2A server on %s", base_url)
     uvicorn.run(app, host=host, port=port, log_level="warning")
-
 
 if __name__ == "__main__":
     main()

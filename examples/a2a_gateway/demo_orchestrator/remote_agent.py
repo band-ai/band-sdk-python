@@ -21,7 +21,6 @@ from a2a.types import (
 
 logger = logging.getLogger(__name__)
 
-
 def extract_text_from_parts(parts: list[Part]) -> str:
     """Extract text content from A2A message parts."""
     texts = []
@@ -29,7 +28,6 @@ def extract_text_from_parts(parts: list[Part]) -> str:
         if isinstance(part.root, TextPart):
             texts.append(part.root.text)
     return " ".join(texts)
-
 
 class GatewayClient:
     """Client for calling A2A Gateway peers.

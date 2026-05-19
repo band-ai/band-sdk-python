@@ -116,7 +116,7 @@ OPENAI_API_KEY=your-openai-key
 
 ### 3. Add agent credentials to `agent_config.yaml`
 
-1. Create an external agent on the [Thenvoi Platform](https://app.thenvoi.com)
+1. Create a remote agent on the [Thenvoi Platform](https://app.thenvoi.com)
 2. Generate an API key for the agent
 3. Edit `agent_config.yaml` and fill in the Parlant agent section:
 

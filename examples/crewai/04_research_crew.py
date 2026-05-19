@@ -44,12 +44,10 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import CrewAIAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 # Define crew member configurations
 CREW_MEMBERS = {
@@ -122,7 +120,6 @@ Your workflow:
     },
 }
 
-
 async def main() -> None:
     load_dotenv()
 
@@ -153,13 +150,9 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config(member["config_name"])
-
     # Create adapter with crew member configuration
     adapter = CrewAIAdapter(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         role=member["role"],
         goal=member["goal"],
         backstory=member["backstory"],
@@ -168,17 +161,15 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        member["config_name"],
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting %s...", member["role"])
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

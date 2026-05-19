@@ -9,7 +9,6 @@ from typing import TypedDict, Literal
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import InMemorySaver
 
-
 class CalculatorState(TypedDict):
     """State for the calculator graph."""
 
@@ -18,7 +17,6 @@ class CalculatorState(TypedDict):
     b: float
     result: float
     error: str | None
-
 
 async def calculate_node(state: CalculatorState) -> dict:
     """Performs the calculation."""
@@ -41,7 +39,6 @@ async def calculate_node(state: CalculatorState) -> dict:
 
     return {"result": result, "error": None}
 
-
 def create_calculator_graph():
     """
     Creates a compiled calculator graph.
@@ -63,7 +60,6 @@ def create_calculator_graph():
 
     # Compile with checkpointer for state management
     return graph.compile(checkpointer=InMemorySaver())
-
 
 # Export for easy import
 if __name__ == "__main__":

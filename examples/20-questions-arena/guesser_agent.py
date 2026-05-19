@@ -43,10 +43,8 @@ from prompts import create_llm, create_llm_by_name, generate_guesser_prompt
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import LangGraphAdapter
-from thenvoi.config import load_agent_config
 
 logger = logging.getLogger(__name__)
-
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Guesser agent for 20 Questions Arena")
@@ -64,7 +62,6 @@ def _parse_args() -> argparse.Namespace:
         "If omitted, auto-detects from env vars.",
     )
     return parser.parse_args()
-
 
 async def main() -> None:
     load_dotenv()
@@ -88,9 +85,7 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    # Load Guesser's credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config(args.config)
-    logger.info("  agent_id   : %s", agent_id)
+    # Load Guesser's credentials from agent_config.yaml    logger.info("  agent_id   : %s", agent_id)
     logger.info("  ws_url     : %s", ws_url)
     logger.info("  rest_url   : %s", rest_url)
 
@@ -113,17 +108,15 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        args.config,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Guesser is ready -- waiting to be invited to a game...")
     await agent.run()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

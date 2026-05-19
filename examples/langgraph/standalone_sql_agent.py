@@ -29,12 +29,10 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.prebuilt import ToolNode
 
-
 class MessagesState(TypedDict):
     """State for the SQL agent."""
 
     messages: Annotated[list, add_messages]
-
 
 def create_sql_agent(db_path: str = "Chinook.db"):
     """
@@ -55,7 +53,7 @@ def create_sql_agent(db_path: str = "Chinook.db"):
     db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
 
     # Create LLM for the agent
-    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0)
 
     # Create SQL toolkit with database interaction tools
     # This provides: sql_db_list_tables, sql_db_schema, sql_db_query, sql_db_query_checker
@@ -96,7 +94,6 @@ def create_sql_agent(db_path: str = "Chinook.db"):
 
     # Compile with checkpointer for conversation memory
     return workflow.compile(checkpointer=InMemorySaver())
-
 
 def download_chinook_db():
     """Download the Chinook sample database if not present."""
@@ -151,7 +148,6 @@ def download_chinook_db():
         conn.close()
         logger.info("Created minimal test database at %s", db_path)
         return db_path
-
 
 # Export for easy import
 if __name__ == "__main__":
