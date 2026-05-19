@@ -55,37 +55,30 @@ class WebSocketUpgradeError(Exception):
         status_code = getattr(response, "status_code", None)
         if status_code is None:
             status_code = getattr(exc, "status_code", None)
-        if not isinstance(status_code, int):
+        if not isinstance(status_code, int) or status_code not in {400, 409, 429, 503}:
             return None
 
         headers = getattr(response, "headers", None) or getattr(exc, "headers", None)
         body = getattr(response, "body", b"") if response is not None else b""
         payload = _decode_upgrade_error_body(body)
-        error = payload.get("error") if isinstance(payload, dict) else None
-        error = error if isinstance(error, dict) else {}
+        error = payload.get("error")
+        if not isinstance(error, dict):
+            error = {}
 
+        code = error.get("code")
+        message = error.get("message")
+        request_id = error.get("request_id")
         retry_after = _parse_retry_after(error.get("retry_after"))
         if status_code == 429 and retry_after is None and headers is not None:
             retry_after = _parse_retry_after(_get_header(headers, "Retry-After"))
 
-        if status_code in {400, 409, 429, 503}:
-            return cls(
-                status_code=status_code,
-                code=error.get("code") if isinstance(error.get("code"), str) else None,
-                message=(
-                    error.get("message")
-                    if isinstance(error.get("message"), str)
-                    else None
-                ),
-                request_id=(
-                    error.get("request_id")
-                    if isinstance(error.get("request_id"), str)
-                    else None
-                ),
-                retry_after=retry_after,
-            )
-
-        return None
+        return cls(
+            status_code=status_code,
+            code=code if isinstance(code, str) else None,
+            message=message if isinstance(message, str) else None,
+            request_id=request_id if isinstance(request_id, str) else None,
+            retry_after=retry_after,
+        )
 
 
 def _decode_upgrade_error_body(body: Any) -> dict[str, Any]:
