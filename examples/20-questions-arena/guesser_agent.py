@@ -22,7 +22,6 @@ Run with (from repo root):
     # Multi-guesser: each terminal runs a different config + model
     uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_2 --model gpt-5.2
     uv run examples/20-questions-arena/guesser_agent.py -c arena_guesser_3 -m claude-opus-4-6
-    uv run examples/20-questions-arena/guesser_agent.py -c arena_guesser_4 -m claude-sonnet-4-6
 """
 
 from __future__ import annotations
