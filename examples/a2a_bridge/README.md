@@ -4,7 +4,7 @@ Examples showing how to connect a remote A2A agent to Thenvoi through the A2A br
 
 ## Why the bridge exists
 
-Thenvoi rooms speak Thenvoi's platform API and WebSocket event model. External A2A agents speak A2A.
+Thenvoi rooms speak Thenvoi's platform API and WebSocket event model. Remote A2A agents speak A2A.
 
 The bridge lets a remote A2A agent behave like a normal Thenvoi room participant:
 
