@@ -6,7 +6,7 @@
 # thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
-External A2A fact checker for the mixed example.
+Remote A2A fact checker for the mixed example.
 
 This agent is not connected to Thenvoi by itself. It becomes a room participant
 only after the mixed bridge script forwards room messages to it.

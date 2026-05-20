@@ -17,7 +17,7 @@ uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[langgraph]"
 
 **Configuration:**
 - Set `OPENAI_API_KEY` environment variable
-- Configure agent credentials (see main [README](../../README.md#creating-external-agents-on-thenvoi-platform))
+- Configure agent credentials (see main [README](../../README.md#creating-remote-agents-on-thenvoi-platform))
 
 ---
 

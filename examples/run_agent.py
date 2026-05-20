@@ -778,7 +778,7 @@ async def run_a2a_gateway_agent(
     """Run the A2A Gateway agent.
 
     The gateway connects to Thenvoi platform and exposes discovered peers
-    as A2A endpoints. External A2A agents can call these peers via standard
+    as A2A endpoints. Remote A2A agents can call these peers via standard
     A2A protocol.
     """
     from thenvoi.adapters import A2AGatewayAdapter

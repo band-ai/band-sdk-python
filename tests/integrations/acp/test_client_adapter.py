@@ -343,7 +343,7 @@ class TestACPClientAdapterOnMessage:
     async def test_on_message_sends_prompt(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """Should send prompt to external ACP agent."""
+        """Should send prompt to remote ACP agent."""
         tools = FakeAgentTools()
         msg = make_platform_message("What is the weather?", room_id="room-123")
 
