@@ -288,12 +288,14 @@ adapter = AnthropicAdapter(
 
 ### Emit Options
 
-Emit options let adapters publish optional operational events back to Thenvoi. They are configured with the same `AdapterFeatures` object as capabilities. When you pass `AdapterFeatures`, emit options are disabled unless you include them in `emit`.
+Emit options tell adapters which supported operational events to transmit to Thenvoi. They are configured with the same `AdapterFeatures` object as capabilities.
+
+`emit` controls adapter-transmitted telemetry, not the model's normal room behavior. Enabling an emit option does not force the model to produce thoughts or tool events, and it does not run the model again; it tells the adapter to publish that class of event to the platform when the adapter observes or creates one. Leaving `emit` empty disables that adapter telemetry where the adapter gates it with `AdapterFeatures`, but it does not mean "text messages only": `thenvoi_send_event` is a base chat tool, so an agent can still choose to send `thought`, `error`, or `task` events unless you explicitly filter that tool out.
 
 | Emit Option | What It Sends | Use It For |
 | ----------- | ------------- | ---------- |
 | `Emit.EXECUTION` | `tool_call` and `tool_result` events with JSON payloads that include the tool name, args or output, and `tool_call_id` for linking the call to its result | Showing tool activity in the room timeline and debugging agent actions |
-| `Emit.THOUGHTS` | `thought` events for adapter-exposed reasoning, plans, approval handling, or model-internal state | Inspecting supported coding-agent workflows during development or review |
+| `Emit.THOUGHTS` | `thought` events for runtime-provided reasoning summaries, plans, review-mode state, approval status, or Claude thinking blocks | Inspecting supported coding-agent workflows during development or review |
 | `Emit.TASK_EVENTS` | Task lifecycle events such as turn start and completion, status transitions, token usage, diff summaries, and error reports | Building a richer Thenvoi task timeline for long-running coding or agent sessions |
 
 Enable only the events you want by passing `features=` when you construct an adapter:
@@ -357,6 +359,8 @@ Adapter support:
 | ACP Client | - | - | - |
 
 If you request an unsupported emit value, the adapter logs a warning when it starts and the value has no effect. Emit sends are best-effort: a failed event send is logged but does not crash tool execution or the agent loop.
+
+Codex also has separate real-time streaming flags such as `stream_reasoning_events`, `stream_plan_events`, and `stream_commentary_events`. Those stream Codex runtime deltas as `thought` events directly; keep them disabled if you do not want streaming thought events.
 
 Behavior to expect:
 

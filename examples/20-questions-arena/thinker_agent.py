@@ -76,7 +76,6 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    # Load Thinker's credentials from agent_config.yaml    logger.info("  agent_id   : %s", agent_id)
     logger.info("  ws_url     : %s", ws_url)
     logger.info("  rest_url   : %s", rest_url)
 
