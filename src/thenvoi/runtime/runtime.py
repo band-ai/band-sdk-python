@@ -270,29 +270,46 @@ class AgentRuntime:
         the room and creates its execution context, so future real messages
         flow through the normal presence pipeline afterwards.
         """
-        if room_id not in self.presence.rooms:
-            # Claim the slot before awaiting subscribe_room so concurrent
-            # bootstrap calls for the same room don't double-subscribe.
-            self.presence.rooms.add(room_id)
-            try:
-                await self.link.subscribe_room(room_id)
-            except Exception:
+        claimed_room = False
+        created_execution = False
+        try:
+            if room_id not in self.presence.rooms:
+                # Claim the slot before awaiting subscribe_room so concurrent
+                # bootstrap calls for the same room don't double-subscribe.
+                self.presence.rooms.add(room_id)
+                claimed_room = True
+                try:
+                    await self.link.subscribe_room(room_id)
+                except Exception:
+                    self.presence.rooms.discard(room_id)
+                    raise
+                logger.debug(
+                    "Bootstrap subscribed to room %s outside presence flow", room_id
+                )
+
+            execution = self.executions.get(room_id)
+            if execution is None:
+                execution = await self._create_execution(room_id)
+                created_execution = True
+
+            bootstrap = getattr(execution, "bootstrap_message", None)
+            if bootstrap is None:
+                raise RuntimeError(
+                    f"Execution for room {room_id} does not support bootstrap_message"
+                )
+            await bootstrap(message)
+        except Exception:
+            if created_execution:
+                await self._destroy_execution(room_id)
+            if claimed_room:
                 self.presence.rooms.discard(room_id)
-                raise
-            logger.debug(
-                "Bootstrap subscribed to room %s outside presence flow", room_id
-            )
-
-        execution = self.executions.get(room_id)
-        if execution is None:
-            execution = await self._create_execution(room_id)
-
-        bootstrap = getattr(execution, "bootstrap_message", None)
-        if bootstrap is None:
-            raise RuntimeError(
-                f"Execution for room {room_id} does not support bootstrap_message"
-            )
-        await bootstrap(message)
+                try:
+                    await self.link.unsubscribe_room(room_id)
+                except Exception:
+                    logger.exception(
+                        "Failed to unsubscribe room %s after bootstrap failure", room_id
+                    )
+            raise
 
     async def _create_execution(self, room_id: str) -> Execution:
         """Create and start execution context for a room."""
@@ -325,7 +342,11 @@ class AgentRuntime:
             )
 
         self.executions[room_id] = execution
-        await execution.start()
+        try:
+            await execution.start()
+        except Exception:
+            self.executions.pop(room_id, None)
+            raise
 
         logger.debug("Created execution for room %s", room_id)
         return execution

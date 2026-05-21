@@ -41,6 +41,7 @@ def mock_link():
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
     link.subscribe_room = AsyncMock()
+    link.unsubscribe_room = AsyncMock()
     return link
 
 
@@ -214,6 +215,60 @@ class TestAgentRuntimeBootstrap:
 
         for room_id in list(runtime.executions.keys()):
             await runtime.executions[room_id].stop()
+
+    @pytest.mark.asyncio
+    async def test_rolls_back_claimed_room_when_execution_lacks_bootstrap(
+        self, mock_link
+    ):
+        from thenvoi.runtime.runtime import AgentRuntime
+
+        class NoBootstrapExecution:
+            async def start(self):
+                return None
+
+            async def stop(self, timeout=None):
+                return True
+
+        runtime = AgentRuntime(
+            mock_link,
+            "agent-123",
+            on_execute=AsyncMock(),
+            execution_factory=lambda *_args, **_kwargs: NoBootstrapExecution(),
+        )
+
+        with pytest.raises(RuntimeError, match="does not support bootstrap_message"):
+            await runtime.bootstrap_room_message("new-room", _platform_message())
+
+        assert "new-room" not in runtime.presence.rooms
+        assert "new-room" not in runtime.executions
+        mock_link.subscribe_room.assert_awaited_once_with("new-room")
+        mock_link.unsubscribe_room.assert_awaited_once_with("new-room")
+
+    @pytest.mark.asyncio
+    async def test_rolls_back_execution_slot_when_start_fails(self, mock_link):
+        from thenvoi.runtime.runtime import AgentRuntime
+
+        class FailingStartExecution:
+            async def start(self):
+                raise RuntimeError("start failed")
+
+            async def stop(self, timeout=None):
+                return True
+
+        runtime = AgentRuntime(
+            mock_link,
+            "agent-123",
+            on_execute=AsyncMock(),
+            execution_factory=lambda *_args, **_kwargs: FailingStartExecution(),
+        )
+
+        with pytest.raises(RuntimeError, match="start failed"):
+            await runtime.bootstrap_room_message("new-room", _platform_message())
+
+        assert "new-room" not in runtime.presence.rooms
+        assert "new-room" not in runtime.executions
+        mock_link.subscribe_room.assert_awaited_once_with("new-room")
+        mock_link.unsubscribe_room.assert_awaited_once_with("new-room")
 
 
 class TestAgentBootstrap:
