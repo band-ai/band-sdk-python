@@ -8193,15 +8193,14 @@ anthropic = [
 ]
 bridge = [
     { name = "aiohttp" },
+    { name = "httpx" },
     { name = "python-dotenv" },
 ]
 bridge-agentcore = [
     { name = "aiohttp" },
     { name = "boto3" },
-    { name = "python-dotenv" },
-]
-bridge-langchain = [
     { name = "httpx" },
+    { name = "python-dotenv" },
 ]
 claude-sdk = [
     { name = "claude-agent-sdk" },
@@ -8333,7 +8332,8 @@ requires-dist = [
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=1.0.0,<2" },
     { name = "google-genai", marker = "extra == 'dev'", specifier = ">=1.43.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.43.0" },
-    { name = "httpx", marker = "extra == 'bridge-langchain'", specifier = ">=0.24.0" },
+    { name = "httpx", marker = "extra == 'bridge'", specifier = ">=0.24.0" },
+    { name = "httpx", marker = "extra == 'bridge-agentcore'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'dev-parlant'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'opencode'", specifier = ">=0.24.0" },
@@ -8408,7 +8408,7 @@ requires-dist = [
     { name = "werkzeug", marker = "extra == 'dev-parlant'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "bridge", "bridge-agentcore", "google-adk", "bridge-langchain", "dev", "dev-parlant"]
+provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "bridge", "bridge-agentcore", "google-adk", "dev", "dev-parlant"]
 
 [[package]]
 name = "thenvoi-testing-python"

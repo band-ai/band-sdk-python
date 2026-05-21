@@ -31,20 +31,8 @@
       },
       "secrets": [
         {
-          "name": "THENVOI_AGENT_ID",
-          "valueFrom": "<AGENT_ID_SECRET_ARN>"
-        },
-        {
-          "name": "THENVOI_API_KEY",
-          "valueFrom": "<API_KEY_SECRET_ARN>"
-        },
-        {
-          "name": "AGENT_MAPPING",
-          "valueFrom": "<AGENT_MAPPING_SECRET_ARN>"
-        },
-        {
-          "name": "AGENTCORE_RUNTIME_ARN",
-          "valueFrom": "<RUNTIME_ARN_SECRET_ARN>"
+          "name": "THENVOI_BRIDGE_AGENTS",
+          "valueFrom": "<BRIDGE_AGENTS_SECRET_ARN>"
         }
       ],
       "environment": [

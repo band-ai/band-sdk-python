@@ -14,28 +14,12 @@ Parameters:
     Type: String
     Description: Docker image URI for the bridge container
 
-  AgentIdSecretArn:
-    Type: String
-    Description: Secrets Manager ARN for THENVOI_AGENT_ID
-
-  ApiKeySecretArn:
-    Type: String
-    Description: Secrets Manager ARN for THENVOI_API_KEY
-
-  AgentMappingSecretArn:
-    Type: String
-    Description: Secrets Manager ARN for AGENT_MAPPING
-
-  RuntimeArnSecretArn:
-    Type: String
-    Description: Secrets Manager ARN for AGENTCORE_RUNTIME_ARN
-
-  AgentCoreRuntimeId:
+  BridgeAgentsSecretArn:
     Type: String
     Description: >-
-      AgentCore runtime ID (the trailing segment of the runtime ARN).
-      Used to scope the IAM policy to a specific runtime instead of
-      granting access to all runtimes in the account.
+      Secrets Manager ARN for THENVOI_BRIDGE_AGENTS. The secret value is a
+      JSON array of agent configs (agent_id, api_key, target). One secret
+      per bridge deployment carries identities for all hosted agents.
 
   AwsRegion:
     Type: String
@@ -89,10 +73,7 @@ Resources:
                 Action:
                   - secretsmanager:GetSecretValue
                 Resource:
-                  - !Ref AgentIdSecretArn
-                  - !Ref ApiKeySecretArn
-                  - !Ref AgentMappingSecretArn
-                  - !Ref RuntimeArnSecretArn
+                  - !Ref BridgeAgentsSecretArn
               - !If
                 - HasKmsKey
                 - Effect: Allow
@@ -120,7 +101,10 @@ Resources:
               - Effect: Allow
                 Action:
                   - bedrock-agentcore:InvokeAgentRuntime
-                Resource: !Sub "arn:aws:bedrock-agentcore:${AwsRegion}:${AWS::AccountId}:runtime/${AgentCoreRuntimeId}"
+                # Wildcard because one bridge can invoke N runtime ARNs
+                # (one per agent). Scope per-deployment by replacing the
+                # wildcard with explicit ARNs if you need tighter IAM.
+                Resource: !Sub "arn:aws:bedrock-agentcore:${AwsRegion}:${AWS::AccountId}:runtime/*"
 
   # ---------- Networking ----------
   SecurityGroup:
@@ -171,14 +155,8 @@ Resources:
             Retries: 3
             StartPeriod: 10
           Secrets:
-            - Name: THENVOI_AGENT_ID
-              ValueFrom: !Ref AgentIdSecretArn
-            - Name: THENVOI_API_KEY
-              ValueFrom: !Ref ApiKeySecretArn
-            - Name: AGENT_MAPPING
-              ValueFrom: !Ref AgentMappingSecretArn
-            - Name: AGENTCORE_RUNTIME_ARN
-              ValueFrom: !Ref RuntimeArnSecretArn
+            - Name: THENVOI_BRIDGE_AGENTS
+              ValueFrom: !Ref BridgeAgentsSecretArn
           Environment:
             - Name: THENVOI_WS_URL
               Value: wss://app.thenvoi.com/api/v1/socket/websocket
