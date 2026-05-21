@@ -276,4 +276,4 @@ version_files = [
     "src/thenvoi/__init__.py:__version__",
 ]
 # Tag format aligned with release-please (package-name-v$version)
-tag_format = "band-sdk-python-v$version"
+tag_format = "band-sdk-v$version"

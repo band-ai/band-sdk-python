@@ -94,3 +94,4 @@ async def create_thenvoi_mcp_backend(
 
 
 ThenvoiMCPBackend = BandMCPBackend
+ThenvoiMCPBackendKind = BandMCPBackendKind

@@ -2,11 +2,11 @@
 
 This module provides bidirectional ACP support:
 
-1. **ACP Server** (Editor -> Thenvoi): Editors use Band as an ACP agent.
+1. **ACP Server** (Editor -> Band): Editors use Band as an ACP agent.
    The "Super-Agent" pattern exposes a single ACP facade over multi-agent
    orchestration.
 
-2. **ACP Client Adapter** (Thenvoi -> Remote ACP Runtime): Thenvoi forwards
+2. **ACP Client Adapter** (Band -> Remote ACP Runtime): Band forwards
    messages to remote ACP runtimes (Codex CLI, Gemini CLI, Claude Code, etc.)
    via a Band bridge layered over a generic ACP runtime.
 
@@ -14,7 +14,7 @@ This module provides bidirectional ACP support:
    - Outbound A2A: `A2AAdapter` bridges to a remote A2A peer.
    - Outbound ACP: `ACPClientAdapter` bridges to `ACPRuntime` for subprocess/session plumbing.
    - Inbound A2A: `GatewayServer` + `A2AGatewayAdapter`.
-   - Inbound ACP: `ACPServer` + `ThenvoiACPServerAdapter`.
+   - Inbound ACP: `ACPServer` + `BandACPServerAdapter`.
 
    Where ACP differs: outbound ACP can manage local subprocess lifecycle and keep
    runtime-specific behavior in thin profiles; A2A outbound is always remote.
@@ -50,13 +50,17 @@ if TYPE_CHECKING:
     from thenvoi.integrations.acp.client_adapter import ACPClientAdapter
     from thenvoi.integrations.acp.client_types import (
         ACPClientSessionState,
+        BandACPClient,
         ThenvoiACPClient,
     )
     from thenvoi.integrations.acp.event_converter import EventConverter
     from thenvoi.integrations.acp.push_handler import ACPPushHandler
     from thenvoi.integrations.acp.router import AgentRouter
     from thenvoi.integrations.acp.server import ACPServer
-    from thenvoi.integrations.acp.server_adapter import ThenvoiACPServerAdapter
+    from thenvoi.integrations.acp.server_adapter import (
+        BandACPServerAdapter,
+        ThenvoiACPServerAdapter,
+    )
     from thenvoi.integrations.acp.types import (
         ACPSessionState,
         CollectedChunk,
@@ -70,6 +74,8 @@ __all__ = [
     "ACPServer",
     "ACPSessionState",
     "AgentRouter",
+    "BandACPClient",
+    "BandACPServerAdapter",
     "CollectedChunk",
     "EventConverter",
     "PendingACPPrompt",
@@ -83,11 +89,16 @@ _IMPORT_MAP: dict[str, tuple[str, str]] = {
         "thenvoi.integrations.acp.client_types",
         "ACPClientSessionState",
     ),
+    "BandACPClient": ("thenvoi.integrations.acp.client_types", "BandACPClient"),
     "ThenvoiACPClient": ("thenvoi.integrations.acp.client_types", "ThenvoiACPClient"),
     "EventConverter": ("thenvoi.integrations.acp.event_converter", "EventConverter"),
     "ACPPushHandler": ("thenvoi.integrations.acp.push_handler", "ACPPushHandler"),
     "AgentRouter": ("thenvoi.integrations.acp.router", "AgentRouter"),
     "ACPServer": ("thenvoi.integrations.acp.server", "ACPServer"),
+    "BandACPServerAdapter": (
+        "thenvoi.integrations.acp.server_adapter",
+        "BandACPServerAdapter",
+    ),
     "ThenvoiACPServerAdapter": (
         "thenvoi.integrations.acp.server_adapter",
         "ThenvoiACPServerAdapter",

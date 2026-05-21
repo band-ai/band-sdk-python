@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         ACPClientAdapter as ACPClientAdapter,
         ACPServer as ACPServer,
         BandACPServerAdapter as BandACPServerAdapter,
+        ThenvoiACPServerAdapter as ThenvoiACPServerAdapter,
     )
     from thenvoi.adapters.gemini import GeminiAdapter as GeminiAdapter
     from thenvoi.adapters.google_adk import GoogleADKAdapter as GoogleADKAdapter
@@ -63,6 +64,7 @@ __all__ = [
     "ACPClientAdapter",
     "ACPServer",
     "BandACPServerAdapter",
+    "ThenvoiACPServerAdapter",
     "GeminiAdapter",
     "GoogleADKAdapter",
     "OpencodeAdapter",
@@ -118,17 +120,25 @@ def __getattr__(name: str) -> type:
         from thenvoi.adapters.codex import CodexAdapterConfig
 
         return CodexAdapterConfig
-    elif name in ("ACPClientAdapter", "ACPServer", "BandACPServerAdapter"):
+    elif name in (
+        "ACPClientAdapter",
+        "ACPServer",
+        "BandACPServerAdapter",
+        "ThenvoiACPServerAdapter",
+    ):
         from thenvoi.adapters.acp import (
             ACPClientAdapter,
             ACPServer,
             BandACPServerAdapter,
+            ThenvoiACPServerAdapter,
         )
 
         if name == "ACPClientAdapter":
             return ACPClientAdapter
         elif name == "ACPServer":
             return ACPServer
+        elif name == "ThenvoiACPServerAdapter":
+            return ThenvoiACPServerAdapter
         return BandACPServerAdapter
     elif name == "GeminiAdapter":
         from thenvoi.adapters.gemini import GeminiAdapter
