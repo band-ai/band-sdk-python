@@ -676,7 +676,7 @@ Dependency modes:
 - Docker defaults `CODEX_SANDBOX=external-sandbox` so Codex defers sandboxing to Docker.
 
 ```bash
-export THENVOI_CLIENT_REST_WHEEL_DIR=/Users/vlad/Documents/elixir/dist_rearch/fern/generated_sdk/dist
+export THENVOI_CLIENT_REST_WHEEL_DIR=/path/to/thenvoi-client-rest/dist
 export THENVOI_CLIENT_REST_WHEEL=/opt/thenvoi-client-rest/thenvoi_client_rest-0.0.1.dev6-py3-none-any.whl
 docker compose -f examples/codex/docker-compose.yml up --build codex-agent
 ```
@@ -693,9 +693,9 @@ docker compose -f examples/codex/docker-compose.yml up --build codex-agent
 If you need both local wheels in one run:
 
 ```bash
-export THENVOI_CLIENT_REST_WHEEL_DIR=/Users/vlad/Documents/elixir/dist_rearch/fern/generated_sdk/dist
+export THENVOI_CLIENT_REST_WHEEL_DIR=/path/to/thenvoi-client-rest/dist
 export THENVOI_CLIENT_REST_WHEEL=/opt/thenvoi-client-rest/thenvoi_client_rest-0.0.1.dev6-py3-none-any.whl
-export PHOENIX_CHANNELS_CLIENT_WHEEL_DIR=/Users/vlad/Documents/elixir/dist_rearch/phoenix-channels-python-client/dist
+export PHOENIX_CHANNELS_CLIENT_WHEEL_DIR=/path/to/phoenix-channels-python-client/dist
 export PHOENIX_CHANNELS_CLIENT_WHEEL=/opt/phoenix-client
 docker compose -f examples/codex/docker-compose.yml build --no-cache codex-agent
 docker compose -f examples/codex/docker-compose.yml up codex-agent

@@ -16,13 +16,13 @@ services:
       CODEX_APPROVAL_MODE: manual
       CODEX_TURN_TASK_MARKERS: "false"
       PYTHONPATH: /workspace/repo/src
-      # Container must reach host Thenvoi services via host.docker.internal (not localhost).
+      # Container must reach host Band services via host.docker.internal (not localhost).
       # Override with BAND_REST_URL_DOCKER / BAND_WS_URL_DOCKER if needed.
       BAND_REST_URL: ${BAND_REST_URL_DOCKER:-http://host.docker.internal:4000}
       BAND_WS_URL: ${BAND_WS_URL_DOCKER:-ws://host.docker.internal:4000/api/v1/socket/websocket}
       # Optional local override when PyPI thenvoi-client-rest is behind:
       # Example:
-      #   THENVOI_CLIENT_REST_WHEEL_DIR=/Users/vlad/Documents/elixir/dist_rearch/fern/generated_sdk/dist
+      #   THENVOI_CLIENT_REST_WHEEL_DIR=/path/to/thenvoi-client-rest/dist
       #   THENVOI_CLIENT_REST_WHEEL=/opt/thenvoi-client-rest/thenvoi_client_rest-0.0.1.dev6-py3-none-any.whl
       THENVOI_CLIENT_REST_WHEEL: ${THENVOI_CLIENT_REST_WHEEL:-}
       # Optional local override for phoenix channels client wheel:

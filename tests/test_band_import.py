@@ -12,3 +12,10 @@ def test_thenvoi_import_surface_keeps_compatibility_aliases() -> None:
     from thenvoi import BandLink, ThenvoiLink
 
     assert ThenvoiLink is BandLink
+
+
+def test_band_submodule_imports_alias_thenvoi_modules() -> None:
+    import band.adapters
+    import thenvoi.adapters
+
+    assert band.adapters is thenvoi.adapters
