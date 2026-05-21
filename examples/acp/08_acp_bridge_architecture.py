@@ -16,7 +16,7 @@ Architecture:
       -> ACPClientAdapter (Band bridge)
          - room/session mapping
          - bootstrap context + event emission
-         - Thenvoi MCP tool policy (adapter-level)
+         - Band MCP tool policy (adapter-level)
       -> ACPRuntime (generic ACP subprocess/session plumbing)
       -> Remote ACP runtime (Codex, Claude Code, Gemini CLI, Cursor, etc.)
 
@@ -29,14 +29,14 @@ Relation to A2A:
     - ACP outbound can spawn a local ACP subprocess and manage its lifecycle.
 
 Prerequisites:
-    1. Set THENVOI_API_KEY in your environment.
+    1. Set BAND_API_KEY in your environment.
     2. Install an ACP-capable runtime (default command uses codex-acp).
 
 Optional environment variables:
     - ACP_AGENT_COMMAND (default: "npx @zed-industries/codex-acp")
     - ACP_AGENT_CWD (default: ".")
     - ACP_AUTH_METHOD (example: "cursor_login")
-    - ACP_INJECT_THENVOI_TOOLS (default: true)
+    - ACP_INJECT_BAND_TOOLS (default: true; legacy: ACP_INJECT_THENVOI_TOOLS)
 
 Run with:
     uv run examples/acp/08_acp_bridge_architecture.py
@@ -67,8 +67,12 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
+    ws_url = os.getenv("BAND_WS_URL") or os.getenv(
+        "THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"
+    )
+    rest_url = os.getenv("BAND_REST_URL") or os.getenv(
+        "THENVOI_REST_URL", "https://app.band.ai"
+    )
 
     agent_id, api_key = load_agent_config("acp_client_agent")
 
@@ -77,8 +81,9 @@ async def main() -> None:
     )
     cwd = os.getenv("ACP_AGENT_CWD", ".")
     auth_method = os.getenv("ACP_AUTH_METHOD")
-    inject_thenvoi_tools = os.getenv(
-        "ACP_INJECT_THENVOI_TOOLS", "true"
+    inject_thenvoi_tools = (
+        os.getenv("ACP_INJECT_BAND_TOOLS")
+        or os.getenv("ACP_INJECT_THENVOI_TOOLS", "true")
     ).lower() not in {
         "0",
         "false",
@@ -106,7 +111,7 @@ async def main() -> None:
 
     logger.info("Starting ACP bridge architecture example...")
     logger.info("ACP command: %s", " ".join(command))
-    logger.info("Thenvoi tool injection enabled: %s", inject_thenvoi_tools)
+    logger.info("Band tool injection enabled: %s", inject_thenvoi_tools)
     logger.info(
         "ACP client profile: %s",
         type(profile).__name__ if profile else "None",

@@ -41,7 +41,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
     """Adapter that forwards Band messages to a remote ACP agent.
 
     The adapter owns Band bridge concerns such as room-to-session mapping,
-    session rehydration, system-context bootstrapping, Thenvoi MCP injection,
+    session rehydration, system-context bootstrapping, Band MCP injection,
     and emitting replies back to the platform. ACP subprocess lifecycle,
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
     """
