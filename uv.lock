@@ -8188,6 +8188,10 @@ acp = [
     { name = "starlette" },
     { name = "uvicorn" },
 ]
+agentcore-runtime = [
+    { name = "fastapi" },
+    { name = "uvicorn" },
+]
 anthropic = [
     { name = "anthropic" },
 ]
@@ -8328,6 +8332,7 @@ requires-dist = [
     { name = "crewai", marker = "extra == 'crewai'", specifier = "==1.14.3" },
     { name = "crewai", marker = "extra == 'dev'", specifier = "==1.14.3" },
     { name = "cryptography", specifier = ">=46.0.5" },
+    { name = "fastapi", marker = "extra == 'agentcore-runtime'", specifier = ">=0.110" },
     { name = "google-adk", marker = "extra == 'dev'", specifier = ">=1.0.0,<2" },
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=1.0.0,<2" },
     { name = "google-genai", marker = "extra == 'dev'", specifier = ">=1.43.0" },
@@ -8403,12 +8408,13 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'a2a-gateway'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway-demo'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'acp'", specifier = ">=0.32.0" },
+    { name = "uvicorn", marker = "extra == 'agentcore-runtime'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.32.0" },
     { name = "websockets", marker = "extra == 'codex'", specifier = ">=13.0" },
     { name = "werkzeug", marker = "extra == 'dev-parlant'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "bridge", "bridge-agentcore", "google-adk", "dev", "dev-parlant"]
+provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "dev", "dev-parlant"]
 
 [[package]]
 name = "thenvoi-testing-python"
