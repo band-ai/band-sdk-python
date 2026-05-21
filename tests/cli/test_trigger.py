@@ -506,7 +506,7 @@ class TestMain:
         monkeypatch.setattr(
             "sys.argv",
             [
-                "thenvoi-trigger",
+                "band-trigger",
                 "--api-key",
                 "k",
                 "--target-handle",
@@ -527,7 +527,7 @@ class TestMain:
 
     def test_exits_1_on_missing_api_key(self, monkeypatch):
         monkeypatch.delenv("THENVOI_API_KEY", raising=False)
-        monkeypatch.setattr("sys.argv", ["thenvoi-trigger"])
+        monkeypatch.setattr("sys.argv", ["band-trigger"])
 
         with (
             patch(
@@ -545,7 +545,7 @@ class TestMain:
         monkeypatch.setattr(
             "sys.argv",
             [
-                "thenvoi-trigger",
+                "band-trigger",
                 "--api-key",
                 "k",
                 "--target-handle",
@@ -568,7 +568,7 @@ class TestMain:
         monkeypatch.setattr(
             "sys.argv",
             [
-                "thenvoi-trigger",
+                "band-trigger",
                 "--api-key",
                 "k",
                 "--target-handle",
@@ -595,7 +595,7 @@ class TestMain:
         monkeypatch.setattr(
             "sys.argv",
             [
-                "thenvoi-trigger",
+                "band-trigger",
                 "--api-key",
                 "k",
                 "--target-handle",
@@ -623,7 +623,7 @@ class TestMain:
         monkeypatch.setattr(
             "sys.argv",
             [
-                "thenvoi-trigger",
+                "band-trigger",
                 "--api-key",
                 "k",
                 "--target-handle",
@@ -647,7 +647,7 @@ class TestMain:
         monkeypatch.setattr(
             "sys.argv",
             [
-                "thenvoi-trigger",
+                "band-trigger",
                 "--api-key",
                 "k",
                 "--target-handle",

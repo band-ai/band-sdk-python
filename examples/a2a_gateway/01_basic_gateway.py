@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[a2a_gateway]"]
+# dependencies = ["band-sdk[a2a_gateway]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Basic A2A Gateway adapter example.

@@ -1,4 +1,4 @@
-"""ACP (Agent Client Protocol) integration for Thenvoi SDK.
+"""ACP (Agent Client Protocol) integration for Band SDK.
 
 This module provides bidirectional ACP support:
 
@@ -8,7 +8,7 @@ This module provides bidirectional ACP support:
 
 2. **ACP Client Adapter** (Thenvoi -> Remote ACP Runtime): Thenvoi forwards
    messages to remote ACP runtimes (Codex CLI, Gemini CLI, Claude Code, etc.)
-   via a Thenvoi bridge layered over a generic ACP runtime.
+   via a Band bridge layered over a generic ACP runtime.
 
 3. **Architectural analogy to A2A**:
    - Outbound A2A: `A2AAdapter` bridges to a remote A2A peer.

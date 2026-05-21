@@ -14,8 +14,8 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
 1. **Fork and clone the repository**
 
    ```bash
-   git clone https://github.com/<your-username>/thenvoi-sdk-python.git
-   cd thenvoi-sdk-python
+   git clone https://github.com/<your-username>/band-sdk-python.git
+   cd band-sdk-python
    ```
 
 2. **Add the upstream remote**

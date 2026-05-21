@@ -27,7 +27,7 @@ JetBrains Configuration (~/.jetbrains/acp.json):
         "default_mcp_settings": {},
         "agent_servers": {
             "Band": {
-                "command": "thenvoi-acp",
+                "command": "band-acp",
                 "args": ["--agent-id", "YOUR_AGENT_ID"],
                 "env": {
                     "THENVOI_API_KEY": "YOUR_API_KEY"
@@ -44,7 +44,7 @@ JetBrains Configuration (~/.jetbrains/acp.json):
                 "command": "uv",
                 "args": [
                     "run", "--extra", "acp",
-                    "thenvoi-acp", "--agent-id", "YOUR_AGENT_ID"
+                    "band-acp", "--agent-id", "YOUR_AGENT_ID"
                 ],
                 "env": {
                     "THENVOI_API_KEY": "YOUR_API_KEY"

@@ -1,4 +1,4 @@
-"""Integration tests for thenvoi-trigger CLI against a real API.
+"""Integration tests for band-trigger CLI against a real API.
 
 Tests the trigger flow end-to-end: peer lookup, room creation,
 participant addition, and message delivery using real REST endpoints.

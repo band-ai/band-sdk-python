@@ -1,6 +1,6 @@
 """Pytest fixtures for thenvoi SDK tests.
 
-Most fixtures are provided by thenvoi-testing-python (auto-registered plugin).
+Most fixtures are provided by band-testing-python (auto-registered plugin).
 
 Available from thenvoi_testing:
 - factory: MockDataFactory for creating test data

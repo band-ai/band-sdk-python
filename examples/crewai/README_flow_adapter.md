@@ -13,7 +13,7 @@ Use `CrewAIFlowAdapter` if your router needs one of these behaviors:
 - accept the first peer reply and finalize early
 - require that explicitly tagged peers receive a delegation before finalization
 - run a sequential handoff, such as `data-fetcher` before `presenter`
-- spawn a sub-Crew that can still use Thenvoi tools safely
+- spawn a sub-Crew that can still use Band tools safely
 
 Use `CrewAIAdapter` instead if you just want one CrewAI agent to answer room messages, call platform tools, or run a conventional CrewAI crew turn. The Flow adapter writes task events for orchestration and reads the task-event log on each turn, so it is heavier by design.
 
@@ -257,7 +257,7 @@ This updates the adapter's participant snapshot for the current turn so a subseq
 
 ## Sub-Crew tools
 
-Use the runtime when a sub-Crew needs Thenvoi tools:
+Use the runtime when a sub-Crew needs Band tools:
 
 ```python
 from thenvoi.adapters.crewai_flow import get_current_flow_runtime

@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[acp]"]
+# dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 ACP Client example - Use a remote ACP agent from Thenvoi.
@@ -19,7 +19,7 @@ Architecture:
         -> remote ACP agent subprocess/session
           -> Remote ACP Agent (Codex CLI, Gemini CLI, etc.)
             -> session_update responses streamed back
-        -> Posts response to Thenvoi room
+        -> Posts response to Band room
 
 Prerequisites:
     1. Set environment variables:

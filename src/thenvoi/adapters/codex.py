@@ -295,7 +295,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     """
     Codex adapter backed by codex app-server (stdio or websocket transport).
 
-    One Thenvoi room maps to one Codex thread. Mapping is persisted in task
+    One Band room maps to one Codex thread. Mapping is persisted in task
     events metadata and restored via CodexHistoryConverter on bootstrap.
     """
 

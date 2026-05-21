@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[acp]"]
+# dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Cursor ACP Client - Use Cursor's AI agent from Thenvoi.
@@ -20,15 +20,15 @@ the other direction — Thenvoi spawns Cursor's agent as a backend.
 For the reverse direction (IDE connects to Thenvoi), see:
 - JetBrains: examples/acp/07_jetbrains_server.py
 - Zed: examples/acp/01_basic_acp_server.py
-- Any ACP client: thenvoi-acp CLI
+- Any ACP client: band-acp CLI
 
 Architecture:
     Band Platform (message arrives in room)
       -> ACPClientAdapter
         -> Cursor ACP subprocess
-          -> Cursor CLI Agent (with Thenvoi MCP tools injected)
+          -> Cursor CLI Agent (with Band MCP tools injected)
             -> session_update responses streamed back
-        -> Posts response to Thenvoi room
+        -> Posts response to Band room
 
 Prerequisites:
     1. Cursor CLI installed and authenticated:
@@ -90,7 +90,7 @@ async def main() -> None:
 
     # Create adapter that spawns Cursor's ACP agent.
     # - auth_method="cursor_login" authenticates using your Cursor login
-    # - Thenvoi tools are injected through a local localhost-only MCP server
+    # - Band tools are injected through a local localhost-only MCP server
     adapter = ACPClientAdapter(
         command=[os.path.expanduser("~/.local/bin/agent"), "acp"],
         cwd=cwd,

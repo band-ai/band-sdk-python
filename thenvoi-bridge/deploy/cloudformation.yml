@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: Thenvoi Bridge ECS Fargate service with AgentCore handler support
+Description: Band Bridge ECS Fargate service with AgentCore handler support
 
 Parameters:
   VpcId:
@@ -126,7 +126,7 @@ Resources:
   SecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: Thenvoi Bridge ECS tasks - HTTPS egress only
+      GroupDescription: Band Bridge ECS tasks - HTTPS egress only
       VpcId: !Ref VpcId
       SecurityGroupEgress:
         - IpProtocol: tcp

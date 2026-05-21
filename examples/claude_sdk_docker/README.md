@@ -1,4 +1,4 @@
-# Thenvoi Agent Runner
+# Band Agent Runner
 
 Run AI agents powered by Claude SDK with Docker - no coding required.
 
@@ -21,9 +21,9 @@ cp .env.example .env
 
 ### 2. Create your agent
 
-1. Go to the [Thenvoi Dashboard](https://app.band.ai/dashboard)
+1. Go to the [Band Dashboard](https://app.band.ai/dashboard)
 2. Log in or create an account
-3. Create a new **Remote Agent** (see [Creating a Remote Agent](https://docs.thenvoi.com/getting-started/connect-remote-agent) for detailed instructions)
+3. Create a new **Remote Agent** in the Band documentation
    - **Name**: e.g., "Customer Support Bot" or "Research Assistant"
    - **Description**: e.g., "Handles customer inquiries and provides product information"
 4. Copy your **Agent ID** and **API Key** from the agent settings
@@ -37,8 +37,8 @@ cp example_agent.yaml agent1.yaml
 6. Edit your new agent file and paste your credentials:
 
 ```yaml
-agent_id: "agt_abc123xyz"  # Your Agent ID from Thenvoi
-api_key: "sk_live_..."     # Your API Key from Thenvoi
+agent_id: "agt_abc123xyz"  # Your Agent ID from Band
+api_key: "sk_live_..."     # Your API Key from Band
 ```
 
 You can create multiple agents by repeating these steps with different files (e.g. `agent2.yaml`, `agent3.yaml`).
@@ -98,7 +98,7 @@ docker compose up
 ## Agent Configuration
 
 ```yaml
-# Required: credentials from Thenvoi Dashboard
+# Required: credentials from Band Dashboard
 agent_id: "agt_abc123xyz"
 api_key: "sk_live_..."
 
@@ -125,7 +125,7 @@ tools:
 
 To run multiple agents, repeat steps 2-3 for each agent:
 
-1. Create a new remote agent on Thenvoi and copy the credentials
+1. Create a new remote agent on Band and copy the credentials
 2. Copy `example_agent.yaml` to a new file (e.g. `agent2.yaml`)
 3. Edit the new file with the credentials
 4. Add the new agent to `docker-compose.yml`
@@ -174,7 +174,7 @@ All agents share the same mounts. This is the simplest setup for multi-agent col
 Concurrency guidance for shared workspaces:
 - Designate one agent (typically the planner) as the primary writer
 - Other agents should read code but coordinate changes via chat
-- Use Thenvoi messaging to coordinate file modifications between agents
+- Use Band messaging to coordinate file modifications between agents
 
 ### Isolated Workspaces
 

@@ -8,7 +8,7 @@ A **Thinker** agent (game master) picks a secret word, announces a challenge to 
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) package manager
-- `thenvoi-sdk` with the `langgraph` extra installed
+- `band-sdk` with the `langgraph` extra installed
 - An `agent_config.yaml` file in the repo root with credentials for each agent:
   - `arena_thinker`
   - `arena_guesser`

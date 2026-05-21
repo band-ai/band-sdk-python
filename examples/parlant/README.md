@@ -1,6 +1,6 @@
 # Parlant Examples for Thenvoi
 
-Examples showing how to use the Thenvoi SDK with [Parlant](https://github.com/emcie-co/parlant) - an AI agent framework designed for controlled, guideline-based agent behavior.
+Examples showing how to use the Band SDK with [Parlant](https://github.com/emcie-co/parlant) - an AI agent framework designed for controlled, guideline-based agent behavior.
 
 ## Why Parlant?
 
@@ -136,7 +136,7 @@ parlant_agent:
 
 ```bash
 # From project root
-cd /path/to/thenvoi-sdk-python
+cd /path/to/band-sdk-python
 
 # Run examples
 uv run python examples/parlant/01_basic_agent.py
@@ -198,5 +198,5 @@ Install the Parlant extra:
 ```bash
 uv sync --extra parlant
 # or
-pip install 'thenvoi-sdk[parlant]'
+pip install 'band-sdk[parlant]'
 ```

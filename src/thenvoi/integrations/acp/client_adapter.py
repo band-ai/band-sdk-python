@@ -38,9 +38,9 @@ LocalMcpServerConfig = HttpMcpServer | SseMcpServer
 
 
 class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
-    """Adapter that forwards Thenvoi messages to a remote ACP agent.
+    """Adapter that forwards Band messages to a remote ACP agent.
 
-    The adapter owns Thenvoi bridge concerns such as room-to-session mapping,
+    The adapter owns Band bridge concerns such as room-to-session mapping,
     session rehydration, system-context bootstrapping, Thenvoi MCP injection,
     and emitting replies back to the platform. ACP subprocess lifecycle,
     prompt delivery, and session-update buffering live in ``ACPRuntime``.
@@ -257,8 +257,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         room_context = (
             f"\n## Room Context\n"
-            f"You are connected to Thenvoi using the Thenvoi tools.\n"
-            f"Use the Thenvoi tools for any visible room action. Plain text "
+            f"You are connected to Thenvoi using the Band tools.\n"
+            f"Use the Band tools for any visible room action. Plain text "
             f"output is not posted back to the room.\n"
             f"\n"
             f"Current room_id: {room_id}\n"

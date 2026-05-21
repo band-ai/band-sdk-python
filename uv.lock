@@ -475,6 +475,7 @@ dev = [
     { name = "agent-client-protocol" },
     { name = "aiohttp" },
     { name = "anthropic" },
+    { name = "band-testing-python" },
     { name = "beautifulsoup4" },
     { name = "boto3" },
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" } },
@@ -505,10 +506,10 @@ dev = [
     { name = "python-dotenv" },
     { name = "ruff" },
     { name = "starlette" },
-    { name = "thenvoi-testing-python" },
     { name = "uvicorn" },
 ]
 dev-parlant = [
+    { name = "band-testing-python" },
     { name = "httpx" },
     { name = "openai" },
     { name = "parlant" },
@@ -520,7 +521,6 @@ dev-parlant = [
     { name = "pytest-rerunfailures" },
     { name = "pytest-timeout" },
     { name = "ruff" },
-    { name = "thenvoi-testing-python" },
     { name = "werkzeug" },
 ]
 gemini = [
@@ -569,6 +569,8 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
+    { name = "band-testing-python", marker = "extra == 'dev'", specifier = ">=0.1.2" },
+    { name = "band-testing-python", marker = "extra == 'dev-parlant'", specifier = ">=0.1.2" },
     { name = "beautifulsoup4", marker = "extra == 'dev'", specifier = ">=4.12.0" },
     { name = "beautifulsoup4", marker = "extra == 'langgraph'", specifier = ">=4.12.0" },
     { name = "boto3", marker = "extra == 'bridge-agentcore'", specifier = ">=1.35.0" },
@@ -649,8 +651,6 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
     { name = "thenvoi-client-rest", specifier = "==0.0.7" },
-    { name = "thenvoi-testing-python", marker = "extra == 'dev'", specifier = ">=0.1.2" },
-    { name = "thenvoi-testing-python", marker = "extra == 'dev-parlant'", specifier = ">=0.1.2" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway-demo'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'acp'", specifier = ">=0.32.0" },
@@ -660,6 +660,22 @@ requires-dist = [
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
 provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "bridge", "bridge-agentcore", "google-adk", "bridge-langchain", "dev", "dev-parlant"]
+
+[[package]]
+name = "band-testing-python"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic-settings", version = "2.10.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant')" },
+    { name = "pydantic-settings", version = "2.13.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev')" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/53/2b/47b6a5afca2f6c41f5c75557164654512af96b2a06f09fe50fac35e86d1d/band_testing_python-0.1.4.tar.gz", hash = "sha256:3a4e3bd3b8a37bda5d587a6290cc7d1a8c4b4ecbe7bb348716d632de314d87f7", size = 61988, upload-time = "2026-04-28T13:24:46.244Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f4/63/f53ebd26ac8ce6e4ee9e523e962955adb4dc003f4d2f70b582bd85863c79/band_testing_python-0.1.4-py3-none-any.whl", hash = "sha256:b5b45d56646fcb3fb1c7b3ca0925dc7354b93beaab11eddeb85a7b7550b0376c", size = 25696, upload-time = "2026-04-28T13:24:44.441Z" },
+]
 
 [[package]]
 name = "bcrypt"
@@ -7329,22 +7345,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/54/b8/077727592881e2bce52d9cd4198ddff4d2109eb30a456fe29bdd84eacba0/thenvoi_client_rest-0.0.7.tar.gz", hash = "sha256:1f793a96449556c304bbecce79db0ae2d8044e32b6c137e50c608d09cd97ddb3", size = 95101, upload-time = "2026-04-12T13:22:44.949Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/41/f4/61b5a86a1f3bbaeb09f46a01d019a2c0df0f6bf57494745ee670eee9e68b/thenvoi_client_rest-0.0.7-py3-none-any.whl", hash = "sha256:60b572ed3b64d2acaf447e50f36ea064506c14ca6c7d6ca9b3b197ccbc68c70f", size = 233953, upload-time = "2026-04-12T13:22:43.351Z" },
-]
-
-[[package]]
-name = "thenvoi-testing-python"
-version = "0.1.3"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-    { name = "pydantic-settings", version = "2.10.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant')" },
-    { name = "pydantic-settings", version = "2.13.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-parlant') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev')" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e0/5c/f9ba3872ce3d55ab6122ae4eed6b31b586b12586d9a951c809274053610a/thenvoi_testing_python-0.1.3.tar.gz", hash = "sha256:42be7c27818fe1a626d5f8db601c056293545542f9baba177aee864cc8affc7d", size = 61300, upload-time = "2026-04-12T12:32:01.706Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ae/2c/a252b28994f7d2061f7576806254af24fe77c2993477ed3efbfc51559bf2/thenvoi_testing_python-0.1.3-py3-none-any.whl", hash = "sha256:b389954cfee82b4ff036427b52fec98ee1ef879ebe7c155428dd50b3bd27fdba", size = 25721, upload-time = "2026-04-12T12:32:00.357Z" },
 ]
 
 [[package]]

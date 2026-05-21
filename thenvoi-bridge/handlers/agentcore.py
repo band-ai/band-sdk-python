@@ -74,7 +74,7 @@ class AgentCoreHandler:
             except ImportError:
                 raise ImportError(
                     "boto3 is required for AgentCoreHandler. "
-                    "Install with: pip install thenvoi-sdk[bridge_agentcore]"
+                    "Install with: pip install band-sdk[bridge_agentcore]"
                 )
             self._boto3_client = boto3.client(
                 "bedrock-agentcore", region_name=self._region

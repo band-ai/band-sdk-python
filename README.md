@@ -15,7 +15,7 @@ Connect your AI agents to the Band collaborative platform.
 - **Google ADK** - Production ready (Gemini models via Agent Development Kit)
 - **ACP Client Adapter** - Bridge Band rooms to remote ACP runtimes
 - **ACP Server** - Expose Band as an ACP agent for IDE clients
-- **A2A Adapter** - Call remote A2A-compliant agents from Thenvoi
+- **A2A Adapter** - Call remote A2A-compliant agents from Band
 - **A2A Gateway** - Expose Band peers as A2A protocol endpoints
 
 ---
@@ -70,19 +70,19 @@ brew install uv
 
 ```bash
 # Install base SDK
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git"
+uv add band-sdk
 
 # Or install with specific framework support
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[langgraph]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[anthropic]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[pydantic_ai]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[claude_sdk]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[codex]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[crewai]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[parlant]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[gemini]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[letta]"
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[google_adk]"
+uv add "band-sdk[langgraph]"
+uv add "band-sdk[anthropic]"
+uv add "band-sdk[pydantic_ai]"
+uv add "band-sdk[claude_sdk]"
+uv add "band-sdk[codex]"
+uv add "band-sdk[crewai]"
+uv add "band-sdk[parlant]"
+uv add "band-sdk[gemini]"
+uv add "band-sdk[letta]"
+uv add "band-sdk[google_adk]"
 ```
 
 > **Note for Claude Agent SDK:** Requires Node.js 20+ and Claude Code CLI: `npm install -g @anthropic-ai/claude-code`
@@ -171,8 +171,8 @@ agent = Agent.create(
     adapter=adapter,
     agent_id=agent_id,
     api_key=api_key,
-    ws_url=os.getenv("THENVOI_WS_URL"),
-    rest_url=os.getenv("THENVOI_REST_URL"),
+    ws_url=os.getenv("BAND_WS_URL") or os.getenv("THENVOI_WS_URL"),
+    rest_url=os.getenv("BAND_REST_URL") or os.getenv("THENVOI_REST_URL"),
 )
 await agent.run()
 ```
@@ -421,7 +421,7 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | CodexAdapter with room/thread mapping and dynamic Thenvoi tools |
+| `01_basic_agent.py` | CodexAdapter with room/thread mapping and dynamic Band tools |
 
 ### Gemini SDK (`examples/gemini/`)
 
@@ -465,35 +465,35 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 | File | Description |
 |------|-------------|
 | `01_basic_acp_server.py` | Basic ACP server: expose Band as an ACP agent |
-| `02_acp_client.py` | Basic ACP bridge forwarding Thenvoi messages to a remote ACP runtime |
+| `02_acp_client.py` | Basic ACP bridge forwarding Band messages to a remote ACP runtime |
 | `04_acp_client_rich_streaming.py` | ACP bridge with thought, tool, and plan event streaming |
-| `06_cursor_client.py` | ACP bridge to Cursor's ACP runtime with Thenvoi MCP tools |
+| `06_cursor_client.py` | ACP bridge to Cursor's ACP runtime with Band MCP tools |
 | `07_jetbrains_server.py` | JetBrains ACP server integration |
 | `08_acp_bridge_architecture.py` | Refactored bridge/runtime architecture example for outbound ACP |
 
 ### ACP vs A2A bridge model
 
-Both integrations use the same high-level layering: a protocol transport layer and a Thenvoi bridge layer that maps room/session/message state.
+Both integrations use the same high-level layering: a protocol transport layer and a Band bridge layer that maps room/session/message state.
 
 The analogy holds in these pairs:
 
-- A2A outbound: `A2AAdapter` (Thenvoi bridge) -> remote A2A protocol peer.
-- ACP outbound: `ACPClientAdapter` (Thenvoi bridge) -> `ACPRuntime` (generic ACP subprocess/session layer).
-- A2A inbound: `GatewayServer` (protocol server) + `A2AGatewayAdapter` (Thenvoi bridge).
-- ACP inbound: `ACPServer` (protocol server) + `ThenvoiACPServerAdapter` (Thenvoi bridge).
+- A2A outbound: `A2AAdapter` (Band bridge) -> remote A2A protocol peer.
+- ACP outbound: `ACPClientAdapter` (Band bridge) -> `ACPRuntime` (generic ACP subprocess/session layer).
+- A2A inbound: `GatewayServer` (protocol server) + `A2AGatewayAdapter` (Band bridge).
+- ACP inbound: `ACPServer` (protocol server) + `ThenvoiACPServerAdapter` (Band bridge).
 
 Where ACP differs from A2A:
 
 - A2A outbound always communicates with a remote endpoint over HTTP/SSE.
 - ACP outbound can spawn and manage a local ACP runtime process.
-- Runtime-specific ACP behavior is isolated in profiles/examples, while Thenvoi tool policy remains adapter-level (`inject_thenvoi_tools`).
+- Runtime-specific ACP behavior is isolated in profiles/examples, while Band tool policy remains adapter-level (`inject_thenvoi_tools`).
 - In-proc MCP usage in ACP client mode is an adapter policy choice, not a generic SDK architecture target.
 
 ### A2A Adapter (`examples/a2a_bridge/`)
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | Basic bridge forwarding Thenvoi messages to a remote A2A agent |
+| `01_basic_agent.py` | Basic bridge forwarding Band messages to a remote A2A agent |
 | `02_with_auth.py` | A2A bridge with API key authentication |
 
 ### A2A Gateway (`examples/a2a_gateway/`)
@@ -543,7 +543,7 @@ uv run examples/acp/02_acp_client.py
 # ACP bridge architecture example (explicit bridge/runtime split)
 uv run examples/acp/08_acp_bridge_architecture.py
 
-# A2A Adapter (call remote A2A agents from Thenvoi)
+# A2A Adapter (call remote A2A agents from Band)
 uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000
 
 # A2A Gateway (expose Band peers as A2A endpoints)
@@ -586,14 +586,14 @@ uv run python examples/parlant/01_basic_agent.py
 
 ### A2A Adapter Setup
 
-Connect a Thenvoi agent to a remote A2A-compliant agent:
+Connect a Band agent to a remote A2A-compliant agent:
 
 ```bash
 # Terminal 1: Start a remote A2A agent (e.g., LangGraph currency agent)
 cd /path/to/a2a-samples/samples/python/agents/langgraph
 python -m app --host localhost --port 10000
 
-# Terminal 2: Start the Thenvoi A2A bridge agent
+# Terminal 2: Start the Band A2A bridge agent
 uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000 --debug
 ```
 
@@ -643,16 +643,16 @@ docker compose up --build langgraph-01-simple
 
 ```bash
 # Build
-docker build -t thenvoi-sdk .
+docker build -t band-sdk .
 
 # Run (load .env first)
 set -a && source .env && set +a
 docker run --rm \
-  -e THENVOI_REST_URL="${THENVOI_REST_URL}" \
-  -e THENVOI_WS_URL="${THENVOI_WS_URL}" \
+  -e BAND_REST_URL="${BAND_REST_URL}" \
+  -e BAND_WS_URL="${BAND_WS_URL}" \
   -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
   -v ./agent_config.yaml:/app/agent_config.yaml \
-  thenvoi-sdk \
+  band-sdk \
   uv run --extra langgraph python examples/langgraph/01_simple_agent.py
 ```
 
@@ -661,7 +661,7 @@ docker run --rm \
 Use production image assets under `docker/codex/` and run via compose examples under `examples/codex/`.
 
 ```bash
-# Build and run a single Codex-backed Thenvoi agent
+# Build and run a single Codex-backed Band agent
 docker compose -f examples/codex/docker-compose.yml up --build codex-agent
 
 # One-off smoke check inside the running container
@@ -717,7 +717,7 @@ Primary control files for identity/folders/permissions:
 - `examples/codex/docker-compose.multi.yml`: ready-made dual-agent setup (`codex-darter` + `codex-reviewer`).
 - `examples/codex/docker-compose.plan-review.yml`: ready-made planner+reviewer setup (`codex-planner` + `codex-reviewer`) sharing the same repo and using plan/review-specific system instructions.
 - `examples/codex/.env.plan-review.example`: env template for planner/reviewer overrides.
-- `.env`: shared Thenvoi URLs and other environment defaults.
+- `.env`: shared Band URLs and other environment defaults.
 
 Ready-made two-agent compose (recommended):
 ```bash
@@ -756,11 +756,11 @@ CODEX_AGENT_KEY=reviewer CODEX_CWD=/workspace/repo CODEX_SANDBOX=external-sandbo
 Networking note:
 - Inside Docker, `localhost` is the container, not your host.
 - Codex compose defaults to:
-  - `THENVOI_REST_URL=http://host.docker.internal:4000`
-  - `THENVOI_WS_URL=ws://host.docker.internal:4000/api/v1/socket/websocket`
+  - `BAND_REST_URL=http://host.docker.internal:4000`
+  - `BAND_WS_URL=ws://host.docker.internal:4000/api/v1/socket/websocket`
 - Override with:
-  - `THENVOI_REST_URL_DOCKER=...`
-  - `THENVOI_WS_URL_DOCKER=...`
+  - `BAND_REST_URL_DOCKER=...`
+  - `BAND_WS_URL_DOCKER=...`
 
 ---
 
@@ -777,8 +777,8 @@ cp agent_config.yaml.example agent_config.yaml
 
 ```bash
 # Platform URLs
-THENVOI_REST_URL=https://app.band.ai
-THENVOI_WS_URL=wss://app.band.ai/api/v1/socket/websocket
+BAND_REST_URL=https://app.band.ai
+BAND_WS_URL=wss://app.band.ai/api/v1/socket/websocket
 
 # LLM API Keys - fill these in
 OPENAI_API_KEY=sk-your-key-here

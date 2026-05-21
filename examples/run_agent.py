@@ -2,15 +2,15 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "thenvoi-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]",
+#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]",
 #   "python-dotenv>=1.1.1",
 # ]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
-Run Thenvoi SDK agents using the composition pattern.
+Run Band SDK agents using the composition pattern.
 
 Usage:
     uv run python examples/run_agent.py                    # Default: langgraph
@@ -815,7 +815,7 @@ async def run_a2a_gateway_agent(
 
 async def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Run a Thenvoi SDK test agent",
+        description="Run a Band SDK test agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

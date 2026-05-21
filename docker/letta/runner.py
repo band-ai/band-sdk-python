@@ -15,8 +15,8 @@ Environment variables:
     LETTA_PROJECT              Letta Cloud project name (optional, ignored for self-hosted)
     MCP_SERVER_URL             thenvoi-mcp server URL (default: http://localhost:8002/sse)
     MCP_SERVER_NAME            MCP server name (default: thenvoi)
-    THENVOI_WS_URL             Platform WebSocket URL
-    THENVOI_REST_URL           Platform REST URL
+    BAND_WS_URL                Platform WebSocket URL (legacy: THENVOI_WS_URL)
+    BAND_REST_URL              Platform REST URL (legacy: THENVOI_REST_URL)
 """
 
 from __future__ import annotations
@@ -123,13 +123,16 @@ async def main() -> None:
     agent_key = os.environ.get("AGENT_KEY", "agent")
 
     ws_url = os.environ.get(
-        "THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"
+        "BAND_WS_URL",
+        os.environ.get("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
     )
-    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.band.ai")
+    rest_url = os.environ.get(
+        "BAND_REST_URL", os.environ.get("THENVOI_REST_URL", "https://app.band.ai")
+    )
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is empty")
+        raise ValueError("BAND_WS_URL environment variable is empty")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is empty")
+        raise ValueError("BAND_REST_URL environment variable is empty")
 
     logger.info("Loading config from: %s (key: %s)", config_path, agent_key)
     config = load_config(config_path, agent_key)

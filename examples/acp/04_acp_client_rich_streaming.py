@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[acp]"]
+# dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 ACP Client with rich streaming - Thoughts, tool calls, and plans.

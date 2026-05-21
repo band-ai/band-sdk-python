@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[a2a]"]
+# dependencies = ["band-sdk[a2a]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Mixed-example bridge launcher.
 
-Starts two Thenvoi bridge agents in one process:
+Starts two Band bridge agents in one process:
 - one bridge for the remote contract checker A2A service
 - one bridge for the remote risk reviewer A2A service
 
@@ -52,7 +52,7 @@ def _build_bridge_agent(
     ws_url: str,
     rest_url: str,
 ) -> Agent:
-    """Create one Thenvoi bridge agent for a remote A2A service."""
+    """Create one Band bridge agent for a remote A2A service."""
     agent_id, api_key = load_agent_config(config_name, config_path=CONFIG_PATH)
     adapter = A2AAdapter(remote_url=remote_url, streaming=True)
 

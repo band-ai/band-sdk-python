@@ -34,7 +34,7 @@ Editor Configuration:
         {"agent_servers": {"Band": {"type": "custom", "command": "uv run examples/acp/01_basic_acp_server.py"}}}
 
     JetBrains (~/.jetbrains/acp.json):
-        {"agent_servers": {"Band": {"command": "thenvoi-acp", "args": ["--agent-id", "..."], "env": {"THENVOI_API_KEY": "..."}}}}
+        {"agent_servers": {"Band": {"command": "band-acp", "args": ["--agent-id", "..."], "env": {"THENVOI_API_KEY": "..."}}}}
 
 Run with:
     uv run examples/acp/01_basic_acp_server.py

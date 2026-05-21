@@ -98,7 +98,7 @@ class LangChainHandler:
             except ImportError:
                 raise ImportError(
                     "httpx is required for LangChainHandler. "
-                    "Install with: pip install thenvoi-sdk[bridge_langchain]"
+                    "Install with: pip install band-sdk[bridge_langchain]"
                 )
             self._httpx_client = _httpx.AsyncClient(
                 timeout=_httpx.Timeout(self._timeout)
@@ -290,7 +290,7 @@ class LangChainHandler:
         except ImportError:
             raise ImportError(
                 "httpx is required for LangChainHandler. "
-                "Install with: pip install thenvoi-sdk[bridge_langchain]"
+                "Install with: pip install band-sdk[bridge_langchain]"
             )
 
         try:

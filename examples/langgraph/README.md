@@ -6,7 +6,7 @@ This guide explains how to integrate LangGraph agents with the Band platform usi
 
 **If running from repository:**
 ```bash
-# From thenvoi-sdk-python/ directory
+# From band-sdk-python/ directory
 uv sync --extra langgraph
 ```
 

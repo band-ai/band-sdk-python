@@ -1,6 +1,6 @@
 # Pydantic AI Examples for Thenvoi
 
-Examples showing how to use the Thenvoi SDK with Pydantic AI using the composition-based pattern.
+Examples showing how to use the Band SDK with Pydantic AI using the composition-based pattern.
 
 ## Prerequisites
 

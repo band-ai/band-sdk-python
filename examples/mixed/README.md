@@ -1,8 +1,8 @@
 # Mixed Multi-Agent Example
 
-This example puts multiple integration styles in one shared Thenvoi room:
+This example puts multiple integration styles in one shared Band room:
 
-- 2 native CrewAI agents running as normal Thenvoi agents
+- 2 native CrewAI agents running as normal Band agents
 - 2 remote A2A services running as local HTTP agents
 - 1 bridge process that connects both remote A2A services to Thenvoi so they act like room participants
 
@@ -23,11 +23,11 @@ The user asks the room to sanity-check a change before ship. The agents split th
 - `04_risk_reviewer_a2a.py`
   Runs outside Thenvoi as a local A2A service. It returns compatibility, rollout, rollback, and observability risks.
 - `05_a2a_bridge.py`
-  Starts two Thenvoi bridge agents in one process. One forwards room messages to the contract checker A2A service. The other forwards room messages to the risk reviewer A2A service.
+  Starts two Band bridge agents in one process. One forwards room messages to the contract checker A2A service. The other forwards room messages to the risk reviewer A2A service.
 
 ## Why the bridge matters
 
-Without the bridge, the A2A services are just local HTTP agents. You can call them directly over A2A, but they are not in your Thenvoi room and they do not see room traffic.
+Without the bridge, the A2A services are just local HTTP agents. You can call them directly over A2A, but they are not in your Band room and they do not see room traffic.
 
 With the bridge running:
 
@@ -54,7 +54,7 @@ You need:
 
 - `OPENAI_API_KEY` for the CrewAI agents
 - optional: `OPENAI_MODEL` if you do not want the default `gpt-4o`
-- four Thenvoi agent credentials in `examples/mixed/agents.yaml`
+- four Band agent credentials in `examples/mixed/agents.yaml`
 
 The mixed examples default to the hosted Thenvoi URLs:
 
@@ -144,7 +144,7 @@ Terminal 3:
 uv run examples/mixed/05_a2a_bridge.py
 ```
 
-This one process starts two Thenvoi bridge agents:
+This one process starts two Band bridge agents:
 
 - one for the contract checker service at `http://127.0.0.1:10121`
 - one for the risk reviewer service at `http://127.0.0.1:10122`
@@ -167,8 +167,8 @@ uv run examples/mixed/02_draft_writer.py
 
 Once all five processes are running:
 
-1. Create a Thenvoi room.
-2. Add these four Thenvoi agents to the same room:
+1. Create a Band room.
+2. Add these four Band agents to the same room:
    - the release coordinator
    - the engineering writer
    - the contract checker bridge

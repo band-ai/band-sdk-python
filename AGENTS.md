@@ -181,7 +181,7 @@ The SDK supports the [A2A (Agent-to-Agent) protocol](https://google.github.io/A2
 
 ### A2A Adapter (outbound)
 
-`A2AAdapter` forwards Thenvoi messages to a remote A2A-compliant agent. Each Thenvoi room maps to an A2A context, with automatic session state persistence via task events and session rehydration on room rejoin.
+`A2AAdapter` forwards Band messages to a remote A2A-compliant agent. Each Band room maps to an A2A context, with automatic session state persistence via task events and session rehydration on room rejoin.
 
 ```python
 from thenvoi.adapters.a2a import A2AAdapter, A2AAuth
@@ -194,7 +194,7 @@ adapter = A2AAdapter(
 
 ### A2A Gateway (inbound)
 
-`A2AGatewayAdapter` + `GatewayServer` expose Band peers as A2A JSON-RPC endpoints. Remote A2A clients can send messages to Thenvoi agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
+`A2AGatewayAdapter` + `GatewayServer` expose Band peers as A2A JSON-RPC endpoints. Remote A2A clients can send messages to Band agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
 
 ```python
 from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
@@ -223,8 +223,8 @@ Two-layer pattern (mirrors A2A Gateway):
 | Protocol | `ACPServer` (JSON-RPC handler) | ACP SDK's `spawn_agent_process` |
 | Platform Bridge | `ThenvoiACPServerAdapter` | `ACPClientAdapter` |
 
-**Server**: Editor -> ACP -> `ACPServer` -> `ThenvoiACPServerAdapter` -> Thenvoi REST/WS -> Peers
-**Client**: Thenvoi room message -> `ACPClientAdapter` -> spawned subprocess (Codex, Claude Code, etc.)
+**Server**: Editor -> ACP -> `ACPServer` -> `ThenvoiACPServerAdapter` -> Band REST/WS -> Peers
+**Client**: Band room message -> `ACPClientAdapter` -> spawned subprocess (Codex, Claude Code, etc.)
 
 ### Key Files
 
@@ -237,7 +237,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/thenvoi/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/thenvoi/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
 | `src/thenvoi/integrations/acp/event_converter.py` | `EventConverter` — PlatformMessage -> ACP session_update chunks |
-| `src/thenvoi/integrations/acp/cli.py` | `thenvoi-acp` CLI entry point |
+| `src/thenvoi/integrations/acp/cli.py` | `band-acp` CLI entry point |
 | `src/thenvoi/converters/acp_server.py` | History converter for server adapter |
 | `src/thenvoi/converters/acp_client.py` | History converter for client adapter |
 
@@ -245,16 +245,16 @@ Two-layer pattern (mirrors A2A Gateway):
 
 ```bash
 # Installed via pip/uv as console_scripts entry point
-thenvoi-acp --agent-id my-agent --api-key $THENVOI_API_KEY
+band-acp --agent-id my-agent --api-key $THENVOI_API_KEY
 
 # Or with environment variables
-THENVOI_AGENT_ID=my-agent THENVOI_API_KEY=key thenvoi-acp
+THENVOI_AGENT_ID=my-agent THENVOI_API_KEY=key band-acp
 ```
 
 ### Session Lifecycle
 
 1. Editor connects via stdio -> `ACPServer.on_connect()` stores client ref
-2. `new_session(cwd, mcp_servers)` -> creates Thenvoi room, stores cwd/mcp_servers per session
+2. `new_session(cwd, mcp_servers)` -> creates Band room, stores cwd/mcp_servers per session
 3. `prompt(blocks, session_id)` -> extracts text/image/resource content, sends to room, waits for `done_event`
 4. `on_message()` receives peer response -> `EventConverter.convert()` -> `session_update` back to editor
 5. `on_cleanup(room_id)` -> removes all session state, unblocks pending prompts
@@ -270,7 +270,7 @@ THENVOI_AGENT_ID=my-agent THENVOI_API_KEY=key thenvoi-acp
 acp = ["agent-client-protocol"]
 ```
 
-Install with: `pip install thenvoi-sdk[acp]` or `uv add thenvoi-sdk[acp]`
+Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
 
 ## REST Client OMIT vs Null
 
@@ -451,10 +451,10 @@ Every example file must include PEP 723 inline script metadata at the top for st
 ```python
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[<extra>]"]
+# dependencies = ["band-sdk[<extra>]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Brief description of what this example does.

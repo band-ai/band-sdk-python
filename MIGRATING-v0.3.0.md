@@ -235,9 +235,9 @@ from YAML. This preserves type safety for adapter-specific options.
 optional extra. If you were using `ClaudeSDKAdapter`, install the extra:
 
 ```bash
-pip install thenvoi-sdk[claude-sdk]
+pip install band-sdk[claude-sdk]
 # or
-uv add thenvoi-sdk[claude-sdk]
+uv add band-sdk[claude-sdk]
 ```
 
 If you do not use `ClaudeSDKAdapter`, you no longer pull in

@@ -1,6 +1,6 @@
 # Anthropic SDK Examples for Thenvoi
 
-Examples for creating Thenvoi agents using the Anthropic Python SDK with the composition-based pattern.
+Examples for creating Band agents using the Anthropic Python SDK with the composition-based pattern.
 
 ## Overview
 

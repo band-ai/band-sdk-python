@@ -1,19 +1,19 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[acp]"]
+# dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 ACP Bridge Architecture example.
 
 This example demonstrates the refactored outbound ACP architecture where
-Thenvoi bridge concerns are separated from generic ACP runtime plumbing.
+Band bridge concerns are separated from generic ACP runtime plumbing.
 
 Architecture:
     Band Platform (message arrives in room)
-      -> ACPClientAdapter (Thenvoi bridge)
+      -> ACPClientAdapter (Band bridge)
          - room/session mapping
          - bootstrap context + event emission
          - Thenvoi MCP tool policy (adapter-level)
@@ -21,7 +21,7 @@ Architecture:
       -> Remote ACP runtime (Codex, Claude Code, Gemini CLI, Cursor, etc.)
 
 Relation to A2A:
-    The analogy holds at the bridge boundary: both adapters map Thenvoi room
+    The analogy holds at the bridge boundary: both adapters map Band room
     messages to a remote protocol session and stream responses back.
 
     The main difference is transport ownership:

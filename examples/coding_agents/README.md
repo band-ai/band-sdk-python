@@ -64,7 +64,7 @@ When using HTTPS URLs, configure git credentials on host (`credential helper`, P
 - Docker and Docker Compose v2
 - Anthropic API key for planner
 - OpenAI API key for reviewer
-- Thenvoi agent credentials (`agent_id` + `api_key`)
+- Band agent credentials (`agent_id` + `api_key`)
 
 ## Setup
 

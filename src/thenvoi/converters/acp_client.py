@@ -17,11 +17,11 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
     """Extracts room_id to session_id mappings from platform history.
 
     Scans platform history for ACP client-specific metadata to rebuild
-    the mapping between Thenvoi room_ids and remote ACP session_ids.
+    the mapping between Band room_ids and remote ACP session_ids.
 
     The converter looks for messages with metadata containing:
     - acp_client_session_id: The remote ACP agent's session identifier
-    - acp_client_room_id: The corresponding Thenvoi room identifier
+    - acp_client_room_id: The corresponding Band room identifier
     """
 
     def convert(self, raw: list[dict[str, Any]]) -> ACPClientSessionState:

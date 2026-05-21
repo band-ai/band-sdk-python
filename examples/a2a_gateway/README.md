@@ -9,7 +9,7 @@ The gateway is the inbound side of the Thenvoi A2A story.
 - the **bridge** connects a remote A2A agent into Thenvoi
 - the **gateway** exposes Band peers out to remote A2A clients
 
-A remote A2A client can call the gateway, discover Band peers through AgentCard routes, and send requests that the gateway turns into Thenvoi room activity.
+A remote A2A client can call the gateway, discover Band peers through AgentCard routes, and send requests that the gateway turns into Band room activity.
 
 ## Architecture
 
@@ -26,7 +26,7 @@ Remote A2A Client
    Thenvoi Peer
 ```
 
-Context is preserved by mapping the incoming A2A `contextId` to a Thenvoi room.
+Context is preserved by mapping the incoming A2A `contextId` to a Band room.
 
 ## What these examples cover
 
@@ -84,7 +84,7 @@ If you want the orchestrator demo too:
 uv sync --extra a2a_gateway_demo
 ```
 
-When you run these examples from this repository, `uv run` uses the local checkout of `thenvoi-sdk`.
+When you run these examples from this repository, `uv run` uses the local checkout of `band-sdk`.
 
 ## Running the basic gateway
 
@@ -166,7 +166,7 @@ What success looks like:
 
 ## Context reuse test
 
-To verify the same `contextId` maps back to the same Thenvoi room:
+To verify the same `contextId` maps back to the same Band room:
 
 1. send a first request with `contextId: "ctx-1"`
 2. send a second request with the same `contextId`
