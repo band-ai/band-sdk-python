@@ -12,9 +12,13 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.22 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/
-RUN uv sync --frozen --extra agentcore_runtime --extra anthropic --no-dev
+# --no-editable installs the SDK as a regular package into .venv so the
+# final stage can drop /app/src/ — without it, .venv contains an editable
+# .pth pointing at /app/src/ and the import breaks when src/ isn't present.
+RUN uv sync --frozen --no-editable --no-dev \
+    --extra agentcore_runtime --extra anthropic
 
 # --- Final stage ---
 FROM --platform=$TARGETPLATFORM python:3.11-slim
