@@ -320,6 +320,53 @@ def test_ignores_generic_auth_upgrade_error_without_json_contract():
     assert err is None
 
 
+async def test_aenter_wraps_upgrade_error(monkeypatch):
+    upgrade_exc = _upgrade_exception(
+        409,
+        b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
+    )
+
+    class FailingPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+
+        async def __aenter__(self):
+            raise upgrade_exc
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(WebSocketUpgradeError) as exc_info:
+        await client.__aenter__()
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "connection_conflict"
+    assert exc_info.value.request_id == "req-409"
+
+
+async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
+    original_exc = RuntimeError("socket exploded")
+
+    class FailingPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+
+        async def __aenter__(self):
+            raise original_exc
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(RuntimeError, match="socket exploded"):
+        await client.__aenter__()
+
+
 # --- Valid payload tests ---
 
 

@@ -25,7 +25,12 @@ def mock_ws_client():
     ws.leave_chat_room_channel = AsyncMock()
     ws.join_agent_control_channel = AsyncMock()
     ws.leave_agent_control_channel = AsyncMock()
-    ws.record_terminal_disconnect = MagicMock()
+    ws.last_disconnect_reason = None
+
+    def record_terminal_disconnect(reason):
+        ws.last_disconnect_reason = reason
+
+    ws.record_terminal_disconnect = MagicMock(side_effect=record_terminal_disconnect)
     ws.join_agent_rooms_channel = AsyncMock()
     ws.join_room_participants_channel = AsyncMock()
     ws.leave_room_participants_channel = AsyncMock()

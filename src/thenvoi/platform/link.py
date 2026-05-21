@@ -99,8 +99,6 @@ class ThenvoiLink:
         # Event queue for async iteration
         self._event_queue: asyncio.Queue[PlatformEvent] = asyncio.Queue(maxsize=1000)
 
-        self._last_disconnect_reason: WebSocketDisconnectReason | None = None
-
     @property
     def is_connected(self) -> bool:
         return self._is_connected
@@ -108,7 +106,9 @@ class ThenvoiLink:
     @property
     def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
         """Most recent terminal WebSocket disconnect reason, if reported."""
-        return self._last_disconnect_reason
+        if self._ws is None:
+            return None
+        return self._ws.last_disconnect_reason
 
     # --- Async iterator protocol ---
 
@@ -313,7 +313,6 @@ class ThenvoiLink:
     async def _on_supersede(self, payload: "SupersedePayload") -> None:
         """Handle terminal supersede event before the platform closes the socket."""
         reason = payload.to_disconnect_reason()
-        self._last_disconnect_reason = reason
         self._is_connected = False
         if self._ws:
             self._ws.record_terminal_disconnect(reason)
@@ -327,10 +326,10 @@ class ThenvoiLink:
 
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""
-        if self._last_disconnect_reason:
+        if self.last_disconnect_reason:
             logger.warning(
                 "WebSocket disconnected after terminal platform reason: %s",
-                self._last_disconnect_reason.reason,
+                self.last_disconnect_reason.reason,
             )
             return
         logger.warning("WebSocket disconnected: %s", error)
