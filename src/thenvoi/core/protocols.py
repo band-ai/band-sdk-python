@@ -40,7 +40,7 @@ class HistoryConverter(Protocol[T]):
 @runtime_checkable
 class AgentToolsProtocol(Protocol):
     """
-    Interface for Thenvoi platform tools.
+    Interface for Band platform tools.
 
     Enables:
     - Testable adapters via fake implementations

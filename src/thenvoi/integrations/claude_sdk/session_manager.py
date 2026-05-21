@@ -1,7 +1,7 @@
 """
 Session manager for Claude Agent SDK clients.
 
-Maintains one ClaudeSDKClient instance per Thenvoi chat room to ensure
+Maintains one ClaudeSDKClient instance per Band chat room to ensure
 conversation continuity within each room.
 
 Uses a dedicated background task for all session operations to ensure
@@ -293,7 +293,7 @@ class ClaudeSessionManager:
         room_id returns the same client instance.
 
         Args:
-            room_id: Thenvoi chat room ID (UUID)
+            room_id: Band chat room ID (UUID)
             resume_session_id: Optional session ID to resume from a previous
                               session. Only used when creating a new session.
 
@@ -326,7 +326,7 @@ class ClaudeSessionManager:
         - Adapter is shutting down
 
         Args:
-            room_id: Thenvoi chat room ID
+            room_id: Band chat room ID
         """
         if not self._started:
             return
@@ -350,7 +350,7 @@ class ClaudeSessionManager:
         invalidation, ``get_or_create_session`` will create a fresh client.
 
         Args:
-            room_id: Thenvoi chat room ID
+            room_id: Band chat room ID
         """
         if not self._started:
             return

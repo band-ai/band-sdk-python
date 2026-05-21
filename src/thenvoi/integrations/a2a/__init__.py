@@ -1,7 +1,7 @@
-"""A2A protocol integration for Thenvoi SDK.
+"""A2A protocol integration for Band SDK.
 
 This module provides integration with A2A (Agent-to-Agent) protocol, allowing
-remote A2A-compliant agents to participate in Thenvoi chat rooms as peers.
+remote A2A-compliant agents to participate in Band chat rooms as peers.
 
 Example:
     from thenvoi import Agent

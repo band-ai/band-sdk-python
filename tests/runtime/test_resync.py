@@ -44,7 +44,7 @@ async def wait_for_condition(
 
 @pytest.fixture
 def mock_link():
-    """ThenvoiLink mock configured for ExecutionContext tests."""
+    """BandLink mock configured for ExecutionContext tests."""
     link = MagicMock()
     link.agent_id = "agent-123"
     link.is_connected = False

@@ -1,15 +1,15 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[a2a]"]
+# dependencies = ["band-sdk[a2a]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic A2A adapter example.
 
 This example connects to a remote A2A-compliant agent and makes it available
-as a Thenvoi platform agent. Messages from the platform are forwarded to the
+as a Band platform agent. Messages from the platform are forwarded to the
 A2A agent, and responses are posted back to the chat.
 
 Features:
@@ -40,9 +40,9 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import A2AAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import A2AAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)

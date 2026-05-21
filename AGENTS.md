@@ -1,11 +1,11 @@
-# Thenvoi Python SDK
+# Band Python SDK
 
-This is a Python SDK that connects AI agents to the Thenvoi collaborative platform.
+This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 ## Core Features
 
 1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode)
-2. A2A protocol support: Bridge to remote A2A agents and expose Thenvoi peers as A2A endpoints
+2. A2A protocol support: Bridge to remote A2A agents and expose Band peers as A2A endpoints
 3. ACP integration: Editor-facing server and subprocess client adapters (Cursor, Codex, Claude Code)
 4. Platform tools for chat, contacts, and memory management
 5. WebSocket + REST transport: Real-time messaging with REST API fallback
@@ -194,7 +194,7 @@ adapter = A2AAdapter(
 
 ### A2A Gateway (inbound)
 
-`A2AGatewayAdapter` + `GatewayServer` expose Thenvoi peers as A2A JSON-RPC endpoints. Remote A2A clients can send messages to Thenvoi agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
+`A2AGatewayAdapter` + `GatewayServer` expose Band peers as A2A JSON-RPC endpoints. Remote A2A clients can send messages to Thenvoi agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
 
 ```python
 from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
@@ -373,8 +373,8 @@ resolves each in a separate fork.
 
 ## Environment Variables
 
-- `THENVOI_REST_URL`: REST API URL (default: https://app.thenvoi.com)
-- `THENVOI_WS_URL`: WebSocket URL (default: wss://app.thenvoi.com/api/v1/socket/websocket)
+- `THENVOI_REST_URL`: REST API URL (default: https://app.band.ai)
+- `THENVOI_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
 - `THENVOI_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages
 - `OPENAI_API_KEY`: OpenAI API key (for LangGraph examples)
 - `ANTHROPIC_API_KEY`: Anthropic API key (for Anthropic/Claude SDK examples)

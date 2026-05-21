@@ -1,4 +1,4 @@
-"""Role-based prompt profiles for Thenvoi agents."""
+"""Role-based prompt profiles for Band agents."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""CrewAI Flow adapter — message-scoped orchestration for Thenvoi rooms.
+"""CrewAI Flow adapter — message-scoped orchestration for Band rooms.
 
 Experimental in v1. Use ``CrewAIAdapter`` for normal CrewAI agent turns; this
 adapter exists for room routers that need parallel join, sequential
@@ -6,7 +6,7 @@ composition, tagged-peer enforcement, and explicit waiting turns without
 relying on the model to track pending state from chat history.
 
 Every inbound message creates one local Flow execution. Orchestration state
-is stored in Thenvoi task events and reconstructed via
+is stored in Band task events and reconstructed via
 ``CrewAIFlowStateSource`` on every turn. The adapter is deterministic on a
 single worker through reserve-send-confirm side effects with bounded retry,
 and fails closed on ambiguous state.
@@ -42,7 +42,7 @@ from thenvoi.converters.crewai_flow import (
     CrewAIFlowTextOnlyBehavior,
     normalize_participant_key,
 )
-from thenvoi.core.exceptions import ThenvoiConfigError, ThenvoiToolError
+from thenvoi.core.exceptions import BandConfigError, BandToolError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import (
@@ -124,7 +124,7 @@ class RestCrewAIFlowStateSource:
         page_size: page size for pagination (max 100 per platform contract).
         cache_size: LRU bound for room caches (default 32).
         retry_attempts: number of retries on a REST exception before raising
-            ``ThenvoiToolError``. Default 1 (one retry beyond the initial
+            ``BandToolError``. Default 1 (one retry beyond the initial
             attempt).
     """
 
@@ -136,11 +136,9 @@ class RestCrewAIFlowStateSource:
         retry_attempts: int = 1,
     ) -> None:
         if page_size < 1 or page_size > 100:
-            raise ThenvoiConfigError(
-                "page_size must be in [1, 100] (platform max is 100)"
-            )
+            raise BandConfigError("page_size must be in [1, 100] (platform max is 100)")
         if cache_size < 1:
-            raise ThenvoiConfigError("cache_size must be >= 1")
+            raise BandConfigError("cache_size must be >= 1")
         self._page_size = page_size
         self._cache_size = cache_size
         self._retry_attempts = max(0, retry_attempts)
@@ -198,7 +196,7 @@ class RestCrewAIFlowStateSource:
                 if attempt > self._retry_attempts:
                     break
                 await asyncio.sleep(0.1 * attempt)
-        raise ThenvoiToolError(
+        raise BandToolError(
             f"fetch_room_context failed for room {room_id}: {last_exc}"
         ) from last_exc
 
@@ -346,7 +344,7 @@ class HistoryCrewAIFlowStateSource:
 
     def __init__(self, *, acknowledge_test_only: bool = False) -> None:
         if acknowledge_test_only is not True:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "HistoryCrewAIFlowStateSource is for tests and bootstrap-only "
                 "deployments. Pass acknowledge_test_only=True to construct it. "
                 "For production, use RestCrewAIFlowStateSource."
@@ -912,7 +910,7 @@ class SideEffectExecutor:
                 last_exc = exc
                 if attempt < retry_attempts:
                     await asyncio.sleep(0.1 * (attempt + 1))
-        raise ThenvoiToolError(
+        raise BandToolError(
             f"send_event ({message_type}) failed after {retry_attempts + 1} attempts: {last_exc}"
         ) from last_exc
 
@@ -1028,7 +1026,7 @@ class SideEffectExecutor:
                 metadata=confirmation_metadata,
                 retry_attempts=self._confirm_retry_attempts,
             )
-        except ThenvoiToolError:
+        except BandToolError:
             logger.warning(
                 "Confirmation event for %s failed after retries; recording indeterminate",
                 side_effect_key,
@@ -1048,7 +1046,7 @@ class SideEffectExecutor:
                 ),
                 retry_attempts=1,
             )
-        except ThenvoiToolError:
+        except BandToolError:
             logger.error(
                 "Could not persist indeterminate state for %s after retries",
                 side_effect_key,
@@ -1240,7 +1238,7 @@ class SideEffectExecutor:
                         sent_event_id=str(getattr(sent_event, "id", "")) or None,
                     )
                 )
-            except ThenvoiToolError:
+            except BandToolError:
                 logger.warning(
                     "Confirmation event for delegation %s failed; recording indeterminate",
                     item.delegation_id,
@@ -1363,7 +1361,7 @@ class CrewAIFlowSubCrewReporter:
                 logger.debug("Skipping duplicate sub-Crew side effect %s", key)
                 return
             await self._executor._record_indeterminate(side_effect_key=key)
-            raise ThenvoiToolError(
+            raise BandToolError(
                 f"sub-Crew side effect {key} was reserved but not confirmed"
             )
 
@@ -1389,9 +1387,7 @@ class CrewAIFlowSubCrewReporter:
                 exc_info=True,
             )
             await self._executor._record_indeterminate(side_effect_key=key)
-            raise ThenvoiToolError(
-                f"send_message failed for sub-Crew side effect {key}"
-            )
+            raise BandToolError(f"send_message failed for sub-Crew side effect {key}")
         message_id = (
             getattr(message_response, "id", None)
             if message_response is not None
@@ -1412,10 +1408,10 @@ class CrewAIFlowSubCrewReporter:
                 ),
                 retry_attempts=self._executor._confirm_retry_attempts,
             )
-        except ThenvoiToolError as exc:
+        except BandToolError as exc:
             logger.warning("Confirmation event for sub-Crew side effect %s failed", key)
             await self._executor._record_indeterminate(side_effect_key=key)
-            raise ThenvoiToolError(
+            raise BandToolError(
                 f"confirmation failed for sub-Crew side effect {key}"
             ) from exc
 
@@ -1535,7 +1531,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     ) -> None:
         # ---- flow_factory -------------------------------------------------
         if not callable(flow_factory):
-            raise ThenvoiConfigError("flow_factory must be callable")
+            raise BandConfigError("flow_factory must be callable")
         # Constructor never calls flow_factory(); the first turn validates it.
 
         # ---- state_source -------------------------------------------------
@@ -1545,7 +1541,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         if not callable(load_task_events) or not inspect.iscoroutinefunction(
             load_task_events
         ):
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "state_source must implement an awaitable "
                 "load_task_events(*, room_id, metadata_namespace, tools, history) method"
             )
@@ -1558,25 +1554,25 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         try:
             state_source_params = set(inspect.signature(load_task_events).parameters)
         except (TypeError, ValueError) as exc:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "state_source must expose an inspectable load_task_events signature"
             ) from exc
         if not required_state_source_params.issubset(state_source_params):
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "state_source.load_task_events must accept keyword arguments "
                 "room_id, metadata_namespace, tools, and history"
             )
 
         # ---- join_policy --------------------------------------------------
         if join_policy not in _VALID_JOIN_POLICIES:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 f"join_policy must be one of {sorted(_VALID_JOIN_POLICIES)}"
             )
 
         # ---- metadata_namespace -------------------------------------------
         if metadata_namespace is not None:
             if not isinstance(metadata_namespace, str) or not metadata_namespace:
-                raise ThenvoiConfigError(
+                raise BandConfigError(
                     "metadata_namespace must be a non-empty string or None"
                 )
 
@@ -1584,63 +1580,61 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         if not isinstance(max_delegation_rounds, int) or isinstance(
             max_delegation_rounds, bool
         ):
-            raise ThenvoiConfigError("max_delegation_rounds must be an int")
+            raise BandConfigError("max_delegation_rounds must be an int")
         if not (1 <= max_delegation_rounds <= 20):
-            raise ThenvoiConfigError("max_delegation_rounds must be in [1, 20]")
+            raise BandConfigError("max_delegation_rounds must be in [1, 20]")
 
         # ---- max_run_age --------------------------------------------------
         if not isinstance(max_run_age, timedelta):
-            raise ThenvoiConfigError("max_run_age must be a timedelta")
+            raise BandConfigError("max_run_age must be a timedelta")
         if max_run_age <= timedelta(0):
-            raise ThenvoiConfigError("max_run_age must be positive")
+            raise BandConfigError("max_run_age must be positive")
 
         # ---- text_only_behavior -------------------------------------------
         if text_only_behavior not in _VALID_TEXT_ONLY:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 f"text_only_behavior must be one of {sorted(_VALID_TEXT_ONLY)}"
             )
 
         # ---- tagged_peer_policy -------------------------------------------
         if tagged_peer_policy not in _VALID_TAGGED_PEER:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 f"tagged_peer_policy must be one of {sorted(_VALID_TAGGED_PEER)}"
             )
 
         # ---- sequential_chains --------------------------------------------
         if sequential_chains is not None:
             if not isinstance(sequential_chains, Mapping):
-                raise ThenvoiConfigError(
-                    "sequential_chains must be a Mapping[str, str]"
-                )
+                raise BandConfigError("sequential_chains must be a Mapping[str, str]")
             for k, v in sequential_chains.items():
                 if not isinstance(k, str) or not isinstance(v, str):
-                    raise ThenvoiConfigError(
+                    raise BandConfigError(
                         "sequential_chains keys and values must be strings"
                     )
 
         # ---- accept_agent_initiated ----------------------------------------
         if not isinstance(accept_agent_initiated, bool):
-            raise ThenvoiConfigError("accept_agent_initiated must be a bool")
+            raise BandConfigError("accept_agent_initiated must be a bool")
 
         # ---- additional_tools ----------------------------------------------
         custom_tools_by_name: dict[str, CustomToolDef] = {}
         for tool in additional_tools or []:
             if not isinstance(tool, tuple) or len(tool) != 2:
-                raise ThenvoiConfigError(
+                raise BandConfigError(
                     "additional_tools must be a list of (InputModel, callable) tuples"
                 )
             input_model, handler = tool
             if not isinstance(input_model, type) or not issubclass(
                 input_model, BaseModel
             ):
-                raise ThenvoiConfigError(
+                raise BandConfigError(
                     "additional_tools InputModel values must be Pydantic BaseModel subclasses"
                 )
             if not callable(handler):
-                raise ThenvoiConfigError("additional_tools handlers must be callable")
+                raise BandConfigError("additional_tools handlers must be callable")
             tool_name = get_custom_tool_name(input_model)
             if tool_name in custom_tools_by_name:
-                raise ThenvoiConfigError(f"Duplicate custom tool name: {tool_name}")
+                raise BandConfigError(f"Duplicate custom tool name: {tool_name}")
             custom_tools_by_name[tool_name] = tool
 
         # ---- history_converter --------------------------------------------
@@ -1750,7 +1744,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
     ) -> None:
         if not self.metadata_namespace:
             # on_started has not run yet — fail closed.
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "CrewAIFlowAdapter.on_message called before on_started; "
                 "metadata_namespace is unresolved."
             )
@@ -1798,7 +1792,7 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
                 tools=tools,
                 history=history,
             )
-        except ThenvoiToolError as exc:
+        except BandToolError as exc:
             logger.warning("State source unavailable: %s", exc)
             await self._safe_record_failed(
                 executor,

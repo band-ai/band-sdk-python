@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Example: Using graph_as_tool to wrap a standalone graph as a tool.
@@ -11,10 +11,10 @@ Example: Using graph_as_tool to wrap a standalone graph as a tool.
 This example demonstrates:
 1. Importing a standalone, compiled graph (calculator)
 2. Wrapping it as a tool using graph_as_tool
-3. Adding it to a Thenvoi agent alongside platform tools
+3. Adding it to a Band agent alongside platform tools
 4. The agent intelligently decides when to use the calculator
 
-The calculator graph knows nothing about Thenvoi - it's completely independent.
+The calculator graph knows nothing about Band - it's completely independent.
 
 Run with (from repo root):
     uv run examples/langgraph/04_calculator_as_tool.py
@@ -35,10 +35,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from standalone_calculator import create_calculator_graph
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.integrations.langgraph import graph_as_tool
+from band import Agent
+from band.adapters import LangGraphAdapter
+from band.config import load_agent_config
+from band.integrations.langgraph import graph_as_tool
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ async def main() -> None:
     agent_id, api_key = load_agent_config("calculator_agent")
 
     logger.info(
-        "Step 1: Creating standalone calculator graph (no Thenvoi dependencies)..."
+        "Step 1: Creating standalone calculator graph (no Band dependencies)..."
     )
     calculator_graph = create_calculator_graph()
     logger.info("Calculator graph created and compiled")
@@ -78,7 +78,7 @@ async def main() -> None:
     )
     logger.info("Calculator wrapped as a tool")
 
-    logger.info("Step 3: Creating Thenvoi agent with calculator tool...")
+    logger.info("Step 3: Creating Band agent with calculator tool...")
 
     # Create adapter with calculator tool
     adapter = LangGraphAdapter(

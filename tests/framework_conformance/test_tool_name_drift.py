@@ -87,10 +87,10 @@ class TestClaudeSDKAdapterToolDrift:
 
     @pytest.mark.skipif(
         not _HAS_CLAUDE_SDK,
-        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+        reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
     )
     def test_shared_builder_covers_all_tools(self):
-        """Every Thenvoi tool should be buildable for the Claude SDK adapter."""
+        """Every Band tool should be buildable for the Claude SDK adapter."""
         sdk_tools = build_thenvoi_sdk_tools(
             tool_definitions=iter_tool_definitions(include_memory=True),
             get_tools=lambda _room_id: None,

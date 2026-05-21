@@ -65,8 +65,8 @@ support_agent:
 
 Set environment variables:
 ```bash
-export THENVOI_WS_URL="wss://app.thenvoi.com/api/v1/socket/websocket"
-export THENVOI_REST_URL="https://app.thenvoi.com"
+export THENVOI_WS_URL="wss://app.band.ai/api/v1/socket/websocket"
+export THENVOI_REST_URL="https://app.band.ai"
 export OPENAI_API_KEY="your-openai-key"  # for OpenAI models
 export ANTHROPIC_API_KEY="your-anthropic-key"  # for Anthropic models
 ```

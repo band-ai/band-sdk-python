@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[pydantic-ai]"]
+# dependencies = ["band-sdk[pydantic-ai]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Pydantic AI agent example.
 
-This is the simplest way to create a Thenvoi agent with Pydantic AI.
+This is the simplest way to create a Band agent with Pydantic AI.
 The adapter handles tool registration automatically.
 
 Run with:
@@ -24,9 +24,9 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import PydanticAIAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import PydanticAIAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)

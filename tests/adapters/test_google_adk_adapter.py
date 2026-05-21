@@ -24,7 +24,7 @@ pytest.importorskip("google.adk", reason="google-adk not installed")
 _google_adk_mod = importlib.import_module("thenvoi.adapters.google_adk")
 GoogleADKAdapter = _google_adk_mod.GoogleADKAdapter
 _get_tool_bridge_class = _google_adk_mod._get_tool_bridge_class
-_ThenvoiToolBridge = _get_tool_bridge_class()
+_BandToolBridge = _get_tool_bridge_class()
 _strip_additional_properties = _google_adk_mod._strip_additional_properties
 
 
@@ -357,11 +357,11 @@ class TestOnCleanup:
 
 
 class TestToolBridge:
-    """Tests for _ThenvoiToolBridge."""
+    """Tests for _BandToolBridge."""
 
     def test_tool_name(self):
         """Should return the tool name."""
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="thenvoi_send_message",
             tool_description="Send a message",
             parameters_schema={},
@@ -372,7 +372,7 @@ class TestToolBridge:
 
     def test_tool_description(self):
         """Should return the tool description."""
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="test_tool",
             tool_description="A test tool",
             parameters_schema={},
@@ -383,7 +383,7 @@ class TestToolBridge:
 
     def test_get_declaration(self):
         """Should build a FunctionDeclaration with stripped additionalProperties."""
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="my_tool",
             tool_description="Does things",
             parameters_schema={
@@ -404,7 +404,7 @@ class TestToolBridge:
 
     def test_declaration_eagerly_cached(self):
         """Declaration should be built eagerly in __init__ and cached."""
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="cached_tool",
             tool_description="Cached",
             parameters_schema={"type": "object", "properties": {}},
@@ -428,7 +428,7 @@ class TestToolBridge:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock(return_value={"status": "sent"})
 
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="thenvoi_send_message",
             tool_description="Send a message",
             parameters_schema={},
@@ -452,7 +452,7 @@ class TestToolBridge:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock(side_effect=Exception("Tool failed!"))
 
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="failing_tool",
             tool_description="Fails",
             parameters_schema={},
@@ -490,7 +490,7 @@ class TestDeclarationCandidateDetection:
         # The fact that _get_tool_bridge_class() returned successfully at
         # module level (line 26) proves the smoke-test passed.  Verify the
         # returned class has the expected declaration method.
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="smoke",
             tool_description="smoke test",
             parameters_schema={},
@@ -617,7 +617,7 @@ class TestCustomTools:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock()
 
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="echo",
             tool_description="Echo back the message",
             parameters_schema={},
@@ -651,7 +651,7 @@ class TestCustomTools:
         mock_tools.execute_tool_call = AsyncMock()
 
         # Tool name derived from model: CalcInput -> "calc"
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="calc",
             tool_description="Calculate sum",
             parameters_schema={},
@@ -682,7 +682,7 @@ class TestCustomTools:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock()
 
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="strict",
             tool_description="Requires name",
             parameters_schema={},
@@ -724,7 +724,7 @@ class TestCustomTools:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock()
 
-        echo_bridge = _ThenvoiToolBridge(
+        echo_bridge = _BandToolBridge(
             tool_name="echo",
             tool_description="Echo",
             parameters_schema={},
@@ -732,7 +732,7 @@ class TestCustomTools:
             custom_tools=custom_tools,
         )
         # Tool name derived from model: CalcInput -> "calc"
-        calc_bridge = _ThenvoiToolBridge(
+        calc_bridge = _BandToolBridge(
             tool_name="calc",
             tool_description="Calc",
             parameters_schema={},

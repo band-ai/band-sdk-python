@@ -1,5 +1,5 @@
 """
-Parlant tool definitions that wrap Thenvoi AgentTools.
+Parlant tool definitions that wrap Band AgentTools.
 
 These tools are defined at server startup and use a session-keyed registry
 to access the current room's tools during execution.
@@ -95,7 +95,7 @@ def get_current_tools() -> Optional[Any]:
 
 
 def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
-    """Create Parlant tool definitions that wrap Thenvoi tools.
+    """Create Parlant tool definitions that wrap Band tools.
 
     These tools use context variables to access the current room's
     AgentToolsProtocol during execution.

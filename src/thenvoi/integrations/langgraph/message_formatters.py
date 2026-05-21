@@ -1,5 +1,5 @@
 """
-Message formatters for converting Thenvoi platform messages to LangGraph inputs.
+Message formatters for converting Band platform messages to LangGraph inputs.
 
 Transforms MessageCreatedPayload (from WebSocket) into the format needed
 for your graph's state.

@@ -17,7 +17,7 @@ from thenvoi.client.streaming import (
 from thenvoi.platform.event import (
     ContactRequestReceivedEvent,
 )
-from thenvoi.platform.link import ThenvoiLink
+from thenvoi.platform.link import BandLink
 from thenvoi.runtime.contact_handler import ContactEventHandler
 from thenvoi.runtime.contact_tools import ContactTools
 from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -116,7 +116,7 @@ class TestHubRoomReceivesEvents:
         logger.info("=" * 60)
 
         # Create handler with HUB_ROOM strategy
-        link = ThenvoiLink(
+        link = BandLink(
             agent_id=integration_settings.test_agent_id,
             api_key=integration_settings.thenvoi_api_key,
             rest_url=integration_settings.thenvoi_base_url,
@@ -184,7 +184,7 @@ class TestHubRoomAgentActions:
         logger.info("Agent 2: %s", agent2_handle)
 
         # Create handler for Agent 1
-        link = ThenvoiLink(
+        link = BandLink(
             agent_id=integration_settings.test_agent_id,
             api_key=integration_settings.thenvoi_api_key,
             rest_url=integration_settings.thenvoi_base_url,
@@ -281,7 +281,7 @@ class TestHubRoomAgentActions:
         response2 = await api_client_2.agent_api_identity.get_agent_me()
         agent2_handle = response2.data.handle
 
-        link = ThenvoiLink(
+        link = BandLink(
             agent_id=integration_settings.test_agent_id,
             api_key=integration_settings.thenvoi_api_key,
             rest_url=integration_settings.thenvoi_base_url,
@@ -369,7 +369,7 @@ class TestHubRoomPersistence:
         logger.info("Testing: Hub room persistence")
         logger.info("=" * 60)
 
-        link = ThenvoiLink(
+        link = BandLink(
             agent_id=integration_settings.test_agent_id,
             api_key=integration_settings.thenvoi_api_key,
             rest_url=integration_settings.thenvoi_base_url,
@@ -446,7 +446,7 @@ class TestHubRoomIsolation:
         logger.info("Testing: Hub room isolation")
         logger.info("=" * 60)
 
-        link = ThenvoiLink(
+        link = BandLink(
             agent_id=integration_settings.test_agent_id,
             api_key=integration_settings.thenvoi_api_key,
             rest_url=integration_settings.thenvoi_base_url,

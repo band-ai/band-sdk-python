@@ -1,7 +1,7 @@
 """
-Claude Agent SDK integration for Thenvoi SDK.
+Claude Agent SDK integration for Band SDK.
 
-NOTE: The old ThenvoiClaudeSDKAgent has been removed.
+NOTE: The old BandClaudeSDKAgent has been removed.
 Use the new composition-based pattern instead:
 
     from thenvoi import Agent

@@ -1,6 +1,6 @@
-"""Thenvoi WebSocket streaming SDK.
+"""Band WebSocket streaming SDK.
 
-This module provides WebSocket-based real-time communication with the Thenvoi platform.
+This module provides WebSocket-based real-time communication with the Band platform.
 
 Usage:
     from thenvoi.client.streaming import WebSocketClient

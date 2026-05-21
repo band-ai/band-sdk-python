@@ -1,4 +1,4 @@
-"""ACP Server Adapter that bridges ACP protocol to Thenvoi platform."""
+"""ACP Server Adapter that bridges ACP protocol to Band platform."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # Maximum active ACP sessions per adapter instance.
 _MAX_SESSIONS = 100
 
-# Maximum time (seconds) to wait for a Thenvoi peer to respond to a prompt.
+# Maximum time (seconds) to wait for a Band peer to respond to a prompt.
 # Prevents infinite hangs if the peer is unreachable or unresponsive.
 _PROMPT_TIMEOUT_SECONDS = 300
 
@@ -43,13 +43,13 @@ _PROMPT_TIMEOUT_SECONDS = 300
 _PROMPT_COMPLETION_GRACE_SECONDS = 0.25
 
 
-class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
-    """Bridge between ACP protocol and Thenvoi platform.
+class BandACPServerAdapter(SimpleAdapter[ACPSessionState]):
+    """Bridge between ACP protocol and Band platform.
 
     This adapter enables editors (Zed, Cursor, JetBrains, Neovim) to
-    interact with Thenvoi platform peers through the ACP protocol. It acts
+    interact with Band platform peers through the ACP protocol. It acts
     as the "Super-Agent" facade: a single ACP agent that routes to
-    multiple Thenvoi peers.
+    multiple Band peers.
 
     Uses direct REST client (not AgentToolsProtocol) because:
     - AgentToolsProtocol is room-bound (passed in on_message with room context)
@@ -58,10 +58,10 @@ class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
     Example:
         from thenvoi import Agent
-        from thenvoi.integrations.acp import ThenvoiACPServerAdapter, ACPServer
+        from thenvoi.integrations.acp import BandACPServerAdapter, ACPServer
 
-        adapter = ThenvoiACPServerAdapter(
-            rest_url="https://app.thenvoi.com",
+        adapter = BandACPServerAdapter(
+            rest_url="https://app.band.ai",
             api_key="your-api-key",
         )
         server = ACPServer(adapter)
@@ -72,13 +72,13 @@ class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
 
     def __init__(
         self,
-        rest_url: str = "https://app.thenvoi.com",
+        rest_url: str = "https://app.band.ai",
         api_key: str = "",
     ) -> None:
         """Initialize ACP server adapter.
 
         Args:
-            rest_url: Base URL for Thenvoi REST API.
+            rest_url: Base URL for Band REST API.
             api_key: API key for authentication.
         """
         super().__init__(history_converter=ACPServerHistoryConverter())
@@ -191,7 +191,7 @@ class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
         return self._session_to_room.get(session_id)
 
     async def verify_credentials(self) -> bool:
-        """Validate API key by calling the Thenvoi identity endpoint."""
+        """Validate API key by calling the Band identity endpoint."""
         try:
             await self._rest.agent_api_identity.get_agent_me(
                 request_options=DEFAULT_REQUEST_OPTIONS,
@@ -267,7 +267,7 @@ class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
         cwd: str = ".",
         mcp_servers: list[Any] | None = None,
     ) -> str:
-        """Create a Thenvoi room and map it to an ACP session.
+        """Create a Band room and map it to an ACP session.
 
         Args:
             cwd: Working directory from the editor.
@@ -336,7 +336,7 @@ class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
         return session_id
 
     async def handle_prompt(self, session_id: str, text: str) -> None:
-        """Send message to Thenvoi room and wait for response.
+        """Send message to Band room and wait for response.
 
         The response is streamed back to the editor via on_message() ->
         session_update, not returned directly from this method.
@@ -434,7 +434,7 @@ class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Receive Thenvoi response, stream to editor via ACP session_update.
+        """Receive Band response, stream to editor via ACP session_update.
 
         Args:
             msg: Platform message from peer.
@@ -680,3 +680,6 @@ class ThenvoiACPServerAdapter(SimpleAdapter[ACPSessionState]):
         if set_done:
             pending.done_event.set()
         return pending
+
+
+ThenvoiACPServerAdapter = BandACPServerAdapter

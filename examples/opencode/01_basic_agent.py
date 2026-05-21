@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[opencode]", "python-dotenv"]
+# dependencies = ["band-sdk[opencode]", "python-dotenv"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic OpenCode adapter agent example.
@@ -31,10 +31,10 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from setup_logging import setup_logging  # pyrefly: ignore[missing-import]
-from thenvoi import Agent
-from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from thenvoi.config import load_agent_config
-from thenvoi.core.types import AdapterFeatures, Emit
+from band import Agent
+from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.config import load_agent_config
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)

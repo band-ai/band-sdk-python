@@ -1,7 +1,7 @@
 """
-Pydantic AI integration for Thenvoi SDK.
+Pydantic AI integration for Band SDK.
 
-NOTE: The old ThenvoiPydanticAgent has been removed.
+NOTE: The old BandPydanticAgent has been removed.
 Use the new composition-based pattern instead:
 
     from thenvoi import Agent

@@ -507,7 +507,7 @@ class TestA2AAdapterMessageConversion:
     """Tests for message conversion."""
 
     def test_to_a2a_message_basic(self):
-        """Should convert Thenvoi message to A2A format."""
+        """Should convert Band message to A2A format."""
         adapter = A2AAdapter(remote_url="http://localhost:10000")
         msg = make_platform_message("Hello world")
 

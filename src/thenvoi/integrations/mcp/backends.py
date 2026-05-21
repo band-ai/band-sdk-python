@@ -1,4 +1,4 @@
-"""Shared Thenvoi MCP backend selection for SDK and local transports."""
+"""Shared Band MCP backend selection for SDK and local transports."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from thenvoi.runtime.mcp_server import (
 )
 from thenvoi.runtime.tools import ToolDefinition
 
-ThenvoiMCPBackendKind = Literal["sdk", "http", "sse"]
+BandMCPBackendKind = Literal["sdk", "http", "sse"]
 
 
 @dataclass
-class ThenvoiMCPBackend:
-    """Materialized Thenvoi MCP backend for a specific transport."""
+class BandMCPBackend:
+    """Materialized Band MCP backend for a specific transport."""
 
-    kind: ThenvoiMCPBackendKind
+    kind: BandMCPBackendKind
     server: Any
     allowed_tools: list[str]
     local_server: LocalMCPServer | None = None
@@ -46,14 +46,14 @@ def _build_allowed_tools(
 
 async def create_thenvoi_mcp_backend(
     *,
-    kind: ThenvoiMCPBackendKind,
+    kind: BandMCPBackendKind,
     tool_definitions: list[ToolDefinition],
     get_tools: Any,
     additional_tools: list[CustomToolDef] | None = None,
     get_participant_handles: Any | None = None,
     tool_result_hook: Any | None = None,
-) -> ThenvoiMCPBackend:
-    """Create a shared Thenvoi MCP backend for the requested transport."""
+) -> BandMCPBackend:
+    """Create a shared Band MCP backend for the requested transport."""
     resolved_tools = list(additional_tools or [])
     allowed_tools = _build_allowed_tools(tool_definitions, resolved_tools)
 
@@ -70,7 +70,7 @@ async def create_thenvoi_mcp_backend(
             get_participant_handles=get_participant_handles,
             tool_result_hook=tool_result_hook,
         )
-        return ThenvoiMCPBackend(
+        return BandMCPBackend(
             kind=kind,
             server=create_thenvoi_sdk_mcp_server(sdk_tools),
             allowed_tools=allowed_tools,
@@ -85,9 +85,12 @@ async def create_thenvoi_mcp_backend(
         ),
     )
     await local_server.start()
-    return ThenvoiMCPBackend(
+    return BandMCPBackend(
         kind=kind,
         server=local_server,
         allowed_tools=allowed_tools,
         local_server=local_server,
     )
+
+
+ThenvoiMCPBackend = BandMCPBackend

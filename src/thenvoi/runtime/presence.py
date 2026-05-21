@@ -1,7 +1,7 @@
 """
 RoomPresence - Cross-room lifecycle management.
 
-Extracted from ThenvoiAgent room lifecycle methods.
+Extracted from BandAgent room lifecycle methods.
 Handles agent's presence across rooms. Does NOT handle what happens inside rooms.
 """
 
@@ -24,7 +24,7 @@ from thenvoi.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
 )
-from thenvoi.platform.link import ThenvoiLink
+from thenvoi.platform.link import BandLink
 
 # Type alias for contact event callback (agent-level, no tools)
 ContactEventHandler = Callable[[ContactEvent], Awaitable[None]]
@@ -39,7 +39,7 @@ class RoomPresence:
     Cross-room only. Does NOT handle what happens inside rooms.
     That's the job of Execution implementations.
 
-    Extracted from ThenvoiAgent room lifecycle:
+    Extracted from BandAgent room lifecycle:
     - _on_room_added() -> on_room_joined callback
     - _on_room_removed() -> on_room_left callback
     - _subscribe_to_existing_rooms() -> start() auto-subscription
@@ -48,7 +48,7 @@ class RoomPresence:
         import logging
         logger = logging.getLogger(__name__)
 
-        link = ThenvoiLink(agent_id, api_key, ...)
+        link = BandLink(agent_id, api_key, ...)
         presence = RoomPresence(link)
 
         async def on_joined(room_id: str, payload: dict):
@@ -68,7 +68,7 @@ class RoomPresence:
 
     def __init__(
         self,
-        link: ThenvoiLink,
+        link: BandLink,
         room_filter: Callable[[dict], bool] | None = None,
         auto_subscribe_existing: bool = True,
     ):
@@ -76,7 +76,7 @@ class RoomPresence:
         Initialize RoomPresence.
 
         Args:
-            link: ThenvoiLink for WebSocket events
+            link: BandLink for WebSocket events
             room_filter: Optional filter to decide which rooms to join
             auto_subscribe_existing: Subscribe to existing rooms on start
         """
@@ -163,7 +163,7 @@ class RoomPresence:
 
     async def _on_platform_event(self, event: PlatformEvent) -> None:
         """
-        Handle platform events from ThenvoiLink.
+        Handle platform events from BandLink.
 
         Routes to appropriate handler based on event type.
         """
@@ -190,7 +190,7 @@ class RoomPresence:
         """
         Handle room_added event.
 
-        Extracted from ThenvoiAgent._on_room_added().
+        Extracted from BandAgent._on_room_added().
         """
         room_id = event.room_id
         if not room_id or not event.payload:

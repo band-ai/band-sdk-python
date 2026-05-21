@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import ClassVar, Any, Literal
 
 from thenvoi.converters.letta import LettaHistoryConverter, LettaSessionState
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -166,7 +166,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         )
 
         if _has_legacy_booleans and features is not None:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "Cannot pass both legacy boolean flags in LettaAdapterConfig "
                 "(enable_memory_tools / enable_execution_reporting) "
                 "and 'features'. "
@@ -237,7 +237,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         except ImportError:
             raise ImportError(
                 "letta-client is required for LettaAdapter. "
-                "Install with: pip install thenvoi-sdk[letta]"
+                "Install with: pip install band-sdk[letta]"
             )
 
         client_kwargs: dict[str, Any] = {
@@ -750,7 +750,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     )
 
     async def _update_instruction_block(self, agent_id: str, room_id: str) -> None:
-        """Update (or create) a memory block with the Thenvoi system prompt."""
+        """Update (or create) a memory block with the Band system prompt."""
         base = self.config.persona or self._system_prompt
         value = _LETTA_TOOL_ENFORCEMENT + base
 

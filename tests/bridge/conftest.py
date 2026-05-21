@@ -17,7 +17,7 @@ _bridge_dir = os.path.abspath(
 if _bridge_dir not in sys.path:
     sys.path.insert(0, _bridge_dir)
 
-from bridge_core.bridge import BridgeConfig, ThenvoiBridge  # noqa: E402
+from bridge_core.bridge import BridgeConfig, BandBridge  # noqa: E402
 
 
 def make_tools(
@@ -46,10 +46,10 @@ def bridge_config() -> BridgeConfig:
 
 
 @pytest.fixture
-def bridge_with_mock_link(bridge_config: BridgeConfig) -> ThenvoiBridge:
+def bridge_with_mock_link(bridge_config: BridgeConfig) -> BandBridge:
     """Bridge instance with a mocked link and handler."""
     handler = AsyncMock()
-    b = ThenvoiBridge(config=bridge_config, handlers={"handler_a": handler})
+    b = BandBridge(config=bridge_config, handlers={"handler_a": handler})
     mock_link = MagicMock()
     mock_link.subscribe_room = AsyncMock()
     mock_link.unsubscribe_room = AsyncMock()
@@ -60,7 +60,7 @@ def bridge_with_mock_link(bridge_config: BridgeConfig) -> ThenvoiBridge:
 
 
 @pytest.fixture
-def bridge_with_full_mock(bridge_config: BridgeConfig) -> ThenvoiBridge:
+def bridge_with_full_mock(bridge_config: BridgeConfig) -> BandBridge:
     """Bridge with all link methods mocked (superset of bridge_with_mock_link).
 
     Covers connect, disconnect, subscribe/unsubscribe, lifecycle marks,
@@ -68,7 +68,7 @@ def bridge_with_full_mock(bridge_config: BridgeConfig) -> ThenvoiBridge:
     connect-and-consume tests.
     """
     handler = AsyncMock()
-    b = ThenvoiBridge(config=bridge_config, handlers={"handler_a": handler})
+    b = BandBridge(config=bridge_config, handlers={"handler_a": handler})
     mock_link = MagicMock()
     mock_link.connect = AsyncMock()
     mock_link.disconnect = AsyncMock()

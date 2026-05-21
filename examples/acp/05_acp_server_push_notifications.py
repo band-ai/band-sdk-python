@@ -1,23 +1,23 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[acp]"]
+# dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-ACP Server with push notifications - Real-time activity from Thenvoi peers.
+ACP Server with push notifications - Real-time activity from Band peers.
 
 This example demonstrates push notifications: when platform messages arrive
 for rooms with active ACP sessions but no pending prompt, they are pushed
 to the editor as unsolicited session_update notifications.
 
 This lets the editor display real-time activity from other agents working
-in the same Thenvoi room, even when the user hasn't sent a prompt.
+in the same Band room, even when the user hasn't sent a prompt.
 
 Architecture:
-    Thenvoi Platform (peer sends a message in room)
-      -> ThenvoiACPServerAdapter.on_message() (no pending prompt)
+    Band Platform (peer sends a message in room)
+      -> BandACPServerAdapter.on_message() (no pending prompt)
         -> ACPPushHandler.handle_push_event()
           -> EventConverter.convert(msg) -> ACP session_update chunk
             -> acp_client.session_update(session_id, chunk)
@@ -25,11 +25,11 @@ Architecture:
 
 Prerequisites:
     1. Set environment variables:
-       - THENVOI_API_KEY: Your Thenvoi API key
-       - THENVOI_WS_URL: WebSocket URL (default: wss://app.thenvoi.com/api/v1/socket/websocket)
-       - THENVOI_REST_URL: REST API URL (default: https://app.thenvoi.com)
+       - THENVOI_API_KEY: Your Band API key
+       - THENVOI_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+       - THENVOI_REST_URL: REST API URL (default: https://app.band.ai)
 
-    2. Have peers configured on the Thenvoi platform
+    2. Have peers configured on the Band platform
 
 Run with:
     uv run examples/acp/05_acp_server_push_notifications.py
@@ -48,10 +48,10 @@ from acp import run_agent
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ACPServer, ThenvoiACPServerAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.integrations.acp import ACPPushHandler
+from band import Agent
+from band.adapters import ACPServer, BandACPServerAdapter
+from band.config import load_agent_config
+from band.integrations.acp import ACPPushHandler
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -60,10 +60,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
     # ACP server examples check env vars first because editors (Zed, Cursor)
     # typically inject credentials via environment when spawning the subprocess.
     api_key = os.getenv("THENVOI_API_KEY")
@@ -80,7 +78,7 @@ async def main() -> None:
         agent_id = os.getenv("THENVOI_AGENT_ID", "acp-server")
 
     # Create ACP server adapter
-    adapter = ThenvoiACPServerAdapter(
+    adapter = BandACPServerAdapter(
         rest_url=rest_url,
         api_key=api_key,
     )
@@ -92,7 +90,7 @@ async def main() -> None:
     # Create ACP protocol handler
     server = ACPServer(adapter)
 
-    # Create Thenvoi agent (manages WebSocket connection)
+    # Create Band agent (manages WebSocket connection)
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,

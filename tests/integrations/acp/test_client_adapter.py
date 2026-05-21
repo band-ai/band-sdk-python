@@ -12,7 +12,7 @@ from thenvoi.integrations.acp.client_profiles import CursorACPClientProfile
 from thenvoi.integrations.acp.client_runtime import ACPCollectingClient
 from thenvoi.integrations.acp.client_types import (
     ACPClientSessionState,
-    ThenvoiACPClient,
+    BandACPClient,
 )
 from thenvoi.integrations.acp.types import CollectedChunk
 from thenvoi.testing import FakeAgentTools
@@ -79,17 +79,17 @@ class TestACPClientAdapterInit:
         assert adapter._cwd == os.path.abspath("examples")
 
     def test_init_rejects_invalid_rest_url(self) -> None:
-        """Should fail fast on invalid Thenvoi base URLs."""
+        """Should fail fast on invalid Band base URLs."""
         with pytest.raises(ValueError, match="rest_url"):
             ACPClientAdapter(command="codex", rest_url="ftp://invalid")
 
 
 class TestACPClientAdapterLocalMcpConfig:
-    """Tests for local Thenvoi MCP injection."""
+    """Tests for local Band MCP injection."""
 
     @pytest.mark.asyncio
     async def test_get_or_start_thenvoi_mcp_server_returns_http_config(self) -> None:
-        """Should expose a shared local HTTP MCP server for Thenvoi tools."""
+        """Should expose a shared local HTTP MCP server for Band tools."""
         adapter = ACPClientAdapter(command="codex")
         mock_server = MagicMock(http_url="http://127.0.0.1:50000/mcp")
         backend = MagicMock(local_server=mock_server)
@@ -130,7 +130,7 @@ class TestACPClientAdapterLocalMcpConfig:
 
     @pytest.mark.asyncio
     async def test_get_or_start_thenvoi_mcp_server_reuses_shared_server(self) -> None:
-        """Should start the shared Thenvoi MCP server only once."""
+        """Should start the shared Band MCP server only once."""
         adapter = ACPClientAdapter(command="codex")
         mock_server = MagicMock(http_url="http://127.0.0.1:50000/mcp")
         backend = MagicMock(local_server=mock_server)
@@ -159,7 +159,7 @@ class TestACPClientAdapterLocalMcpConfig:
 
         system_context = adapter._build_system_context("room-123", msg)
 
-        assert "Thenvoi tools" in system_context
+        assert "Band tools" in system_context
         assert "Current room_id: room-123" in system_context
         assert "Current requester name: Pat" in system_context
         assert "must include room_id" in system_context
@@ -293,7 +293,7 @@ class TestACPClientAdapterOnMessage:
         adapter._runtime._conn.prompt = AsyncMock()
 
         # Mock client with response text
-        adapter._runtime._client = ThenvoiACPClient()
+        adapter._runtime._client = BandACPClient()
 
         return adapter
 
@@ -365,7 +365,7 @@ class TestACPClientAdapterOnMessage:
     async def test_on_message_posts_response(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """Should post collected response back to Thenvoi room."""
+        """Should post collected response back to Band room."""
 
         # Make prompt() populate the per-session buffer (simulating session_update)
         async def mock_prompt(**kwargs):
@@ -607,7 +607,7 @@ class TestACPClientAdapterPermissionHandler:
         adapter._runtime._conn.prompt = AsyncMock()
 
         # Mock client with response text
-        adapter._runtime._client = ThenvoiACPClient()
+        adapter._runtime._client = BandACPClient()
 
         return adapter
 
@@ -805,7 +805,7 @@ class TestACPClientAdapterStop:
         mock_ctx.__aexit__ = AsyncMock(return_value=None)
         adapter._runtime._ctx = mock_ctx
         adapter._runtime._conn = AsyncMock()
-        adapter._runtime._client = ThenvoiACPClient()
+        adapter._runtime._client = BandACPClient()
         adapter._room_to_session["room-123"] = "session-123"
         adapter._room_tools["room-123"] = MagicMock()
         local_server = MagicMock()
@@ -971,7 +971,7 @@ class TestACPClientAdapterDeadConnectionRecovery:
         mock_session = MagicMock()
         mock_session.session_id = "sess-1"
         adapter._runtime._conn.new_session = AsyncMock(return_value=mock_session)
-        adapter._runtime._client = ThenvoiACPClient()
+        adapter._runtime._client = BandACPClient()
 
         mock_ctx = MagicMock()
         mock_ctx.__aexit__ = AsyncMock(return_value=None)

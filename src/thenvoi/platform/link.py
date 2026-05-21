@@ -1,7 +1,7 @@
 """
-ThenvoiLink - Live link to Thenvoi platform.
+BandLink - Live link to Band platform.
 
-Extracted from core/agent.py ThenvoiAgent - WebSocket management only.
+Extracted from core/agent.py BandAgent - WebSocket management only.
 REST client exposed directly for API calls.
 """
 
@@ -49,18 +49,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ThenvoiLink:
+class BandLink:
     """
-    Live link to Thenvoi platform.
+    Live link to Band platform.
 
-    Extracted from ThenvoiAgent - handles WebSocket connection and event dispatch.
+    Extracted from BandAgent - handles WebSocket connection and event dispatch.
     REST client exposed directly via self.rest for API calls.
 
     Example:
         import logging
         logger = logging.getLogger(__name__)
 
-        link = ThenvoiLink(agent_id="...", api_key="...")
+        link = BandLink(agent_id="...", api_key="...")
         await link.connect()
         await link.subscribe_agent_rooms(agent_id)
 
@@ -76,22 +76,22 @@ class ThenvoiLink:
         self,
         agent_id: str,
         api_key: str,
-        ws_url: str = "wss://app.thenvoi.com/api/v1/socket/websocket",
-        rest_url: str = "https://app.thenvoi.com",
+        ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
+        rest_url: str = "https://app.band.ai",
     ):
         self.agent_id = agent_id
         self.api_key = api_key
         self.ws_url = ws_url
         self.rest_url = rest_url
 
-        # REST client - exposed directly (from ThenvoiAgent._api_client)
+        # REST client - exposed directly (from BandAgent._api_client)
         self.rest = AsyncRestClient(api_key=api_key, base_url=rest_url)
 
-        # WebSocket client (from ThenvoiAgent._ws_client)
+        # WebSocket client (from BandAgent._ws_client)
         self._ws: WebSocketClient | None = None
         self._is_connected = False
 
-        # Subscription tracking (from ThenvoiAgent._subscribed_rooms)
+        # Subscription tracking (from BandAgent._subscribed_rooms)
         self._subscribed_rooms: set[str] = set()
 
         # Event queue for async iteration
@@ -111,13 +111,13 @@ class ThenvoiLink:
         """Get next event from the queue. Blocks until an event is available."""
         return await self._event_queue.get()
 
-    # --- Connection lifecycle (from ThenvoiAgent.start/stop/run) ---
+    # --- Connection lifecycle (from BandAgent.start/stop/run) ---
 
     async def connect(self) -> None:
         """
         Connect WebSocket.
 
-        Extracted from ThenvoiAgent.start() lines 158-164.
+        Extracted from BandAgent.start() lines 158-164.
         """
         if self._is_connected:
             logger.warning("Already connected")
@@ -138,7 +138,7 @@ class ThenvoiLink:
         """
         Disconnect WebSocket.
 
-        Extracted from ThenvoiAgent.stop() lines 193-195.
+        Extracted from BandAgent.stop() lines 193-195.
         """
         if not self._is_connected or not self._ws:
             return
@@ -153,19 +153,19 @@ class ThenvoiLink:
         """
         Run until interrupted.
 
-        From ThenvoiAgent.run() lines 208-209.
+        From BandAgent.run() lines 208-209.
         """
         if not self._ws:
             raise RuntimeError("Not connected")
         await self._ws.run_forever()
 
-    # --- Subscription management (from ThenvoiAgent) ---
+    # --- Subscription management (from BandAgent) ---
 
     async def subscribe_agent_rooms(self, agent_id: str) -> None:
         """
         Subscribe to agent room events (room_added/removed).
 
-        From ThenvoiAgent.start() lines 167-171.
+        From BandAgent.start() lines 167-171.
         """
         if not self._ws:
             raise RuntimeError("Not connected")
@@ -180,7 +180,7 @@ class ThenvoiLink:
         """
         Subscribe to room messages and participants.
 
-        Extracted from ThenvoiAgent._subscribe_to_room() lines 724-746.
+        Extracted from BandAgent._subscribe_to_room() lines 724-746.
         Wraps each channel join so a single room failure doesn't crash
         the entire subscription sequence.
         """
@@ -244,7 +244,7 @@ class ThenvoiLink:
         """
         Unsubscribe from room.
 
-        Extracted from ThenvoiAgent._unsubscribe_from_room() lines 748-769.
+        Extracted from BandAgent._unsubscribe_from_room() lines 748-769.
         """
         if not self._ws or room_id not in self._subscribed_rooms:
             return
@@ -274,7 +274,7 @@ class ThenvoiLink:
         except Exception as e:
             logger.warning("Error unsubscribing from agent_contacts: %s", e)
 
-    # --- Event handlers (from ThenvoiAgent, unified into PlatformEvent) ---
+    # --- Event handlers (from BandAgent, unified into PlatformEvent) ---
 
     async def _on_reconnected(self) -> None:
         """Handle PHX client reconnection.
@@ -310,7 +310,7 @@ class ThenvoiLink:
         """
         Handle room_added from WebSocket.
 
-        From ThenvoiAgent._on_room_added() lines 619-630.
+        From BandAgent._on_room_added() lines 619-630.
         Now creates RoomAddedEvent and queues it for async iteration.
         """
         event = RoomAddedEvent(
@@ -323,7 +323,7 @@ class ThenvoiLink:
         """
         Handle room_removed from WebSocket.
 
-        From ThenvoiAgent._on_room_removed() lines 632-643.
+        From BandAgent._on_room_removed() lines 632-643.
         """
         event = RoomRemovedEvent(
             room_id=payload.id,
@@ -337,7 +337,7 @@ class ThenvoiLink:
         """
         Handle message_created from WebSocket.
 
-        From ThenvoiAgent._on_message_created() lines 645-682.
+        From BandAgent._on_message_created() lines 645-682.
         Now creates MessageEvent and queues it for async iteration.
         """
         event = MessageEvent(
@@ -366,7 +366,7 @@ class ThenvoiLink:
         """
         Handle participant_added from WebSocket.
 
-        From ThenvoiAgent._on_participant_added() lines 771-786.
+        From BandAgent._on_participant_added() lines 771-786.
         Payload is already validated by WebSocketClient._handle_events().
         """
         event = ParticipantAddedEvent(
@@ -381,7 +381,7 @@ class ThenvoiLink:
         """
         Handle participant_removed from WebSocket.
 
-        From ThenvoiAgent._on_participant_removed() lines 788-805.
+        From BandAgent._on_participant_removed() lines 788-805.
         Payload is already validated by WebSocketClient._handle_events().
         """
         event = ParticipantRemovedEvent(
@@ -589,3 +589,6 @@ class ThenvoiLink:
                 e,
             )
             return []
+
+
+ThenvoiLink = BandLink

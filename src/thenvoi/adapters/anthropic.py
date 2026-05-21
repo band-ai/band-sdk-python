@@ -1,7 +1,7 @@
 """
 Anthropic adapter using SimpleAdapter pattern.
 
-Extracted from thenvoi.integrations.anthropic.agent.ThenvoiAnthropicAgent.
+Extracted from thenvoi.integrations.anthropic.agent.BandAnthropicAgent.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Any, ClassVar, cast
 from anthropic import AsyncAnthropic
 from anthropic.types import Message, MessageParam, ToolParam, ToolUseBlock
 
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import (
@@ -85,9 +85,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 stacklevel=2,
             )
             if api_key is not None:
-                raise ThenvoiConfigError(
-                    "Cannot pass both api_key and anthropic_api_key"
-                )
+                raise BandConfigError("Cannot pass both api_key and anthropic_api_key")
             api_key = anthropic_api_key
 
         # --- Selective: prompt rename ---
@@ -98,13 +96,13 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 stacklevel=2,
             )
             if prompt is not None:
-                raise ThenvoiConfigError("Cannot pass both prompt and custom_section")
+                raise BandConfigError("Cannot pass both prompt and custom_section")
             prompt = custom_section
 
         # --- Universal: boolean → AdapterFeatures migration ---
         if enable_memory_tools or enable_execution_reporting:
             if features is not None:
-                raise ThenvoiConfigError(
+                raise BandConfigError(
                     "Cannot pass both features= and legacy boolean params "
                     "(enable_memory_tools, enable_execution_reporting)"
                 )
@@ -143,7 +141,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         # Custom tools (user-provided)
         self._custom_tools: list[CustomToolDef] = additional_tools or []
 
-    # --- Copied from ThenvoiAnthropicAgent._on_started ---
+    # --- Copied from BandAnthropicAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render system prompt after agent metadata is fetched.
 
@@ -165,7 +163,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         )
         logger.info("Anthropic adapter started for agent: %s", agent_name)
 
-    # --- Adapted from ThenvoiAnthropicAgent._handle_message ---
+    # --- Adapted from BandAnthropicAgent._handle_message ---
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -313,14 +311,14 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             len(self._message_history[room_id]),
         )
 
-    # --- Copied from ThenvoiAnthropicAgent._cleanup_session ---
+    # --- Copied from BandAnthropicAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up message history when agent leaves a room."""
         if room_id in self._message_history:
             del self._message_history[room_id]
             logger.debug("Room %s: Cleaned up message history", room_id)
 
-    # --- Copied from ThenvoiAnthropicAgent._call_anthropic ---
+    # --- Copied from BandAnthropicAgent._call_anthropic ---
     async def _call_anthropic(
         self,
         messages: list[dict[str, Any]],
@@ -344,7 +342,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             tools=tools,
         )
 
-    # --- Copied from ThenvoiAnthropicAgent._extract_text_content ---
+    # --- Copied from BandAnthropicAgent._extract_text_content ---
     def _extract_text_content(self, content: list) -> str:
         """Extract text content from response content blocks."""
         from anthropic.types import TextBlock
@@ -355,7 +353,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                 texts.append(block.text)
         return " ".join(texts) if texts else ""
 
-    # --- Copied from ThenvoiAnthropicAgent._serialize_content_blocks ---
+    # --- Copied from BandAnthropicAgent._serialize_content_blocks ---
     def _serialize_content_blocks(self, content: list) -> list[dict[str, Any]]:
         """Serialize content blocks to dict format for message history."""
         from anthropic.types import TextBlock
@@ -381,7 +379,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     )
         return serialized
 
-    # --- Copied from ThenvoiAnthropicAgent._process_tool_calls ---
+    # --- Copied from BandAnthropicAgent._process_tool_calls ---
     async def _process_tool_calls(
         self, response: Message, tools: AgentToolsProtocol
     ) -> list[dict[str, Any]]:

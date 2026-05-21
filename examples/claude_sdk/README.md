@@ -1,6 +1,6 @@
 # Claude Agent SDK Examples for Thenvoi
 
-Examples of using the Claude Agent SDK with the Thenvoi platform using the composition-based pattern.
+Examples of using the Claude Agent SDK with the Band platform using the composition-based pattern.
 
 ## Prerequisites
 
@@ -210,4 +210,4 @@ uv sync --extra claude_sdk
 Or use Docker (see [Docker Usage](#docker-usage) above).
 
 ### Session not found for room
-Ensure the agent is properly connected to the Thenvoi platform and has joined the room.
+Ensure the agent is properly connected to the Band platform and has joined the room.

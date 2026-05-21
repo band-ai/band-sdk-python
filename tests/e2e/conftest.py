@@ -1,6 +1,6 @@
 """E2E test configuration and fixtures.
 
-E2E tests run adapters against a real Thenvoi platform with real (cheap) LLMs.
+E2E tests run adapters against a real Band platform with real (cheap) LLMs.
 They verify platform functionality and integration correctness, not LLM output quality.
 
 Run manually only, never in CI/CD:
@@ -23,7 +23,7 @@ from thenvoi_rest import AsyncRestClient, ChatRoomRequest
 from thenvoi_rest.types import (
     ParticipantRequest,
 )
-from thenvoi_testing.settings import ThenvoiTestSettings
+from thenvoi_testing.settings import ThenvoiTestSettings as BandTestSettings
 
 from thenvoi.client.streaming import WebSocketClient
 
@@ -76,7 +76,7 @@ _MAX_ROOMS_TO_SEARCH = 10
 # =============================================================================
 
 
-class E2ESettings(ThenvoiTestSettings):
+class E2ESettings(BandTestSettings):
     """Settings for E2E tests, extending the standard test settings.
 
     Loads from .env.test and allows E2E-specific overrides via env vars.
@@ -84,7 +84,7 @@ class E2ESettings(ThenvoiTestSettings):
     (e.g. E2E_LLM_MODEL -> e2e_llm_model) with case-insensitive matching.
     """
 
-    # Standard ThenvoiTestSettings convention for locating the env file.
+    # Standard BandTestSettings convention for locating the env file.
     _env_file_path = Path(__file__).parent.parent.parent / ".env.test"
 
     # E2E-specific settings (override via environment variables)

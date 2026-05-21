@@ -123,9 +123,9 @@ async def main() -> None:
     agent_key = os.environ.get("AGENT_KEY", "agent")
 
     ws_url = os.environ.get(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
+        "THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"
     )
-    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.thenvoi.com")
+    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.band.ai")
     if not ws_url:
         raise ValueError("THENVOI_WS_URL environment variable is empty")
     if not rest_url:

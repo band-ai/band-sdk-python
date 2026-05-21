@@ -4,7 +4,7 @@
 # Add agent_config.yaml to .gitignore to avoid committing secrets
 #
 # SETUP INSTRUCTIONS:
-# 1. Create remote agents in the Thenvoi platform
+# 1. Create remote agents in the Band platform
 # 2. Generate an API key for each agent in the platform
 # 3. Copy the agent_id and api_key here
 # 4. The agent name and description are stored on the platform (not here)

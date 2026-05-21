@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[crewai]"]
+# dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """CrewAI Flow router example.
 
@@ -35,9 +35,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from setup_logging import setup_logging  # noqa: E402
 
-from thenvoi import Agent  # noqa: E402
-from thenvoi.adapters import CrewAIFlowAdapter  # noqa: E402
-from thenvoi.config import load_agent_config  # noqa: E402
+from band import Agent  # noqa: E402
+from band.adapters import CrewAIFlowAdapter  # noqa: E402
+from band.config import load_agent_config  # noqa: E402
 
 setup_logging()
 logger = logging.getLogger(__name__)

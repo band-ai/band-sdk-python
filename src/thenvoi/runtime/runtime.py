@@ -2,7 +2,7 @@
 AgentRuntime - Convenience wrapper combining RoomPresence + Execution management.
 
 For SDK-heavy users who want managed execution contexts.
-Framework-light users can use RoomPresence or ThenvoiLink directly.
+Framework-light users can use RoomPresence or BandLink directly.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
-    from thenvoi.platform.link import ThenvoiLink
+    from thenvoi.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class ExecutionFactory(Protocol):
     def __call__(
         self,
         room_id: str,
-        link: "ThenvoiLink",
+        link: "BandLink",
         *,
         hub_room_id: str | None = None,
     ) -> Execution: ...
@@ -57,7 +57,7 @@ class AgentRuntime:
     - Lifecycle coordination (start, stop, run)
 
     Example (default execution):
-        link = ThenvoiLink(agent_id, api_key, ...)
+        link = BandLink(agent_id, api_key, ...)
 
         async def on_execute(ctx: ExecutionContext, event: PlatformEvent):
             if isinstance(event, MessageEvent):
@@ -70,7 +70,7 @@ class AgentRuntime:
     Example (custom execution factory):
         def letta_factory(
             room_id: str,
-            link: ThenvoiLink,
+            link: BandLink,
             *,
             hub_room_id: str | None = None,
         ) -> Execution:
@@ -87,7 +87,7 @@ class AgentRuntime:
 
     def __init__(
         self,
-        link: "ThenvoiLink",
+        link: "BandLink",
         agent_id: str,
         on_execute: ExecutionHandler,
         execution_factory: ExecutionFactory | None = None,
@@ -101,8 +101,8 @@ class AgentRuntime:
         Initialize AgentRuntime.
 
         Args:
-            link: ThenvoiLink for WebSocket and REST
-            agent_id: Agent ID from Thenvoi platform
+            link: BandLink for WebSocket and REST
+            agent_id: Agent ID from Band platform
             on_execute: Callback for handling execution events
             execution_factory: Optional factory for custom Execution implementations
             room_filter: Optional filter to decide which rooms to join

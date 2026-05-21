@@ -360,16 +360,16 @@ class TestParlantToolFunctions:
     async def test_send_message_translates_thenvoi_tool_error(
         self, parlant_tools, mock_tools, mock_context
     ):
-        """ThenvoiToolError from underlying tool must surface as ToolResult, not crash.
+        """BandToolError from underlying tool must surface as ToolResult, not crash.
 
         Pins the wrapper translation contract: framework wrappers must catch
-        ThenvoiToolError raised by AgentTools and return a model-visible
+        BandToolError raised by AgentTools and return a model-visible
         failure value so the LLM can recover, instead of letting the exception
         crash the turn.
         """
-        from thenvoi.core.exceptions import ThenvoiToolError
+        from thenvoi.core.exceptions import BandToolError
 
-        mock_tools.send_message.side_effect = ThenvoiToolError(
+        mock_tools.send_message.side_effect = BandToolError(
             "Backend rejected message: 503 Service Unavailable"
         )
         set_session_tools(mock_context.session_id, mock_tools)

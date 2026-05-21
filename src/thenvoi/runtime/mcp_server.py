@@ -100,7 +100,7 @@ def build_thenvoi_mcp_tool_registrations(
     additional_tools: list[CustomToolDef] | None = None,
     tool_definitions: Sequence[ToolDefinition] | None = None,
 ) -> list[MCPToolRegistration]:
-    """Build MCP tool registrations for Thenvoi tools and custom tools."""
+    """Build MCP tool registrations for Band tools and custom tools."""
     # LocalMCPServer stays agent-only in Phase 1 of INT-338. Pin surface
     # so a human tool added to the registry never leaks into an adapter
     # expecting only agent tools. Widening is deferred to a future ticket.

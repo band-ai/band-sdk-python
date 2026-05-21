@@ -9,12 +9,12 @@
 ACP Client example - Use a remote ACP agent from Thenvoi.
 
 This example connects to a remote ACP-compliant agent (Codex CLI, Gemini CLI,
-Claude Code, Goose, etc.) and makes it available as a Thenvoi platform agent.
+Claude Code, Goose, etc.) and makes it available as a Band platform agent.
 Messages from the platform are forwarded to the ACP agent, and responses are
 posted back to the chat.
 
 Architecture:
-    Thenvoi Platform (message arrives in room)
+    Band Platform (message arrives in room)
       -> ACPClientAdapter
         -> remote ACP agent subprocess/session
           -> Remote ACP Agent (Codex CLI, Gemini CLI, etc.)
@@ -58,10 +58,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
 
     # Load agent credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("acp_client_agent")

@@ -321,7 +321,7 @@ class AnyHTTPStatusError(httpx.HTTPStatusError):
 
 
 class FakeMCPBackend:
-    """Fake ThenvoiMCPBackend for tests."""
+    """Fake BandMCPBackend for tests."""
 
     def __init__(
         self,

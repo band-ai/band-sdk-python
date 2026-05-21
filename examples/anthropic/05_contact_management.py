@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[anthropic]"]
+# dependencies = ["band-sdk[anthropic]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Contact management example using the Anthropic adapter.
@@ -25,12 +25,12 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import AnthropicAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.platform.event import ContactEvent, ContactRequestReceivedEvent
-from thenvoi.runtime.contact_tools import ContactTools
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band import Agent
+from band.adapters import AnthropicAdapter
+from band.config import load_agent_config
+from band.platform.event import ContactEvent, ContactRequestReceivedEvent
+from band.runtime.contact_tools import ContactTools
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 setup_logging()
 logger = logging.getLogger(__name__)

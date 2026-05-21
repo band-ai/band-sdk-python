@@ -1,6 +1,6 @@
 """Integration tests for Claude SDK chat-based approval flow.
 
-Tests the approval flow against the real Thenvoi platform using two agents:
+Tests the approval flow against the real Band platform using two agents:
 - Agent 1 (primary): Runs ClaudeSDKAdapter with approval_mode
 - Agent 2 (secondary): Sends messages to Agent 1 via REST API
 

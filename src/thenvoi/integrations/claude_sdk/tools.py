@@ -1,5 +1,5 @@
 """
-Shared Claude SDK MCP tool wrappers for Thenvoi tools.
+Shared Claude SDK MCP tool wrappers for Band tools.
 
 This module keeps the Claude-specific SDK wrapping in one place so the adapter
 and the legacy integration do not each maintain their own copy of the same
@@ -20,11 +20,11 @@ try:
 except ImportError as e:
     raise ImportError(
         "claude-agent-sdk is required for Claude SDK tools.\n"
-        "Install with: pip install thenvoi-sdk[claude_sdk]\n"
-        "Or: uv add thenvoi-sdk[claude_sdk]"
+        "Install with: pip install band-sdk[claude_sdk]\n"
+        "Or: uv add band-sdk[claude_sdk]"
     ) from e
 
-from thenvoi.core.exceptions import ThenvoiToolError
+from thenvoi.core.exceptions import BandToolError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.runtime.custom_tools import (
     CustomToolDef,
@@ -220,7 +220,7 @@ def _build_builtin_sdk_tool(
             return _make_result(
                 _format_success_payload(definition.name, call_args, result)
             )
-        except (ValueError, ThenvoiToolError) as error:
+        except (ValueError, BandToolError) as error:
             if (
                 definition.name == "thenvoi_send_message"
                 and get_participant_handles is not None
@@ -273,7 +273,7 @@ def build_thenvoi_sdk_tools(
     get_participant_handles: ParticipantHandlesResolver | None = None,
     tool_result_hook: ToolResultHook | None = None,
 ) -> list[SdkMcpTool[Any]]:
-    """Build Claude SDK MCP tools from central Thenvoi tool definitions."""
+    """Build Claude SDK MCP tools from central Band tool definitions."""
     sdk_tools = [
         _build_builtin_sdk_tool(
             definition,
@@ -297,7 +297,7 @@ def build_thenvoi_sdk_tools(
 
 
 def create_thenvoi_sdk_mcp_server(tools: list[SdkMcpTool[Any]]) -> Any:
-    """Create a Claude SDK MCP server config for Thenvoi tools."""
+    """Create a Claude SDK MCP server config for Band tools."""
     return create_sdk_mcp_server(
         name="thenvoi",
         version="1.0.0",
@@ -307,7 +307,7 @@ def create_thenvoi_sdk_mcp_server(tools: list[SdkMcpTool[Any]]) -> Any:
 
 def create_thenvoi_mcp_server(agent: Any) -> Any:
     """
-    Create an in-process Claude SDK MCP server for Thenvoi platform tools.
+    Create an in-process Claude SDK MCP server for Band platform tools.
 
     The returned server uses room-scoped ``AgentTools`` instances resolved from
     the running agent state at tool-call time.
@@ -363,7 +363,7 @@ def create_thenvoi_mcp_server(agent: Any) -> Any:
     server = create_thenvoi_sdk_mcp_server(sdk_tools)
 
     logger.info(
-        "Thenvoi MCP SDK server created with %s real tools",
+        "Band MCP SDK server created with %s real tools",
         len(sdk_tools),
     )
 

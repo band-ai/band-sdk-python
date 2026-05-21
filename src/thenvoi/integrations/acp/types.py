@@ -11,7 +11,7 @@ from typing import Any
 class CollectedChunk:
     """A parsed chunk from an ACP session_update.
 
-    Used by ThenvoiACPClient to buffer rich response chunks
+    Used by BandACPClient to buffer rich response chunks
     (text, thoughts, tool calls, tool results, plans) from
     remote ACP agents.
 
@@ -35,7 +35,7 @@ class ACPSessionState:
     when the agent rejoins a chat room.
 
     Attributes:
-        session_to_room: Mapping of ACP session_id to Thenvoi room_id.
+        session_to_room: Mapping of ACP session_id to Band room_id.
         session_cwd: Mapping of ACP session_id to editor working directory.
         session_mcp_servers: Mapping of ACP session_id to editor MCP servers.
     """
@@ -47,10 +47,10 @@ class ACPSessionState:
 
 @dataclass
 class PendingACPPrompt:
-    """Tracks an in-flight ACP prompt awaiting Thenvoi response.
+    """Tracks an in-flight ACP prompt awaiting Band response.
 
     When the ACP server receives a prompt from the editor, it creates a
-    PendingACPPrompt to correlate the eventual response from the Thenvoi
+    PendingACPPrompt to correlate the eventual response from the Band
     platform with the ACP session_update back to the editor.
 
     Attributes:

@@ -1,4 +1,4 @@
-"""CLI entry point for thenvoi-acp server."""
+"""CLI entry point for band-acp server."""
 
 from __future__ import annotations
 
@@ -21,31 +21,33 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         Parsed arguments namespace.
     """
     parser = argparse.ArgumentParser(
-        prog="thenvoi-acp",
-        description="Thenvoi ACP server — expose Thenvoi peers as an ACP agent.",
+        prog="band-acp",
+        description="Band ACP server — expose Band peers as an ACP agent.",
     )
     parser.add_argument(
         "--agent-id",
-        default=os.environ.get("THENVOI_AGENT_ID"),
-        help="Thenvoi agent ID (or set THENVOI_AGENT_ID env var)",
+        default=os.environ.get("BAND_AGENT_ID") or os.environ.get("THENVOI_AGENT_ID"),
+        help="Band agent ID (env: BAND_AGENT_ID, legacy: THENVOI_AGENT_ID)",
     )
     parser.add_argument(
         "--api-key",
-        default=os.environ.get("THENVOI_API_KEY"),
-        help="Thenvoi API key (or set THENVOI_API_KEY env var)",
+        default=os.environ.get("BAND_API_KEY") or os.environ.get("THENVOI_API_KEY"),
+        help="Band API key (env: BAND_API_KEY, legacy: THENVOI_API_KEY)",
     )
     parser.add_argument(
         "--rest-url",
-        default=os.environ.get("THENVOI_REST_URL", "https://app.thenvoi.com"),
-        help="Thenvoi REST API URL (default: https://app.thenvoi.com)",
+        default=os.environ.get("BAND_REST_URL")
+        or os.environ.get("THENVOI_REST_URL", "https://app.band.ai"),
+        help="Band REST API URL (default: https://app.band.ai)",
     )
     parser.add_argument(
         "--ws-url",
-        default=os.environ.get(
+        default=os.environ.get("BAND_WS_URL")
+        or os.environ.get(
             "THENVOI_WS_URL",
-            "wss://app.thenvoi.com/api/v1/socket/websocket",
+            "wss://app.band.ai/api/v1/socket/websocket",
         ),
-        help="Thenvoi WebSocket URL",
+        help="Band WebSocket URL",
     )
     parser.add_argument(
         "--log-level",
@@ -58,7 +60,7 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
 
 
 async def main(args: argparse.Namespace | None = None) -> None:
-    """Run the thenvoi-acp server.
+    """Run the band-acp server.
 
     Args:
         args: Parsed arguments. If None, parses from sys.argv.
@@ -81,9 +83,9 @@ async def main(args: argparse.Namespace | None = None) -> None:
     from thenvoi import Agent
     from thenvoi.integrations.acp.push_handler import ACPPushHandler
     from thenvoi.integrations.acp.server import ACPServer
-    from thenvoi.integrations.acp.server_adapter import ThenvoiACPServerAdapter
+    from thenvoi.integrations.acp.server_adapter import BandACPServerAdapter
 
-    adapter = ThenvoiACPServerAdapter(
+    adapter = BandACPServerAdapter(
         rest_url=args.rest_url,
         api_key=args.api_key,
     )
@@ -102,9 +104,9 @@ async def main(args: argparse.Namespace | None = None) -> None:
         ws_url=args.ws_url,
     )
 
-    logger.info("Starting thenvoi-acp server (agent_id=%s)", args.agent_id)
+    logger.info("Starting band-acp server (agent_id=%s)", args.agent_id)
 
-    # Start Thenvoi agent in background, run ACP server in foreground
+    # Start Band agent in background, run ACP server in foreground
     async with agent:
         try:
             await run_agent(server)
@@ -113,7 +115,7 @@ async def main(args: argparse.Namespace | None = None) -> None:
 
 
 def entry_point() -> None:
-    """CLI entry point for the thenvoi-acp command."""
+    """CLI entry point for the band-acp command."""
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

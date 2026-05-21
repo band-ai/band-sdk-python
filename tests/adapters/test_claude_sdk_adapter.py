@@ -31,7 +31,7 @@ from thenvoi.core.types import PlatformMessage
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
-    reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+    reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
 )
 
 
@@ -508,8 +508,8 @@ class TestCleanupAll:
         assert len(adapter._room_tools) == 0
 
 
-class TestThenvoiTools:
-    """Tests for Thenvoi tool names constants."""
+class TestBandTools:
+    """Tests for Band tool names constants."""
 
     def test_thenvoi_base_tools_list(self):
         """Should define base platform tools (always included)."""

@@ -72,11 +72,11 @@ class _StaticHeadersInterceptor(ClientCallInterceptor):
 class A2AAdapter(SimpleAdapter[A2ASessionState]):
     """Adapter that forwards messages to a remote A2A agent.
 
-    This adapter enables remote A2A-compliant agents to participate in Thenvoi
-    chat rooms as peers. Messages from the Thenvoi platform are forwarded to
+    This adapter enables remote A2A-compliant agents to participate in Band
+    chat rooms as peers. Messages from the Band platform are forwarded to
     the A2A agent, and responses are posted back to the chat.
 
-    The adapter uses A2A's native context management - each Thenvoi room maps
+    The adapter uses A2A's native context management - each Band room maps
     to an A2A context_id, allowing the remote agent to maintain conversation
     state without history being resent each time.
 
@@ -165,7 +165,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Forward message to A2A agent, post response to Thenvoi."""
+        """Forward message to A2A agent, post response to Band."""
         if self._client is None:
             raise RuntimeError("A2A client not initialized. Call on_started first.")
 
@@ -180,7 +180,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         if is_session_bootstrap and history:
             await self._rehydrate_from_history(room_id, history)
 
-        # Convert Thenvoi message to A2A format
+        # Convert Band message to A2A format
         a2a_message = self._to_a2a_message(msg, room_id)
 
         try:
@@ -207,7 +207,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         sender_id: str,
         sender_name: str | None,
     ) -> None:
-        """Handle A2A event and forward to Thenvoi platform."""
+        """Handle A2A event and forward to Band platform."""
         # Handle direct message reply (rare - most responses come via Task)
         if isinstance(event, A2AMessage):
             text = get_message_text(event)
@@ -287,7 +287,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 self._tasks.pop(room_id, None)
 
     def _to_a2a_message(self, msg: PlatformMessage, room_id: str) -> A2AMessage:
-        """Convert Thenvoi message to A2A format."""
+        """Convert Band message to A2A format."""
         context_id = self._contexts.get(room_id)
         task_id = self._tasks.get(room_id)
         logger.debug(

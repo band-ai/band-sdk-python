@@ -25,7 +25,7 @@ from thenvoi.runtime.presence import RoomPresence
 
 @pytest.fixture
 def mock_link():
-    """Mock ThenvoiLink for testing."""
+    """Mock BandLink for testing."""
     link = MagicMock()
     link.agent_id = "agent-123"
     link.is_connected = True

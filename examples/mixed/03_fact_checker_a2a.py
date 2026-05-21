@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[a2a]"]
+# dependencies = ["band-sdk[a2a]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Remote A2A fact checker for the mixed example.
 
-This agent is not connected to Thenvoi by itself. It becomes a room participant
+This agent is not connected to Band by itself. It becomes a room participant
 only after the mixed bridge script forwards room messages to it.
 
 In the developer-focused scenario, this service acts like an API contract and

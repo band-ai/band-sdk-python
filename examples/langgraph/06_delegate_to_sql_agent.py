@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Example: Hierarchical agents with graph_as_tool.
@@ -13,7 +13,7 @@ The SQL subagent has its own LLM and database tools, and all of its internal
 execution (tool calls, reasoning, queries) is visible to the user.
 
 Demonstrates:
-- Main agent with Thenvoi platform tools
+- Main agent with Band platform tools
 - SQL subagent with its own LLM + database tools
 - Full observability of nested execution
 - Events bubble up from subagent to main agent
@@ -38,10 +38,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from standalone_sql_agent import create_sql_agent, download_chinook_db
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.integrations.langgraph import graph_as_tool
+from band import Agent
+from band.adapters import LangGraphAdapter
+from band.config import load_agent_config
+from band.integrations.langgraph import graph_as_tool
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -91,7 +91,7 @@ async def main() -> None:
         "SQL agent wrapped as a tool with memory enabled (isolate_thread=False)"
     )
 
-    logger.info("\nStep 3: Creating main Thenvoi agent with database tool...")
+    logger.info("\nStep 3: Creating main Band agent with database tool...")
 
     # Create adapter with SQL tool
     adapter = LangGraphAdapter(

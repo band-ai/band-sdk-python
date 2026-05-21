@@ -8,22 +8,22 @@
 """
 Basic A2A Gateway adapter example.
 
-This example creates a gateway that exposes Thenvoi platform peers as A2A
+This example creates a gateway that exposes Band platform peers as A2A
 endpoints. Remote A2A-compliant agents can connect to this gateway and
-interact with Thenvoi peers via standard A2A protocol.
+interact with Band peers via standard A2A protocol.
 
 Use Case:
     - You have a remote agent (e.g., SAP Agent) that uses A2A protocol
-    - You want that agent to interact with Thenvoi platform peers
+    - You want that agent to interact with Band platform peers
     - This gateway runs as a sidecar, exposing peers as A2A endpoints
 
 Architecture:
-    Remote Agent → A2A HTTP → Gateway → Thenvoi REST API → Platform Peers
+    Remote Agent → A2A HTTP → Gateway → Band REST API → Platform Peers
                   ↑                                              ↓
                   ←←←←←←← SSE Response Stream ←←←←←←←←←←←←←←←←←←←
 
 Features:
-    - Automatic peer discovery from Thenvoi platform
+    - Automatic peer discovery from Band platform
     - Per-peer A2A endpoints with AgentCard discovery
     - SSE streaming for real-time responses
     - Context management (room-per-context)
@@ -33,10 +33,10 @@ Prerequisites:
     1. Configure gateway credentials:
        - preferred: gateway_agent in agent_config.yaml
        - fallback: THENVOI_API_KEY and optional THENVOI_AGENT_ID
-       - THENVOI_WS_URL: WebSocket URL (default: wss://app.thenvoi.com/api/v1/socket/websocket)
-       - THENVOI_REST_URL: REST API URL (default: https://app.thenvoi.com)
+       - THENVOI_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+       - THENVOI_REST_URL: REST API URL (default: https://app.band.ai)
 
-    2. Have peers configured on the Thenvoi platform
+    2. Have peers configured on the Band platform
 
 Run with:
     uv run examples/a2a_gateway/01_basic_gateway.py
@@ -67,10 +67,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
     try:
         agent_id, api_key = load_agent_config("gateway_agent")
         logger.info("Loaded gateway credentials from agent_config.yaml")

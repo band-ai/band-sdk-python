@@ -9,7 +9,7 @@
 Cursor ACP Client - Use Cursor's AI agent from Thenvoi.
 
 Spawns Cursor's CLI agent (`cursor agent acp`) as a subprocess and bridges it
-to the Thenvoi platform. Messages from Thenvoi rooms are forwarded to Cursor,
+to the Band platform. Messages from Band rooms are forwarded to Cursor,
 and Cursor's responses (including tool calls, plans, and streaming text) are
 posted back to the room.
 
@@ -23,7 +23,7 @@ For the reverse direction (IDE connects to Thenvoi), see:
 - Any ACP client: thenvoi-acp CLI
 
 Architecture:
-    Thenvoi Platform (message arrives in room)
+    Band Platform (message arrives in room)
       -> ACPClientAdapter
         -> Cursor ACP subprocess
           -> Cursor CLI Agent (with Thenvoi MCP tools injected)
@@ -36,7 +36,7 @@ Prerequisites:
        # OR set CURSOR_API_KEY / CURSOR_AUTH_TOKEN environment variable
 
     2. Set environment variables:
-       - THENVOI_API_KEY: Your Thenvoi API key (required for tool injection)
+       - THENVOI_API_KEY: Your Band API key (required for tool injection)
 
     3. Optionally configure:
        - CURSOR_API_KEY: Cursor API key (alternative to `cursor agent login`)
@@ -70,10 +70,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
 
     # Load agent credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("cursor_agent")

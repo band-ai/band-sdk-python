@@ -10,7 +10,7 @@ def generate_tom_prompt(agent_name: str = "Tom", mouse_name: str = "Jerry") -> s
 
     Args:
         agent_name: The name to use for Tom (default: "Tom")
-        mouse_name: The display name of the mouse agent on Thenvoi.
+        mouse_name: The display name of the mouse agent on Band.
 
     Returns:
         The complete character prompt for Tom
@@ -222,7 +222,7 @@ def generate_jerry_prompt(agent_name: str = "Jerry", cat_name: str = "Tom") -> s
 
     Args:
         agent_name: The name to use for Jerry (default: "Jerry")
-        cat_name: The display name of the cat agent on Thenvoi.
+        cat_name: The display name of the cat agent on Band.
 
     Returns:
         The complete character prompt for Jerry

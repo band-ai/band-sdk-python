@@ -37,7 +37,7 @@ def _make_args(**overrides) -> argparse.Namespace:
     """Create a Namespace with sensible defaults for run()."""
     defaults = {
         "api_key": "test-api-key",
-        "rest_url": "https://app.thenvoi.com/",
+        "rest_url": "https://app.band.ai/",
         "auth_mode": "agent",
         "target_handle": "@owner/agent",
         "message": "Hello agent",
@@ -117,7 +117,7 @@ class TestBuildParser:
         parser = build_parser()
         args = parser.parse_args([])
 
-        assert args.rest_url == "https://app.thenvoi.com/"
+        assert args.rest_url == "https://app.band.ai/"
 
     def test_default_auth_mode(self):
         parser = build_parser()
@@ -312,7 +312,7 @@ class TestRun:
 
     @pytest.mark.asyncio
     async def test_strips_trailing_slash_from_rest_url(self):
-        args = _make_args(rest_url="https://app.thenvoi.com/")
+        args = _make_args(rest_url="https://app.band.ai/")
         peer = {"id": "peer-1", "name": "Test Agent", "handle": "owner/agent"}
 
         with (
@@ -332,7 +332,7 @@ class TestRun:
             await run(args)
 
             MockClient.assert_called_once_with(
-                api_key="test-api-key", base_url="https://app.thenvoi.com"
+                api_key="test-api-key", base_url="https://app.band.ai"
             )
 
     @pytest.mark.asyncio

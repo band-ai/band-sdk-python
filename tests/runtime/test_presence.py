@@ -21,7 +21,7 @@ from tests.conftest import (
 
 @pytest.fixture
 def mock_link():
-    """Mock ThenvoiLink for testing RoomPresence."""
+    """Mock BandLink for testing RoomPresence."""
     link = MagicMock()
     link.agent_id = "agent-123"
     link.is_connected = False

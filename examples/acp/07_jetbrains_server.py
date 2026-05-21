@@ -1,24 +1,24 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[acp]"]
+# dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-JetBrains ACP Server - Use Thenvoi as an ACP agent in JetBrains IDEs.
+JetBrains ACP Server - Use Band as an ACP agent in JetBrains IDEs.
 
-This example starts Thenvoi as an ACP agent that JetBrains IDEs (IntelliJ,
+This example starts Band as an ACP agent that JetBrains IDEs (IntelliJ,
 PyCharm, WebStorm, etc.) can connect to via the ACP protocol. When you type
-prompts in the JetBrains AI Chat, they are routed to Thenvoi platform peers
+prompts in the JetBrains AI Chat, they are routed to Band platform peers
 and responses stream back to the IDE.
 
 Architecture:
     JetBrains IDE (AI Chat)
       -> spawns this process as ACP agent
         -> ACPServer (ACP JSON-RPC over stdio)
-          -> ThenvoiACPServerAdapter
-            -> Thenvoi Platform (creates room, sends message)
+          -> BandACPServerAdapter
+            -> Band Platform (creates room, sends message)
               -> Peer agents respond via WebSocket
             -> Streams responses back to IDE via session_update
 
@@ -26,7 +26,7 @@ JetBrains Configuration (~/.jetbrains/acp.json):
     {
         "default_mcp_settings": {},
         "agent_servers": {
-            "Thenvoi": {
+            "Band": {
                 "command": "thenvoi-acp",
                 "args": ["--agent-id", "YOUR_AGENT_ID"],
                 "env": {
@@ -40,7 +40,7 @@ JetBrains Configuration (~/.jetbrains/acp.json):
     {
         "default_mcp_settings": {},
         "agent_servers": {
-            "Thenvoi": {
+            "Band": {
                 "command": "uv",
                 "args": [
                     "run", "--extra", "acp",
@@ -54,7 +54,7 @@ JetBrains Configuration (~/.jetbrains/acp.json):
     }
 
 Prerequisites:
-    1. Install: pip install thenvoi-sdk[acp]
+    1. Install: pip install band-sdk[acp]
     2. Set THENVOI_API_KEY and THENVOI_AGENT_ID
 
 Run standalone for testing:
@@ -74,12 +74,12 @@ from acp import run_agent
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.config import load_agent_config
-from thenvoi.integrations.acp.push_handler import ACPPushHandler
-from thenvoi.integrations.acp.router import AgentRouter
-from thenvoi.integrations.acp.server import ACPServer
-from thenvoi.integrations.acp.server_adapter import ThenvoiACPServerAdapter
+from band import Agent
+from band.config import load_agent_config
+from band.integrations.acp.push_handler import ACPPushHandler
+from band.integrations.acp.router import AgentRouter
+from band.integrations.acp.server import ACPServer
+from band.integrations.acp.server_adapter import BandACPServerAdapter
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -88,10 +88,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
     # JetBrains IDEs inject credentials via ~/.jetbrains/acp.json env config.
     # Fall back to agent_config.yaml for standalone testing.
     api_key = os.getenv("THENVOI_API_KEY")
@@ -112,7 +110,7 @@ async def main() -> None:
             )
 
     # Create ACP server adapter
-    adapter = ThenvoiACPServerAdapter(
+    adapter = BandACPServerAdapter(
         rest_url=rest_url,
         api_key=api_key,
     )
@@ -134,7 +132,7 @@ async def main() -> None:
     # Create ACP protocol handler
     server = ACPServer(adapter)
 
-    # Create Thenvoi agent
+    # Create Band agent
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,
@@ -143,7 +141,7 @@ async def main() -> None:
         rest_url=rest_url,
     )
 
-    logger.info("Starting Thenvoi ACP server for JetBrains...")
+    logger.info("Starting Band ACP server for JetBrains...")
     logger.info("IDE will connect via stdio ACP protocol.")
 
     await agent.start()

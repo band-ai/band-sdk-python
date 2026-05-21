@@ -1,15 +1,16 @@
 """
-Thenvoi Platform Layer - Wire-level connection to Thenvoi platform.
+Band Platform Layer - Wire-level connection to Band platform.
 
 Components:
-    ThenvoiLink: WebSocket connection + event dispatch (REST via .rest)
+    BandLink: WebSocket connection + event dispatch (REST via .rest)
     PlatformEvent: Single event type for all platform events
 """
 
 from .event import PlatformEvent
-from .link import ThenvoiLink
+from .link import BandLink, ThenvoiLink
 
 __all__ = [
+    "BandLink",
     "ThenvoiLink",
     "PlatformEvent",
 ]

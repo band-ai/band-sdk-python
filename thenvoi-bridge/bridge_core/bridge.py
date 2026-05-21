@@ -49,8 +49,8 @@ class BridgeConfig(BaseModel):
 
     agent_id: str
     api_key: str = Field(repr=False)
-    ws_url: str = "wss://app.thenvoi.com/api/v1/socket/websocket"
-    rest_url: str = "https://app.thenvoi.com"
+    ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"
+    rest_url: str = "https://app.band.ai"
     agent_mapping: str
     health_port: int = 8080
     health_host: str = "0.0.0.0"
@@ -220,7 +220,7 @@ class ReconnectConfig(BaseModel):
 class ThenvoiBridge:
     """Main bridge orchestrator.
 
-    Connects to the Thenvoi platform via WebSocket, listens for @mention
+    Connects to the Band platform via WebSocket, listens for @mention
     messages, and routes them to the appropriate handler.
     """
 
@@ -707,6 +707,9 @@ class ThenvoiBridge:
             )
             for p in response.data
         ]
+
+
+BandBridge = ThenvoiBridge
 
 
 async def main(handlers: dict[str, Handler]) -> None:

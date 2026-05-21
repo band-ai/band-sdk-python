@@ -1,5 +1,5 @@
 """
-Thenvoi Runtime Layer - Agent execution and room management.
+Band Runtime Layer - Agent execution and room management.
 
 Components:
     RoomPresence: Cross-room lifecycle management

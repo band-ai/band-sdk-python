@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from pydantic import AliasChoices, BaseModel, Field, ValidationError
 
 from thenvoi.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
-from thenvoi.core.exceptions import ThenvoiToolError
+from thenvoi.core.exceptions import BandToolError
 from thenvoi.core.protocols import AgentToolsProtocol
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
 
 @dataclass(frozen=True)
 class ToolDefinition:
-    """Metadata for a built-in Thenvoi tool."""
+    """Metadata for a built-in Band tool."""
 
     name: str
     input_model: type[BaseModel]
@@ -1232,7 +1232,7 @@ class AgentTools(AgentToolsProtocol):
             participant_names = [
                 p.get("handle") or p["name"] for p in self._participants
             ]
-            raise ThenvoiToolError(
+            raise BandToolError(
                 "At least one mention is required. "
                 f"Available participants: {participant_names}. "
                 "Please retry with mentions specifying who this message is for."
@@ -2117,7 +2117,7 @@ class AgentTools(AgentToolsProtocol):
         method converts them to dicts via .model_dump() so adapters always
         receive JSON-serializable results.
 
-        ThenvoiToolError is re-raised so framework wrappers can translate it
+        BandToolError is re-raised so framework wrappers can translate it
         into framework-native failure results. Unexpected exceptions are
         caught and returned as error strings for the LLM.
 
@@ -2130,7 +2130,7 @@ class AgentTools(AgentToolsProtocol):
             or error string if an unexpected failure occurred
 
         Raises:
-            ThenvoiToolError: When a tool method raises a typed tool failure
+            BandToolError: When a tool method raises a typed tool failure
         """
         # Validate arguments against Pydantic model
         try:
@@ -2162,8 +2162,8 @@ class AgentTools(AgentToolsProtocol):
                     for item in result
                 ]
             return result
-        except ThenvoiToolError:
-            # Let ThenvoiToolError propagate so framework wrappers can
+        except BandToolError:
+            # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.
             raise
         except Exception as e:
@@ -2171,7 +2171,7 @@ class AgentTools(AgentToolsProtocol):
 
 
 class HumanTools:
-    """User-scoped tools for Thenvoi platform interaction.
+    """User-scoped tools for Band platform interaction.
 
     ``HumanTools`` is stateless per credential: one instance per user-scoped
     ``AsyncRestClient``. Unlike ``AgentTools`` it is not bound to a room —

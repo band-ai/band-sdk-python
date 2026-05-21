@@ -1,5 +1,5 @@
 """
-Standalone Agentic RAG graph - completely independent of Thenvoi.
+Standalone Agentic RAG graph - completely independent of Band.
 
 Based on LangGraph Agentic RAG tutorial pattern:
 https://docs.langchain.com/oss/python/langgraph/agentic-rag

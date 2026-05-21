@@ -38,7 +38,7 @@ from thenvoi.adapters.crewai_flow import (  # noqa: E402
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from thenvoi.core.exceptions import ThenvoiConfigError  # noqa: E402
+from thenvoi.core.exceptions import BandConfigError  # noqa: E402
 from thenvoi.core.types import PlatformMessage  # noqa: E402
 from thenvoi.testing.fake_tools import FakeAgentTools  # noqa: E402
 
@@ -114,11 +114,11 @@ class TestInit:
 
 class TestValidation:
     def test_flow_factory_must_be_callable(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(flow_factory="not callable")  # type: ignore[arg-type]
 
     def test_additional_tools_requires_pydantic_model(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 additional_tools=[(object, lambda: None)],  # type: ignore[list-item]
@@ -128,7 +128,7 @@ class TestValidation:
         class EmailsInput(BaseModel):
             pass
 
-        with pytest.raises(ThenvoiConfigError, match="Duplicate custom tool name"):
+        with pytest.raises(BandConfigError, match="Duplicate custom tool name"):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 additional_tools=[
@@ -138,7 +138,7 @@ class TestValidation:
             )
 
     def test_state_source_must_have_load_task_events(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 state_source=object(),  # type: ignore[arg-type]
@@ -149,60 +149,60 @@ class TestValidation:
             def load_task_events(self, *, room_id, metadata_namespace, tools, history):
                 return []
 
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 state_source=SyncSource(),  # type: ignore[arg-type]
             )
 
     def test_join_policy_validation(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 join_policy="some_other",  # type: ignore[arg-type]
             )
 
     def test_metadata_namespace_must_be_non_empty(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(flow_factory=_factory, metadata_namespace="")
 
     def test_max_delegation_rounds_bounds(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(flow_factory=_factory, max_delegation_rounds=0)
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(flow_factory=_factory, max_delegation_rounds=21)
 
     def test_max_run_age_must_be_positive_timedelta(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(flow_factory=_factory, max_run_age=timedelta(0))
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(flow_factory=_factory, max_run_age=timedelta(seconds=-1))
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(flow_factory=_factory, max_run_age=86400)  # type: ignore[arg-type]
 
     def test_text_only_behavior_validation(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 text_only_behavior="bogus",  # type: ignore[arg-type]
             )
 
     def test_tagged_peer_policy_validation(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 tagged_peer_policy="something_else",  # type: ignore[arg-type]
             )
 
     def test_sequential_chains_must_be_str_to_str(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 sequential_chains={"k": 123},  # type: ignore[dict-item]
             )
 
     def test_accept_agent_initiated_must_be_bool(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             CrewAIFlowAdapter(
                 flow_factory=_factory,
                 accept_agent_initiated="yes",  # type: ignore[arg-type]

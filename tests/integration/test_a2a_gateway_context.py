@@ -1,6 +1,6 @@
 """E2E tests for A2A Gateway context_id flow.
 
-Tests the complete flow using real Thenvoi platform (requires API keys in .env.test):
+Tests the complete flow using real Band platform (requires API keys in .env.test):
 1. Gateway receives HTTP request with contextId
 2. Gateway creates/reuses chat room based on contextId
 3. Same contextId -> same room, different contextId -> different room
@@ -42,7 +42,7 @@ async def ensure_peer_in_room(
 
 @requires_api
 class TestA2AGatewayContextIdWithPlatform:
-    """E2E tests using real Thenvoi platform (requires API keys in .env.test).
+    """E2E tests using real Band platform (requires API keys in .env.test).
 
     These tests actually:
     1. Create rooms on the real platform

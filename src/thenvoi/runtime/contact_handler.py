@@ -43,7 +43,7 @@ from thenvoi.runtime.types import (
 )
 
 if TYPE_CHECKING:
-    from thenvoi.platform.link import ThenvoiLink
+    from thenvoi.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,7 @@ class ContactEventHandler:
     def __init__(
         self,
         config: ContactEventConfig,
-        link: "ThenvoiLink",
+        link: "BandLink",
         on_broadcast: Callable[[str], None] | None = None,
         on_hub_event: HubEventCallback | None = None,
         on_hub_init: HubInitCallback | None = None,
@@ -113,7 +113,7 @@ class ContactEventHandler:
 
         Args:
             config: Contact event configuration
-            link: ThenvoiLink for REST API access
+            link: BandLink for REST API access
             on_broadcast: Optional callback to queue broadcast messages
             on_hub_event: Callback to inject events into hub room (for HUB_ROOM strategy)
             on_hub_init: Callback to inject system prompt when hub room is first used

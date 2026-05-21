@@ -1,15 +1,15 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[parlant]"]
+# dependencies = ["band-sdk[parlant]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Parlant agent with behavioral guidelines using the official Parlant SDK.
 
 This example shows how to use Parlant's guideline system for controlled
-agent behavior with the full Thenvoi toolset.
+agent behavior with the full Band toolset.
 
 Run with:
     uv run examples/parlant/02_with_guidelines.py
@@ -27,17 +27,17 @@ import parlant.sdk as p
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ParlantAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.integrations.parlant.tools import create_parlant_tools
+from band import Agent
+from band.adapters import ParlantAdapter
+from band.config import load_agent_config
+from band.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
 CUSTOM_DESCRIPTION = """
-You are a collaborative assistant in the Thenvoi multi-agent platform.
+You are a collaborative assistant in the Band multi-agent platform.
 
 ## Your Role
 - Help users navigate multi-agent conversations
@@ -168,7 +168,7 @@ async def main() -> None:
             parlant_agent=parlant_agent,
         )
 
-        # Create and start Thenvoi agent
+        # Create and start Band agent
         agent = Agent.create(
             adapter=adapter,
             agent_id=agent_id,
@@ -178,7 +178,7 @@ async def main() -> None:
         )
 
         logger.info(
-            "Starting Thenvoi agent with Parlant SDK and comprehensive guidelines..."
+            "Starting Band agent with Parlant SDK and comprehensive guidelines..."
         )
         await agent.run()
 

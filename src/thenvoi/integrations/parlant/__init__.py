@@ -1,5 +1,5 @@
 """
-Parlant SDK integration for Thenvoi SDK.
+Parlant SDK integration for Band SDK.
 
 This module provides the integration with the official Parlant SDK
 (https://github.com/emcie-co/parlant) for building guideline-based

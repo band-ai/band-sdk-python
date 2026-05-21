@@ -30,7 +30,7 @@ _client: anthropic.Anthropic | None = None
 _model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
 _system_prompt = os.environ.get(
     "SYSTEM_PROMPT",
-    "You are a helpful assistant connected to the Thenvoi platform. "
+    "You are a helpful assistant connected to the Band platform. "
     "Be concise and friendly. Respond directly to what the user asks.",
 )
 

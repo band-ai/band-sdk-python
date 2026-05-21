@@ -1,6 +1,6 @@
-# Contributing to Thenvoi Python SDK
+# Contributing to Band Python SDK
 
-Thank you for your interest in contributing to the Thenvoi Python SDK! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to the Band Python SDK! This document provides guidelines and instructions for contributing.
 
 ## Development Setup
 
@@ -143,7 +143,7 @@ Use Google-style docstrings for public functions and classes:
 
 ```python
 def connect_agent(agent_id: str, api_key: str) -> Agent:
-    """Connect an agent to the Thenvoi platform.
+    """Connect an agent to the Band platform.
 
     Args:
         agent_id: The unique identifier for the agent.
@@ -173,7 +173,7 @@ def get_items() -> dict[str, list[int]]:
 
 ## Running Integration Tests
 
-Integration tests require a valid Thenvoi API key:
+Integration tests require a valid Band API key:
 
 ```bash
 # Set up your API key in .env or agent_config.yaml

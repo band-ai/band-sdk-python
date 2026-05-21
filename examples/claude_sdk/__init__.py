@@ -1,1 +1,1 @@
-"""Claude Agent SDK examples for Thenvoi platform."""
+"""Claude Agent SDK examples for Band platform."""

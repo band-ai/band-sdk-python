@@ -1,7 +1,7 @@
 """
-LangGraph integration for Thenvoi SDK.
+LangGraph integration for Band SDK.
 
-NOTE: The old ThenvoiLangGraphAgent has been removed.
+NOTE: The old BandLangGraphAgent has been removed.
 Use the new composition-based pattern instead:
 
     from thenvoi import Agent

@@ -3,14 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "thenvoi-sdk"
+name = "band-sdk"
 version = "0.2.8"
-description = "A Python SDK for Thenvoi API"
+description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "thenvoi" }]
+authors = [{ name = "Band" }]
 license = { text = "MIT" }
-keywords = ["sdk", "thenvoi", "api", "agents"]
+keywords = ["sdk", "band", "api", "agents"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -191,12 +191,14 @@ dev-parlant = [
 ]
 
 [project.scripts]
+band-acp = "thenvoi.integrations.acp.cli:entry_point"
+band-trigger = "thenvoi.cli.trigger:main"
 thenvoi-acp = "thenvoi.integrations.acp.cli:entry_point"
 thenvoi-trigger = "thenvoi.cli.trigger:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["thenvoi", "thenvoi.*"]
+include = ["band", "band.*", "thenvoi", "thenvoi.*"]
 namespaces = false
 
 [tool.setuptools]
@@ -274,4 +276,4 @@ version_files = [
     "src/thenvoi/__init__.py:__version__",
 ]
 # Tag format aligned with release-please (package-name-v$version)
-tag_format = "thenvoi-sdk-python-v$version"
+tag_format = "band-sdk-python-v$version"

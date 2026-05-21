@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[pydantic-ai]"]
+# dependencies = ["band-sdk[pydantic-ai]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Tom the cat agent using Pydantic AI.
@@ -31,9 +31,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from prompts.characters import generate_tom_prompt
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import PydanticAIAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import PydanticAIAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)

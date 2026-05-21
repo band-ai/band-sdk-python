@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 try:
-    _SDK_VERSION = _get_version("thenvoi-sdk")
+    _SDK_VERSION = _get_version("band-sdk")
 except PackageNotFoundError:
     _SDK_VERSION = "unknown"
 
@@ -98,8 +98,8 @@ class Agent:
         adapter: FrameworkAdapter | SimpleAdapter,
         agent_id: str,
         api_key: str,
-        ws_url: str = "wss://app.thenvoi.com/api/v1/socket/websocket",
-        rest_url: str = "https://app.thenvoi.com",
+        ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
+        rest_url: str = "https://app.band.ai",
         config: AgentConfig | None = None,
         session_config: SessionConfig | None = None,
         contact_config: ContactEventConfig | None = None,
@@ -116,8 +116,8 @@ class Agent:
             adapter: Framework adapter (e.g., PydanticAIAdapter)
             agent_id: UUID of the agent
             api_key: API key for authentication
-            ws_url: WebSocket URL (default: wss://api.thenvoi.com/ws)
-            rest_url: REST API URL (default: https://api.thenvoi.com)
+            ws_url: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+            rest_url: REST API URL (default: https://app.band.ai)
             config: Agent configuration options
             session_config: Session lifecycle configuration
             contact_config: Contact event handling configuration.
@@ -230,7 +230,7 @@ class Agent:
 
         self._started = True
         logger.info(
-            "Agent started: %s (thenvoi-sdk %s)", self._runtime.agent_name, _SDK_VERSION
+            "Agent started: %s (band-sdk %s)", self._runtime.agent_name, _SDK_VERSION
         )
 
     async def stop(self, timeout: float | None = None) -> bool:

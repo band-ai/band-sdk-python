@@ -1,9 +1,9 @@
-"""Unit tests for ThenvoiLink contact subscription."""
+"""Unit tests for BandLink contact subscription."""
 
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from thenvoi.platform.link import ThenvoiLink
+from thenvoi.platform.link import BandLink
 from thenvoi.platform.event import (
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
@@ -40,7 +40,7 @@ class TestContactSubscription:
         """subscribe_agent_contacts() should join agent contacts channel."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
         await link.subscribe_agent_contacts("agent-123")
 
@@ -55,7 +55,7 @@ class TestContactSubscription:
         """subscribe_agent_contacts() should pass all 4 event handlers."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
         await link.subscribe_agent_contacts("agent-123")
 
@@ -72,7 +72,7 @@ class TestContactSubscription:
         """subscribe_agent_contacts() should raise when not connected."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         # Not connected
 
         with pytest.raises(RuntimeError, match="Not connected"):
@@ -85,7 +85,7 @@ class TestContactSubscription:
         """unsubscribe_agent_contacts() should leave agent contacts channel."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
         await link.unsubscribe_agent_contacts()
 
@@ -101,7 +101,7 @@ class TestContactSubscription:
             "Leave failed"
         )
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
         # Should not raise
@@ -109,7 +109,7 @@ class TestContactSubscription:
 
     async def test_unsubscribe_agent_contacts_noop_when_not_connected(self):
         """unsubscribe_agent_contacts() should be no-op when not connected."""
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         # Should not raise
         await link.unsubscribe_agent_contacts()
 
@@ -124,7 +124,7 @@ class TestContactEventHandlers:
         """_on_contact_request_received() should queue ContactRequestReceivedEvent."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
         payload = ContactRequestReceivedPayload(
@@ -148,7 +148,7 @@ class TestContactEventHandlers:
         """_on_contact_request_updated() should queue ContactRequestUpdatedEvent."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
         payload = ContactRequestUpdatedPayload(
@@ -167,7 +167,7 @@ class TestContactEventHandlers:
         """_on_contact_added() should queue ContactAddedEvent."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
         payload = ContactAddedPayload(
@@ -189,7 +189,7 @@ class TestContactEventHandlers:
         """_on_contact_removed() should queue ContactRemovedEvent."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
         payload = ContactRemovedPayload(id="contact-123")
@@ -209,7 +209,7 @@ class TestPublicQueueMethod:
         """queue_event() should add event to queue (public API)."""
         mock_ws_class.return_value = mock_ws_client
 
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
         await link.connect()
 
         event = ContactAddedEvent(
@@ -228,7 +228,7 @@ class TestPublicQueueMethod:
 
     def test_queue_event_works_without_connection(self):
         """queue_event() should work even when not connected."""
-        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link = BandLink(agent_id="agent-123", api_key="test-key")
 
         event = ContactRemovedEvent(payload=ContactRemovedPayload(id="contact-123"))
         link.queue_event(event)

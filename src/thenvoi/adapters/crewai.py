@@ -21,11 +21,11 @@ try:
 except ImportError as e:
     raise ImportError(
         "crewai is required for CrewAI adapter.\n"
-        "Install with: pip install 'thenvoi-sdk[crewai]'\n"
+        "Install with: pip install 'band-sdk[crewai]'\n"
         "Or: uv add crewai nest-asyncio"
     ) from e
 
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -53,7 +53,7 @@ MessageType = Literal["thought", "error", "task"]
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     """CrewAI adapter using the official CrewAI SDK.
 
-    Integrates the CrewAI framework (https://docs.crewai.com/) with Thenvoi
+    Integrates the CrewAI framework (https://docs.crewai.com/) with Band
     platform for building collaborative multi-agent systems.
 
     Example:
@@ -129,7 +129,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         # --- Deprecation shim: boolean → features migration ---
         _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
         if _has_legacy_booleans and features is not None:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "Cannot pass both legacy boolean flags "
                 "(enable_execution_reporting / enable_memory_tools) and 'features'. "
                 "Use features=AdapterFeatures(...) instead."

@@ -1,4 +1,4 @@
-"""Shared CrewAI BaseTool wrappers for Thenvoi platform tools.
+"""Shared CrewAI BaseTool wrappers for Band platform tools.
 
 Both CrewAIAdapter and CrewAIFlowAdapter consume the same tool builder so that
 the platform tool surface stays consistent across adapters and Flow authors who
@@ -39,7 +39,7 @@ try:
 except ImportError as e:  # pragma: no cover - same import guard as the adapter
     raise ImportError(
         "crewai is required for CrewAI adapter.\n"
-        "Install with: pip install 'thenvoi-sdk[crewai]'\n"
+        "Install with: pip install 'band-sdk[crewai]'\n"
         "Or: uv add crewai nest-asyncio"
     ) from e
 

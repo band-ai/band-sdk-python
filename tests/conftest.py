@@ -215,7 +215,7 @@ def dummy_message_handler():
 
 @pytest.fixture
 def mock_thenvoi_agent(mock_api_client, mock_websocket):
-    """Mock ThenvoiAgent coordinator for session/adapter tests."""
+    """Mock BandAgent coordinator for session/adapter tests."""
     agent = AsyncMock()
     agent.agent_id = "agent-123"
     agent.agent_name = "TestBot"

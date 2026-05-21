@@ -8,7 +8,7 @@ from datetime import datetime
 
 @dataclass
 class OpencodeSessionState:
-    """Session metadata persisted in Thenvoi task events."""
+    """Session metadata persisted in Band task events."""
 
     session_id: str | None = None
     room_id: str | None = None

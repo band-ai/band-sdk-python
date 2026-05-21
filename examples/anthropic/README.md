@@ -10,7 +10,7 @@ with full control over conversation history and tool loop management.
 ## Prerequisites
 
 1. **Anthropic API Key** - Set `ANTHROPIC_API_KEY` environment variable
-2. **Thenvoi Platform** - Create a remote agent and get credentials
+2. **Band Platform** - Create a remote agent and get credentials
 3. **Dependencies** - Install with `uv sync --extra anthropic`
 
 ---

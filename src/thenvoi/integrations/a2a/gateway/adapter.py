@@ -1,4 +1,4 @@
-"""A2A Gateway Adapter that exposes Thenvoi peers as A2A endpoints."""
+"""A2A Gateway Adapter that exposes Band peers as A2A endpoints."""
 
 from __future__ import annotations
 
@@ -60,9 +60,9 @@ def slugify(name: str) -> str:
 
 
 class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
-    """Gateway adapter exposing Thenvoi peers as A2A endpoints.
+    """Gateway adapter exposing Band peers as A2A endpoints.
 
-    This adapter enables remote A2A agents to interact with Thenvoi platform
+    This adapter enables remote A2A agents to interact with Band platform
     peers through standard A2A HTTP endpoints. It acts as a bridge:
     - Receives A2A messages via HTTP server
     - Creates/reuses Thenvoi chat rooms for context management
@@ -79,7 +79,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         from thenvoi.integrations.a2a.gateway import A2AGatewayAdapter
 
         adapter = A2AGatewayAdapter(
-            rest_url="https://app.thenvoi.com",
+            rest_url="https://app.band.ai",
             api_key="your-api-key",
             gateway_url="http://localhost:10000",
             port=10000,
@@ -97,7 +97,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
     def __init__(
         self,
-        rest_url: str = "https://app.thenvoi.com",
+        rest_url: str = "https://app.band.ai",
         api_key: str = "",
         gateway_url: str = "http://localhost:10000",
         port: int = 10000,
@@ -106,7 +106,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         """Initialize gateway adapter.
 
         Args:
-            rest_url: Base URL for Thenvoi REST API.
+            rest_url: Base URL for Band REST API.
             api_key: API key for authentication (same as Agent.create()).
             gateway_url: Base URL for A2A endpoints exposed by this gateway.
             port: Port for HTTP server to listen on.
@@ -313,7 +313,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             logger.error("Peer not found: %s", peer_id)
             return
 
-        # Use the peer's actual UUID for Thenvoi API calls
+        # Use the peer's actual UUID for Band API calls
         peer_uuid = peer.id
 
         # Get or create room for context

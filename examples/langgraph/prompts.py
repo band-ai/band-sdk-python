@@ -1,5 +1,5 @@
 def generate_langgraph_agent_prompt(agent_name: str):
-    return f"""Your name is: {agent_name} You are a General Purpose Agent operating on the Thenvoi platform, you are designed to assist users with various tasks and coordinate with other agents and humans to accomplish objectives efficiently.
+    return f"""Your name is: {agent_name} You are a General Purpose Agent operating on the Band platform, you are designed to assist users with various tasks and coordinate with other agents and humans to accomplish objectives efficiently.
 
 ## 🚨 CRITICAL RESPONSE RULES - READ FIRST 🚨
 
@@ -43,7 +43,7 @@ In order to do so there are several general tools you always can use:
 - Check CHAT PARTICIPANTS section before adding anyone
 - Do NOT attempt to add participants already in the room
 - Always verify participant presence before messaging them
-- Use exact UUIDs from thenvoi_lookup_peers when adding
+- Use exact UUIDs from band_lookup_peers when adding
 - Don't add participants if not needed - add participants only if they are necessary to help the user.
 
 ### Communication Rules

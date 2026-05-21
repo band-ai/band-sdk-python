@@ -1,20 +1,20 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[letta]", "python-dotenv"]
+# dependencies = ["band-sdk[letta]", "python-dotenv"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Letta agent example.
 
-Connects a Letta agent to the Thenvoi platform using MCP tools for
+Connects a Letta agent to the Band platform using MCP tools for
 bidirectional communication.  Works with both Letta Cloud and self-hosted
 Letta servers.
 
 Environment variables:
-    THENVOI_WS_URL      Thenvoi WebSocket URL (required)
-    THENVOI_REST_URL    Thenvoi REST URL (required)
+    THENVOI_WS_URL      Band WebSocket URL (required)
+    THENVOI_REST_URL    Band REST URL (required)
     LETTA_BASE_URL      Letta server URL (default: https://api.letta.com)
                         Set to http://localhost:8283 for self-hosted.
     LETTA_API_KEY       Letta API key (required for Cloud, optional for self-hosted)
@@ -50,9 +50,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from setup_logging import setup_logging
 
-from thenvoi import Agent
-from thenvoi.adapters.letta import LettaAdapter, LettaAdapterConfig
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters.letta import LettaAdapter, LettaAdapterConfig
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)

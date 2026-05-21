@@ -1,7 +1,7 @@
 """
 Pydantic AI adapter using SimpleAdapter pattern.
 
-Extracted from thenvoi.integrations.pydantic_ai.agent.ThenvoiPydanticAgent.
+Extracted from thenvoi.integrations.pydantic_ai.agent.BandPydanticAgent.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -88,7 +88,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # --- Deprecation shim: boolean → features migration ---
         _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
         if _has_legacy_booleans and features is not None:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "Cannot pass both legacy boolean flags "
                 "(enable_execution_reporting / enable_memory_tools) and 'features'. "
                 "Use features=AdapterFeatures(...) instead."
@@ -127,14 +127,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # Custom tools (PydanticAI-compatible functions)
         self._custom_tools: list[Callable[..., Any]] = additional_tools or []
 
-    # --- Adapted from ThenvoiPydanticAgent._on_started ---
+    # --- Adapted from BandPydanticAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create the Pydantic AI agent after metadata is fetched."""
         await super().on_started(agent_name, agent_description)
         self._agent = self._create_agent()
         logger.info("Pydantic AI adapter started for agent: %s", agent_name)
 
-    # --- Copied from ThenvoiPydanticAgent._create_agent ---
+    # --- Copied from BandPydanticAgent._create_agent ---
     def _create_agent(self) -> Agent[AgentToolsProtocol, None]:
         """Create Pydantic AI Agent with platform tools."""
         system = self.system_prompt or render_system_prompt(
@@ -457,7 +457,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         return agent
 
-    # --- Adapted from ThenvoiPydanticAgent._handle_message ---
+    # --- Adapted from BandPydanticAgent._handle_message ---
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -562,7 +562,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             len(self._message_history[room_id]),
         )
 
-    # --- Copied from ThenvoiPydanticAgent._cleanup_session ---
+    # --- Copied from BandPydanticAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up message history when agent leaves a room."""
         if room_id in self._message_history:

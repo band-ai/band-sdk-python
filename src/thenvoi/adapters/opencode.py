@@ -16,12 +16,12 @@ import httpx
 
 from thenvoi.converters._utils import optional_str
 from thenvoi.converters.opencode import OpencodeHistoryConverter
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from thenvoi.integrations.mcp.backends import (
-    ThenvoiMCPBackend,
+    BandMCPBackend,
     create_thenvoi_mcp_backend,
 )
 from thenvoi.integrations.opencode import (
@@ -40,8 +40,8 @@ QuestionMode = Literal["manual", "auto_reject"]
 ApprovalReply = Literal["once", "always", "reject"]
 
 _OPENCODE_SYSTEM_NOTE = """\
-Responses are relayed back into the Thenvoi room by the adapter.
-Use the thenvoi_ prefixed tools (e.g. thenvoi_send_message) for Thenvoi platform actions when available.
+Responses are relayed back into the Band room by the adapter.
+Use the thenvoi_ prefixed tools (e.g. thenvoi_send_message) for Band platform actions when available.
 When you need approval or clarification, ask clearly and wait for the user's next room message.
 """
 
@@ -104,14 +104,14 @@ class OpencodeAdapterConfig:
     approval_timeout_reply: ApprovalReply = "reject"
     question_mode: QuestionMode = "manual"
     question_wait_timeout_s: float = 300.0
-    session_title_prefix: str = "Thenvoi"
+    session_title_prefix: str = "Band"
     mcp_server_name: str = "thenvoi"
 
 
 class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
-    """Thenvoi adapter for the OpenCode HTTP server.
+    """Band adapter for the OpenCode HTTP server.
 
-    Maps each Thenvoi room to an OpenCode session. Messages from the room
+    Maps each Band room to an OpenCode session. Messages from the room
     are forwarded as prompts; SSE events from OpenCode are relayed back as
     room messages, tool-call/result reports, and error events. Platform
     tools come from thenvoi-mcp, while `additional_tools` are exposed through
@@ -157,7 +157,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
 
         if _has_legacy_booleans and features is not None:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "Cannot pass both legacy boolean flags in OpencodeAdapterConfig "
                 "(enable_memory_tools / enable_execution_reporting) "
                 "and 'features'. "
@@ -194,7 +194,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
         self._event_task: asyncio.Task[None] | None = None
-        self._mcp_backend: ThenvoiMCPBackend | None = None
+        self._mcp_backend: BandMCPBackend | None = None
         self._rooms: dict[str, _RoomState] = {}
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
@@ -390,8 +390,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if was_new:
             await self._register_mcp_backend()
 
-    async def _ensure_mcp_backend(self) -> ThenvoiMCPBackend:
-        """Create the shared Thenvoi MCP backend (LocalMCPServer with SSE)."""
+    async def _ensure_mcp_backend(self) -> BandMCPBackend:
+        """Create the shared Band MCP backend (LocalMCPServer with SSE)."""
         if self._mcp_backend is not None:
             return self._mcp_backend
 
@@ -413,7 +413,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return self._mcp_backend
         self._mcp_backend = backend
         logger.info(
-            "Shared Thenvoi MCP backend started with %d tools (%d custom)",
+            "Shared Band MCP backend started with %d tools (%d custom)",
             len(backend.allowed_tools),
             len(self._custom_tools),
         )
@@ -427,7 +427,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         try:
             backend = await self._ensure_mcp_backend()
         except Exception:
-            logger.exception("Failed to start shared Thenvoi MCP backend for OpenCode")
+            logger.exception("Failed to start shared Band MCP backend for OpenCode")
             return
 
         local_server = backend.local_server

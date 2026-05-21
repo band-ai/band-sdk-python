@@ -1003,13 +1003,13 @@ class TestEmptyMentionsValidation:
     async def test_raises_error_with_participant_names(
         self, mock_rest_client, participants
     ):
-        """Should raise ThenvoiToolError listing available participants when mentions empty."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        """Should raise BandToolError listing available participants when mentions empty."""
+        from thenvoi.core.exceptions import BandToolError
 
         tools = AgentTools("room-123", mock_rest_client, participants)
 
         with pytest.raises(
-            ThenvoiToolError, match="At least one mention is required"
+            BandToolError, match="At least one mention is required"
         ) as exc_info:
             await tools.send_message("Hello!", mentions=[])
 
@@ -1021,36 +1021,36 @@ class TestEmptyMentionsValidation:
     async def test_raises_error_when_mentions_none(
         self, mock_rest_client, participants
     ):
-        """Should raise ThenvoiToolError when mentions is None."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        """Should raise BandToolError when mentions is None."""
+        from thenvoi.core.exceptions import BandToolError
 
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(ThenvoiToolError, match="At least one mention is required"):
+        with pytest.raises(BandToolError, match="At least one mention is required"):
             await tools.send_message("Hello!", mentions=None)
 
     async def test_uses_handle_when_available(self, mock_rest_client):
         """Should prefer handle over name in error message."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        from thenvoi.core.exceptions import BandToolError
 
         participants = [
             {"id": "user-1", "name": "User One", "type": "User", "handle": "@user-one"},
         ]
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(ThenvoiToolError, match="@user-one"):
+        with pytest.raises(BandToolError, match="@user-one"):
             await tools.send_message("Hello!", mentions=[])
 
     async def test_uses_name_when_no_handle(self, mock_rest_client):
         """Should fall back to participant name when handle is missing."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        from thenvoi.core.exceptions import BandToolError
 
         participants = [
             {"id": "user-1", "name": "User One", "type": "User"},
         ]
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(ThenvoiToolError, match="User One"):
+        with pytest.raises(BandToolError, match="User One"):
             await tools.send_message("Hello!", mentions=[])
 
     async def test_no_error_when_mentions_provided(
@@ -1068,12 +1068,12 @@ class TestEmptyMentionsValidation:
     async def test_execute_tool_call_raises_thenvoi_tool_error(
         self, mock_rest_client, participants
     ):
-        """execute_tool_call lets ThenvoiToolError propagate for wrapper translation."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        """execute_tool_call lets BandToolError propagate for wrapper translation."""
+        from thenvoi.core.exceptions import BandToolError
 
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(ThenvoiToolError, match="At least one mention is required"):
+        with pytest.raises(BandToolError, match="At least one mention is required"):
             await tools.execute_tool_call(
                 "thenvoi_send_message", {"content": "Hello!", "mentions": []}
             )

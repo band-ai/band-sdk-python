@@ -44,7 +44,7 @@ class TestGetHistoryForLLMHydrationDisabled:
 
     @pytest.fixture
     def mock_link(self):
-        """Create a mock ThenvoiLink."""
+        """Create a mock BandLink."""
         link = MagicMock()
         link.rest = MagicMock()
         link.rest.agent_api_participants = MagicMock()
@@ -106,7 +106,7 @@ class TestGetHistoryForLLMHydrationEnabled:
 
     @pytest.fixture
     def mock_link(self):
-        """Create a mock ThenvoiLink with context data."""
+        """Create a mock BandLink with context data."""
         link = MagicMock()
         link.rest = MagicMock()
         link.rest.agent_api_participants = MagicMock()
@@ -183,7 +183,7 @@ class TestProcessEventHydration:
 
     @pytest.fixture
     def mock_link(self):
-        """Create a mock ThenvoiLink."""
+        """Create a mock BandLink."""
         link = MagicMock()
         link.rest = MagicMock()
         link.rest.agent_api_participants = MagicMock()

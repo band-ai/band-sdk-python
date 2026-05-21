@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[claude_sdk]", "pyyaml"]
+# dependencies = ["band-sdk[claude_sdk]", "pyyaml"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-YAML-based agent runner for Thenvoi Claude SDK.
+YAML-based agent runner for Band Claude SDK.
 
 Reads agent configuration from a YAML file and runs the agent.
 Designed for Docker deployment without writing Python code.
@@ -28,8 +28,8 @@ from typing import Any
 
 import yaml
 
-from thenvoi.config.loader import load_agent_config
-from thenvoi.core.types import AdapterFeatures, Emit
+from band.config.loader import load_agent_config
+from band.core.types import AdapterFeatures, Emit
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -168,11 +168,11 @@ async def main() -> None:
     if not config_path:
         raise ValueError("AGENT_CONFIG environment variable not set")
 
-    # Validate Thenvoi platform URLs
+    # Validate Band platform URLs
     ws_url = os.environ.get(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
+        "THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"
     )
-    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.thenvoi.com")
+    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.band.ai")
     if not ws_url:
         raise ValueError("THENVOI_WS_URL environment variable is empty")
     if not rest_url:
@@ -185,8 +185,8 @@ async def main() -> None:
     config = load_config(config_path)
 
     # Import here to allow early config validation
-    from thenvoi import Agent
-    from thenvoi.adapters import ClaudeSDKAdapter
+    from band import Agent
+    from band.adapters import ClaudeSDKAdapter
 
     # Extract config values
     agent_id = config["agent_id"]

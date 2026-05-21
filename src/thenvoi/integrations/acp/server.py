@@ -1,4 +1,4 @@
-"""ACP protocol handler for Thenvoi platform."""
+"""ACP protocol handler for Band platform."""
 
 from __future__ import annotations
 
@@ -41,28 +41,28 @@ from thenvoi import __version__
 if TYPE_CHECKING:
     from acp.interfaces import Client
 
-    from thenvoi.integrations.acp.server_adapter import ThenvoiACPServerAdapter
+    from thenvoi.integrations.acp.server_adapter import BandACPServerAdapter
 
 logger = logging.getLogger(__name__)
 
 
 class ACPServer(Agent):
-    """ACP protocol handler that delegates to ThenvoiACPServerAdapter.
+    """ACP protocol handler that delegates to BandACPServerAdapter.
 
     Subclasses the ACP SDK's Agent class to handle ACP JSON-RPC protocol
     methods (initialize, new_session, prompt, cancel) and delegates the
-    actual Thenvoi platform interaction to the adapter.
+    actual Band platform interaction to the adapter.
 
     This follows the same two-layer pattern as the A2A Gateway:
     - ACPServer: Protocol handler (like GatewayServer)
-    - ThenvoiACPServerAdapter: Platform bridge (like A2AGatewayAdapter)
+    - BandACPServerAdapter: Platform bridge (like A2AGatewayAdapter)
     """
 
-    def __init__(self, adapter: ThenvoiACPServerAdapter) -> None:
+    def __init__(self, adapter: BandACPServerAdapter) -> None:
         """Initialize ACP server.
 
         Args:
-            adapter: The Thenvoi ACP server adapter for platform interaction.
+            adapter: The Band ACP server adapter for platform interaction.
         """
         self._adapter = adapter
         self._conn: Client | None = None
@@ -93,7 +93,7 @@ class ACPServer(Agent):
     ) -> InitializeResponse:
         """Handle ACP initialize request.
 
-        Returns Thenvoi agent capabilities and info.
+        Returns Band agent capabilities and info.
 
         Args:
             protocol_version: ACP protocol version from client.
@@ -114,7 +114,7 @@ class ACPServer(Agent):
             agent_capabilities=AgentCapabilities(
                 load_session=True,
                 prompt_capabilities=PromptCapabilities(
-                    # Thenvoi supports rich text and tool/thought updates.
+                    # Band supports rich text and tool/thought updates.
                     # It does not currently consume image/audio prompt blocks.
                     image=False,
                     audio=False,
@@ -133,7 +133,7 @@ class ACPServer(Agent):
             ),
             agent_info=Implementation(
                 name="thenvoi-agent",
-                title=self._adapter.agent_name or "Thenvoi Agent",
+                title=self._adapter.agent_name or "Band Agent",
                 version=__version__,
             ),
             auth_methods=[
@@ -153,7 +153,7 @@ class ACPServer(Agent):
     ) -> NewSessionResponse:
         """Handle ACP new_session request.
 
-        Creates a Thenvoi room and maps it to the ACP session. The
+        Creates a Band room and maps it to the ACP session. The
         ``cwd`` and ``mcp_servers`` are stored per-session in the adapter
         so they can be returned in ``list_sessions`` and used for
         workspace context.
@@ -284,7 +284,7 @@ class ACPServer(Agent):
     ) -> SetSessionConfigOptionResponse | None:
         """Handle ACP set_config_option request.
 
-        Thenvoi ACP adapter does not currently expose configurable ACP
+        Band ACP adapter does not currently expose configurable ACP
         session options, so we acknowledge the request with ``None``.
         """
         logger.info(
@@ -302,7 +302,7 @@ class ACPServer(Agent):
     ) -> AuthenticateResponse | None:
         """Handle ACP authenticate request.
 
-        Validates API key by calling the Thenvoi identity endpoint.
+        Validates API key by calling the Band identity endpoint.
 
         Args:
             method_id: The authentication method. Supports "api_key" and the
@@ -330,7 +330,7 @@ class ACPServer(Agent):
     ) -> ForkSessionResponse:
         """Handle ACP fork_session request.
 
-        Creates a new Thenvoi-backed ACP session as a fork target.
+        Creates a new Band-backed ACP session as a fork target.
         """
         if not self._adapter.has_session(session_id):
             raise KeyError(f"Cannot fork unknown ACP session: {session_id}")
@@ -373,7 +373,7 @@ class ACPServer(Agent):
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Handle ACP extension method.
 
-        Handles Cursor-specific extension methods and Thenvoi extensions.
+        Handles Cursor-specific extension methods and Band extensions.
 
         Cursor extensions:
         - cursor/ask_question: Present options to user (auto-selects first)
@@ -389,7 +389,7 @@ class ACPServer(Agent):
         logger.debug("Extension method: %s, params=%s", method, params)
 
         # Cursor: ask_question — present multiple-choice options
-        # Auto-select first option since Thenvoi platform doesn't have
+        # Auto-select first option since Band platform doesn't have
         # interactive UI prompts (the agent should just proceed).
         if method == "cursor/ask_question":
             options = params.get("options", [])
@@ -404,7 +404,7 @@ class ACPServer(Agent):
             return {"outcome": {"type": "cancelled"}}
 
         # Cursor: create_plan — request plan approval
-        # Auto-approve since the Thenvoi platform agent should proceed.
+        # Auto-approve since the Band platform agent should proceed.
         if method == "cursor/create_plan":
             logger.info("cursor/create_plan: auto-approved")
             return {"outcome": {"type": "approved"}}
@@ -415,7 +415,7 @@ class ACPServer(Agent):
         """Handle ACP extension notification (fire-and-forget).
 
         Handles Cursor-specific notifications by forwarding relevant
-        information to the Thenvoi platform as events.
+        information to the Band platform as events.
 
         Cursor notifications:
         - cursor/update_todos: Todo list state changes
@@ -475,7 +475,7 @@ class ACPServer(Agent):
     ) -> PromptResponse:
         """Handle ACP prompt request.
 
-        Extracts text from content blocks, forwards to Thenvoi platform,
+        Extracts text from content blocks, forwards to Band platform,
         and waits for the response to be streamed back via session_update.
 
         Args:

@@ -41,8 +41,8 @@ class TestParseArgs:
             ]
         )
 
-        assert args.rest_url == "https://app.thenvoi.com"
-        assert args.ws_url == "wss://app.thenvoi.com/api/v1/socket/websocket"
+        assert args.rest_url == "https://app.band.ai"
+        assert args.ws_url == "wss://app.band.ai/api/v1/socket/websocket"
         assert args.log_level == "INFO"
 
     def test_parse_args_custom_urls(self) -> None:
@@ -138,7 +138,7 @@ class TestMain:
 
         with patch("thenvoi.Agent.create", return_value=mock_agent):
             with patch(
-                "thenvoi.integrations.acp.server_adapter.ThenvoiACPServerAdapter",
+                "thenvoi.integrations.acp.server_adapter.BandACPServerAdapter",
                 return_value=mock_adapter,
             ):
                 with patch("thenvoi.integrations.acp.push_handler.ACPPushHandler"):

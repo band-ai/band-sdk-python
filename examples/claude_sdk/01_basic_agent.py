@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[claude_sdk]"]
+# dependencies = ["band-sdk[claude_sdk]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Claude SDK Agent Example.
 
 This example shows how to create a simple agent using the Claude Agent SDK
-connected to the Thenvoi platform.
+connected to the Band platform.
 
 Prerequisites:
     1. Node.js 20+ installed
@@ -38,10 +38,10 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ClaudeSDKAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.core.types import AdapterFeatures, Emit
+from band import Agent
+from band.adapters import ClaudeSDKAdapter
+from band.config import load_agent_config
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)

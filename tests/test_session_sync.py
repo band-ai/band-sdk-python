@@ -38,7 +38,7 @@ def make_message(msg_id: str, room_id: str = "room-123") -> PlatformMessage:
 
 @pytest.fixture
 def mock_link():
-    """Create mock ThenvoiLink with all required async endpoints."""
+    """Create mock BandLink with all required async endpoints."""
     link = MagicMock()
     link.rest = MagicMock()
     link.rest.agent_api_participants = MagicMock()

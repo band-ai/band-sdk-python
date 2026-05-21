@@ -9,7 +9,7 @@ from typing import ClassVar, TYPE_CHECKING, Any, Callable, List
 
 from langgraph.pregel import Pregel
 
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -81,7 +81,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
     ):
         # --- Deprecation shim: boolean → features migration ---
         if enable_memory_tools and features is not None:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "Cannot pass both 'enable_memory_tools' and 'features'. "
                 "Use features=AdapterFeatures(capabilities={Capability.MEMORY}) instead."
             )

@@ -132,7 +132,7 @@ class TestCapabilityGatingEndToEnd:
 
     @pytest.mark.skipif(
         not _HAS_CLAUDE_SDK,
-        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+        reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
     )
     async def test_claude_sdk_adapter_renders_memory_section_when_enabled(
         self,
@@ -152,7 +152,7 @@ class TestCapabilityGatingEndToEnd:
 
     @pytest.mark.skipif(
         not _HAS_CLAUDE_SDK,
-        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+        reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
     )
     async def test_claude_sdk_adapter_omits_memory_section_when_disabled(
         self,
@@ -169,7 +169,7 @@ class TestCapabilityGatingEndToEnd:
 
     @pytest.mark.skipif(
         not _HAS_CLAUDE_SDK,
-        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+        reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
     )
     async def test_claude_sdk_adapter_renders_contacts_section_when_enabled(
         self,

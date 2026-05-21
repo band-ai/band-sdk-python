@@ -23,7 +23,7 @@ from thenvoi.platform.event import (
     RoomRemovedEvent,
 )
 
-from bridge_core.bridge import BridgeConfig, ReconnectConfig, ThenvoiBridge
+from bridge_core.bridge import BridgeConfig, ReconnectConfig, BandBridge
 
 
 class TestBridgeConfig:
@@ -148,8 +148,8 @@ class TestBridgeConfig:
             monkeypatch.delenv(var, raising=False)
 
         config = BridgeConfig.from_env()
-        assert config.ws_url == "wss://app.thenvoi.com/api/v1/socket/websocket"
-        assert config.rest_url == "https://app.thenvoi.com"
+        assert config.ws_url == "wss://app.band.ai/api/v1/socket/websocket"
+        assert config.rest_url == "https://app.band.ai"
         assert config.health_port == 8080
         assert config.health_host == "0.0.0.0"
         assert config.session_ttl == 86400.0
@@ -299,7 +299,7 @@ class TestReconnectConfig:
         assert config.multiplier == 1.0
 
 
-class TestThenvoiBridgeInit:
+class TestBandBridgeInit:
     def _make_config(self, mapping: str = "alice:handler_a") -> BridgeConfig:
         return BridgeConfig(
             agent_id="agent-1",
@@ -309,7 +309,7 @@ class TestThenvoiBridgeInit:
 
     def test_init_valid(self) -> None:
         handler = AsyncMock()
-        bridge = ThenvoiBridge(
+        bridge = BandBridge(
             config=self._make_config(),
             handlers={"handler_a": handler},
         )
@@ -317,31 +317,31 @@ class TestThenvoiBridgeInit:
 
     def test_init_missing_handler_raises(self) -> None:
         with pytest.raises(ValueError, match="no handler with that name"):
-            ThenvoiBridge(
+            BandBridge(
                 config=self._make_config("alice:missing_handler"),
                 handlers={"handler_a": AsyncMock()},
             )
 
     def test_init_invalid_mapping_raises(self) -> None:
         with pytest.raises(ValueError):
-            ThenvoiBridge(
+            BandBridge(
                 config=self._make_config("invalid_no_colon"),
                 handlers={},
             )
 
     def test_init_multiple_handlers(self) -> None:
-        bridge = ThenvoiBridge(
+        bridge = BandBridge(
             config=self._make_config("alice:handler_a,bob:handler_b"),
             handlers={"handler_a": AsyncMock(), "handler_b": AsyncMock()},
         )
         assert bridge._agent_mapping == {"alice": "handler_a", "bob": "handler_b"}
 
 
-class TestThenvoiBridgeHandleEvent:
+class TestBandBridgeHandleEvent:
     """Tests for _handle_event dispatch."""
 
     async def test_room_added_subscribes(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         event = RoomAddedEvent(
@@ -359,7 +359,7 @@ class TestThenvoiBridgeHandleEvent:
         bridge._link.subscribe_room.assert_called_once_with("room-new")
 
     async def test_room_removed_unsubscribes_and_cleans_session(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         # Pre-populate a session
@@ -383,7 +383,7 @@ class TestThenvoiBridgeHandleEvent:
         assert session is None
 
     async def test_room_added_subscribe_failure_does_not_propagate(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         bridge._link.subscribe_room = AsyncMock(
@@ -406,7 +406,7 @@ class TestThenvoiBridgeHandleEvent:
         assert "room-new" not in bridge._participant_cache
 
     async def test_room_removed_unsubscribe_failure_still_cleans_session(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         bridge._link.unsubscribe_room = AsyncMock(
@@ -432,7 +432,7 @@ class TestThenvoiBridgeHandleEvent:
         assert session is None
 
     async def test_unhandled_event_does_not_raise(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         from thenvoi.client.streaming import ParticipantAddedPayload
 
@@ -445,7 +445,7 @@ class TestThenvoiBridgeHandleEvent:
         await bridge._handle_event(event)
 
     async def test_message_event_routes_to_handler(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         payload = MessageCreatedPayload(
@@ -481,7 +481,7 @@ class TestThenvoiBridgeHandleEvent:
         bridge._link.mark_processed.assert_called_once_with("room-1", "msg-1")
 
     async def test_message_event_with_none_payload_ignored(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         event = MessageEvent(room_id="room-1", payload=None)
@@ -490,7 +490,7 @@ class TestThenvoiBridgeHandleEvent:
         await bridge._handle_event(event)
 
     async def test_participant_added_updates_cache(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         # Pre-populate cache
@@ -508,7 +508,7 @@ class TestThenvoiBridgeHandleEvent:
         assert any(p["id"] == "user-2" for p in bridge._participant_cache["room-1"])
 
     async def test_participant_added_deduplicates(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         bridge._participant_cache["room-1"] = [
@@ -524,7 +524,7 @@ class TestThenvoiBridgeHandleEvent:
         assert len(bridge._participant_cache["room-1"]) == 1
 
     async def test_participant_added_ignored_without_cache(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         event = ParticipantAddedEvent(
@@ -537,7 +537,7 @@ class TestThenvoiBridgeHandleEvent:
         assert "room-1" not in bridge._participant_cache
 
     async def test_participant_removed_updates_cache(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         bridge._participant_cache["room-1"] = [
@@ -555,7 +555,7 @@ class TestThenvoiBridgeHandleEvent:
         assert bridge._participant_cache["room-1"][0]["id"] == "user-2"
 
     async def test_room_added_caches_participants(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         mock_participant = MagicMock()
@@ -585,7 +585,7 @@ class TestThenvoiBridgeHandleEvent:
         assert bridge._participant_cache["room-new"][0]["name"] == "Alice"
 
     async def test_room_removed_clears_participant_cache(
-        self, bridge_with_mock_link: ThenvoiBridge
+        self, bridge_with_mock_link: BandBridge
     ) -> None:
         bridge = bridge_with_mock_link
         bridge._participant_cache["room-old"] = [
@@ -609,11 +609,11 @@ class TestThenvoiBridgeHandleEvent:
         assert "room-old" not in bridge._participant_cache
 
 
-class TestThenvoiBridgeMessageDedup:
+class TestBandBridgeMessageDedup:
     """Tests for message deduplication on reconnect."""
 
     async def test_duplicate_message_skipped(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
         payload = MessageCreatedPayload(
@@ -639,33 +639,31 @@ class TestThenvoiBridgeMessageDedup:
         assert bridge._handlers["handler_a"].handle.call_count == 1
 
     def test_is_duplicate_returns_false_for_new(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
         assert bridge._is_duplicate("msg-1") is False
 
     def test_is_duplicate_returns_true_for_seen(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
         bridge._is_duplicate("msg-1")
         assert bridge._is_duplicate("msg-1") is True
 
-    def test_dedup_bounded_at_max_size(
-        self, bridge_with_full_mock: ThenvoiBridge
-    ) -> None:
+    def test_dedup_bounded_at_max_size(self, bridge_with_full_mock: BandBridge) -> None:
         bridge = bridge_with_full_mock
         # Fill beyond max size
-        for i in range(ThenvoiBridge._DEDUP_MAX_SIZE + 100):
+        for i in range(BandBridge._DEDUP_MAX_SIZE + 100):
             bridge._is_duplicate(f"msg-{i}")
-        assert len(bridge._processed_message_ids) <= ThenvoiBridge._DEDUP_MAX_SIZE
+        assert len(bridge._processed_message_ids) <= BandBridge._DEDUP_MAX_SIZE
 
 
-class TestThenvoiBridgeParticipantCache:
+class TestBandBridgeParticipantCache:
     """Tests for participant cache usage in _on_message."""
 
     async def test_cached_participants_used(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
         bridge._participant_cache["room-1"] = [
@@ -696,7 +694,7 @@ class TestThenvoiBridgeParticipantCache:
         assert call_kwargs["sender_handle"] == "jane"
 
     async def test_cache_miss_falls_back_to_rest(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
         mock_participant = MagicMock()
@@ -736,7 +734,7 @@ class TestThenvoiBridgeParticipantCache:
         assert call_kwargs["sender_handle"] == "jane"
 
     async def test_sender_name_none_when_not_found(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
         bridge._participant_cache["room-1"] = [
@@ -764,11 +762,9 @@ class TestThenvoiBridgeParticipantCache:
         assert call_kwargs["sender_handle"] is None
 
 
-class TestThenvoiBridgeFetchExistingRooms:
+class TestBandBridgeFetchExistingRooms:
     async def test_returns_room_ids(self, bridge_config: BridgeConfig) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
 
         mock_room_1 = MagicMock()
         mock_room_1.id = "room-1"
@@ -785,9 +781,7 @@ class TestThenvoiBridgeFetchExistingRooms:
         assert rooms == ["room-1", "room-2"]
 
     async def test_returns_empty_on_error(self, bridge_config: BridgeConfig) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
 
         bridge._link.rest.agent_api_chats.list_agent_chats = AsyncMock(
             side_effect=RuntimeError("connection failed")
@@ -797,9 +791,7 @@ class TestThenvoiBridgeFetchExistingRooms:
         assert rooms == []
 
     async def test_returns_empty_on_no_data(self, bridge_config: BridgeConfig) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
 
         mock_response = MagicMock()
         mock_response.data = None
@@ -811,13 +803,11 @@ class TestThenvoiBridgeFetchExistingRooms:
         assert rooms == []
 
 
-class TestThenvoiBridgeReconnect:
+class TestBandBridgeReconnect:
     async def test_reconnect_exits_cleanly_on_success(
         self, bridge_config: BridgeConfig
     ) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
 
         # Make _connect_and_consume succeed immediately (simulating clean exit)
         bridge._connect_and_consume = AsyncMock()
@@ -829,9 +819,7 @@ class TestThenvoiBridgeReconnect:
     async def test_reconnect_stops_on_shutdown(
         self, bridge_config: BridgeConfig
     ) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
         bridge._request_shutdown()
 
         bridge._connect_and_consume = AsyncMock()
@@ -843,9 +831,7 @@ class TestThenvoiBridgeReconnect:
     async def test_reconnect_retries_on_error(
         self, bridge_config: BridgeConfig
     ) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
         bridge._link = MagicMock()
         bridge._link.disconnect = AsyncMock()
 
@@ -872,7 +858,7 @@ class TestThenvoiBridgeReconnect:
         self, bridge_config: BridgeConfig
     ) -> None:
         reconnect = ReconnectConfig(max_retries=3)
-        bridge = ThenvoiBridge(
+        bridge = BandBridge(
             config=bridge_config,
             handlers={"handler_a": AsyncMock()},
             reconnect_config=reconnect,
@@ -894,7 +880,7 @@ class TestThenvoiBridgeReconnect:
     ) -> None:
         """After a successful connection that later drops, backoff should reset."""
         reconnect = ReconnectConfig(initial_delay=1.0, multiplier=2.0, jitter=0)
-        bridge = ThenvoiBridge(
+        bridge = BandBridge(
             config=bridge_config,
             handlers={"handler_a": AsyncMock()},
             reconnect_config=reconnect,
@@ -945,7 +931,7 @@ class TestReconnectBackoffCalculation:
         reconnect = ReconnectConfig(
             initial_delay=1.0, multiplier=2.0, max_delay=10.0, jitter=0, max_retries=5
         )
-        bridge = ThenvoiBridge(
+        bridge = BandBridge(
             config=bridge_config,
             handlers={"handler_a": AsyncMock()},
             reconnect_config=reconnect,
@@ -980,7 +966,7 @@ class TestReconnectBackoffCalculation:
         reconnect = ReconnectConfig(
             initial_delay=5.0, multiplier=3.0, max_delay=10.0, jitter=0, max_retries=4
         )
-        bridge = ThenvoiBridge(
+        bridge = BandBridge(
             config=bridge_config,
             handlers={"handler_a": AsyncMock()},
             reconnect_config=reconnect,
@@ -1007,20 +993,16 @@ class TestReconnectBackoffCalculation:
         assert sleep_delays[2] == 10.0
 
 
-class TestThenvoiBridgeShutdown:
+class TestBandBridgeShutdown:
     def test_request_shutdown_sets_flag(self, bridge_config: BridgeConfig) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
 
         assert bridge._shutting_down is False
         bridge._request_shutdown()
         assert bridge._shutting_down is True
 
     def test_request_shutdown_idempotent(self, bridge_config: BridgeConfig) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
 
         bridge._request_shutdown()
         bridge._request_shutdown()
@@ -1029,9 +1011,7 @@ class TestThenvoiBridgeShutdown:
     async def test_shutdown_disconnects_and_stops_health(
         self, bridge_config: BridgeConfig
     ) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
         bridge._link = MagicMock()
         bridge._link.disconnect = AsyncMock()
         bridge._health = MagicMock()
@@ -1045,9 +1025,7 @@ class TestThenvoiBridgeShutdown:
     async def test_shutdown_stops_health_even_if_disconnect_raises(
         self, bridge_config: BridgeConfig
     ) -> None:
-        bridge = ThenvoiBridge(
-            config=bridge_config, handlers={"handler_a": AsyncMock()}
-        )
+        bridge = BandBridge(config=bridge_config, handlers={"handler_a": AsyncMock()})
         bridge._link = MagicMock()
         bridge._link.disconnect = AsyncMock(side_effect=RuntimeError("disconnect boom"))
         bridge._health = MagicMock()
@@ -1063,7 +1041,7 @@ class TestConnectAndConsume:
     """Tests for _connect_and_consume event loop logic."""
 
     async def test_consumes_events_until_shutdown(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
         events_delivered: list[object] = []
@@ -1118,7 +1096,7 @@ class TestConnectAndConsume:
         bridge._link.subscribe_agent_rooms.assert_called_once()
 
     async def test_shutdown_cancels_pending_next_fut(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
 
@@ -1138,7 +1116,7 @@ class TestConnectAndConsume:
         bridge._link.connect.assert_called_once()
 
     async def test_stop_async_iteration_exits_cleanly(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
 
@@ -1151,7 +1129,7 @@ class TestConnectAndConsume:
         bridge._link.connect.assert_called_once()
 
     async def test_runtime_error_wrapping_stop_async_iteration_via_context(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         """CPython wraps StopAsyncIteration in RuntimeError via __context__."""
         bridge = bridge_with_full_mock
@@ -1167,7 +1145,7 @@ class TestConnectAndConsume:
         bridge._link.connect.assert_called_once()
 
     async def test_runtime_error_wrapping_stop_async_iteration_via_cause(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         """Explicit chaining: raise RuntimeError from StopAsyncIteration."""
         bridge = bridge_with_full_mock
@@ -1183,7 +1161,7 @@ class TestConnectAndConsume:
         bridge._link.connect.assert_called_once()
 
     async def test_unrelated_runtime_error_propagates(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         bridge = bridge_with_full_mock
 
@@ -1195,7 +1173,7 @@ class TestConnectAndConsume:
                 await bridge._connect_and_consume()
 
     async def test_handle_event_exception_does_not_break_loop(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         """An exception in _handle_event should be logged, not trigger reconnect."""
         bridge = bridge_with_full_mock
@@ -1256,7 +1234,7 @@ class TestConnectAndConsumeShutdownCancelsHandler:
     """Tests that in-flight handlers are cancelled on shutdown."""
 
     async def test_shutdown_cancels_in_flight_handler(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         """When shutdown fires during handler execution, the handler is cancelled."""
         import asyncio
@@ -1309,7 +1287,7 @@ class TestConnectAndConsumeShutdownCancelsHandler:
         assert handler_cancelled, "Handler should have been cancelled on shutdown"
 
     async def test_shutdown_during_handler_exits_loop(
-        self, bridge_with_full_mock: ThenvoiBridge
+        self, bridge_with_full_mock: BandBridge
     ) -> None:
         """The consume loop exits after cancelling an in-flight handler."""
         import asyncio
@@ -1359,7 +1337,7 @@ class TestConnectAndConsumeShutdownCancelsHandler:
         assert len(events_handled) == 1
 
 
-class TestThenvoiBridgeMain:
+class TestBandBridgeMain:
     """Tests for the main() entry point."""
 
     async def test_main_loads_env_and_runs_bridge(
@@ -1372,7 +1350,7 @@ class TestThenvoiBridgeMain:
         mock_run = AsyncMock()
 
         with (
-            patch("bridge_core.bridge.ThenvoiBridge.run", mock_run),
+            patch("bridge_core.bridge.BandBridge.run", mock_run),
             patch("dotenv.load_dotenv") as mock_dotenv,
         ):
             from bridge_core.bridge import main

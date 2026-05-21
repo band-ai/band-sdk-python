@@ -1,5 +1,5 @@
 """
-Framework integrations for Thenvoi SDK.
+Framework integrations for Band SDK.
 
 This module contains utilities for integrating with various AI frameworks:
 - base: Common helpers for all frameworks

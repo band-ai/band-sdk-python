@@ -1,5 +1,5 @@
 """
-Example tools for the Thenvoi Claude SDK agent runner.
+Example tools for the Band Claude SDK agent runner.
 
 Tool Response Format:
     Tools must return a dict with:

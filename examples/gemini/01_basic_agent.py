@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[gemini]"]
+# dependencies = ["band-sdk[gemini]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Gemini agent example.
 
-This is the simplest way to create a Thenvoi agent with the Gemini SDK.
+This is the simplest way to create a Band agent with the Gemini SDK.
 The adapter handles tool registration and function-calling loops automatically.
 
 Requires:
@@ -32,9 +32,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from setup_logging import setup_logging
 
-from thenvoi import Agent
-from thenvoi.adapters import GeminiAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import GeminiAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)

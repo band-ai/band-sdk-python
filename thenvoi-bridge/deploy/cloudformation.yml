@@ -133,7 +133,7 @@ Resources:
           FromPort: 443
           ToPort: 443
           CidrIp: 0.0.0.0/0
-          Description: HTTPS to Thenvoi platform, Bedrock AgentCore, and CloudWatch
+          Description: HTTPS to Band platform, Bedrock AgentCore, and CloudWatch
 
   # ---------- ECS ----------
   Cluster:
@@ -181,9 +181,9 @@ Resources:
               ValueFrom: !Ref RuntimeArnSecretArn
           Environment:
             - Name: THENVOI_WS_URL
-              Value: wss://app.thenvoi.com/api/v1/socket/websocket
+              Value: wss://app.band.ai/api/v1/socket/websocket
             - Name: THENVOI_REST_URL
-              Value: https://app.thenvoi.com
+              Value: https://app.band.ai
             - Name: AWS_DEFAULT_REGION
               Value: !Ref AwsRegion
             - Name: HEALTH_HOST

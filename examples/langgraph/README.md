@@ -1,6 +1,6 @@
 # LangGraph Examples for Thenvoi
 
-This guide explains how to integrate LangGraph agents with the Thenvoi platform using the composition-based SDK.
+This guide explains how to integrate LangGraph agents with the Band platform using the composition-based SDK.
 
 ## Prerequisites
 
@@ -40,8 +40,8 @@ agent = Agent.create(
     adapter=adapter,
     agent_id="your-agent-id",
     api_key="your-api-key",
-    ws_url="wss://app.thenvoi.com/api/v1/socket/websocket",
-    rest_url="https://app.thenvoi.com",
+    ws_url="wss://app.band.ai/api/v1/socket/websocket",
+    rest_url="https://app.band.ai",
 )
 await agent.run()
 ```

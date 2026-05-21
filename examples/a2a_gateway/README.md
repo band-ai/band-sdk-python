@@ -1,15 +1,15 @@
 # A2A Gateway Examples
 
-Examples showing how to expose Thenvoi peers as inbound A2A endpoints.
+Examples showing how to expose Band peers as inbound A2A endpoints.
 
 ## Why the gateway exists
 
 The gateway is the inbound side of the Thenvoi A2A story.
 
 - the **bridge** connects a remote A2A agent into Thenvoi
-- the **gateway** exposes Thenvoi peers out to remote A2A clients
+- the **gateway** exposes Band peers out to remote A2A clients
 
-A remote A2A client can call the gateway, discover Thenvoi peers through AgentCard routes, and send requests that the gateway turns into Thenvoi room activity.
+A remote A2A client can call the gateway, discover Band peers through AgentCard routes, and send requests that the gateway turns into Thenvoi room activity.
 
 ## Architecture
 
@@ -20,7 +20,7 @@ Remote A2A Client
    A2A Gateway
         |
         v
- Thenvoi Platform
+ Band Platform
         |
         v
    Thenvoi Peer
@@ -32,7 +32,7 @@ Context is preserved by mapping the incoming A2A `contextId` to a Thenvoi room.
 
 | File | Description |
 |------|-------------|
-| `01_basic_gateway.py` | **Basic gateway** - Start the gateway and expose Thenvoi peers as A2A endpoints. |
+| `01_basic_gateway.py` | **Basic gateway** - Start the gateway and expose Band peers as A2A endpoints. |
 | `02_with_demo_agent.py` | **Gateway plus orchestrator** - Run the gateway and a local demo A2A agent that calls gateway peers. |
 | `demo_orchestrator/` | Implementation details for the local demo orchestrator agent. |
 
@@ -200,7 +200,7 @@ The orchestrator's job is to accept an incoming A2A request and route it to one 
 
 ### Basic gateway
 
-- `/peers` returns real Thenvoi peers
+- `/peers` returns real Band peers
 - `/.well-known/agent.json` returns a valid card for a peer
 - a message call returns a peer response
 - the same `contextId` reuses the same room
@@ -234,8 +234,8 @@ Use `gateway_agent` from `agent_config.yaml`, which is the safest path for onboa
 
 Use:
 
-- the **bridge** when you want a remote A2A agent to join Thenvoi rooms
-- the **gateway** when you want a remote A2A client to talk to Thenvoi peers
+- the **bridge** when you want a remote A2A agent to join Band rooms
+- the **gateway** when you want a remote A2A client to talk to Band peers
 
 ### Requests work but context does not persist
 

@@ -1,7 +1,7 @@
 """
-Thenvoi trigger — create a chatroom and send a message to a target agent.
+Band trigger — create a chatroom and send a message to a target agent.
 
-Use this to trigger a Thenvoi process from cron jobs, CI/CD pipelines, GitHub Actions,
+Use this to trigger a Band process from cron jobs, CI/CD pipelines, GitHub Actions,
 or any external automation.
 
 Configuration is accepted via CLI arguments and environment variables (CLI takes precedence).
@@ -12,21 +12,21 @@ Exit codes:
 
 Examples:
     # Agent authentication
-    thenvoi-trigger \\
-        --api-key "$THENVOI_API_KEY" \\
+    band-trigger \\
+        --api-key "$BAND_API_KEY" \\
         --target-handle "@owner/my-agent" \\
         --message "Run the daily report"
 
     # User authentication
-    thenvoi-trigger \\
-        --api-key "$THENVOI_USER_API_KEY" \\
+    band-trigger \\
+        --api-key "$BAND_USER_API_KEY" \\
         --auth-mode user \\
         --target-handle "@owner/my-agent" \\
         --message "Please review the latest PR"
 
     # Using environment variables
-    THENVOI_API_KEY=key THENVOI_TARGET_HANDLE=@owner/agent \\
-        thenvoi-trigger --message "Hello"
+    BAND_API_KEY=key BAND_TARGET_HANDLE=@owner/agent \\
+        band-trigger --message "Hello"
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ from thenvoi_rest.human_api_chats.types.create_my_chat_room_request_chat import 
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REST_URL = "https://app.thenvoi.com/"
+DEFAULT_REST_URL = "https://app.band.ai/"
 DEFAULT_REQUEST_OPTIONS: Final[RequestOptions] = {"max_retries": 3}
 DEFAULT_TIMEOUT: Final[int] = 120
 
@@ -62,50 +62,56 @@ DEFAULT_TIMEOUT: Final[int] = 120
 def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser."""
     parser = argparse.ArgumentParser(
-        prog="thenvoi-trigger",
-        description="Create a Thenvoi chatroom and send a message to a target agent.",
+        prog="band-trigger",
+        description="Create a Band chatroom and send a message to a target agent.",
     )
     parser.add_argument(
         "--api-key",
-        default=os.environ.get("THENVOI_API_KEY"),
-        help="API key for authentication (env: THENVOI_API_KEY). Prefer env var over CLI to avoid exposing the key in process listings.",
+        default=os.environ.get("BAND_API_KEY") or os.environ.get("THENVOI_API_KEY"),
+        help="API key for authentication (env: BAND_API_KEY, legacy: THENVOI_API_KEY). Prefer env var over CLI to avoid exposing the key in process listings.",
     )
     parser.add_argument(
         "--rest-url",
-        default=os.environ.get("THENVOI_REST_URL", DEFAULT_REST_URL),
+        default=os.environ.get("BAND_REST_URL")
+        or os.environ.get("THENVOI_REST_URL", DEFAULT_REST_URL),
         help=(
-            f"Thenvoi REST API URL (env: THENVOI_REST_URL, default: {DEFAULT_REST_URL})"
+            f"Band REST API URL (env: BAND_REST_URL, legacy: THENVOI_REST_URL, default: {DEFAULT_REST_URL})"
         ),
     )
     parser.add_argument(
         "--auth-mode",
         choices=["agent", "user"],
-        default=os.environ.get("THENVOI_AUTH_MODE", "agent"),
+        default=os.environ.get("BAND_AUTH_MODE")
+        or os.environ.get("THENVOI_AUTH_MODE", "agent"),
         help=(
             "Authentication mode: 'agent' or 'user' "
-            "(env: THENVOI_AUTH_MODE, default: agent)"
+            "(env: BAND_AUTH_MODE, legacy: THENVOI_AUTH_MODE, default: agent)"
         ),
     )
     parser.add_argument(
         "--target-handle",
-        default=os.environ.get("THENVOI_TARGET_HANDLE"),
+        default=os.environ.get("BAND_TARGET_HANDLE")
+        or os.environ.get("THENVOI_TARGET_HANDLE"),
         help=(
             "Handle of the target agent, e.g. @owner/agent-name "
-            "(env: THENVOI_TARGET_HANDLE)"
+            "(env: BAND_TARGET_HANDLE, legacy: THENVOI_TARGET_HANDLE)"
         ),
     )
     parser.add_argument(
         "--message",
-        default=os.environ.get("THENVOI_MESSAGE"),
-        help="Message to send to the target agent (env: THENVOI_MESSAGE)",
+        default=os.environ.get("BAND_MESSAGE") or os.environ.get("THENVOI_MESSAGE"),
+        help="Message to send to the target agent (env: BAND_MESSAGE, legacy: THENVOI_MESSAGE)",
     )
     parser.add_argument(
         "--timeout",
         type=int,
-        default=int(os.environ.get("THENVOI_TRIGGER_TIMEOUT", str(DEFAULT_TIMEOUT))),
+        default=int(
+            os.environ.get("BAND_TRIGGER_TIMEOUT")
+            or os.environ.get("THENVOI_TRIGGER_TIMEOUT", str(DEFAULT_TIMEOUT))
+        ),
         help=(
             "Timeout in seconds for the entire operation "
-            f"(env: THENVOI_TRIGGER_TIMEOUT, default: {DEFAULT_TIMEOUT})"
+            f"(env: BAND_TRIGGER_TIMEOUT, legacy: THENVOI_TRIGGER_TIMEOUT, default: {DEFAULT_TIMEOUT})"
         ),
     )
     parser.add_argument(

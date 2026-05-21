@@ -50,11 +50,11 @@
       "environment": [
         {
           "name": "THENVOI_WS_URL",
-          "value": "wss://app.thenvoi.com/api/v1/socket/websocket"
+          "value": "wss://app.band.ai/api/v1/socket/websocket"
         },
         {
           "name": "THENVOI_REST_URL",
-          "value": "https://app.thenvoi.com"
+          "value": "https://app.band.ai"
         },
         {
           "name": "AWS_DEFAULT_REGION",

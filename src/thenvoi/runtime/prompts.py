@@ -1,5 +1,5 @@
 """
-System prompt rendering for Thenvoi agents.
+System prompt rendering for Band agents.
 
 Combines agent identity + custom instructions + base environment instructions.
 Capability-gated: memory/contact tool instruction sections are only included

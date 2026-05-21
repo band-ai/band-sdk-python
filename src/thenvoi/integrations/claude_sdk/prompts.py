@@ -1,7 +1,7 @@
 """
-System prompts for Claude Agent SDK agents on Thenvoi platform.
+System prompts for Claude Agent SDK agents on Band platform.
 
-Generates system prompts using Claude Code's preset with Thenvoi-specific
+Generates system prompts using Claude Code's preset with Band-specific
 instructions appended for multi-participant chat room behavior.
 """
 
@@ -22,7 +22,7 @@ def generate_claude_sdk_agent_prompt(
     features: AdapterFeatures | None = None,
 ) -> SystemPromptPreset:
     """
-    Generate system prompt for Claude SDK agent on Thenvoi platform.
+    Generate system prompt for Claude SDK agent on Band platform.
 
     Args:
         agent_name: Name of the agent
@@ -70,9 +70,9 @@ You have access to contact management tools via MCP:
 
     thenvoi_instructions = f"""
 
-## Thenvoi Platform Integration
+## Band Platform Integration
 
-You are **{agent_name}**, {agent_description}, operating in a Thenvoi chat room.
+You are **{agent_name}**, {agent_description}, operating in a Band chat room.
 
 ### Message Format
 

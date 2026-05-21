@@ -7,7 +7,7 @@ import logging
 from typing import Awaitable, Callable
 
 from thenvoi.client.rest import DEFAULT_REQUEST_OPTIONS
-from thenvoi.platform.link import ThenvoiLink
+from thenvoi.platform.link import BandLink
 from thenvoi.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from thenvoi.runtime.contact_handler import ContactEventHandler
 from thenvoi.runtime.runtime import AgentRuntime
@@ -30,7 +30,7 @@ class PlatformRuntime:
     Manages platform connectivity.
 
     Handles:
-    - ThenvoiLink (WebSocket + REST)
+    - BandLink (WebSocket + REST)
     - AgentRuntime (room presence, execution)
     - Agent metadata fetching
 
@@ -46,8 +46,8 @@ class PlatformRuntime:
         self,
         agent_id: str,
         api_key: str,
-        ws_url: str = "wss://app.thenvoi.com/api/v1/socket/websocket",
-        rest_url: str = "https://app.thenvoi.com",
+        ws_url: str = "wss://app.band.ai/api/v1/socket/websocket",
+        rest_url: str = "https://app.band.ai",
         config: AgentConfig | None = None,
         session_config: SessionConfig | None = None,
         contact_config: ContactEventConfig | None = None,
@@ -64,7 +64,7 @@ class PlatformRuntime:
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
 
-        self._link: ThenvoiLink | None = None
+        self._link: BandLink | None = None
         self._runtime: AgentRuntime | None = None
         self._agent_name: str = ""
         self._agent_description: str = ""
@@ -88,7 +88,7 @@ class PlatformRuntime:
         return self._agent_description
 
     @property
-    def link(self) -> ThenvoiLink:
+    def link(self) -> BandLink:
         if not self._link:
             raise RuntimeError("Runtime not started")
         return self._link
@@ -125,7 +125,7 @@ class PlatformRuntime:
         if self._link:
             return  # Already initialized
 
-        self._link = ThenvoiLink(
+        self._link = BandLink(
             agent_id=self._agent_id,
             api_key=self._api_key,
             ws_url=self._ws_url,

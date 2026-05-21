@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """Start a 20 Questions Arena game as a user by creating a room, adding all agents, and sending a message.
 
@@ -19,14 +19,14 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from thenvoi_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
-from thenvoi_rest.human_api_chats.types.create_my_chat_room_request_chat import (
+from band_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
+from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
-from thenvoi_rest.types import ChatMessageRequestMentionsItem as Mention
+from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from setup_logging import setup_logging
-from thenvoi.config import load_agent_config
+from band.config import load_agent_config
 
 logger = logging.getLogger(__name__)
 

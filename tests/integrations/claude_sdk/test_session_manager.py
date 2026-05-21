@@ -13,7 +13,7 @@ if _HAS_CLAUDE_SDK:
 
 pytestmark = pytest.mark.skipif(
     not _HAS_CLAUDE_SDK,
-    reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+    reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
 )
 
 

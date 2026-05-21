@@ -16,7 +16,7 @@ try:
 except ImportError as e:
     raise ImportError(
         "Pydantic AI dependencies not installed. "
-        "Install with: uv add thenvoi-sdk[pydantic_ai]"
+        "Install with: uv add band-sdk[pydantic_ai]"
     ) from e
 
 from thenvoi.core.protocols import HistoryConverter

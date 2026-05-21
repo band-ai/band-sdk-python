@@ -2,7 +2,7 @@
 Google ADK adapter using SimpleAdapter pattern.
 
 Integrates with the Google Agent Development Kit (ADK) to run Gemini-powered
-agents on the Thenvoi platform. Uses ADK's built-in Runner for tool loop
+agents on the Band platform. Uses ADK's built-in Runner for tool loop
 management and session handling.
 """
 
@@ -17,7 +17,7 @@ from typing import ClassVar, TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -72,7 +72,7 @@ def _require_adk() -> tuple[type, type, type, Any]:
     except ImportError as exc:
         raise ImportError(
             "google-adk is required for GoogleADKAdapter. "
-            "Install with: uv add thenvoi-sdk[google_adk]"
+            "Install with: uv add band-sdk[google_adk]"
         ) from exc
     return ADKAgent, InMemoryRunner, BaseTool, types
 
@@ -110,7 +110,7 @@ def _strip_additional_properties(
 
 @functools.lru_cache(maxsize=1)
 def _get_tool_bridge_class() -> type:
-    """Build the ``_ThenvoiToolBridge`` class lazily.
+    """Build the ``_BandToolBridge`` class lazily.
 
     Defined inside a factory because it needs ``BaseTool`` as its base
     class, which requires ``google-adk`` to be installed.  Cached so the
@@ -148,8 +148,8 @@ def _get_tool_bridge_class() -> type:
         ", ".join(active_methods),
     )
 
-    class _ThenvoiToolBridge(BaseTool):
-        """Bridges a Thenvoi platform tool to Google ADK.
+    class _BandToolBridge(BaseTool):
+        """Bridges a Band platform tool to Google ADK.
 
         Wraps a tool schema from AgentToolsProtocol into a BaseTool that ADK
         can register with its agent. Execution delegates to the platform's
@@ -203,7 +203,7 @@ def _get_tool_bridge_class() -> type:
             args: dict[str, Any],
             tool_context: ToolContext,
         ) -> Any:
-            """Execute the tool via Thenvoi's AgentToolsProtocol."""
+            """Execute the tool via Band's AgentToolsProtocol."""
             try:
                 custom_tool = find_custom_tool(self._custom_tools, self.name)
                 if custom_tool:
@@ -233,15 +233,15 @@ def _get_tool_bridge_class() -> type:
     # even if ADK renames the internal API in a future minor release.
     for method_name in active_methods:
         setattr(
-            _ThenvoiToolBridge,
+            _BandToolBridge,
             method_name,
-            _ThenvoiToolBridge._build_declaration,
+            _BandToolBridge._build_declaration,
         )
 
     # Smoke-test: verify the declaration mechanism works end-to-end.
     # Catches signature changes that hasattr alone would miss.
     try:
-        _probe = _ThenvoiToolBridge(
+        _probe = _BandToolBridge(
             tool_name="_probe",
             tool_description="probe",
             parameters_schema={},
@@ -261,7 +261,7 @@ def _get_tool_bridge_class() -> type:
             ">=1.0,<2 — your installed version may be incompatible."
         ) from exc
 
-    return _ThenvoiToolBridge
+    return _BandToolBridge
 
 
 class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
@@ -308,7 +308,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         # --- Deprecation shim: boolean → features migration ---
         _has_legacy_booleans = enable_execution_reporting or enable_memory_tools
         if _has_legacy_booleans and features is not None:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "Cannot pass both legacy boolean flags "
                 "(enable_execution_reporting / enable_memory_tools) and 'features'. "
                 "Use features=AdapterFeatures(...) instead."
@@ -381,7 +381,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         logger.info("Google ADK adapter started for agent: %s", agent_name)
 
     def _build_adk_tools(self, tools: AgentToolsProtocol) -> list[Any]:
-        """Build ADK tool bridges from Thenvoi tool schemas."""
+        """Build ADK tool bridges from Band tool schemas."""
         ToolBridge = _get_tool_bridge_class()
         openai_schemas = tools.get_openai_tool_schemas(
             include_memory=Capability.MEMORY in self.features.capabilities,

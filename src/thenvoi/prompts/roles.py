@@ -1,5 +1,5 @@
 """
-Role-based prompt profiles for Thenvoi agents.
+Role-based prompt profiles for Band agents.
 
 Provides pre-defined role templates that can be used as custom_section
 in adapters. Roles define agent behavior, collaboration patterns, and

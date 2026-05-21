@@ -21,11 +21,11 @@ class ACPServerHistoryConverter(HistoryConverter["ACPSessionState"]):
     Unlike LLM converters that transform message content for model consumption,
     this converter extracts metadata for session state restoration. It scans
     platform history for ACP-specific metadata to rebuild the mapping
-    between ACP session_ids and Thenvoi room_ids.
+    between ACP session_ids and Band room_ids.
 
     The converter looks for messages with metadata containing:
     - acp_session_id: The ACP session identifier
-    - acp_room_id: The corresponding Thenvoi room identifier
+    - acp_room_id: The corresponding Band room identifier
     """
 
     def convert(self, raw: list[dict[str, Any]]) -> ACPSessionState:

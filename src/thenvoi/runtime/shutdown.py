@@ -1,5 +1,5 @@
 """
-Graceful shutdown utilities for Thenvoi agents.
+Graceful shutdown utilities for Band agents.
 
 Provides signal handling and shutdown coordination for clean termination.
 """
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class GracefulShutdown:
     """
-    Manages graceful shutdown of a Thenvoi agent via signal handling.
+    Manages graceful shutdown of a Band agent via signal handling.
 
     Catches SIGINT (Ctrl+C), SIGTERM, and SIGHUP signals and triggers a graceful
     shutdown of the agent, allowing current message processing to complete

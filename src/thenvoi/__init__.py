@@ -1,8 +1,8 @@
 """
-Thenvoi SDK - Connect AI agents to the Thenvoi platform.
+Band SDK - Connect AI agents to the Band platform.
 
 Platform Layer:
-    ThenvoiLink: WebSocket + REST transport
+    BandLink: WebSocket + REST transport
     PlatformEvent: Typed events from the platform
 
 Runtime Layer:
@@ -17,7 +17,7 @@ Configuration:
     SessionConfig: Per-session configuration
 
 Example (SDK-heavy pattern):
-    from thenvoi import ThenvoiLink, AgentRuntime, ExecutionContext, AgentTools
+    from thenvoi import BandLink, AgentRuntime, ExecutionContext, AgentTools
     from thenvoi.platform import PlatformEvent
 
     async def handle_event(ctx: ExecutionContext, event: PlatformEvent):
@@ -25,14 +25,14 @@ Example (SDK-heavy pattern):
         # Your LLM logic here
         await tools.send_message("Hello!", mentions=["@john"])
 
-    link = ThenvoiLink(agent_id="...", api_key="...", ws_url="...", rest_url="...")
+    link = BandLink(agent_id="...", api_key="...", ws_url="...", rest_url="...")
     runtime = AgentRuntime(link, agent_id="...", on_execute=handle_event)
     await runtime.run()
 
 Example (Framework-light pattern):
-    from thenvoi import ThenvoiLink, RoomPresence
+    from thenvoi import BandLink, RoomPresence
 
-    link = ThenvoiLink(agent_id="...", api_key="...", ws_url="...", rest_url="...")
+    link = BandLink(agent_id="...", api_key="...", ws_url="...", rest_url="...")
     presence = RoomPresence(link)
     presence.on_room_joined = my_join_handler
     presence.on_room_event = my_event_handler
@@ -48,6 +48,10 @@ from .agent import Agent
 # Core types (v0.3.0)
 from .core.types import AdapterFeatures, Capability, Emit
 from .core.exceptions import (
+    BandError,
+    BandConfigError,
+    BandConnectionError,
+    BandToolError,
     ThenvoiError,
     ThenvoiConfigError,
     ThenvoiConnectionError,
@@ -55,7 +59,7 @@ from .core.exceptions import (
 )
 
 # Platform layer
-from .platform import ThenvoiLink, PlatformEvent
+from .platform import BandLink, ThenvoiLink, PlatformEvent
 
 # Runtime layer
 from .runtime import (
@@ -97,11 +101,16 @@ __all__ = [
     "AdapterFeatures",
     "Capability",
     "Emit",
+    "BandError",
+    "BandConfigError",
+    "BandConnectionError",
+    "BandToolError",
     "ThenvoiError",
     "ThenvoiConfigError",
     "ThenvoiConnectionError",
     "ThenvoiToolError",
     # Platform
+    "BandLink",
     "ThenvoiLink",
     "PlatformEvent",
     # Runtime - Core
@@ -140,6 +149,6 @@ __all__ = [
 ]
 
 try:
-    __version__ = _get_version("thenvoi-sdk")
+    __version__ = _get_version("band-sdk")
 except PackageNotFoundError:
     __version__ = "0.1.0"  # Fallback for editable installs

@@ -11,18 +11,18 @@ services:
       # Configure Letta's LLM provider.
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
 
-  # thenvoi-mcp server — provides Thenvoi platform tools to Letta via MCP.
+  # thenvoi-mcp server — provides Band platform tools to Letta via MCP.
   thenvoi-mcp:
     image: ghcr.io/thenvoi/thenvoi-mcp:latest
     restart: unless-stopped
     ports:
       - "8002:8002"
     environment:
-      THENVOI_REST_URL: ${THENVOI_REST_URL:-https://app.thenvoi.com}
+      THENVOI_REST_URL: ${THENVOI_REST_URL:-https://app.band.ai}
       THENVOI_API_KEY: ${THENVOI_API_KEY:-}
       MCP_PORT: "8002"
 
-  # Letta adapter — connects Thenvoi platform to Letta agent.
+  # Letta adapter — connects Band platform to Letta agent.
   agent:
     restart: unless-stopped
     build:

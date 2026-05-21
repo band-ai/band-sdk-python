@@ -22,11 +22,11 @@ class GatewayHistoryConverter(HistoryConverter["GatewaySessionState"]):
     Unlike LLM converters that transform message content for model consumption,
     this converter extracts metadata for session state restoration. It scans
     platform history for gateway-specific metadata to rebuild the mapping
-    between A2A context_ids and Thenvoi room_ids.
+    between A2A context_ids and Band room_ids.
 
     The converter looks for messages with metadata containing:
     - gateway_context_id: The A2A context identifier
-    - gateway_room_id: The corresponding Thenvoi room identifier
+    - gateway_room_id: The corresponding Band room identifier
 
     It also tracks which peers have participated in each room by examining
     message sender information.

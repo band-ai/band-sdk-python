@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.types import AdapterFeatures, Capability, Emit
 
 
@@ -34,7 +34,7 @@ class TestUniversalBooleanShims:
     def test_anthropic_both_booleans_and_features_raises(self) -> None:
         from thenvoi.adapters.anthropic import AnthropicAdapter
 
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             AnthropicAdapter(
                 enable_memory_tools=True,
                 features=AdapterFeatures(capabilities={Capability.MEMORY}),
@@ -59,7 +59,7 @@ class TestUniversalBooleanShims:
     def test_gemini_both_booleans_and_features_raises(self) -> None:
         from thenvoi.adapters.gemini import GeminiAdapter
 
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             GeminiAdapter(
                 enable_memory_tools=True,
                 features=AdapterFeatures(capabilities={Capability.MEMORY}),
@@ -87,7 +87,7 @@ class TestUniversalBooleanShims:
 
     @pytest.mark.skipif(
         not _HAS_CLAUDE_SDK,
-        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+        reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
     )
     def test_claude_sdk_enable_execution_reporting_maps_to_execution_and_thoughts(
         self,
@@ -121,7 +121,7 @@ class TestUniversalBooleanShims:
     def test_crewai_both_booleans_and_features_raises(self) -> None:
         from thenvoi.adapters.crewai import CrewAIAdapter
 
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             CrewAIAdapter(
                 enable_memory_tools=True,
                 features=AdapterFeatures(capabilities={Capability.MEMORY}),
@@ -154,7 +154,7 @@ class TestUniversalBooleanShims:
     def test_google_adk_both_booleans_and_features_raises(self) -> None:
         from thenvoi.adapters.google_adk import GoogleADKAdapter
 
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             GoogleADKAdapter(
                 enable_execution_reporting=True,
                 features=AdapterFeatures(emit={Emit.EXECUTION}),
@@ -180,7 +180,7 @@ class TestUniversalBooleanShims:
         from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
 
         config = CodexAdapterConfig(enable_execution_reporting=True)
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             CodexAdapter(
                 config=config,
                 features=AdapterFeatures(emit={Emit.EXECUTION}),
@@ -238,13 +238,13 @@ class TestSelectiveRenameShims:
     def test_anthropic_api_key_and_anthropic_api_key_conflict(self) -> None:
         from thenvoi.adapters.anthropic import AnthropicAdapter
 
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             AnthropicAdapter(api_key="sk-new", anthropic_api_key="sk-old")
 
     def test_anthropic_prompt_and_custom_section_conflict(self) -> None:
         from thenvoi.adapters.anthropic import AnthropicAdapter
 
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             AnthropicAdapter(prompt="new", custom_section="old")
 
     def test_gemini_gemini_api_key_warns(self) -> None:
@@ -262,13 +262,13 @@ class TestSelectiveRenameShims:
     def test_gemini_api_key_and_gemini_api_key_conflict(self) -> None:
         from thenvoi.adapters.gemini import GeminiAdapter
 
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             GeminiAdapter(api_key="AIza-new", gemini_api_key="AIza-old")
 
     def test_gemini_prompt_and_custom_section_conflict(self) -> None:
         from thenvoi.adapters.gemini import GeminiAdapter
 
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             GeminiAdapter(prompt="new", custom_section="old")
 
 
@@ -299,7 +299,7 @@ class TestOpencodeDeprecationShims:
         from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 
         config = OpencodeAdapterConfig(enable_execution_reporting=True)
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             OpencodeAdapter(config=config, features=AdapterFeatures())
 
 
@@ -330,5 +330,5 @@ class TestLettaDeprecationShims:
         from thenvoi.adapters.letta import LettaAdapter, LettaAdapterConfig
 
         config = LettaAdapterConfig(enable_memory_tools=True)
-        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+        with pytest.raises(BandConfigError, match="Cannot pass both"):
             LettaAdapter(config=config, features=AdapterFeatures())

@@ -3,7 +3,7 @@
 # Build:   docker build -t thenvoi-claude-sdk .
 # Run:     docker compose up
 #
-# This image provides a YAML-configured agent runner for the Thenvoi platform.
+# This image provides a YAML-configured agent runner for the Band platform.
 
 FROM python:3.12-slim
 

@@ -3,7 +3,7 @@
   "release-type": "python",
   "packages": {
     ".": {
-      "package-name": "thenvoi-sdk-python",
+      "package-name": "band-sdk",
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,

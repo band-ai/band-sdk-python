@@ -21,7 +21,7 @@ from tests.conftest import (
 
 @pytest.fixture
 def mock_link():
-    """Mock ThenvoiLink for testing ExecutionContext."""
+    """Mock BandLink for testing ExecutionContext."""
     link = MagicMock()
     link.agent_id = "agent-123"
 
@@ -52,7 +52,7 @@ def mock_link():
         return_value=MagicMock(data=[msg1])
     )
 
-    # Mock message lifecycle methods (new in ThenvoiLink)
+    # Mock message lifecycle methods (new in BandLink)
     link.mark_processing = AsyncMock()
     link.mark_processed = AsyncMock()
     link.mark_failed = AsyncMock()
@@ -399,7 +399,7 @@ class TestCrashRecoverySync:
 
     @pytest.fixture
     def mock_link_with_next(self):
-        """Mock ThenvoiLink with message lifecycle methods."""
+        """Mock BandLink with message lifecycle methods."""
         link = MagicMock()
         link.agent_id = "agent-123"
         link.rest = MagicMock()
@@ -414,7 +414,7 @@ class TestCrashRecoverySync:
             return_value=MagicMock(data=[])
         )
 
-        # Message lifecycle methods (new in ThenvoiLink)
+        # Message lifecycle methods (new in BandLink)
         link.mark_processing = AsyncMock()
         link.mark_processed = AsyncMock()
         link.mark_failed = AsyncMock()

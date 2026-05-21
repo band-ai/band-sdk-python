@@ -9,8 +9,7 @@ try:
     from google.genai import types  # type: ignore[missing-import]
 except ImportError as e:
     raise ImportError(
-        "Google GenAI dependencies not installed. "
-        "Install with: uv add thenvoi-sdk[gemini]"
+        "Google GenAI dependencies not installed. Install with: uv add band-sdk[gemini]"
     ) from e
 
 from thenvoi.core.protocols import HistoryConverter

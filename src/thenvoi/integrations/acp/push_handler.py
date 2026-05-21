@@ -9,7 +9,7 @@ from thenvoi.core.types import PlatformMessage
 from thenvoi.integrations.acp.event_converter import EventConverter
 
 if TYPE_CHECKING:
-    from thenvoi.integrations.acp.server_adapter import ThenvoiACPServerAdapter
+    from thenvoi.integrations.acp.server_adapter import BandACPServerAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class ACPPushHandler:
     working in the same room).
     """
 
-    def __init__(self, adapter: ThenvoiACPServerAdapter) -> None:
+    def __init__(self, adapter: BandACPServerAdapter) -> None:
         """Initialize push handler.
 
         Args:

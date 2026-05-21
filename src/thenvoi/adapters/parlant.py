@@ -2,7 +2,7 @@
 Parlant adapter using the official Parlant SDK directly.
 
 This adapter integrates the Parlant framework (https://github.com/emcie-co/parlant)
-with the Thenvoi platform.
+with the Band platform.
 """
 
 from __future__ import annotations
@@ -259,7 +259,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         session = await app.sessions.create(
             customer_id=customer_id,
             agent_id=self._parlant_agent.id,
-            title=f"Thenvoi Room {room_id[:8]}",
+            title=f"Band Room {room_id[:8]}",
         )
 
         self._room_sessions[room_id] = session.id

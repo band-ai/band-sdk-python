@@ -1,17 +1,17 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-Example: Using the standalone Agentic RAG graph with Thenvoi platform.
+Example: Using the standalone Agentic RAG graph with Band platform.
 
 This example demonstrates:
 1. Importing a standalone Agentic RAG graph (following LangGraph tutorial pattern)
 2. Wrapping it as a tool using graph_as_tool
-3. Adding it to a Thenvoi agent alongside platform tools
+3. Adding it to a Band agent alongside platform tools
 4. The agent can delegate research questions to the RAG system
 
 The RAG graph:
@@ -44,10 +44,10 @@ from langgraph.checkpoint.memory import InMemorySaver
 from standalone_rag import create_rag_graph
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.integrations.langgraph import graph_as_tool
+from band import Agent
+from band.adapters import LangGraphAdapter
+from band.config import load_agent_config
+from band.integrations.langgraph import graph_as_tool
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -97,7 +97,7 @@ async def main() -> None:
     )
     logger.info("RAG graph wrapped as a tool with memory enabled")
 
-    logger.info("\nStep 3: Creating main Thenvoi agent with RAG tool...")
+    logger.info("\nStep 3: Creating main Band agent with RAG tool...")
 
     # Custom instructions for using the RAG tool
     rag_instructions = """

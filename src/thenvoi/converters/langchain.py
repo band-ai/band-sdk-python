@@ -11,8 +11,7 @@ try:
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 except ImportError as e:
     raise ImportError(
-        "LangChain dependencies not installed. "
-        "Install with: uv add thenvoi-sdk[langgraph]"
+        "LangChain dependencies not installed. Install with: uv add band-sdk[langgraph]"
     ) from e
 
 from thenvoi.core.protocols import HistoryConverter

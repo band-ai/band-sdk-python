@@ -8,7 +8,7 @@ Use it when the agent is acting as a coordinator, not as a normal chat participa
 
 Use `CrewAIFlowAdapter` if your router needs one of these behaviors:
 
-- delegate one request to multiple Thenvoi peers
+- delegate one request to multiple Band peers
 - wait until all delegated peers reply before synthesizing
 - accept the first peer reply and finalize early
 - require that explicitly tagged peers receive a delegation before finalization

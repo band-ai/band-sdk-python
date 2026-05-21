@@ -11,7 +11,7 @@ CrewAI is a good fit when you want:
 - richer prompt shaping than a single flat system prompt
 - crew-style room workflows inside Thenvoi
 
-In this repo, the CrewAI adapter lets those agents use Thenvoi rooms and Thenvoi tools.
+In this repo, the CrewAI adapter lets those agents use Band rooms and Thenvoi tools.
 
 ## What these examples cover
 

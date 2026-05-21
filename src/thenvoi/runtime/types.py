@@ -1,5 +1,5 @@
 """
-Runtime types for Thenvoi agent SDK.
+Runtime types for Band agent SDK.
 
 Extracted from core/types.py - data structures used across the runtime layer.
 """
@@ -141,7 +141,7 @@ class ConversationContext:
     hydrated_at: datetime
 
 
-# Callback type - receives AgentTools, NOT ThenvoiAgent
+# Callback type - receives AgentTools, NOT BandAgent
 MessageHandler = Callable[["PlatformMessage", "AgentTools"], Awaitable[None]]
 
 

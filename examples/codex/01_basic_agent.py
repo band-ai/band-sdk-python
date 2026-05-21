@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[codex]"]
+# dependencies = ["band-sdk[codex]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Codex adapter agent example.
 
-Runs a Thenvoi agent backed by Codex app-server.
+Runs a Band agent backed by Codex app-server.
 
 Prerequisites:
 1. OAuth login:
@@ -43,9 +43,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)

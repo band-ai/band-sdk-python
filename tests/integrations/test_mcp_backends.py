@@ -10,11 +10,11 @@ from thenvoi.runtime.tools import iter_tool_definitions
 from thenvoi.testing import FakeAgentTools
 
 
-class TestThenvoiMcpBackends:
+class TestBandMcpBackends:
     @pytest.mark.asyncio
     @pytest.mark.skipif(
         not _HAS_CLAUDE_SDK,
-        reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+        reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
     )
     async def test_create_sdk_backend(self) -> None:
         tool_definitions = list(iter_tool_definitions(include_memory=False))[:1]

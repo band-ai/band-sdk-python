@@ -1,7 +1,7 @@
 """
 Claude SDK adapter using SimpleAdapter pattern.
 
-Extracted from thenvoi.integrations.claude_sdk.agent.ThenvoiClaudeSDKAgent.
+Extracted from thenvoi.integrations.claude_sdk.agent.BandClaudeSDKAgent.
 
 Note: This adapter is more complex than Anthropic/PydanticAI because Claude SDK
 uses MCP servers which need access to tools by room_id. We store tools per-room
@@ -47,7 +47,7 @@ try:
 except ImportError:
     _CLAUDE_SDK_AVAILABLE = False
 
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -56,7 +56,7 @@ from thenvoi.converters.claude_sdk import (
     ClaudeSDKSessionState,
 )
 from thenvoi.integrations.mcp.backends import (
-    ThenvoiMCPBackend,
+    BandMCPBackend,
     create_thenvoi_mcp_backend,
 )
 from thenvoi.integrations.claude_sdk.session_manager import ClaudeSessionManager
@@ -239,18 +239,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 and ``/status`` are always available to all participants.
             features: Unified adapter feature settings. When provided alongside
                 deprecated ``enable_execution_reporting`` or ``enable_memory_tools``,
-                raises ``ThenvoiConfigError``.
+                raises ``BandConfigError``.
         """
         if not _CLAUDE_SDK_AVAILABLE:
             raise ImportError(
                 "claude-agent-sdk is required for ClaudeSDKAdapter.\n"
-                "Install with: pip install thenvoi-sdk[claude_sdk]\n"
-                "Or: uv add thenvoi-sdk[claude_sdk]"
+                "Install with: pip install band-sdk[claude_sdk]\n"
+                "Or: uv add band-sdk[claude_sdk]"
             )
         # --- Shim deprecated params into features -------------------------
         _has_legacy = enable_execution_reporting or enable_memory_tools
         if _has_legacy and features is not None:
-            raise ThenvoiConfigError(
+            raise BandConfigError(
                 "Cannot combine 'features' with deprecated "
                 "'enable_execution_reporting' / 'enable_memory_tools'. "
                 "Use AdapterFeatures exclusively."
@@ -310,7 +310,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # Session manager and MCP server (created after start)
         self._session_manager: ClaudeSessionManager | None = None
         self._mcp_server = None
-        self._mcp_backend: ThenvoiMCPBackend | None = None
+        self._mcp_backend: BandMCPBackend | None = None
 
         # Per-room tools storage for MCP server access
         self._room_tools: dict[str, AgentToolsProtocol] = {}
@@ -331,7 +331,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # Last message sender per room (used for @mentions in approval notifications)
         self._room_last_sender: dict[str, dict[str, str]] = {}
 
-    # --- Adapted from ThenvoiClaudeSDKAgent._on_started ---
+    # --- Adapted from BandClaudeSDKAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create MCP server and session manager after agent metadata is fetched."""
         await super().on_started(agent_name, agent_description)
@@ -398,7 +398,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             self.approval_mode,
         )
 
-    async def _create_mcp_backend(self) -> ThenvoiMCPBackend:
+    async def _create_mcp_backend(self) -> BandMCPBackend:
         """Create shared MCP backend that uses stored room tools."""
         include_memory = Capability.MEMORY in self.features.capabilities
         include_contacts = Capability.CONTACTS in self.features.capabilities
@@ -416,14 +416,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         )
 
         logger.info(
-            "Thenvoi MCP SDK server created with %s tools (%s custom)",
+            "Band MCP SDK server created with %s tools (%s custom)",
             len(backend.allowed_tools),
             len(self._custom_tools),
         )
 
         return backend
 
-    # --- Adapted from ThenvoiClaudeSDKAgent._handle_message ---
+    # --- Adapted from BandClaudeSDKAgent._handle_message ---
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -585,7 +585,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         logger.debug("Message %s processed successfully", msg.id)
 
-    # --- Copied from ThenvoiClaudeSDKAgent._process_response ---
+    # --- Copied from BandClaudeSDKAgent._process_response ---
     async def _process_response(
         self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
     ) -> None:
@@ -701,7 +701,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                             )
                 break
 
-    # --- Copied from ThenvoiClaudeSDKAgent._cleanup_session ---
+    # --- Copied from BandClaudeSDKAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up Claude SDK session and stored tools when agent leaves a room."""
         self._clear_pending_approvals_for_room(room_id)

@@ -1,7 +1,7 @@
 """
-Anthropic integration for Thenvoi SDK.
+Anthropic integration for Band SDK.
 
-NOTE: The old ThenvoiAnthropicAgent has been removed.
+NOTE: The old BandAnthropicAgent has been removed.
 Use the new composition-based pattern instead:
 
     from thenvoi import Agent

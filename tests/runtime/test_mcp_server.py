@@ -29,7 +29,7 @@ async def echo_tool(input_data: EchoInput) -> dict[str, str]:
     return {"echo": input_data.message}
 
 
-class TestBuildThenvoiMcpToolRegistrations:
+class TestBuildBandMcpToolRegistrations:
     def test_includes_builtin_and_custom_tools(self) -> None:
         agent_tools = AgentTools("room-123", MagicMock(), [])
 

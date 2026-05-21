@@ -1,4 +1,4 @@
-"""Integration test: LangChainHandler with real Thenvoi platform.
+"""Integration test: LangChainHandler with real Band platform.
 
 Tests:
   1. handler.handle() end-to-end (echo server + send_message to platform)
@@ -71,9 +71,9 @@ async def main() -> None:
 
     agent_id = os.environ.get("TEST_AGENT_ID")
     api_key = os.environ.get("THENVOI_API_KEY")
-    rest_url = os.environ.get("THENVOI_BASE_URL", "https://app.thenvoi.com")
+    rest_url = os.environ.get("THENVOI_BASE_URL", "https://app.band.ai")
     ws_url = os.environ.get(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
+        "THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"
     )
 
     if not agent_id or not api_key:

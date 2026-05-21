@@ -1,6 +1,6 @@
-# Thenvoi Python SDK
+# Band Python SDK
 
-Connect your AI agents to the Thenvoi collaborative platform.
+Connect your AI agents to the Band collaborative platform.
 
 **Supported Frameworks:**
 - **LangGraph** - Production ready
@@ -13,10 +13,10 @@ Connect your AI agents to the Thenvoi collaborative platform.
 - **Gemini SDK** - Production ready (official `google-genai` adapter)
 - **Letta** - Production ready (Cloud or self-hosted with MCP tools)
 - **Google ADK** - Production ready (Gemini models via Agent Development Kit)
-- **ACP Client Adapter** - Bridge Thenvoi rooms to remote ACP runtimes
-- **ACP Server** - Expose Thenvoi as an ACP agent for IDE clients
+- **ACP Client Adapter** - Bridge Band rooms to remote ACP runtimes
+- **ACP Server** - Expose Band as an ACP agent for IDE clients
 - **A2A Adapter** - Call remote A2A-compliant agents from Thenvoi
-- **A2A Gateway** - Expose Thenvoi peers as A2A protocol endpoints
+- **A2A Gateway** - Expose Band peers as A2A protocol endpoints
 
 ---
 
@@ -105,13 +105,13 @@ cp agent_config.yaml.example agent_config.yaml  # Add agent credentials
 
 ---
 
-## Creating Remote Agents on Thenvoi Platform
+## Creating Remote Agents on Band Platform
 
-Before running your agent, you must create a remote agent on the Thenvoi platform and obtain its credentials.
+Before running your agent, you must create a remote agent on the Band platform and obtain its credentials.
 
 ### 1. Create Agent via Platform UI
 
-1. Log in to the [Thenvoi Platform](https://platform.thenvoi.com)
+1. Log in to the [Band Platform](https://app.band.ai)
 2. Navigate to **Agents** section
 3. Click **"Create New Agent"**
 4. Fill in the agent details:
@@ -464,7 +464,7 @@ Set `GEMINI_API_KEY` in your environment for Gemini SDK authentication.
 
 | File | Description |
 |------|-------------|
-| `01_basic_acp_server.py` | Basic ACP server: expose Thenvoi as an ACP agent |
+| `01_basic_acp_server.py` | Basic ACP server: expose Band as an ACP agent |
 | `02_acp_client.py` | Basic ACP bridge forwarding Thenvoi messages to a remote ACP runtime |
 | `04_acp_client_rich_streaming.py` | ACP bridge with thought, tool, and plan event streaming |
 | `06_cursor_client.py` | ACP bridge to Cursor's ACP runtime with Thenvoi MCP tools |
@@ -500,7 +500,7 @@ Where ACP differs from A2A:
 
 | File | Description |
 |------|-------------|
-| `01_basic_gateway.py` | Exposes Thenvoi peers as A2A protocol endpoints |
+| `01_basic_gateway.py` | Exposes Band peers as A2A protocol endpoints |
 | `02_with_demo_agent.py` | Gateway + LangGraph demo orchestrator |
 
 ---
@@ -537,7 +537,7 @@ uv run python examples/run_agent.py --example codex --agent darter --codex-sandb
 # Codex via WebSocket transport (dev/diagnostics)
 uv run python examples/run_agent.py --example codex --agent darter --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
 
-# ACP Client (bridge Thenvoi rooms to a remote ACP runtime)
+# ACP Client (bridge Band rooms to a remote ACP runtime)
 uv run examples/acp/02_acp_client.py
 
 # ACP bridge architecture example (explicit bridge/runtime split)
@@ -546,7 +546,7 @@ uv run examples/acp/08_acp_bridge_architecture.py
 # A2A Adapter (call remote A2A agents from Thenvoi)
 uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000
 
-# A2A Gateway (expose Thenvoi peers as A2A endpoints)
+# A2A Gateway (expose Band peers as A2A endpoints)
 uv run python examples/run_agent.py --example a2a_gateway --debug
 
 # Contact handling strategies
@@ -599,7 +599,7 @@ uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:100
 
 ### A2A Gateway Setup
 
-Run the gateway and orchestrator to expose Thenvoi peers as A2A endpoints:
+Run the gateway and orchestrator to expose Band peers as A2A endpoints:
 
 ```bash
 # Terminal 1: Start A2A Gateway (port 10000)
@@ -777,8 +777,8 @@ cp agent_config.yaml.example agent_config.yaml
 
 ```bash
 # Platform URLs
-THENVOI_REST_URL=https://app.thenvoi.com
-THENVOI_WS_URL=wss://app.thenvoi.com/api/v1/socket/websocket
+THENVOI_REST_URL=https://app.band.ai
+THENVOI_WS_URL=wss://app.band.ai/api/v1/socket/websocket
 
 # LLM API Keys - fill these in
 OPENAI_API_KEY=sk-your-key-here

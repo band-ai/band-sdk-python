@@ -1,5 +1,5 @@
 """
-Re-export wrapper for Thenvoi REST API client.
+Re-export wrapper for Band REST API client.
 
 Usage:
     from thenvoi.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS

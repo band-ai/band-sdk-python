@@ -12,7 +12,7 @@ This example demonstrates the refactored outbound ACP architecture where
 Thenvoi bridge concerns are separated from generic ACP runtime plumbing.
 
 Architecture:
-    Thenvoi Platform (message arrives in room)
+    Band Platform (message arrives in room)
       -> ACPClientAdapter (Thenvoi bridge)
          - room/session mapping
          - bootstrap context + event emission
@@ -67,10 +67,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
 
     agent_id, api_key = load_agent_config("acp_client_agent")
 

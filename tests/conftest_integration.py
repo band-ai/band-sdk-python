@@ -33,7 +33,7 @@ from thenvoi_rest import AsyncRestClient, ChatRoomRequest
 from thenvoi_rest.core.api_error import ApiError
 from thenvoi_rest.types import ParticipantRequest
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
-from thenvoi_testing.settings import ThenvoiTestSettings
+from thenvoi_testing.settings import ThenvoiTestSettings as BandTestSettings
 
 if TYPE_CHECKING:
     from _pytest.config.argparsing import Parser
@@ -95,7 +95,7 @@ def is_no_clean_mode(request: pytest.FixtureRequest | None = None) -> bool:
 # =============================================================================
 
 
-class TestSettings(ThenvoiTestSettings):
+class TestSettings(BandTestSettings):
     """Settings for integration tests, loaded from .env.test."""
 
     _env_file_path = Path(__file__).parent.parent / ".env.test"

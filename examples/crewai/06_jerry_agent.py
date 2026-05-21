@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[crewai]"]
+# dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Jerry the mouse agent using CrewAI.
@@ -33,9 +33,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_jerry_prompt
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import CrewAIAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import CrewAIAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--peer-name",
         default="Tom",
-        help="Display name of the Tom agent to look up on Thenvoi",
+        help="Display name of the Tom agent to look up on Band",
     )
     return parser.parse_args()
 

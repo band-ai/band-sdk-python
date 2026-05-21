@@ -53,7 +53,7 @@ Setup:
 
 3. For A2A example, start a remote A2A agent first (e.g., LangGraph currency agent)
 
-4. For A2A Gateway example, the gateway exposes Thenvoi platform peers as A2A endpoints
+4. For A2A Gateway example, the gateway exposes Band platform peers as A2A endpoints
 """
 
 from __future__ import annotations
@@ -183,7 +183,7 @@ _DEFAULT_MODELS: dict[str, str] = {
 CONTACTS_INSTRUCTIONS = """
 ## Contact Management Assistant
 
-You help manage contacts and contact requests on the Thenvoi platform.
+You help manage contacts and contact requests on the Band platform.
 
 ### Available Actions
 
@@ -777,7 +777,7 @@ async def run_a2a_gateway_agent(
 ) -> None:
     """Run the A2A Gateway agent.
 
-    The gateway connects to Thenvoi platform and exposes discovered peers
+    The gateway connects to Band platform and exposes discovered peers
     as A2A endpoints. Remote A2A agents can call these peers via standard
     A2A protocol.
     """

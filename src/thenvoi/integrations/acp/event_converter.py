@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 class EventConverter:
     """Convert PlatformMessage to ACP session_update chunks.
 
-    Stateless converter that maps each Thenvoi message type to the
+    Stateless converter that maps each Band message type to the
     appropriate ACP session_update discriminator for rich streaming.
     """
 

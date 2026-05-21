@@ -18,11 +18,11 @@ try:
 except ImportError as e:
     raise ImportError(
         "google-genai is required for Gemini adapter.\n"
-        "Install with: pip install 'thenvoi-sdk[gemini]'\n"
+        "Install with: pip install 'band-sdk[gemini]'\n"
         "Or: uv add google-genai"
     ) from e
 
-from thenvoi.core.exceptions import ThenvoiConfigError
+from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import (
@@ -97,7 +97,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 stacklevel=2,
             )
             if api_key is not None:
-                raise ThenvoiConfigError("Cannot pass both api_key and gemini_api_key")
+                raise BandConfigError("Cannot pass both api_key and gemini_api_key")
             api_key = gemini_api_key
 
         # --- Selective: prompt rename ---
@@ -108,13 +108,13 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 stacklevel=2,
             )
             if prompt is not None:
-                raise ThenvoiConfigError("Cannot pass both prompt and custom_section")
+                raise BandConfigError("Cannot pass both prompt and custom_section")
             prompt = custom_section
 
         # --- Universal: boolean → AdapterFeatures migration ---
         if enable_memory_tools or enable_execution_reporting:
             if features is not None:
-                raise ThenvoiConfigError(
+                raise BandConfigError(
                     "Cannot pass both features= and legacy boolean params "
                     "(enable_memory_tools, enable_execution_reporting)"
                 )

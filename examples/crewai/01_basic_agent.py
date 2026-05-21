@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[crewai]"]
+# dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic CrewAI agent example.
 
-This is the simplest way to create a Thenvoi agent using the CrewAI framework.
+This is the simplest way to create a Band agent using the CrewAI framework.
 The adapter handles conversation history, tool calling, and platform integration.
 
 CrewAI (https://docs.crewai.com/) provides:
@@ -29,9 +29,9 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import CrewAIAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import CrewAIAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)

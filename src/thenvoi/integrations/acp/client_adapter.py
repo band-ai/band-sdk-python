@@ -1,4 +1,4 @@
-"""ACP adapter that bridges Thenvoi rooms to a remote ACP runtime."""
+"""ACP adapter that bridges Band rooms to a remote ACP runtime."""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._cwd = os.path.abspath(cwd or ".")
         self._mcp_servers = list(mcp_servers or [])
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
-        self._rest_url = rest_url or "https://app.thenvoi.com"
+        self._rest_url = rest_url or "https://app.band.ai"
         self._validate_rest_url(self._rest_url)
         self._inject_thenvoi_tools = inject_thenvoi_tools
         self._auth_method = auth_method

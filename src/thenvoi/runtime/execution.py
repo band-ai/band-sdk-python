@@ -50,7 +50,7 @@ from .retry_tracker import MessageRetryTracker
 from ._context_serialization import context_item_to_dict
 
 if TYPE_CHECKING:
-    from thenvoi.platform.link import ThenvoiLink
+    from thenvoi.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +173,7 @@ class ExecutionContext:
     def __init__(
         self,
         room_id: str,
-        link: "ThenvoiLink",
+        link: "BandLink",
         on_execute: ExecutionHandler,
         config: SessionConfig | None = None,
         agent_id: str | None = None,
@@ -187,7 +187,7 @@ class ExecutionContext:
 
         Args:
             room_id: The room this context manages
-            link: ThenvoiLink for REST API calls
+            link: BandLink for REST API calls
             on_execute: Callback for handling events
             config: Optional session configuration
             agent_id: Agent ID for filtering self-messages
@@ -908,7 +908,7 @@ class ExecutionContext:
         Get next unprocessed message from REST API.
 
         Returns None if no more messages in backlog (204 No Content).
-        Delegates to ThenvoiLink.get_next_message().
+        Delegates to BandLink.get_next_message().
         """
         return await self.link.get_next_message(self.room_id)
 

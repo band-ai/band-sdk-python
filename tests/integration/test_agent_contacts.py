@@ -47,14 +47,14 @@ def agent_id():
 @pytest.fixture
 def ws_url():
     """Get WebSocket URL from environment."""
-    return os.getenv("THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket")
+    return os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
 
 
 @pytest.fixture
 def rest_url():
     """Get REST URL from environment."""
     return os.getenv(
-        "THENVOI_BASE_URL", os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+        "THENVOI_BASE_URL", os.getenv("THENVOI_REST_URL", "https://app.band.ai")
     )
 
 

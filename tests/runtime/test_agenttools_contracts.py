@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.core.exceptions import ThenvoiToolError
+from thenvoi.core.exceptions import BandToolError
 from thenvoi.testing.fake_tools import FakeAgentTools
 
 
@@ -81,12 +81,12 @@ class TestFakeAgentToolsAssertions:
             tools.assert_no_messages_sent()
 
 
-class TestThenvoiToolErrorImport:
-    """Verify ThenvoiToolError is usable for the send_message contract."""
+class TestBandToolErrorImport:
+    """Verify BandToolError is usable for the send_message contract."""
 
     def test_can_raise_and_catch(self) -> None:
-        with pytest.raises(ThenvoiToolError, match="At least one mention"):
-            raise ThenvoiToolError(
+        with pytest.raises(BandToolError, match="At least one mention"):
+            raise BandToolError(
                 "At least one mention is required. "
                 "Available participants: ['@alice']. "
                 "Please retry with mentions specifying who this message is for."

@@ -1,4 +1,4 @@
-# Multi-stage Dockerfile for Thenvoi Python SDK examples
+# Multi-stage Dockerfile for Band Python SDK examples
 # Supports LangGraph adapter examples
 #
 # Usage:

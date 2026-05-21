@@ -1,15 +1,15 @@
-"""Thenvoi SDK exception hierarchy."""
+"""Band SDK exception hierarchy."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 
 
-class ThenvoiError(Exception):
+class BandError(Exception):
     """Base for all SDK exceptions."""
 
 
-class ThenvoiConfigError(ThenvoiError):
+class BandConfigError(BandError):
     """Configuration or setup problems. Actionable by developer.
 
     Use ``with_suggestion`` to attach a "did you mean?" hint when the
@@ -24,7 +24,7 @@ class ThenvoiConfigError(ThenvoiError):
         valid_names: Iterable[str],
         *,
         max_distance: int = 2,
-    ) -> "ThenvoiConfigError":
+    ) -> "BandConfigError":
         """Build an error message with a typo suggestion if one is close enough.
 
         Args:
@@ -40,12 +40,18 @@ class ThenvoiConfigError(ThenvoiError):
         return cls(message)
 
 
-class ThenvoiConnectionError(ThenvoiError):
+class BandConnectionError(BandError):
     """Transport failures (WebSocket, REST). Actionable by ops."""
 
 
-class ThenvoiToolError(ThenvoiError):
+class BandToolError(BandError):
     """Tool execution failures. Actionable by adapter/LLM."""
+
+
+ThenvoiError = BandError
+ThenvoiConfigError = BandConfigError
+ThenvoiConnectionError = BandConnectionError
+ThenvoiToolError = BandToolError
 
 
 def _levenshtein(a: str, b: str) -> int:

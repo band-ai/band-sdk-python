@@ -16,7 +16,7 @@ class GatewaySessionState:
     when the agent rejoins a chat room.
 
     Attributes:
-        context_to_room: Mapping of A2A context_id to Thenvoi room_id.
+        context_to_room: Mapping of A2A context_id to Band room_id.
         room_participants: Mapping of room_id to set of peer_ids in that room.
     """
 
@@ -29,7 +29,7 @@ class PendingA2ATask:
     """Tracks an in-flight A2A request awaiting response.
 
     When the gateway receives an A2A HTTP request, it creates a PendingA2ATask
-    to correlate the eventual response from the Thenvoi platform with the
+    to correlate the eventual response from the Band platform with the
     SSE stream back to the A2A client.
 
     Attributes:

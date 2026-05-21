@@ -22,7 +22,7 @@ from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
 
 @pytest.fixture
 def mock_link():
-    """Mock ThenvoiLink for testing."""
+    """Mock BandLink for testing."""
     link = MagicMock()
     link.rest = MagicMock()
     # Mock for HUB_ROOM tests

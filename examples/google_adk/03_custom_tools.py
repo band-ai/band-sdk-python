@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[google_adk]"]
+# dependencies = ["band-sdk[google_adk]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Google ADK agent with custom tools.
@@ -13,7 +13,7 @@ the ``additional_tools`` parameter. The adapter bridges them into ADK's
 BaseTool system automatically.
 
 Requires GOOGLE_API_KEY (or GOOGLE_GENAI_API_KEY) environment variable for
-Gemini authentication, in addition to the Thenvoi credentials.
+Gemini authentication, in addition to the Band credentials.
 
 Run with:
     uv run examples/google_adk/03_custom_tools.py
@@ -33,10 +33,10 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import GoogleADKAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.core.types import AdapterFeatures, Emit
+from band import Agent
+from band.adapters import GoogleADKAdapter
+from band.config import load_agent_config
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)

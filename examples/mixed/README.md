@@ -58,8 +58,8 @@ You need:
 
 The mixed examples default to the hosted Thenvoi URLs:
 
-- `THENVOI_WS_URL=wss://app.thenvoi.com/api/v1/socket/websocket`
-- `THENVOI_REST_URL=https://app.thenvoi.com`
+- `THENVOI_WS_URL=wss://app.band.ai/api/v1/socket/websocket`
+- `THENVOI_REST_URL=https://app.band.ai`
 
 Only set those vars if you want to point the example at another environment.
 

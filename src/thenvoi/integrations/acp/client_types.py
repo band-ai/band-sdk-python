@@ -15,13 +15,16 @@ class ACPClientSessionState:
     room_to_session: dict[str, str] = field(default_factory=dict)
 
 
-class ThenvoiACPClient(ACPCollectingClient):
+class BandACPClient(ACPCollectingClient):
     """Compatibility wrapper around ``ACPCollectingClient``.
 
-    Existing tests and e2e helpers still construct ``ThenvoiACPClient``
+    Existing tests and e2e helpers still construct ``BandACPClient``
     directly. Keep this alias stable while bridge adapters choose the
     runtime-specific profile explicitly.
     """
 
     def __init__(self, profile: ACPClientProfile | None = None) -> None:
         super().__init__(profile=profile)
+
+
+ThenvoiACPClient = BandACPClient

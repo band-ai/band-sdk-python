@@ -3,18 +3,18 @@
 Adapters are lazily imported to avoid requiring all optional dependencies.
 Install the extra you need::
 
-    uv add thenvoi-sdk[langgraph]
-    uv add thenvoi-sdk[anthropic]
-    uv add thenvoi-sdk[pydantic_ai]
-    uv add thenvoi-sdk[claude_sdk]
-    uv add thenvoi-sdk[parlant]
-    uv add thenvoi-sdk[crewai]
-    uv add thenvoi-sdk[gemini]
-    uv add thenvoi-sdk[a2a]
-    uv add thenvoi-sdk[a2a_gateway]
-    uv add thenvoi-sdk[codex]
-    uv add thenvoi-sdk[google_adk]
-    uv add thenvoi-sdk[opencode]
+    uv add band-sdk[langgraph]
+    uv add band-sdk[anthropic]
+    uv add band-sdk[pydantic_ai]
+    uv add band-sdk[claude_sdk]
+    uv add band-sdk[parlant]
+    uv add band-sdk[crewai]
+    uv add band-sdk[gemini]
+    uv add band-sdk[a2a]
+    uv add band-sdk[a2a_gateway]
+    uv add band-sdk[codex]
+    uv add band-sdk[google_adk]
+    uv add band-sdk[opencode]
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from thenvoi.adapters.acp import (
         ACPClientAdapter as ACPClientAdapter,
         ACPServer as ACPServer,
-        ThenvoiACPServerAdapter as ThenvoiACPServerAdapter,
+        BandACPServerAdapter as BandACPServerAdapter,
     )
     from thenvoi.adapters.gemini import GeminiAdapter as GeminiAdapter
     from thenvoi.adapters.google_adk import GoogleADKAdapter as GoogleADKAdapter
@@ -62,7 +62,7 @@ __all__ = [
     "CodexAdapterConfig",
     "ACPClientAdapter",
     "ACPServer",
-    "ThenvoiACPServerAdapter",
+    "BandACPServerAdapter",
     "GeminiAdapter",
     "GoogleADKAdapter",
     "OpencodeAdapter",
@@ -118,18 +118,18 @@ def __getattr__(name: str) -> type:
         from thenvoi.adapters.codex import CodexAdapterConfig
 
         return CodexAdapterConfig
-    elif name in ("ACPClientAdapter", "ACPServer", "ThenvoiACPServerAdapter"):
+    elif name in ("ACPClientAdapter", "ACPServer", "BandACPServerAdapter"):
         from thenvoi.adapters.acp import (
             ACPClientAdapter,
             ACPServer,
-            ThenvoiACPServerAdapter,
+            BandACPServerAdapter,
         )
 
         if name == "ACPClientAdapter":
             return ACPClientAdapter
         elif name == "ACPServer":
             return ACPServer
-        return ThenvoiACPServerAdapter
+        return BandACPServerAdapter
     elif name == "GeminiAdapter":
         from thenvoi.adapters.gemini import GeminiAdapter
 
