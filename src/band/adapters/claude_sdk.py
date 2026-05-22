@@ -502,10 +502,10 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 await existing.update_inner(tools)
                 tools = cast(AgentToolsProtocol, existing)
             else:
-                wrapped: Any = DedupingAgentTools(
+                wrapper = DedupingAgentTools(
                     tools, ttl_seconds=self.send_message_dedup_ttl_seconds
                 )
-                tools = wrapped
+                tools = cast(AgentToolsProtocol, wrapper)
                 self._room_tools[room_id] = tools
         else:
             self._room_tools[room_id] = tools
