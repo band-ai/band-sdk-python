@@ -203,13 +203,22 @@ class TestOnMessage:
                 room_id="room-123",
             )
 
-            assert adapter._room_tools["room-123"] is mock_tools
+            # By default the adapter wraps tools with DedupingAgentTools so
+            # MCP tool calls go through the dedup shim.  The wrapped
+            # instance is what gets stored and forwarded.
+            from band.integrations.claude_sdk.dedup_tools import (
+                DedupingAgentTools,
+            )
+
+            stored_tools = adapter._room_tools["room-123"]
+            assert isinstance(stored_tools, DedupingAgentTools)
+            assert stored_tools._inner is mock_tools
             assert adapter._session_context["room-123"] == ""
             mock_manager.get_or_create_session.assert_awaited_once_with(
                 "room-123", resume_session_id=None
             )
             mock_client.query.assert_awaited_once()
-            mock_process.assert_awaited_once_with(mock_client, "room-123", mock_tools)
+            mock_process.assert_awaited_once_with(mock_client, "room-123", stored_tools)
 
     @pytest.mark.asyncio
     async def test_loads_existing_history_on_bootstrap(
@@ -1906,3 +1915,121 @@ class TestPendingApprovalEviction:
         # Old future should have been evicted and declined
         assert old_future.done()
         assert old_future.result() == "decline"
+
+
+class TestSendMessageDedupWiring:
+    """Tests that on_message wires the dedup shim correctly."""
+
+    @pytest.mark.asyncio
+    async def test_wraps_tools_by_default(self, sample_message, mock_tools):
+        """By default, on_message stores a DedupingAgentTools wrapper."""
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        stored = adapter._room_tools["room-1"]
+        assert isinstance(stored, DedupingAgentTools)
+        assert stored._inner is mock_tools
+
+    @pytest.mark.asyncio
+    async def test_ttl_zero_disables_wrapping(self, sample_message, mock_tools):
+        """ttl=0 keeps the raw tools — no shim — for operators who opt out."""
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter(send_message_dedup_ttl_seconds=0)
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        stored = adapter._room_tools["room-1"]
+        assert stored is mock_tools
+        assert not isinstance(stored, DedupingAgentTools)
+
+    def test_negative_ttl_rejected(self):
+        with pytest.raises(ValueError):
+            ClaudeSDKAdapter(send_message_dedup_ttl_seconds=-1)
+
+    @pytest.mark.asyncio
+    async def test_duplicate_mcp_calls_collapse_via_room_tools(
+        self, sample_message, mock_tools
+    ):
+        """End-to-end: two MCP-style calls through the stored wrapper hit
+        the inner send_message exactly once."""
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        # Simulate the MCP backend resolving room_tools.get("room-1") on
+        # each tool call (exactly what _create_mcp_backend wires up).
+        stored = adapter._room_tools["room-1"]
+        await stored.send_message("hello", ["alice"])
+        await stored.send_message("hello", ["alice"])
+
+        assert mock_tools.send_message.await_count == 1
