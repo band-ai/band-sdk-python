@@ -499,11 +499,19 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if self.send_message_dedup_ttl_seconds > 0:
             existing = self._room_tools.get(room_id)
             if isinstance(existing, DedupingAgentTools):
-                await existing.update_inner(tools)
+                # ``AgentTools.from_context`` returns a fresh instance per
+                # inbound message, so the identity check is normally false
+                # — but skipping a no-op swap avoids briefly contending on
+                # the wrapper lock for the rare case where the runtime
+                # hands us the same instance twice.
+                if existing._inner is not tools:
+                    await existing.update_inner(tools)
                 tools = cast(AgentToolsProtocol, existing)
             else:
                 wrapper = DedupingAgentTools(
-                    tools, ttl_seconds=self.send_message_dedup_ttl_seconds
+                    tools,
+                    ttl_seconds=self.send_message_dedup_ttl_seconds,
+                    label=room_id,
                 )
                 tools = cast(AgentToolsProtocol, wrapper)
                 self._room_tools[room_id] = tools

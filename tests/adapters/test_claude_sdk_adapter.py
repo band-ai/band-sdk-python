@@ -2144,3 +2144,124 @@ class TestSendMessageDedupWiring:
 
             await adapter.on_cleanup("room-1")
             assert "room-1" not in adapter._room_tools
+
+    @pytest.mark.asyncio
+    async def test_distinct_rooms_get_distinct_wrappers(self, sample_message):
+        """Per-room isolation: identical ``(content, mentions)`` in two
+        different rooms must POST twice — once per room — because rooms
+        are independent conversations and the dedup window is a per-room
+        guard, not a global one.
+
+        Pins ``_room_tools`` keying behavior so a future refactor (e.g.
+        a per-session or singleton tools cache) cannot silently turn the
+        dedup wrapper into a tenant-wide message suppressor.
+        """
+        from thenvoi.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        tools_a = MagicMock()
+        tools_a.send_message = AsyncMock(return_value={"id": "a"})
+        tools_b = MagicMock()
+        tools_b.send_message = AsyncMock(return_value={"id": "b"})
+
+        with (
+            patch(
+                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools_a,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-a",
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools_b,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-b",
+            )
+
+        wrapper_a = adapter._room_tools["room-a"]
+        wrapper_b = adapter._room_tools["room-b"]
+        assert isinstance(wrapper_a, DedupingAgentTools)
+        assert isinstance(wrapper_b, DedupingAgentTools)
+        assert wrapper_a is not wrapper_b
+
+        # Identical sends in two distinct rooms must both reach their
+        # respective inner tools — dedup is per-room, not per-tenant.
+        await wrapper_a.send_message("hello", ["alice"])
+        await wrapper_b.send_message("hello", ["alice"])
+        assert tools_a.send_message.await_count == 1
+        assert tools_b.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_update_inner_skipped_when_tools_identity_unchanged(
+        self, sample_message
+    ):
+        """When the runtime hands the adapter the same tools object twice,
+        ``update_inner`` is a no-op and must be skipped — otherwise we'd
+        briefly contend on the wrapper's lock for no reason and could
+        wait behind an in-flight send."""
+        from thenvoi.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        tools = MagicMock()
+        tools.send_message = AsyncMock(return_value={"id": "x"})
+
+        with (
+            patch(
+                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+            wrapper = adapter._room_tools["room-1"]
+            assert isinstance(wrapper, DedupingAgentTools)
+
+            with patch.object(
+                wrapper, "update_inner", new_callable=AsyncMock
+            ) as mock_update:
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=tools,  # SAME instance
+                    history=ClaudeSDKSessionState(text=""),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=False,
+                    room_id="room-1",
+                )
+                mock_update.assert_not_awaited()

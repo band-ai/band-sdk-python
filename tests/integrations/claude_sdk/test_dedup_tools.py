@@ -290,3 +290,113 @@ class TestDedupHitLogging:
         ), (
             f"expected WARNING log on dedup hit, got: {[r.message for r in caplog.records]}"
         )
+
+    @pytest.mark.asyncio
+    async def test_warning_includes_label_when_provided(self, caplog):
+        """The adapter passes ``label=room_id`` so an operator triaging a
+        dedup storm in production can map a warning back to one room.
+        Without it the log is ``suppressing duplicate send`` with no
+        identifier and is useless across a multi-room tenant.
+        """
+        inner = _make_inner()
+        wrapper = DedupingAgentTools(inner, label="room-abc")
+
+        await wrapper.send_message("hello", ["alice"])
+        with caplog.at_level(
+            "WARNING", logger="thenvoi.integrations.claude_sdk.dedup_tools"
+        ):
+            await wrapper.send_message("hello", ["alice"])
+
+        assert any("room-abc" in rec.getMessage() for rec in caplog.records), (
+            f"expected room-abc label in warning, got: "
+            f"{[r.getMessage() for r in caplog.records]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_warning_omits_label_brackets_when_unset(self, caplog):
+        """No label → no empty ``[]`` in the log line."""
+        inner = _make_inner()
+        wrapper = DedupingAgentTools(inner)
+
+        await wrapper.send_message("hello", ["alice"])
+        with caplog.at_level(
+            "WARNING", logger="thenvoi.integrations.claude_sdk.dedup_tools"
+        ):
+            await wrapper.send_message("hello", ["alice"])
+
+        for rec in caplog.records:
+            if "dedup" in rec.getMessage().lower():
+                assert "[]" not in rec.getMessage()
+
+
+class TestInnerSendFailure:
+    """Behavior when the wrapped ``send_message`` raises.
+
+    A failed POST should not poison the cache: the next attempt at the
+    same ``(content, mentions)`` must be allowed to reach the platform,
+    otherwise a transient platform error would silently swallow every
+    subsequent send for the next ``ttl_seconds``.  These tests pin that
+    contract so a future cache refactor cannot regress it without making
+    the change visible.
+    """
+
+    @pytest.mark.asyncio
+    async def test_inner_exception_propagates(self):
+        inner = _make_inner()
+        inner.send_message = AsyncMock(side_effect=RuntimeError("boom"))
+        wrapper = DedupingAgentTools(inner)
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await wrapper.send_message("hi", ["alice"])
+
+    @pytest.mark.asyncio
+    async def test_inner_failure_does_not_poison_cache(self):
+        """A retry after a transient failure must reach the inner tools.
+
+        If the wrapper kept a cache entry for the failed call, a follow-up
+        retry would dedup against nothing useful and return a stale or
+        bogus value.  The current implementation only writes the cache
+        after a successful return, so the retry takes the cache-miss
+        branch and POSTs again — which is correct.
+        """
+        inner = _make_inner()
+        calls: list[int] = [0]
+
+        async def flaky(content, mentions=None):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise RuntimeError("transient")
+            return {"id": "msg-recovered"}
+
+        inner.send_message = AsyncMock(side_effect=flaky)
+        wrapper = DedupingAgentTools(inner)
+
+        with pytest.raises(RuntimeError):
+            await wrapper.send_message("hi", ["alice"])
+
+        result = await wrapper.send_message("hi", ["alice"])
+        assert result == {"id": "msg-recovered"}
+        assert calls[0] == 2
+
+    @pytest.mark.asyncio
+    async def test_recovered_call_then_dedupes_subsequent_duplicate(self):
+        """After the recovery POST succeeds, the wrapper resumes deduping
+        subsequent duplicates against the recovered result."""
+        inner = _make_inner()
+        calls: list[int] = [0]
+
+        async def flaky(content, mentions=None):
+            calls[0] += 1
+            if calls[0] == 1:
+                raise RuntimeError("transient")
+            return {"id": "msg-recovered"}
+
+        inner.send_message = AsyncMock(side_effect=flaky)
+        wrapper = DedupingAgentTools(inner)
+
+        with pytest.raises(RuntimeError):
+            await wrapper.send_message("hi", ["alice"])
+        await wrapper.send_message("hi", ["alice"])  # recovery POST
+        await wrapper.send_message("hi", ["alice"])  # dedup hit
+
+        assert calls[0] == 2

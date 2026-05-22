@@ -96,6 +96,7 @@ class DedupingAgentTools:
         *,
         ttl_seconds: float = DEFAULT_DEDUP_TTL_SECONDS,
         max_entries: int = DEFAULT_DEDUP_MAX_ENTRIES,
+        label: str | None = None,
     ) -> None:
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be positive")
@@ -104,6 +105,11 @@ class DedupingAgentTools:
         self._inner = inner
         self._ttl_seconds = ttl_seconds
         self._max_entries = max_entries
+        # Optional caller-supplied identifier (room id, agent id, etc.) used
+        # only in dedup-hit warning logs.  Without it, the operator sees
+        # ``suppressing duplicate`` lines that cannot be attributed to a
+        # specific room across a multi-room tenant.
+        self._label = label
         # Ordered for LRU eviction; values are (timestamp, cached_result).
         self._recent_sends: OrderedDict[
             tuple[str, frozenset[str]], tuple[float, Any]
@@ -157,7 +163,8 @@ class DedupingAgentTools:
                 # genuinely-new identical message can go through.
                 logger.warning(
                     "ClaudeSDK send_message dedup: suppressing duplicate "
-                    "send to room (content_len=%d, mentions=%d)",
+                    "send%s (content_len=%d, mentions=%d)",
+                    f" [{self._label}]" if self._label else "",
                     len(content),
                     len(key[1]),
                 )
