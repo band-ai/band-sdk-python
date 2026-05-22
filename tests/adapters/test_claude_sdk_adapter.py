@@ -2033,3 +2033,114 @@ class TestSendMessageDedupWiring:
         await stored.send_message("hello", ["alice"])
 
         assert mock_tools.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_wrapper_persists_across_on_message_calls(self, sample_message):
+        """Cross-turn regression: the dominant INT-502 pattern is a duplicate
+        tool call arriving *after* the original turn's Complete event. Since
+        SimpleAdapter constructs a fresh AgentTools per inbound message, a
+        wrapper rebuilt per on_message would drop the cache and let the
+        post-Complete duplicate through.
+
+        Drive two on_message calls with different inner tools (mirroring
+        AgentTools.from_context being called per message), then fire two
+        identical send_message calls against the stored wrapper — one before
+        and one after the second on_message — and assert the duplicate is
+        suppressed across the turn boundary.
+        """
+        from thenvoi.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        tools_turn1 = MagicMock()
+        tools_turn1.send_message = AsyncMock(return_value={"id": "m1"})
+        tools_turn2 = MagicMock()
+        tools_turn2.send_message = AsyncMock(return_value={"id": "m2"})
+
+        with (
+            patch(
+                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools_turn1,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+            wrapper_after_turn1 = adapter._room_tools["room-1"]
+            assert isinstance(wrapper_after_turn1, DedupingAgentTools)
+
+            # Original send during turn 1 (via the MCP-resolved wrapper).
+            await wrapper_after_turn1.send_message("hi", ["alice"])
+            assert tools_turn1.send_message.await_count == 1
+
+            # Turn 2 arrives; SimpleAdapter builds a fresh AgentTools.
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools_turn2,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+            # SAME wrapper instance must still be stored — only _inner swapped.
+            wrapper_after_turn2 = adapter._room_tools["room-1"]
+            assert wrapper_after_turn2 is wrapper_after_turn1
+            assert wrapper_after_turn2._inner is tools_turn2
+
+            # The lingering duplicate from turn 1 fires now. It must hit
+            # the cache and NOT POST through tools_turn2.
+            await wrapper_after_turn2.send_message("hi", ["alice"])
+            assert tools_turn2.send_message.await_count == 0
+            # And tools_turn1 was not called again either.
+            assert tools_turn1.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_on_cleanup_evicts_wrapper(self, sample_message, mock_tools):
+        """on_cleanup must remove the wrapper so a re-entered room rebuilds
+        fresh state (and so the cache cannot leak across detached sessions)."""
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+        mock_manager.cleanup_session = AsyncMock()
+
+        with (
+            patch(
+                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+            assert "room-1" in adapter._room_tools
+
+            await adapter.on_cleanup("room-1")
+            assert "room-1" not in adapter._room_tools

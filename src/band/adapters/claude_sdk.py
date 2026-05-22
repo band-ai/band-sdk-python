@@ -18,7 +18,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -484,16 +484,31 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # not turn into duplicate chat messages.  Bypass the wrapper when
         # the operator has explicitly opted out via ttl=0.
         #
+        # The wrapper MUST persist across on_message calls for the same
+        # room: the dominant INT-502 pattern is a duplicate tool call
+        # arriving after the original turn's Complete event, which means
+        # the duplicate lands on a *subsequent* on_message (or on a
+        # lingering MCP handler that resolves via self._room_tools.get).
+        # Rebuilding the wrapper per call would throw away the cache and
+        # let that duplicate through.  Swap the inner reference instead.
+        #
         # DedupingAgentTools is structurally a superset of AgentToolsProtocol
         # (the dedup shim only intercepts send_message and __getattr__-forwards
         # everything else), but pyrefly cannot reason about __getattr__ for
         # protocol conformance, so we cast through Any.
         if self.send_message_dedup_ttl_seconds > 0:
-            wrapped: Any = DedupingAgentTools(
-                tools, ttl_seconds=self.send_message_dedup_ttl_seconds
-            )
-            tools = wrapped
-        self._room_tools[room_id] = tools
+            existing = self._room_tools.get(room_id)
+            if isinstance(existing, DedupingAgentTools):
+                await existing.update_inner(tools)
+                tools = cast(AgentToolsProtocol, existing)
+            else:
+                wrapped: Any = DedupingAgentTools(
+                    tools, ttl_seconds=self.send_message_dedup_ttl_seconds
+                )
+                tools = wrapped
+                self._room_tools[room_id] = tools
+        else:
+            self._room_tools[room_id] = tools
 
         # Approval flow: track notify target and intercept local commands
         if self.approval_mode is not None:

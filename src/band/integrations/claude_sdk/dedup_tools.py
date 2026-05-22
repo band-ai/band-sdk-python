@@ -116,6 +116,27 @@ class DedupingAgentTools:
 
     # --- public API used by callers -----------------------------------
 
+    async def update_inner(self, inner: AgentToolsProtocol) -> None:
+        """Swap the wrapped tools object while preserving the dedup cache.
+
+        ``AgentTools.from_context`` is called per inbound message in
+        ``preprocessing/default.py`` and produces a fresh ``AgentTools``
+        instance each time. If the adapter rebuilt the wrapper on every
+        call the cache would be discarded after every turn and the
+        dominant INT-502 failure mode (a duplicate tool call landing
+        *after* the original turn's ``Complete`` event) would still slip
+        through.
+
+        Holding the lock during the swap prevents a concurrent in-flight
+        ``send_message`` from observing a torn reference: the in-flight
+        call started against the previous ``_inner`` and is holding the
+        lock, so this method waits until that call returns before
+        installing the new tools object. Subsequent calls see the new
+        ``_inner`` immediately.
+        """
+        async with self._lock:
+            self._inner = inner
+
     async def send_message(
         self,
         content: str,

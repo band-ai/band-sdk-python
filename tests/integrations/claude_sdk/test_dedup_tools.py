@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -175,14 +176,117 @@ class TestTransparentPassthrough:
         wrapper = DedupingAgentTools(inner)
 
         await wrapper.send_event(content="ping", message_type="thought")
-        await wrapper.add_participant(handle="@svc/bot")
+        await wrapper.add_participant("@svc/bot")
 
         inner.send_event.assert_awaited_once_with(
             content="ping", message_type="thought"
         )
-        inner.add_participant.assert_awaited_once_with(handle="@svc/bot")
+        inner.add_participant.assert_awaited_once_with("@svc/bot")
 
     def test_attributes_forward_unchanged(self):
         inner = _make_inner()
         wrapper = DedupingAgentTools(inner)
         assert wrapper.participants == ["p1", "p2"]
+
+
+class TestUpdateInner:
+    """update_inner() preserves the dedup cache across on_message calls.
+
+    The dominant INT-502 failure mode is a duplicate tool call landing
+    *after* the original turn's Complete event — i.e. a call that
+    arrives on a later on_message. If the adapter rebuilt the wrapper
+    on every on_message, the duplicate would miss the cache and POST a
+    second time. update_inner swaps just the inner reference so the
+    cache survives the turn boundary.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dedup_survives_inner_swap(self):
+        inner_a = _make_inner()
+        wrapper = DedupingAgentTools(inner_a)
+
+        # Turn 1: original send populates the cache via inner_a.
+        await wrapper.send_message("hi", ["alice"])
+        assert inner_a.send_message.await_count == 1
+
+        # Turn 2: SimpleAdapter would normally build a fresh AgentTools
+        # and the adapter rebuilds wrappers per call. With update_inner,
+        # the wrapper persists and the cache is intact.
+        inner_b = _make_inner()
+        await wrapper.update_inner(inner_b)
+
+        # The duplicate tool call from the previous turn fires now.
+        # It must hit the cache and NOT POST through inner_b.
+        await wrapper.send_message("hi", ["alice"])
+        assert inner_b.send_message.await_count == 0
+
+    @pytest.mark.asyncio
+    async def test_new_sends_use_new_inner(self):
+        """After swap, novel sends route to the new inner tools."""
+        inner_a = _make_inner()
+        wrapper = DedupingAgentTools(inner_a)
+        await wrapper.send_message("first", ["alice"])
+
+        inner_b = _make_inner()
+        await wrapper.update_inner(inner_b)
+
+        await wrapper.send_message("second", ["alice"])
+        assert inner_b.send_message.await_count == 1
+        # The first inner is no longer used after the swap.
+        assert inner_a.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_swap_waits_for_in_flight_send(self):
+        """update_inner takes the lock so it serializes with send_message.
+
+        If a send_message call is in flight against inner_a when
+        update_inner is called, the swap must wait for the in-flight
+        call to complete. Otherwise the in-flight call could see a
+        torn _inner reference mid-await.
+        """
+        inner_a = _make_inner()
+        gate = asyncio.Event()
+        observed_inner: list[Any] = []
+
+        async def slow_send(content, mentions=None):
+            observed_inner.append("a")
+            await gate.wait()
+            return {"id": "msg-a"}
+
+        inner_a.send_message.side_effect = slow_send
+        wrapper = DedupingAgentTools(inner_a)
+
+        send_task = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+        # Yield so send_task enters the lock and awaits the gate.
+        await asyncio.sleep(0)
+
+        inner_b = _make_inner()
+        swap_task = asyncio.create_task(wrapper.update_inner(inner_b))
+
+        # Swap must not have completed while send_message holds the lock.
+        await asyncio.sleep(0)
+        assert not swap_task.done()
+
+        gate.set()
+        await asyncio.gather(send_task, swap_task)
+        assert observed_inner == ["a"]
+
+
+class TestDedupHitLogging:
+    @pytest.mark.asyncio
+    async def test_duplicate_emits_warning(self, caplog):
+        inner = _make_inner()
+        wrapper = DedupingAgentTools(inner)
+
+        await wrapper.send_message("hello", ["alice"])
+        with caplog.at_level(
+            "WARNING", logger="thenvoi.integrations.claude_sdk.dedup_tools"
+        ):
+            await wrapper.send_message("hello", ["alice"])
+
+        assert any(
+            "dedup" in rec.message.lower() and rec.levelname == "WARNING"
+            for rec in caplog.records
+        ), (
+            f"expected WARNING log on dedup hit, got: {[r.message for r in caplog.records]}"
+        )
