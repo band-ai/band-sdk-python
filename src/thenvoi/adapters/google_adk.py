@@ -598,12 +598,24 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             logger.debug("Room %s: Cleaned up ADK session", room_id)
 
     def _format_history_transcript(self, history: GoogleADKMessages) -> str:
-        """Format converted history as a text transcript for context injection."""
+        """Format converted history as a text transcript for context injection.
+
+        Own-agent text turns (``role="model"`` with string content) are
+        labeled with the agent's own name so the LLM can distinguish its
+        prior replies from peer turns on rehydration.  Without this label
+        the bootstrap transcript looks like a series of speakerless lines
+        between peer messages, which is what produced the duplicate-reply
+        behavior described in INT-509.
+        """
+        own_label = self.agent_name or "Assistant"
         lines: list[str] = []
         for msg in history:
             content = msg.get("content", "")
             if isinstance(content, str):
-                lines.append(content)
+                if msg.get("role") == "model":
+                    lines.append(f"[{own_label}]: {content}")
+                else:
+                    lines.append(content)
             elif isinstance(content, list):
                 # Tool call/result blocks - summarize
                 for block in content:

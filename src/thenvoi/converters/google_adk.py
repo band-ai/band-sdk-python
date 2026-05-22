@@ -138,10 +138,13 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
     Output: [{"role": "user"|"model", "content": "..." | [...]}]
 
     Handles:
-    - text messages: User messages with [name] prefix, other agents as user messages
-    - tool_call: Model message with function_call content blocks
-    - tool_result: User message with function_response content blocks
-    - This agent's text messages are skipped (redundant with tool results)
+    - text from this agent: ``role="model"`` with bare content (matches the
+      shape the adapter appends live in ``_room_history`` after each reply,
+      so a rehydrated transcript looks identical to one accumulated in-memory)
+    - text from other agents and users: ``role="user"`` with ``[name]:``
+      prefix so the LLM can attribute speakers
+    - tool_call: ``role="model"`` message with ``function_call`` content blocks
+    - tool_result: ``role="user"`` message with ``function_response`` blocks
 
     Tool events are stored in platform as JSON:
     - tool_call: {"name": "...", "args": {...}, "tool_call_id": "..."}
@@ -152,6 +155,13 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
     structured function_call/function_response blocks produced here are
     consumed only for transcript formatting and conformance validation, not
     passed directly to ADK as ``Content`` objects.
+
+    Why own-agent text is kept (and not dropped as "redundant with tool
+    results"): the agent's text replies are NOT recorded as tool results,
+    they are recorded as ``message_type="text"`` rows.  Dropping them on
+    rehydration leaves the LLM looking at a series of unanswered user
+    messages and re-answering questions it already handled — the bug
+    documented in INT-509 (ADK duplicate response after crash recovery).
     """
 
     def __init__(self, agent_name: str = ""):
@@ -159,15 +169,17 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with tool results). Messages from other
-                       agents are included as user messages.
+            agent_name: Name of this agent. Used to decide whether an
+                       assistant text message came from this agent (in which
+                       case it is emitted with ``role="model"``) or from a
+                       peer (emitted as ``role="user"`` with a ``[name]:``
+                       prefix).
         """
         self._agent_name = agent_name
 
     def set_agent_name(self, name: str) -> None:
         """
-        Set agent name so converter knows which messages to skip.
+        Set this agent's name for own-vs-peer attribution.
 
         Args:
             name: Name of this agent
@@ -224,7 +236,13 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
                 sender_name = hist.get("sender_name", "")
 
                 if role == "assistant" and sender_name == self._agent_name:
-                    # Skip THIS agent's text (redundant with tool results)
+                    # Own-agent text reply: emit as model turn with bare
+                    # content (no [name]: prefix). This matches the shape the
+                    # adapter appends to ``_room_history`` live after each
+                    # response, so a rehydrated transcript is byte-identical
+                    # to one accumulated in-memory and the LLM sees its own
+                    # prior replies in context.
+                    messages.append({"role": "model", "content": content})
                     continue
 
                 messages.append(

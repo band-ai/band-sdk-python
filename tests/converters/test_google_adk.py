@@ -63,11 +63,16 @@ class TestBasicConversion:
         assert "[Bob]: Hi there" in result[1]["content"]
 
 
-class TestOwnMessageFiltering:
-    """Tests for filtering this agent's own messages."""
+class TestOwnMessageHandling:
+    """Tests for handling this agent's own messages.
 
-    def test_filters_own_messages(self):
-        """Should skip this agent's text messages."""
+    INT-509: own-agent text is kept (as ``role="model"``) so that on
+    rehydration the LLM sees its prior replies and does not re-answer
+    messages it already handled.
+    """
+
+    def test_own_messages_kept_as_model_role(self):
+        """Should preserve this agent's text as model role with bare content."""
         converter = GoogleADKHistoryConverter(agent_name="TestBot")
         result = converter.convert(
             [
@@ -79,10 +84,13 @@ class TestOwnMessageFiltering:
                 }
             ]
         )
-        assert len(result) == 0
+        assert len(result) == 1
+        assert result[0]["role"] == "model"
+        # No [TestBot]: prefix on own-agent content; speaker is implicit in role.
+        assert result[0]["content"] == "I'm the bot response"
 
     def test_includes_other_agent_messages(self):
-        """Should include messages from other agents."""
+        """Should include messages from other agents as user role."""
         converter = GoogleADKHistoryConverter(agent_name="TestBot")
         result = converter.convert(
             [
@@ -98,8 +106,8 @@ class TestOwnMessageFiltering:
         assert result[0]["role"] == "user"
         assert "[OtherBot]" in result[0]["content"]
 
-    def test_set_agent_name(self):
-        """Should update agent name."""
+    def test_set_agent_name_marks_subsequent_replies_as_model(self):
+        """set_agent_name should switch which sender is treated as 'own'."""
         converter = GoogleADKHistoryConverter()
         converter.set_agent_name("TestBot")
 
@@ -113,7 +121,9 @@ class TestOwnMessageFiltering:
                 }
             ]
         )
-        assert len(result) == 0
+        assert len(result) == 1
+        assert result[0]["role"] == "model"
+        assert result[0]["content"] == "My response"
 
 
 class TestToolEvents:
@@ -592,3 +602,99 @@ class TestOrphanedToolCallPatching:
             for b in content
             if isinstance(b, dict)
         )
+
+
+class TestRehydrationRegressionINT509:
+    """Regression: ADK adapter sent duplicate replies after kill/restart.
+
+    Before the fix the converter dropped own-agent text rows
+    ("redundant with tool results"). Pre-restart history was rehydrated as
+    a series of unanswered user turns, so the LLM re-answered them. The
+    fix maps every text row through, keeping own-agent replies as
+    ``role="model"`` so the rehydrated transcript reflects the real
+    conversation.
+    """
+
+    def test_rehydrated_history_preserves_alternating_turns(self):
+        """A user/agent ping-pong should round-trip through the converter
+        with the agent's replies intact."""
+        converter = GoogleADKHistoryConverter(agent_name="ResearchBot")
+        result = converter.convert(
+            [
+                {
+                    "role": "user",
+                    "content": "Hello",
+                    "sender_name": "Alice",
+                    "message_type": "text",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Hello! I'm here to help.",
+                    "sender_name": "ResearchBot",
+                    "message_type": "text",
+                },
+                {
+                    "role": "user",
+                    "content": "What's the capital of France?",
+                    "sender_name": "Alice",
+                    "message_type": "text",
+                },
+                {
+                    "role": "assistant",
+                    "content": "Paris.",
+                    "sender_name": "ResearchBot",
+                    "message_type": "text",
+                },
+                {
+                    "role": "user",
+                    "content": "Remember pineapple",
+                    "sender_name": "Alice",
+                    "message_type": "text",
+                },
+                {
+                    "role": "assistant",
+                    "content": "I'll remember 'pineapple'.",
+                    "sender_name": "ResearchBot",
+                    "message_type": "text",
+                },
+            ]
+        )
+
+        # Every turn survives the round-trip.
+        assert len(result) == 6
+        roles = [m["role"] for m in result]
+        assert roles == ["user", "model", "user", "model", "user", "model"]
+
+        # Peer messages carry the [name]: prefix; own messages do not.
+        assert result[0]["content"] == "[Alice]: Hello"
+        assert result[1]["content"] == "Hello! I'm here to help."
+        assert result[3]["content"] == "Paris."
+        assert result[5]["content"] == "I'll remember 'pineapple'."
+
+    def test_peer_agent_replies_stay_distinct_from_own_replies(self):
+        """Cross-room isolation requires that peer-agent text is never
+        labeled as this agent's own reply, even when the senders share a
+        common prefix."""
+        converter = GoogleADKHistoryConverter(agent_name="ResearchBot")
+        result = converter.convert(
+            [
+                {
+                    "role": "assistant",
+                    "content": "From me",
+                    "sender_name": "ResearchBot",
+                    "message_type": "text",
+                },
+                {
+                    "role": "assistant",
+                    "content": "From a peer",
+                    "sender_name": "ResearchBotJr",
+                    "message_type": "text",
+                },
+            ]
+        )
+
+        assert len(result) == 2
+        assert result[0]["role"] == "model"
+        assert result[0]["content"] == "From me"
+        assert result[1]["role"] == "user"
+        assert result[1]["content"] == "[ResearchBotJr]: From a peer"

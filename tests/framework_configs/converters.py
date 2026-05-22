@@ -279,6 +279,10 @@ def _build_google_adk_config() -> ConverterConfig:
         display_name="GoogleADK",
         converter_factory=_google_adk_factory,
         empty_result=[],
+        # ADK keeps own-agent text as ``role="model"`` so rehydrated history
+        # shows the agent's prior replies (INT-509).  The adapter renders this
+        # into the transcript with the agent's own name as the speaker label.
+        filters_own_messages=False,
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         output_adapter=GoogleADKOutputAdapter(),
