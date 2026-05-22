@@ -140,7 +140,10 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
     Handles:
     - text from this agent: ``role="model"`` with bare content (matches the
       shape the adapter appends live in ``_room_history`` after each reply,
-      so a rehydrated transcript looks identical to one accumulated in-memory)
+      so a rehydrated own-reply has the same role/content shape as a live
+      one — the surrounding transcript is not byte-identical because tool
+      events are folded into separate ``function_call``/``function_response``
+      blocks and peer messages carry a ``[name]:`` prefix)
     - text from other agents and users: ``role="user"`` with ``[name]:``
       prefix so the LLM can attribute speakers
     - tool_call: ``role="model"`` message with ``function_call`` content blocks
@@ -162,6 +165,11 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
     rehydration leaves the LLM looking at a series of unanswered user
     messages and re-answering questions it already handled — the bug
     documented in INT-509 (ADK duplicate response after crash recovery).
+
+    Own-agent attribution requires a non-empty ``agent_name`` to be set
+    via the constructor or ``set_agent_name()``.  Without it, every
+    nameless assistant row would be attributed to this agent, swapping
+    one false-attribution bug for another.
     """
 
     def __init__(self, agent_name: str = ""):
@@ -235,13 +243,18 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
                 role = hist.get("role", "user")
                 sender_name = hist.get("sender_name", "")
 
-                if role == "assistant" and sender_name == self._agent_name:
+                if (
+                    role == "assistant"
+                    and self._agent_name
+                    and sender_name == self._agent_name
+                ):
                     # Own-agent text reply: emit as model turn with bare
                     # content (no [name]: prefix). This matches the shape the
                     # adapter appends to ``_room_history`` live after each
-                    # response, so a rehydrated transcript is byte-identical
-                    # to one accumulated in-memory and the LLM sees its own
-                    # prior replies in context.
+                    # response, so the LLM sees its own prior replies in
+                    # context.  The empty-name guard prevents a default
+                    # ``agent_name=""`` from misattributing every nameless
+                    # assistant row to this agent.
                     messages.append({"role": "model", "content": content})
                     continue
 

@@ -125,6 +125,31 @@ class TestOwnMessageHandling:
         assert result[0]["role"] == "model"
         assert result[0]["content"] == "My response"
 
+    def test_empty_agent_name_does_not_claim_nameless_assistant_rows(self):
+        """A converter built with the default ``agent_name=""`` must NOT
+        treat nameless assistant rows as its own.  Without this guard the
+        comparison ``sender_name == self._agent_name`` reduces to
+        ``"" == ""`` and every peer message without a sender_name would
+        be misattributed to this agent (emitted as ``role="model"`` with
+        no prefix), swapping the INT-509 bug for the opposite one.
+        """
+        converter = GoogleADKHistoryConverter()  # agent_name defaults to ""
+        result = converter.convert(
+            [
+                {
+                    "role": "assistant",
+                    "content": "anonymous peer reply",
+                    "sender_name": "",
+                    "message_type": "text",
+                }
+            ]
+        )
+        assert len(result) == 1
+        # Nameless assistant row must be a peer (role="user"), not own.
+        assert result[0]["role"] == "user"
+        # No name → no [name]: prefix; bare content carrying speaker via role.
+        assert result[0]["content"] == "anonymous peer reply"
+
 
 class TestToolEvents:
     """Tests for tool call and tool result conversion."""
