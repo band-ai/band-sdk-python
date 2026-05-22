@@ -963,16 +963,22 @@ class TestHistoryTranscript:
         adapter = GoogleADKAdapter()
         assert adapter._format_history_transcript([]) == ""
 
-    def test_labels_own_agent_replies_with_agent_name(self):
+    @pytest.mark.asyncio
+    async def test_labels_own_agent_replies_with_agent_name(self):
         """Own-agent text (role='model', bare content) should be labeled with the agent's name.
 
         INT-509 regression: without a speaker label, rehydrated transcripts
         showed the agent's prior replies as anonymous lines and the LLM
         could not tell them apart from peer turns, leading it to re-answer
         questions it had already handled after a restart.
+
+        ``SimpleAdapter.on_started`` propagates the agent name into the
+        converter, which is the single source of truth for own-vs-peer
+        attribution.  This test exercises that wiring end-to-end so a
+        future refactor that drops the propagation step would fail here.
         """
         adapter = GoogleADKAdapter()
-        adapter.agent_name = "ResearchBot"
+        await adapter.on_started("ResearchBot", "Test bot")
         history = [
             {"role": "user", "content": "[Alice]: What's the capital of France?"},
             {"role": "model", "content": "Paris."},
@@ -985,15 +991,6 @@ class TestHistoryTranscript:
         assert "[Alice]: What's the capital of France?" in transcript
         assert "[ResearchBot]: Paris." in transcript
         assert "[ResearchBot]: I'll remember 'pineapple'." in transcript
-
-    def test_own_agent_label_falls_back_when_unnamed(self):
-        """Should still produce a labeled line if agent_name has not been set yet."""
-        adapter = GoogleADKAdapter()
-        history = [{"role": "model", "content": "ok"}]
-
-        transcript = adapter._format_history_transcript(history)
-
-        assert transcript == "[Assistant]: ok"
 
 
 class TestHistoryAccumulation:

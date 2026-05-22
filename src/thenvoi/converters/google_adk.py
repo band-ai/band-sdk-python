@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -13,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 # Type alias for Google ADK messages (dict-based, converted to Content by adapter)
 GoogleADKMessages = list[dict[str, Any]]
+
+# Truncate long tool-result strings in transcript previews so a single
+# noisy tool result cannot dominate the rehydrated context window.
+_MAX_TOOL_OUTPUT_PREVIEW = 200
 
 
 def _patch_orphaned_tool_calls(messages: GoogleADKMessages) -> None:
@@ -276,3 +281,53 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
         _patch_orphaned_tool_calls(messages)
 
         return messages
+
+    def format_transcript(self, history: GoogleADKMessages) -> str:
+        """Render converted history as a labeled text transcript.
+
+        The ADK adapter creates a fresh ``InMemoryRunner`` per message and
+        injects accumulated history as a text transcript, so this is the
+        layer where rehydration becomes a single string the LLM reads.
+
+        Own-agent text turns (``role="model"`` with string content) are
+        labeled with this agent's own name so the LLM can distinguish its
+        prior replies from peer turns.  Peer turns are already prefixed
+        with ``[sender_name]:`` by ``convert()``; passing them through
+        unchanged keeps the prefix shape uniform across the transcript.
+        Without the own-turn label the bootstrap transcript looks like a
+        series of speakerless lines between peer messages, which is what
+        produced the duplicate-reply behavior in INT-509.
+
+        Tool events render as compact ``[Tool Call]`` / ``[Tool Result]``
+        previews so the rehydrated context shows what work was already
+        done in the prior session.
+        """
+        lines: list[str] = []
+        for msg in history:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                if msg.get("role") == "model" and self._agent_name:
+                    lines.append(f"[{self._agent_name}]: {content}")
+                else:
+                    lines.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = block.get("type", "")
+                    if block_type == "function_call":
+                        lines.append(
+                            f"[Tool Call] {block.get('name', 'unknown')}"
+                            f" ({json.dumps(block.get('args', {}), default=str)})"
+                        )
+                    elif block_type == "function_response":
+                        output = str(block.get("output", ""))
+                        truncated = (
+                            output[:_MAX_TOOL_OUTPUT_PREVIEW] + "..."
+                            if len(output) > _MAX_TOOL_OUTPUT_PREVIEW
+                            else output
+                        )
+                        lines.append(
+                            f"[Tool Result] {block.get('name', 'unknown')}: {truncated}"
+                        )
+        return "\n".join(lines)

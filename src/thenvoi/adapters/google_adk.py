@@ -13,7 +13,7 @@ import json
 import logging
 import uuid
 import warnings
-from typing import ClassVar, TYPE_CHECKING, Any
+from typing import ClassVar, TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "thenvoi"
-_MAX_TOOL_OUTPUT_PREVIEW = 200
 _DEFAULT_MAX_HISTORY_MESSAGES = 50
 _DEFAULT_MAX_TRANSCRIPT_CHARS = 100_000
 
@@ -598,46 +597,21 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             logger.debug("Room %s: Cleaned up ADK session", room_id)
 
     def _format_history_transcript(self, history: GoogleADKMessages) -> str:
-        """Format converted history as a text transcript for context injection.
+        """Render converted history as a labeled text transcript.
 
-        Own-agent text turns (``role="model"`` with string content) are
-        labeled with the agent's own name so the LLM can distinguish its
-        prior replies from peer turns on rehydration.  Without this label
-        the bootstrap transcript looks like a series of speakerless lines
-        between peer messages, which is what produced the duplicate-reply
-        behavior described in INT-509.
+        Delegates to the converter so the own-agent name used for labeling
+        comes from a single source of truth (the converter, which already
+        owns own-vs-peer attribution during ``convert()``).  The converter
+        also owns the tool-call/tool-result preview format.
+
+        ``SimpleAdapter`` types ``self.history_converter`` as the generic
+        ``HistoryConverter | None``; the ADK constructor always installs a
+        concrete ``GoogleADKHistoryConverter`` (defaulting to a fresh one
+        if the caller omits it), so the narrowing here is a no-op at
+        runtime that lets the type checker see ``format_transcript``.
         """
-        own_label = self.agent_name or "Assistant"
-        lines: list[str] = []
-        for msg in history:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                if msg.get("role") == "model":
-                    lines.append(f"[{own_label}]: {content}")
-                else:
-                    lines.append(content)
-            elif isinstance(content, list):
-                # Tool call/result blocks - summarize
-                for block in content:
-                    if isinstance(block, dict):
-                        block_type = block.get("type", "")
-                        if block_type == "function_call":
-                            lines.append(
-                                f"[Tool Call] {block.get('name', 'unknown')}"
-                                f" ({json.dumps(block.get('args', {}), default=str)})"
-                            )
-                        elif block_type == "function_response":
-                            output = str(block.get("output", ""))
-                            truncated = (
-                                output[:_MAX_TOOL_OUTPUT_PREVIEW] + "..."
-                                if len(output) > _MAX_TOOL_OUTPUT_PREVIEW
-                                else output
-                            )
-                            lines.append(
-                                f"[Tool Result] {block.get('name', 'unknown')}: "
-                                f"{truncated}"
-                            )
-        return "\n".join(lines)
+        converter = cast(GoogleADKHistoryConverter, self.history_converter)
+        return converter.format_transcript(history)
 
     @staticmethod
     def _extract_event_text(event: Any) -> str:

@@ -723,3 +723,123 @@ class TestRehydrationRegressionINT509:
         assert result[0]["content"] == "From me"
         assert result[1]["role"] == "user"
         assert result[1]["content"] == "[ResearchBotJr]: From a peer"
+
+
+class TestFormatTranscript:
+    """Tests for ``format_transcript`` — the converter renders its own
+    history shape into the text transcript the ADK adapter rehydrates.
+
+    Owning rendering on the converter (instead of the adapter) gives the
+    own-agent label a single source of truth: the same ``_agent_name`` that
+    drives own-vs-peer attribution during ``convert()`` also drives the
+    speaker label in the transcript.  Without that, the label and the
+    attribution could drift apart and reintroduce INT-509.
+    """
+
+    def test_empty_history(self):
+        """Empty history renders as the empty string."""
+        converter = GoogleADKHistoryConverter(agent_name="ResearchBot")
+        assert converter.format_transcript([]) == ""
+
+    def test_labels_own_turns_with_agent_name(self):
+        """Own ``role='model'`` text turns carry the agent's name as label."""
+        converter = GoogleADKHistoryConverter(agent_name="ResearchBot")
+        transcript = converter.format_transcript(
+            [
+                {"role": "user", "content": "[Alice]: Hello"},
+                {"role": "model", "content": "Hi back"},
+            ]
+        )
+        assert transcript == "[Alice]: Hello\n[ResearchBot]: Hi back"
+
+    def test_own_turns_unlabeled_without_agent_name(self):
+        """Without a configured agent name, own turns render as bare
+        content — peer prefixes are already on user lines from ``convert()``.
+
+        In production ``SimpleAdapter.on_started`` always calls
+        ``set_agent_name`` before any message arrives, so this branch is
+        the rare bootstrap-only case.
+        """
+        converter = GoogleADKHistoryConverter()
+        transcript = converter.format_transcript(
+            [
+                {"role": "user", "content": "[Alice]: Hello"},
+                {"role": "model", "content": "Hi back"},
+            ]
+        )
+        assert transcript == "[Alice]: Hello\nHi back"
+
+    def test_set_agent_name_updates_label(self):
+        """``set_agent_name`` is the runtime hook used by ``SimpleAdapter.on_started``
+        and must change the transcript label going forward."""
+        converter = GoogleADKHistoryConverter()
+        converter.set_agent_name("ResearchBot")
+        transcript = converter.format_transcript([{"role": "model", "content": "ok"}])
+        assert transcript == "[ResearchBot]: ok"
+
+    def test_renders_tool_call_block(self):
+        """Function-call blocks render as a compact ``[Tool Call]`` preview
+        with the tool name and JSON-serialized arguments."""
+        converter = GoogleADKHistoryConverter(agent_name="ResearchBot")
+        transcript = converter.format_transcript(
+            [
+                {
+                    "role": "model",
+                    "content": [
+                        {
+                            "type": "function_call",
+                            "id": "call_1",
+                            "name": "thenvoi_send_message",
+                            "args": {"content": "Hello"},
+                        }
+                    ],
+                }
+            ]
+        )
+        assert "[Tool Call] thenvoi_send_message" in transcript
+        assert '"content": "Hello"' in transcript
+
+    def test_renders_tool_result_block(self):
+        """Function-response blocks render as a compact ``[Tool Result]`` preview."""
+        converter = GoogleADKHistoryConverter(agent_name="ResearchBot")
+        transcript = converter.format_transcript(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "function_response",
+                            "tool_call_id": "call_1",
+                            "name": "thenvoi_send_message",
+                            "output": '{"status": "sent"}',
+                        }
+                    ],
+                }
+            ]
+        )
+        assert "[Tool Result] thenvoi_send_message" in transcript
+        assert '{"status": "sent"}' in transcript
+
+    def test_truncates_long_tool_result_output(self):
+        """A single noisy tool result must not be allowed to dominate the
+        rehydrated context window — long outputs are truncated to a fixed
+        preview length with an ellipsis."""
+        converter = GoogleADKHistoryConverter(agent_name="ResearchBot")
+        long_output = "x" * 1000
+        transcript = converter.format_transcript(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "function_response",
+                            "tool_call_id": "call_1",
+                            "name": "noisy_tool",
+                            "output": long_output,
+                        }
+                    ],
+                }
+            ]
+        )
+        assert "..." in transcript
+        assert len(transcript) < 500
