@@ -214,6 +214,12 @@ def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
     )
 
 
+# Defensive cap on the drain loop. The platform shouldn't backlog dozens
+# of messages for a single agent in normal operation; if it does, log and
+# bail out rather than draining indefinitely.
+_DRAIN_MAX = 50
+
+
 async def _process_message_event(
     body: dict[str, Any],
     *,
@@ -221,7 +227,30 @@ async def _process_message_event(
     adapter: AnthropicAdapter,
     own_agent_id: str,
 ) -> dict[str, Any]:
-    """Run the SDK agent loop for one forwarded message_created event."""
+    """Run the SDK agent loop for one forwarded message_created event.
+
+    Honors the platform's lifecycle markers (``mark_processing`` /
+    ``mark_processed`` / ``mark_failed``) so concurrent invocations across
+    ``(agent, room)`` don't duplicate work — mirroring what the SDK's
+    ``ExecutionContext`` does in the long-running Agent flow.
+
+    Flow:
+    1. Self-filter (skip the agent's own echo).
+    2. ``get_next_message(room_id)`` to verify the triggering message is the
+       earliest unprocessed message for this agent. If it isn't (either
+       already processed by a sibling invocation that drained, or eclipsed
+       by an older un-processed message that should be handled first),
+       return early without invoking the LLM.
+    3. ``mark_processing(triggering)`` to claim it.
+    4. Fetch participants + history, build AgentInput, run the adapter.
+    5. ``mark_processed(triggering)``.
+    6. Drain the room: ``get_next_message`` until None, marking each as
+       processed. Rationale: the LLM had visibility into the full room
+       history during its turn; whatever was unanswered at the time is now
+       this agent's responsibility, whether the LLM replied or chose to
+       ignore. Subsequent invocations should not re-run the LLM on those.
+    7. On error: ``mark_failed(triggering)``.
+    """
     payload = body.get("payload") or {}
     room_id = body.get("room_id") or payload.get("chat_room_id")
     if not room_id:
@@ -229,39 +258,96 @@ async def _process_message_event(
     if not payload.get("id"):
         raise HTTPException(status_code=400, detail="missing message id in payload")
 
-    # Self-message filter: Thenvoi delivers the agent's own outbound messages
-    # back on its WS subscription. The SDK filters these in normal operation;
-    # we replicate the check here so we don't spin up an LLM call on our own echo.
+    msg_id = payload["id"]
+
+    # 1. Self-message filter: Thenvoi delivers the agent's own outbound
+    # messages back on its WS subscription. The SDK filters these in normal
+    # operation; we replicate the check so we don't burn an LLM call on
+    # our own echo.
     if (
         payload.get("sender_type") == "Agent"
         and payload.get("sender_id") == own_agent_id
     ):
-        return {"status": "skipped_self", "message_id": payload["id"]}
+        return {"status": "skipped_self", "message_id": msg_id}
 
-    participants = await _fetch_participants(link, room_id)
-    sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
+    # 2. Verify the triggering message is the next open one for this agent.
+    # If a sibling invocation already drained it, or there's an older
+    # unprocessed message ahead of it, skip the LLM call.
+    next_msg = await link.get_next_message(room_id)
+    if next_msg is None:
+        return {"status": "no_pending", "message_id": msg_id}
+    if next_msg.id != msg_id:
+        return {
+            "status": "already_processed",
+            "message_id": msg_id,
+            "next_open": next_msg.id,
+        }
 
-    msg = _build_platform_message(payload, room_id, sender_name)
-    history = await _fetch_history(
-        link,
-        room_id,
-        exclude_message_id=msg.id,
-        participants=participants,
-    )
-    tools = AgentTools(room_id=room_id, rest=link.rest, participants=participants)
+    # 3. Claim the message.
+    await link.mark_processing(room_id, msg_id)
 
-    inp = AgentInput(
-        msg=msg,
-        tools=tools,
-        history=HistoryProvider(raw=history),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id=room_id,
-    )
+    try:
+        # 4. Build AgentInput and run the adapter.
+        participants = await _fetch_participants(link, room_id)
+        sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
 
-    await adapter.on_event(inp)
-    return {"status": "done", "room_id": room_id, "message_id": msg.id}
+        msg = _build_platform_message(payload, room_id, sender_name)
+        history = await _fetch_history(
+            link,
+            room_id,
+            exclude_message_id=msg.id,
+            participants=participants,
+        )
+        tools = AgentTools(room_id=room_id, rest=link.rest, participants=participants)
+
+        inp = AgentInput(
+            msg=msg,
+            tools=tools,
+            history=HistoryProvider(raw=history),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id=room_id,
+        )
+
+        await adapter.on_event(inp)
+
+        # 5. Mark the triggering message processed.
+        await link.mark_processed(room_id, msg_id)
+    except Exception as exc:
+        # 7. Mark failed so the platform can surface the error.
+        logger.exception("Adapter failed for message %s in room %s", msg_id, room_id)
+        try:
+            await link.mark_failed(room_id, msg_id, str(exc)[:500] or "error")
+        except Exception:
+            logger.warning(
+                "Could not mark %s failed in room %s", msg_id, room_id, exc_info=True
+            )
+        raise
+
+    # 6. Drain any other open messages this LLM call had visibility into.
+    drained: list[str] = []
+    for _ in range(_DRAIN_MAX):
+        stale = await link.get_next_message(room_id)
+        if stale is None:
+            break
+        await link.mark_processed(room_id, stale.id)
+        drained.append(stale.id)
+    else:
+        logger.warning(
+            "Hit drain cap (%d) for room %s — leaving remaining messages open",
+            _DRAIN_MAX,
+            room_id,
+        )
+
+    result: dict[str, Any] = {
+        "status": "done",
+        "room_id": room_id,
+        "message_id": msg_id,
+    }
+    if drained:
+        result["drained"] = drained
+    return result
 
 
 @asynccontextmanager

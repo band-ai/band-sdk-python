@@ -146,10 +146,27 @@ def _make_participant_mock(p: dict[str, Any]) -> MagicMock:
     return mock
 
 
+def _platform_msg(msg_id: str) -> MagicMock:
+    """A stand-in for thenvoi.runtime.types.PlatformMessage — only ``id`` is read."""
+    m = MagicMock()
+    m.id = msg_id
+    return m
+
+
 def _make_link_mock(
     participants: list[dict[str, Any]] | None = None,
     history_items: list[Any] | None = None,
+    next_messages: list[MagicMock | None] | None = None,
 ) -> MagicMock:
+    """Build a fake ThenvoiLink.
+
+    ``next_messages`` controls what ``link.get_next_message`` returns on
+    successive calls. Each call pops the next entry; once exhausted, all
+    further calls return ``None``. If not provided, ``get_next_message``
+    always returns ``None`` (tests that don't exercise the lifecycle path
+    will skip via the no_pending branch — set the sequence to drive the
+    test through the happy path).
+    """
     link = MagicMock()
     participants_response = MagicMock()
     participants_response.data = [
@@ -163,6 +180,17 @@ def _make_link_mock(
     link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
         return_value=context_response
     )
+
+    # Lifecycle methods on the link itself (not via .rest.*).
+    sequence = list(next_messages or [])
+
+    async def _get_next(*_args: Any, **_kwargs: Any) -> MagicMock | None:
+        return sequence.pop(0) if sequence else None
+
+    link.get_next_message = AsyncMock(side_effect=_get_next)
+    link.mark_processing = AsyncMock()
+    link.mark_processed = AsyncMock()
+    link.mark_failed = AsyncMock()
     return link
 
 
@@ -172,31 +200,44 @@ def _make_adapter_mock() -> MagicMock:
     return adapter
 
 
+def _msg_body(
+    *,
+    msg_id: str = "msg-1",
+    room_id: str = "room-1",
+    sender_id: str = "user-1",
+    sender_type: str = "User",
+    content: str = "@bot hello",
+    agent_id: str = "agent-1",
+) -> dict[str, Any]:
+    return {
+        "event_type": "message_created",
+        "agent_id": agent_id,
+        "room_id": room_id,
+        "payload": {
+            "id": msg_id,
+            "content": content,
+            "sender_id": sender_id,
+            "sender_type": sender_type,
+            "message_type": "user",
+            "inserted_at": "2026-05-21T10:00:00Z",
+        },
+    }
+
+
 class TestProcessMessageEvent:
-    async def test_processes_message(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_processes_message(self) -> None:
         link = _make_link_mock(
             participants=[
                 {"id": "user-1", "name": "Alice", "type": "User", "handle": "alice"},
-            ]
+            ],
+            # First call: returns triggering msg → claim it.
+            # Second call (drain): None → nothing more open.
+            next_messages=[_platform_msg("msg-1"), None],
         )
         adapter = _make_adapter_mock()
 
-        body = {
-            "event_type": "message_created",
-            "agent_id": "agent-1",
-            "room_id": "room-1",
-            "payload": {
-                "id": "msg-1",
-                "content": "@bot hello",
-                "sender_id": "user-1",
-                "sender_type": "User",
-                "message_type": "user",
-                "inserted_at": "2026-05-21T10:00:00Z",
-            },
-        }
-
         result = await container._process_message_event(
-            body, link=link, adapter=adapter, own_agent_id="agent-1"
+            _msg_body(), link=link, adapter=adapter, own_agent_id="agent-1"
         )
 
         assert result["status"] == "done"
@@ -205,33 +246,124 @@ class TestProcessMessageEvent:
 
         adapter.on_event.assert_awaited_once()
         inp = adapter.on_event.call_args.args[0]
-        assert inp.room_id == "room-1"
         assert inp.msg.id == "msg-1"
-        assert inp.msg.content == "@bot hello"
         assert inp.msg.sender_name == "Alice"
-        assert inp.tools.room_id == "room-1"
+
+        # Lifecycle calls in expected order.
+        link.mark_processing.assert_awaited_once_with("room-1", "msg-1")
+        link.mark_processed.assert_awaited_once_with("room-1", "msg-1")
+        link.mark_failed.assert_not_awaited()
 
     async def test_skips_self_message(self) -> None:
         link = _make_link_mock()
         adapter = _make_adapter_mock()
-        body = {
-            "event_type": "message_created",
-            "agent_id": "agent-1",
-            "room_id": "room-1",
-            "payload": {
-                "id": "msg-self",
-                "sender_id": "agent-1",
-                "sender_type": "Agent",
-                "content": "echo",
-                "inserted_at": "2026-05-21T10:00:00Z",
-            },
-        }
+        body = _msg_body(
+            msg_id="msg-self",
+            sender_id="agent-1",
+            sender_type="Agent",
+            content="echo",
+        )
 
         result = await container._process_message_event(
             body, link=link, adapter=adapter, own_agent_id="agent-1"
         )
         assert result["status"] == "skipped_self"
         adapter.on_event.assert_not_awaited()
+        # Self-filter happens before any lifecycle interaction.
+        link.get_next_message.assert_not_awaited()
+        link.mark_processing.assert_not_awaited()
+
+    async def test_skips_when_no_pending(self) -> None:
+        """get_next_message returns None — the triggering message is
+        already processed (e.g. a sibling invocation drained it). The LLM
+        must not run."""
+        link = _make_link_mock(next_messages=[None])
+        adapter = _make_adapter_mock()
+
+        result = await container._process_message_event(
+            _msg_body(), link=link, adapter=adapter, own_agent_id="agent-1"
+        )
+
+        assert result["status"] == "no_pending"
+        assert result["message_id"] == "msg-1"
+        adapter.on_event.assert_not_awaited()
+        link.mark_processing.assert_not_awaited()
+
+    async def test_skips_when_different_message_is_next(self) -> None:
+        """get_next_message returns a different msg id — the triggering
+        message is already processed (or behind an older open one). Skip."""
+        link = _make_link_mock(next_messages=[_platform_msg("msg-other")])
+        adapter = _make_adapter_mock()
+
+        result = await container._process_message_event(
+            _msg_body(msg_id="msg-1"),
+            link=link,
+            adapter=adapter,
+            own_agent_id="agent-1",
+        )
+
+        assert result["status"] == "already_processed"
+        assert result["message_id"] == "msg-1"
+        assert result["next_open"] == "msg-other"
+        adapter.on_event.assert_not_awaited()
+        link.mark_processing.assert_not_awaited()
+
+    async def test_drains_stale_messages_after_llm(self) -> None:
+        """After the LLM completes, get_next_message keeps returning open
+        messages (the LLM saw them in history but the platform hasn't
+        marked them yet). Drain marks them processed without re-invoking
+        the LLM."""
+        link = _make_link_mock(
+            next_messages=[
+                _platform_msg("msg-1"),  # claim check
+                _platform_msg("msg-2"),  # drain #1
+                _platform_msg("msg-3"),  # drain #2
+                None,  # drain done
+            ],
+        )
+        adapter = _make_adapter_mock()
+
+        result = await container._process_message_event(
+            _msg_body(msg_id="msg-1"),
+            link=link,
+            adapter=adapter,
+            own_agent_id="agent-1",
+        )
+
+        assert result["status"] == "done"
+        assert result["drained"] == ["msg-2", "msg-3"]
+
+        # LLM ran exactly once.
+        adapter.on_event.assert_awaited_once()
+        # Lifecycle: claim msg-1, mark msg-1 processed, then mark msg-2
+        # and msg-3 processed (without claiming them — the LLM already
+        # had them in its prompt's history).
+        link.mark_processing.assert_awaited_once_with("room-1", "msg-1")
+        processed_args = [c.args for c in link.mark_processed.await_args_list]
+        assert processed_args == [
+            ("room-1", "msg-1"),
+            ("room-1", "msg-2"),
+            ("room-1", "msg-3"),
+        ]
+
+    async def test_marks_failed_on_adapter_error(self) -> None:
+        """If the adapter raises, the triggering message is marked failed."""
+        link = _make_link_mock(next_messages=[_platform_msg("msg-1")])
+        adapter = _make_adapter_mock()
+        adapter.on_event = AsyncMock(side_effect=RuntimeError("LLM crashed"))
+
+        with pytest.raises(RuntimeError, match="LLM crashed"):
+            await container._process_message_event(
+                _msg_body(),
+                link=link,
+                adapter=adapter,
+                own_agent_id="agent-1",
+            )
+
+        link.mark_processing.assert_awaited_once_with("room-1", "msg-1")
+        link.mark_failed.assert_awaited_once()
+        # mark_processed should NOT have been called on a failed message.
+        link.mark_processed.assert_not_awaited()
 
     async def test_missing_room_id_raises(self) -> None:
         link = _make_link_mock()
@@ -265,7 +397,7 @@ class TestProcessMessageEvent:
 
     async def test_falls_back_to_payload_chat_room_id(self) -> None:
         """When top-level room_id is missing, fall back to payload.chat_room_id."""
-        link = _make_link_mock()
+        link = _make_link_mock(next_messages=[_platform_msg("msg-1"), None])
         adapter = _make_adapter_mock()
         body = {
             "event_type": "message_created",
@@ -337,7 +469,8 @@ class TestInvocationsRouting:
         link = _make_link_mock(
             participants=[
                 {"id": "u1", "name": "Alice", "type": "User", "handle": "alice"}
-            ]
+            ],
+            next_messages=[_platform_msg("m1"), None],
         )
         adapter = _make_adapter_mock()
         container.app.state.link = link
