@@ -8,6 +8,17 @@ a final answer back to the user. No human relay between agents.
 
 This demo proves the bridge's dumb-pipe model (INT-506).
 
+## Other docs
+
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — *How it works.* The two-layer
+  bridge + container shape, why the bridge has no Band logic, how
+  per-room serialization and lifecycle markers prevent duplicate work,
+  the AgentCore Runtime constraints to know.
+- **[BUILDING.md](BUILDING.md)** — *Build your own agent.* Writing the
+  system prompt, the tools available to your LLM, the per-invocation
+  contract, patterns (reactive / coordinator / peer), customising the
+  container, testing locally.
+
 ## Architecture
 
 ```
@@ -197,6 +208,9 @@ room id so each room gets its own AgentCore microVM.
 
 | Path | Role |
 |---|---|
+| `README.md` | This file — operator-focused deploy guide. |
+| `ARCHITECTURE.md` | Conceptual overview — bridge vs container, lifecycle, constraints. |
+| `BUILDING.md` | Guide for writing your own AgentCore agent. |
 | `agentcore_llm_server.py` | The container (FastAPI + SDK). Runs once per ARN. |
 | `Dockerfile` | Container image build. |
 | `run_agentcore.py` | Local bridge launcher (loads `.env.test`). |
