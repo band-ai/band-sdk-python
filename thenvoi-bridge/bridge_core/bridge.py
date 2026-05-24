@@ -102,6 +102,11 @@ class AgentRunner:
         self._shutdown_event = shutdown_event
         self._connected_event = asyncio.Event()
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()
+        # Per-room locks: events for the same room are forwarded sequentially
+        # so the container always sees a settled history (its own prior reply
+        # is already posted before the next invocation reads room context).
+        # Different rooms are unaffected — they forward in parallel.
+        self._room_locks: dict[str, asyncio.Lock] = {}
         self._link = link or ThenvoiLink(
             agent_id=agent_config.agent_id,
             api_key=agent_config.api_key,
@@ -355,15 +360,38 @@ class AgentRunner:
             )
             return
 
-        try:
-            await self._forwarder.forward(payload)
-        except Exception:
-            logger.warning(
-                "Agent %s: forward failed for event %s",
-                self._config.agent_id,
-                type(event).__name__,
-                exc_info=True,
-            )
+        # Serialize forwards per room so events from the same room don't race
+        # the container's history fetch. Without this, two messages arriving
+        # in quick succession invoke the container twice in parallel; both
+        # invocations fetch room context before either has posted its reply,
+        # both LLMs see un-answered mentions, and both respond — leading to
+        # duplicate messages in the room.
+        room_id = payload.get("room_id")
+        room_lock = self._lock_for_room(room_id)
+        async with room_lock:
+            try:
+                await self._forwarder.forward(payload)
+            except Exception:
+                logger.warning(
+                    "Agent %s: forward failed for event %s",
+                    self._config.agent_id,
+                    type(event).__name__,
+                    exc_info=True,
+                )
+
+    def _lock_for_room(self, room_id: str | None) -> asyncio.Lock:
+        """Return the asyncio.Lock for a room id, creating one on first use.
+
+        Events without a room_id (e.g. contact events) share a single
+        ``_global`` lock — they're rare and not in the demo path; keeping
+        them serial is the safe default.
+        """
+        key = room_id or "_global"
+        lock = self._room_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._room_locks[key] = lock
+        return lock
 
     def _serialize_event(self, event: object) -> dict[str, Any] | None:
         """Convert a typed PlatformEvent into a JSON payload for forwarding.

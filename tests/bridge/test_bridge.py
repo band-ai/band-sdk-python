@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import MagicMock
 
 from bridge_core.bridge import AgentRunner, ThenvoiBridge
@@ -215,6 +216,82 @@ class TestAgentRunnerForwarderFailures:
         # _safe_handle_event wraps _handle_event in a logging try/except.
         await runner._safe_handle_event(_make_message_event())
         # No exception means the failure was swallowed.
+
+
+# ---------------------------------------------------------------------------
+# AgentRunner — per-room serialization
+# ---------------------------------------------------------------------------
+
+
+class _OrderTrackingForwarder:
+    """Forwarder that records start/end of each forward, with a delay.
+
+    Lets us observe whether forwards serialize or overlap by examining the
+    order of (start, end) events across calls.
+    """
+
+    def __init__(self, delay: float = 0.05) -> None:
+        self._delay = delay
+        self.events: list[tuple[str, str]] = []  # (kind, msg_id)
+        self.closed = False
+
+    async def forward(self, payload: dict[str, Any]) -> None:
+        msg_id = (payload.get("payload") or {}).get("id", "?")
+        self.events.append(("start", msg_id))
+        await asyncio.sleep(self._delay)
+        self.events.append(("end", msg_id))
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class TestAgentRunnerPerRoomSerialization:
+    """Two events in the same room must serialize through the forwarder;
+    two events in different rooms must overlap.
+
+    Regression test for the duplicate-reply race seen during INT-506 deploy:
+    two PA messages arriving back-to-back in the same room invoked the
+    container twice in parallel; both invocations fetched history before
+    either reply landed and both LLMs emitted duplicate responses.
+    """
+
+    async def test_same_room_serializes(self) -> None:
+        fwd = _OrderTrackingForwarder(delay=0.05)
+        runner, _, _ = _build_runner(forwarder=fwd)
+
+        e1 = _make_message_event(message_id="m1", room_id="room-X")
+        e2 = _make_message_event(message_id="m2", room_id="room-X")
+
+        await asyncio.gather(
+            runner._safe_handle_event(e1),
+            runner._safe_handle_event(e2),
+        )
+
+        # With per-room serialization, one fully completes before the other
+        # starts. Reject any interleaving.
+        assert fwd.events in (
+            [("start", "m1"), ("end", "m1"), ("start", "m2"), ("end", "m2")],
+            [("start", "m2"), ("end", "m2"), ("start", "m1"), ("end", "m1")],
+        ), f"Expected serial ordering, got: {fwd.events}"
+
+    async def test_different_rooms_overlap(self) -> None:
+        fwd = _OrderTrackingForwarder(delay=0.05)
+        runner, _, _ = _build_runner(forwarder=fwd)
+
+        e1 = _make_message_event(message_id="m1", room_id="room-A")
+        e2 = _make_message_event(message_id="m2", room_id="room-B")
+
+        await asyncio.gather(
+            runner._safe_handle_event(e1),
+            runner._safe_handle_event(e2),
+        )
+
+        # With different rooms, both forwards overlap: both start before
+        # either ends.
+        kinds = [e[0] for e in fwd.events]
+        assert kinds == ["start", "start", "end", "end"], (
+            f"Expected overlapping ordering, got: {fwd.events}"
+        )
 
 
 # ---------------------------------------------------------------------------

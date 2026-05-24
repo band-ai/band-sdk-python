@@ -32,6 +32,8 @@ Environment variables:
     THENVOI_REST_URL — defaults to https://app.thenvoi.com
     ANTHROPIC_MODEL  — defaults to claude-sonnet-4-5-20250929
     SYSTEM_PROMPT    — optional custom system prompt for the adapter
+    EMIT_EXECUTION   — "true" (default) emits tool_call/tool_result as platform
+                       events; set "false" to silence them
     PORT             — defaults to 8080 (AgentCore Runtime contract)
 
 Run locally::
@@ -55,7 +57,9 @@ from fastapi import FastAPI, HTTPException, Request
 from thenvoi.adapters.anthropic import AnthropicAdapter
 from thenvoi.client.rest import DEFAULT_REQUEST_OPTIONS
 from thenvoi.core.types import (
+    AdapterFeatures,
     AgentInput,
+    Emit,
     HistoryProvider,
     PlatformMessage,
 )
@@ -185,13 +189,28 @@ def _build_platform_message(
 
 
 def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
-    """Build the AnthropicAdapter from env config."""
+    """Build the AnthropicAdapter from env config.
+
+    Enables ``Emit.EXECUTION`` by default so every tool_call and tool_result
+    is posted to the room as a platform event (visible in the Band UI).
+    Set ``EMIT_EXECUTION=false`` to disable.
+    """
     model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
     system_prompt = os.environ.get("SYSTEM_PROMPT")
+    emit_execution = os.environ.get("EMIT_EXECUTION", "true").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    emit: frozenset[Emit] = (
+        frozenset({Emit.EXECUTION}) if emit_execution else frozenset()
+    )
+    features = AdapterFeatures(emit=emit)
     return AnthropicAdapter(
         model=model,
         api_key=anthropic_api_key,
         prompt=system_prompt,
+        features=features,
     )
 
 
