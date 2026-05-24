@@ -5,7 +5,7 @@ This is a Python SDK that connects AI agents to the Thenvoi collaborative platfo
 ## Core Features
 
 1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode)
-2. A2A protocol support: Bridge to external A2A agents and expose Thenvoi peers as A2A endpoints
+2. A2A protocol support: Bridge to remote A2A agents and expose Thenvoi peers as A2A endpoints
 3. ACP integration: Editor-facing server and subprocess client adapters (Cursor, Codex, Claude Code)
 4. Platform tools for chat, contacts, and memory management
 5. WebSocket + REST transport: Real-time messaging with REST API fallback
@@ -181,7 +181,7 @@ The SDK supports the [A2A (Agent-to-Agent) protocol](https://google.github.io/A2
 
 ### A2A Adapter (outbound)
 
-`A2AAdapter` forwards Thenvoi messages to an external A2A-compliant agent. Each Thenvoi room maps to an A2A context, with automatic session state persistence via task events and session rehydration on room rejoin.
+`A2AAdapter` forwards Thenvoi messages to a remote A2A-compliant agent. Each Thenvoi room maps to an A2A context, with automatic session state persistence via task events and session rehydration on room rejoin.
 
 ```python
 from thenvoi.adapters.a2a import A2AAdapter, A2AAuth
@@ -194,7 +194,7 @@ adapter = A2AAdapter(
 
 ### A2A Gateway (inbound)
 
-`A2AGatewayAdapter` + `GatewayServer` expose Thenvoi peers as A2A JSON-RPC endpoints. External A2A clients can send messages to Thenvoi agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
+`A2AGatewayAdapter` + `GatewayServer` expose Thenvoi peers as A2A JSON-RPC endpoints. Remote A2A clients can send messages to Thenvoi agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
 
 ```python
 from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
@@ -232,7 +232,7 @@ Two-layer pattern (mirrors A2A Gateway):
 |------|---------|
 | `src/thenvoi/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
 | `src/thenvoi/integrations/acp/server_adapter.py` | `ThenvoiACPServerAdapter` — REST client, room/session mapping |
-| `src/thenvoi/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns external ACP agent subprocess |
+| `src/thenvoi/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
 | `src/thenvoi/integrations/acp/client_types.py` | `ThenvoiACPClient` — per-session chunk buffering |
 | `src/thenvoi/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/thenvoi/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |

@@ -18,11 +18,11 @@ Architecture:
          - bootstrap context + event emission
          - Thenvoi MCP tool policy (adapter-level)
       -> ACPRuntime (generic ACP subprocess/session plumbing)
-      -> External ACP runtime (Codex, Claude Code, Gemini CLI, Cursor, etc.)
+      -> Remote ACP runtime (Codex, Claude Code, Gemini CLI, Cursor, etc.)
 
 Relation to A2A:
     The analogy holds at the bridge boundary: both adapters map Thenvoi room
-    messages to an external protocol session and stream responses back.
+    messages to a remote protocol session and stream responses back.
 
     The main difference is transport ownership:
     - A2A adapter talks to a remote A2A peer over HTTP/SSE.

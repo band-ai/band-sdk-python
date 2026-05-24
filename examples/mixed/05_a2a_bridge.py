@@ -9,10 +9,10 @@
 Mixed-example bridge launcher.
 
 Starts two Thenvoi bridge agents in one process:
-- one bridge for the external contract checker A2A service
-- one bridge for the external risk reviewer A2A service
+- one bridge for the remote contract checker A2A service
+- one bridge for the remote risk reviewer A2A service
 
-This is the piece that makes both external A2A services show up as normal,
+This is the piece that makes both remote A2A services show up as normal,
 bidirectional participants in the shared engineering review room.
 
 Run with:

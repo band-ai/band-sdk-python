@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-import repo_init
+from thenvoi.docker import repo_init
 
 
 def test_parse_repo_config_absent() -> None:

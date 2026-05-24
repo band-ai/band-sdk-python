@@ -23,7 +23,7 @@ cp .env.example .env
 
 1. Go to the [Thenvoi Dashboard](https://app.thenvoi.com/dashboard)
 2. Log in or create an account
-3. Create a new **Remote Agent** (see [Creating a Remote Agent](https://docs.thenvoi.com/getting-started/connect-external-agent) for detailed instructions)
+3. Create a new **Remote Agent** (see [Creating a Remote Agent](https://docs.thenvoi.com/getting-started/connect-remote-agent) for detailed instructions)
    - **Name**: e.g., "Customer Support Bot" or "Research Assistant"
    - **Description**: e.g., "Handles customer inquiries and provides product information"
 4. Copy your **Agent ID** and **API Key** from the agent settings

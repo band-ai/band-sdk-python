@@ -62,6 +62,24 @@ class TestSimpleAdapterFeatures:
         adapter = _TestAdapter(features=f)
         assert adapter.features is f
 
+    def test_adapter_features_normalizes_iterable_inputs(self) -> None:
+        features = AdapterFeatures(
+            capabilities=[Capability.MEMORY],
+            emit=[Emit.EXECUTION],
+            include_tools=["thenvoi_send_message", "thenvoi_lookup_peers"],
+            exclude_tools={"thenvoi_remove_participant"},
+            include_categories=("chat", "memory"),
+        )
+
+        assert features.capabilities == frozenset({Capability.MEMORY})
+        assert features.emit == frozenset({Emit.EXECUTION})
+        assert features.include_tools == (
+            "thenvoi_send_message",
+            "thenvoi_lookup_peers",
+        )
+        assert features.exclude_tools == ("thenvoi_remove_participant",)
+        assert features.include_categories == ("chat", "memory")
+
     @pytest.mark.asyncio
     async def test_warns_on_unsupported_emit(
         self, caplog: pytest.LogCaptureFixture

@@ -26,7 +26,7 @@ from typing import Any
 
 import yaml
 
-from repo_init import initialize_repo
+from thenvoi.docker.repo_init import initialize_repo
 from thenvoi.config.loader import load_agent_config
 
 # Global flag for graceful shutdown
