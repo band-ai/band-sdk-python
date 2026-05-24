@@ -275,8 +275,17 @@ async def _process_message_event(
     # unprocessed message ahead of it, skip the LLM call.
     next_msg = await link.get_next_message(room_id)
     if next_msg is None:
+        logger.info(
+            "Skip: room %s has no pending messages (triggering=%s)", room_id, msg_id
+        )
         return {"status": "no_pending", "message_id": msg_id}
     if next_msg.id != msg_id:
+        logger.info(
+            "Skip: room %s next-open=%s != triggering=%s",
+            room_id,
+            next_msg.id,
+            msg_id,
+        )
         return {
             "status": "already_processed",
             "message_id": msg_id,
@@ -284,6 +293,7 @@ async def _process_message_event(
         }
 
     # 3. Claim the message.
+    logger.info("Claiming msg %s in room %s", msg_id, room_id)
     await link.mark_processing(room_id, msg_id)
 
     try:
@@ -326,11 +336,15 @@ async def _process_message_event(
         raise
 
     # 6. Drain any other open messages this LLM call had visibility into.
+    # Each one needs the full processing → processed transition; the platform
+    # may reject `mark_processed` on a message that was never marked
+    # `processing` (the SDK's ExecutionContext always pairs the two).
     drained: list[str] = []
     for _ in range(_DRAIN_MAX):
         stale = await link.get_next_message(room_id)
         if stale is None:
             break
+        await link.mark_processing(room_id, stale.id)
         await link.mark_processed(room_id, stale.id)
         drained.append(stale.id)
     else:
@@ -338,6 +352,10 @@ async def _process_message_event(
             "Hit drain cap (%d) for room %s — leaving remaining messages open",
             _DRAIN_MAX,
             room_id,
+        )
+    if drained:
+        logger.info(
+            "Drained %d stale messages in room %s: %s", len(drained), room_id, drained
         )
 
     result: dict[str, Any] = {

@@ -311,8 +311,8 @@ class TestProcessMessageEvent:
     async def test_drains_stale_messages_after_llm(self) -> None:
         """After the LLM completes, get_next_message keeps returning open
         messages (the LLM saw them in history but the platform hasn't
-        marked them yet). Drain marks them processed without re-invoking
-        the LLM."""
+        marked them yet). Drain marks each through the full
+        processing → processed transition without re-invoking the LLM."""
         link = _make_link_mock(
             next_messages=[
                 _platform_msg("msg-1"),  # claim check
@@ -335,10 +335,14 @@ class TestProcessMessageEvent:
 
         # LLM ran exactly once.
         adapter.on_event.assert_awaited_once()
-        # Lifecycle: claim msg-1, mark msg-1 processed, then mark msg-2
-        # and msg-3 processed (without claiming them — the LLM already
-        # had them in its prompt's history).
-        link.mark_processing.assert_awaited_once_with("room-1", "msg-1")
+        # Each message — triggering and drained — gets the full
+        # processing → processed transition.
+        processing_args = [c.args for c in link.mark_processing.await_args_list]
+        assert processing_args == [
+            ("room-1", "msg-1"),
+            ("room-1", "msg-2"),
+            ("room-1", "msg-3"),
+        ]
         processed_args = [c.args for c in link.mark_processed.await_args_list]
         assert processed_args == [
             ("room-1", "msg-1"),
