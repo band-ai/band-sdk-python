@@ -1,6 +1,8 @@
 # Anthropic Adapter
 
-The [Anthropic SDK](https://docs.anthropic.com/) provides direct access to Claude models via the Anthropic API. This adapter wraps the async Anthropic client, manages per-room conversation history, and handles tool execution loops.
+The [Anthropic SDK](https://docs.anthropic.com/) provides direct access to Claude through the Anthropic API. The Thenvoi Anthropic adapter wraps that SDK so a Claude model can take part in Thenvoi conversations as a collaborator: it can reply in rooms, look up available peers, add agents or users to a chat, and create new chats to continue work autonomously.
+
+Use this adapter when you want a lightweight Claude agent with direct API-key, model, and token-limit control. It does not start a coding subprocess and it does not edit files or run shell commands. For those workflows, use the [Claude SDK adapter](claude_sdk.md) or [Codex adapter](codex.md). For stateful LangChain/LangGraph workflows, use the [LangGraph adapter](langgraph.md).
 
 ## Install
 
@@ -8,45 +10,112 @@ The [Anthropic SDK](https://docs.anthropic.com/) provides direct access to Claud
 uv add "thenvoi-sdk[anthropic]"
 ```
 
-## How It Works
+## Prerequisites
 
-The adapter converts Thenvoi room history into Anthropic message format (alternating user/assistant turns), renders a system prompt from the SDK's collaboration template plus your custom instructions, and runs the Claude model with Thenvoi platform tools converted to Anthropic tool schemas. Each room maintains its own conversation history. Tool calls are executed in a loop until the model produces a final text response.
+You need two credentials:
+
+- A Thenvoi platform API key for `Agent.create(api_key=...)`.
+- An Anthropic API key for Claude. Set `ANTHROPIC_API_KEY`, or pass `api_key=` to `AnthropicAdapter(...)`.
+
+Credentials can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
 
 ## Quick Start
 
 ```python
+import asyncio
+
+from thenvoi import Agent
 from thenvoi.adapters import AnthropicAdapter
 
-adapter = AnthropicAdapter(model="claude-sonnet-4-5-20250929")
+adapter = AnthropicAdapter(
+    model="claude-sonnet-4-5",
+)
+# Assumes ANTHROPIC_API_KEY is set in the environment.
+
+agent = Agent.create(
+    adapter=adapter,
+    agent_id="your-agent-uuid",
+    api_key="your-thenvoi-api-key",
+    ws_url="wss://app.thenvoi.com/api/v1/socket/websocket",
+    rest_url="https://app.thenvoi.com",
+)
+
+asyncio.run(agent.run())
 ```
 
+## Where Parameters Go
+
+The quick start uses two setup calls:
+
+- `AnthropicAdapter(...)` configures Claude through the Anthropic API: model, Anthropic API key, prompts, custom tools, feature flags, and token limits. The [Configuration Reference](#configuration-reference) below covers these parameters.
+- `Agent.create(...)` connects that configured adapter to Thenvoi. Use it for the Thenvoi agent identity, Thenvoi API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
+
+`api_key` appears in both places, but it means different things:
+
+| Put it here | Value |
+|-------------|-------|
+| `AnthropicAdapter(api_key=...)` | Anthropic API key. Optional when `ANTHROPIC_API_KEY` is set. |
+| `Agent.create(api_key=...)` | Thenvoi platform API key. Required unless you load it from config. |
+
+Common `Agent.create(...)` parameters:
+
+| Parameter | Use it for |
+|-----------|------------|
+| `adapter` | The configured `AnthropicAdapter` instance. |
+| `agent_id` | The Thenvoi agent UUID to run as. |
+| `api_key` | The Thenvoi platform API key. |
+| `ws_url` | Thenvoi WebSocket URL. Omit it to use the hosted default. |
+| `rest_url` | Thenvoi REST API URL. Omit it to use the hosted default. |
+| `config` | Advanced Thenvoi runtime options. Most agents do not need it. |
+| `session_config` | Advanced session lifecycle behavior. |
+| `contact_config` | How incoming contact requests and contact updates are handled. |
+| `on_participant_added` / `on_participant_removed` | Optional callbacks for room membership changes. |
+| `preprocessor` | Optional event filter or transformer before messages reach the adapter. |
+
+## How It Works
+
+When a message arrives in a Thenvoi room, the adapter gives Claude the conversation context in Anthropic message and tool-block format. It also builds a system prompt from Thenvoi's collaboration instructions plus your custom instructions.
+
+Claude receives Thenvoi collaboration tools such as `thenvoi_send_message`, `thenvoi_lookup_peers`, `thenvoi_add_participant`, `thenvoi_create_chatroom`, and any opt-in memory/contact tools. Claude must use `thenvoi_send_message` to post a reply to the room. If Claude ends with plain text instead of a Thenvoi tool call, that text is kept in the adapter's in-memory conversation history but is not posted to the room.
+
+Tool calls run in a loop: Claude asks for a tool, the adapter executes it, the result goes back to Claude, and the loop continues until Claude returns a non-tool-use response. Responses are not streamed.
+
+Each room has its own in-memory Anthropic conversation history. Restarting the process clears that adapter-local history, though Thenvoi room history can still be hydrated by the platform.
+
 ## Configuration Reference
+
+This section covers `AnthropicAdapter(...)` constructor parameters. Pass these directly to `AnthropicAdapter(...)`, not to `Agent.create(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | `str` | `"claude-sonnet-4-5-20250929"` | Anthropic model ID. |
-| `api_key` | `str \| None` | `None` | Anthropic API key. Falls back to `ANTHROPIC_API_KEY` env var. |
-| `prompt` | `str \| None` | `None` | Custom instructions appended to the SDK's base prompt. |
-| `system_prompt` | `str \| None` | `None` | Replaces the SDK's default system prompt entirely. When set, `prompt` and `include_base_instructions` are bypassed. |
-| `include_base_instructions` | `bool` | `True` | Include the SDK's base collaboration instructions. Only relevant when `system_prompt` is not set. |
-| `max_tokens` | `int` | `4096` | Max tokens per response. |
-| `additional_tools` | `list[CustomToolDef]` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
-| `features` | `AdapterFeatures` | `None` | Capabilities and emit options. |
-| `history_converter` | `AnthropicHistoryConverter` | auto | Override the default history converter. |
+| `api_key` | `str \| None` | `None` | Anthropic API key. When omitted, the Anthropic SDK reads `ANTHROPIC_API_KEY`. |
+| `prompt` | `str \| None` | `None` | Custom instructions appended after Thenvoi's base collaboration instructions. |
+| `system_prompt` | `str \| None` | `None` | Replaces the whole system prompt. When set, `prompt`, `include_base_instructions`, and memory/contact instruction sections are bypassed. Tools are still exposed according to `features`, so include your own Thenvoi tool-use instructions. |
+| `include_base_instructions` | `bool` | `True` | Include Thenvoi's base collaboration instructions. Only used when `system_prompt` is not set. |
+| `max_tokens` | `int` | `4096` | Maximum tokens for each Anthropic response. |
+| `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
+| `features` | `AdapterFeatures \| None` | `None` | Optional Thenvoi feature settings: extra platform-tool capabilities and telemetry emit options. |
+| `history_converter` | `AnthropicHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |
 
-> **Note on `prompt` vs `custom_section`:** This adapter uses `prompt` (not `custom_section`) for custom instructions. The older `custom_section` parameter is deprecated and will be removed.
+## AdapterFeatures: Capabilities and Emit
 
-## Capabilities and Emit
+`AdapterFeatures` is passed to the adapter constructor as `features=AdapterFeatures(...)`. It has two jobs:
 
-| Feature | Supported |
-|---------|-----------|
-| `Capability.CONTACTS` | Yes |
-| `Capability.MEMORY` | Yes |
-| `Emit.EXECUTION` | Yes |
-| `Emit.THOUGHTS` | - |
-| `Emit.TASK_EVENTS` | - |
+- `capabilities` exposes optional Thenvoi tool categories to the model.
+- `emit` controls telemetry events the adapter sends back to Thenvoi.
 
-When `Emit.EXECUTION` is enabled, the adapter sends `tool_call` and `tool_result` events with JSON payloads containing the tool name, args/output, and a `tool_call_id` for linking calls to results.
+For this adapter, all capabilities and emit options are off by default.
+
+| Feature | Supported | What it does |
+|---------|-----------|--------------|
+| `Capability.CONTACTS` | Yes | Exposes contact-management tools to Claude. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
+| `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Thenvoi workspace. |
+| `Emit.EXECUTION` | Yes | Sends `tool_call` and `tool_result` events with tool name, arguments/output, and a `tool_call_id`. |
+| `Emit.THOUGHTS` | No | Not supported by this adapter. |
+| `Emit.TASK_EVENTS` | No | Not supported by this adapter. |
+
+Example:
 
 ```python
 from thenvoi import AdapterFeatures, Capability, Emit
@@ -55,7 +124,7 @@ from thenvoi.adapters import AnthropicAdapter
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
     features=AdapterFeatures(
-        capabilities={Capability.CONTACTS},
+        capabilities={Capability.CONTACTS, Capability.MEMORY},
         emit={Emit.EXECUTION},
     ),
 )
@@ -63,17 +132,26 @@ adapter = AnthropicAdapter(
 
 ## Custom Tools
 
-Uses the Thenvoi custom-tool tuple format — a Pydantic input model plus a callable:
+Use `additional_tools` when you want Claude to call functions from your own application. Each custom tool is a tuple:
+
+- A Pydantic model class that defines the tool input schema.
+- A sync or async callable that receives an instance of that model.
 
 ```python
 from pydantic import BaseModel, Field
 
+from thenvoi.adapters import AnthropicAdapter
+
+
 class WeatherInput(BaseModel):
     """Get current weather for a city."""
+
     city: str = Field(description="City name")
 
+
 def get_weather(args: WeatherInput) -> str:
-    return f"Sunny, 22°C in {args.city}"
+    return f"Sunny, 22 C in {args.city}"
+
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
@@ -81,14 +159,24 @@ adapter = AnthropicAdapter(
 )
 ```
 
+The tool name Claude sees comes from the Pydantic model class, not from the Python function name. The SDK strips a trailing `Input` suffix and lowercases the rest:
+
+| Model class | Tool name |
+|-------------|-----------|
+| `WeatherInput` | `weather` |
+| `CalculatorInput` | `calculator` |
+| `SearchWebInput` | `searchweb` |
+
+Choose model class names that produce unique tool names. Avoid names that collide with another custom tool or a built-in Thenvoi tool such as `thenvoi_send_message`.
+
 ## Examples
 
 See [examples/anthropic/](../../examples/anthropic/) for runnable scripts.
 
-| File | Description |
-|------|-------------|
-| `01_basic_agent.py` | Minimal Anthropic agent |
-| `02_custom_instructions.py` | Custom prompt instructions |
-| `03_tom_agent.py` | Tom agent for multi-agent demo |
-| `04_jerry_agent.py` | Jerry agent for multi-agent demo |
-| `05_contact_management.py` | Contact event handling |
+| File | Start here when you want to... |
+|------|--------------------------------|
+| `01_basic_agent.py` | Run a minimal Claude agent with Thenvoi collaboration tools. |
+| `02_custom_instructions.py` | Add custom instructions with `prompt`. |
+| `03_tom_agent.py` | Run one side of the Tom/Jerry multi-agent collaboration demo. |
+| `04_jerry_agent.py` | Run the other side of the Tom/Jerry demo. |
+| `05_contact_management.py` | Configure contact request handling with `ContactEventConfig`. |

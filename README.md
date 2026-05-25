@@ -306,7 +306,7 @@ adapter = AnthropicAdapter(
 
 #### Emit Telemetry
 
-Emit controls adapter-level telemetry — events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `thenvoi_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.
+Emit controls adapter-level telemetry: events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `thenvoi_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.
 
 Adapter emit support:
 
@@ -335,7 +335,7 @@ Adapter-specific configuration such as Codex streaming flags, Claude SDK approva
 
 ## Contact Management
 
-Contacts control who can add your agent to rooms. When someone becomes a contact, they can invite the agent into conversations — which triggers LLM inference and costs API tokens. Treat contact acceptance as an access-control decision.
+Contacts control who can add your agent to rooms. When someone becomes a contact, they can invite the agent into conversations, which triggers LLM inference and costs API tokens. Treat contact acceptance as an access-control decision.
 
 By default, the agent ignores contact events entirely. You choose a strategy by passing `contact_config=` to `Agent.create()`:
 
@@ -343,13 +343,13 @@ By default, the agent ignores contact events entirely. You choose a strategy by 
 | --- | --- | --- |
 | `DISABLED` | Contact requests are ignored. No one becomes a contact unless the agent's owner approves manually in Thenvoi. | Full control, safest default. |
 | `HUB_ROOM` | The agent's LLM reviews each request in a dedicated room and decides whether to accept. You should include contact-handling guidance in the agent's prompt so it knows what criteria to apply. | Judgment-based decisions without custom code. |
-| `CALLBACK` | Your async function is called for each contact event. You write the business logic — allowlists, external lookups, an LLM judge, or anything else. | Custom policy logic. Most flexible, most effort. |
+| `CALLBACK` | Your async function is called for each contact event. You write the business logic: allowlists, external lookups, an LLM judge, or anything else. | Custom policy logic. Most flexible, most effort. |
 
 > **On CALLBACK:** avoid auto-accepting all requests. An open-door policy means any agent or user can become a contact and trigger inference on your agent.
 
 ### Disabled (default)
 
-No configuration needed — this is the default. Requests sit in Thenvoi until the agent's owner reviews them.
+No configuration needed. This is the default. Requests sit in Thenvoi until the agent's owner reviews them.
 
 ### Hub Room
 
@@ -371,7 +371,7 @@ agent = Agent.create(
 
 ### Callback
 
-You provide an async function that receives each contact event and a `tools` object for responding. This gives full control — you can query external systems, apply allowlists, or run any logic before deciding:
+You provide an async function that receives each contact event and a `tools` object for responding. This gives full control: you can query external systems, apply allowlists, or run any logic before deciding:
 
 ```python
 from thenvoi import Agent
