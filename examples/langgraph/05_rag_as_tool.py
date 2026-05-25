@@ -46,7 +46,6 @@ from standalone_rag import create_rag_graph
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import LangGraphAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.integrations.langgraph import graph_as_tool
 
 setup_logging()
@@ -62,12 +61,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent configuration from agent_config.yaml
-    agent_id, api_key = load_agent_config("rag_agent")
-
-    if agent_id:
-        logger.info("Using existing agent ID from config: %s", agent_id)
 
     logger.info("Step 1: Creating standalone Agentic RAG graph...")
     logger.info("(This may take a moment to load and index blog posts)")
@@ -139,11 +132,9 @@ User: "tell nvidia about reward hacking"
         custom_section=rag_instructions,
     )
 
-    # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "rag_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

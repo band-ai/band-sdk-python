@@ -31,7 +31,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 # Create adapter with LLM and checkpointer
 adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
+    llm=ChatOpenAI(model="gpt-5.4-mini"),
     checkpointer=InMemorySaver(),
 )
 
@@ -83,7 +83,7 @@ def my_custom_tool(query: str) -> str:
     return "result"
 
 adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
+    llm=ChatOpenAI(model="gpt-5.4-mini"),
     checkpointer=InMemorySaver(),
     additional_tools=[my_custom_tool],  # Your tools added here
 )
@@ -125,7 +125,7 @@ adapter = LangGraphAdapter(
 
 ```python
 adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
+    llm=ChatOpenAI(model="gpt-5.4-mini"),
     checkpointer=InMemorySaver(),
     custom_section="You are a pirate assistant. Always respond in pirate speak!",
 )

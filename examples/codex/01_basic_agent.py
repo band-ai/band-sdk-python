@@ -45,7 +45,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
-from thenvoi.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -98,8 +97,6 @@ async def main() -> None:
             sys.exit(1)
 
     agent_key = os.getenv("AGENT_KEY", "darter")
-    agent_id, api_key = load_agent_config(agent_key)
-
     codex_transport = os.getenv("CODEX_TRANSPORT", "stdio")
     if codex_transport not in {"stdio", "ws"}:
         raise ValueError("CODEX_TRANSPORT must be 'stdio' or 'ws'")
@@ -134,10 +131,9 @@ async def main() -> None:
         )
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        agent_key,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
