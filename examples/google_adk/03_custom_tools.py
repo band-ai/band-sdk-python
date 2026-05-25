@@ -57,7 +57,7 @@ class CalculatorInput(BaseModel):
     right: float = Field(description="The second number")
 
 
-def calculator(operation: str, left: float, right: float) -> str:
+def calculator(input: CalculatorInput) -> str:
     """Execute a calculator operation."""
     ops = {
         "add": lambda a, b: a + b,
@@ -65,10 +65,10 @@ def calculator(operation: str, left: float, right: float) -> str:
         "multiply": lambda a, b: a * b,
         "divide": lambda a, b: "Error: division by zero" if b == 0 else a / b,
     }
-    fn = ops.get(operation)
+    fn = ops.get(input.operation)
     if fn is None:
-        return f"Unknown operation '{operation}'. Use: add, subtract, multiply, divide"
-    result = fn(left, right)
+        return f"Unknown operation '{input.operation}'. Use: add, subtract, multiply, divide"
+    result = fn(input.left, input.right)
     return str(result)
 
 
@@ -78,9 +78,9 @@ class WeatherInput(BaseModel):
     city: str = Field(description="Name of the city")
 
 
-def weather(city: str) -> str:
+def weather(input: WeatherInput) -> str:
     """Return mock weather data."""
-    return f"Weather in {city}: Sunny, 22 °C"
+    return f"Weather in {input.city}: Sunny, 22 °C"
 
 
 async def main() -> None:
