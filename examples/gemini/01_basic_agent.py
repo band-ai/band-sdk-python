@@ -26,7 +26,6 @@ import logging
 import os
 import sys
 
-from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -34,26 +33,12 @@ from setup_logging import setup_logging
 
 from thenvoi import Agent
 from thenvoi.adapters import GeminiAdapter
-from thenvoi.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    load_dotenv()
-
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
-
-    if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("gemini_agent")
-
     # Create adapter with Gemini settings
     # Requires GEMINI_API_KEY environment variable or pass api_key explicitly
     adapter = GeminiAdapter(
@@ -62,12 +47,9 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "gemini_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Gemini agent...")

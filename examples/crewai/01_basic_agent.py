@@ -31,7 +31,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import CrewAIAdapter
-from thenvoi.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -47,21 +46,16 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("crewai_agent")
-
     # Create adapter with framework-specific settings
     adapter = CrewAIAdapter(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         custom_section="You are a helpful assistant. Be concise and friendly.",
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "crewai_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
