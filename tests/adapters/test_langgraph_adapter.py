@@ -606,8 +606,66 @@ class TestOnMessage:
             )
 
             messages = captured_inputs[0].get("messages", [])
-            # Should include history messages (system + 2 history + user)
-            assert len(messages) >= 3
+            assert len(messages) == 4
+            assert messages[0] == ("system", adapter._system_prompt)
+            assert messages[1] is history[0]
+            assert messages[1].content == "Previous question"
+            assert messages[2] is history[1]
+            assert messages[2].content == "Previous answer"
+            assert messages[3] == ("user", "[Alice]: Hello, agent!")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_injects_hydrated_own_reply_once(
+        self, sample_message, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """Bootstrap should pass prior own replies through to LangGraph once."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+        )
+        await adapter.on_started("TestBot", "Test bot")
+
+        current_message = PlatformMessage(
+            id=sample_message.id,
+            room_id=sample_message.room_id,
+            content="What word did I ask you to remember?",
+            sender_id=sample_message.sender_id,
+            sender_type=sample_message.sender_type,
+            sender_name=sample_message.sender_name,
+            message_type=sample_message.message_type,
+            metadata=sample_message.metadata,
+            created_at=sample_message.created_at,
+        )
+        history = [
+            HumanMessage(content="[Alice]: Remember papaya"),
+            AIMessage(content="I will remember papaya"),
+        ]
+
+        mock_graph, captured_inputs, _captured_kwargs = make_capture_graph()
+        adapter.graph_factory = MagicMock(return_value=mock_graph)
+
+        with patch(
+            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+        ) as mock_convert:
+            mock_convert.return_value = []
+
+            await adapter.on_message(
+                msg=current_message,
+                tools=mock_tools,
+                history=history,
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        messages = captured_inputs[0]["messages"]
+        assert messages == [
+            ("system", adapter._system_prompt),
+            history[0],
+            history[1],
+            ("user", "[Alice]: What word did I ask you to remember?"),
+        ]
 
     @pytest.mark.asyncio
     async def test_injects_participants_message(

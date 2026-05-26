@@ -30,7 +30,8 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
 
     Handles:
     - tool_call + tool_result pairing with tool_call_id extraction
-    - Skipping this agent's redundant text messages
+    - Preserving this agent's visible text replies for restart hydration
+    - Skipping own text only while a tool call is open, preserving LangChain ordering
     - Including other agents' messages as HumanMessage
     - User messages as HumanMessage
     """
@@ -40,9 +41,11 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with tool calls). Messages from other
-                       agents are included as HumanMessage.
+            agent_name: Name of this agent. Visible text messages from this agent
+                       are included as AIMessage for restart hydration, except
+                       while a tool call is open because LangChain requires the
+                       tool-call AIMessage to be followed by its ToolMessage.
+                       Messages from other agents are included as HumanMessage.
         """
         self._agent_name = agent_name
 
@@ -59,9 +62,6 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
         """Convert platform history to LangChain messages."""
         messages: LangChainMessages = []
         pending_tool_calls: list[dict[str, Any]] = []
-        has_tool_events = any(
-            hist.get("message_type") in {"tool_call", "tool_result"} for hist in raw
-        )
 
         for hist in raw:
             message_type = hist.get("message_type", "text")
@@ -131,9 +131,12 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
 
             elif message_type == "text":
                 if role == "assistant" and sender_name == self._agent_name:
-                    if has_tool_events:
-                        # Skip only THIS agent's text when tool events reconstruct it.
-                        logger.debug("Skipping own message: %s", content[:50])
+                    if pending_tool_calls:
+                        # Text while a tool call is open would interrupt the
+                        # required AIMessage(tool_calls) -> ToolMessage pairing.
+                        logger.debug(
+                            "Skipping own message in tool segment: %s", content[:50]
+                        )
                     else:
                         messages.append(AIMessage(content=content))
                 else:

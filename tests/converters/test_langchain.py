@@ -429,7 +429,7 @@ class TestMixedHistory:
         assert isinstance(result[2], HumanMessage)
         assert result[2].content == "[Alice]: What word did I ask you to remember?"
 
-    def test_skips_own_agent_text_when_tool_events_exist(self):
+    def test_skips_own_agent_text_while_tool_call_is_open(self):
         converter = LangChainHistoryConverter(agent_name="Agent")
         raw = [
             {
@@ -478,6 +478,88 @@ class TestMixedHistory:
         assert result[1].tool_calls[0]["name"] == "search"
         assert isinstance(result[2], ToolMessage)
 
+    def test_preserves_own_visible_text_outside_active_tool_segments(self):
+        converter = LangChainHistoryConverter(agent_name="Agent")
+        raw = [
+            {
+                "role": "user",
+                "content": "Remember the word papaya.",
+                "sender_name": "Alice",
+                "message_type": "text",
+            },
+            {
+                "role": "assistant",
+                "content": "I will remember papaya.",
+                "sender_name": "Agent",
+                "message_type": "text",
+            },
+            {
+                "role": "user",
+                "content": "Search for Python tutorials",
+                "sender_name": "Alice",
+                "message_type": "text",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "search",
+                        "run_id": "run-1",
+                        "data": {"input": {"query": "Python tutorials"}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": "I am searching now.",
+                "sender_name": "Agent",
+                "message_type": "text",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_end",
+                        "name": "search",
+                        "run_id": "run-1",
+                        "data": {"output": "Found results tool_call_id='call_search'"},
+                    }
+                ),
+                "message_type": "tool_result",
+            },
+            {
+                "role": "assistant",
+                "content": "I found Python tutorials for you.",
+                "sender_name": "Agent",
+                "message_type": "text",
+            },
+            {
+                "role": "user",
+                "content": "What word did I ask you to remember?",
+                "sender_name": "Alice",
+                "message_type": "text",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert len(result) == 7
+        assert isinstance(result[0], HumanMessage)
+        assert result[0].content == "[Alice]: Remember the word papaya."
+        assert isinstance(result[1], AIMessage)
+        assert result[1].content == "I will remember papaya."
+        assert isinstance(result[2], HumanMessage)
+        assert result[2].content == "[Alice]: Search for Python tutorials"
+        assert isinstance(result[3], AIMessage)
+        assert result[3].tool_calls[0]["name"] == "search"
+        assert isinstance(result[4], ToolMessage)
+        assert isinstance(result[5], AIMessage)
+        assert result[5].content == "I found Python tutorials for you."
+        assert isinstance(result[6], HumanMessage)
+        assert result[6].content == "[Alice]: What word did I ask you to remember?"
+
     def test_full_conversation_flow(self):
         """Should handle a realistic conversation with all message types."""
         converter = LangChainHistoryConverter(agent_name="Agent")
@@ -516,7 +598,7 @@ class TestMixedHistory:
                 ),
                 "message_type": "tool_result",
             },
-            # Agent responds (text - should be skipped because sender matches agent_name)
+            # Agent's visible answer after the tool result should be preserved.
             {
                 "role": "assistant",
                 "content": "I found 5 Python tutorials for you.",
@@ -534,9 +616,9 @@ class TestMixedHistory:
 
         result = converter.convert(raw)
 
-        # Should have: HumanMessage, AIMessage with tool_calls, ToolMessage, HumanMessage
-        # (agent's own text is skipped because sender_name == agent_name)
-        assert len(result) == 4
+        # Should have: HumanMessage, AIMessage with tool_calls, ToolMessage,
+        # visible AIMessage answer, HumanMessage.
+        assert len(result) == 5
 
         assert isinstance(result[0], HumanMessage)
         assert result[0].content == "[Alice]: Search for Python tutorials"
@@ -546,8 +628,11 @@ class TestMixedHistory:
 
         assert isinstance(result[2], ToolMessage)
 
-        assert isinstance(result[3], HumanMessage)
-        assert result[3].content == "[Alice]: Thanks!"
+        assert isinstance(result[3], AIMessage)
+        assert result[3].content == "I found 5 Python tutorials for you."
+
+        assert isinstance(result[4], HumanMessage)
+        assert result[4].content == "[Alice]: Thanks!"
 
     def test_multi_agent_conversation_flow(self):
         """Should include other agents' messages in multi-agent conversations."""
