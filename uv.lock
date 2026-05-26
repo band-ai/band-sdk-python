@@ -8165,7 +8165,7 @@ wheels = [
 
 [[package]]
 name = "thenvoi-sdk"
-version = "0.2.10"
+version = "0.2.9"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -8189,7 +8189,6 @@ a2a-gateway-demo = [
     { name = "a2a-sdk" },
     { name = "click", version = "8.1.8", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-11-thenvoi-sdk-crewai' or extra == 'extra-11-thenvoi-sdk-dev'" },
     { name = "click", version = "8.3.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra != 'extra-11-thenvoi-sdk-crewai' and extra != 'extra-11-thenvoi-sdk-dev')" },
-    { name = "langchain" },
     { name = "langchain-openai" },
     { name = "langgraph" },
     { name = "starlette" },
@@ -8351,7 +8350,6 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'dev-parlant'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'opencode'", specifier = ">=0.24.0" },
-    { name = "langchain", marker = "extra == 'a2a-gateway-demo'", specifier = ">=1.0.0" },
     { name = "langchain", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "langchain", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
     { name = "langchain-anthropic", marker = "extra == 'dev'", specifier = ">=0.3.0" },

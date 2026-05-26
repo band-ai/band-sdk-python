@@ -14,7 +14,7 @@ from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import InjectedToolArg, tool
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 
 try:
@@ -146,24 +146,19 @@ Always be helpful and provide clear responses to the user."""
         else:
             peers_list = "(Peers will be discovered dynamically from the gateway)"
 
-        system_prompt = "\n\n".join(
-            [
-                self.SYSTEM_INSTRUCTION.format(peers_list=peers_list),
-                self.FORMAT_INSTRUCTION,
-            ]
-        )
+        system_prompt = self.SYSTEM_INSTRUCTION.format(peers_list=peers_list)
 
         # Create LangGraph agent
         self.model = ChatOpenAI(model=model)
         self.memory = MemorySaver()
         self.tools = [call_peer_agent]
 
-        self.graph = create_agent(
+        self.graph = create_react_agent(
             self.model,
             tools=self.tools,
             checkpointer=self.memory,
-            system_prompt=system_prompt,
-            response_format=ResponseFormat,
+            prompt=system_prompt,
+            response_format=(self.FORMAT_INSTRUCTION, ResponseFormat),
         )
 
     async def stream(

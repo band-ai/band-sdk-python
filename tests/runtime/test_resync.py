@@ -70,9 +70,9 @@ def mock_link():
     api_response.metadata.total_pages = None
     link.rest.agent_api_chats.list_agent_chats = AsyncMock(return_value=api_response)
 
-    link.mark_processing = AsyncMock(return_value=True)
-    link.mark_processed = AsyncMock(return_value=True)
-    link.mark_failed = AsyncMock(return_value=True)
+    link.mark_processing = AsyncMock()
+    link.mark_processed = AsyncMock()
+    link.mark_failed = AsyncMock()
     link.get_next_message = AsyncMock(return_value=None)
     link.get_stale_processing_messages = AsyncMock(return_value=[])
 

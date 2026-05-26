@@ -226,11 +226,6 @@ class ExecutionContext:
         self._processed_ids: OrderedDict[str, bool] = OrderedDict()
         self._max_processed_ids: int = 500
 
-        # Local in-flight guard shared by /next and WebSocket processing.
-        # This prevents the same message ID from executing twice before the
-        # durable processed status becomes visible to both paths.
-        self._inflight_message_ids: set[str] = set()
-
         # Crash recovery: sync point marker and retry tracking
         self._first_ws_msg_id: str | None = None  # First WS message = sync point
         self._retry_tracker = MessageRetryTracker(
@@ -291,73 +286,6 @@ class ExecutionContext:
         """Mark that system prompt has been sent to LLM."""
         self._llm_initialized = True
         logger.debug("ExecutionContext %s: LLM initialized", self.room_id)
-
-    def _metadata_to_dict(self, metadata: Any) -> dict[str, Any]:
-        """Normalize platform metadata from dict or Pydantic models."""
-        if isinstance(metadata, dict):
-            return metadata
-
-        model_dump = getattr(metadata, "model_dump", None)
-        if callable(model_dump):
-            dumped = model_dump()
-            return dumped if isinstance(dumped, dict) else {}
-
-        return {}
-
-    def _delivery_status_for_agent(self, metadata: Any) -> str | None:
-        """Return this agent's delivery status from message metadata."""
-        if not self._agent_id:
-            return None
-
-        metadata_dict = self._metadata_to_dict(metadata)
-        delivery_status = metadata_dict.get("delivery_status")
-        if not isinstance(delivery_status, dict):
-            return None
-
-        agent_status = delivery_status.get(self._agent_id)
-        if not isinstance(agent_status, dict):
-            return None
-
-        status = agent_status.get("status")
-        return status if isinstance(status, str) else None
-
-    def _context_message_metadata(self, message_id: str) -> dict[str, Any] | None:
-        """Return metadata for a hydrated context message by ID."""
-        if not self._context_cache:
-            return None
-
-        for message in self._context_cache.messages:
-            if message.get("id") == message_id:
-                metadata = self._metadata_to_dict(message.get("metadata"))
-                return metadata
-
-        return None
-
-    def _message_processed_for_agent(self, message_id: str, metadata: Any) -> bool:
-        """Check whether platform metadata says this agent processed a message."""
-        if self._delivery_status_for_agent(metadata) == "processed":
-            return True
-
-        context_metadata = self._context_message_metadata(message_id)
-        return self._delivery_status_for_agent(context_metadata) == "processed"
-
-    def _remember_processed_message(self, message_id: str) -> None:
-        """Track a processed message ID in the local LRU dedupe cache."""
-        self._processed_ids[message_id] = True
-        self._processed_ids.move_to_end(message_id)
-        if len(self._processed_ids) > self._max_processed_ids:
-            self._processed_ids.popitem(last=False)
-
-    def _try_claim_local_message(self, message_id: str) -> bool:
-        """Claim a message ID for local processing before hydration/status writes."""
-        if message_id in self._inflight_message_ids:
-            return False
-        self._inflight_message_ids.add(message_id)
-        return True
-
-    def _release_local_message(self, message_id: str) -> None:
-        """Release a local in-flight message claim."""
-        self._inflight_message_ids.discard(message_id)
 
     # --- Execution protocol implementation ---
 
@@ -1081,41 +1009,20 @@ class ExecutionContext:
             logger.debug("Skipping duplicate backlog message: %s", msg_id)
             return
 
-        if not self._try_claim_local_message(msg_id):
-            logger.debug("Skipping already in-flight backlog message: %s", msg_id)
+        # Track attempts - check if exceeded BEFORE processing
+        attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
+        if exceeded:
+            logger.warning(
+                "Message %s exceeded max retries (%s attempts)", msg_id, attempts
+            )
             return
 
         self._set_state("processing")
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
 
         try:
-            if self._delivery_status_for_agent(msg.metadata) == "processed":
-                logger.info(
-                    "Skipping stale /next message %s in room %s because it is already processed",
-                    msg_id,
-                    self.room_id,
-                )
-                self._remember_processed_message(msg_id)
-                return
-
-            # Track attempts - check if exceeded BEFORE processing
-            attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
-            if exceeded:
-                logger.warning(
-                    "Message %s exceeded max retries (%s attempts)", msg_id, attempts
-                )
-                return
-
-            # Mark as processing on server BEFORE we start. If this fails, do not
-            # invoke the adapter; otherwise the platform will keep returning the
-            # same message and the agent may replay side effects.
-            if not await self.link.mark_processing(self.room_id, msg_id):
-                logger.warning(
-                    "ExecutionContext %s: Could not claim backlog message %s",
-                    self.room_id,
-                    msg_id,
-                )
-                return
+            # Mark as processing on server BEFORE we start
+            await self.link.mark_processing(self.room_id, msg_id)
 
             # Hydrate context on first message (loads participants always,
             # history only if enable_context_hydration is True)
@@ -1129,7 +1036,7 @@ class ExecutionContext:
             )
 
             # Normalize metadata.mentions to include username field
-            metadata = self._metadata_to_dict(msg.metadata).copy()
+            metadata = msg.metadata.copy() if msg.metadata else {}
             if "mentions" in metadata:
                 normalized_mentions = []
                 for mention in metadata.get("mentions", []):
@@ -1171,17 +1078,14 @@ class ExecutionContext:
             await self._on_execute(self, event)
 
             # SUCCESS: Mark as processed on server
-            durable_processed = await self.link.mark_processed(self.room_id, msg_id)
-            if durable_processed:
-                self._retry_tracker.mark_success(msg_id)
-            else:
-                logger.warning(
-                    "ExecutionContext %s: Local execution completed but durable processed mark failed for backlog message %s",
-                    self.room_id,
-                    msg_id,
-                )
+            await self.link.mark_processed(self.room_id, msg_id)
+            self._retry_tracker.mark_success(msg_id)
 
-            self._remember_processed_message(msg_id)
+            # Track in dedupe cache
+            self._processed_ids[msg_id] = True
+            if len(self._processed_ids) > self._max_processed_ids:
+                self._processed_ids.popitem(last=False)
+
             logger.debug("Message %s processed successfully", msg_id)
 
         except Exception as e:
@@ -1189,15 +1093,9 @@ class ExecutionContext:
             logger.error(
                 "Error processing backlog message %s: %s", msg_id, e, exc_info=True
             )
-            if not await self.link.mark_failed(self.room_id, msg_id, _error_label(e)):
-                logger.warning(
-                    "ExecutionContext %s: Failed to mark backlog message %s as failed",
-                    self.room_id,
-                    msg_id,
-                )
+            await self.link.mark_failed(self.room_id, msg_id, _error_label(e))
 
         finally:
-            self._release_local_message(msg_id)
             self._set_state("idle")
 
     def _drain_duplicate_from_queue(self, msg_id: str) -> None:
@@ -1252,8 +1150,6 @@ class ExecutionContext:
         payload = event.payload if isinstance(event, MessageEvent) else None
         msg_id = payload.id if payload else None
 
-        claimed_msg_id: str | None = None
-
         # For messages: check if we should skip
         if isinstance(event, MessageEvent) and msg_id and payload:
             # Skip messages from self (agent's own messages) to avoid infinite loops
@@ -1288,40 +1184,6 @@ class ExecutionContext:
                     logger.debug("Skipping duplicate message %s", msg_id)
                     return
 
-                if not self._try_claim_local_message(msg_id):
-                    logger.debug("Skipping already in-flight message %s", msg_id)
-                    return
-                claimed_msg_id = msg_id
-
-                if self._message_processed_for_agent(msg_id, payload.metadata):
-                    logger.info(
-                        "Skipping processed replay message %s in room %s",
-                        msg_id,
-                        self.room_id,
-                    )
-                    self._remember_processed_message(msg_id)
-                    self._release_local_message(msg_id)
-                    return
-
-        self._set_state("processing")
-        logger.debug("Processing %s in room %s", event.type, self.room_id)
-
-        try:
-            # Hydrate before claiming real WebSocket messages when payload
-            # metadata did not prove they were already processed. Hydrated
-            # context may contain the durable delivery status for replayed events.
-            if isinstance(event, MessageEvent) and msg_id and payload:
-                if not self._context_hydrated:
-                    await self._ensure_fresh_context()
-                if self._message_processed_for_agent(msg_id, payload.metadata):
-                    logger.info(
-                        "Skipping processed replay message %s in room %s after hydration",
-                        msg_id,
-                        self.room_id,
-                    )
-                    self._remember_processed_message(msg_id)
-                    return
-
                 # Track attempts
                 attempts, exceeded = self._retry_tracker.record_attempt(msg_id)
                 if exceeded:
@@ -1332,14 +1194,13 @@ class ExecutionContext:
                     )
                     return
 
-                # For messages: mark as processing on server
-                if not await self.link.mark_processing(self.room_id, msg_id):
-                    logger.warning(
-                        "ExecutionContext %s: Could not claim message %s",
-                        self.room_id,
-                        msg_id,
-                    )
-                    return
+        self._set_state("processing")
+        logger.debug("Processing %s in room %s", event.type, self.room_id)
+
+        try:
+            # For messages: mark as processing on server
+            if isinstance(event, MessageEvent) and msg_id:
+                await self.link.mark_processing(self.room_id, msg_id)
 
             # Hydrate context on first event (loads participants always,
             # history only if enable_context_hydration is True)
@@ -1358,17 +1219,13 @@ class ExecutionContext:
 
             # For messages: mark as processed on server
             if isinstance(event, MessageEvent) and msg_id:
-                durable_processed = await self.link.mark_processed(self.room_id, msg_id)
-                if durable_processed:
-                    self._retry_tracker.mark_success(msg_id)
-                else:
-                    logger.warning(
-                        "ExecutionContext %s: Local execution completed but durable processed mark failed for message %s",
-                        self.room_id,
-                        msg_id,
-                    )
+                await self.link.mark_processed(self.room_id, msg_id)
+                self._retry_tracker.mark_success(msg_id)
 
-                self._remember_processed_message(msg_id)
+                # Track in dedupe cache
+                self._processed_ids[msg_id] = True
+                if len(self._processed_ids) > self._max_processed_ids:
+                    self._processed_ids.popitem(last=False)
 
             logger.debug("Event %s processed successfully", event.type)
 
@@ -1376,16 +1233,7 @@ class ExecutionContext:
             logger.exception("Error processing %s: %s", event.type, e)
             # For messages: mark as failed on server
             if isinstance(event, MessageEvent) and msg_id:
-                if not await self.link.mark_failed(
-                    self.room_id, msg_id, _error_label(e)
-                ):
-                    logger.warning(
-                        "ExecutionContext %s: Failed to mark message %s as failed",
-                        self.room_id,
-                        msg_id,
-                    )
+                await self.link.mark_failed(self.room_id, msg_id, _error_label(e))
 
         finally:
-            if claimed_msg_id:
-                self._release_local_message(claimed_msg_id)
             self._set_state("idle")

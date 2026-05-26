@@ -9,7 +9,7 @@ Tests cover:
 """
 
 from thenvoi.core.types import AdapterFeatures, Capability
-from thenvoi.runtime.prompts import BASE_INSTRUCTIONS, TEMPLATES, render_system_prompt
+from thenvoi.runtime.prompts import BASE_INSTRUCTIONS, render_system_prompt
 
 
 class TestRenderSystemPromptDefaults:
@@ -36,17 +36,14 @@ class TestRenderSystemPromptDefaults:
         assert "A helpful assistant" in prompt
 
     def test_includes_custom_section(self):
-        """Custom section should lead the prompt so persona dominates."""
+        """Should include custom section in Developer Instructions."""
         prompt = render_system_prompt(
             agent_name="TestBot",
             custom_section="Focus on Python programming.",
         )
 
         assert "Focus on Python programming." in prompt
-        # custom_section must precede the agent identity line
-        assert prompt.index("Focus on Python programming.") < prompt.index(
-            "You are TestBot"
-        )
+        assert "## Developer Instructions" in prompt
 
 
 class TestRenderSystemPromptWithoutBaseInstructions:
@@ -86,7 +83,7 @@ class TestRenderSystemPromptWithoutBaseInstructions:
         assert "Custom behavior instructions here." in prompt
 
     def test_minimal_prompt_format(self):
-        """Minimal prompt should have expected format with custom_section leading."""
+        """Minimal prompt should have expected format."""
         prompt = render_system_prompt(
             agent_name="Bot",
             agent_description="helper",
@@ -94,8 +91,8 @@ class TestRenderSystemPromptWithoutBaseInstructions:
             include_base_instructions=False,
         )
 
-        assert prompt.startswith("Be helpful.")
-        assert "You are Bot, helper." in prompt
+        assert prompt.startswith("You are Bot, helper.")
+        assert "Be helpful." in prompt
 
     def test_empty_custom_section_when_disabled(self):
         """Should handle empty custom section gracefully."""
@@ -108,37 +105,6 @@ class TestRenderSystemPromptWithoutBaseInstructions:
 
         assert "Bot" in prompt
         assert "helper" in prompt
-
-
-class TestPromptTemplates:
-    """Test template lookup behavior."""
-
-    def test_uses_named_template_from_public_templates(self):
-        """The public template= argument should affect rendered output."""
-        original = TEMPLATES.get("minimal_test")
-        TEMPLATES["minimal_test"] = "CUSTOM {agent_name}: {custom_section}"
-        try:
-            prompt = render_system_prompt(
-                agent_name="Bot",
-                custom_section="be brief",
-                template="minimal_test",
-            )
-        finally:
-            if original is None:
-                del TEMPLATES["minimal_test"]
-            else:
-                TEMPLATES["minimal_test"] = original
-
-        assert prompt == "CUSTOM Bot: be brief"
-
-    def test_unknown_template_raises(self):
-        """Unknown template names should fail instead of silently no-oping."""
-        try:
-            render_system_prompt(template="missing-template")
-        except ValueError as exc:
-            assert "missing-template" in str(exc)
-        else:
-            raise AssertionError("Expected ValueError for unknown template")
 
 
 class TestBaseInstructionsConstant:

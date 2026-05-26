@@ -446,7 +446,7 @@ class ThenvoiLink:
 
     # --- Message lifecycle (SDK internal operations) ---
 
-    async def mark_processing(self, room_id: str, message_id: str) -> bool:
+    async def mark_processing(self, room_id: str, message_id: str) -> None:
         """
         Mark message as being processed on the server.
 
@@ -461,10 +461,8 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as processing: %s", message_id, e)
-            return False
-        return True
 
-    async def mark_processed(self, room_id: str, message_id: str) -> bool:
+    async def mark_processed(self, room_id: str, message_id: str) -> None:
         """
         Mark message as successfully processed on the server.
 
@@ -479,10 +477,8 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as processed: %s", message_id, e)
-            return False
-        return True
 
-    async def mark_failed(self, room_id: str, message_id: str, error: str) -> bool:
+    async def mark_failed(self, room_id: str, message_id: str, error: str) -> None:
         """
         Mark message as failed on the server.
 
@@ -499,8 +495,6 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as failed: %s", message_id, e)
-            return False
-        return True
 
     async def get_next_message(self, room_id: str) -> PlatformMessage | None:
         """
