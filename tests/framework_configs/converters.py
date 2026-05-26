@@ -55,6 +55,7 @@ class ConverterConfig:
 
     # Behavioral flags
     filters_own_messages: bool = True
+    includes_own_text_without_tool_events: bool = False
     skips_tool_events: bool = False
 
     # How empty/missing sender_name is handled
@@ -155,6 +156,7 @@ def _build_langchain_config() -> ConverterConfig:
         # produces the same "[]: content" as an empty string (brackets_empty).
         missing_sender_behavior=SenderBehavior.BRACKETS_EMPTY,
         output_adapter=LangChainOutputAdapter(),
+        includes_own_text_without_tool_events=True,
     )
 
 
