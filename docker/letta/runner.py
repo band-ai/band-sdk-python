@@ -10,7 +10,7 @@ Environment variables:
     LETTA_BASE_URL             Letta server URL (default: https://api.letta.com)
                                Set to http://localhost:8283 for self-hosted.
     LETTA_API_KEY              Letta API key (required for Cloud, optional for self-hosted)
-    LETTA_MODEL                Model ID (e.g., openai/gpt-4o)
+    LETTA_MODEL                Model ID (e.g., openai/gpt-5.4)
     LETTA_MODE                 Operating mode: per_room or shared (default: per_room)
     LETTA_PROJECT              Letta Cloud project name (optional, ignored for self-hosted)
     MCP_SERVER_URL             thenvoi-mcp server URL (default: http://localhost:8002/sse)
