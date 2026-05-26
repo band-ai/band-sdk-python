@@ -40,7 +40,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import ClaudeSDKAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
@@ -59,9 +58,6 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    # Load credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("claude_sdk_basic")
-
     # Create adapter with Claude SDK settings.  Omitting `model` lets the
     # npm `claude` binary pick its own default (latest installed model).
     adapter = ClaudeSDKAdapter(
@@ -69,17 +65,15 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
     )
 
-    # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "claude_sdk_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting Claude SDK agent...")
-    logger.info("Agent ID: %s", agent_id)
+    logger.info("Agent ID: %s", agent.runtime.agent_id)
     logger.info("Press Ctrl+C to stop")
 
     try:

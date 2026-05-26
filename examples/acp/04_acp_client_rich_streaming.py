@@ -9,14 +9,14 @@
 ACP Client with rich streaming - Thoughts, tool calls, and plans.
 
 This example shows how the ACPClientAdapter handles rich session_update
-chunks from external ACP agents. Beyond plain text, it captures:
+chunks from remote ACP agents. Beyond plain text, it captures:
 
   - Thoughts: Internal reasoning from the agent
   - Tool calls: Tool invocations with name, args, and results
   - Plans: Task plans with status tracking
 
 All rich events are posted back to the Thenvoi platform with full type
-fidelity, so other participants can see exactly what the external agent
+fidelity, so other participants can see exactly what the remote agent
 is doing.
 
 Permission requests from the ACP agent are also posted to the platform
@@ -25,8 +25,8 @@ as visible events (auto-allowed by default).
 Architecture:
     Thenvoi Platform (message arrives in room)
       -> ACPClientAdapter.on_message()
-        -> external ACP prompt/session handling
-          -> External ACP Agent (e.g., Claude Code)
+        -> remote ACP prompt/session handling
+          -> Remote ACP Agent (e.g., Claude Code)
             -> session_update: thought -> tools.send_event("thought")
             -> session_update: tool_call -> tools.send_event("tool_call")
             -> session_update: text -> tools.send_message()
@@ -40,7 +40,7 @@ Prerequisites:
        - ACP_AGENT_COMMAND: Command to spawn
          (default: "npx @zed-industries/codex-acp")
 
-    2. Have the external ACP agent installed and available in PATH
+    2. Have the remote ACP agent installed and available in PATH
 
 Run with:
     uv run examples/acp/04_acp_client_rich_streaming.py
@@ -78,7 +78,7 @@ async def main() -> None:
     # Load agent credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("acp_client_agent")
 
-    # Command to spawn the external ACP agent
+    # Command to spawn the remote ACP agent
     acp_command = shlex.split(
         os.getenv("ACP_AGENT_COMMAND", "npx @zed-industries/codex-acp")
     )
@@ -86,7 +86,7 @@ async def main() -> None:
     # Working directory for ACP sessions
     acp_cwd = os.getenv("ACP_AGENT_CWD", ".")
 
-    # Create adapter pointing to external ACP agent
+    # Create adapter pointing to remote ACP agent
     adapter = ACPClientAdapter(
         command=acp_command,
         cwd=acp_cwd,

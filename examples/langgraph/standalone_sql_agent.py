@@ -56,7 +56,7 @@ def create_sql_agent(db_path: str = "Chinook.db"):
     db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
 
     # Create LLM for the agent
-    llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o"), temperature=0)
+    llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"), temperature=0)
 
     # Create SQL toolkit with database interaction tools
     # This provides: sql_db_list_tables, sql_db_schema, sql_db_query, sql_db_query_checker

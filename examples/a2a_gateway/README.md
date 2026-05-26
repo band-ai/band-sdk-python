@@ -7,14 +7,14 @@ Examples showing how to expose Thenvoi peers as inbound A2A endpoints.
 The gateway is the inbound side of the Thenvoi A2A story.
 
 - the **bridge** connects a remote A2A agent into Thenvoi
-- the **gateway** exposes Thenvoi peers out to external A2A clients
+- the **gateway** exposes Thenvoi peers out to remote A2A clients
 
-An external A2A client can call the gateway, discover Thenvoi peers through AgentCard routes, and send requests that the gateway turns into Thenvoi room activity.
+A remote A2A client can call the gateway, discover Thenvoi peers through AgentCard routes, and send requests that the gateway turns into Thenvoi room activity.
 
 ## Architecture
 
 ```text
-External A2A Client
+Remote A2A Client
         |
         v
    A2A Gateway
@@ -235,7 +235,7 @@ Use `gateway_agent` from `agent_config.yaml`, which is the safest path for onboa
 Use:
 
 - the **bridge** when you want a remote A2A agent to join Thenvoi rooms
-- the **gateway** when you want an external A2A client to talk to Thenvoi peers
+- the **gateway** when you want a remote A2A client to talk to Thenvoi peers
 
 ### Requests work but context does not persist
 
