@@ -1,4 +1,4 @@
-"""Real LangChain agent server using gpt-4o-mini.
+"""Real LangChain agent server using gpt-5.4-mini.
 
 Serves a ``/invoke`` endpoint matching the LangServe format
 and a ``/health`` check for readiness probes.
@@ -38,7 +38,7 @@ def _get_llm() -> ChatOpenAI:
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
-        _llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        _llm = ChatOpenAI(model="gpt-5.4-mini", temperature=0)
     return _llm
 
 

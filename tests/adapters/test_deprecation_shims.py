@@ -81,7 +81,7 @@ class TestUniversalBooleanShims:
 
         with pytest.warns(DeprecationWarning, match="enable_execution_reporting"):
             adapter = PydanticAIAdapter(
-                model="openai:gpt-4o", enable_execution_reporting=True
+                model="openai:gpt-5.4", enable_execution_reporting=True
             )
         assert Emit.EXECUTION in adapter.features.emit
 

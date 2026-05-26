@@ -58,7 +58,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     Example:
         adapter = CrewAIAdapter(
-            model="gpt-4o",
+            model="gpt-5.4",
             role="Research Assistant",
             goal="Help users find and analyze information",
             backstory="Expert researcher with deep knowledge across domains",
@@ -78,7 +78,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     def __init__(
         self,
-        model: str = "gpt-4o",
+        model: str = "gpt-5.4",
         role: str | None = None,
         goal: str | None = None,
         backstory: str | None = None,
@@ -97,7 +97,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         """Initialize the CrewAI adapter.
 
         Args:
-            model: Model name (e.g., "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet").
+            model: Model name (e.g., "gpt-5.4", "gpt-5.4-mini", "claude-3-5-sonnet").
                    API keys are read from environment variables by CrewAI's LLM class.
             role: Agent's role in the crew (e.g., "Research Assistant")
             goal: Agent's primary goal or objective
