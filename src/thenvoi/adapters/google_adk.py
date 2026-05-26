@@ -11,6 +11,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import re
 import uuid
 import warnings
 from typing import ClassVar, TYPE_CHECKING, Any, cast
@@ -422,8 +423,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         ADKAgent, InMemoryRunnerCls, _, _ = _require_adk()
         adk_tools = self._build_adk_tools(tools)
 
+        safe_name = re.sub(r"[^A-Za-z0-9_]", "_", self.agent_name or "thenvoi_agent")
         adk_agent = ADKAgent(
-            name=self.agent_name or "thenvoi_agent",
+            name=safe_name,
             model=self.model,
             instruction=self._system_prompt,
             tools=adk_tools,
