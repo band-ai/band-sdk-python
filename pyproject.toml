@@ -228,11 +228,17 @@ required-environments = [
 # crewai 1.14.3 and parlant >=3.0.0 are fundamentally incompatible:
 #   - parlant <3.1 requires openai <2.0, but crewai 1.14.3 requires openai >=2.0
 #   - parlant >=3.1 requires opentelemetry-sdk >=1.37, but crewai 1.14.3 pins ~=1.34.0
+# crewai 1.14.3 pins pydantic~=2.11.9 (<2.12), but pydantic-ai-slim >=1.61
+# requires pydantic>=2.12. Forking lets each resolve independently.
 # Declaring them as conflicting extras lets uv resolve each in a separate fork.
 conflicts = [
     [
         { extra = "crewai" },
         { extra = "parlant" },
+    ],
+    [
+        { extra = "crewai" },
+        { extra = "pydantic-ai" },
     ],
     [
         { extra = "dev" },
