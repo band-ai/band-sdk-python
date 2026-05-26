@@ -9,6 +9,7 @@ patterns, system prompt rendering, stream event handling, and error handling.
 
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from datetime import datetime, timezone
 from typing import Any
@@ -115,6 +116,12 @@ class TestInitialization:
         assert adapter.graph_factory is not None
         # additional_tools cleared after baking into factory
         assert adapter.additional_tools == []
+
+    def test_simple_pattern_creates_default_checkpointer(self, mock_llm):
+        """The simple path should not silently become stateless."""
+        adapter = LangGraphAdapter(llm=mock_llm)
+
+        assert adapter._simple_checkpointer is not None
 
     def test_advanced_pattern_with_graph_factory(self):
         """Should accept graph_factory for advanced pattern."""
@@ -910,6 +917,33 @@ class TestStreamEventHandling:
         mock_tools.send_event.assert_awaited_once()
         call_kwargs = mock_tools.send_event.call_args.kwargs
         assert call_kwargs["message_type"] == "tool_result"
+        payload = json.loads(call_kwargs["content"])
+        assert payload["is_error"] is False
+
+    @pytest.mark.asyncio
+    async def test_handles_on_tool_error(self, mock_tools, mock_llm, mock_checkpointer):
+        """Failed tools should be visible as error tool_results."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+        )
+
+        event = {
+            "event": "on_tool_error",
+            "name": "thenvoi_send_message",
+            "run_id": "run-123",
+            "data": {"error": "missing mentions"},
+        }
+
+        await adapter._handle_stream_event(event, "room-123", mock_tools)
+
+        mock_tools.send_event.assert_awaited_once()
+        call_kwargs = mock_tools.send_event.call_args.kwargs
+        assert call_kwargs["message_type"] == "tool_result"
+        payload = json.loads(call_kwargs["content"])
+        assert payload["is_error"] is True
+        assert payload["output"] == "missing mentions"
 
     @pytest.mark.asyncio
     async def test_ignores_other_events(self, mock_tools, mock_llm, mock_checkpointer):
@@ -1064,57 +1098,30 @@ class TestOnCleanup:
         assert "room-123" not in adapter._bootstrapped_rooms
 
     @pytest.mark.asyncio
-    async def test_cleanup_clears_checkpointer_thread(self, sample_message, mock_tools):
-        """Cleanup must remove saved graph state before room re-entry.
+    async def test_cleanup_does_not_delete_persistent_checkpointer_state(
+        self, mock_llm, mock_checkpointer
+    ):
+        """Runtime cleanup must not erase user-owned LangGraph persistence."""
+        mock_checkpointer.delete_thread = MagicMock()
+        mock_checkpointer.adelete_thread = AsyncMock()
+        mock_checkpointer.delete_for_runs = MagicMock()
+        mock_checkpointer.adelete_for_runs = AsyncMock()
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+        )
 
-        Otherwise a room_added -> cleanup -> room_added lifecycle replays the
-        hydrated history into the existing checkpointer thread and duplicates
-        SystemMessages, which hard-fails ChatAnthropic.
-        """
-        from langgraph.checkpoint.memory import InMemorySaver
-        from langgraph.graph import END, START, MessagesState, StateGraph
+        adapter._bootstrapped_rooms["room-123"] = None
+        adapter._room_checkpointers["room-123"] = mock_checkpointer
 
-        checkpointer = InMemorySaver()
-        seen_system_counts: list[int] = []
+        await adapter.on_cleanup("room-123")
 
-        def capture_systems(state: MessagesState) -> dict[str, list[Any]]:
-            seen_system_counts.append(
-                sum(isinstance(m, SystemMessage) for m in state["messages"])
-            )
-            return {"messages": []}
-
-        builder = StateGraph(MessagesState)
-        builder.add_node("capture", capture_systems)
-        builder.add_edge(START, "capture")
-        builder.add_edge("capture", END)
-        graph = builder.compile(checkpointer=checkpointer)
-
-        adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
-        await adapter.on_started("TestBot", "Test bot")
-
-        for content in ("first lifecycle", "second lifecycle"):
-            await adapter.on_message(
-                msg=PlatformMessage(
-                    id=f"msg-{content}",
-                    room_id="room-123",
-                    content=content,
-                    sender_id="user-456",
-                    sender_type="User",
-                    sender_name="Alice",
-                    message_type="text",
-                    metadata={},
-                    created_at=datetime.now(timezone.utc),
-                ),
-                tools=mock_tools,
-                history=[HumanMessage(content="hydrated prior turn")],
-                participants_msg=None,
-                contacts_msg=None,
-                is_session_bootstrap=True,
-                room_id="room-123",
-            )
-            await adapter.on_cleanup("room-123")
-
-        assert seen_system_counts == [1, 1]
+        assert "room-123" not in adapter._bootstrapped_rooms
+        assert "room-123" not in adapter._room_checkpointers
+        mock_checkpointer.delete_thread.assert_not_called()
+        mock_checkpointer.adelete_thread.assert_not_awaited()
+        mock_checkpointer.delete_for_runs.assert_not_called()
+        mock_checkpointer.adelete_for_runs.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_restart_with_existing_checkpointer_state_does_not_rehydrate_twice(

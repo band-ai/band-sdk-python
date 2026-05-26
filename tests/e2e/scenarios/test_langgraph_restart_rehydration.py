@@ -2,14 +2,18 @@
 
 Run manually only:
     E2E_TESTS_ENABLED=true LANGGRAPH_RESTART_SMOKE=true uv run pytest \
-        tests/e2e/scenarios/test_langgraph_restart_rehydration.py -v -s --no-cov
+        tests/e2e/scenarios/test_langgraph_restart_rehydration.py -v -s \
+        --log-cli-level=INFO --no-cov
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import pytest
@@ -32,11 +36,45 @@ from thenvoi.client.streaming import MessageCreatedPayload, WebSocketClient
 from tests.e2e.conftest import requires_e2e
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(frozen=True)
 class TemporaryAgent:
     agent_id: str
     api_key: str
     name: str
+
+
+@dataclass(frozen=True)
+class AgentMessageObserver:
+    received: list[MessageCreatedPayload]
+    ready: asyncio.Event
+
+
+@asynccontextmanager
+async def _agent_message_observer(
+    ws: WebSocketClient,
+    room_id: str,
+    agent_id: str,
+) -> AsyncIterator[AgentMessageObserver]:
+    received: list[MessageCreatedPayload] = []
+    ready = asyncio.Event()
+
+    async def on_message(payload: MessageCreatedPayload) -> None:
+        if (
+            payload.sender_type == "Agent"
+            and payload.sender_id == agent_id
+            and payload.message_type == "text"
+        ):
+            received.append(payload)
+            ready.set()
+
+    await ws.join_chat_room_channel(room_id, on_message)
+    try:
+        yield AgentMessageObserver(received=received, ready=ready)
+    finally:
+        await ws.leave_chat_room_channel(room_id)
 
 
 def _require_env(name: str) -> str:
@@ -106,61 +144,22 @@ async def _send_user_message(
     return response.data.id
 
 
-async def _observe_agent_messages(
-    ws: WebSocketClient,
-    room_id: str,
-    agent_id: str,
+async def _wait_for_agent_messages(
+    observer: AgentMessageObserver,
     *,
     min_messages: int,
     timeout: float,
     quiet_after_first: float = 0,
 ) -> list[MessageCreatedPayload]:
-    received: list[MessageCreatedPayload] = []
-    event = asyncio.Event()
+    while len(observer.received) < min_messages:
+        observer.ready.clear()
+        if len(observer.received) >= min_messages:
+            break
+        await asyncio.wait_for(observer.ready.wait(), timeout=timeout)
 
-    async def on_message(payload: MessageCreatedPayload) -> None:
-        if (
-            payload.sender_type == "Agent"
-            and payload.sender_id == agent_id
-            and payload.message_type == "text"
-        ):
-            received.append(payload)
-            if len(received) >= min_messages:
-                event.set()
-
-    await ws.join_chat_room_channel(room_id, on_message)
-    try:
-        await asyncio.wait_for(event.wait(), timeout=timeout)
-        if quiet_after_first:
-            await asyncio.sleep(quiet_after_first)
-        return list(received)
-    finally:
-        await ws.leave_chat_room_channel(room_id)
-
-
-async def _observe_quiet_period(
-    ws: WebSocketClient,
-    room_id: str,
-    agent_id: str,
-    *,
-    duration: float,
-) -> list[MessageCreatedPayload]:
-    received: list[MessageCreatedPayload] = []
-
-    async def on_message(payload: MessageCreatedPayload) -> None:
-        if (
-            payload.sender_type == "Agent"
-            and payload.sender_id == agent_id
-            and payload.message_type == "text"
-        ):
-            received.append(payload)
-
-    await ws.join_chat_room_channel(room_id, on_message)
-    try:
-        await asyncio.sleep(duration)
-        return list(received)
-    finally:
-        await ws.leave_chat_room_channel(room_id)
+    if quiet_after_first:
+        await asyncio.sleep(quiet_after_first)
+    return list(observer.received)
 
 
 @pytest.mark.asyncio
@@ -200,24 +199,22 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
                 rest_url=base_url,
             )
             async with first_agent:
-                first_wait = asyncio.create_task(
-                    _observe_agent_messages(
-                        ws,
+                async with _agent_message_observer(
+                    ws, room_id, agent.agent_id
+                ) as observer:
+                    await _send_user_message(
+                        user_client,
                         room_id,
-                        agent.agent_id,
+                        agent,
+                        f"Remember this nonce: {nonce}. Reply that you will remember it.",
+                    )
+                    first_responses = await _wait_for_agent_messages(
+                        observer,
                         min_messages=1,
                         timeout=45,
                     )
-                )
-                await _send_user_message(
-                    user_client,
-                    room_id,
-                    agent,
-                    f"Remember this nonce: {nonce}. Reply that you will remember it.",
-                )
-                first_responses = await first_wait
-                assert len(first_responses) == 1
-                assert nonce.lower() in first_responses[0].content.lower()
+                    assert len(first_responses) == 1
+                    assert nonce.lower() in first_responses[0].content.lower()
 
             down_message_id = await _send_user_message(
                 user_client,
@@ -226,54 +223,46 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
                 "What nonce did I ask you to remember? Reply with just the nonce.",
             )
 
-            restart_wait = asyncio.create_task(
-                _observe_agent_messages(
-                    ws,
-                    room_id,
-                    agent.agent_id,
-                    min_messages=1,
-                    timeout=60,
-                    quiet_after_first=12,
+            async with _agent_message_observer(ws, room_id, agent.agent_id) as observer:
+                restarted_agent = Agent.create(
+                    adapter=_make_adapter(),
+                    agent_id=agent.agent_id,
+                    api_key=agent.api_key,
+                    ws_url=ws_url,
+                    rest_url=base_url,
                 )
-            )
-            restarted_agent = Agent.create(
-                adapter=_make_adapter(),
-                agent_id=agent.agent_id,
-                api_key=agent.api_key,
-                ws_url=ws_url,
-                rest_url=base_url,
-            )
-            async with restarted_agent:
-                restart_responses = await restart_wait
+                async with restarted_agent:
+                    restart_responses = await _wait_for_agent_messages(
+                        observer,
+                        min_messages=1,
+                        timeout=60,
+                        quiet_after_first=12,
+                    )
 
             restart_contents = [r.content for r in restart_responses]
             assert len(restart_responses) == 1, restart_contents
             assert nonce.lower() in restart_responses[0].content.lower()
 
-            quiet_wait = asyncio.create_task(
-                _observe_quiet_period(
-                    ws,
-                    room_id,
-                    agent.agent_id,
-                    duration=10,
+            async with _agent_message_observer(ws, room_id, agent.agent_id) as observer:
+                second_restart_agent = Agent.create(
+                    adapter=_make_adapter(),
+                    agent_id=agent.agent_id,
+                    api_key=agent.api_key,
+                    ws_url=ws_url,
+                    rest_url=base_url,
                 )
-            )
-            second_restart_agent = Agent.create(
-                adapter=_make_adapter(),
-                agent_id=agent.agent_id,
-                api_key=agent.api_key,
-                ws_url=ws_url,
-                rest_url=base_url,
-            )
-            async with second_restart_agent:
-                quiet_responses = await quiet_wait
+                async with second_restart_agent:
+                    await asyncio.sleep(10)
+                    quiet_responses = list(observer.received)
 
             assert quiet_responses == []
-            print(
+            logger.info(
                 "RESULT langgraph_restart_rehydration=PASS "
-                f"down_message_id={down_message_id} nonce_prefix={nonce[:18]}"
+                "down_message_id=%s nonce_prefix=%s",
+                down_message_id,
+                nonce[:18],
             )
-            print(
+            logger.info(
                 "ASSERTIONS no_replay_burst=True "
                 "pending_down_message_answered_once=True "
                 "recalled_pre_restart_context=True "
@@ -287,4 +276,4 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
                     force=True,
                 )
             except Exception:
-                pass
+                logger.exception("Failed to delete temporary LangGraph smoke agent")

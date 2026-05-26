@@ -160,7 +160,7 @@ All LangGraph agents automatically have access to:
 
 Contact tools are available when `Capability.CONTACTS` is enabled. Memory tools are available when `Capability.MEMORY` is enabled.
 
-All tools automatically know which room they're operating in through the LangGraph `thread_id`; do not pass room IDs manually.
+All tools automatically know which room they're operating in through the LangGraph `thread_id`; do not pass room IDs manually. Use `thenvoi_send_message` when another participant should be woken up, and include the participant in `mentions`. Use `thenvoi_send_event` for non-waking telemetry such as thoughts, task status, or errors.
 
 ---
 

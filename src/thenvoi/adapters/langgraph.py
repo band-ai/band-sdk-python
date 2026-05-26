@@ -136,6 +136,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # forward, matching the pattern used by every other Band adapter.
         if uses_simple_pattern:
             from langchain.agents import create_agent
+            from langgraph.checkpoint.memory import InMemorySaver
+
+            if checkpointer is None:
+                checkpointer = InMemorySaver()
 
             additional = additional_tools or []
 
@@ -376,19 +380,20 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             except Exception as e:
                 logger.warning("Failed to send tool_call event: %s", e)
 
-        elif event_type == "on_tool_end":
+        elif event_type in {"on_tool_end", "on_tool_error"}:
             if Emit.EXECUTION not in self.features.emit:
                 return
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            is_error = event_type == "on_tool_error" or bool(data.get("error"))
             payload = {
                 "name": tool_name,
-                "output": data.get("output", ""),
+                "output": data.get("error") or data.get("output", ""),
                 "tool_call_id": event.get("run_id", "unknown"),
-                "is_error": False,
+                "is_error": is_error,
             }
-            logger.info("[STREAM] on_tool_end: %s", tool_name)
+            logger.info("[STREAM] %s: %s", event_type, tool_name)
             try:
                 await tools.send_event(
                     content=json.dumps(payload, default=str),
@@ -398,27 +403,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 logger.warning("Failed to send tool_result event: %s", e)
 
     async def on_cleanup(self, room_id: str) -> None:
-        """Clean up LangGraph state for a room."""
+        """Clean up process-local LangGraph bookkeeping for a room."""
         self._bootstrapped_rooms.pop(room_id, None)
-        checkpointer = self._room_checkpointers.pop(room_id, None)
-        if checkpointer is None and self._static_graph is not None:
-            checkpointer = getattr(self._static_graph, "checkpointer", None)
-        if checkpointer is None:
-            checkpointer = self._simple_checkpointer
-        if checkpointer is None:
-            return
-
-        config = {"configurable": {"thread_id": room_id}}
-        for method_name, argument in (
-            ("adelete_thread", room_id),
-            ("delete_thread", room_id),
-            ("adelete_for_runs", config),
-            ("delete_for_runs", config),
-        ):
-            method = getattr(checkpointer, method_name, None)
-            if not callable(method):
-                continue
-            result = method(argument)
-            if inspect.isawaitable(result):
-                await result
-            return
+        self._room_checkpointers.pop(room_id, None)
