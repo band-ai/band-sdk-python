@@ -16,13 +16,13 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, Callable
 import asyncio
 import contextlib
-import inspect
 import json
 import os
 import socket
 import uuid
 
 import pytest
+from pydantic import BaseModel
 from thenvoi_rest import AsyncRestClient, ChatRoomRequest
 from thenvoi_rest.types import ParticipantRequest
 
@@ -42,6 +42,18 @@ try:
     HAS_PARLANT = True
 except ImportError:
     HAS_PARLANT = False
+
+
+class NativeEchoInput(BaseModel):
+    """Echo back the validation code provided by the user."""
+
+    code: str
+
+
+def native_echo_handler(args: NativeEchoInput) -> dict:
+    """Custom additional_tool used to exercise the wrapper's real-time emission."""
+    return {"echo": args.code}
+
 
 requires_parlant = pytest.mark.skipif(not HAS_PARLANT, reason="parlant not installed")
 
@@ -165,7 +177,6 @@ class TestParlantE2E:
         Yields a running Agent inside its async context manager.
         """
         from thenvoi.adapters.parlant import ParlantAdapter
-        from thenvoi.integrations.parlant.tools import create_parlant_tools
 
         if not os.getenv("OPENAI_API_KEY"):
             pytest.skip("OPENAI_API_KEY is required for Parlant E2E tests")
@@ -178,30 +189,6 @@ class TestParlantE2E:
         )
         await server.__aenter__()
         try:
-            from parlant.core.tools import ToolContext, ToolResult
-
-            async def native_echo_impl(context, code):
-                """Return the exact validation code provided by the user."""
-                return ToolResult(data={"echo": code})
-
-            native_echo_impl.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
-                parameters=[
-                    inspect.Parameter(
-                        "context",
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                        annotation=ToolContext,
-                    ),
-                    inspect.Parameter(
-                        "code",
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                        annotation=str,
-                    ),
-                ],
-                return_annotation=ToolResult,
-            )
-            native_echo = p.tool(name="native_echo")(native_echo_impl)
-
-            parlant_tools = create_parlant_tools()
             parlant_agent = await server.create_agent(
                 name="E2E Test Agent",
                 description=(
@@ -211,6 +198,9 @@ class TestParlantE2E:
                     "user who sent the message."
                 ),
             )
+            # Steering guidelines only. Band/built-in tools and the custom
+            # `nativeecho` tool are registered by the adapter's contract
+            # guideline via ``create_parlant_tools(additional_tools=...)``.
             await parlant_agent.create_guideline(
                 condition="User asks you to reply with a specific word or phrase",
                 action=(
@@ -218,16 +208,15 @@ class TestParlantE2E:
                     "as content, and set mentions to the user's name or handle. "
                     "Do not address or mention yourself."
                 ),
-                tools=parlant_tools,
             )
             await parlant_agent.create_guideline(
-                condition="User asks for native echo validation",
+                condition="User asks for echo validation with a code",
                 action=(
-                    "Call native_echo with the exact validation code. Then call "
-                    "thenvoi_send_message with content containing the returned echo "
-                    "code, and mention the user, not yourself."
+                    "Call the nativeecho tool with the exact validation code as "
+                    "the `code` argument. Then call thenvoi_send_message with "
+                    "content containing the returned echo code, and mention the "
+                    "user, not yourself."
                 ),
-                tools=[native_echo, *parlant_tools],
             )
 
             adapter = ParlantAdapter(
@@ -235,6 +224,7 @@ class TestParlantE2E:
                 parlant_agent=parlant_agent,
                 custom_section="Keep responses short and concise.",
                 features=AdapterFeatures(emit={Emit.EXECUTION}),
+                additional_tools=[(NativeEchoInput, native_echo_handler)],
             )
 
             agent = Agent.create(
@@ -309,7 +299,7 @@ class TestParlantE2E:
             token in str(_message_value(msg, "content") or "") for msg in received
         )
 
-    async def test_execution_emit_reports_native_parlant_tool(
+    async def test_execution_emit_reports_additional_custom_tool(
         self,
         e2e_config: E2ESettings,
         e2e_parlant_room: tuple[str, str, str],
@@ -318,20 +308,26 @@ class TestParlantE2E:
         running_parlant_agent: Agent,
         api_client: AsyncRestClient,
     ):
-        """Verify Emit.EXECUTION reports native Parlant tools, not only SDK wrappers."""
+        """Emit.EXECUTION reports adapter-registered tools (built-ins + additional_tools)
+        in real time, with tool_call ordered before tool_result and before the reply.
+
+        Raw Parlant tools attached directly to a guideline outside additional_tools
+        are intentionally not reported by the wrapper-based path.
+        """
         chat_id, _user_id, _user_name = e2e_parlant_room
         agent_id, agent_name = e2e_agent_info
         code = f"NATIVE-{uuid.uuid4().hex[:8]}"
 
         def has_expected_messages(messages) -> bool:
-            has_native_tool_call = any(
+            has_tool_call = any(
                 _message_value(msg, "message_type") == "tool_call"
-                and "native_echo" in str(_message_value(msg, "content") or "")
+                and "nativeecho" in str(_message_value(msg, "content") or "")
                 and code in str(_message_value(msg, "content") or "")
                 for msg in messages
             )
-            has_native_tool_result = any(
+            has_tool_result = any(
                 _message_value(msg, "message_type") == "tool_result"
+                and "nativeecho" in str(_message_value(msg, "content") or "")
                 and code in str(_message_value(msg, "content") or "")
                 for msg in messages
             )
@@ -340,12 +336,12 @@ class TestParlantE2E:
                 and code in str(_message_value(msg, "content") or "")
                 for msg in messages
             )
-            return has_native_tool_call and has_native_tool_result and has_text_reply
+            return has_tool_call and has_tool_result and has_text_reply
 
         await send_trigger_message(
             api_client,
             chat_id,
-            f"Native echo validation: call native_echo with code {code}, then reply to the user with that exact code.",
+            f"Echo validation: call the nativeecho tool with code {code}, then reply to the user with that exact code.",
             agent_name,
             agent_id,
         )
@@ -360,18 +356,22 @@ class TestParlantE2E:
             msg
             for msg in received
             if _message_value(msg, "message_type") == "tool_call"
-            and "native_echo" in str(_message_value(msg, "content") or "")
+            and "nativeecho" in str(_message_value(msg, "content") or "")
             and code in str(_message_value(msg, "content") or "")
         )
         tool_result = next(
             msg
             for msg in received
             if _message_value(msg, "message_type") == "tool_result"
+            and "nativeecho" in str(_message_value(msg, "content") or "")
             and code in str(_message_value(msg, "content") or "")
         )
         call_payload = json.loads(_message_value(tool_call, "content"))
         result_payload = json.loads(_message_value(tool_result, "content"))
-        assert call_payload["name"] == "native_echo"
+        assert call_payload["name"] == "nativeecho"
         assert call_payload["args"]["code"] == code
-        assert result_payload["name"] == "native_echo"
+        assert result_payload["name"] == "nativeecho"
         assert result_payload["output"]["echo"] == code
+        # tool_call and tool_result are correlated by a stable id emitted by the
+        # wrapper around a single execute_custom_tool invocation.
+        assert call_payload["tool_call_id"] == result_payload["tool_call_id"]
