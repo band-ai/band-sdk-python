@@ -13,7 +13,12 @@ The adapter handles tool registration and function-calling loops automatically.
 
 Requires:
     - agent_config.yaml with gemini_agent credentials
-    - GEMINI_API_KEY environment variable
+    - Authentication via one of:
+      - GOOGLE_API_KEY or GEMINI_API_KEY environment variable (Gemini Developer API)
+      - gcloud CLI with Application Default Credentials (Vertex AI):
+          gcloud auth application-default login
+          export GOOGLE_GENAI_USE_VERTEXAI=true
+          export GOOGLE_CLOUD_PROJECT=your-project-id
 
 Run with:
     uv run examples/gemini/01_basic_agent.py
