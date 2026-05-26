@@ -50,6 +50,20 @@ _DECLARATION_CANDIDATES: tuple[str, ...] = (
 )
 
 
+def _sanitize_adk_agent_name(agent_name: str) -> str:
+    """Return an ADK-valid internal agent name.
+
+    Band display names may contain spaces, punctuation, start with digits,
+    or use ADK-reserved words. Google ADK requires ``Agent.name`` to be a
+    Python identifier and reserves ``user`` for end-user input, so this
+    internal name is normalized separately from the public Band name.
+    """
+    safe_name = re.sub(r"[^A-Za-z0-9_]", "_", agent_name or "thenvoi_agent")
+    if not safe_name.isidentifier() or safe_name == "user":
+        safe_name = f"thenvoi_{safe_name}"
+    return safe_name
+
+
 @functools.lru_cache(maxsize=1)
 def _require_adk() -> tuple[type, type, type, Any]:
     """Import Google ADK dependencies lazily.
@@ -423,9 +437,8 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         ADKAgent, InMemoryRunnerCls, _, _ = _require_adk()
         adk_tools = self._build_adk_tools(tools)
 
-        safe_name = re.sub(r"[^A-Za-z0-9_]", "_", self.agent_name or "thenvoi_agent")
         adk_agent = ADKAgent(
-            name=safe_name,
+            name=_sanitize_adk_agent_name(self.agent_name),
             model=self.model,
             instruction=self._system_prompt,
             tools=adk_tools,
