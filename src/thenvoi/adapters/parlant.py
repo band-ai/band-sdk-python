@@ -8,9 +8,7 @@ with the Thenvoi platform.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
-from collections.abc import Mapping
 from typing import ClassVar, TYPE_CHECKING, Any
 
 from thenvoi.core.protocols import AgentToolsProtocol
@@ -35,9 +33,6 @@ logger = logging.getLogger(__name__)
 
 # Parlant preamble message tag - used to identify acknowledgment messages before tool execution
 PARLANT_PREAMBLE_TAG = "__preamble__"
-
-# Platform tools already create user-visible Band effects directly.
-_SILENT_REPORTING_TOOLS = frozenset({"thenvoi_send_message", "thenvoi_send_event"})
 
 
 class ParlantAdapter(SimpleAdapter[ParlantMessages]):
@@ -220,8 +215,14 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             raise
         session_id_str = str(session_id)
 
-        # Set tools for this session (keyed by session_id for cross-task access)
-        set_session_tools(session_id_str, tools)
+        # Set tools for this session (keyed by session_id for cross-task access).
+        # Execution reporting is emitted in real time from the tool wrappers when
+        # enabled, so the wrappers need to know whether emit is on.
+        set_session_tools(
+            session_id_str,
+            tools,
+            emit_execution=Emit.EXECUTION in self.features.emit,
+        )
         logger.info("Room %s: Set tools for session_id=%s", room_id, session_id_str)
 
         # On bootstrap, inject historical context
@@ -426,74 +427,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         return count
 
-    @staticmethod
-    def _mapping_value(value: Any, key: str, default: Any = None) -> Any:
-        if isinstance(value, Mapping):
-            return value.get(key, default)
-        return getattr(value, key, default)
-
-    @staticmethod
-    def _jsonable(value: Any) -> Any:
-        if hasattr(value, "model_dump"):
-            return value.model_dump()
-        if isinstance(value, list):
-            return [ParlantAdapter._jsonable(item) for item in value]
-        if isinstance(value, Mapping):
-            return {
-                str(key): ParlantAdapter._jsonable(item) for key, item in value.items()
-            }
-        return value
-
-    @staticmethod
-    def _tool_name_from_id(tool_id: Any) -> str:
-        raw_tool_id = str(tool_id or "unknown")
-        return raw_tool_id.split(":", 1)[-1]
-
-    async def _report_tool_event(self, event: Any, tools: AgentToolsProtocol) -> None:
-        """Forward Parlant-observed tool calls as Band execution events."""
-        data = self._mapping_value(event, "data", {})
-        tool_calls = self._mapping_value(data, "tool_calls", []) or []
-        event_id = self._mapping_value(event, "id", None)
-        event_offset = self._mapping_value(event, "offset", "unknown")
-
-        for index, tool_call in enumerate(tool_calls):
-            tool_name = self._tool_name_from_id(
-                self._mapping_value(tool_call, "tool_id", None)
-            )
-            if tool_name in _SILENT_REPORTING_TOOLS:
-                continue
-
-            arguments = self._mapping_value(tool_call, "arguments", {}) or {}
-            result = self._mapping_value(tool_call, "result", {}) or {}
-            output = self._mapping_value(result, "data", result)
-            tool_call_id = f"parlant-{event_id or event_offset}-{index}"
-
-            try:
-                await tools.send_event(
-                    content=json.dumps(
-                        {
-                            "name": tool_name,
-                            "args": self._jsonable(arguments),
-                            "tool_call_id": tool_call_id,
-                        },
-                        default=str,
-                    ),
-                    message_type="tool_call",
-                )
-                await tools.send_event(
-                    content=json.dumps(
-                        {
-                            "name": tool_name,
-                            "output": self._jsonable(output),
-                            "tool_call_id": tool_call_id,
-                        },
-                        default=str,
-                    ),
-                    message_type="tool_result",
-                )
-            except Exception as error:
-                logger.warning("Failed to report Parlant tool execution: %s", error)
-
     async def _process_agent_response(
         self,
         session_id: SessionId,
@@ -511,11 +444,10 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         from parlant.core.async_utils import Timeout  # type: ignore[missing-import]
         from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]
 
+        # Tool execution is reported in real time by the tool wrappers, so the
+        # response loop only waits for the agent's final message.
         event_kinds = [EventKind.MESSAGE]
         event_source = EventSource.AI_AGENT
-        if Emit.EXECUTION in self.features.emit:
-            event_kinds.append(EventKind.TOOL)
-            event_source = None
 
         current_offset = min_offset
         max_iterations = 10
@@ -593,11 +525,6 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
                 if hasattr(event, "offset") and event.offset > current_offset:
                     current_offset = event.offset
-
-                if event.kind == EventKind.TOOL:
-                    saw_relevant_event = True
-                    await self._report_tool_event(event, tools)
-                    continue
 
                 if (
                     event.kind != EventKind.MESSAGE

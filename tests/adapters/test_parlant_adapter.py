@@ -8,7 +8,6 @@ Application container, session management, history injection, and error handling
 """
 
 from datetime import datetime, timezone
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 
@@ -17,11 +16,22 @@ from pydantic import BaseModel
 
 try:
     import parlant.sdk  # type: ignore[missing-import]  # noqa: F401
+
+    _HAS_PARLANT = True
 except ImportError:
-    pass
+    _HAS_PARLANT = False
 
 from thenvoi.adapters.parlant import ParlantAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+
+# Parlant lives in the isolated `dev-parlant` dependency fork (it conflicts with
+# crewai). The plain `test` CI job installs `--extra dev` without parlant and
+# runs the whole suite, so these parlant-specific tests must skip cleanly there;
+# they run for real in the `test-parlant` job.
+pytestmark = pytest.mark.skipif(
+    not _HAS_PARLANT,
+    reason="parlant not installed (uv sync --extra dev-parlant)",
+)
 
 
 class CalculatorInput(BaseModel):
@@ -487,16 +497,21 @@ class TestOnMessage:
 
             # Verify tools were set with session_id and then cleared
             assert mock_set_tools.call_count == 2
-            # First call sets the tools with session_id
-            mock_set_tools.assert_any_call("session-123", mock_tools)
+            # First call sets the tools with session_id + emit flag (off by default)
+            mock_set_tools.assert_any_call(
+                "session-123", mock_tools, emit_execution=False
+            )
             # Second call clears the tools
             mock_set_tools.assert_any_call("session-123", None)
 
     @pytest.mark.asyncio
-    async def test_execution_emit_reports_native_parlant_tool_events(
+    async def test_response_loop_only_waits_for_agent_message(
         self, mock_parlant_server, mock_parlant_agent, sample_message, mock_tools
     ):
-        """Adapter-level polling should report native Parlant tools too."""
+        """Execution reporting moved into the tool wrappers, so the response loop
+        only waits for the agent's final MESSAGE — it no longer polls TOOL events
+        or widens the source filter, which is what produced misordered/duplicate
+        tool events."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
@@ -515,21 +530,6 @@ class TestOnMessage:
         mock_app.sessions.wait_for_more_events = AsyncMock(return_value=True)
         mock_app.sessions.find_events = AsyncMock(
             return_value=[
-                MagicMock(
-                    id="evt-tool",
-                    offset=2,
-                    kind="tool",
-                    source="system",
-                    data={
-                        "tool_calls": [
-                            {
-                                "tool_id": "local:external_lookup",
-                                "arguments": {"query": "alice"},
-                                "result": {"data": {"answer": "found"}},
-                            }
-                        ]
-                    },
-                ),
                 MagicMock(
                     id="evt-message",
                     offset=3,
@@ -575,83 +575,79 @@ class TestOnMessage:
 
         wait_kwargs = mock_app.sessions.wait_for_more_events.await_args.kwargs
         find_kwargs = mock_app.sessions.find_events.await_args.kwargs
-        assert wait_kwargs["source"] is None
-        assert find_kwargs["source"] is None
-        assert wait_kwargs["kinds"] == ["message", "tool"]
-        assert find_kwargs["kinds"] == ["message", "tool"]
-
-        message_types = [
-            call.kwargs["message_type"]
-            for call in mock_tools.send_event.await_args_list
-        ]
-        assert message_types == ["tool_call", "tool_result"]
-        tool_call_payload = json.loads(
-            mock_tools.send_event.await_args_list[0].kwargs["content"]
-        )
-        tool_result_payload = json.loads(
-            mock_tools.send_event.await_args_list[1].kwargs["content"]
-        )
-        assert tool_call_payload == {
-            "name": "external_lookup",
-            "args": {"query": "alice"},
-            "tool_call_id": "parlant-evt-tool-0",
-        }
-        assert tool_result_payload == {
-            "name": "external_lookup",
-            "output": {"answer": "found"},
-            "tool_call_id": "parlant-evt-tool-0",
-        }
+        # Only the final agent message is awaited; TOOL polling is gone.
+        assert wait_kwargs["kinds"] == ["message"]
+        assert find_kwargs["kinds"] == ["message"]
+        assert wait_kwargs["source"] == "ai_agent"
+        assert find_kwargs["source"] == "ai_agent"
+        # The adapter no longer re-reports tool events from the session log.
+        mock_tools.send_event.assert_not_called()
         mock_tools.send_message.assert_awaited_once_with("Done", mentions=["Alice"])
 
     @pytest.mark.asyncio
-    async def test_execution_emit_skips_platform_tools_that_emit_directly(
-        self, mock_parlant_server, mock_parlant_agent, mock_tools
+    async def test_emit_flag_passed_to_session_tools(
+        self, mock_parlant_server, mock_parlant_agent, sample_message, mock_tools
     ):
-        """thenvoi_send_message/send_event already create Band-visible effects."""
+        """The adapter must tell the wrappers whether execution emit is enabled."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
             features=AdapterFeatures(emit={Emit.EXECUTION}),
         )
-        event = MagicMock(
-            id="evt-tool",
-            offset=2,
-            data={
-                "tool_calls": [
-                    {
-                        "tool_id": "local:thenvoi_send_message",
-                        "arguments": {"content": "Hello"},
-                        "result": {"data": {"status": "sent"}},
-                    },
-                    {
-                        "tool_id": "local:thenvoi_send_event",
-                        "arguments": {"content": "thinking"},
-                        "result": {"data": {"status": "sent"}},
-                    },
-                    {
-                        "tool_id": "local:external_lookup",
-                        "arguments": {"query": "alice"},
-                        "result": {"data": "found"},
-                    },
-                ]
+        adapter.agent_name = "TestBot"
+        adapter.agent_description = "A test bot"
+        adapter._system_prompt = "Test prompt"
+
+        mock_app = MagicMock()
+        mock_app.sessions = AsyncMock()
+        mock_app.sessions.create = AsyncMock(return_value=MagicMock(id="session-123"))
+        mock_app.sessions.create_customer_message = AsyncMock(
+            return_value=MagicMock(offset=1)
+        )
+        mock_app.sessions.wait_for_more_events = AsyncMock(return_value=True)
+        mock_app.sessions.find_events = AsyncMock(
+            return_value=[
+                MagicMock(
+                    id="evt-message",
+                    offset=3,
+                    kind="message",
+                    source="ai_agent",
+                    data={"message": "Done"},
+                ),
+            ]
+        )
+        adapter._app = mock_app
+
+        mock_moderation = MagicMock()
+        mock_moderation.NONE = "none"
+        mock_event_kind = MagicMock(MESSAGE="message", TOOL="tool")
+        mock_event_source = MagicMock(CUSTOMER="customer", AI_AGENT="ai_agent")
+
+        with patch.dict(
+            sys.modules,
+            {
+                "parlant.core.app_modules.sessions": MagicMock(
+                    Moderation=mock_moderation
+                ),
+                "parlant.core.sessions": MagicMock(
+                    EventSource=mock_event_source,
+                    EventKind=mock_event_kind,
+                ),
+                "parlant.core.async_utils": MagicMock(Timeout=lambda x: x),
             },
-        )
+        ):
+            with patch("thenvoi.adapters.parlant.set_session_tools") as mock_set_tools:
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
 
-        await adapter._report_tool_event(event, mock_tools)
-
-        message_types = [
-            call.kwargs["message_type"]
-            for call in mock_tools.send_event.await_args_list
-        ]
-        assert message_types == ["tool_call", "tool_result"]
-        tool_call_payload = json.loads(
-            mock_tools.send_event.await_args_list[0].kwargs["content"]
-        )
-        assert tool_call_payload == {
-            "name": "external_lookup",
-            "args": {"query": "alice"},
-            "tool_call_id": "parlant-evt-tool-2",
-        }
+        mock_set_tools.assert_any_call("session-123", mock_tools, emit_execution=True)
 
     @pytest.mark.asyncio
     async def test_reuses_existing_session(

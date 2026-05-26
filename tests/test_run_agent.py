@@ -1,5 +1,6 @@
 """Tests for the generic example runner."""
 
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock
 import importlib.util
@@ -14,7 +15,7 @@ from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
 @pytest.fixture
 def run_agent_module():
     """Import examples/run_agent.py as a test module."""
-    module_path = "/tmp/thenvoi-sdk-python-pr304-review/examples/run_agent.py"
+    module_path = str(Path(__file__).resolve().parents[1] / "examples" / "run_agent.py")
     spec = importlib.util.spec_from_file_location("example_run_agent", module_path)
     assert spec is not None
     assert spec.loader is not None

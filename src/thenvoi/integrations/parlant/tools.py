@@ -14,6 +14,7 @@ import json
 import logging
 from types import UnionType
 from typing import Any, Optional, Union, get_args, get_origin
+import uuid
 import warnings
 
 from pydantic_core import PydanticUndefined
@@ -42,11 +43,16 @@ logger = logging.getLogger(__name__)
 class _SessionContext:
     tools: AgentToolsProtocol
     message_sent: bool = False
+    emit_execution: bool = False
 
 
 # Session-keyed registry to hold tools and delivery state.
 # This approach works across async contexts (unlike ContextVar).
 _session_contexts: dict[str, _SessionContext] = {}
+
+# Platform tools already create user-visible Band effects directly, so they are
+# not re-reported as execution events (that would double-count the send).
+_SILENT_REPORTING_TOOLS = frozenset({"thenvoi_send_message", "thenvoi_send_event"})
 
 _ERROR_PREFIXES = (
     "Error",
@@ -58,12 +64,25 @@ _ERROR_PREFIXES = (
 def set_session_tools(
     session_id: str,
     tools: Optional[AgentToolsProtocol],
+    *,
+    emit_execution: bool = False,
 ) -> None:
-    """Set the tools for a specific Parlant session."""
+    """Set the tools for a specific Parlant session.
+
+    Args:
+        session_id: Parlant session ID the tools belong to.
+        tools: Room AgentTools, or ``None`` to clear the session.
+        emit_execution: When true, generated tool wrappers report each call as
+            ``tool_call``/``tool_result`` Band events in real time, interleaved
+            with the actual side effects.
+    """
     if tools is None:
         _session_contexts.pop(session_id, None)
     else:
-        _session_contexts[session_id] = _SessionContext(tools=tools)
+        _session_contexts[session_id] = _SessionContext(
+            tools=tools,
+            emit_execution=emit_execution,
+        )
     logger.debug("Set tools for session %s: %s", session_id, tools is not None)
 
 
@@ -244,6 +263,60 @@ def _signature_for_input_model(
     )
 
 
+def _new_tool_call_id() -> str:
+    return f"parlant-{uuid.uuid4().hex[:12]}"
+
+
+async def _report_tool_call(
+    session_context: _SessionContext,
+    tool_name: str,
+    arguments: Any,
+    tool_call_id: str,
+) -> None:
+    """Emit a Band ``tool_call`` event in real time, before the tool runs."""
+    if not session_context.emit_execution or tool_name in _SILENT_REPORTING_TOOLS:
+        return
+    try:
+        await session_context.tools.send_event(
+            content=json.dumps(
+                {
+                    "name": tool_name,
+                    "args": _dump_data(arguments),
+                    "tool_call_id": tool_call_id,
+                },
+                default=str,
+            ),
+            message_type="tool_call",
+        )
+    except Exception as error:
+        logger.warning("Failed to report tool_call for %s: %s", tool_name, error)
+
+
+async def _report_tool_result(
+    session_context: _SessionContext,
+    tool_name: str,
+    output: Any,
+    tool_call_id: str,
+) -> None:
+    """Emit a Band ``tool_result`` event in real time, after the tool runs."""
+    if not session_context.emit_execution or tool_name in _SILENT_REPORTING_TOOLS:
+        return
+    try:
+        await session_context.tools.send_event(
+            content=json.dumps(
+                {
+                    "name": tool_name,
+                    "output": _dump_data(output),
+                    "tool_call_id": tool_call_id,
+                },
+                default=str,
+            ),
+            message_type="tool_result",
+        )
+    except Exception as error:
+        logger.warning("Failed to report tool_result for %s: %s", tool_name, error)
+
+
 def _create_builtin_parlant_tool_entry(
     definition: ToolDefinition,
     p: Any,
@@ -276,6 +349,9 @@ def _create_builtin_parlant_tool_entry(
         if isinstance(coerced, str):
             return tool_result_type(data=coerced)
 
+        tool_call_id = _new_tool_call_id()
+        await _report_tool_call(session_context, definition.name, coerced, tool_call_id)
+
         try:
             result = await session_context.tools.execute_tool_call(
                 definition.name,
@@ -289,6 +365,9 @@ def _create_builtin_parlant_tool_entry(
                 exc_info=True,
             )
             output = f"Error executing {definition.name}: {error}"
+            await _report_tool_result(
+                session_context, definition.name, output, tool_call_id
+            )
             return tool_result_type(data=output)
         except Exception as error:
             logger.error(
@@ -298,11 +377,17 @@ def _create_builtin_parlant_tool_entry(
                 exc_info=True,
             )
             output = f"Error executing {definition.name}: {error}"
+            await _report_tool_result(
+                session_context, definition.name, output, tool_call_id
+            )
             return tool_result_type(data=output)
 
         if definition.name == "thenvoi_send_message" and not _is_error_result(result):
             session_context.message_sent = True
 
+        await _report_tool_result(
+            session_context, definition.name, result, tool_call_id
+        )
         output = _tool_result_data(result)
         return tool_result_type(data=output)
 
@@ -338,10 +423,19 @@ def _create_custom_parlant_tool_entry(
         if isinstance(coerced, str):
             return tool_result_type(data=coerced)
 
+        session_context = _get_session_context(str(context.session_id))
+        tool_call_id = _new_tool_call_id()
+        if session_context:
+            await _report_tool_call(session_context, tool_name, coerced, tool_call_id)
+
         try:
             result = await execute_custom_tool(custom_tool, coerced)
         except ValueError as error:
             output = str(error)
+            if session_context:
+                await _report_tool_result(
+                    session_context, tool_name, output, tool_call_id
+                )
             return tool_result_type(data=output)
         except Exception as error:
             logger.error(
@@ -351,8 +445,14 @@ def _create_custom_parlant_tool_entry(
                 exc_info=True,
             )
             output = f"Error executing {tool_name}: {error}"
+            if session_context:
+                await _report_tool_result(
+                    session_context, tool_name, output, tool_call_id
+                )
             return tool_result_type(data=output)
 
+        if session_context:
+            await _report_tool_result(session_context, tool_name, result, tool_call_id)
         output = _tool_result_data(result)
         return tool_result_type(data=output)
 

@@ -1,5 +1,6 @@
 """Tests for Parlant tools module."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,6 +17,21 @@ from thenvoi.integrations.parlant.tools import (
     was_message_sent,
 )
 from thenvoi.runtime.tools import iter_tool_definitions
+
+try:
+    import parlant.sdk  # type: ignore[missing-import]  # noqa: F401
+
+    _HAS_PARLANT = True
+except ImportError:
+    _HAS_PARLANT = False
+
+# create_parlant_tools() returns real wrappers only when parlant is importable.
+# Parlant lives in the isolated `dev-parlant` fork, so skip cleanly in the plain
+# `test` job and run for real in `test-parlant`.
+pytestmark = pytest.mark.skipif(
+    not _HAS_PARLANT,
+    reason="parlant not installed (uv sync --extra dev-parlant)",
+)
 
 
 class CalculatorInput(BaseModel):
@@ -464,3 +480,125 @@ class TestParlantToolFunctions:
         result = await tools["calculator"](mock_context, "not-an-int")
 
         assert "Invalid arguments for calculator" in result.data
+
+
+class TestRealTimeExecutionReporting:
+    """Tool wrappers emit tool_call/tool_result Band events as the tool runs.
+
+    Reporting happens inside the wrapper (the real execution point) rather than
+    by draining Parlant's session log after the turn, so the events are ordered
+    correctly relative to the actual side effects and emitted exactly once.
+    """
+
+    def setup_method(self):
+        _session_contexts.clear()
+
+    @pytest.fixture
+    def mock_context(self):
+        return SimpleNamespace(session_id="session-rt")
+
+    @pytest.fixture
+    def builtin_tools(self):
+        return {entry.tool.name: entry.function for entry in create_parlant_tools()}
+
+    @pytest.mark.asyncio
+    async def test_builtin_tool_reports_call_and_result_when_emit_enabled(
+        self, builtin_tools, mock_context
+    ):
+        """A non-silent builtin tool emits a paired tool_call/tool_result."""
+        tools = MagicMock()
+        tools.execute_tool_call = AsyncMock(return_value={"participants": ["alice"]})
+        tools.send_event = AsyncMock(return_value={"status": "sent"})
+        set_session_tools(mock_context.session_id, tools, emit_execution=True)
+
+        await builtin_tools["thenvoi_get_participants"](mock_context)
+
+        types = [c.kwargs["message_type"] for c in tools.send_event.await_args_list]
+        assert types == ["tool_call", "tool_result"]
+        call_payload = json.loads(tools.send_event.await_args_list[0].kwargs["content"])
+        result_payload = json.loads(
+            tools.send_event.await_args_list[1].kwargs["content"]
+        )
+        assert call_payload["name"] == "thenvoi_get_participants"
+        assert result_payload["name"] == "thenvoi_get_participants"
+        assert result_payload["output"] == {"participants": ["alice"]}
+        # call and result share one stable id for correlation
+        assert call_payload["tool_call_id"] == result_payload["tool_call_id"]
+
+    @pytest.mark.asyncio
+    async def test_no_execution_events_when_emit_disabled(
+        self, builtin_tools, mock_context
+    ):
+        """With emit off the tool still runs but produces no execution events."""
+        tools = MagicMock()
+        tools.execute_tool_call = AsyncMock(return_value={"participants": []})
+        tools.send_event = AsyncMock()
+        set_session_tools(mock_context.session_id, tools, emit_execution=False)
+
+        await builtin_tools["thenvoi_get_participants"](mock_context)
+
+        tools.execute_tool_call.assert_awaited_once()
+        tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_platform_send_tools_are_not_reported(
+        self, builtin_tools, mock_context
+    ):
+        """send_message/send_event already create Band effects, so no echo event."""
+        tools = MagicMock()
+        tools.execute_tool_call = AsyncMock(return_value={"status": "sent"})
+        tools.send_event = AsyncMock()
+        set_session_tools(mock_context.session_id, tools, emit_execution=True)
+
+        await builtin_tools["thenvoi_send_message"](mock_context, "Hi", ["@alice"])
+        await builtin_tools["thenvoi_send_event"](mock_context, "thinking", "thought")
+
+        tools.send_event.assert_not_called()
+        assert tools.execute_tool_call.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_tool_call_emitted_before_execution(
+        self, builtin_tools, mock_context
+    ):
+        """Ordering oracle: tool_call precedes the side effect, tool_result follows."""
+        order: list[str] = []
+
+        async def fake_execute(name, args):
+            order.append("execute")
+            return {"ok": True}
+
+        async def fake_send_event(*, content, message_type):
+            order.append(message_type)
+            return {"status": "sent"}
+
+        tools = MagicMock()
+        tools.execute_tool_call = AsyncMock(side_effect=fake_execute)
+        tools.send_event = AsyncMock(side_effect=fake_send_event)
+        set_session_tools(mock_context.session_id, tools, emit_execution=True)
+
+        await builtin_tools["thenvoi_get_participants"](mock_context)
+
+        assert order == ["tool_call", "execute", "tool_result"]
+
+    @pytest.mark.asyncio
+    async def test_custom_tool_reports_when_emit_enabled(self, mock_context):
+        """Custom tools route through the same real-time reporting path."""
+        tools = MagicMock()
+        tools.send_event = AsyncMock(return_value={"status": "sent"})
+        wrappers = {
+            entry.tool.name: entry.function
+            for entry in create_parlant_tools(
+                additional_tools=[(CalculatorInput, calculate)]
+            )
+        }
+        set_session_tools(mock_context.session_id, tools, emit_execution=True)
+
+        await wrappers["calculator"](mock_context, 41)
+
+        types = [c.kwargs["message_type"] for c in tools.send_event.await_args_list]
+        assert types == ["tool_call", "tool_result"]
+        result_payload = json.loads(
+            tools.send_event.await_args_list[1].kwargs["content"]
+        )
+        assert result_payload["name"] == "calculator"
+        assert result_payload["output"] == "42"
