@@ -252,6 +252,8 @@ class TestThenvoiLinkConnection:
         assert link.is_connected is False
         assert link._ws is None
         assert link._subscribed_rooms == set()
+        assert link.last_disconnect_reason is not None
+        assert link.last_disconnect_reason.reason == "session.already_connected"
 
     async def test_close_without_supersede_leaves_disconnect_reason_empty(self):
         """An empty Phoenix close should not invent a terminal reason."""

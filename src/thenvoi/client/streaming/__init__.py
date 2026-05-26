@@ -9,7 +9,6 @@ Usage:
 from thenvoi.client.streaming.client import (
     WebSocketClient,
     WebSocketDisconnectReason,
-    WebSocketUpgradeError,
     MessageCreatedPayload,
     RoomAddedPayload,
     RoomRemovedPayload,
@@ -24,6 +23,7 @@ from thenvoi.client.streaming.client import (
     ContactRemovedPayload,
     SupersedePayload,
 )
+from thenvoi.client.streaming.errors import WebSocketUpgradeError
 
 __all__ = [
     "WebSocketClient",

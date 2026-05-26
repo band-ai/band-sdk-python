@@ -12,6 +12,7 @@ import logging
 from unittest.mock import AsyncMock
 
 import pytest
+from phoenix_channels_python_client.exceptions import PHXConnectionError
 from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
@@ -345,6 +346,72 @@ async def test_aenter_wraps_upgrade_error(monkeypatch):
     assert exc_info.value.status_code == 409
     assert exc_info.value.code == "connection_conflict"
     assert exc_info.value.request_id == "req-409"
+
+
+async def test_aenter_probes_initial_phx_connection_error(monkeypatch):
+    upgrade_exc = _upgrade_exception(
+        429,
+        b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-429"}}',
+        {"Retry-After": "30"},
+    )
+    probed_urls = []
+
+    class FailingPHXClient:
+        def __init__(self, *args, **kwargs):
+            assert kwargs["auto_reconnect"] is False
+            self.channel_socket_url = "wss://test/socket"
+
+        async def __aenter__(self):
+            raise PHXConnectionError("Connection supervisor stopped before connecting")
+
+    class FailingProbe:
+        async def __aenter__(self):
+            raise upgrade_exc
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    def fake_connect(url, *, open_timeout):
+        probed_urls.append((url, open_timeout))
+        return FailingProbe()
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+    )
+    monkeypatch.setattr("thenvoi.client.streaming.errors.connect", fake_connect)
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(WebSocketUpgradeError) as exc_info:
+        await client.__aenter__()
+
+    assert probed_urls == [("wss://test/socket&agent_id=agent-123", 5)]
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.code == "too_many_requests"
+    assert exc_info.value.retry_after == 30
+
+
+async def test_aenter_restores_reconnect_after_successful_initial_connect(monkeypatch):
+    init_kwargs = {}
+
+    class SuccessfulPHXClient:
+        def __init__(self, *args, **kwargs):
+            init_kwargs.update(kwargs)
+            self.channel_socket_url = "wss://test/socket"
+            self.auto_reconnect = kwargs["auto_reconnect"]
+
+        async def __aenter__(self):
+            return self
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", SuccessfulPHXClient
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    await client.__aenter__()
+
+    assert init_kwargs["auto_reconnect"] is False
+    assert client.client.auto_reconnect is True
 
 
 async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
