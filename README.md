@@ -242,6 +242,8 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
 | OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
 
+LangGraph supports the built-in Thenvoi platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
+
 > `crewai` and `parlant` cannot be installed together because their transitive dependencies conflict. Install one or the other in a given environment.
 
 ### Bridge Adapters
@@ -322,7 +324,7 @@ Adapter emit support:
 | Gemini | Yes | - | - |
 | Google ADK | Yes | - | - |
 | Pydantic AI | Yes | - | - |
-| LangGraph | - | - | - |
+| LangGraph | Yes | - | - |
 | Parlant | - | - | - |
 | A2A / A2A Gateway | - | - | - |
 | ACP Client | - | - | - |
@@ -651,7 +653,7 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | **Create room** | `thenvoi_create_chatroom(task_id=None)` then `thenvoi_add_participant(identifier)` |
 | **Control access** | `Agent.create(..., contact_config=ContactEventConfig(strategy=...))` |
 | **Emit telemetry** | `AdapterFeatures(emit={Emit.EXECUTION})` |
-| **Custom tools** | `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
+| **Custom tools** | `LangGraphAdapter(llm=..., additional_tools=[...])` or `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
 | **A2A bridge** | `A2AAdapter(remote_url="http://...")` |
 | **Editor ACP** | `thenvoi-acp --agent-id ID --api-key KEY` |
 | **Store memory** | `thenvoi_store_memory(content, system, type, segment, thought)` |
