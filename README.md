@@ -880,7 +880,7 @@ Add domain-specific tools to your agents via the `additional_tools` parameter. E
 | `PydanticAIAdapter` | PydanticAI-style functions with `RunContext` |
 | `AnthropicAdapter` | `CustomToolDef` tuples (Pydantic model + callable) |
 | `CrewAIAdapter` | `CustomToolDef` tuples |
-| `ParlantAdapter` | `CustomToolDef` tuples |
+| `ParlantAdapter` | `CustomToolDef` tuples or native Parlant `@p.tool` tools |
 | `ClaudeSDKAdapter` | `CustomToolDef` tuples (wrapped to MCP) |
 
 ### LangGraph (LangChain Tools)

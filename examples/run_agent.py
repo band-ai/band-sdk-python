@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "thenvoi-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]",
+#   "thenvoi-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,crewai,a2a,codex]",
 #   "python-dotenv>=1.1.1",
 # ]
 #
@@ -68,7 +68,7 @@ from dotenv import load_dotenv
 
 from thenvoi import Agent
 from thenvoi.config import load_agent_config
-from thenvoi.core.types import AdapterFeatures, Emit
+from thenvoi.core.types import AdapterFeatures, Capability, Emit
 from thenvoi.platform.event import ContactRequestReceivedEvent, ContactEvent
 from thenvoi.runtime.contact_tools import ContactTools
 from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -408,10 +408,18 @@ async def run_parlant_agent(
     model: str | None,
     custom_section: str,
     enable_streaming: bool,
+    contact_config: ContactEventConfig | None,
     logger: logging.Logger,
 ) -> None:
     """Run the Parlant agent."""
-    import parlant.sdk as p
+    try:
+        import parlant.sdk as p
+    except ImportError as e:
+        raise RuntimeError(
+            "Parlant conflicts with CrewAI in the generic runner metadata; run "
+            "`uv sync --extra dev-parlant` from the repo or use "
+            "examples/parlant/... in a Parlant-enabled environment."
+        ) from e
 
     from thenvoi.adapters import ParlantAdapter
     from thenvoi.integrations.parlant.tools import create_parlant_tools
@@ -421,15 +429,23 @@ async def run_parlant_agent(
             "Parlant uses the provider configured by p.NLPServices.openai; ignoring --model=%s",
             model,
         )
-    if enable_streaming:
-        logger.warning(
-            "Parlant adapter does not support execution-report streaming; ignoring --streaming"
-        )
-
     description = custom_section or "A helpful Band collaboration agent using Parlant."
 
+    parlant_capabilities = (
+        frozenset({Capability.CONTACTS}) if contact_config else frozenset()
+    )
+    parlant_emit = frozenset({Emit.EXECUTION}) if enable_streaming else frozenset()
+    parlant_features = (
+        AdapterFeatures(capabilities=parlant_capabilities, emit=parlant_emit)
+        if parlant_capabilities or parlant_emit
+        else None
+    )
+
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
-        parlant_tools = create_parlant_tools()
+        parlant_tools = create_parlant_tools(
+            parlant_features,
+            legacy_defaults=contact_config is None,
+        )
         parlant_agent = await server.create_agent(
             name="Parlant",
             description=description,
@@ -450,6 +466,7 @@ async def run_parlant_agent(
             server=server,
             parlant_agent=parlant_agent,
             custom_section=custom_section,
+            features=parlant_features,
         )
 
         agent = Agent.create(
@@ -458,9 +475,13 @@ async def run_parlant_agent(
             api_key=api_key,
             ws_url=ws_url,
             rest_url=rest_url,
+            contact_config=contact_config,
         )
 
-        logger.info("Starting Parlant agent with OpenAI NLP service")
+        contacts_str = (
+            f", contacts={contact_config.strategy.value}" if contact_config else ""
+        )
+        logger.info("Starting Parlant agent with OpenAI NLP service%s", contacts_str)
         await agent.run()
 
 
@@ -866,7 +887,7 @@ Examples:
   uv run python examples/run_agent.py --example claude_sdk --streaming    # With tool_call/tool_result events
   uv run python examples/run_agent.py --example claude_sdk --thinking     # With extended thinking
   uv run python examples/run_agent.py --example parlant                   # Parlant adapter
-  uv run python examples/run_agent.py --example parlant --streaming       # With tool visibility
+  uv run python examples/run_agent.py --example parlant --streaming       # With tool_call/tool_result events
   uv run python examples/run_agent.py --example crewai                    # CrewAI adapter
   uv run python examples/run_agent.py --example crewai --streaming        # With tool visibility
   uv run python examples/run_agent.py --example codex                     # Codex app-server adapter
@@ -1193,6 +1214,7 @@ Examples:
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
+                contact_config=contact_config,
                 logger=logger,
             )
         elif args.example == "crewai":

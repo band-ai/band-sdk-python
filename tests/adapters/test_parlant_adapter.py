@@ -8,13 +8,30 @@ Application container, session management, history injection, and error handling
 """
 
 from datetime import datetime, timezone
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 
 import pytest
+from pydantic import BaseModel
+
+try:
+    import parlant.sdk  # type: ignore[missing-import]  # noqa: F401
+except ImportError:
+    pass
 
 from thenvoi.adapters.parlant import ParlantAdapter
-from thenvoi.core.types import PlatformMessage
+from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+
+
+class CalculatorInput(BaseModel):
+    """Calculate a value."""
+
+    value: int
+
+
+def calculate(args: CalculatorInput) -> str:
+    return str(args.value + 1)
 
 
 @pytest.fixture
@@ -76,6 +93,7 @@ def mock_parlant_agent():
     agent = MagicMock()
     agent.id = "parlant-agent-123"
     agent.name = "TestBot"
+    agent.create_guideline = AsyncMock(return_value=MagicMock(id="guideline-123"))
     return agent
 
 
@@ -105,6 +123,20 @@ class TestInitialization:
         assert adapter._room_sessions == {}
         assert adapter._room_customers == {}
         assert adapter._system_prompt == ""
+
+    def test_stores_additional_tools_for_contract_guideline(
+        self, mock_parlant_server, mock_parlant_agent
+    ):
+        """Parlant should expose CustomToolDef tools through its guideline tools."""
+        custom_tool = (CalculatorInput, calculate)
+
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            additional_tools=[custom_tool],
+        )
+
+        assert adapter._custom_tools == [custom_tool]
 
 
 class TestOnStarted:
@@ -172,6 +204,117 @@ class TestOnStarted:
         assert adapter._system_prompt == "You are a custom assistant."
 
     @pytest.mark.asyncio
+    async def test_installs_rendered_prompt_as_parlant_guideline(
+        self, mock_parlant_server, mock_parlant_agent, mock_application_class
+    ):
+        """Should install Band platform instructions into Parlant, not just store them."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            custom_section="Always include the token BANANA.",
+            features=AdapterFeatures(capabilities={Capability.CONTACTS}),
+        )
+
+        mock_app = MagicMock()
+        mock_module = MagicMock()
+        mock_module.Application = mock_application_class
+        mock_parlant_server.container = {mock_application_class: mock_app}
+
+        with patch.dict(
+            sys.modules,
+            {"parlant.core.application": mock_module},
+        ):
+            await adapter.on_started(
+                agent_name="BandBot", agent_description="A Band test agent"
+            )
+
+        mock_parlant_agent.create_guideline.assert_awaited_once()
+        kwargs = mock_parlant_agent.create_guideline.await_args.kwargs
+        assert "BANANA" in kwargs["description"]
+        assert "BandBot" in kwargs["description"]
+        assert kwargs["metadata"]["thenvoi_adapter_contract"] is True
+        assert kwargs["matcher"] is not None
+        assert any(t.tool.name == "thenvoi_send_message" for t in kwargs["tools"])
+        assert any(t.tool.name == "thenvoi_list_contacts" for t in kwargs["tools"])
+        assert adapter._contract_guideline_installed is True
+        assert adapter._contract_guideline_id == "guideline-123"
+
+    @pytest.mark.asyncio
+    async def test_contract_guideline_includes_additional_tools(
+        self, mock_parlant_server, mock_parlant_agent, mock_application_class
+    ):
+        """CustomToolDef tools should be exposed through Parlant's tool surface."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            additional_tools=[(CalculatorInput, calculate)],
+        )
+
+        mock_app = MagicMock()
+        mock_module = MagicMock()
+        mock_module.Application = mock_application_class
+        mock_parlant_server.container = {mock_application_class: mock_app}
+
+        with patch.dict(
+            sys.modules,
+            {"parlant.core.application": mock_module},
+        ):
+            await adapter.on_started("BandBot", "A Band test agent")
+
+        tools = mock_parlant_agent.create_guideline.await_args.kwargs["tools"]
+        calculator = next(t for t in tools if t.tool.name == "calculator")
+        assert list(calculator.tool.parameters) == ["value"]
+
+    @pytest.mark.asyncio
+    async def test_contract_guideline_uses_legacy_contact_tools_by_default(
+        self, mock_parlant_server, mock_parlant_agent, mock_application_class
+    ):
+        """Omitted features keep Parlant's legacy contact-tool default."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+        )
+
+        mock_app = MagicMock()
+        mock_module = MagicMock()
+        mock_module.Application = mock_application_class
+        mock_parlant_server.container = {mock_application_class: mock_app}
+
+        with patch.dict(
+            sys.modules,
+            {"parlant.core.application": mock_module},
+        ):
+            await adapter.on_started("BandBot", "A Band test agent")
+
+        tools = mock_parlant_agent.create_guideline.await_args.kwargs["tools"]
+        assert any(t.tool.name == "thenvoi_list_contacts" for t in tools)
+
+    @pytest.mark.asyncio
+    async def test_contract_guideline_respects_explicit_empty_features(
+        self, mock_parlant_server, mock_parlant_agent, mock_application_class
+    ):
+        """Explicit empty features should not expose contact tools."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            features=AdapterFeatures(),
+        )
+
+        mock_app = MagicMock()
+        mock_module = MagicMock()
+        mock_module.Application = mock_application_class
+        mock_parlant_server.container = {mock_application_class: mock_app}
+
+        with patch.dict(
+            sys.modules,
+            {"parlant.core.application": mock_module},
+        ):
+            await adapter.on_started("BandBot", "A Band test agent")
+
+        tools = mock_parlant_agent.create_guideline.await_args.kwargs["tools"]
+        assert not any(t.tool.name == "thenvoi_list_contacts" for t in tools)
+
+    @pytest.mark.asyncio
     async def test_gets_application_from_container(
         self, mock_parlant_server, mock_parlant_agent, mock_application_class
     ):
@@ -218,8 +361,17 @@ class TestOnMessage:
         mock_app.sessions.create_customer_message = AsyncMock(
             return_value=MagicMock(offset=1)
         )
-        mock_app.sessions.wait_for_update = AsyncMock(return_value=True)
-        mock_app.sessions.find_events = AsyncMock(return_value=[])
+        mock_app.sessions.wait_for_more_events = AsyncMock(return_value=True)
+        mock_app.sessions.find_events = AsyncMock(
+            return_value=[
+                MagicMock(
+                    offset=2,
+                    kind="message",
+                    source="ai_agent",
+                    data={"message": "Hello from Parlant"},
+                )
+            ]
+        )
 
         adapter._app = mock_app
         return adapter
@@ -237,7 +389,8 @@ class TestOnMessage:
                     Moderation=MagicMock(NONE="none")
                 ),
                 "parlant.core.sessions": MagicMock(
-                    EventSource=MagicMock(CUSTOMER="customer")
+                    EventSource=MagicMock(CUSTOMER="customer", AI_AGENT="ai_agent"),
+                    EventKind=MagicMock(MESSAGE="message"),
                 ),
                 "parlant.core.async_utils": MagicMock(Timeout=lambda x: x),
             },
@@ -293,6 +446,12 @@ class TestOnMessage:
 
         # Verify message was sent to Parlant
         initialized_adapter._app.sessions.create_customer_message.assert_called_once()
+        wait_kwargs = (
+            initialized_adapter._app.sessions.wait_for_more_events.await_args.kwargs
+        )
+        find_kwargs = initialized_adapter._app.sessions.find_events.await_args.kwargs
+        assert wait_kwargs["source"] == "ai_agent"
+        assert find_kwargs["source"] == "ai_agent"
 
     @pytest.mark.asyncio
     async def test_sets_session_tools_for_tool_execution(
@@ -332,6 +491,167 @@ class TestOnMessage:
             mock_set_tools.assert_any_call("session-123", mock_tools)
             # Second call clears the tools
             mock_set_tools.assert_any_call("session-123", None)
+
+    @pytest.mark.asyncio
+    async def test_execution_emit_reports_native_parlant_tool_events(
+        self, mock_parlant_server, mock_parlant_agent, sample_message, mock_tools
+    ):
+        """Adapter-level polling should report native Parlant tools too."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            features=AdapterFeatures(emit={Emit.EXECUTION}),
+        )
+        adapter.agent_name = "TestBot"
+        adapter.agent_description = "A test bot"
+        adapter._system_prompt = "Test prompt"
+
+        mock_app = MagicMock()
+        mock_app.sessions = AsyncMock()
+        mock_app.sessions.create = AsyncMock(return_value=MagicMock(id="session-123"))
+        mock_app.sessions.create_customer_message = AsyncMock(
+            return_value=MagicMock(offset=1)
+        )
+        mock_app.sessions.wait_for_more_events = AsyncMock(return_value=True)
+        mock_app.sessions.find_events = AsyncMock(
+            return_value=[
+                MagicMock(
+                    id="evt-tool",
+                    offset=2,
+                    kind="tool",
+                    source="system",
+                    data={
+                        "tool_calls": [
+                            {
+                                "tool_id": "local:external_lookup",
+                                "arguments": {"query": "alice"},
+                                "result": {"data": {"answer": "found"}},
+                            }
+                        ]
+                    },
+                ),
+                MagicMock(
+                    id="evt-message",
+                    offset=3,
+                    kind="message",
+                    source="ai_agent",
+                    data={"message": "Done"},
+                ),
+            ]
+        )
+        adapter._app = mock_app
+
+        mock_moderation = MagicMock()
+        mock_moderation.NONE = "none"
+        mock_event_kind = MagicMock(MESSAGE="message", TOOL="tool")
+        mock_event_source = MagicMock(
+            CUSTOMER="customer",
+            AI_AGENT="ai_agent",
+            SYSTEM="system",
+        )
+
+        with patch.dict(
+            sys.modules,
+            {
+                "parlant.core.app_modules.sessions": MagicMock(
+                    Moderation=mock_moderation
+                ),
+                "parlant.core.sessions": MagicMock(
+                    EventSource=mock_event_source,
+                    EventKind=mock_event_kind,
+                ),
+                "parlant.core.async_utils": MagicMock(Timeout=lambda x: x),
+            },
+        ):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        wait_kwargs = mock_app.sessions.wait_for_more_events.await_args.kwargs
+        find_kwargs = mock_app.sessions.find_events.await_args.kwargs
+        assert wait_kwargs["source"] is None
+        assert find_kwargs["source"] is None
+        assert wait_kwargs["kinds"] == ["message", "tool"]
+        assert find_kwargs["kinds"] == ["message", "tool"]
+
+        message_types = [
+            call.kwargs["message_type"]
+            for call in mock_tools.send_event.await_args_list
+        ]
+        assert message_types == ["tool_call", "tool_result"]
+        tool_call_payload = json.loads(
+            mock_tools.send_event.await_args_list[0].kwargs["content"]
+        )
+        tool_result_payload = json.loads(
+            mock_tools.send_event.await_args_list[1].kwargs["content"]
+        )
+        assert tool_call_payload == {
+            "name": "external_lookup",
+            "args": {"query": "alice"},
+            "tool_call_id": "parlant-evt-tool-0",
+        }
+        assert tool_result_payload == {
+            "name": "external_lookup",
+            "output": {"answer": "found"},
+            "tool_call_id": "parlant-evt-tool-0",
+        }
+        mock_tools.send_message.assert_awaited_once_with("Done", mentions=["Alice"])
+
+    @pytest.mark.asyncio
+    async def test_execution_emit_skips_platform_tools_that_emit_directly(
+        self, mock_parlant_server, mock_parlant_agent, mock_tools
+    ):
+        """thenvoi_send_message/send_event already create Band-visible effects."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            features=AdapterFeatures(emit={Emit.EXECUTION}),
+        )
+        event = MagicMock(
+            id="evt-tool",
+            offset=2,
+            data={
+                "tool_calls": [
+                    {
+                        "tool_id": "local:thenvoi_send_message",
+                        "arguments": {"content": "Hello"},
+                        "result": {"data": {"status": "sent"}},
+                    },
+                    {
+                        "tool_id": "local:thenvoi_send_event",
+                        "arguments": {"content": "thinking"},
+                        "result": {"data": {"status": "sent"}},
+                    },
+                    {
+                        "tool_id": "local:external_lookup",
+                        "arguments": {"query": "alice"},
+                        "result": {"data": "found"},
+                    },
+                ]
+            },
+        )
+
+        await adapter._report_tool_event(event, mock_tools)
+
+        message_types = [
+            call.kwargs["message_type"]
+            for call in mock_tools.send_event.await_args_list
+        ]
+        assert message_types == ["tool_call", "tool_result"]
+        tool_call_payload = json.loads(
+            mock_tools.send_event.await_args_list[0].kwargs["content"]
+        )
+        assert tool_call_payload == {
+            "name": "external_lookup",
+            "args": {"query": "alice"},
+            "tool_call_id": "parlant-evt-tool-2",
+        }
 
     @pytest.mark.asyncio
     async def test_reuses_existing_session(
@@ -595,16 +915,16 @@ class TestErrorHandling:
         )
         # Don't set _app
 
-        # Should return early without error
-        await adapter.on_message(
-            msg=sample_message,
-            tools=mock_tools,
-            history=[],
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-123",
-        )
+        with pytest.raises(RuntimeError, match="Parlant Application not initialized"):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
-        # No calls should be made
         mock_tools.send_message.assert_not_called()
+        mock_tools.send_event.assert_called_once()

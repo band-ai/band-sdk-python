@@ -179,10 +179,12 @@ ParlantAdapter(
     parlant_agent=agent,     # Parlant Agent instance
 
     # Optional: Custom prompts
-    system_prompt=None,      # Full system prompt override
-    custom_section="...",    # Custom instructions (added to default prompt)
+    system_prompt=None,      # Full prompt override
+    custom_section="...",    # Custom instructions
 )
 ```
+
+`ParlantAdapter` supports `additional_tools` with the same `CustomToolDef` tuple format used by other adapters. You can also define custom tools with Parlant's native `@p.tool` decorator when you are building Parlant-specific guidelines. Contact and memory tools are capability-gated; memory is supported on enterprise accounts only. Execution reporting is available with `features=AdapterFeatures(emit={Emit.EXECUTION})`.
 
 ---
 
