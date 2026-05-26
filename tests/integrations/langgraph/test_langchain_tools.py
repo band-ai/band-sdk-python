@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from thenvoi.core.types import AdapterFeatures, Capability
 from thenvoi.integrations.langgraph.langchain_tools import agent_tools_to_langchain
 from thenvoi.runtime.tools import CHAT_TOOL_NAMES, CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 
@@ -33,10 +34,7 @@ def by_name(tools: list[Any]) -> dict[str, Any]:
 
 
 def test_base_tools_are_always_exposed() -> None:
-    tool_names = {
-        tool.name
-        for tool in agent_tools_to_langchain(make_tools(), include_contacts=False)
-    }
+    tool_names = {tool.name for tool in agent_tools_to_langchain(make_tools())}
 
     assert CHAT_TOOL_NAMES <= tool_names
     assert CONTACT_TOOL_NAMES.isdisjoint(tool_names)
@@ -44,17 +42,20 @@ def test_base_tools_are_always_exposed() -> None:
 
 
 def test_contact_and_memory_tools_are_capability_gated() -> None:
-    without_optional = {
-        tool.name
-        for tool in agent_tools_to_langchain(make_tools(), include_contacts=False)
-    }
+    without_optional = {tool.name for tool in agent_tools_to_langchain(make_tools())}
     with_contacts = {
         tool.name
-        for tool in agent_tools_to_langchain(make_tools(), include_contacts=True)
+        for tool in agent_tools_to_langchain(
+            make_tools(),
+            features=AdapterFeatures(capabilities=frozenset({Capability.CONTACTS})),
+        )
     }
     with_memory = {
         tool.name
-        for tool in agent_tools_to_langchain(make_tools(), include_memory_tools=True)
+        for tool in agent_tools_to_langchain(
+            make_tools(),
+            features=AdapterFeatures(capabilities=frozenset({Capability.MEMORY})),
+        )
     }
 
     assert CONTACT_TOOL_NAMES.isdisjoint(without_optional)
@@ -69,16 +70,18 @@ async def test_wrappers_call_agent_tools_methods() -> None:
     wrapped = by_name(
         agent_tools_to_langchain(
             tools,
-            include_contacts=True,
-            include_memory_tools=True,
+            features=AdapterFeatures(
+                capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY})
+            ),
         )
     )
 
     assert await wrapped["thenvoi_send_message"].ainvoke(
-        {"content": "hello", "mentions": ["@alice"]}
+        {"content": "hello", "mentions": ["00000000-0000-0000-0000-000000000001"]}
     ) == {"status": "sent"}
     tools.execute_tool_call.assert_any_await(
-        "thenvoi_send_message", {"content": "hello", "mentions": ["@alice"]}
+        "thenvoi_send_message",
+        {"content": "hello", "mentions": ["00000000-0000-0000-0000-000000000001"]},
     )
 
     assert await wrapped["thenvoi_send_event"].ainvoke(
@@ -142,7 +145,7 @@ async def test_wrapper_errors_are_returned_to_model() -> None:
     wrapped = by_name(agent_tools_to_langchain(tools))
 
     result = await wrapped["thenvoi_send_message"].ainvoke(
-        {"content": "hello", "mentions": []}
+        {"content": "hello", "mentions": ["00000000-0000-0000-0000-000000000001"]}
     )
 
     assert result == "Error executing thenvoi_send_message: see agent logs."

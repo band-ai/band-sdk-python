@@ -187,6 +187,48 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         )
         logger.info("LangGraph adapter started for agent: %s", agent_name)
 
+    async def _checkpointer_has_messages(self, checkpointer: Any, room_id: str) -> bool:
+        """Best-effort check for existing LangGraph messages in a thread."""
+        config = {"configurable": {"thread_id": room_id}}
+        for method_name in ("aget_tuple", "get_tuple"):
+            method = getattr(checkpointer, method_name, None)
+            if not callable(method):
+                continue
+
+            try:
+                result = method(config)
+                if inspect.isawaitable(result):
+                    result = await result
+            except (KeyError, NotImplementedError, TypeError, ValueError):
+                logger.debug(
+                    "Checkpointer %s cannot inspect thread %s via %s",
+                    type(checkpointer).__name__,
+                    room_id,
+                    method_name,
+                )
+                continue
+            except Exception:
+                logger.debug(
+                    "Failed to inspect LangGraph checkpointer thread %s",
+                    room_id,
+                    exc_info=True,
+                )
+                continue
+
+            checkpoint = getattr(result, "checkpoint", None)
+            if not isinstance(checkpoint, dict):
+                continue
+
+            channel_values = checkpoint.get("channel_values")
+            if not isinstance(channel_values, dict):
+                continue
+
+            messages = channel_values.get("messages")
+            if isinstance(messages, list) and messages:
+                return True
+
+        return False
+
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -209,8 +251,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         langchain_tools = (
             agent_tools_to_langchain(
                 tools,
-                include_memory_tools=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
+                features=self.features,
             )
             + self.additional_tools
         )
@@ -237,10 +278,15 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         # we just append the new user turn.
         should_mark_bootstrapped = False
         if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
-            if self._inject_system_prompt and self._system_prompt:
-                messages.append(("system", self._system_prompt))
-            if history:
-                messages.extend(history)  # Already converted by history_converter
+            checkpointer_already_has_messages = (
+                checkpointer is not None
+                and await self._checkpointer_has_messages(checkpointer, room_id)
+            )
+            if not checkpointer_already_has_messages:
+                if self._inject_system_prompt and self._system_prompt:
+                    messages.append(("system", self._system_prompt))
+                if history:
+                    messages.extend(history)  # Already converted by history_converter
             should_mark_bootstrapped = True
 
         # Inject metadata updates as user messages with [System]: prefix.

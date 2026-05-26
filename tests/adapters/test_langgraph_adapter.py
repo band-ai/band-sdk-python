@@ -18,7 +18,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from thenvoi.adapters.langgraph import LangGraphAdapter
-from thenvoi.core.types import AdapterFeatures, Emit, PlatformMessage
+from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 
 
 # ---------------------------------------------------------------------------
@@ -407,8 +407,6 @@ class TestOnMessage:
     async def test_feature_capabilities_control_tool_groups(
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
-        from thenvoi.core.types import Capability
-
         adapter = LangGraphAdapter(
             llm=mock_llm,
             checkpointer=mock_checkpointer,
@@ -438,8 +436,7 @@ class TestOnMessage:
 
         mock_convert.assert_called_once_with(
             mock_tools,
-            include_memory_tools=True,
-            include_contacts=True,
+            features=adapter.features,
         )
 
     @pytest.mark.asyncio
@@ -472,7 +469,9 @@ class TestOnMessage:
                 room_id="room-123",
             )
 
-        assert mock_convert.call_args.kwargs["include_memory_tools"] is True
+        assert (
+            Capability.MEMORY in mock_convert.call_args.kwargs["features"].capabilities
+        )
 
     @pytest.mark.asyncio
     async def test_real_compiled_graph_emits_tool_events(
@@ -1117,6 +1116,91 @@ class TestOnCleanup:
 
         assert seen_system_counts == [1, 1]
 
+    @pytest.mark.asyncio
+    async def test_restart_with_existing_checkpointer_state_does_not_rehydrate_twice(
+        self, mock_tools
+    ):
+        """Persistent checkpointer state should suppress duplicate bootstrap history."""
+        from langgraph.checkpoint.memory import InMemorySaver
+        from langgraph.graph import END, START, MessagesState, StateGraph
+
+        checkpointer = InMemorySaver()
+        seen_contents: list[list[str]] = []
+        seen_system_counts: list[int] = []
+
+        def capture_messages(state: MessagesState) -> dict[str, list[Any]]:
+            messages = state["messages"]
+            seen_contents.append([getattr(m, "content", "") for m in messages])
+            seen_system_counts.append(
+                sum(isinstance(m, SystemMessage) for m in messages)
+            )
+            return {"messages": []}
+
+        builder = StateGraph(MessagesState)
+        builder.add_node("capture", capture_messages)
+        builder.add_edge(START, "capture")
+        builder.add_edge("capture", END)
+        graph = builder.compile(checkpointer=checkpointer)
+
+        first_adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
+        await first_adapter.on_started("TestBot", "Test bot")
+        await first_adapter.on_message(
+            msg=PlatformMessage(
+                id="msg-first",
+                room_id="room-123",
+                content="first live message",
+                sender_id="user-456",
+                sender_type="User",
+                sender_name="Alice",
+                message_type="text",
+                metadata={},
+                created_at=datetime.now(timezone.utc),
+            ),
+            tools=mock_tools,
+            history=[HumanMessage(content="hydrated prior turn")],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        restarted_adapter = LangGraphAdapter(graph=graph, inject_system_prompt=True)
+        await restarted_adapter.on_started("TestBot", "Test bot")
+        await restarted_adapter.on_message(
+            msg=PlatformMessage(
+                id="msg-second",
+                room_id="room-123",
+                content="second live message",
+                sender_id="user-456",
+                sender_type="User",
+                sender_name="Alice",
+                message_type="text",
+                metadata={},
+                created_at=datetime.now(timezone.utc),
+            ),
+            tools=mock_tools,
+            history=[HumanMessage(content="hydrated prior turn")],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        assert seen_contents[0].count("hydrated prior turn") == 1
+        assert seen_contents[1].count("hydrated prior turn") == 1
+        assert seen_system_counts == [1, 1]
+
+    @pytest.mark.asyncio
+    async def test_empty_checkpointer_state_still_allows_bootstrap_hydration(self):
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        adapter = LangGraphAdapter(graph=MagicMock(), inject_system_prompt=True)
+
+        assert (
+            await adapter._checkpointer_has_messages(InMemorySaver(), "room-123")
+            is False
+        )
+
 
 class TestErrorHandling:
     """Tests for error handling."""
@@ -1345,15 +1429,16 @@ class TestGraphFactoryMultiRoom:
             t for t in received_tool_lists[1] if t.name == "thenvoi_send_message"
         )
 
-        await send_a.ainvoke({"content": "from a", "mentions": ["@x"]})
-        await send_b.ainvoke({"content": "from b", "mentions": ["@x"]})
+        mention_id = "00000000-0000-0000-0000-000000000001"
+        await send_a.ainvoke({"content": "from a", "mentions": [mention_id]})
+        await send_b.ainvoke({"content": "from b", "mentions": [mention_id]})
 
         # Each call dispatched to its OWN room's AgentTools — never the other.
         tools_a.execute_tool_call.assert_awaited_once_with(
-            "thenvoi_send_message", {"content": "from a", "mentions": ["@x"]}
+            "thenvoi_send_message", {"content": "from a", "mentions": [mention_id]}
         )
         tools_b.execute_tool_call.assert_awaited_once_with(
-            "thenvoi_send_message", {"content": "from b", "mentions": ["@x"]}
+            "thenvoi_send_message", {"content": "from b", "mentions": [mention_id]}
         )
 
 
