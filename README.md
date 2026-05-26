@@ -306,6 +306,25 @@ adapter = AnthropicAdapter(
 )
 ```
 
+For LangGraph, pass native LangChain tools with `additional_tools`; the adapter exposes them alongside the built-in `thenvoi_*` tools:
+
+```python
+from langchain_core.tools import tool
+from thenvoi.adapters import LangGraphAdapter
+
+
+@tool
+def get_order_status(order_id: str) -> str:
+    """Look up an order status."""
+    return "shipped"
+
+
+adapter = LangGraphAdapter(
+    llm=llm,
+    additional_tools=[get_order_status],
+)
+```
+
 #### Emit Telemetry
 
 Emit controls adapter-level telemetry: events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `thenvoi_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.
