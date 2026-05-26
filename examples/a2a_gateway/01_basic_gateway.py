@@ -9,16 +9,16 @@
 Basic A2A Gateway adapter example.
 
 This example creates a gateway that exposes Thenvoi platform peers as A2A
-endpoints. External A2A-compliant agents can connect to this gateway and
+endpoints. Remote A2A-compliant agents can connect to this gateway and
 interact with Thenvoi peers via standard A2A protocol.
 
 Use Case:
-    - You have an external agent (e.g., SAP Agent) that uses A2A protocol
+    - You have a remote agent (e.g., SAP Agent) that uses A2A protocol
     - You want that agent to interact with Thenvoi platform peers
     - This gateway runs as a sidecar, exposing peers as A2A endpoints
 
 Architecture:
-    External Agent → A2A HTTP → Gateway → Thenvoi REST API → Platform Peers
+    Remote Agent → A2A HTTP → Gateway → Thenvoi REST API → Platform Peers
                   ↑                                              ↓
                   ←←←←←←← SSE Response Stream ←←←←←←←←←←←←←←←←←←←
 
@@ -41,7 +41,7 @@ Prerequisites:
 Run with:
     uv run examples/a2a_gateway/01_basic_gateway.py
 
-Then external agents can connect:
+Then remote agents can connect:
     - Discovery: GET http://localhost:10000/agents/weather/.well-known/agent.json
     - JSON-RPC:  POST http://localhost:10000/agents/weather
     - Stream:    POST http://localhost:10000/agents/weather/v1/message:stream

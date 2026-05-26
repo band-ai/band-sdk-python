@@ -169,13 +169,14 @@ CREWAI_DEFAULTS = {
 # adapter / underlying CLI picks its own default.  The user can always pass
 # --model to override.
 _DEFAULT_MODELS: dict[str, str] = {
-    "pydantic_ai": "openai:gpt-4o",  # preserve previous global-default behavior
+    "pydantic_ai": "openai:gpt-5.4-mini",  # preserve previous global-default behavior
     "pydantic_ai_contacts": "anthropic:claude-sonnet-4-5",
     "contacts_auto": "anthropic:claude-sonnet-4-5",
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "crewai": "gpt-4o-mini",
+    "parlant": "gpt-5.4-mini",
+    "crewai": "gpt-5.4-mini",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
 
@@ -236,7 +237,7 @@ async def run_langgraph_agent(
     from thenvoi.adapters import LangGraphAdapter
 
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-4o"),
+        llm=ChatOpenAI(model="gpt-5.4-mini"),
         checkpointer=InMemorySaver(),
         custom_section=custom_section,
     )
@@ -830,7 +831,7 @@ async def run_a2a_gateway_agent(
     """Run the A2A Gateway agent.
 
     The gateway connects to Thenvoi platform and exposes discovered peers
-    as A2A endpoints. External A2A agents can call these peers via standard
+    as A2A endpoints. Remote A2A agents can call these peers via standard
     A2A protocol.
     """
     from thenvoi.adapters import A2AGatewayAdapter

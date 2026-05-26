@@ -1,10 +1,10 @@
-# Agent Configuration for External Agents
+# Agent Configuration for Remote Agents
 #
 # IMPORTANT: Keep this file secure - it contains agent-specific API keys
 # Add agent_config.yaml to .gitignore to avoid committing secrets
 #
 # SETUP INSTRUCTIONS:
-# 1. Create external agents in the Thenvoi platform
+# 1. Create remote agents in the Thenvoi platform
 # 2. Generate an API key for each agent in the platform
 # 3. Copy the agent_id and api_key here
 # 4. The agent name and description are stored on the platform (not here)
@@ -19,7 +19,7 @@
 
 # 01_simple_agent.py
 simple_agent:
-  agent_id: ""  # Required: Copy from platform after creating external agent
+  agent_id: ""  # Required: Copy from platform after creating remote agent
   api_key: ""   # Required: Copy agent-specific API key from platform
 
 # 02_custom_tools.py

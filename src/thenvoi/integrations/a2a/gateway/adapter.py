@@ -62,7 +62,7 @@ def slugify(name: str) -> str:
 class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     """Gateway adapter exposing Thenvoi peers as A2A endpoints.
 
-    This adapter enables external A2A agents to interact with Thenvoi platform
+    This adapter enables remote A2A agents to interact with Thenvoi platform
     peers through standard A2A HTTP endpoints. It acts as a bridge:
     - Receives A2A messages via HTTP server
     - Creates/reuses Thenvoi chat rooms for context management
@@ -298,11 +298,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     async def _handle_a2a_request(
         self, peer_id: str, message: A2AMessage
     ) -> AsyncIterator[TaskStatusUpdateEvent]:
-        """Handle incoming A2A request from external agent.
+        """Handle incoming A2A request from remote agent.
 
         Args:
             peer_id: Target peer slug or UUID.
-            message: A2A message from external agent.
+            message: A2A message from remote agent.
 
         Yields:
             TaskStatusUpdateEvent for SSE streaming.

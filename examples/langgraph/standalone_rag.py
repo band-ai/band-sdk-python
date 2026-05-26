@@ -70,8 +70,8 @@ def create_rag_graph():
     retriever_tool = retrieve_blog_posts
 
     # Step 3: Set up LLMs
-    response_model = ChatOpenAI(model="gpt-4o", temperature=0)
-    grader_model = ChatOpenAI(model="gpt-4o", temperature=0)
+    response_model = ChatOpenAI(model="gpt-5.4-mini", temperature=0)
+    grader_model = ChatOpenAI(model="gpt-5.4-mini", temperature=0)
 
     # Step 4: Define graph nodes
 

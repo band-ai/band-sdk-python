@@ -28,7 +28,6 @@ from typing import Any
 
 import yaml
 
-from thenvoi.config.loader import load_agent_config
 from thenvoi.core.types import AdapterFeatures, Emit
 
 # Global flag for graceful shutdown
@@ -72,10 +71,9 @@ def validate_mounts() -> None:
 def load_config(config_path: str) -> dict[str, Any]:
     """Load agent configuration from YAML file.
 
-    Credentials (agent_id, api_key) are validated via the SDK's
-    ``load_agent_config()`` so all examples follow a single path
-    for credential loading.  Additional fields (role, model, prompt,
-    etc.) are returned as-is for the runner to consume.
+    Returns the YAML contents as a dict.  Credentials (agent_id, api_key)
+    are expected in the YAML and used by ``Agent.from_config()`` at startup.
+    Additional fields (role, model, prompt, etc.) are consumed by the runner.
     """
     path = Path(config_path).resolve()
     if not path.exists():
@@ -91,11 +89,6 @@ def load_config(config_path: str) -> dict[str, Any]:
 
     if config is None:
         raise ValueError("Config file is empty")
-
-    # Validate credentials via the SDK config loader (supports flat YAML format)
-    agent_id, api_key = load_agent_config("agent", config_path=path)
-    config["agent_id"] = agent_id
-    config["api_key"] = api_key
 
     return config
 
@@ -190,7 +183,6 @@ async def main() -> None:
 
     # Extract config values
     agent_id = config["agent_id"]
-    api_key = config["api_key"]
     model = config.get("model")
     fallback_model = config.get("fallback_model")
     custom_prompt = config.get("prompt", "")
@@ -248,10 +240,10 @@ async def main() -> None:
     )
 
     # Create agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "agent",
+        config_path=config_path,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

@@ -13,7 +13,7 @@ class CollectedChunk:
 
     Used by ThenvoiACPClient to buffer rich response chunks
     (text, thoughts, tool calls, tool results, plans) from
-    external ACP agents.
+    remote ACP agents.
 
     Attributes:
         chunk_type: The type of chunk ("text", "thought", "tool_call",

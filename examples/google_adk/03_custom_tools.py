@@ -35,12 +35,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import GoogleADKAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Custom tool definitions (Pydantic model + handler function)
@@ -57,7 +55,7 @@ class CalculatorInput(BaseModel):
     right: float = Field(description="The second number")
 
 
-def calculator(operation: str, left: float, right: float) -> str:
+def calculator(input: CalculatorInput) -> str:
     """Execute a calculator operation."""
     ops = {
         "add": lambda a, b: a + b,
@@ -65,10 +63,10 @@ def calculator(operation: str, left: float, right: float) -> str:
         "multiply": lambda a, b: a * b,
         "divide": lambda a, b: "Error: division by zero" if b == 0 else a / b,
     }
-    fn = ops.get(operation)
+    fn = ops.get(input.operation)
     if fn is None:
-        return f"Unknown operation '{operation}'. Use: add, subtract, multiply, divide"
-    result = fn(left, right)
+        return f"Unknown operation '{input.operation}'. Use: add, subtract, multiply, divide"
+    result = fn(input.left, input.right)
     return str(result)
 
 
@@ -78,9 +76,9 @@ class WeatherInput(BaseModel):
     city: str = Field(description="Name of the city")
 
 
-def weather(city: str) -> str:
+def weather(input: WeatherInput) -> str:
     """Return mock weather data."""
-    return f"Weather in {city}: Sunny, 22 °C"
+    return f"Weather in {input.city}: Sunny, 22 °C"
 
 
 async def main() -> None:
@@ -93,9 +91,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    agent_id, api_key = load_agent_config("google_adk_agent")
-
     # Create adapter with custom tools
     adapter = GoogleADKAdapter(
         model="gemini-2.5-flash",
@@ -110,10 +105,9 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "google_adk_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
