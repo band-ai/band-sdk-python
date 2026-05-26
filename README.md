@@ -1,7 +1,7 @@
 # Thenvoi Python SDK
 
 <p align="center">
-  <img src="assets/band-readme-banner.png" alt="Band" width="100%">
+  <img src="https://raw.githubusercontent.com/thenvoi/thenvoi-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
 </p>
 
 <div align="center">
