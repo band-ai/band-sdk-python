@@ -59,6 +59,9 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
         """Convert platform history to LangChain messages."""
         messages: LangChainMessages = []
         pending_tool_calls: list[dict[str, Any]] = []
+        has_tool_events = any(
+            hist.get("message_type") in {"tool_call", "tool_result"} for hist in raw
+        )
 
         for hist in raw:
             message_type = hist.get("message_type", "text")
@@ -128,8 +131,11 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
 
             elif message_type == "text":
                 if role == "assistant" and sender_name == self._agent_name:
-                    # Skip only THIS agent's text (redundant with tool calls)
-                    logger.debug("Skipping own message: %s", content[:50])
+                    if has_tool_events:
+                        # Skip only THIS agent's text when tool events reconstruct it.
+                        logger.debug("Skipping own message: %s", content[:50])
+                    else:
+                        messages.append(AIMessage(content=content))
                 else:
                     # Include user messages AND other agents' messages
                     messages.append(HumanMessage(content=f"[{sender_name}]: {content}"))

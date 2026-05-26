@@ -396,6 +396,88 @@ class TestExtractToolCallId:
 class TestMixedHistory:
     """Integration tests with mixed message types."""
 
+    def test_includes_own_agent_text_when_no_tool_events_exist(self):
+        converter = LangChainHistoryConverter(agent_name="Agent")
+        raw = [
+            {
+                "role": "user",
+                "content": "Remember the word papaya.",
+                "sender_name": "Alice",
+                "message_type": "text",
+            },
+            {
+                "role": "assistant",
+                "content": "I will remember papaya.",
+                "sender_name": "Agent",
+                "message_type": "text",
+            },
+            {
+                "role": "user",
+                "content": "What word did I ask you to remember?",
+                "sender_name": "Alice",
+                "message_type": "text",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert len(result) == 3
+        assert isinstance(result[0], HumanMessage)
+        assert result[0].content == "[Alice]: Remember the word papaya."
+        assert isinstance(result[1], AIMessage)
+        assert result[1].content == "I will remember papaya."
+        assert isinstance(result[2], HumanMessage)
+        assert result[2].content == "[Alice]: What word did I ask you to remember?"
+
+    def test_skips_own_agent_text_when_tool_events_exist(self):
+        converter = LangChainHistoryConverter(agent_name="Agent")
+        raw = [
+            {
+                "role": "user",
+                "content": "Search for Python tutorials",
+                "sender_name": "Alice",
+                "message_type": "text",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "search",
+                        "run_id": "run-1",
+                        "data": {"input": {"query": "Python tutorials"}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": "I am searching now.",
+                "sender_name": "Agent",
+                "message_type": "text",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_end",
+                        "name": "search",
+                        "run_id": "run-1",
+                        "data": {"output": "Found results tool_call_id='call_search'"},
+                    }
+                ),
+                "message_type": "tool_result",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert len(result) == 3
+        assert isinstance(result[0], HumanMessage)
+        assert isinstance(result[1], AIMessage)
+        assert result[1].tool_calls[0]["name"] == "search"
+        assert isinstance(result[2], ToolMessage)
+
     def test_full_conversation_flow(self):
         """Should handle a realistic conversation with all message types."""
         converter = LangChainHistoryConverter(agent_name="Agent")
@@ -503,12 +585,18 @@ class TestMixedHistory:
 
         result = converter.convert(raw)
 
-        # Should have: Alice's message + Weather Agent's message
-        # (Main Agent's own messages are skipped)
-        assert len(result) == 2
+        # Should have Alice's message, Main Agent's own replies, and Weather Agent's message.
+        # With no tool events, own replies are needed to rehydrate a two-sided transcript.
+        assert len(result) == 4
 
         assert isinstance(result[0], HumanMessage)
         assert result[0].content == "[Alice]: What's the weather in Tokyo?"
 
-        assert isinstance(result[1], HumanMessage)
-        assert result[1].content == "[Weather Agent]: Tokyo is 15°C and cloudy."
+        assert isinstance(result[1], AIMessage)
+        assert result[1].content == "Let me check with the weather agent."
+
+        assert isinstance(result[2], HumanMessage)
+        assert result[2].content == "[Weather Agent]: Tokyo is 15°C and cloudy."
+
+        assert isinstance(result[3], AIMessage)
+        assert result[3].content == "The weather in Tokyo is 15°C and cloudy."
