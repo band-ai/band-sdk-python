@@ -327,10 +327,18 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         if room_id in self._room_customers:
             return self._room_customers[room_id]
 
-        # Create customer via server
+        customer_id = (
+            f"thenvoi-{hashlib.sha256(room_id.encode('utf-8')).hexdigest()[:32]}"
+        )
+
+        existing_customer = await self._server.find_customer(id=customer_id)
+        if existing_customer is not None:
+            self._room_customers[room_id] = existing_customer.id
+            return existing_customer.id
+
         customer = await self._server.create_customer(
             name=customer_name,
-            id=f"thenvoi-{room_id[:8]}",
+            id=customer_id,
         )
 
         self._room_customers[room_id] = customer.id

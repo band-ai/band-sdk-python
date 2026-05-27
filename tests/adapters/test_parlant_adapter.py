@@ -91,7 +91,8 @@ def mock_parlant_server():
     # Container returns Application
     server.container = {MagicMock: mock_app}
 
-    # Mock create_customer
+    # Mock customer lookup/creation
+    server.find_customer = AsyncMock(return_value=None)
     server.create_customer = AsyncMock(return_value=MagicMock(id="customer-123"))
 
     return server
@@ -418,6 +419,33 @@ class TestOnMessage:
         # Verify session was created
         assert "room-123" in initialized_adapter._room_sessions
         mock_parlant_server.create_customer.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_customer_ids_do_not_truncate_room_id_prefixes(
+        self, initialized_adapter, mock_parlant_server
+    ):
+        """Rooms with the same first eight characters should not share a customer id."""
+        await initialized_adapter._get_or_create_customer("abcdefgh-room-one", "Alice")
+        await initialized_adapter._get_or_create_customer("abcdefgh-room-two", "Bob")
+
+        first_call, second_call = mock_parlant_server.create_customer.await_args_list
+        assert first_call.kwargs["id"] != second_call.kwargs["id"]
+
+    @pytest.mark.asyncio
+    async def test_get_or_create_customer_reuses_existing_parlant_customer(
+        self, initialized_adapter, mock_parlant_server
+    ):
+        """Adapter restarts against the same Parlant server should be idempotent."""
+        mock_parlant_server.find_customer.return_value = MagicMock(
+            id="existing-customer"
+        )
+
+        customer_id = await initialized_adapter._get_or_create_customer(
+            "room-123", "Alice"
+        )
+
+        assert customer_id == "existing-customer"
+        mock_parlant_server.create_customer.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sends_customer_message_to_parlant(

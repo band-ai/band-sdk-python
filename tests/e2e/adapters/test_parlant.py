@@ -52,7 +52,7 @@ class NativeEchoInput(BaseModel):
 
 def native_echo_handler(args: NativeEchoInput) -> dict:
     """Custom additional_tool used to exercise the wrapper's real-time emission."""
-    return {"echo": args.code}
+    return {"echo": f"verified-{args.code}"}
 
 
 requires_parlant = pytest.mark.skipif(not HAS_PARLANT, reason="parlant not installed")
@@ -62,6 +62,24 @@ def _message_value(payload, key: str):
     if isinstance(payload, dict):
         return payload.get(key)
     return getattr(payload, key, None)
+
+
+def _is_agent_text_message(payload, agent_id: str, expected_content: str) -> bool:
+    return (
+        _message_value(payload, "message_type") == "text"
+        and _message_value(payload, "sender_type") == "Agent"
+        and _message_value(payload, "sender_id") == agent_id
+        and expected_content in str(_message_value(payload, "content") or "")
+    )
+
+
+def _message_timestamp_key(payload) -> str:
+    timestamp = _message_value(payload, "inserted_at") or _message_value(
+        payload, "created_at"
+    )
+    if timestamp is None:
+        raise AssertionError("Chat message is missing inserted_at/created_at timestamp")
+    return str(timestamp)
 
 
 async def _wait_for_chat_messages(
@@ -288,16 +306,12 @@ class TestParlantE2E:
             api_client,
             chat_id,
             lambda messages: any(
-                _message_value(msg, "message_type") == "text"
-                and token in str(_message_value(msg, "content") or "")
-                for msg in messages
+                _is_agent_text_message(msg, agent_id, token) for msg in messages
             ),
             e2e_config.e2e_timeout,
         )
 
-        assert any(
-            token in str(_message_value(msg, "content") or "") for msg in received
-        )
+        assert any(_is_agent_text_message(msg, agent_id, token) for msg in received)
 
     async def test_execution_emit_reports_additional_custom_tool(
         self,
@@ -317,6 +331,7 @@ class TestParlantE2E:
         chat_id, _user_id, _user_name = e2e_parlant_room
         agent_id, agent_name = e2e_agent_info
         code = f"NATIVE-{uuid.uuid4().hex[:8]}"
+        expected_echo = f"verified-{code}"
 
         def has_expected_messages(messages) -> bool:
             has_tool_call = any(
@@ -332,16 +347,14 @@ class TestParlantE2E:
                 for msg in messages
             )
             has_text_reply = any(
-                _message_value(msg, "message_type") == "text"
-                and code in str(_message_value(msg, "content") or "")
-                for msg in messages
+                _is_agent_text_message(msg, agent_id, expected_echo) for msg in messages
             )
             return has_tool_call and has_tool_result and has_text_reply
 
         await send_trigger_message(
             api_client,
             chat_id,
-            f"Echo validation: call the nativeecho tool with code {code}, then reply to the user with that exact code.",
+            f"Echo validation: call the nativeecho tool with code {code}, then reply to the user with the returned echo value.",
             agent_name,
             agent_id,
         )
@@ -366,12 +379,21 @@ class TestParlantE2E:
             and "nativeecho" in str(_message_value(msg, "content") or "")
             and code in str(_message_value(msg, "content") or "")
         )
+        text_reply = next(
+            msg
+            for msg in received
+            if _is_agent_text_message(msg, agent_id, expected_echo)
+        )
+        ordered_messages = sorted(received, key=_message_timestamp_key)
+        assert ordered_messages.index(tool_call) < ordered_messages.index(tool_result)
+        assert ordered_messages.index(tool_result) < ordered_messages.index(text_reply)
+
         call_payload = json.loads(_message_value(tool_call, "content"))
         result_payload = json.loads(_message_value(tool_result, "content"))
         assert call_payload["name"] == "nativeecho"
         assert call_payload["args"]["code"] == code
         assert result_payload["name"] == "nativeecho"
-        assert result_payload["output"]["echo"] == code
+        assert result_payload["output"]["echo"] == expected_echo
         # tool_call and tool_result are correlated by a stable id emitted by the
         # wrapper around a single execute_custom_tool invocation.
         assert call_payload["tool_call_id"] == result_payload["tool_call_id"]
