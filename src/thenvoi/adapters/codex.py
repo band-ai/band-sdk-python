@@ -1693,7 +1693,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         processing (e.g. a transient 403 from the load balancer).
         """
         item_type = item.get("type", "")
-        item_id = str(item.get("id") or "")
+        item_id = str(
+            item.get("id") or item.get("callId") or item.get("toolCallId") or ""
+        )
         metadata = {
             "codex_room_id": room_id,
             "codex_thread_id": thread_id,
@@ -1735,6 +1737,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             "webSearch",
             "imageView",
             "collabAgentToolCall",
+            "dynamicToolCall",
         }:
             if Emit.EXECUTION not in self.features.emit:
                 return
@@ -1850,7 +1853,73 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             )
             return name, collab_args, output
 
+        if item_type == "dynamicToolCall":
+            tool = item.get("tool") or item.get("name") or item.get("toolName")
+            if isinstance(tool, dict):
+                tool = tool.get("name") or tool.get("tool") or tool.get("toolName")
+            name = str(tool or "dynamic_tool")
+
+            raw_args = (
+                item.get("arguments")
+                if "arguments" in item
+                else item.get("args")
+                if "args" in item
+                else item.get("input")
+                if "input" in item
+                else item.get("inputJson", {})
+            )
+            args = CodexAdapter._coerce_tool_args(raw_args)
+
+            output = CodexAdapter._stringify_tool_output(
+                item.get("result"),
+                item.get("output"),
+                item.get("content"),
+                item.get("error"),
+                item.get("contentItems"),
+                default=str(item.get("status", "completed")),
+            )
+            return name, args, output
+
         return item_type, {}, "completed"
+
+    @staticmethod
+    def _coerce_tool_args(value: Any) -> dict[str, Any]:
+        """Return a dict for Codex tool args across protocol variants."""
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {"input": value}
+            if isinstance(parsed, dict):
+                return parsed
+            return {"input": parsed}
+        if value is None:
+            return {}
+        return {"input": value}
+
+    @staticmethod
+    def _stringify_tool_output(*values: Any, default: str) -> str:
+        """Return the first present tool output as displayable text."""
+        for value in values:
+            if value is None:
+                continue
+            if isinstance(value, str):
+                return value
+            if isinstance(value, list):
+                text_parts: list[str] = []
+                for item in value:
+                    if isinstance(item, dict):
+                        text = item.get("text")
+                        if isinstance(text, str):
+                            text_parts.append(text)
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                if text_parts:
+                    return "\n".join(text_parts)
+            return json.dumps(value, default=str)
+        return default
 
     @staticmethod
     def _extract_thought_text(item_type: str, item: dict[str, Any]) -> str:

@@ -2454,6 +2454,71 @@ class TestItemCompletedForwarding:
         assert "127.0.0.1 localhost" in result_data["output"]
 
     @pytest.mark.asyncio
+    async def test_item_completed_dynamicToolCall_emits_tool_events(self) -> None:
+        """dynamicToolCall emits tool_call + tool_result for Codex dynamic tools."""
+        events = [
+            _event_notification(
+                "item/completed",
+                {
+                    "item": {
+                        "type": "dynamicToolCall",
+                        "callId": "dyn-1",
+                        "tool": "read_file",
+                        "arguments": {"path": "src/app.py"},
+                        "result": {"content": "print('hello')"},
+                        "status": "completed",
+                    }
+                },
+            ),
+            _event_notification(
+                "turn/completed",
+                {
+                    "turn": {
+                        "id": "turn-1",
+                        "status": "completed",
+                        "items": [],
+                        "error": None,
+                    }
+                },
+            ),
+        ]
+        fake_client = FakeCodexClient(events=events)
+        adapter = CodexAdapter(
+            config=CodexAdapterConfig(transport="ws", enable_execution_reporting=True),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = ToolSchemaFakeTools()
+
+        await adapter.on_started("Codex Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            CodexSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tool_call_events = [
+            e for e in tools.events_sent if e["message_type"] == "tool_call"
+        ]
+        tool_result_events = [
+            e for e in tools.events_sent if e["message_type"] == "tool_result"
+        ]
+        assert len(tool_call_events) == 1
+        assert len(tool_result_events) == 1
+
+        call_data = json.loads(tool_call_events[0]["content"])
+        assert call_data["name"] == "read_file"
+        assert call_data["args"]["path"] == "src/app.py"
+        assert call_data["tool_call_id"] == "dyn-1"
+
+        result_data = json.loads(tool_result_events[0]["content"])
+        assert "print('hello')" in result_data["output"]
+        assert result_data["tool_call_id"] == "dyn-1"
+
+    @pytest.mark.asyncio
     async def test_item_completed_reasoning_emits_thought(self) -> None:
         """reasoning item emits thought event when emit_thought_events=True."""
         events = [
