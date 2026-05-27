@@ -23,7 +23,7 @@ import random
 import signal
 from collections import OrderedDict
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from thenvoi.client.rest import DEFAULT_REQUEST_OPTIONS
 from thenvoi.client.streaming import MessageCreatedPayload
@@ -45,9 +45,6 @@ from thenvoi.platform.link import ThenvoiLink
 from .config import AgentConfig, BridgeConfig, ReconnectConfig
 from .forwarder import Forwarder, build_forwarder
 from .health import HealthServer
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +447,13 @@ class AgentRunner:
                     type(event).__name__,
                     exc_info=True,
                 )
+
+        # Evict the per-room lock once the room is gone so ``_room_locks`` does
+        # not grow unbounded over a long-lived bridge that cycles through many
+        # ephemeral rooms. Done after the forward above releases the lock; a
+        # later straggler event for the same room just creates a fresh one.
+        if isinstance(event, (RoomRemovedEvent, RoomDeletedEvent)) and room_id:
+            self._room_locks.pop(room_id, None)
 
     def _lock_for_room(self, room_id: str | None) -> asyncio.Lock:
         """Return the asyncio.Lock for a room id, creating one on first use.

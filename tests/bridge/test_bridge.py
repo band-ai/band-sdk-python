@@ -203,6 +203,33 @@ class TestAgentRunnerSubscriptions:
         assert isinstance(fwd, FakeForwarder)
         assert len(fwd.forwarded) == 1
 
+    async def test_room_removed_evicts_room_lock(self) -> None:
+        """The per-room lock is dropped once the room is gone so ``_room_locks``
+        does not grow unbounded over a long-lived bridge."""
+        runner, _, _ = _build_runner()
+
+        # A live message creates the lock.
+        await runner._handle_event(_make_message_event(room_id="r-gone"))
+        assert "r-gone" in runner._room_locks
+
+        # Room teardown evicts it (after its own forward releases the lock).
+        await runner._handle_event(_make_room_removed_event(room_id="r-gone"))
+        assert "r-gone" not in runner._room_locks
+
+    async def test_room_deleted_evicts_room_lock(self) -> None:
+        runner, _, _ = _build_runner()
+        await runner._handle_event(_make_message_event(room_id="r-del"))
+        assert "r-del" in runner._room_locks
+
+        event = RoomDeletedEvent(
+            type="room_deleted",
+            room_id="r-del",
+            payload=MagicMock(model_dump=MagicMock(return_value={})),
+            raw={},
+        )
+        await runner._handle_event(event)
+        assert "r-del" not in runner._room_locks
+
 
 # ---------------------------------------------------------------------------
 # AgentRunner — forwarder failure handling
