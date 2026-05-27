@@ -79,6 +79,7 @@ def make_link_mock() -> MagicMock:
     link.subscribe_room = AsyncMock()
     link.unsubscribe_room = AsyncMock()
     link.subscribe_agent_rooms = AsyncMock()
+    link.get_next_message = AsyncMock(return_value=None)
     link.is_connected = True
     link.rest = MagicMock()
     link.rest.agent_api_chats.list_agent_chats = AsyncMock(

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
 
 from bridge_core.bridge import AgentRunner, ThenvoiBridge
 from bridge_core.config import BridgeConfig, ReconnectConfig
 from bridge_core.forwarder import Forwarder
+from thenvoi.runtime.types import PlatformMessage
 from thenvoi.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -216,6 +218,82 @@ class TestAgentRunnerForwarderFailures:
         # _safe_handle_event wraps _handle_event in a logging try/except.
         await runner._safe_handle_event(_make_message_event())
         # No exception means the failure was swallowed.
+
+
+# ---------------------------------------------------------------------------
+# AgentRunner — startup rehydration
+# ---------------------------------------------------------------------------
+
+
+def _make_platform_message(
+    message_id: str = "m1",
+    room_id: str = "r1",
+    sender_id: str = "sender",
+    content: str = "hello",
+) -> PlatformMessage:
+    return PlatformMessage(
+        id=message_id,
+        room_id=room_id,
+        content=content,
+        sender_id=sender_id,
+        sender_type="User",
+        sender_name="Someone",
+        message_type="user",
+        metadata={},
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+
+
+class TestAgentRunnerRehydration:
+    async def test_forwards_one_nudge_per_room_with_backlog(self) -> None:
+        runner, fwd, link = _build_runner()
+        link.get_next_message.side_effect = [
+            _make_platform_message("m-a", "r1"),
+            _make_platform_message("m-b", "r2"),
+        ]
+
+        await runner._rehydrate_backlog(["r1", "r2"])
+
+        assert isinstance(fwd, FakeForwarder)
+        ids = {(p.get("payload") or {}).get("id") for p in fwd.forwarded}
+        assert ids == {"m-a", "m-b"}
+        # Each forwarded nudge looks like a live message_created event.
+        assert all(p["event_type"] == "message_created" for p in fwd.forwarded)
+
+    async def test_skips_rooms_with_no_backlog(self) -> None:
+        runner, fwd, link = _build_runner()
+        link.get_next_message.return_value = None
+
+        await runner._rehydrate_backlog(["r1", "r2"])
+
+        assert isinstance(fwd, FakeForwarder)
+        assert fwd.forwarded == []
+
+    async def test_next_failure_does_not_block_other_rooms(self) -> None:
+        runner, fwd, link = _build_runner()
+        link.get_next_message.side_effect = [
+            RuntimeError("boom"),
+            _make_platform_message("m-b", "r2"),
+        ]
+
+        await runner._rehydrate_backlog(["r1", "r2"])
+
+        assert isinstance(fwd, FakeForwarder)
+        ids = {(p.get("payload") or {}).get("id") for p in fwd.forwarded}
+        assert ids == {"m-b"}
+
+    async def test_rehydrated_message_dedups_against_live_event(self) -> None:
+        runner, fwd, link = _build_runner()
+        link.get_next_message.side_effect = [_make_platform_message("m-dup", "r1")]
+
+        await runner._rehydrate_backlog(["r1"])
+        # Same message id then arrives live on the WS.
+        await runner._handle_event(
+            _make_message_event(message_id="m-dup", room_id="r1")
+        )
+
+        assert isinstance(fwd, FakeForwarder)
+        assert len(fwd.forwarded) == 1
 
 
 # ---------------------------------------------------------------------------

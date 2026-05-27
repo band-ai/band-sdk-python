@@ -26,6 +26,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from thenvoi.client.rest import DEFAULT_REQUEST_OPTIONS
+from thenvoi.client.streaming import MessageCreatedPayload
+from thenvoi.runtime.types import PlatformMessage
 from thenvoi.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
@@ -233,6 +235,11 @@ class AgentRunner:
                 self._config.agent_id,
                 len(existing_rooms),
             )
+            # Rehydrate: Phoenix only pushes events from subscription time
+            # forward, so messages that arrived (or got stuck mid-processing)
+            # while the bridge was down are never redelivered on the WS. Nudge
+            # the container once per room with the oldest unprocessed message.
+            await self._rehydrate_backlog(existing_rooms)
 
         logger.info(
             "Agent %s: connected and listening for events",
@@ -294,6 +301,71 @@ class AgentRunner:
                 exc_info=True,
             )
         return []
+
+    async def _rehydrate_backlog(self, room_ids: list[str]) -> None:
+        """Forward one nudge per room that has an unanswered message.
+
+        For each room we ask the platform for the oldest unprocessed message
+        (``/next``) and, if one exists, forward it as a synthetic
+        ``message_created`` event through the normal handle path (dedup +
+        per-room lock + forwarder). ``/next`` also returns messages stuck in
+        ``processing`` from a crashed container, so forwarding its result both
+        replays missed backlog and lets the container reclaim stuck work
+        (``msg_id`` matches its own ``/next``, so it claims rather than skips).
+
+        We forward at most ONE message per room: the bridge does no lifecycle
+        marking, so ``/next`` would return the same message until the container
+        marks it processed. The container's own drain loop pulls the rest.
+        """
+
+        async def nudge(room_id: str) -> None:
+            try:
+                msg = await self._link.get_next_message(room_id)
+            except Exception:
+                logger.warning(
+                    "Agent %s: rehydration /next failed for room %s",
+                    self._config.agent_id,
+                    room_id,
+                    exc_info=True,
+                )
+                return
+            if msg is None:
+                return
+            logger.info(
+                "Agent %s: rehydrating room %s with backlog message %s",
+                self._config.agent_id,
+                room_id,
+                msg.id,
+            )
+            await self._safe_handle_event(self._backlog_event(msg))
+
+        # Rooms are independent; nudge concurrently. Per-room locks and dedup
+        # still serialize each nudge against any live event for that room.
+        await asyncio.gather(*(nudge(rid) for rid in room_ids))
+
+    def _backlog_event(self, msg: PlatformMessage) -> MessageEvent:
+        """Wrap a ``/next`` PlatformMessage as a synthetic message_created event.
+
+        Shaped so ``_serialize_event`` produces the same payload a live
+        ``message_created`` event would — the container can't tell the two
+        apart.
+        """
+        created_at = msg.created_at.isoformat()
+        return MessageEvent(
+            room_id=msg.room_id,
+            payload=MessageCreatedPayload(
+                id=msg.id,
+                content=msg.content,
+                message_type=msg.message_type,
+                metadata=msg.metadata or None,
+                sender_id=msg.sender_id,
+                sender_type=msg.sender_type,
+                sender_name=msg.sender_name or None,
+                chat_room_id=msg.room_id,
+                inserted_at=created_at,
+                updated_at=created_at,
+            ),
+        )
 
     async def _safe_handle_event(self, event: object) -> None:
         try:

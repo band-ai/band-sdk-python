@@ -55,17 +55,22 @@ Two cooperating pieces:
   marking.** The bridge is a dumb pipe.
 
 ### Container (`examples/agentcore/agentcore_llm_server.py`)
-- A FastAPI app implementing the AgentCore Runtime contract:
+- A thin FastAPI app implementing the AgentCore Runtime contract:
   - `GET /ping` — health probe.
   - `POST /invocations` — one event in, one response out.
-- Each invocation:
+- The container is just transport + env-driven adapter construction. All the
+  lifecycle logic lives in the SDK's `OneShotInvoker`
+  (`thenvoi.runtime.oneshot`), which the container wraps. On each invocation
+  it calls `await invoker.handle_event(forwarded_body)`, and `OneShotInvoker`:
   1. Reconstructs a typed `PlatformMessage` from the forwarded JSON.
   2. Fetches participants and recent room history from Thenvoi REST.
   3. Builds `AgentInput` and calls `adapter.on_event(...)` (default
      adapter: `AnthropicAdapter`).
   4. Adapter runs the LLM tool loop; tools call back to Thenvoi REST
      (`send_message`, `add_participant`, `lookup_peers`, …).
-  5. Container returns 200 to the bridge.
+  5. Returns a status dict; the container returns 200 to the bridge.
+- Because `OneShotInvoker` is in the SDK, any request/response host (Lambda,
+  Cloud Run, …) can reuse it — the container is one ~80-line example of how.
 
 ## Why the bridge has no Band logic
 
@@ -132,29 +137,32 @@ parallel. So when PA's two messages hit weather's WS, the bridge calls
 start until invocation A's forward call returns.
 
 ### Container: lifecycle markers + drain
-Inside the container, each invocation:
+Inside `OneShotInvoker.handle_event`, each invocation:
 
 1. Calls `link.get_next_message(room_id)` — the platform returns the
    next unprocessed message for this agent. If it's not the triggering
    message (or no message is open), skip the LLM call.
 2. Calls `link.mark_processing(room_id, msg_id)` to claim the message.
 3. Runs the LLM (which sees the *full* history including any other
-   un-answered mentions).
+   un-answered mentions), recording the message ids in that history
+   snapshot as `seen_ids`.
 4. On success, calls `mark_processed(room_id, msg_id)`.
-5. **Drains**: while `get_next_message` returns a message, call
-   `mark_processing` + `mark_processed` on it. The LLM had visibility
-   into the room history during its turn — whatever was unanswered is
-   now this agent's responsibility, whether it replied or chose to
-   ignore.
+5. **Drains**: while `get_next_message` returns a message *that was in
+   `seen_ids`*, call `mark_processing` + `mark_processed` on it. The LLM
+   had visibility into those during its turn — whatever was unanswered is
+   now this agent's responsibility, replied or not. A message that arrived
+   *after* the snapshot is **not** swallowed: drain stops and leaves it
+   open so the next invocation handles it with fresh context. (Self-
+   messages are skipped defensively; hitting the drain cap surfaces
+   `drain_truncated: true` in the response.)
 
 When weather invocation B starts (after A finishes), B's
 `get_next_message` returns `204 No Content` — A drained it. B exits with
 `{"status": "no_pending"}` without an LLM call.
 
-This mirrors what the SDK's `ExecutionContext` does in the normal
-long-running Agent flow. We replicate the lifecycle dance in the
-container because `ExecutionContext`'s process-loop design doesn't fit
-the request/response model gracefully (see follow-ups, below).
+This is the same in-band claim/process semantics the SDK's
+`ExecutionContext` uses in the normal long-running Agent flow;
+`OneShotInvoker` reshapes it for the request/response model.
 
 ## Constraints to know
 
@@ -186,9 +194,6 @@ right fit.
 
 These are not required for the demo to work, but worth knowing:
 
-- **Add `one_shot_execute(event)` to the SDK** so the container can
-  call SDK code directly instead of replicating `ExecutionContext`'s
-  lifecycle dance. Would also benefit Lambda / Cloud Run hosts.
 - **AgentCore Gateway as Band tool broker**: register Thenvoi REST as
   Gateway targets so multiple agents share one tool surface.
 - **A2A protocol bridge**: alternate inbound path using AgentCore's
