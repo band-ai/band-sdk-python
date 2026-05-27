@@ -484,13 +484,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # not turn into duplicate chat messages.  Bypass the wrapper when
         # the operator has explicitly opted out via ttl=0.
         #
-        # The wrapper MUST persist across on_message calls for the same
-        # room: the dominant INT-502 pattern is a duplicate tool call
-        # arriving after the original turn's Complete event, which means
-        # the duplicate lands on a *subsequent* on_message (or on a
-        # lingering MCP handler that resolves via self._room_tools.get).
-        # Rebuilding the wrapper per call would throw away the cache and
-        # let that duplicate through.  Swap the inner reference instead.
+        # The wrapper MUST persist for the room so a lingering MCP retry can
+        # still see the cache through self._room_tools.get.  The active
+        # dedup scope is updated from the inbound platform message id so two
+        # legitimate turns with identical text do not suppress each other.
+        # Swap the inner reference instead of rebuilding the wrapper.
         #
         # DedupingAgentTools is structurally a superset of AgentToolsProtocol
         # (the dedup shim only intercepts send_message and __getattr__-forwards
@@ -505,7 +503,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 # the wrapper lock for the rare case where the runtime
                 # hands us the same instance twice.
                 if existing._inner is not tools:
-                    await existing.update_inner(tools)
+                    await existing.update_inner(tools, dedup_scope=msg.id)
+                else:
+                    await existing.update_inner(existing._inner, dedup_scope=msg.id)
                 tools = cast(AgentToolsProtocol, existing)
             else:
                 wrapper = DedupingAgentTools(
@@ -513,6 +513,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     ttl_seconds=self.send_message_dedup_ttl_seconds,
                     label=room_id,
                 )
+                await wrapper.update_inner(tools, dedup_scope=msg.id)
                 tools = cast(AgentToolsProtocol, wrapper)
                 self._room_tools[room_id] = tools
         else:

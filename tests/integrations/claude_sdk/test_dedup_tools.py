@@ -78,6 +78,18 @@ class TestSendMessageDedup:
         assert inner.send_message.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_distinct_dedup_scope_does_not_dedup(self):
+        inner = _make_inner()
+        wrapper = DedupingAgentTools(inner)
+
+        await wrapper.update_inner(inner, dedup_scope="platform-msg-1")
+        await wrapper.send_message("Done.", ["alice"])
+        await wrapper.update_inner(inner, dedup_scope="platform-msg-2")
+        await wrapper.send_message("Done.", ["alice"])
+
+        assert inner.send_message.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_mention_order_does_not_matter(self):
         """A retry that re-orders the mentions list is the same logical send."""
         inner = _make_inner()
@@ -134,7 +146,7 @@ class TestSendMessageDedup:
         """Two coroutines racing on the same key must POST exactly once."""
         inner = _make_inner()
         # Block the first inner call long enough for the second to enter
-        # the wrapper and contend on the lock.
+        # the wrapper and observe the in-flight task.
         gate = asyncio.Event()
 
         async def slow_send(content, mentions=None):
@@ -152,6 +164,32 @@ class TestSendMessageDedup:
         await asyncio.gather(t1, t2)
 
         assert inner.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_distinct_concurrent_sends_do_not_block_each_other(self):
+        inner = _make_inner()
+        slow_gate = asyncio.Event()
+        completed: list[str] = []
+
+        async def controlled_send(content, mentions=None):
+            if content == "slow":
+                await slow_gate.wait()
+            completed.append(content)
+            return {"id": content}
+
+        inner.send_message.side_effect = controlled_send
+        wrapper = DedupingAgentTools(inner)
+
+        slow_task = asyncio.create_task(wrapper.send_message("slow", ["alice"]))
+        await asyncio.sleep(0)
+        fast_result = await wrapper.send_message("fast", ["alice"])
+
+        assert fast_result == {"id": "fast"}
+        assert completed == ["fast"]
+
+        slow_gate.set()
+        await slow_task
+        assert completed == ["fast", "slow"]
 
     @pytest.mark.asyncio
     async def test_cache_bounded_by_max_entries(self):
@@ -190,14 +228,12 @@ class TestTransparentPassthrough:
 
 
 class TestUpdateInner:
-    """update_inner() preserves the dedup cache across on_message calls.
+    """update_inner() swaps tools without discarding cache state.
 
-    The dominant INT-502 failure mode is a duplicate tool call landing
-    *after* the original turn's Complete event — i.e. a call that
-    arrives on a later on_message. If the adapter rebuilt the wrapper
-    on every on_message, the duplicate would miss the cache and POST a
-    second time. update_inner swaps just the inner reference so the
-    cache survives the turn boundary.
+    The adapter keeps one wrapper per room so lingering MCP retries can still
+    resolve through ``_room_tools``. The adapter also supplies a per-message
+    dedup scope; tests that omit it exercise the backwards-compatible default
+    scope.
     """
 
     @pytest.mark.asyncio
@@ -236,13 +272,12 @@ class TestUpdateInner:
         assert inner_a.send_message.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_swap_waits_for_in_flight_send(self):
-        """update_inner takes the lock so it serializes with send_message.
+    async def test_swap_does_not_wait_for_in_flight_send(self):
+        """update_inner is not serialized behind platform I/O.
 
-        If a send_message call is in flight against inner_a when
-        update_inner is called, the swap must wait for the in-flight
-        call to complete. Otherwise the in-flight call could see a
-        torn _inner reference mid-await.
+        An in-flight send captures the inner tools before awaiting the POST, so
+        update_inner can install the next turn's tools immediately without
+        changing where that in-flight send lands.
         """
         inner_a = _make_inner()
         gate = asyncio.Event()
@@ -257,19 +292,19 @@ class TestUpdateInner:
         wrapper = DedupingAgentTools(inner_a)
 
         send_task = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
-        # Yield so send_task enters the lock and awaits the gate.
+        # Yield so send_task registers the in-flight task and awaits the gate.
         await asyncio.sleep(0)
 
         inner_b = _make_inner()
         swap_task = asyncio.create_task(wrapper.update_inner(inner_b))
 
-        # Swap must not have completed while send_message holds the lock.
         await asyncio.sleep(0)
-        assert not swap_task.done()
+        assert swap_task.done()
 
         gate.set()
         await asyncio.gather(send_task, swap_task)
         assert observed_inner == ["a"]
+        assert inner_b.send_message.await_count == 0
 
 
 class TestDedupHitLogging:
