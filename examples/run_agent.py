@@ -28,7 +28,6 @@ Usage:
     uv run python examples/run_agent.py --example claude_sdk
     uv run python examples/run_agent.py --example claude_sdk --streaming  # With tool_call/tool_result events
     uv run python examples/run_agent.py --example claude_sdk --thinking   # Enable extended thinking
-    uv run python examples/run_agent.py --example parlant
     uv run python examples/run_agent.py --example crewai
     uv run python examples/run_agent.py --example crewai --streaming  # Show tool calls
     uv run python examples/run_agent.py --example codex
@@ -46,7 +45,7 @@ Setup:
 1. Copy .env.example to .env and configure:
    - THENVOI_REST_URL (default: production, change for local dev)
    - THENVOI_WS_URL (default: production, change for local dev)
-   - OPENAI_API_KEY (required for langgraph/openai/parlant/crewai models)
+   - OPENAI_API_KEY (required for langgraph/openai/crewai models)
    - ANTHROPIC_API_KEY (required for anthropic models)
 
 2. Configure agent in agent_config.yaml
@@ -175,7 +174,6 @@ _DEFAULT_MODELS: dict[str, str] = {
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "parlant": "gpt-5.4-mini",
     "crewai": "gpt-5.4-mini",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
@@ -890,8 +888,6 @@ Examples:
   uv run python examples/run_agent.py --example claude_sdk                # Claude Agent SDK
   uv run python examples/run_agent.py --example claude_sdk --streaming    # With tool_call/tool_result events
   uv run python examples/run_agent.py --example claude_sdk --thinking     # With extended thinking
-  uv run python examples/run_agent.py --example parlant                   # Parlant adapter
-  uv run python examples/run_agent.py --example parlant --streaming       # With tool_call/tool_result events
   uv run python examples/run_agent.py --example crewai                    # CrewAI adapter
   uv run python examples/run_agent.py --example crewai --streaming        # With tool visibility
   uv run python examples/run_agent.py --example codex                     # Codex app-server adapter
@@ -920,7 +916,6 @@ Examples:
             "contacts_broadcast",
             "anthropic",
             "claude_sdk",
-            "parlant",
             "crewai",
             "codex",
             "a2a",
@@ -975,7 +970,7 @@ Examples:
         "--streaming",
         "-s",
         action="store_true",
-        help="Enable tool call/result visibility for anthropic/claude_sdk/parlant/crewai (default: False)",
+        help="Enable tool call/result visibility for anthropic/claude_sdk/crewai (default: False)",
     )
     parser.add_argument(
         "--codex-transport",
@@ -1080,7 +1075,6 @@ Examples:
         "contacts_broadcast": "simple_agent",
         "anthropic": "anthropic_agent",
         "claude_sdk": "anthropic_agent",
-        "parlant": "parlant_agent",
         "crewai": "crewai_agent",
         "codex": "simple_agent",
         "a2a": "a2a_agent",
