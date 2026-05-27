@@ -1,0 +1,24 @@
+# Copy to agent_config.yaml and fill in credentials.
+# Each key maps to a config_key in config.yaml.
+
+crewai_agent:
+  agent_id: ""
+  api_key: ""
+
+crew_memory_test:
+  agent_id: ""
+  api_key: ""
+
+crew_contacts_test:
+  agent_id: ""
+  api_key: ""
+  handle: "admin1/crew-contacts-test"
+
+crew_full_test:
+  agent_id: ""
+  api_key: ""
+
+requester_test:
+  agent_id: ""
+  api_key: ""
+  handle: "admin1/crew-qa-requester"

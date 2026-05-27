@@ -1,0 +1,45 @@
+adapter: crewai
+llm_model: gpt-5.4-mini
+env_file: examples/crewai/.env
+
+# NOTE: crewai and parlant cannot coexist in the same Python environment
+# due to conflicting opentelemetry-sdk transitive dependencies.
+# Use `uv sync --extra dev` (includes crewai, excludes parlant).
+
+# Core scenarios (A-C) run per example file
+examples:
+  working_dir: examples/crewai
+  config_file: examples/crewai/agent_config.yaml
+  items:
+    01_basic_agent:
+      file: 01_basic_agent.py
+      config_key: crewai_agent
+    02_role_based_agent:
+      file: 02_role_based_agent.py
+      config_key: crewai_agent
+
+# Expanded scenarios (E-I) run purpose-built agent scripts
+expanded:
+  config_file: agent_config.yaml
+  scenarios:
+    E:
+      script: agents/memory_agent.py
+      config_key: crew_memory_test
+    F1:
+      script: agents/contacts_disabled.py
+      config_key: crew_contacts_test
+    F2:
+      script: agents/contacts_callback.py
+      config_key: crew_contacts_test
+    F3:
+      script: agents/contacts_hub.py
+      config_key: crew_contacts_test
+    G:
+      script: agents/full_agent.py
+      config_key: crew_full_test
+    I:
+      script: agents/full_agent.py
+      config_key: crew_full_test
+  contacts:
+    requester_config_key: requester_test
+    target_handle: "admin1/crew-contacts-test"

@@ -1,0 +1,20 @@
+# Copy to agent_config.yaml and fill in credentials.
+# Each key maps to a config_key in config.yaml.
+
+adk_memory_test:
+  agent_id: ""
+  api_key: ""
+
+adk_contacts_test:
+  agent_id: ""
+  api_key: ""
+  handle: "admin1/adk-contacts-test"
+
+adk_full_test:
+  agent_id: ""
+  api_key: ""
+
+requester_test:
+  agent_id: ""
+  api_key: ""
+  handle: "admin1/adk-qa-requester"

@@ -1,0 +1,6 @@
+# Copy to agent_config.yaml and fill in credentials.
+# Each key maps to a config_key in config.yaml.
+
+letta_agent:
+  agent_id: ""
+  api_key: ""

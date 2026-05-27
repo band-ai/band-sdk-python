@@ -1,0 +1,11 @@
+# Copy to agent_config.yaml and fill in credentials.
+# Each key maps to a config_key in config.yaml.
+#
+# Prerequisites:
+#   - Node.js 20+
+#   - Claude Code CLI: npm install -g @anthropic-ai/claude-code
+#   - ANTHROPIC_API_KEY environment variable
+
+claude_sdk_agent:
+  agent_id: ""
+  api_key: ""

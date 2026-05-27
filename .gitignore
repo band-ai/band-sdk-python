@@ -90,6 +90,7 @@ celerybeat-schedule
 .env
 .env.test
 .venv/
+.venv-*/
 env/
 venv/
 ENV/
@@ -169,3 +170,9 @@ uv.toml
 # Scripts config (contains local paths)
 scripts/config.yaml
 .a5c/
+
+# QA test harness — credentials and generated reports
+tests/qa/.env
+tests/qa/adapters/*/agent_config.yaml
+tests/qa/reports/*.md
+!tests/qa/reports/.gitkeep

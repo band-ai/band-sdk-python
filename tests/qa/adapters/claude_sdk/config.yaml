@@ -1,0 +1,15 @@
+adapter: claude_sdk
+llm_model: claude
+env_file: examples/claude_sdk/.env
+
+# NOTE: Requires Node.js 20+ and Claude Code CLI installed:
+#   npm install -g @anthropic-ai/claude-code
+# Core scenarios only — no expanded scenarios for this adapter.
+
+examples:
+  working_dir: examples/claude_sdk
+  config_file: examples/claude_sdk/agent_config.yaml
+  items:
+    01_basic_agent:
+      file: 01_basic_agent.py
+      config_key: claude_sdk_agent

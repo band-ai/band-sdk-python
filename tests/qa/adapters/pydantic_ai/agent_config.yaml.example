@@ -1,0 +1,24 @@
+# Copy to agent_config.yaml and fill in credentials.
+# Each key maps to a config_key in config.yaml.
+
+pydantic_agent:
+  agent_id: ""
+  api_key: ""
+
+pai_memory_test:
+  agent_id: ""
+  api_key: ""
+
+pai_contacts_test:
+  agent_id: ""
+  api_key: ""
+  handle: "admin1/pai-contacts-test"
+
+pai_full_test:
+  agent_id: ""
+  api_key: ""
+
+requester_test:
+  agent_id: ""
+  api_key: ""
+  handle: "admin1/pai-qa-requester"

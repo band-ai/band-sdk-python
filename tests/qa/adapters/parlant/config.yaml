@@ -1,0 +1,20 @@
+adapter: parlant
+llm_model: openai (via Parlant NLP)
+env_file: examples/parlant/.env
+venv: .venv-parlant
+
+# NOTE: parlant and crewai cannot coexist in the same Python environment
+# due to conflicting opentelemetry-sdk transitive dependencies.
+# This adapter uses a dedicated venv. Create it once:
+#   UV_PROJECT_ENVIRONMENT=.venv-parlant uv sync --extra dev-parlant
+#
+# Core scenarios only — Parlant's complex async setup (server context,
+# agent creation, guideline wiring) makes expanded scripts impractical.
+
+examples:
+  working_dir: examples/parlant
+  config_file: examples/parlant/agent_config.yaml
+  items:
+    01_basic_agent:
+      file: 01_basic_agent.py
+      config_key: parlant_agent

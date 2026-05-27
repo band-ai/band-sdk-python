@@ -1,0 +1,24 @@
+# Copy to agent_config.yaml and fill in credentials.
+# Each key maps to a config_key in config.yaml.
+
+anthropic_agent:
+  agent_id: ""
+  api_key: ""
+
+anth_memory_test:
+  agent_id: ""
+  api_key: ""
+
+anth_contacts_test:
+  agent_id: ""
+  api_key: ""
+  handle: "admin1/anth-contacts-test"
+
+anth_full_test:
+  agent_id: ""
+  api_key: ""
+
+requester_test:
+  agent_id: ""
+  api_key: ""
+  handle: "admin1/anth-qa-requester"

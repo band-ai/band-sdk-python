@@ -1,0 +1,12 @@
+adapter: letta
+llm_model: openai/gpt-5.4-mini
+env_file: examples/letta/.env
+
+# Core scenarios (A-C) run per example file
+examples:
+  working_dir: examples/letta
+  config_file: examples/letta/agent_config.yaml
+  items:
+    01_basic_agent:
+      file: 01_basic_agent.py
+      config_key: letta_agent

@@ -1,0 +1,10 @@
+# Copy to agent_config.yaml and fill in credentials.
+# Each key maps to a config_key in config.yaml.
+#
+# NOTE: Parlant requires a separate environment:
+#   uv sync --extra dev-parlant
+# It cannot be tested alongside crewai.
+
+parlant_agent:
+  agent_id: ""
+  api_key: ""

@@ -1,0 +1,41 @@
+adapter: pydantic_ai
+llm_model: openai:gpt-5.4-mini
+env_file: examples/pydantic_ai/.env
+
+# Core scenarios (A-C) run per example file
+examples:
+  working_dir: examples/pydantic_ai
+  config_file: examples/pydantic_ai/agent_config.yaml
+  items:
+    01_basic_agent:
+      file: 01_basic_agent.py
+      config_key: pydantic_agent
+    02_custom_instructions:
+      file: 02_custom_instructions.py
+      config_key: pydantic_agent
+
+# Expanded scenarios (E-I) run purpose-built agent scripts
+expanded:
+  config_file: agent_config.yaml
+  scenarios:
+    E:
+      script: agents/memory_agent.py
+      config_key: pai_memory_test
+    F1:
+      script: agents/contacts_disabled.py
+      config_key: pai_contacts_test
+    F2:
+      script: agents/contacts_callback.py
+      config_key: pai_contacts_test
+    F3:
+      script: agents/contacts_hub.py
+      config_key: pai_contacts_test
+    G:
+      script: agents/full_agent.py
+      config_key: pai_full_test
+    I:
+      script: agents/full_agent.py
+      config_key: pai_full_test
+  contacts:
+    requester_config_key: requester_test
+    target_handle: "admin1/pai-contacts-test"
