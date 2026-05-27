@@ -166,7 +166,6 @@ def _build_crewai_config() -> ConverterConfig:
         display_name="CrewAI",
         converter_factory=_crewai_factory,
         empty_result=[],
-        skips_tool_events=True,
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         has_sender_metadata=True,
