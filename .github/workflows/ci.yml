@@ -65,7 +65,7 @@ jobs:
       run: uv run pytest
 
 
-  test-parlant:
+  test-crewai:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -90,27 +90,37 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Install parlant dependencies
-      run: uv sync --extra dev-parlant
+    - name: Install crewai dependencies
+      run: uv sync --extra dev-crewai
 
-    - name: Run parlant tests
+    - name: Run crewai tests
       env:
-        # dev-parlant venv lacks langgraph/anthropic/crewai/etc.; tolerate
-        # missing framework adapter/converter configs instead of failing fast.
+        # dev-crewai venv lacks langgraph/anthropic/parlant/pydantic-ai/etc.;
+        # tolerate missing framework configs instead of failing fast.
         THENVOI_ALLOW_MISSING_FRAMEWORKS: "1"
       run: |
         uv run pytest \
-          tests/adapters/test_parlant_adapter.py \
-          tests/converters/test_parlant.py \
-          tests/integrations/parlant/ \
-          tests/framework_conformance/ -k parlant
+          tests/adapters/test_crewai_adapter.py \
+          tests/adapters/test_crewai_adapter_soak.py \
+          tests/adapters/test_crewai_flow_adapter.py \
+          tests/adapters/test_crewai_flow_phase3.py \
+          tests/adapters/test_crewai_flow_phase4.py \
+          tests/adapters/test_crewai_flow_phase5.py \
+          tests/adapters/test_crewai_flow_state_source.py \
+          tests/converters/test_crewai.py \
+          tests/converters/test_crewai_flow.py \
+          tests/integrations/test_crewai_tools.py \
+          tests/integrations/test_crewai_flow_real_sdk.py \
+          tests/framework_conformance/ -k crewai
 
-    - name: Pyrefly check (parlant sources)
+    - name: Pyrefly check (crewai sources)
       run: |
         uv run pyrefly check \
-          src/thenvoi/adapters/parlant.py \
-          src/thenvoi/converters/parlant.py \
-          src/thenvoi/integrations/parlant/
+          src/thenvoi/adapters/crewai.py \
+          src/thenvoi/adapters/crewai_flow.py \
+          src/thenvoi/converters/crewai.py \
+          src/thenvoi/converters/crewai_flow.py \
+          src/thenvoi/integrations/crewai/
 
 
   packaging:

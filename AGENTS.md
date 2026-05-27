@@ -320,11 +320,11 @@ tests/
 ## Commands
 
 ```bash
-# Install dependencies (all extras except parlant — see Dependency Conflicts below)
+# Install dependencies (all extras except crewai — see Dependency Conflicts below)
 uv sync --extra dev
 
-# Install parlant adapter deps (isolated from dev/crewai)
-uv sync --extra dev-parlant
+# Install crewai adapter deps (isolated from dev/parlant/pydantic-ai)
+uv sync --extra dev-crewai
 
 # Run unit tests
 uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
@@ -352,24 +352,24 @@ uv run pyrefly check
 
 ## Dependency Conflicts
 
-**crewai and parlant cannot coexist** in the same Python environment due to
-conflicting transitive dependencies:
+**crewai cannot coexist** with parlant or pydantic-ai in the same Python
+environment due to conflicting transitive dependencies:
 
-| Package | `opentelemetry-sdk` requirement |
-|---|---|
-| crewai 1.14.2 | `~=1.34.0` (>=1.34.0, <1.35.0) |
-| parlant >=3.1.0 | `>=1.37.0` |
+| Conflict | crewai 1.14.3 requires | Other package requires |
+|---|---|---|
+| pydantic | `~=2.11.9` (<2.12) | pydantic-ai-slim >=1.61 needs `>=2.12` |
+| opentelemetry-sdk | `~=1.34.0` (<1.35) | parlant >=3.1 needs `>=1.37` |
 
 This is declared in `pyproject.toml` via `[tool.uv] conflicts` so `uv lock`
 resolves each in a separate fork.
 
 **Extras layout:**
-- `dev` — includes all framework deps **except** parlant
-- `dev-parlant` — includes parlant + test tooling only (no crewai)
-- `crewai` and `parlant` are mutually exclusive runtime extras
+- `dev` — includes all framework deps **except** crewai
+- `dev-crewai` — includes crewai + test tooling only (no parlant/pydantic-ai)
+- `crewai` is mutually exclusive with `parlant` and `pydantic-ai` runtime extras
 
-**For CI:** parlant adapter tests require a separate job/step using
-`uv sync --extra dev-parlant`.
+**For CI:** crewai adapter tests require a separate job/step using
+`uv sync --extra dev-crewai`.
 
 ## Environment Variables
 
