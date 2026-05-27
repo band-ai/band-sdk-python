@@ -169,12 +169,12 @@ async def test_run_parlant_agent_broadcast_contacts_do_not_enable_contact_tools(
 
 
 @pytest.mark.asyncio
-async def test_run_parlant_agent_preserves_legacy_tools_without_contacts(
+async def test_run_parlant_agent_excludes_contact_tools_without_contacts(
     run_agent_module,
     fake_parlant_sdk,
     monkeypatch,
 ):
-    """Without contact_config the runner should preserve legacy direct tool defaults."""
+    """Without contact_config the runner should not grant contact-management tools."""
     captured = {}
 
     class FakeAdapter:
@@ -218,7 +218,7 @@ async def test_run_parlant_agent_preserves_legacy_tools_without_contacts(
     assert captured["agent_create_kwargs"].get("contact_config") is None
     assert captured["adapter_kwargs"]["features"] is None
     assert captured["tool_features"] is None
-    assert captured["legacy_defaults"] is True
+    assert captured["legacy_defaults"] is False
 
 
 @pytest.mark.asyncio
@@ -272,4 +272,4 @@ async def test_run_parlant_agent_enables_execution_reporting(
     assert captured["tool_features"] is features
     assert features.emit == frozenset({Emit.EXECUTION})
     assert features.capabilities == frozenset()
-    assert captured["legacy_defaults"] is True
+    assert captured["legacy_defaults"] is False

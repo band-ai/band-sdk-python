@@ -448,7 +448,7 @@ async def run_parlant_agent(
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
         parlant_tools = create_parlant_tools(
             parlant_features,
-            legacy_defaults=contact_config is None,
+            legacy_defaults=False,
         )
         parlant_agent = await server.create_agent(
             name="Parlant",
