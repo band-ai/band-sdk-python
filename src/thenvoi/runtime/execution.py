@@ -44,7 +44,9 @@ from .types import (
     ParticipantRemovedCallback,
     SessionConfig,
     SYNTHETIC_SENDER_TYPE,
-    SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+    SYNTHETIC_KICKOFF_SENDER_ID,
+    SYNTHETIC_KICKOFF_SENDER_NAME,
+    SYNTHETIC_SENDER_IDS,
 )
 from .retry_tracker import MessageRetryTracker
 from ._context_serialization import context_item_to_dict
@@ -128,6 +130,23 @@ class Execution(Protocol):
 
     async def on_event(self, event: PlatformEvent) -> None:
         """Handle a platform event for this room."""
+        ...
+
+    async def bootstrap_message(self, message: PlatformMessage) -> None:
+        """Inject a synthetic kickoff message into this execution.
+
+        .. versionchanged:: 0.3.0
+            Custom ``Execution`` implementations should add ``bootstrap_message()``.
+            ``AgentRuntime`` falls back safely for legacy implementations that do
+            not provide it (raises ``RuntimeError`` at the bootstrap call site),
+            but typed protocol conformance now includes this method.
+
+        Called by ``Agent.kickoff`` and ``Agent.bootstrap_room_message`` to start
+        the agent on its own with an initial message that did not come through
+        the platform. The supplied ``PlatformMessage`` is wrapped as a synthetic
+        ``MessageEvent`` and delivered to the adapter without platform
+        persistence, retry tracking, or other-participant visibility.
+        """
         ...
 
     async def request_resync(self) -> None:
@@ -394,10 +413,19 @@ class ExecutionContext:
             logger.debug("Event %s enqueued for room %s", event.type, self.room_id)
             return
 
-        # Track first WebSocket message ID for sync point
+        # Track first WebSocket message ID for sync point. Skip synthetic
+        # messages (kickoff, contact-event injections) — they aren't in the DB,
+        # so using their id as the sync marker would prevent
+        # _synchronize_with_next from ever finding a matching /next row.
         if isinstance(event, MessageEvent) and self._first_ws_msg_id is None:
             msg_id = event.payload.id if event.payload else None
-            if msg_id:
+            payload = event.payload
+            is_synthetic = (
+                payload is not None
+                and payload.sender_type == SYNTHETIC_SENDER_TYPE
+                and payload.sender_id in SYNTHETIC_SENDER_IDS
+            )
+            if msg_id and not is_synthetic:
                 self._first_ws_msg_id = msg_id
                 logger.debug("Sync point marker set: %s", msg_id)
 
@@ -467,6 +495,60 @@ class ExecutionContext:
     def mark_participants_sent(self) -> None:
         """Mark current participants as sent to LLM."""
         self._last_participants_sent = self._participants.copy()
+
+    async def bootstrap_message(self, message: PlatformMessage) -> None:
+        """
+        Inject a synthetic kickoff message into this execution context.
+
+        The supplied PlatformMessage is wrapped in a MessageEvent and enqueued
+        through the same path real messages take, but with a synthetic sender
+        identity (sender_type="System", sender_id="kickoff"). _process_event
+        recognizes this combination and skips all platform persistence
+        (mark_processing / mark_processed / mark_failed) and retry tracking —
+        the message exists only in memory.
+
+        The caller-supplied message.id is preserved as-is so external systems
+        can use stable ids (e.g. ``"daily-standup:2026-05-06"`` or
+        ``"webhook:{event_id}"``) to dedupe retries and replays.
+
+        Args:
+            message: PlatformMessage to inject. id, content, sender_name,
+                message_type, metadata, and created_at are passed through.
+                sender_type and sender_id are forced to the synthetic identity.
+        """
+        from thenvoi.client.streaming import MessageCreatedPayload, MessageMetadata
+
+        metadata: dict[str, Any] = dict(message.metadata) if message.metadata else {}
+        metadata.setdefault("mentions", [])
+        metadata.setdefault("status", "sent")
+
+        created_at_str = (
+            message.created_at.isoformat()
+            if message.created_at
+            else datetime.now(timezone.utc).isoformat()
+        )
+
+        event = MessageEvent(
+            room_id=self.room_id,
+            payload=MessageCreatedPayload(
+                id=message.id,
+                content=message.content,
+                sender_id=SYNTHETIC_KICKOFF_SENDER_ID,
+                sender_type=SYNTHETIC_SENDER_TYPE,
+                sender_name=message.sender_name or SYNTHETIC_KICKOFF_SENDER_NAME,
+                message_type=message.message_type,
+                metadata=MessageMetadata(**metadata),
+                chat_room_id=self.room_id,
+                inserted_at=created_at_str,
+                updated_at=created_at_str,
+            ),
+        )
+        await self.on_event(event)
+        logger.info(
+            "Bootstrap (kickoff) message %s enqueued for room %s",
+            message.id,
+            self.room_id,
+        )
 
     def inject_system_message(self, message: str) -> None:
         """
@@ -1161,14 +1243,20 @@ class ExecutionContext:
                 logger.debug("Skipping self-message %s", msg_id)
                 return
 
-            # Detect synthetic messages (e.g., contact events injected into hub room)
-            # These don't exist in the database, so skip all tracking and marking
+            # Detect synthetic messages (e.g., contact events injected into hub
+            # room, or kickoff/bootstrap injections). These don't exist in the
+            # database, so skip all tracking and marking. Both sender_type AND
+            # sender_id must match — never broaden to type alone, since real
+            # platform "System" messages must keep full mark_* lifecycle.
             is_synthetic = (
                 payload.sender_type == SYNTHETIC_SENDER_TYPE
-                and payload.sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID
+                and payload.sender_id in SYNTHETIC_SENDER_IDS
             )
             if is_synthetic:
-                logger.debug("Processing synthetic contact event message")
+                logger.debug(
+                    "Processing synthetic message (sender_id=%s)",
+                    payload.sender_id,
+                )
                 msg_id = None  # Clear to skip message marking later
                 # Skip all tracking for synthetic messages - go directly to processing
             else:

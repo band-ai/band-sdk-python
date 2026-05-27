@@ -197,6 +197,15 @@ class RoomPresence:
             logger.warning("room_added event without room_id or payload")
             return
 
+        # Skip if already tracked. Happens when bootstrap_room_message
+        # (kickoff) claimed the room and subscribed before the platform's
+        # room_added event arrived. Re-running subscribe_room would issue a
+        # duplicate Phoenix join. The filter and on_room_joined work was
+        # already done by the bootstrap path or the original add.
+        if room_id in self.rooms:
+            logger.debug("room_added for already-tracked room %s, skipping", room_id)
+            return
+
         payload = event.payload.model_dump(exclude_none=True)
 
         # Apply filter if configured
