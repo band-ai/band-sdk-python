@@ -4,11 +4,14 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import logging
+import random
 
 from phoenix_channels_python_client.client import (
     PHXChannelsClient,
     PhoenixChannelsProtocolVersion,
 )
+from phoenix_channels_python_client.client_types import ReconnectPolicy
+from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -221,6 +224,15 @@ _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
 }
 
 
+def _initial_reconnect_delay(policy: ReconnectPolicy, attempt: int) -> float:
+    delay = min(
+        policy.max_delay_s, policy.base_delay_s * (policy.factor ** max(attempt, 0))
+    )
+    if delay <= 0:
+        return 0.0
+    return (delay / 2) + (random.random() * (delay / 2))
+
+
 class WebSocketClient:
     def __init__(
         self,
@@ -265,27 +277,42 @@ class WebSocketClient:
 
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context"""
-        self.client = PHXChannelsClient(
-            self.ws_url,
-            self.api_key,
-            protocol_version=PhoenixChannelsProtocolVersion.V2,
-            auto_reconnect=False,
-            on_reconnect=self._on_reconnect,
-            on_disconnect=self._on_disconnect,
-        )
-        if self.agent_id:
-            self.client.channel_socket_url += f"&agent_id={self.agent_id}"
-        try:
-            await self.client.__aenter__()
-        except Exception as exc:
-            upgrade_error = await classify_initial_upgrade_error(
-                exc, self.client.channel_socket_url
+        policy = ReconnectPolicy()
+        for attempt in range(policy.rapid_suppress_disconnect_count + 1):
+            self.client = PHXChannelsClient(
+                self.ws_url,
+                self.api_key,
+                protocol_version=PhoenixChannelsProtocolVersion.V2,
+                auto_reconnect=False,
+                on_reconnect=self._on_reconnect,
+                on_disconnect=self._on_disconnect,
             )
-            if upgrade_error is not None:
-                raise upgrade_error from exc
-            raise
-        self.client.auto_reconnect = True
-        return self
+            if self.agent_id:
+                self.client.channel_socket_url += f"&agent_id={self.agent_id}"
+            try:
+                await self.client.__aenter__()
+            except Exception as exc:
+                upgrade_error = await classify_initial_upgrade_error(
+                    exc, self.client.channel_socket_url
+                )
+                if upgrade_error is not None:
+                    raise upgrade_error from exc
+                if not isinstance(exc, PHXConnectionError):
+                    raise
+                if attempt >= policy.rapid_suppress_disconnect_count:
+                    raise
+                delay = _initial_reconnect_delay(policy, attempt)
+                logger.warning(
+                    "Initial WebSocket connection failed; retrying in %.2fs: %s",
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+            else:
+                self.client.auto_reconnect = True
+                return self
+
+        raise RuntimeError("WebSocket client failed to connect")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the PHXChannelsClient context"""

@@ -414,6 +414,45 @@ async def test_aenter_restores_reconnect_after_successful_initial_connect(monkey
     assert client.client.auto_reconnect is True
 
 
+async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch):
+    attempts = 0
+    sleep_delays = []
+
+    class FlakyPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+            self.auto_reconnect = kwargs["auto_reconnect"]
+
+        async def __aenter__(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise PHXConnectionError("temporary network failure")
+            return self
+
+    async def no_upgrade_error(exc, websocket_url):
+        return None
+
+    async def fake_sleep(delay):
+        sleep_delays.append(delay)
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", FlakyPHXClient
+    )
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.classify_initial_upgrade_error",
+        no_upgrade_error,
+    )
+    monkeypatch.setattr("thenvoi.client.streaming.client.asyncio.sleep", fake_sleep)
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    await client.__aenter__()
+
+    assert attempts == 3
+    assert len(sleep_delays) == 2
+    assert client.client.auto_reconnect is True
+
+
 async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
     original_exc = RuntimeError("socket exploded")
 
