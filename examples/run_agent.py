@@ -169,14 +169,14 @@ CREWAI_DEFAULTS = {
 # adapter / underlying CLI picks its own default.  The user can always pass
 # --model to override.
 _DEFAULT_MODELS: dict[str, str] = {
-    "pydantic_ai": "openai:gpt-4o",  # preserve previous global-default behavior
+    "pydantic_ai": "openai:gpt-5.4-mini",  # preserve previous global-default behavior
     "pydantic_ai_contacts": "anthropic:claude-sonnet-4-5",
     "contacts_auto": "anthropic:claude-sonnet-4-5",
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "parlant": "gpt-4o",
-    "crewai": "gpt-4o-mini",
+    "parlant": "gpt-5.4-mini",
+    "crewai": "gpt-5.4-mini",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
 
@@ -237,7 +237,7 @@ async def run_langgraph_agent(
     from thenvoi.adapters import LangGraphAdapter
 
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-4o"),
+        llm=ChatOpenAI(model="gpt-5.4-mini"),
         checkpointer=InMemorySaver(),
         custom_section=custom_section,
     )

@@ -124,14 +124,14 @@ Always be helpful and provide clear responses to the user."""
         self,
         gateway_url: str,
         available_peers: list[str] | None = None,
-        model: str = "gpt-4o",
+        model: str = "gpt-5.4-mini",
     ):
         """Initialize the orchestrator agent.
 
         Args:
             gateway_url: Base URL of the A2A Gateway
             available_peers: List of available peer IDs (optional, will be shown in system prompt)
-            model: OpenAI model to use (default: gpt-4o)
+            model: OpenAI model to use (default: gpt-5.4-mini)
         """
         self.gateway_url = gateway_url
         self.available_peers = available_peers or []

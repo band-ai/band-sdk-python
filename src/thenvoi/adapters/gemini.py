@@ -337,8 +337,9 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             self.client = genai.Client(api_key=self._api_key)
         except ValueError as e:
             raise ValueError(
-                "Gemini client initialization failed. Provide GEMINI_API_KEY or "
-                "pass api_key explicitly."
+                "Gemini client initialization failed. Either set GOOGLE_API_KEY "
+                "/ GEMINI_API_KEY, or enable Vertex AI mode "
+                "(GOOGLE_GENAI_USE_VERTEXAI=true + GOOGLE_CLOUD_PROJECT)."
             ) from e
         return self.client
 
