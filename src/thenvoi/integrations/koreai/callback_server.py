@@ -107,10 +107,10 @@ class KoreAICallbackServer:
 
     async def _handle_callback(self, request: web.Request) -> web.Response:
         """Handle an incoming callback POST from Kore.ai."""
-        # Validate webhook secret if configured
-        # NOTE: The header name "X-Kore-Signature" and SHA-256 hex digest
-        # format are assumptions. Validate against a real Kore.ai webhook
-        # channel during integration testing and update if needed.
+        # Validate webhook secret if configured. KoreAIAdapter currently
+        # rejects webhook_secret because the Kore.ai callback signing contract
+        # has not been validated; this branch is kept only for direct server
+        # tests or a future adapter revision that wires in verified headers.
         if self._webhook_secret:
             body_bytes = await request.read()
             if not self._verify_signature(request, body_bytes):

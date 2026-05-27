@@ -210,7 +210,7 @@ class TestOnStarted:
         assert adapter._client is not None
 
     @pytest.mark.asyncio
-    async def test_warns_no_webhook_secret(
+    async def test_warns_experimental_callback_auth(
         self, adapter: KoreAIAdapter, caplog: pytest.LogCaptureFixture
     ) -> None:
         with (
@@ -219,7 +219,26 @@ class TestOnStarted:
         ):
             await adapter.on_started("KoreBot", "A Kore.ai bot")
 
-        assert any("webhook_secret" in r.message for r in caplog.records)
+        assert any("experimental" in r.message.lower() for r in caplog.records)
+        assert any(
+            "without cryptographic verification" in r.message for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejects_unverified_webhook_secret(self) -> None:
+        cfg = KoreAIConfig(
+            bot_id="st-test",
+            client_id="cs-test",
+            client_secret="secret",
+            callback_url="https://bridge.example.com/koreai/callback",
+            webhook_secret="shared-secret",
+        )
+        adapter = KoreAIAdapter(config=cfg)
+
+        with pytest.raises(
+            ValueError, match="signature verification is not implemented"
+        ):
+            await adapter.on_started("KoreBot", "A Kore.ai bot")
 
     @pytest.mark.asyncio
     async def test_warns_http_callback_url(
@@ -290,10 +309,12 @@ class TestOnMessage:
             new_session=False,
         )
 
-        # Verify response was delivered to ChatRoom
+        # Verify response was delivered to ChatRoom. The adapter passes the
+        # sender id through the normal mention resolver instead of the
+        # deprecated dict mention shape.
         mock_tools.send_message.assert_awaited_once_with(
             content="Your order #123 shipped March 28",
-            mentions=[{"id": "agent-langgraph"}],
+            mentions=["agent-langgraph"],
         )
 
         # Verify session state persisted

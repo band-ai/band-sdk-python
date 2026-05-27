@@ -1,10 +1,12 @@
-"""Kore.ai XO Platform adapter.
+"""Experimental Kore.ai XO Platform adapter.
 
 Bridges Thenvoi's WebSocket-based agent model and Kore.ai's HTTP webhook
 model. Maintains a persistent connection to Thenvoi and runs an HTTP
 callback server for Kore.ai bot responses.
 
-One adapter instance corresponds to one Kore.ai bot.
+One adapter instance corresponds to one Kore.ai bot. This adapter is marked
+experimental until the inbound Kore.ai callback authentication contract is
+validated against a live Kore.ai tenant.
 """
 
 from __future__ import annotations
@@ -69,12 +71,21 @@ class KoreAIAdapter(SimpleAdapter[KoreAISessionState]):
         """Initialize the adapter: start callback server and HTTP client."""
         await super().on_started(agent_name, agent_description)
 
-        # Warn about security configuration
-        if not self.config.webhook_secret:
-            logger.warning(
-                "No webhook_secret configured. Callback server will accept "
-                "unauthenticated requests. Set webhook_secret for production use."
+        # Warn about security configuration. The callback signature contract
+        # has not been validated against Kore.ai's live callback delivery, so
+        # this adapter remains experimental and must not claim production
+        # webhook authentication yet.
+        if self.config.webhook_secret:
+            raise ValueError(
+                "Kore.ai callback signature verification is not implemented: "
+                "webhook_secret was configured, but Kore.ai's callback signing "
+                "contract has not been validated for this adapter."
             )
+        logger.warning(
+            "KoreAIAdapter is experimental: inbound callback authentication "
+            "has not been validated, so the callback server accepts requests "
+            "without cryptographic verification."
+        )
         if self.config.callback_url.startswith("http://"):
             logger.warning(
                 "callback_url uses HTTP. Use HTTPS in production with a "
@@ -154,7 +165,7 @@ class KoreAIAdapter(SimpleAdapter[KoreAISessionState]):
         for text in callback_data.messages:
             await tools.send_message(
                 content=text,
-                mentions=[{"id": msg.sender_id}],
+                mentions=[msg.sender_id],
             )
 
         # Handle task completion

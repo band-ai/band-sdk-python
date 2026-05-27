@@ -24,7 +24,9 @@ class KoreAIConfig:
         callback_bind_host: Bind address for the callback server.
         response_timeout_seconds: Max seconds to wait for Kore.ai callback(s).
         session_timeout_seconds: Session inactivity timeout (must match Kore.ai config).
-        webhook_secret: Secret for HMAC validation of incoming callbacks.
+        webhook_secret: Reserved for future verified Kore.ai callback signing.
+            Configuring it currently makes KoreAIAdapter fail fast because the
+            live callback auth contract has not been validated.
     """
 
     bot_id: str = ""
