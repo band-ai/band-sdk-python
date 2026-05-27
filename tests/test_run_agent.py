@@ -111,6 +111,64 @@ async def test_run_parlant_agent_enables_contacts_for_runtime_and_tools(
 
 
 @pytest.mark.asyncio
+async def test_run_parlant_agent_broadcast_contacts_do_not_enable_contact_tools(
+    run_agent_module,
+    fake_parlant_sdk,
+    monkeypatch,
+):
+    """Broadcast-only contact mode should not grant LLM contact-management tools."""
+    captured = {}
+
+    class FakeAdapter:
+        def __init__(self, **kwargs):
+            captured["adapter_kwargs"] = kwargs
+
+    class FakeAgent:
+        @classmethod
+        def create(cls, **kwargs):
+            captured["agent_create_kwargs"] = kwargs
+            return SimpleNamespace(run=AsyncMock())
+
+    def fake_create_parlant_tools(features=None, *, legacy_defaults=None):
+        captured["tool_features"] = features
+        captured["legacy_defaults"] = legacy_defaults
+        return ["tool-ref"]
+
+    import thenvoi.adapters
+    import thenvoi.integrations.parlant.tools
+
+    monkeypatch.setattr(thenvoi.adapters, "ParlantAdapter", FakeAdapter)
+    monkeypatch.setattr(
+        thenvoi.integrations.parlant.tools,
+        "create_parlant_tools",
+        fake_create_parlant_tools,
+    )
+    monkeypatch.setattr(run_agent_module, "Agent", FakeAgent)
+
+    contact_config = ContactEventConfig(
+        strategy=ContactEventStrategy.DISABLED,
+        broadcast_changes=True,
+    )
+
+    await run_agent_module.run_parlant_agent(
+        agent_id="agent-id",
+        api_key="api-key",
+        rest_url="https://example.test",
+        ws_url="wss://example.test/socket",
+        model=None,
+        custom_section="Be concise",
+        enable_streaming=False,
+        contact_config=contact_config,
+        logger=SimpleNamespace(warning=lambda *args: None, info=lambda *args: None),
+    )
+
+    assert captured["agent_create_kwargs"]["contact_config"] is contact_config
+    assert captured["adapter_kwargs"]["features"] is None
+    assert captured["tool_features"] is None
+    assert captured["legacy_defaults"] is False
+
+
+@pytest.mark.asyncio
 async def test_run_parlant_agent_preserves_legacy_tools_without_contacts(
     run_agent_module,
     fake_parlant_sdk,

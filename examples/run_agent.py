@@ -432,8 +432,11 @@ async def run_parlant_agent(
         )
     description = custom_section or "A helpful Band collaboration agent using Parlant."
 
+    llm_managed_contacts = bool(
+        contact_config and contact_config.strategy == ContactEventStrategy.HUB_ROOM
+    )
     parlant_capabilities = (
-        frozenset({Capability.CONTACTS}) if contact_config else frozenset()
+        frozenset({Capability.CONTACTS}) if llm_managed_contacts else frozenset()
     )
     parlant_emit = frozenset({Emit.EXECUTION}) if enable_streaming else frozenset()
     parlant_features = (
