@@ -164,6 +164,41 @@ This is the same in-band claim/process semantics the SDK's
 `ExecutionContext` uses in the normal long-running Agent flow;
 `OneShotInvoker` reshapes it for the request/response model.
 
+## Startup rehydration: catching up after downtime
+
+Phoenix only pushes events from subscription time forward. So a message
+that arrives while the bridge is down — or one left stuck in `processing`
+when a container crashed mid-turn — is never redelivered on the WS once
+the bridge reconnects. Without a catch-up step, the agent would stay
+silent on that backlog until some *new* event happened to land in the
+room.
+
+On every (re)connect, after subscribing to its existing rooms, each
+`AgentRunner` polls `link.get_next_message(room_id)` (the platform's
+`/next`) once per room. If a room has an unprocessed message, the bridge
+forwards the oldest one as a synthetic `message_created` event through the
+same dedup + per-room-lock + forwarder path a live event takes — so the
+container can't tell a rehydrated nudge from a live message.
+
+Two things make one nudge per room enough:
+
+- The container's **drain loop** pulls the rest of that room's backlog
+  once it processes the first message, so the bridge needn't replay all of
+  them.
+- `/next` also returns messages stuck in `processing`, so this doubles as
+  **cross-restart crash recovery**: the forwarded `msg_id` matches the
+  container's own `/next`, so the container *reclaims* the stuck message
+  (re-`mark_processing` resets the attempt) rather than skipping it as
+  already-claimed.
+
+This stays within the dumb-pipe boundary: rehydration is a *read*
+(`/next`) plus a forward. The bridge still parses no mentions, constructs
+no messages, and marks no lifecycle state — the container owns all of
+that. (One genuinely uncovered case remains: a message stuck in
+`processing` while the bridge stays connected, with no new traffic and no
+reconnect — nothing re-polls `/next`. Covering it would need a periodic
+sweep, deliberately out of scope for now.)
+
 ## Constraints to know
 
 | Constraint | Implication |
