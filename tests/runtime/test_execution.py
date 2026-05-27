@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.runtime.execution import Execution, ExecutionContext, _error_label
+from thenvoi.runtime.execution import (
+    Execution,
+    ExecutionContext,
+    _BacklogProcessResult,
+    _error_label,
+)
 from thenvoi.runtime.types import ConversationContext, SessionConfig
 
 # Import test helpers from conftest
@@ -57,6 +62,7 @@ def mock_link():
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
     link.get_next_message = AsyncMock(return_value=None)  # No backlog by default
+    link.get_stale_processing_messages = AsyncMock(return_value=[])
 
     return link
 
@@ -828,6 +834,392 @@ class TestCrashRecoverySync:
         mock_handler.assert_not_called()
         mock_link_with_next.mark_processed.assert_not_called()
         assert ctx._inflight_message_ids == set()
+
+    async def test_backlog_processed_ack_failure_is_not_remembered(
+        self, mock_link_with_next, mock_handler
+    ):
+        """Local success without durable processed ack must not enter processed dedupe."""
+        from thenvoi.runtime.types import PlatformMessage
+
+        msg = PlatformMessage(
+            id="msg-ack-fails",
+            room_id="room-123",
+            content="ack fails",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(return_value=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        result = await ctx._process_backlog_message(msg)
+
+        assert result == _BacklogProcessResult.RETRY_LATER
+        mock_handler.assert_awaited_once()
+        mock_link_with_next.mark_processed.assert_awaited_once_with(
+            "room-123", "msg-ack-fails"
+        )
+        assert "msg-ack-fails" not in ctx._processed_ids
+        assert "msg-ack-fails" in ctx._processed_ack_pending_ids
+
+    async def test_websocket_processed_ack_failure_is_not_remembered(
+        self, mock_link_with_next, mock_handler
+    ):
+        """WebSocket success without durable processed ack must not enter dedupe."""
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(return_value=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        event = make_message_event(room_id="room-123", msg_id="msg-ws-ack-fails")
+        await ctx._process_event(event)
+
+        mock_handler.assert_awaited_once()
+        mock_link_with_next.mark_processed.assert_awaited_once_with(
+            "room-123", "msg-ws-ack-fails"
+        )
+        assert "msg-ws-ack-fails" not in ctx._processed_ids
+        assert "msg-ws-ack-fails" in ctx._processed_ack_pending_ids
+
+    async def test_backlog_processed_ack_failure_retries_ack_without_handler_replay(
+        self, mock_link_with_next, mock_handler
+    ):
+        """Redelivery after local success should retry only the processed ack."""
+        from thenvoi.runtime.types import PlatformMessage
+
+        msg = PlatformMessage(
+            id="msg-backlog-ack-retry",
+            room_id="room-123",
+            content="ack retry",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(side_effect=[False, True])
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        assert (
+            await ctx._process_backlog_message(msg) == _BacklogProcessResult.RETRY_LATER
+        )
+        assert await ctx._process_backlog_message(msg) == _BacklogProcessResult.ADVANCED
+
+        mock_handler.assert_awaited_once()
+        assert mock_link_with_next.mark_processed.await_count == 2
+        assert "msg-backlog-ack-retry" in ctx._processed_ids
+        assert "msg-backlog-ack-retry" not in ctx._processed_ack_pending_ids
+
+    async def test_processed_ack_retry_budget_exhaustion_keeps_local_completion(
+        self, mock_link_with_next, mock_handler
+    ):
+        """Permanent processed ack failure should not deadlock or replay local side effects."""
+        from thenvoi.runtime.types import PlatformMessage
+
+        msg = PlatformMessage(
+            id="msg-ack-budget",
+            room_id="room-123",
+            content="ack budget",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(return_value=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(
+                enable_context_hydration=False,
+                max_message_retries=1,
+            ),
+        )
+
+        assert (
+            await ctx._process_backlog_message(msg) == _BacklogProcessResult.RETRY_LATER
+        )
+        assert await ctx._process_backlog_message(msg) == _BacklogProcessResult.ADVANCED
+
+        mock_handler.assert_awaited_once()
+        assert mock_link_with_next.mark_processed.await_count == 2
+        assert "msg-ack-budget" in ctx._processed_ids
+        assert "msg-ack-budget" not in ctx._processed_ack_pending_ids
+
+    async def test_websocket_processed_ack_failure_retries_ack_without_handler_replay(
+        self, mock_link_with_next, mock_handler
+    ):
+        """WebSocket redelivery after local success should retry only the processed ack."""
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(side_effect=[False, True])
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        event = make_message_event(room_id="room-123", msg_id="msg-ws-ack-retry")
+        await ctx._process_event(event)
+        await ctx._process_event(event)
+
+        mock_handler.assert_awaited_once()
+        assert mock_link_with_next.mark_processed.await_count == 2
+        assert "msg-ws-ack-retry" in ctx._processed_ids
+        assert "msg-ws-ack-retry" not in ctx._processed_ack_pending_ids
+
+    async def test_websocket_processed_ack_failure_retries_ack_before_newer_queue(
+        self, mock_link_with_next, mock_handler
+    ):
+        """The process loop should retry a failed WebSocket processed ack before newer events."""
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(side_effect=[False, True, True])
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        await ctx.start()
+        await asyncio.sleep(0.1)
+        await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-old-ws"))
+        await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-new-ws"))
+        await asyncio.sleep(0.3)
+
+        assert [call.args[1].payload.id for call in mock_handler.await_args_list] == [
+            "msg-old-ws",
+            "msg-new-ws",
+        ]
+        assert mock_link_with_next.mark_processed.await_count == 3
+        assert "msg-old-ws" in ctx._processed_ids
+        assert "msg-new-ws" in ctx._processed_ids
+        assert ctx._processed_ack_pending_ids == {}
+
+        await ctx.stop()
+
+    async def test_sync_point_claim_failure_does_not_clear_marker(
+        self, mock_link_with_next, mock_handler
+    ):
+        """A failed durable claim is not a completed sync point."""
+        from thenvoi.runtime.types import PlatformMessage
+
+        sync_msg = PlatformMessage(
+            id="msg-sync-claim-fails",
+            room_id="room-123",
+            content="sync claim fails",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.get_next_message = AsyncMock(return_value=sync_msg)
+        mock_link_with_next.mark_processing = AsyncMock(return_value=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        await ctx.on_event(
+            make_message_event(room_id="room-123", msg_id="msg-sync-claim-fails")
+        )
+        await ctx.start()
+        await asyncio.sleep(0.2)
+
+        assert ctx._first_ws_msg_id == "msg-sync-claim-fails"
+        mock_handler.assert_not_called()
+        assert "msg-sync-claim-fails" not in ctx._processed_ids
+
+        await ctx.stop()
+
+    async def test_startup_backlog_claim_failure_does_not_spin(
+        self, mock_link_with_next, mock_handler
+    ):
+        """Startup sync should stop after one unclaimable non-sync backlog message."""
+        from thenvoi.runtime.types import PlatformMessage
+
+        msg = PlatformMessage(
+            id="msg-startup-claim-fails",
+            room_id="room-123",
+            content="startup claim fails",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.get_next_message = AsyncMock(return_value=msg)
+        mock_link_with_next.mark_processing = AsyncMock(return_value=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        synchronized = await ctx._synchronize_with_next()
+
+        assert synchronized is False
+        assert ctx._sync_complete is False
+        mock_link_with_next.get_next_message.assert_awaited_once()
+        mock_link_with_next.mark_processing.assert_awaited_once_with(
+            "room-123", "msg-startup-claim-fails"
+        )
+        mock_handler.assert_not_called()
+        assert "msg-startup-claim-fails" not in ctx._processed_ids
+
+    async def test_startup_backlog_claim_failure_does_not_process_newer_ws_event(
+        self, mock_link_with_next, mock_handler
+    ):
+        """Startup sync should not switch to WebSocket after an unclaimable backlog message."""
+        from thenvoi.runtime.types import PlatformMessage
+
+        backlog_msg = PlatformMessage(
+            id="msg-older-claim-fails",
+            room_id="room-123",
+            content="older claim fails",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.get_next_message = AsyncMock(return_value=backlog_msg)
+        mock_link_with_next.mark_processing = AsyncMock(return_value=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(
+                enable_context_hydration=False,
+                idle_resync_seconds=10,
+            ),
+        )
+
+        await ctx.on_event(
+            make_message_event(room_id="room-123", msg_id="msg-newer-ws")
+        )
+        await ctx.start()
+        await asyncio.sleep(0.2)
+
+        mock_link_with_next.mark_processing.assert_awaited_once_with(
+            "room-123", "msg-older-claim-fails"
+        )
+        mock_handler.assert_not_called()
+        assert ctx._sync_complete is False
+        assert ctx._first_ws_msg_id == "msg-newer-ws"
+
+        await ctx.stop()
+
+    async def test_resync_claim_failure_does_not_spin(
+        self, mock_link_with_next, mock_handler
+    ):
+        """Resync should stop after one unclaimable /next message."""
+        from thenvoi.runtime.types import PlatformMessage
+
+        msg = PlatformMessage(
+            id="msg-resync-claim-fails",
+            room_id="room-123",
+            content="resync claim fails",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.get_next_message = AsyncMock(return_value=msg)
+        mock_link_with_next.mark_processing = AsyncMock(return_value=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        synchronized = await ctx._resync_pending_messages()
+
+        assert synchronized is False
+        mock_link_with_next.get_next_message.assert_awaited_once()
+        mock_link_with_next.mark_processing.assert_awaited_once_with(
+            "room-123", "msg-resync-claim-fails"
+        )
+        mock_handler.assert_not_called()
+        assert "msg-resync-claim-fails" not in ctx._processed_ids
+
+    async def test_resync_claim_failure_does_not_process_newer_ws_event(
+        self, mock_link_with_next, mock_handler
+    ):
+        """Phase 2 resync should block queued WebSocket events behind older /next work."""
+        from thenvoi.runtime.types import PlatformMessage
+
+        msg = PlatformMessage(
+            id="msg-resync-older-claim-fails",
+            room_id="room-123",
+            content="resync older claim fails",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.get_next_message = AsyncMock(side_effect=[None, msg])
+        mock_link_with_next.mark_processing = AsyncMock(return_value=False)
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            config=SessionConfig(
+                enable_context_hydration=False,
+                idle_resync_seconds=10,
+            ),
+        )
+
+        await ctx.start()
+        await asyncio.sleep(0.1)
+        await ctx.request_resync()
+        await ctx.on_event(
+            make_message_event(room_id="room-123", msg_id="msg-resync-newer-ws")
+        )
+        await asyncio.sleep(0.2)
+
+        mock_link_with_next.mark_processing.assert_awaited_once_with(
+            "room-123", "msg-resync-older-claim-fails"
+        )
+        mock_handler.assert_not_called()
+        assert "msg-resync-newer-ws" not in ctx._processed_ids
+
+        await ctx.stop()
 
     async def test_sync_skips_permanently_failed(
         self, mock_link_with_next, mock_handler

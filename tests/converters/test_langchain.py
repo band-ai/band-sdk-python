@@ -263,6 +263,113 @@ class TestToolCallPairing:
         assert result[2].tool_calls[0]["id"] == "call_first"
         assert result[2].tool_calls[0]["args"] == {"query": "first"}
 
+    def test_pairs_same_name_tool_calls_in_call_order_by_run_id(self):
+        converter = LangChainHistoryConverter()
+        raw = [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "lookup",
+                        "run_id": "run-first",
+                        "data": {"input": {"query": "first"}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "lookup",
+                        "run_id": "run-second",
+                        "data": {"input": {"query": "second"}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_end",
+                        "name": "lookup",
+                        "run_id": "run-first",
+                        "data": {"output": "first result"},
+                    }
+                ),
+                "message_type": "tool_result",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_end",
+                        "name": "lookup",
+                        "run_id": "run-second",
+                        "data": {"output": "second result"},
+                    }
+                ),
+                "message_type": "tool_result",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert result[0].tool_calls[0]["id"] == "run-first"
+        assert result[0].tool_calls[0]["args"] == {"query": "first"}
+        assert result[1].tool_call_id == "run-first"
+        assert result[2].tool_calls[0]["id"] == "run-second"
+        assert result[2].tool_calls[0]["args"] == {"query": "second"}
+        assert result[3].tool_call_id == "run-second"
+
+    def test_skips_ambiguous_same_name_tool_result_with_nonmatching_ids(self):
+        converter = LangChainHistoryConverter()
+        raw = [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "lookup",
+                        "run_id": "run-first",
+                        "data": {"input": {"query": "first"}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_start",
+                        "name": "lookup",
+                        "run_id": "run-second",
+                        "data": {"input": {"query": "second"}},
+                    }
+                ),
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {
+                        "event": "on_tool_end",
+                        "name": "lookup",
+                        "run_id": "run-missing",
+                        "data": {"output": "missing tool_call_id='call_missing'"},
+                    }
+                ),
+                "message_type": "tool_result",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert result == []
+
     def test_falls_back_to_lifo_by_name_without_tool_call_id_match(self):
         pending = [
             {"name": "lookup", "args": {"query": "first"}},
@@ -272,7 +379,7 @@ class TestToolCallPairing:
         match = LangChainHistoryConverter._pop_matching_tool_call(
             pending,
             tool_name="lookup",
-            tool_call_id=None,
+            match_ids=(),
         )
 
         assert match == {"name": "lookup", "args": {"query": "second"}}
