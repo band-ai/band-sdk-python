@@ -155,7 +155,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         prompt_hash = hashlib.sha256(self._system_prompt.encode("utf-8")).hexdigest()
         tools = create_parlant_tools(
             self.features,
-            legacy_defaults=not self._features_explicitly_provided,
+            legacy_defaults=False,
             additional_tools=self._custom_tools,
         )
         guideline = await self._parlant_agent.create_guideline(

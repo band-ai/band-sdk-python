@@ -277,10 +277,10 @@ class TestOnStarted:
         assert list(calculator.tool.parameters) == ["value"]
 
     @pytest.mark.asyncio
-    async def test_contract_guideline_uses_legacy_contact_tools_by_default(
+    async def test_contract_guideline_requires_explicit_contacts_capability(
         self, mock_parlant_server, mock_parlant_agent, mock_application_class
     ):
-        """Omitted features keep Parlant's legacy contact-tool default."""
+        """Omitted features should not expose contact-management tools."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
@@ -298,7 +298,7 @@ class TestOnStarted:
             await adapter.on_started("BandBot", "A Band test agent")
 
         tools = mock_parlant_agent.create_guideline.await_args.kwargs["tools"]
-        assert any(t.tool.name == "thenvoi_list_contacts" for t in tools)
+        assert not any(t.tool.name == "thenvoi_list_contacts" for t in tools)
 
     @pytest.mark.asyncio
     async def test_contract_guideline_respects_explicit_empty_features(
