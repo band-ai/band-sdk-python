@@ -178,6 +178,14 @@ Watch the logs; you should see three agents connect to Thenvoi's WS, each
 subscribed to its own rooms. The bridge health endpoint is at
 <http://localhost:8080/health> and reports per-agent connection state.
 
+> **Local dev with AWS SSO / `aws login`:** if you authenticate locally via
+> the `login` credential provider, the bridge's first `InvokeAgentRuntime`
+> call fails with `MissingDependencyException: ... botocore[crt]`. Install the
+> extra once (`uv pip install "botocore[crt]"`) and restart the bridge — the
+> boto3 client is built lazily and cached, so a restart is required. This is a
+> local-only papercut; in a real deployment the bridge runs with an instance
+> role and doesn't hit it.
+
 ## Step 7 — Try it
 
 In the Thenvoi UI:
