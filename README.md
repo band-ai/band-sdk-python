@@ -254,7 +254,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 > **Other languages:** The Thenvoi SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
 
-Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `bridge_langchain` support the standalone bridge service under `thenvoi-bridge/` and `examples/agentcore/`.
+Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `agentcore_runtime` support the standalone bridge service under `thenvoi-bridge/` and `examples/agentcore/`.
 
 ---
 
