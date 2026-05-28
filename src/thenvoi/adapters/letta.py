@@ -126,7 +126,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         adapter = LettaAdapter(
             config=LettaAdapterConfig(
                 api_key="your-letta-api-key",
-                model="openai/gpt-4o",
+                model="openai/gpt-5.4",
                 mcp_server_url="http://localhost:8002/sse",
             ),
 
@@ -134,7 +134,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         adapter = LettaAdapter(
             config=LettaAdapterConfig(
                 base_url="http://localhost:8283",
-                model="openai/gpt-4o",
+                model="openai/gpt-5.4",
                 mcp_server_url="http://localhost:8002/sse",
             ),
         )

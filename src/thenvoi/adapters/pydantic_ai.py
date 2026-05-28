@@ -46,7 +46,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     Example:
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             custom_section="You are a helpful assistant.",
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
@@ -73,7 +73,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         Initialize the Pydantic AI adapter.
 
         Args:
-            model: Pydantic AI model string (e.g., "openai:gpt-4o", "anthropic:claude-3-5-sonnet-latest")
+            model: Pydantic AI model string (e.g., "openai:gpt-5.4", "anthropic:claude-3-5-sonnet-latest")
             system_prompt: Optional custom system prompt (overrides default)
             custom_section: Optional custom section added to default system prompt
             enable_execution_reporting: Deprecated. Use features=AdapterFeatures(emit={Emit.EXECUTION}).

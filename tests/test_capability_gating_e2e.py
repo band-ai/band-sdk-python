@@ -113,7 +113,7 @@ class TestCapabilityGatingEndToEnd:
         from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
 
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             features=AdapterFeatures(capabilities={Capability.MEMORY}),
         )
         await adapter.on_started("test-agent", "A test agent")
