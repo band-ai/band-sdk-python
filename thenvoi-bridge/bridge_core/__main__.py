@@ -1,30 +1,20 @@
 """Entry point for ``python -m bridge_core``.
 
-The bridge requires handlers to be registered before it can run.
-Create your own entry point that registers handlers, for example::
+Loads :class:`BridgeConfig` from the ``THENVOI_BRIDGE_AGENTS`` env var and runs::
 
-    import asyncio
-    from bridge_core.bridge import main
-    from my_handlers import MyHandler
-
-    asyncio.run(main(handlers={"my_handler": MyHandler()}))
+    THENVOI_BRIDGE_AGENTS='[{"agent_id":"...","api_key":"...","target":{"type":"http","url":"..."}}]' \\
+        python -m bridge_core
 """
 
 from __future__ import annotations
 
+import asyncio
+
 
 def _main() -> None:
-    raise SystemExit(
-        "The bridge requires handlers to be registered before it can run.\n"
-        "\n"
-        "Create your own entry point that registers handlers, for example:\n"
-        "\n"
-        "    import asyncio\n"
-        "    from bridge_core.bridge import main\n"
-        "    from my_handlers import MyHandler\n"
-        "\n"
-        "    asyncio.run(main(handlers={'my_handler': MyHandler()}))"
-    )
+    from .bridge import main
+
+    asyncio.run(main())
 
 
 if __name__ == "__main__":
