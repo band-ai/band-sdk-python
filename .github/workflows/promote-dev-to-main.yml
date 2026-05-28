@@ -11,6 +11,10 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  group: promote-dev-to-main
+  cancel-in-progress: false
+
 jobs:
   promote:
     runs-on: ubuntu-latest
