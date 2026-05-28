@@ -15,7 +15,10 @@ All agent code lives in `examples/` in this repo. Fetch via raw GitHub URLs:
 https://raw.githubusercontent.com/thenvoi/thenvoi-sdk-python/<branch>/<path>
 ```
 
-Use the same branch you fetched this SKILL.md from. If you don't know it, default to `main`.
+**Determining the branch:** parse it from the SKILL.md URL the user gave you. The expected shape is `https://raw.githubusercontent.com/thenvoi/thenvoi-sdk-python/<branch>/skills/onboarding/SKILL.md` — `<branch>` is the segment between the repo name and `skills/`.
+
+- If you fetched SKILL.md from a `raw.githubusercontent.com` URL matching that shape, use the branch from the URL for all subsequent fetches.
+- If SKILL.md was loaded via any other path (a local file, a different host, a URL that doesn't match the expected shape), **STOP and ask the user which branch to fetch examples from** — show them what URL you were given and ask. Do not silently fall back to `main` — a silent fallback can pull example files that don't match the SKILL.md the user is following, and the failure mode (404 or a subtly different example) is hard to debug.
 
 ### Example file map (adapter → Tom + Jerry filenames)
 
@@ -121,7 +124,14 @@ Fetch these three files from the branch determined at the top:
    ```
    (Keep the existing `logger = logging.getLogger(__name__)` line.)
 
-5. **Swap the LLM if the user picked something other than the example default.** The example defaults are listed below. Only modify if the user's choice differs.
+5. **Replace the module docstring.** The upstream example docstring describes how to run the file from the repo root and mentions `prompts/characters.py` — both are wrong for the scaffolded standalone project. Replace the entire top-of-file `"""..."""` block (the one immediately after `from __future__ import annotations`, if present, or otherwise the first triple-quoted string in the file) with a single-line docstring:
+
+   - Tom file: `"""Tom the cat agent (<ADAPTER>)."""`
+   - Jerry file: `"""Jerry the mouse agent (<ADAPTER>)."""`
+
+   Where `<ADAPTER>` is the human-readable adapter name (LangGraph, CrewAI, Anthropic, Claude SDK, Parlant, Pydantic AI).
+
+6. **Swap the LLM if the user picked something other than the example default.** The example defaults are listed below. Only modify if the user's choice differs.
 
    | Adapter | Example default | Anthropic swap | OpenAI swap |
    |---|---|---|---|
@@ -161,18 +171,37 @@ THENVOI_WS_URL=<WS_URL>
 ```
 
 **`<out>/pyproject.toml`** — `<EXTRA>` is the adapter name with two hyphen-form exceptions: `claude_sdk` → `claude-sdk`, `pydantic_ai` → `pydantic-ai`. The other adapters (`langgraph`, `crewai`, `anthropic`, `parlant`) use their name verbatim.
+
+The `requires-python` upper bound matters: without it `uv` will pick the newest Python on the machine (3.14+ exists at time of writing), and pydantic-core's PyO3 currently caps at 3.13 — `uv sync` will fail to build. Cap at `<3.14`.
+
+`<ANTHROPIC_DEPS>` is normally empty, but for crewai + Anthropic and pydantic_ai + Anthropic some extras don't get pulled in via the band-sdk extras and need to be added explicitly:
+
+| Adapter + LLM | `<ANTHROPIC_DEPS>` content (a single line, indented to match) |
+|---|---|
+| `crewai` + Anthropic | `    "crewai[anthropic]==1.14.3",` |
+| `pydantic_ai` + Anthropic | `    "pydantic-ai-slim[anthropic]>=1.56.0",` |
+| Anything else | *(omit the line entirely)* |
+
 ```toml
 [project]
 name = "thenvoi-tom-jerry"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "band-sdk[<EXTRA>]>=0.2.10",
+<ANTHROPIC_DEPS>
     "python-dotenv>=1.0.0",
 ]
 ```
 
 Note: `band-sdk` is the PyPI name; the installed Python module is still `thenvoi` (so the agent code's `from thenvoi import ...` imports are unchanged).
+
+**`<out>/.python-version`**
+```
+3.12
+```
+
+(Belt-and-suspenders with the `requires-python` cap — pins the interpreter explicitly so `uv sync` picks 3.12 instead of whatever the newest local Python happens to be.)
 
 **`<out>/.gitignore`**
 ```
@@ -200,7 +229,11 @@ AskUserQuestion (single-select):
   uv run python tom_agent.py     # terminal 1
   uv run python jerry_agent.py   # terminal 2
   ```
-- **Claude, run them for me** — start both with `run_in_background: true`, one Bash call per agent. After they're running, give the BashOutput command for tailing logs.
+- **Claude, run them for me** — do these in order:
+  1. `cd <out> && uv sync` (foreground, wait for it to finish). This installs deps and lockfile; the background launches below assume it succeeded.
+  2. Start Tom with `run_in_background: true`: `cd <out> && uv run python tom_agent.py`
+  3. Start Jerry with `run_in_background: true`: `cd <out> && uv run python jerry_agent.py`
+  4. Give the user the `BashOutput` command for each background bash ID so they can tail logs.
 
 ### Step 9 — Show the user how to trigger the chase
 
