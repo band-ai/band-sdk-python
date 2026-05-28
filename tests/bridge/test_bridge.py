@@ -236,6 +236,83 @@ class TestAgentRunnerSubscriptions:
 # ---------------------------------------------------------------------------
 
 
+class TestAgentRunnerBackoff:
+    """Regression for the jitter-is-a-bool bug: ``ReconnectConfig.jitter`` is a
+    *fraction*, so 0.25 and 1.0 must produce visibly different sleep windows.
+    """
+
+    async def test_zero_jitter_is_fixed_delay(self) -> None:
+        runner, _, _ = _build_runner()
+        runner._reconnect = ReconnectConfig(jitter=0.0)
+        # No randomness in the [0, 0] interval — always exactly delay.
+        assert runner._backoff_sleep_seconds(8.0) == 8.0
+
+    async def test_partial_jitter_clamps_to_min_window(self) -> None:
+        runner, _, _ = _build_runner()
+        runner._reconnect = ReconnectConfig(jitter=0.25)
+        # 75% of delay is the fixed floor; only the top 25% randomizes.
+        samples = [runner._backoff_sleep_seconds(8.0) for _ in range(200)]
+        assert all(6.0 <= s <= 8.0 for s in samples)
+
+    async def test_full_jitter_spans_zero_to_delay(self) -> None:
+        runner, _, _ = _build_runner()
+        runner._reconnect = ReconnectConfig(jitter=1.0)
+        samples = [runner._backoff_sleep_seconds(8.0) for _ in range(200)]
+        assert all(0.0 <= s <= 8.0 for s in samples)
+        # With 200 samples on [0, 8] we should see something well below the
+        # 0.25-jitter floor of 6.0 — the previous bool-treatment made these
+        # two configs identical.
+        assert min(samples) < 6.0
+
+
+class TestAgentRunnerConcurrencyCap:
+    """Regression: a burst of events must not fan unbounded concurrent
+    forwards. With ``max_concurrent_forwards=N``, at most N forwards run at
+    once even if N+K tasks are spawned together.
+    """
+
+    async def test_semaphore_caps_in_flight_forwards(self) -> None:
+        in_flight = 0
+        peak = 0
+        gate = asyncio.Event()
+
+        class _BlockingForwarder:
+            async def forward(self, payload: dict[str, Any]) -> None:
+                nonlocal in_flight, peak
+                in_flight += 1
+                peak = max(peak, in_flight)
+                try:
+                    await gate.wait()
+                finally:
+                    in_flight -= 1
+
+            async def close(self) -> None:
+                return
+
+        fwd = _BlockingForwarder()
+        runner, _, _ = _build_runner(forwarder=fwd)  # type: ignore[arg-type]
+        runner._forward_semaphore = asyncio.Semaphore(3)
+
+        # Fire 10 forwards on distinct rooms so per-room locks don't serialize
+        # them — only the semaphore can.
+        tasks = [
+            asyncio.create_task(
+                runner._safe_handle_event(
+                    _make_message_event(message_id=f"m{i}", room_id=f"r{i}")
+                )
+            )
+            for i in range(10)
+        ]
+        # Let the event loop start them all.
+        for _ in range(5):
+            await asyncio.sleep(0)
+
+        assert peak == 3, f"expected peak=3, saw {peak}"
+
+        gate.set()
+        await asyncio.gather(*tasks)
+
+
 class TestAgentRunnerForwarderFailures:
     async def test_forwarder_exception_does_not_crash_safe_handler(self) -> None:
         fwd = FakeForwarder()
@@ -321,6 +398,33 @@ class TestAgentRunnerRehydration:
 
         assert isinstance(fwd, FakeForwarder)
         assert len(fwd.forwarded) == 1
+
+    async def test_failed_forward_is_retryable_on_rehydration(self) -> None:
+        """Regression: dedup must not mask a message whose first forward failed.
+
+        If the bridge marks a message id as processed before the forward
+        succeeds, a transient forwarder failure permanently swallows that
+        message — on reconnect the rehydration sweep sees it again and drops
+        it as a duplicate, so the room is stuck.
+        """
+        fwd = FakeForwarder()
+        runner, _, link = _build_runner(forwarder=fwd)
+
+        # First forward raises; second forward (after rehydration) succeeds.
+        fwd.forward_side_effect = RuntimeError("network down")
+        await runner._safe_handle_event(
+            _make_message_event(message_id="m-stuck", room_id="r1")
+        )
+        assert fwd.forwarded == []  # forward failed → nothing recorded
+
+        # Rehydration replays the same message id; bridge must attempt the
+        # forward again rather than treat it as already-processed.
+        fwd.forward_side_effect = None
+        link.get_next_message.side_effect = [_make_platform_message("m-stuck", "r1")]
+        await runner._rehydrate_backlog(["r1"])
+
+        ids = {(p.get("payload") or {}).get("id") for p in fwd.forwarded}
+        assert ids == {"m-stuck"}
 
 
 # ---------------------------------------------------------------------------

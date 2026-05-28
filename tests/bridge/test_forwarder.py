@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -159,6 +160,31 @@ class TestAgentCoreForwarder:
         forwarder = AgentCoreForwarder(target, boto3_client=mock_client)
         with pytest.raises(TimeoutError):
             await forwarder.forward({"room_id": "r"})
+
+    def test_get_client_applies_matching_socket_timeouts(self) -> None:
+        """Regression: the boto client must inherit ``target.timeout`` as its
+        socket read timeout. Otherwise ``wait_for`` returning doesn't stop the
+        underlying boto thread, so a still-running call can race the next
+        forward for the same room.
+        """
+        target = AgentCoreTarget(
+            runtime_arn="arn:aws:bedrock-agentcore:us-east-1:1:runtime/a",
+            region="us-east-1",
+            timeout=45.0,
+        )
+        forwarder = AgentCoreForwarder(target)
+
+        # Patch ``boto3.client`` so we can assert on the exact ``Config`` our
+        # code requested — botocore reshapes ``retries`` and merges env defaults
+        # into ``client.meta.config`` after construction, so introspecting the
+        # built client tests boto's normalization rather than our intent.
+        with mock.patch("boto3.client") as boto_client:
+            forwarder._get_client()
+
+        cfg = boto_client.call_args.kwargs["config"]
+        assert cfg.read_timeout == 45.0
+        assert cfg.connect_timeout == 10  # min(timeout, 10)
+        assert cfg.retries == {"max_attempts": 1}
 
     def test_derive_session_id_prefers_room(self) -> None:
         assert (

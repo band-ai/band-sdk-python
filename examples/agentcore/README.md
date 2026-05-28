@@ -6,8 +6,6 @@ coordinate inside a single Thenvoi (Band) chatroom: `@weather`, `@math`, and
 needs them, asks each a targeted question, reads their replies, and posts
 a final answer back to the user. No human relay between agents.
 
-This demo proves the bridge's dumb-pipe model (INT-506).
-
 ## Other docs
 
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — *How it works.* The two-layer
@@ -168,10 +166,10 @@ export AWS_DEFAULT_REGION=us-east-1
 # Install bridge deps
 uv sync --extra bridge_agentcore
 
-# Start the bridge
-uv run python -m bridge_core
-# or for the same effect with .env loading:
+# Start the bridge (loads .env automatically)
 uv run python examples/agentcore/run_agentcore.py
+# or run the module directly:
+PYTHONPATH=thenvoi-bridge uv run python -m bridge_core
 ```
 
 Watch the logs; you should see three agents connect to Thenvoi's WS, each

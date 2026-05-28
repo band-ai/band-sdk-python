@@ -82,6 +82,7 @@ class AgentRunner:
         reconnect: ReconnectConfig,
         shutdown_event: asyncio.Event,
         link: ThenvoiLink | None = None,
+        max_concurrent_forwards: int = 32,
     ) -> None:
         """Initialize the runner.
 
@@ -94,6 +95,9 @@ class AgentRunner:
             shutdown_event: Shared shutdown signal (cancels the loop).
             link: Pre-built ThenvoiLink (test injection). If None, one is
                 constructed from agent_config and the URLs.
+            max_concurrent_forwards: Cap on concurrent in-flight forwards for
+                this agent. Tasks are still cheaply created per event; only
+                this many can be inside the forward path at once.
         """
         self._config = agent_config
         self._forwarder = forwarder
@@ -106,6 +110,10 @@ class AgentRunner:
         # is already posted before the next invocation reads room context).
         # Different rooms are unaffected — they forward in parallel.
         self._room_locks: dict[str, asyncio.Lock] = {}
+        # Back-pressure on forward fan-out: a burst of WS events (or a slow
+        # target) would otherwise pile up unbounded tasks and fan an equal
+        # number of HTTP/AgentCore calls at the backend.
+        self._forward_semaphore = asyncio.Semaphore(max_concurrent_forwards)
         self._link = link or ThenvoiLink(
             agent_id=agent_config.agent_id,
             api_key=agent_config.api_key,
@@ -182,12 +190,7 @@ class AgentRunner:
                         exc_info=True,
                     )
 
-                # Full-jitter backoff.
-                if self._reconnect.jitter > 0:
-                    sleep_time = random.uniform(0, delay)  # noqa: S311
-                else:
-                    sleep_time = delay
-                await asyncio.sleep(sleep_time)
+                await asyncio.sleep(self._backoff_sleep_seconds(delay))
 
                 delay = min(
                     delay * self._reconnect.multiplier,
@@ -195,6 +198,19 @@ class AgentRunner:
                 )
 
         logger.info("Agent %s: reconnect loop exited", self._config.agent_id)
+
+    def _backoff_sleep_seconds(self, delay: float) -> float:
+        """Compute the next backoff sleep with partial jitter.
+
+        ``ReconnectConfig.jitter`` is the *fraction* of the delay that
+        randomizes — 0 means a fixed ``delay``, 1 means full jitter uniform on
+        ``[0, delay]``, and 0.25 means 75% of the delay is fixed with the
+        remaining 25% randomized. Treating it as a boolean (the previous
+        ``jitter > 0`` check) collapsed 0.25/0.5/1.0 to the same full-jitter
+        behavior.
+        """
+        jitter = min(self._reconnect.jitter, 1.0)
+        return delay * (1 - jitter) + random.uniform(0, delay * jitter)  # noqa: S311
 
     async def close(self) -> None:
         """Disconnect link and close forwarder. Idempotent."""
@@ -302,13 +318,14 @@ class AgentRunner:
     async def _rehydrate_backlog(self, room_ids: list[str]) -> None:
         """Forward one nudge per room that has an unanswered message.
 
-        For each room we ask the platform for the oldest unprocessed message
+        For each room we ask the platform for the oldest actionable message
         (``/next``) and, if one exists, forward it as a synthetic
         ``message_created`` event through the normal handle path (dedup +
-        per-room lock + forwarder). ``/next`` also returns messages stuck in
-        ``processing`` from a crashed container, so forwarding its result both
-        replays missed backlog and lets the container reclaim stuck work
-        (``msg_id`` matches its own ``/next``, so it claims rather than skips).
+        per-room lock + forwarder). The platform's ``/next`` returns any
+        message not yet in ``processed`` state — including ones stuck in
+        ``processing`` from a crashed container — so a single ``/next`` call
+        both replays missed backlog and reclaims stuck work (``msg_id`` matches
+        the container's own ``/next`` claim step).
 
         We forward at most ONE message per room: the bridge does no lifecycle
         marking, so ``/next`` would return the same message until the container
@@ -365,15 +382,20 @@ class AgentRunner:
         )
 
     async def _safe_handle_event(self, event: object) -> None:
-        try:
-            await self._handle_event(event)
-        except Exception:
-            logger.warning(
-                "Agent %s: error handling event %s",
-                self._config.agent_id,
-                type(event).__name__,
-                exc_info=True,
-            )
+        # Semaphore caps concurrent in-flight forwards per agent. Holding it
+        # across ``_handle_event`` (which includes the per-room lock + the
+        # forwarder call) is the point — bursts wait here instead of stacking
+        # up inside the forwarder.
+        async with self._forward_semaphore:
+            try:
+                await self._handle_event(event)
+            except Exception:
+                logger.warning(
+                    "Agent %s: error handling event %s",
+                    self._config.agent_id,
+                    type(event).__name__,
+                    exc_info=True,
+                )
 
     async def _handle_event(self, event: object) -> None:
         """Manage room subscriptions; forward forwardable events.
@@ -410,9 +432,13 @@ class AgentRunner:
                 )
 
         # Dedup message events by message id (reconnect may redeliver).
+        # Check only — recording the id happens after a successful forward so
+        # that a failed forward stays retryable through WS redelivery or
+        # ``_rehydrate_backlog``.
+        msg_id: str | None = None
         if isinstance(event, MessageEvent) and event.payload is not None:
             msg_id = getattr(event.payload, "id", None)
-            if msg_id and self._is_duplicate(msg_id):
+            if msg_id and msg_id in self._processed_message_ids:
                 logger.debug(
                     "Agent %s: skipping duplicate message %s",
                     self._config.agent_id,
@@ -437,9 +463,11 @@ class AgentRunner:
         # duplicate messages in the room.
         room_id = payload.get("room_id")
         room_lock = self._lock_for_room(room_id)
+        forward_succeeded = False
         async with room_lock:
             try:
                 await self._forwarder.forward(payload)
+                forward_succeeded = True
             except Exception:
                 logger.warning(
                     "Agent %s: forward failed for event %s",
@@ -447,6 +475,12 @@ class AgentRunner:
                     type(event).__name__,
                     exc_info=True,
                 )
+
+        # Only remember the message id once the forward actually succeeded;
+        # otherwise a transient forwarder failure would mask the message on the
+        # next WS redelivery or rehydration sweep.
+        if msg_id and forward_succeeded:
+            self._remember_processed_message(msg_id)
 
         # Evict the per-room lock once the room is gone so ``_room_locks`` does
         # not grow unbounded over a long-lived bridge that cycles through many
@@ -491,14 +525,13 @@ class AgentRunner:
             "forwarded_at": datetime.now(timezone.utc).isoformat(),
         }
 
-    def _is_duplicate(self, message_id: str) -> bool:
-        """Bounded dedup cache for reconnect-redelivery."""
+    def _remember_processed_message(self, message_id: str) -> None:
+        """Record a message id in the bounded dedup cache."""
         if message_id in self._processed_message_ids:
-            return True
+            return
         self._processed_message_ids[message_id] = None
         if len(self._processed_message_ids) > _DEDUP_MAX_SIZE:
             self._processed_message_ids.popitem(last=False)
-        return False
 
 
 class ThenvoiBridge:
@@ -545,6 +578,7 @@ class ThenvoiBridge:
                 reconnect=self._reconnect,
                 shutdown_event=self._shutdown_event,
                 link=injected_link,
+                max_concurrent_forwards=config.max_concurrent_forwards,
             )
             self._runners.append(runner)
 

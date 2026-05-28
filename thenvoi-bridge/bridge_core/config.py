@@ -118,6 +118,18 @@ class BridgeConfig(BaseModel):
     rest_url: str = "https://app.thenvoi.com"
     health_port: int = 8080
     health_host: str = "0.0.0.0"
+    # Per-agent cap on concurrent in-flight forwards. One asyncio task is
+    # spawned per WS event; without a cap, a burst of events (or a slow target)
+    # can pile up thousands of tasks waiting on the per-room lock or the
+    # target's I/O, and fan a flood of HTTP/AgentCore calls at the backend.
+    max_concurrent_forwards: int = 32
+
+    @field_validator("max_concurrent_forwards")
+    @classmethod
+    def validate_max_concurrent_forwards(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError(f"max_concurrent_forwards must be >= 1, got: {v}")
+        return v
 
     @field_validator("agents")
     @classmethod

@@ -532,6 +532,53 @@ class TestMarkFailed:
         assert call_kwargs.kwargs["error"] == "connection reset"
 
 
+class TestGetNextMessage:
+    """Tests for the /next REST wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_204(self) -> None:
+        """204 No Content is the platform's "no actionable message" signal —
+        the only ``ApiError`` that should resolve to ``None``."""
+        from thenvoi_rest.core.api_error import ApiError
+
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            side_effect=ApiError(status_code=204, body=None)
+        )
+
+        assert await link.get_next_message("room-1") is None
+
+    @pytest.mark.asyncio
+    async def test_raises_on_non_204_api_error(self) -> None:
+        """Regression: a 5xx or other API failure must propagate so callers
+        can distinguish "no pending" from "lookup failed." The old behavior
+        swallowed both as ``None``, which silently dropped messages at the
+        OneShot claim step."""
+        from thenvoi_rest.core.api_error import ApiError
+
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            side_effect=ApiError(status_code=503, body="upstream down")
+        )
+
+        with pytest.raises(ApiError):
+            await link.get_next_message("room-1")
+
+    @pytest.mark.asyncio
+    async def test_raises_on_transport_error(self) -> None:
+        """Connection errors / timeouts also propagate — same reason."""
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            side_effect=ConnectionError("dns failure")
+        )
+
+        with pytest.raises(ConnectionError):
+            await link.get_next_message("room-1")
+
+
 class TestGetStaleProcessingMessages:
     """Tests for stale processing recovery pagination."""
 

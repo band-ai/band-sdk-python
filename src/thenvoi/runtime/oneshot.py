@@ -158,6 +158,41 @@ class OneShotInvoker:
             raise RuntimeError("OneShotInvoker.startup() not called")
 
         event_type = body.get("event_type")
+
+        # Long-running containers keep one invoker (and one adapter) alive
+        # across many rooms over the container's lifetime. Adapters cache
+        # per-room state on ``self`` (e.g. Anthropic's ``_message_history``,
+        # Claude SDK's live per-room sessions, langgraph checkpoints); the
+        # only thing that frees those entries is ``adapter.on_cleanup``.
+        # Without this hookup the cache grows unbounded — and for adapters
+        # that spawn subprocesses per room, those subprocesses leak too.
+        # Mirrors ``AgentRuntime._destroy_execution``'s cleanup-callback hook
+        # in the long-running path.
+        if event_type in {"room_removed", "room_deleted"}:
+            room_id = body.get("room_id") or (body.get("payload") or {}).get("id")
+            if room_id:
+                try:
+                    await self._adapter.on_cleanup(room_id)
+                except Exception:
+                    logger.warning(
+                        "Adapter on_cleanup failed for room %s",
+                        room_id,
+                        exc_info=True,
+                    )
+            return {
+                "status": "cleaned_up",
+                "event_type": event_type,
+                "room_id": room_id,
+            }
+
+        # Other forwardable event types intentionally fall through to
+        # "ignored":
+        #   - room_added: bridge already subscribed the WS; no per-room
+        #     context to create on this side.
+        #   - participant_added/removed: OneShot fetches participants fresh
+        #     on every invocation, so there's no cache to update.
+        #   - contact_*: routed via the separate ContactEventConfig flow in
+        #     long-running mode; not wired into OneShot.
         if event_type != "message_created":
             logger.debug("Ignoring non-message event: %s", event_type)
             return {"status": "ignored", "event_type": event_type}
@@ -204,6 +239,10 @@ class OneShotInvoker:
             return {"status": "skipped_self", "message_id": msg_id}
 
         # 2. Verify the triggering message is the next open one for this agent.
+        # The platform's ``/next`` returns the oldest actionable message —
+        # anything not yet in ``processed`` state, including ones stuck in
+        # ``processing`` from a previous crash — so a single call covers both
+        # the normal claim case and stuck-message reclaim.
         next_msg = await self._link.get_next_message(room_id)
         if next_msg is None:
             logger.info(
@@ -283,7 +322,18 @@ class OneShotInvoker:
         drained: list[str] = []
         drain_truncated = False
         for _ in range(self._drain_cap):
-            stale = await self._link.get_next_message(room_id)
+            try:
+                stale = await self._link.get_next_message(room_id)
+            except Exception:
+                # The triggering message is already marked processed; a
+                # transient ``/next`` failure mid-drain just stops this drain
+                # cycle. The next invocation re-fetches via ``/next``.
+                logger.warning(
+                    "Drain /next failed in room %s — stopping drain",
+                    room_id,
+                    exc_info=True,
+                )
+                break
             if stale is None:
                 break
             # Defensive: the platform shouldn't return our own messages here,

@@ -98,14 +98,25 @@ class AgentCoreForwarder:
         if self._client is None:
             try:
                 import boto3
+                from botocore.config import Config
             except ImportError:
                 raise ImportError(
                     "boto3 is required for AgentCoreForwarder. "
                     "Install with: pip install thenvoi-sdk[bridge_agentcore]"
                 )
+            # Match botocore's socket timeouts to ``self._target.timeout`` so
+            # the underlying call actually ends when the bridge's ``wait_for``
+            # gives up — otherwise the thread keeps running, ``forward`` would
+            # have already released the per-room lock, and a follow-up event
+            # for the same room can race the still-in-flight AgentCore call.
             self._client = boto3.client(
                 "bedrock-agentcore",
                 region_name=self._target.region,
+                config=Config(
+                    connect_timeout=min(self._target.timeout, 10),
+                    read_timeout=self._target.timeout,
+                    retries={"max_attempts": 1},
+                ),
             )
         return self._client
 

@@ -313,6 +313,61 @@ class TestHandleEventRouting:
         adapter.on_event.assert_not_awaited()
         link.get_next_message.assert_not_awaited()
 
+    async def test_room_removed_triggers_adapter_cleanup(self) -> None:
+        """Regression: long-running containers keep one adapter alive across
+        many rooms. Without on_cleanup on room teardown, per-room caches
+        (Anthropic history, Claude SDK sessions, etc.) leak.
+        """
+        link = _make_link_mock()
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        result = await invoker.handle_event(
+            {"event_type": "room_removed", "room_id": "r1", "payload": {}}
+        )
+
+        adapter.on_cleanup.assert_awaited_once_with("r1")
+        assert result == {
+            "status": "cleaned_up",
+            "event_type": "room_removed",
+            "room_id": "r1",
+        }
+        link.get_next_message.assert_not_awaited()
+
+    async def test_room_deleted_triggers_adapter_cleanup(self) -> None:
+        link = _make_link_mock()
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        await invoker.handle_event(
+            {"event_type": "room_deleted", "room_id": "r1", "payload": {}}
+        )
+
+        adapter.on_cleanup.assert_awaited_once_with("r1")
+
+    async def test_room_removed_falls_back_to_payload_id(self) -> None:
+        link = _make_link_mock()
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        await invoker.handle_event(
+            {"event_type": "room_removed", "payload": {"id": "r-payload"}}
+        )
+
+        adapter.on_cleanup.assert_awaited_once_with("r-payload")
+
+    async def test_room_removed_swallows_cleanup_errors(self) -> None:
+        link = _make_link_mock()
+        adapter = _make_adapter_mock()
+        adapter.on_cleanup = AsyncMock(side_effect=RuntimeError("adapter blew up"))
+        invoker = await _make_invoker(link, adapter)
+
+        # Must not raise — a flaky adapter cleanup can't kill the container.
+        result = await invoker.handle_event(
+            {"event_type": "room_removed", "room_id": "r1", "payload": {}}
+        )
+        assert result["status"] == "cleaned_up"
+
     async def test_missing_room_id_raises_envelope_error(self) -> None:
         link = _make_link_mock()
         invoker = await _make_invoker(link)
@@ -428,6 +483,23 @@ class TestProcessMessage:
         assert result["next_open"] == "msg-other"
         adapter.on_event.assert_not_awaited()
         link.mark_processing.assert_not_awaited()
+
+    async def test_claim_propagates_get_next_message_failure(self) -> None:
+        """Regression: a transient ``/next`` failure at the claim step must
+        not be silently treated as ``no_pending`` — that would leave the
+        message open on the platform and tell the bridge it was handled.
+        """
+        link = _make_link_mock()
+        link.get_next_message = AsyncMock(side_effect=RuntimeError("network down"))
+        adapter = _make_adapter_mock()
+        invoker = await _make_invoker(link, adapter)
+
+        with pytest.raises(RuntimeError, match="network down"):
+            await invoker.handle_event(_msg_body(msg_id="msg-1"))
+
+        # No claim attempted, no adapter run — caller can retry.
+        link.mark_processing.assert_not_awaited()
+        adapter.on_event.assert_not_awaited()
 
     async def test_marks_failed_on_adapter_error(self) -> None:
         link = _make_link_mock(next_messages=[_platform_msg("msg-1")])
