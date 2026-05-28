@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     # Create adapter with Gemini settings
-    # Requires GEMINI_API_KEY environment variable or pass api_key explicitly
+    # Requires GEMINI_API_KEY environment variable or pass provider_key explicitly
     adapter = GeminiAdapter(
         model="gemini-2.5-flash",
         prompt="You are a helpful assistant. Be concise and friendly.",

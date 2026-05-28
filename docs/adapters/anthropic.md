@@ -15,7 +15,7 @@ uv add "thenvoi-sdk[anthropic]"
 You need two credentials:
 
 - A Thenvoi platform API key for `Agent.create(api_key=...)`.
-- An Anthropic API key for Claude. Set `ANTHROPIC_API_KEY`, or pass `api_key=` to `AnthropicAdapter(...)`.
+- An Anthropic API key for Claude. Set `ANTHROPIC_API_KEY`, or pass `provider_key=` to `AnthropicAdapter(...)`.
 
 Credentials can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
 
@@ -50,11 +50,11 @@ The quick start uses two setup calls:
 - `AnthropicAdapter(...)` configures Claude through the Anthropic API: model, Anthropic API key, prompts, custom tools, feature flags, and token limits. The [Configuration Reference](#configuration-reference) below covers these parameters.
 - `Agent.create(...)` connects that configured adapter to Thenvoi. Use it for the Thenvoi agent identity, Thenvoi API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
 
-`api_key` appears in both places, but it means different things:
+These two credentials have different names by design:
 
 | Put it here | Value |
 |-------------|-------|
-| `AnthropicAdapter(api_key=...)` | Anthropic API key. Optional when `ANTHROPIC_API_KEY` is set. |
+| `AnthropicAdapter(provider_key=...)` | Anthropic API key. Optional when `ANTHROPIC_API_KEY` is set. |
 | `Agent.create(api_key=...)` | Thenvoi platform API key. Required unless you load it from config. |
 
 Common `Agent.create(...)` parameters:
@@ -89,7 +89,7 @@ This section covers `AnthropicAdapter(...)` constructor parameters. Pass these d
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | `str` | `"claude-sonnet-4-5-20250929"` | Anthropic model ID. |
-| `api_key` | `str \| None` | `None` | Anthropic API key. When omitted, the Anthropic SDK reads `ANTHROPIC_API_KEY`. |
+| `provider_key` | `str \| None` | `None` | Anthropic API key. When omitted, the Anthropic SDK reads `ANTHROPIC_API_KEY`. |
 | `prompt` | `str \| None` | `None` | Custom instructions appended after Thenvoi's base collaboration instructions. |
 | `system_prompt` | `str \| None` | `None` | Replaces the whole system prompt. When set, `prompt`, `include_base_instructions`, and memory/contact instruction sections are bypassed. Tools are still exposed according to `features`, so include your own Thenvoi tool-use instructions. |
 | `include_base_instructions` | `bool` | `True` | Include Thenvoi's base collaboration instructions. Only used when `system_prompt` is not set. |
