@@ -23,6 +23,18 @@ from thenvoi.core.types import AdapterFeatures, Capability, PlatformMessage
 if TYPE_CHECKING:
     from thenvoi.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
 
+try:
+    import crewai  # noqa: F401
+
+    _HAS_CREWAI = True
+except ImportError:
+    _HAS_CREWAI = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_CREWAI,
+    reason="crewai not installed — run in test-crewai CI job",
+)
+
 
 class MockBaseTool:
     name: str = ""

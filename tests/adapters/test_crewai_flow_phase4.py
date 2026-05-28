@@ -9,6 +9,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
+try:
+    import crewai  # noqa: F401
+
+    _HAS_CREWAI = True
+except ImportError:
+    _HAS_CREWAI = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_CREWAI,
+    reason="crewai not installed — run in test-crewai CI job",
+)
+
 
 @pytest.fixture(autouse=True)
 def _mock_crewai(monkeypatch: pytest.MonkeyPatch):

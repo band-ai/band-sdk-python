@@ -13,6 +13,18 @@ from thenvoi.adapters.crewai_flow import (
 from thenvoi.core.exceptions import ThenvoiConfigError, ThenvoiToolError
 from thenvoi.testing.fake_tools import FakeAgentTools
 
+try:
+    import crewai  # noqa: F401
+
+    _HAS_CREWAI = True
+except ImportError:
+    _HAS_CREWAI = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_CREWAI,
+    reason="crewai not installed — run in test-crewai CI job",
+)
+
 NS = "crewai_flow:agent-1"
 
 

@@ -11,6 +11,18 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
+try:
+    import crewai  # noqa: F401
+
+    _HAS_CREWAI = True
+except ImportError:
+    _HAS_CREWAI = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_CREWAI,
+    reason="crewai not installed — run in test-crewai CI job",
+)
+
 
 # Mock crewai imports BEFORE importing the adapter module so the optional
 # dependency guard doesn't pin us to a real install.
