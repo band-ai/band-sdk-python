@@ -47,16 +47,22 @@ Look in the conversation so far for:
 
 If any of the four required credentials are missing, ask the user for them before proceeding.
 
-### Step 2 — Ask which adapter
+### Step 2 — Ask which adapter (two-stage picker)
 
-AskUserQuestion (single-select). Show these descriptions:
+`AskUserQuestion` accepts at most 4 options, so we split the adapter pick into two questions. The second is only asked when the first selects the "framework" bucket.
 
-- **langgraph** — Graph-based agent framework. Needs an LLM API key (OpenAI or Anthropic).
-- **crewai** — Role-based multi-agent framework. Needs an LLM API key (OpenAI or Anthropic).
-- **anthropic** — Direct Anthropic SDK loop. Needs an Anthropic API key.
-- **claude_sdk** — Uses the Claude Agent SDK (Claude Code subprocess). **No external LLM key needed** — but requires Node.js 20+ and `npm install -g @anthropic-ai/claude-code`.
-- **parlant** — Conversation-modeling framework. Needs an OpenAI API key.
-- **pydantic_ai** — Pydantic AI agent. Needs an LLM API key (OpenAI or Anthropic).
+**Step 2a — Ask the runtime category** (single-select, 4 options):
+
+- **Framework + your LLM key** — Run inside an agent framework (langgraph / crewai / pydantic_ai). You provide an OpenAI or Anthropic API key.
+- **Direct Anthropic SDK** — Plain Anthropic SDK loop. Needs an Anthropic API key. *(sets `adapter = anthropic`)*
+- **Claude Agent SDK** — Uses the Claude Code subprocess. **No external LLM key needed** — requires Node.js 20+ and `npm install -g @anthropic-ai/claude-code`. *(sets `adapter = claude_sdk`)*
+- **Parlant** — Conversation-modeling framework. Needs an OpenAI API key. *(sets `adapter = parlant`)*
+
+**Step 2b — Ask the framework** *(only if Step 2a was "Framework + your LLM key")* (single-select, 3 options):
+
+- **langgraph** — Graph-based, LangChain ecosystem.
+- **crewai** — Role-based multi-agent.
+- **pydantic_ai** — Pydantic AI agent.
 
 ### Step 3 — Ask which LLM (conditional)
 
