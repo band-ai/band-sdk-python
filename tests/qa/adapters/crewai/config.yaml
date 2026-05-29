@@ -42,4 +42,5 @@ expanded:
       config_key: crew_full_test
   contacts:
     requester_config_key: requester_test
-    target_handle: "admin1/crew-contacts-test"
+    target_handle: "nir/quickstart"
+    user_api_key_env: THENVOI_API_KEY_USER_NIR

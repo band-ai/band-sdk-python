@@ -76,6 +76,17 @@ class Reporter:
                         )
                     lines.append("")
 
+        room_ids = [
+            (sr.name, sr.room_id)
+            for sr in report.scenario_results
+            if sr.room_id
+        ]
+        if room_ids:
+            lines.append("## Chat Rooms")
+            for name, rid in room_ids:
+                lines.append(f"- **{name}**: `{rid}`")
+            lines.append("")
+
         if report.errors:
             lines.append("## Errors")
             for e in report.errors:

@@ -34,6 +34,7 @@ class ScenarioResult:
     status: Status = Status.PASS
     steps: list[StepResult] = field(default_factory=list)
     error: str | None = None
+    room_id: str | None = None
 
     def add_step(
         self, action: str, expected: str, actual: str, status: Status

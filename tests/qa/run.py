@@ -180,6 +180,7 @@ async def run_examples(
                 logger.info("--- Running scenario: %s ---", scenario.name)
                 try:
                     sr = await scenario.run(client, runner, agent_info, room_id, shared=shared)
+                    sr.room_id = room_id
                     report.scenario_results.append(sr)
                     logger.info("Scenario %s: %s", scenario.name, sr.status.value)
                 except Exception as e:
@@ -188,6 +189,7 @@ async def run_examples(
                         description=scenario.description,
                         status=Status.FAIL,
                         error=str(e),
+                        room_id=room_id,
                     )
                     report.scenario_results.append(sr)
                     logger.error("Scenario %s failed: %s", scenario.name, e)
@@ -228,6 +230,7 @@ async def run_expanded(
     )
 
     requester: ContactRequester | None = None
+    contacts_client: PlatformClient | None = None
     target_handle: str = ""
     need_contacts = selected_scenarios & {"F1", "F2", "F3"}
 
@@ -236,6 +239,14 @@ async def run_expanded(
         if creds_ok(creds, req_key):
             requester = ContactRequester(creds[req_key]["api_key"], client.base_url)
             target_handle = contacts_cfg.get("target_handle", "")
+            user_key_env = contacts_cfg.get("user_api_key_env", "")
+            if user_key_env:
+                alt_key = os.environ.get(user_key_env, "")
+                if alt_key:
+                    contacts_client = PlatformClient(client.base_url, alt_key)
+                    logger.info("Using %s for contact scenario rooms", user_key_env)
+                else:
+                    logger.warning("%s not set — falling back to default user key", user_key_env)
         else:
             logger.warning(
                 "%s credentials missing — skipping contact scenarios",
@@ -275,6 +286,7 @@ async def run_expanded(
 
             venv = resolve_venv(adapter_cfg)
             runner = AgentRunner(script, str(adapter_dir), venv=venv)
+            scenario_room_id: str | None = None
             try:
                 ok = await runner.start(timeout=180.0)
                 if not ok:
@@ -288,17 +300,21 @@ async def run_expanded(
                     )
                     continue
 
-                room_id = await client.create_room()
-                agent_info = await client.add_participant(room_id, agent_id)
+                is_contact = scenario_id in ("F1", "F2", "F3")
+                active_client = contacts_client if (is_contact and contacts_client) else client
+
+                scenario_room_id = await active_client.create_room()
+                agent_info = await active_client.add_participant(scenario_room_id, agent_id)
                 await asyncio.sleep(3.0)
 
                 scenario_cls = EXPANDED_SCENARIO_CLASSES[scenario_id]
-                if scenario_id in ("F1", "F2", "F3") and requester:
+                if is_contact and requester:
                     scenario = scenario_cls(requester, target_handle)
                 else:
                     scenario = scenario_cls()
 
-                sr = await scenario.run(client, runner, agent_info, room_id)
+                sr = await scenario.run(active_client, runner, agent_info, scenario_room_id)
+                sr.room_id = scenario_room_id
                 report.scenario_results.append(sr)
                 logger.info("Scenario %s: %s", scenario_id, sr.status.value)
 
@@ -309,6 +325,7 @@ async def run_expanded(
                         description="",
                         status=Status.FAIL,
                         error=str(exc),
+                        room_id=scenario_room_id,
                     )
                 )
             finally:
@@ -317,6 +334,8 @@ async def run_expanded(
     finally:
         if requester:
             await requester.close()
+        if contacts_client:
+            await contacts_client.close()
 
     return report
 
@@ -598,11 +617,14 @@ async def main() -> None:
     if not args.adapter and not args.all_adapters:
         parser.error("--adapter is required unless --all-adapters is specified")
 
-    # Load QA-level .env first, then adapter-specific .env
     from dotenv import load_dotenv
+    # Load root .env as base, then QA .env overrides
+    root_env = REPO_ROOT / ".env"
+    if root_env.exists():
+        load_dotenv(root_env)
     qa_env = QA_DIR / ".env"
     if qa_env.exists():
-        load_dotenv(qa_env)
+        load_dotenv(qa_env, override=True)
 
     # Auto-setup: register agents and generate config files if needed
     if args.setup:

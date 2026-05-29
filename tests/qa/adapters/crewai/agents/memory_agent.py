@@ -7,8 +7,8 @@ import sys
 
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "examples"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "examples", "crewai"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "examples"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "examples", "crewai"))
 
 from setup_logging import setup_logging
 from thenvoi import Agent

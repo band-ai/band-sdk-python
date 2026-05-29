@@ -8,8 +8,8 @@ import sys
 
 from dotenv import load_dotenv
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "examples"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "examples", "gemini"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "examples"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "examples", "gemini"))
 
 from setup_logging import setup_logging
 from thenvoi import Agent
@@ -21,7 +21,7 @@ from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
 setup_logging()
 logger = logging.getLogger(__name__)
 
-APPROVED_HANDLE_PATTERNS = ["gem-qa-*", "qa-*"]
+APPROVED_HANDLE_PATTERNS = ["nir/websocket-*", "nir/ws-*"]
 
 
 async def whitelist_approve(event, tools):
