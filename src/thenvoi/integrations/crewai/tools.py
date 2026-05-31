@@ -79,6 +79,21 @@ _CREWAI_TOOL_CATEGORIES = {
 
 # --- Shared context + reporter contracts ---
 
+# Tool whose successful execution counts as a user-facing reply.
+_SEND_MESSAGE_TOOL = "thenvoi_send_message"
+
+
+@dataclass
+class ReplyTracker:
+    """Mutable per-turn marker shared (by reference) with the tool wrappers.
+
+    Set to ``True`` once ``thenvoi_send_message`` succeeds so an adapter can tell
+    a benign "empty final answer" from CrewAI (the reply already went out via the
+    tool) apart from a genuine no-response failure.
+    """
+
+    replied: bool = False
+
 
 @dataclass(frozen=True)
 class CrewAIToolContext:
@@ -90,6 +105,7 @@ class CrewAIToolContext:
 
     room_id: str
     tools: AgentToolsProtocol
+    reply_tracker: ReplyTracker | None = None
 
 
 @runtime_checkable
@@ -238,7 +254,19 @@ def _execute_tool(
             await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
 
-    return run_async(_execute(), fallback_loop=fallback_loop)
+    result = run_async(_execute(), fallback_loop=fallback_loop)
+
+    # Record that the agent delivered a user-facing reply this turn so the
+    # adapter can treat CrewAI's "empty final answer" ValueError as benign
+    # (the reply already went out) instead of a genuine no-response failure.
+    if tool_name == _SEND_MESSAGE_TOOL and context.reply_tracker is not None:
+        try:
+            if json.loads(result).get("status") == "success":
+                context.reply_tracker.replied = True
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            pass
+
+    return result
 
 
 # --- Input models ---
