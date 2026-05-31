@@ -92,7 +92,17 @@ jobs:
             git checkout -B "$BRANCH" origin/main
           fi
 
-          git push --force-with-lease origin "$BRANCH"
+          # On a dry run, compute the merge locally but don't touch the remote.
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "Dry run: skipping push of $BRANCH."
+            exit 0
+          fi
+
+          # Plain --force (not --force-with-lease): this is a bot-owned throwaway
+          # branch that we recreate from scratch every run, and we never fetch its
+          # remote-tracking ref — so a lease would have nothing to compare against
+          # and would reject every push after the first.
+          git push --force origin "$BRANCH"
 
       - name: Generate PR description
         id: generate_pr
