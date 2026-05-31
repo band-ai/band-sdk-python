@@ -31,6 +31,10 @@
 #                                 in a private channel thread)
 #   - chat:write               → post replies + edit plan/status messages
 #   - users:read               → resolve sender names for attribution
+#   - channels:read            → resolve PUBLIC channel names for the
+#                                 Thenvoi audit-timeline context mirror
+#   - groups:read              → resolve PRIVATE channel names (same)
+#   - im:read                  → identify DMs for the context mirror
 #   - users:read.email         → optional, only if your agent does
 #                                 email-keyed memory scoping
 #
@@ -66,6 +70,9 @@ oauth_config:
       - groups:history
       - chat:write
       - users:read
+      - channels:read
+      - groups:read
+      - im:read
       # Uncomment if your agent does email-keyed memory:
       # - users:read.email
 

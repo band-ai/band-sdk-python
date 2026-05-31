@@ -512,7 +512,7 @@ Where ACP differs from A2A:
 The Slack bridge expects an installed Slack app with the right scopes. A maintained manifest lives at `src/thenvoi/integrations/slack/templates/manifest.yaml` — paste it into Slack's "Create from manifest" flow when registering the app. The manifest declares:
 
 - **AI App** (`assistant_view` + `assistant:write`) so the assistant pane, status indicators, and Block Kit plan/task blocks render.
-- All scopes needed for thread context: `app_mentions:read`, `im:history`, `channels:history`, `groups:history`, `chat:write`, `users:read`.
+- All scopes needed for thread context: `app_mentions:read`, `im:history`, `channels:history`, `groups:history`, `chat:write`, `users:read`, plus `channels:read`/`groups:read`/`im:read` so the context mirror can resolve channel names.
 - Events `app_mention`, `message.im`, `assistant_thread_started`.
 - Socket Mode enabled — no public URL, no signing secret needed for the example.
 

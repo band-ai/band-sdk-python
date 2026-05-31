@@ -451,6 +451,13 @@ class SlackAdapter(SimpleAdapter[Any]):
         self._thread_to_room: dict[str, str] = {}
         self._room_to_binding: dict[str, SlackRoomBinding] = {}
 
+        # Best-effort label caches for the context mirror. Slack user/
+        # channel identities are stable, so resolve each once and reuse.
+        # value: (display_name, handle)
+        self._user_label_cache: dict[str, tuple[str, str]] = {}
+        # value: channel display label (e.g. "#general" or "DM")
+        self._channel_label_cache: dict[str, str] = {}
+
     @property
     def inner(self) -> SimpleAdapter[Any]:
         """The wrapped framework adapter (the brain)."""
@@ -894,19 +901,36 @@ class SlackAdapter(SimpleAdapter[Any]):
         path.
         """
         assert self._rest is not None
-        sender = f"slack:{slack_user}" if slack_user else "slack-user"
+        slack_client = self._get_client(app)
+        display_name, handle = await self._resolve_user_label(slack_client, slack_user)
+        channel_label = await self._resolve_channel_label(slack_client, channel)
+
+        # Friendly, human-readable line for the Thenvoi audit timeline.
+        # Raw ids / thread ts stay in metadata; the visible content shows
+        # who said what and where.
+        if display_name and handle:
+            who = f"{display_name} (@{handle})"
+        elif display_name or handle:
+            who = display_name or f"@{handle}"
+        else:
+            who = "Slack user"
+        content = f"💬 Slack · {channel_label} — {who}: {text}"
+
         try:
             await self._rest.agent_api_events.create_agent_chat_event(
                 chat_id=room_id,
                 event=ChatEventRequest(
-                    content=f"[Slack thread {thread_ts}] {sender}: {text}",
+                    content=content,
                     message_type="thought",
                     metadata={
                         "slack_mirror": True,
                         "slack_app_slug": app.slug,
                         "slack_channel_id": channel,
+                        "slack_channel_label": channel_label,
                         "slack_thread_ts": thread_ts,
                         "slack_user_id": slack_user,
+                        "slack_user_handle": handle,
+                        "slack_user_name": display_name,
                         "slack_ts": ts,
                     },
                 ),
@@ -918,6 +942,62 @@ class SlackAdapter(SimpleAdapter[Any]):
                 channel,
                 thread_ts,
             )
+
+    async def _resolve_user_label(
+        self, slack: AsyncWebClient, user_id: str
+    ) -> tuple[str, str]:
+        """Return ``(display_name, handle)`` for a Slack user id.
+
+        Cached and best-effort: on any failure (missing scope, unknown
+        user) returns empty strings so the caller falls back gracefully.
+        """
+        if not user_id:
+            return "", ""
+        cached = self._user_label_cache.get(user_id)
+        if cached is not None:
+            return cached
+        display_name, handle = "", ""
+        try:
+            resp = await slack.users_info(user=user_id)
+            user = resp.get("user", {}) or {}
+            profile = user.get("profile", {}) or {}
+            display_name = (
+                profile.get("display_name")
+                or profile.get("real_name")
+                or user.get("real_name")
+                or ""
+            )
+            handle = user.get("name", "") or ""
+        except Exception as exc:
+            logger.debug("users.info failed for %s: %s", user_id, exc)
+        label = (display_name, handle)
+        self._user_label_cache[user_id] = label
+        return label
+
+    async def _resolve_channel_label(
+        self, slack: AsyncWebClient, channel_id: str
+    ) -> str:
+        """Return a friendly channel label (``#name``, or ``DM``).
+
+        Cached and best-effort: on failure falls back to the raw id.
+        """
+        if not channel_id:
+            return "unknown channel"
+        cached = self._channel_label_cache.get(channel_id)
+        if cached is not None:
+            return cached
+        label = channel_id
+        try:
+            resp = await slack.conversations_info(channel=channel_id)
+            ch = resp.get("channel", {}) or {}
+            if ch.get("is_im"):
+                label = "DM"
+            elif ch.get("name"):
+                label = f"#{ch['name']}"
+        except Exception as exc:
+            logger.debug("conversations.info failed for %s: %s", channel_id, exc)
+        self._channel_label_cache[channel_id] = label
+        return label
 
     # ── Slack thread history backfill ────────────────────────────────
 

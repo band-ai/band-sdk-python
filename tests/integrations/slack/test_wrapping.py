@@ -159,6 +159,26 @@ def _make_adapter(
         # Default: thread has no prior messages. Tests can override per
         # client (e.g. ``web_mocks["dev"].conversations_replies = ...``).
         client.conversations_replies = AsyncMock(return_value={"messages": []})
+
+        # Context-mirror label resolution. Defaults resolve any user to
+        # display "Alice"/handle "alice", and derive a channel label from
+        # the id (``C123`` -> ``#c123``; ids starting with ``D`` -> DM).
+        client.users_info = AsyncMock(
+            return_value={
+                "user": {
+                    "name": "alice",
+                    "real_name": "Alice A",
+                    "profile": {"display_name": "Alice", "real_name": "Alice A"},
+                }
+            }
+        )
+
+        def _conv_info(*, channel: str, **_kw: Any) -> dict[str, Any]:
+            if channel.startswith("D"):
+                return {"channel": {"is_im": True}}
+            return {"channel": {"name": channel.lower()}}
+
+        client.conversations_info = AsyncMock(side_effect=_conv_info)
         web_mocks[app.slug] = client
 
     rest = _make_rest_mock(room_ids)
@@ -284,9 +304,14 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
     assert mirror_evt.metadata["slack_mirror"] is True
     assert mirror_evt.metadata["slack_thread_ts"] == "1700000000.000100"
     assert mirror_evt.metadata["slack_user_id"] == "U999"
-    # Thread id is surfaced in the visible thought text too, not just metadata.
-    assert "1700000000.000100" in mirror_evt.content
+    # Friendly format: resolved channel name + user handle/name + text.
+    # The raw thread ts lives in metadata only, not the visible content.
+    assert "1700000000.000100" not in mirror_evt.content
+    assert "#c123" in mirror_evt.content
+    assert "Alice (@alice)" in mirror_evt.content
     assert "<@U001> ping" in mirror_evt.content
+    assert mirror_evt.metadata["slack_channel_label"] == "#c123"
+    assert mirror_evt.metadata["slack_user_handle"] == "alice"
 
     # No regular Thenvoi messages posted — the brain replied via Slack only.
     rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
@@ -1308,7 +1333,9 @@ async def test_user_turn_mirrored_as_thought_with_thread_id():
     assert mirror.metadata["slack_mirror"] is True
     assert mirror.metadata["slack_thread_ts"] == "1700000000.5"
     assert mirror.metadata["slack_user_id"] == "U42"
-    assert "1700000000.5" in mirror.content
+    # DM channel resolves to the "DM" label; thread ts stays in metadata.
+    assert "1700000000.5" not in mirror.content
+    assert "DM" in mirror.content
     assert "what's the weather?" in mirror.content
     # Mirror must NOT post a real message (which would trigger peers/loop).
     rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
