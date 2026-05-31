@@ -61,9 +61,9 @@ class LettaAdapterConfig:
     """Configuration for the Letta adapter.
 
     Works with both Letta Cloud and self-hosted Letta.  For Letta Cloud
-    (the default), provide an ``api_key`` and optionally set ``project``
+    (the default), provide a ``provider_key`` and optionally set ``project``
     to scope to a specific project.  For self-hosted, set ``base_url``
-    to your server (e.g. ``"http://localhost:8283"``) — no ``api_key``
+    to your server (e.g. ``"http://localhost:8283"``) — no ``provider_key``
     is required.
 
     Note: The ``mcp_server_url`` is called by the Letta server, not by
@@ -75,7 +75,8 @@ class LettaAdapterConfig:
 
     agent_id: str | None = None
     model: str | None = None
-    api_key: str | None = None  # Required for Letta Cloud, optional for self-hosted
+    provider_key: str | None = None  # Required for Letta Cloud; omit for self-hosted
+    api_key: str | None = None  # deprecated, use provider_key
     base_url: str = "https://api.letta.com"
     custom_section: str = ""
     include_base_instructions: bool = True
@@ -97,6 +98,18 @@ class LettaAdapterConfig:
     # Operating mode: per_room creates one Letta agent per room,
     # shared uses one agent with per-room Conversations for isolation.
     mode: Literal["per_room", "shared"] = "per_room"
+
+    def __post_init__(self) -> None:
+        if self.api_key is not None:
+            warnings.warn(
+                "api_key is deprecated on LettaAdapterConfig, use provider_key instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if self.provider_key is not None:
+                raise ThenvoiConfigError("Cannot pass both provider_key and api_key")
+            self.provider_key = self.api_key
+            self.api_key = None
 
 
 @dataclass
@@ -125,7 +138,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     Example (Letta Cloud):
         adapter = LettaAdapter(
             config=LettaAdapterConfig(
-                api_key="your-letta-api-key",
+                provider_key="your-letta-api-key",
                 model="openai/gpt-5.4",
                 mcp_server_url="http://localhost:8002/sse",
             ),
@@ -243,8 +256,8 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         client_kwargs: dict[str, Any] = {
             "base_url": self.config.base_url,
         }
-        if self.config.api_key:
-            client_kwargs["api_key"] = self.config.api_key
+        if self.config.provider_key:
+            client_kwargs["api_key"] = self.config.provider_key
         if self.config.project:
             client_kwargs["project"] = self.config.project
         self._client = AsyncLetta(**client_kwargs)
