@@ -11,8 +11,12 @@ Google ADK agent with custom instructions and model selection.
 Demonstrates how to configure the Google ADK adapter with a custom system
 prompt, model selection, and execution reporting.
 
-Requires GOOGLE_API_KEY (or GOOGLE_GENAI_API_KEY) environment variable for
-Gemini authentication, in addition to the Thenvoi credentials.
+Requires Thenvoi credentials plus one of:
+    - GOOGLE_API_KEY or GOOGLE_GENAI_API_KEY environment variable (Gemini Developer API)
+    - gcloud CLI with Application Default Credentials (Vertex AI):
+        gcloud auth application-default login
+        export GOOGLE_GENAI_USE_VERTEXAI=true
+        export GOOGLE_CLOUD_PROJECT=your-project-id
 
 Run with:
     uv run examples/google_adk/02_custom_instructions.py
@@ -50,7 +54,7 @@ async def main() -> None:
         raise ValueError("THENVOI_REST_URL environment variable is required")
     # Create adapter with custom configuration
     adapter = GoogleADKAdapter(
-        model="gemini-2.5-pro",
+        model="gemini-2.5-flash",
         custom_section=(
             "You are a research assistant specializing in summarizing information. "
             "Always provide sources when possible and be thorough but concise."

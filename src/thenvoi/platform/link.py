@@ -446,7 +446,7 @@ class ThenvoiLink:
 
     # --- Message lifecycle (SDK internal operations) ---
 
-    async def mark_processing(self, room_id: str, message_id: str) -> None:
+    async def mark_processing(self, room_id: str, message_id: str) -> bool:
         """
         Mark message as being processed on the server.
 
@@ -461,8 +461,10 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as processing: %s", message_id, e)
+            return False
+        return True
 
-    async def mark_processed(self, room_id: str, message_id: str) -> None:
+    async def mark_processed(self, room_id: str, message_id: str) -> bool:
         """
         Mark message as successfully processed on the server.
 
@@ -477,8 +479,10 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as processed: %s", message_id, e)
+            return False
+        return True
 
-    async def mark_failed(self, room_id: str, message_id: str, error: str) -> None:
+    async def mark_failed(self, room_id: str, message_id: str, error: str) -> bool:
         """
         Mark message as failed on the server.
 
@@ -495,16 +499,25 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as failed: %s", message_id, e)
+            return False
+        return True
 
     async def get_next_message(self, room_id: str) -> PlatformMessage | None:
         """
-        Get next unprocessed message for a room from the server.
-
-        Used during sync to process backlog messages missed while offline.
+        Get the next actionable message for a room from the server.
 
         Returns:
-            PlatformMessage if there's an unprocessed message,
-            None if no unprocessed messages (204 No Content) or on error.
+            ``PlatformMessage`` if there's an actionable message, or ``None``
+            if the platform returned no content (204). ``None`` means *the
+            platform told us there's nothing pending* — not "the call failed."
+
+        Raises:
+            ApiError: REST call failed with a non-204 status.
+            Exception: Transport-level failure (connection error, timeout).
+                Callers that want to swallow transient failures should wrap
+                this call explicitly; the previous behavior of conflating
+                "no pending" with "lookup failed" silently dropped messages
+                at the claim step.
         """
         logger.debug("Getting next message for room %s", room_id)
         try:
@@ -512,31 +525,30 @@ class ThenvoiLink:
                 chat_id=room_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
-            if response.data is None:
-                return None
-
-            item = response.data
-            return PlatformMessage(
-                id=item.id,
-                room_id=item.chat_room_id or room_id,
-                content=item.content,
-                sender_id=item.sender_id,
-                sender_type=item.sender_type,
-                sender_name=item.sender_name or "",
-                message_type=item.message_type,
-                metadata=item.metadata or {},
-                created_at=item.inserted_at or datetime.now(timezone.utc),
-            )
         except ApiError as e:
-            # 204 No Content means no unprocessed messages - expected
+            # 204 No Content means no actionable messages — the only "None"
+            # case the platform expresses through an ApiError.
             if e.status_code == 204:
-                logger.debug("No unprocessed messages for room %s", room_id)
+                logger.debug("No actionable messages for room %s", room_id)
                 return None
             logger.warning("Failed to get next message: %s", e)
+            raise
+
+        if response.data is None:
             return None
-        except Exception as e:
-            logger.warning("Failed to get next message: %s", e)
-            return None
+
+        item = response.data
+        return PlatformMessage(
+            id=item.id,
+            room_id=item.chat_room_id or room_id,
+            content=item.content,
+            sender_id=item.sender_id,
+            sender_type=item.sender_type,
+            sender_name=item.sender_name or "",
+            message_type=item.message_type,
+            metadata=item.metadata or {},
+            created_at=item.inserted_at or datetime.now(timezone.utc),
+        )
 
     async def get_stale_processing_messages(
         self, room_id: str
@@ -545,8 +557,17 @@ class ThenvoiLink:
         Get messages stuck in 'processing' state for a room.
 
         On agent restart, messages that were being processed when the agent
-        crashed remain in 'processing' state. The /next endpoint skips them,
-        so we need to find and re-process them explicitly.
+        crashed remain in 'processing' state. The long-running runtime uses
+        this as an explicit recovery sweep at startup.
+
+        Note: ``get_next_message`` (the ``/next`` REST endpoint) already
+        includes stuck-processing messages in its "actionable" result set —
+        see ``Chat.get_next_actionable_message`` on the platform side, which
+        excludes only ``processed``. Callers that drive recovery solely
+        through ``/next`` (e.g. the bridge's rehydration nudge and
+        ``OneShotInvoker``'s claim step) do not need to call this method;
+        it exists for paths that want to drain *every* stuck message up
+        front rather than one-per-room.
 
         Returns:
             List of PlatformMessage objects in processing state.

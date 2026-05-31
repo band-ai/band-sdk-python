@@ -55,6 +55,7 @@ class ConverterConfig:
 
     # Behavioral flags
     filters_own_messages: bool = True
+    includes_own_text_without_tool_events: bool = False
     skips_tool_events: bool = False
 
     # How empty/missing sender_name is handled
@@ -155,6 +156,7 @@ def _build_langchain_config() -> ConverterConfig:
         # produces the same "[]: content" as an empty string (brackets_empty).
         missing_sender_behavior=SenderBehavior.BRACKETS_EMPTY,
         output_adapter=LangChainOutputAdapter(),
+        includes_own_text_without_tool_events=True,
     )
 
 
@@ -279,6 +281,10 @@ def _build_google_adk_config() -> ConverterConfig:
         display_name="GoogleADK",
         converter_factory=_google_adk_factory,
         empty_result=[],
+        # ADK keeps own-agent text as ``role="model"`` so rehydrated history
+        # shows the agent's prior replies (INT-509).  The adapter renders this
+        # into the transcript with the agent's own name as the speaker label.
+        filters_own_messages=False,
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         output_adapter=GoogleADKOutputAdapter(),
