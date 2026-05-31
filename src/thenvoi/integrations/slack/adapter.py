@@ -349,6 +349,7 @@ class SlackAdapter(SimpleAdapter[Any]):
         features: AdapterFeatures | None = None,
         write_tool_names: frozenset[str] | set[str] | None = None,
         show_tool_progress: bool = True,
+        mirror_slack_context: bool = True,
     ) -> None:
         """Initialize the Slack adapter.
 
@@ -373,6 +374,14 @@ class SlackAdapter(SimpleAdapter[Any]):
             features: Optional override for adapter features. Defaults
                 to the inner adapter's features so the brain's
                 capabilities flow through unchanged.
+            mirror_slack_context: When ``True`` (default), each inbound
+                Slack user turn is mirrored into the bound Thenvoi room
+                as a context-only ``thought`` event so the Thenvoi UI
+                audit timeline reflects the Slack-side conversation.
+                These events are tagged ``slack_mirror`` and never loop
+                back into the brain's history or trigger peer replies.
+                Set ``False`` to leave bridged rooms holding only the
+                bootstrap context event.
 
         Raises:
             ImportError: If ``slack-sdk`` is not installed.
@@ -436,6 +445,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             else DEFAULT_WRITE_TOOL_NAMES
         )
         self._show_tool_progress = show_tool_progress
+        self._mirror_slack_context = mirror_slack_context
 
         # Thenvoi-side state.
         self._rest: AsyncRestClient | None = rest_client
@@ -719,6 +729,20 @@ class SlackAdapter(SimpleAdapter[Any]):
             created_at=datetime.now(timezone.utc),
         )
 
+        # Mirror the user turn into the Thenvoi room for audit visibility
+        # (Step 13). Best-effort and tagged context-only; happens before
+        # the brain runs so the timeline ordering matches reality.
+        if self._mirror_slack_context:
+            await self._mirror_user_turn_to_room(
+                room_id=room_id,
+                app=app,
+                channel=channel,
+                thread_ts=thread_ts,
+                slack_user=slack_user,
+                ts=ts,
+                text=text,
+            )
+
         slack_client = self._get_client(app)
         real_tools = AgentTools(room_id=room_id, rest=self._rest, participants=[])
         tools = _SlackTeeingTools(
@@ -844,6 +868,59 @@ class SlackAdapter(SimpleAdapter[Any]):
                 },
             ),
         )
+
+    # ── Slack context mirroring (audit timeline) ─────────────────────
+
+    async def _mirror_user_turn_to_room(
+        self,
+        *,
+        room_id: str,
+        app: SlackApp,
+        channel: str,
+        thread_ts: str,
+        slack_user: str,
+        ts: str,
+        text: str,
+    ) -> None:
+        """Mirror an inbound Slack user turn into the room as a ``thought``.
+
+        Slack-bridged rooms otherwise hold only the Step 8 bootstrap
+        ``task`` event, so the Thenvoi UI audit timeline is blank while
+        real conversations happen on Slack. This posts each triggering
+        user message as a ``thought`` event carrying the Slack thread
+        identity so the timeline reflects what was actually said.
+
+        Emitted as a ``thought`` (which history converters skip) and
+        tagged ``slack_mirror`` in metadata so it never loops back into
+        the brain's history or triggers peer replies. Best-effort: any
+        failure here is logged and swallowed so it can't break the reply
+        path.
+        """
+        assert self._rest is not None
+        sender = f"slack:{slack_user}" if slack_user else "slack-user"
+        try:
+            await self._rest.agent_api_events.create_agent_chat_event(
+                chat_id=room_id,
+                event=ChatEventRequest(
+                    content=f"[Slack thread {thread_ts}] {sender}: {text}",
+                    message_type="thought",
+                    metadata={
+                        "slack_mirror": True,
+                        "slack_app_slug": app.slug,
+                        "slack_channel_id": channel,
+                        "slack_thread_ts": thread_ts,
+                        "slack_user_id": slack_user,
+                        "slack_ts": ts,
+                    },
+                ),
+            )
+        except Exception:
+            logger.exception(
+                "Failed to mirror Slack user turn to room %s (channel=%s thread_ts=%s)",
+                room_id,
+                channel,
+                thread_ts,
+            )
 
     # ── Slack thread history backfill ────────────────────────────────
 

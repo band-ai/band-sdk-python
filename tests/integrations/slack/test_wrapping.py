@@ -140,6 +140,7 @@ def _make_adapter(
     apps: list[SlackApp] | None = None,
     room_ids: list[str] | None = None,
     bridge_agent_id: str = "bridge-uuid",
+    **adapter_kwargs: Any,
 ) -> tuple[
     SlackAdapter,
     _SlackReplyBrain | SimpleAdapter[Any],
@@ -167,6 +168,7 @@ def _make_adapter(
         api_key="k",
         rest_client=rest,
         web_client_factory=lambda a: web_mocks[a.slug],
+        **adapter_kwargs,
     )
     adapter._thenvoi_agent_id = bridge_agent_id  # type: ignore[attr-defined]
     return adapter, inner, web_mocks, rest
@@ -267,14 +269,24 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
     # Thenvoi room was created (delegation infrastructure).
     rest.agent_api_chats.create_agent_chat.assert_awaited_once()
 
-    # One event emitted: the bootstrap context event for Step 8
-    # rehydration. NO inbound relay event, NO brain-reply mirror event.
-    assert rest.agent_api_events.create_agent_chat_event.await_count == 1
-    context_evt = rest.agent_api_events.create_agent_chat_event.await_args.kwargs[
-        "event"
+    # Two events emitted: the Step 8 bootstrap context (task) event, then
+    # the Step 13 user-turn mirror (thought) event. NO brain-reply mirror
+    # event — only the inbound user turn is mirrored.
+    emitted = [
+        c.kwargs["event"]
+        for c in rest.agent_api_events.create_agent_chat_event.await_args_list
     ]
-    assert context_evt.message_type == "task"
+    assert [e.message_type for e in emitted] == ["task", "thought"]
+    context_evt = emitted[0]
     assert context_evt.metadata["slack_channel_id"] == "C123"
+    # The mirror is a context-only thought carrying the Slack thread id.
+    mirror_evt = emitted[1]
+    assert mirror_evt.metadata["slack_mirror"] is True
+    assert mirror_evt.metadata["slack_thread_ts"] == "1700000000.000100"
+    assert mirror_evt.metadata["slack_user_id"] == "U999"
+    # Thread id is surfaced in the visible thought text too, not just metadata.
+    assert "1700000000.000100" in mirror_evt.content
+    assert "<@U001> ping" in mirror_evt.content
 
     # No regular Thenvoi messages posted — the brain replied via Slack only.
     rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
@@ -1179,7 +1191,14 @@ async def test_rehydration_then_slack_event_reuses_room_without_new_chat():
     await adapter.wait_idle()
 
     rest.agent_api_chats.create_agent_chat.assert_not_awaited()
-    rest.agent_api_events.create_agent_chat_event.assert_not_awaited()
+    # No new bootstrap task event (room already exists), but the Step 13
+    # user-turn mirror still fires — exactly one thought event.
+    assert rest.agent_api_events.create_agent_chat_event.await_count == 1
+    mirror_evt = rest.agent_api_events.create_agent_chat_event.await_args.kwargs[
+        "event"
+    ]
+    assert mirror_evt.message_type == "thought"
+    assert mirror_evt.metadata["slack_mirror"] is True
     # Brain saw the Slack-triggered event in the rehydrated room.
     assert isinstance(inner, _SlackReplyBrain)
     slack_invocations = [i for i in inner.invocations if i["room_id"] == "room-resumed"]
@@ -1231,8 +1250,124 @@ async def test_context_event_metadata_includes_slack_room_id():
     )
     await adapter.wait_idle()
 
-    event_arg = rest.agent_api_events.create_agent_chat_event.await_args.kwargs["event"]
+    # Pick the bootstrap task event specifically — the Step 13 user-turn
+    # mirror (a thought) is also emitted and would otherwise be await_args.
+    task_events = [
+        c.kwargs["event"]
+        for c in rest.agent_api_events.create_agent_chat_event.await_args_list
+        if c.kwargs["event"].message_type == "task"
+    ]
+    assert len(task_events) == 1
+    event_arg = task_events[0]
     assert event_arg.metadata["slack_room_id"] == "room-1"
     assert event_arg.metadata["slack_app_slug"] == app.slug
     assert event_arg.metadata["slack_channel_id"] == "C123"
     assert event_arg.metadata["slack_thread_ts"] == "100.0"
+
+
+# ── Step 13 — Slack context mirroring (audit timeline) ──────────────────────
+
+
+def _thought_events(rest: MagicMock) -> list[Any]:
+    return [
+        c.kwargs["event"]
+        for c in rest.agent_api_events.create_agent_chat_event.await_args_list
+        if c.kwargs["event"].message_type == "thought"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_user_turn_mirrored_as_thought_with_thread_id():
+    """A DM user turn is mirrored as a context-only thought carrying the
+    Slack thread id, and no real Thenvoi message is posted (no peer loop)."""
+    adapter, _, _, rest = _make_adapter(inner=_SlackReplyBrain(reply=None))
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    await _post_slack_event(
+        adapter,
+        app,
+        {
+            "type": "event_callback",
+            "event": {
+                "type": "message",
+                "channel_type": "im",
+                "channel": "D999",
+                "ts": "1700000000.5",
+                "text": "what's the weather?",
+                "user": "U42",
+            },
+        },
+    )
+    await adapter.wait_idle()
+
+    thoughts = _thought_events(rest)
+    assert len(thoughts) == 1
+    mirror = thoughts[0]
+    assert mirror.message_type == "thought"
+    assert mirror.metadata["slack_mirror"] is True
+    assert mirror.metadata["slack_thread_ts"] == "1700000000.5"
+    assert mirror.metadata["slack_user_id"] == "U42"
+    assert "1700000000.5" in mirror.content
+    assert "what's the weather?" in mirror.content
+    # Mirror must NOT post a real message (which would trigger peers/loop).
+    rest.agent_api_messages.create_agent_chat_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_mirroring_disabled_emits_no_thought():
+    """With mirror_slack_context=False only the bootstrap task event fires."""
+    adapter, _, _, rest = _make_adapter(
+        inner=_SlackReplyBrain(reply=None),
+        mirror_slack_context=False,
+    )
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    await _post_slack_event(
+        adapter, app, _mention_event(channel="C1", ts="100.0", text="<@BOT> hi")
+    )
+    await adapter.wait_idle()
+
+    assert _thought_events(rest) == []
+    # Only the bootstrap context (task) event is emitted.
+    assert rest.agent_api_events.create_agent_chat_event.await_count == 1
+    assert (
+        rest.agent_api_events.create_agent_chat_event.await_args.kwargs[
+            "event"
+        ].message_type
+        == "task"
+    )
+
+
+@pytest.mark.asyncio
+async def test_mirror_failure_does_not_break_reply():
+    """A failing mirror event is swallowed; the brain still replies to Slack."""
+    adapter, inner, web_mocks, rest = _make_adapter(
+        inner=_SlackReplyBrain(reply="still works"),
+    )
+
+    async def fail_only_thought(*, chat_id: str, event: Any, **_kw: Any) -> Any:
+        # Bootstrap (task) must succeed so the room is created; only the
+        # Step 13 mirror (thought) blows up.
+        if event.message_type == "thought":
+            raise RuntimeError("boom")
+        return SimpleNamespace(data=SimpleNamespace(id="evt"))
+
+    rest.agent_api_events.create_agent_chat_event = AsyncMock(
+        side_effect=fail_only_thought
+    )
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    await _post_slack_event(
+        adapter, app, _mention_event(channel="C1", ts="100.0", text="<@BOT> hi")
+    )
+    await adapter.wait_idle()
+
+    # Brain ran and replied to Slack despite the mirror (and bootstrap) failing.
+    assert isinstance(inner, _SlackReplyBrain)
+    assert len(inner.invocations) == 1
+    web_mocks[app.slug].chat_postMessage.assert_awaited_once_with(
+        channel="C1", text="still works", thread_ts="100.0"
+    )

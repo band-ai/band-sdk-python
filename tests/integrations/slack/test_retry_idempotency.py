@@ -348,6 +348,12 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
     assert brain.count == 1
     # Exactly one room created.
     rest.agent_api_chats.create_agent_chat.assert_awaited_once()
-    # Exactly one bootstrap context event (no inbound relay anymore;
-    # the brain didn't call slack_send_message so no Slack reply either).
-    assert rest.agent_api_events.create_agent_chat_event.await_count == 1
+    # Exactly two events for the single processed turn: the bootstrap
+    # context (task) event and the Step 13 user-turn mirror (thought).
+    # Retries don't duplicate either.
+    assert rest.agent_api_events.create_agent_chat_event.await_count == 2
+    event_types = sorted(
+        c.kwargs["event"].message_type
+        for c in rest.agent_api_events.create_agent_chat_event.await_args_list
+    )
+    assert event_types == ["task", "thought"]
