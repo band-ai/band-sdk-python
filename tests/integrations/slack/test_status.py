@@ -1,4 +1,4 @@
-"""Tests for Step 6 — Slack assistant-pane status indicators.
+"""Tests for Slack assistant-pane status indicators.
 
 The adapter calls ``assistant.threads.setStatus("is thinking…")`` before
 invoking the brain and clears the status (``""``) afterwards. The

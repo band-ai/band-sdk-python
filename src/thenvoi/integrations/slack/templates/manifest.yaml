@@ -19,7 +19,7 @@
 #   - app_mentions:read        → receive @-mentions in channels
 #   - im:history               → receive DM events
 #   - channels:history         → conversations.replies in PUBLIC channels
-#                                 (Step 7.5 thread-history backfill)
+#                                 (thread-history backfill)
 #   - groups:history           → conversations.replies in PRIVATE channels
 #                                 (same; needed when the bot is mentioned
 #                                 in a private channel thread)
@@ -88,4 +88,4 @@ settings:
   socket_mode_enabled: true
 
   org_deploy_enabled: false
-  token_rotation_enabled: false        # v1 explicitly recommends OFF; see PRD
+  token_rotation_enabled: false        # v1 explicitly recommends OFF

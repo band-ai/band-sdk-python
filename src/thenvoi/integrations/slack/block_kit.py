@@ -1,4 +1,4 @@
-"""Block Kit rendering for the tool-call progress UI (Step 7).
+"""Block Kit rendering for the tool-call progress UI.
 
 When the inner brain emits ``tool_call`` / ``tool_result`` events
 (gated on ``Emit.EXECUTION``), the SlackAdapter surfaces them as a

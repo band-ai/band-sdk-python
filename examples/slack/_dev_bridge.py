@@ -1,12 +1,12 @@
-"""Manual smoke driver for INT-461 (wrapping shape).
+"""Manual smoke driver for the Slack bridge (wrapping shape).
 
 One Agent process. One Thenvoi identity. The agent has a brain (here
 ``AnthropicAdapter``) and ``SlackAdapter`` is layered on top so that
 both Slack webhooks AND Thenvoi WS messages flow into the same brain.
 Slack threads are mirrored into Thenvoi rooms one-to-one.
 
-Not part of the shipped examples — Step 11 will write the official
-``examples/slack/01_basic_bot.py``.
+Not part of the shipped examples — see ``examples/slack/01_basic_bot.py``
+for the official getting-started example.
 
 Run with:
     export SLACK_BOT_TOKEN=xoxb-...

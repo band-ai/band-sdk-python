@@ -11,8 +11,6 @@ ingress/egress. One process, one Thenvoi identity, two transports:
   ``PlatformMessage`` from the Slack event and invokes
   ``inner.on_message`` directly with REST-backed tools that tee replies
   back to the originating Slack thread.
-
-See INT-461 for the full design.
 """
 
 from __future__ import annotations
@@ -361,7 +359,7 @@ class SlackAdapter(SimpleAdapter[Any]):
             api_key: API key for the Thenvoi agent (same key passed to
                 ``Agent.create``). Used to mirror Slack messages into
                 Thenvoi rooms.
-            port: TCP port for the HTTP server (used in Step 9).
+            port: TCP port for the HTTP server.
             transport: ``"http"`` (default) serves events via a mountable
                 Starlette router; the developer points their Slack app's
                 Event Subscriptions URL at the bridge. ``"socket"`` opens
@@ -684,7 +682,6 @@ class SlackAdapter(SimpleAdapter[Any]):
             await self._invoke_brain_for_slack_event(app, event)
         elif event_type == "message" and event.get("channel_type") == "im":
             await self._invoke_brain_for_slack_event(app, event)
-        # assistant_thread_started is handled in Step 6.
 
     async def _invoke_brain_for_slack_event(
         self, app: SlackApp, event: dict[str, Any]
@@ -729,9 +726,9 @@ class SlackAdapter(SimpleAdapter[Any]):
             created_at=datetime.now(timezone.utc),
         )
 
-        # Mirror the user turn into the Thenvoi room for audit visibility
-        # (Step 13). Best-effort and tagged context-only; happens before
-        # the brain runs so the timeline ordering matches reality.
+        # Mirror the user turn into the Thenvoi room for audit visibility.
+        # Best-effort and tagged context-only; happens before the brain
+        # runs so the timeline ordering matches reality.
         if self._mirror_slack_context:
             await self._mirror_user_turn_to_room(
                 room_id=room_id,
@@ -818,8 +815,8 @@ class SlackAdapter(SimpleAdapter[Any]):
         )
         room_id = response.data.id
 
-        # Persist Slack thread context as a ``task`` event so Step 8's
-        # SlackHistoryConverter can rehydrate ``thread_to_room`` after
+        # Persist Slack thread context as a ``task`` event so
+        # ``SlackHistoryConverter`` can rehydrate ``thread_to_room`` after
         # the agent restarts.
         await self._emit_context_event(
             room_id=room_id,
@@ -884,8 +881,8 @@ class SlackAdapter(SimpleAdapter[Any]):
     ) -> None:
         """Mirror an inbound Slack user turn into the room as a ``thought``.
 
-        Slack-bridged rooms otherwise hold only the Step 8 bootstrap
-        ``task`` event, so the Thenvoi UI audit timeline is blank while
+        Slack-bridged rooms otherwise hold only the bootstrap ``task``
+        event, so the Thenvoi UI audit timeline is blank while
         real conversations happen on Slack. This posts each triggering
         user message as a ``thought`` event carrying the Slack thread
         identity so the timeline reflects what was actually said.

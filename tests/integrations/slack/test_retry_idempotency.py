@@ -1,4 +1,4 @@
-"""Tests for Step 5 — Slack retry idempotency.
+"""Tests for Slack retry idempotency.
 
 Per Slack's Events API, if we don't return 200 within 3 seconds, Slack
 retries the same ``event_id`` up to three times. We need to:
@@ -7,8 +7,8 @@ retries the same ``event_id`` up to three times. We need to:
 2. Ack 200 anyway so Slack stops
 3. NOT dispatch the duplicate to the brain / Thenvoi side
 
-The PRD success metric: ``100% of Slack retries handled without
-duplicate Band agent invocation``.
+The target: ``100% of Slack retries handled without duplicate agent
+invocation``.
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ def _event_payload(event_id: str = "Ev0001", text: str = "<@U> hi") -> dict:
 
 
 def test_same_event_id_three_times_dispatches_exactly_once():
-    """The core PRD metric: 3 retries → 1 dispatch."""
+    """The core idempotency guarantee: 3 retries → 1 dispatch."""
     app = _app()
     client, captured = _make_test_client([app])
 
@@ -349,7 +349,7 @@ async def test_full_pipeline_three_retries_one_brain_invocation():
     # Exactly one room created.
     rest.agent_api_chats.create_agent_chat.assert_awaited_once()
     # Exactly two events for the single processed turn: the bootstrap
-    # context (task) event and the Step 13 user-turn mirror (thought).
+    # context (task) event and the user-turn mirror (thought).
     # Retries don't duplicate either.
     assert rest.agent_api_events.create_agent_chat_event.await_count == 2
     event_types = sorted(

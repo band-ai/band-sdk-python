@@ -242,7 +242,7 @@ def test_dispatcher_exception_does_not_break_ack():
     )
 
     # Slack must get a 200 even if our handler crashes downstream; we
-    # log the exception and retry semantics live elsewhere (Step 5).
+    # log the exception and retry semantics live elsewhere.
     assert response.status_code == 200
 
 

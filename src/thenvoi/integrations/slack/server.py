@@ -5,10 +5,10 @@ configured Slack app. Each app is served at ``/{slug}/events``.
 
 Responsibilities of this layer:
 
-- HMAC signature verification (Step 1)
-- ``url_verification`` challenge handling (Step 1)
-- Event-ID dedup for Slack retries (Step 5)
-- Dispatching verified events to a per-app callback (Step 2+)
+- HMAC signature verification
+- ``url_verification`` challenge handling
+- Event-ID dedup for Slack retries
+- Dispatching verified events to a per-app callback
 """
 
 from __future__ import annotations

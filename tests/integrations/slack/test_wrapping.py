@@ -1,4 +1,4 @@
-"""Tests for the wrapping-shape SlackAdapter (Steps 3+4+6.5 reworked).
+"""Tests for the wrapping-shape SlackAdapter.
 
 Architecture under test:
 
@@ -269,9 +269,9 @@ async def test_slack_event_creates_room_invokes_brain_and_replies_via_tool():
     # Thenvoi room was created (delegation infrastructure).
     rest.agent_api_chats.create_agent_chat.assert_awaited_once()
 
-    # Two events emitted: the Step 8 bootstrap context (task) event, then
-    # the Step 13 user-turn mirror (thought) event. NO brain-reply mirror
-    # event — only the inbound user turn is mirrored.
+    # Two events emitted: the bootstrap context (task) event, then the
+    # user-turn mirror (thought) event. NO brain-reply mirror event —
+    # only the inbound user turn is mirrored.
     emitted = [
         c.kwargs["event"]
         for c in rest.agent_api_events.create_agent_chat_event.await_args_list
@@ -765,7 +765,7 @@ async def test_send_message_no_longer_overridden_uses_real_thenvoi_path():
     slack.chat_postMessage.assert_not_awaited()
 
 
-# ── Step 7.5: channel-mention coverage + thread history backfill ────────────
+# ── Channel-mention coverage + thread history backfill ──────────────────────
 
 
 @pytest.mark.asyncio
@@ -1005,7 +1005,7 @@ async def test_thread_history_fetch_failure_falls_back_to_empty_history():
     assert inner.invocations[0]["history"] == []
 
 
-# ── Step 8: session rehydration via history ─────────────────────────────────
+# ── Session rehydration via history ─────────────────────────────────────────
 
 
 def _slack_bootstrap_task_event(
@@ -1191,7 +1191,7 @@ async def test_rehydration_then_slack_event_reuses_room_without_new_chat():
     await adapter.wait_idle()
 
     rest.agent_api_chats.create_agent_chat.assert_not_awaited()
-    # No new bootstrap task event (room already exists), but the Step 13
+    # No new bootstrap task event (room already exists), but the
     # user-turn mirror still fires — exactly one thought event.
     assert rest.agent_api_events.create_agent_chat_event.await_count == 1
     mirror_evt = rest.agent_api_events.create_agent_chat_event.await_args.kwargs[
@@ -1250,8 +1250,8 @@ async def test_context_event_metadata_includes_slack_room_id():
     )
     await adapter.wait_idle()
 
-    # Pick the bootstrap task event specifically — the Step 13 user-turn
-    # mirror (a thought) is also emitted and would otherwise be await_args.
+    # Pick the bootstrap task event specifically — the user-turn mirror
+    # (a thought) is also emitted and would otherwise be await_args.
     task_events = [
         c.kwargs["event"]
         for c in rest.agent_api_events.create_agent_chat_event.await_args_list
@@ -1265,7 +1265,7 @@ async def test_context_event_metadata_includes_slack_room_id():
     assert event_arg.metadata["slack_thread_ts"] == "100.0"
 
 
-# ── Step 13 — Slack context mirroring (audit timeline) ──────────────────────
+# ── Slack context mirroring (audit timeline) ────────────────────────────────
 
 
 def _thought_events(rest: MagicMock) -> list[Any]:
@@ -1349,7 +1349,7 @@ async def test_mirror_failure_does_not_break_reply():
 
     async def fail_only_thought(*, chat_id: str, event: Any, **_kw: Any) -> Any:
         # Bootstrap (task) must succeed so the room is created; only the
-        # Step 13 mirror (thought) blows up.
+        # mirror (thought) blows up.
         if event.message_type == "thought":
             raise RuntimeError("boom")
         return SimpleNamespace(data=SimpleNamespace(id="evt"))

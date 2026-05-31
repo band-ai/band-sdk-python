@@ -1,4 +1,4 @@
-"""Unit tests for ``SlackHistoryConverter`` (Step 8 — session rehydration).
+"""Unit tests for ``SlackHistoryConverter`` (session rehydration).
 
 The converter's only job is to recover the Slack thread identity for
 one room from that room's platform history. Tests cover the happy path,

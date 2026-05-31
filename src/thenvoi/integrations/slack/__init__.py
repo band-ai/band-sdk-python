@@ -1,7 +1,6 @@
 """Slack integration for Thenvoi SDK.
 
-Exposes one or more Thenvoi peers as Slack-native AI agents. See INT-461
-for the full PRD and implementation plan.
+Exposes one or more Thenvoi peers as Slack-native AI agents.
 
 Example:
     from thenvoi import Agent

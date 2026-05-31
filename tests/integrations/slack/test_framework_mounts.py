@@ -1,8 +1,8 @@
-"""Framework-mount integration tests (Step 9 absorbed into Step 12).
+"""Framework-mount integration tests.
 
-The PRD lists "Framework compatibility (Python): mounts cleanly into
-FastAPI, Flask, Starlette" as a success metric. Flask is out of v1
-scope (sync-only, would require asgiref). Starlette is exercised
+The adapter must mount cleanly into FastAPI, Flask, and Starlette.
+Flask is out of v1 scope (sync-only, would require asgiref). Starlette
+is exercised
 implicitly throughout ``test_wrapping.py`` via ``ASGITransport`` on
 ``SlackAdapter.router`` itself — which IS a Starlette ``Router``, so
 those tests already prove the Starlette path.

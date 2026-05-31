@@ -1,4 +1,4 @@
-"""Tests for the Socket Mode transport (Step 10).
+"""Tests for the Socket Mode transport.
 
 Covers:
 

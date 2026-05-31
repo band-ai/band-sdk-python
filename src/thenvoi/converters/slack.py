@@ -2,7 +2,7 @@
 
 Recovers the Slack thread identity for a room from its history, so the
 bridge can resume routing Slack events into the right Thenvoi room after
-a restart. See Step 8 in INT-461.
+a restart.
 
 History is converted per-room (the platform fetches and converts a single
 room's history at a time), so this converter only needs to surface the

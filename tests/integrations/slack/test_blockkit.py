@@ -1,4 +1,4 @@
-"""Tests for Step 7 — Tool-call visibility via Block Kit plan/task UI.
+"""Tests for tool-call visibility via Block Kit plan/task UI.
 
 When the brain emits ``tool_call`` / ``tool_result`` events (via
 ``Emit.EXECUTION``), the SlackAdapter renders them as a progressive

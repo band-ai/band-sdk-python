@@ -1,11 +1,10 @@
 """Quantitative success-metric tests for the Slack adapter.
 
-The PRD lists "Adapter overhead < 50 ms p95 added latency from 'event
-received' to 'Band SDK invoked' (excluding agent runtime time)" as a
-v1 success metric. This file pins that quantitatively so an
-accidentally-synchronous addition to ``_dispatch_event`` (e.g. a
-blocking REST call) shows up as a failure rather than a Slack timeout
-in production.
+The target: adapter overhead < 50 ms p95 added latency from "event
+received" to "SDK invoked" (excluding agent runtime time). This file
+pins that quantitatively so an accidentally-synchronous addition to
+``_dispatch_event`` (e.g. a blocking REST call) shows up as a failure
+rather than a Slack timeout in production.
 
 What's measured: round-trip time from POST send to HTTP 200 ack. The
 brain is a fast no-op stub fired into a background task; the timed
@@ -14,7 +13,7 @@ scheduling — i.e. the adapter's overhead.
 
 Why the threshold is generous: CI runners are often 2–5× slower than a
 local laptop. We assert p95 < 100 ms to leave headroom while still
-being well under the PRD's 50 ms bar in practice (typical observed
+being well under the 50 ms target in practice (typical observed
 p95 is in the low single-digit ms on a 2024-era developer machine).
 """
 
@@ -41,7 +40,7 @@ from tests.integrations.slack.test_wrapping import (
 )
 
 
-# Lenient p95 bar; see module docstring. PRD target is 50 ms; this is
+# Lenient p95 bar; see module docstring. Target is 50 ms; this is
 # 2× headroom for CI noise.
 P95_OVERHEAD_MS_MAX = 100.0
 
@@ -71,7 +70,7 @@ def _percentile(values: list[float], pct: float) -> float:
 
 @pytest.mark.asyncio
 async def test_adapter_overhead_p95_under_threshold():
-    """Adapter-side latency p95 must stay well below the PRD bar."""
+    """Adapter-side latency p95 must stay well below the target bar."""
     app_config = SlackApp(
         slug="dev", bot_token="xoxb-dev", signing_secret="test-secret"
     )
@@ -136,6 +135,6 @@ async def test_adapter_overhead_p95_under_threshold():
 
     assert p95 < P95_OVERHEAD_MS_MAX, (
         f"Slack adapter overhead p95={p95:.2f} ms exceeded the "
-        f"{P95_OVERHEAD_MS_MAX} ms safety bar (PRD target is 50 ms). "
+        f"{P95_OVERHEAD_MS_MAX} ms safety bar (target is 50 ms). "
         "Did something synchronous land in the request path?"
     )
