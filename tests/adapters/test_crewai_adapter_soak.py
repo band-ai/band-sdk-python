@@ -82,7 +82,7 @@ async def test_soak_100_turns_3_rooms(crewai_mocks):
     module = importlib.import_module("thenvoi.adapters.crewai")
     CrewAIAdapter = module.CrewAIAdapter
 
-    adapter = CrewAIAdapter(model="gpt-4o-mini")
+    adapter = CrewAIAdapter(model="gpt-5.4-mini")
     fake_agent = MagicMock()
     fake_agent.kickoff_async = AsyncMock(return_value=MagicMock(raw="ok"))
     adapter._crewai_agent = fake_agent

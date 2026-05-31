@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
-from crewai.flow.flow import Flow, start
+
 from pydantic import BaseModel
 
 from thenvoi.adapters.crewai_flow import (
@@ -14,6 +14,18 @@ from thenvoi.adapters.crewai_flow import (
 )
 from thenvoi.core.types import PlatformMessage
 from thenvoi.testing.fake_tools import FakeAgentTools
+
+try:
+    from crewai.flow.flow import Flow, start  # noqa: F401
+
+    _HAS_CREWAI = True
+except ImportError:
+    _HAS_CREWAI = False
+
+pytestmark = pytest.mark.skipif(
+    not _HAS_CREWAI,
+    reason="crewai not installed (pip install thenvoi-sdk[crewai])",
+)
 
 
 class EmailsInput(BaseModel):

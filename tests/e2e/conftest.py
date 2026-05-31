@@ -88,7 +88,7 @@ class E2ESettings(ThenvoiTestSettings):
     _env_file_path = Path(__file__).parent.parent.parent / ".env.test"
 
     # E2E-specific settings (override via environment variables)
-    e2e_llm_model: str = "gpt-4o-mini"
+    e2e_llm_model: str = "gpt-5.4-mini"
     e2e_anthropic_model: str = "claude-3-haiku-20240307"
     e2e_timeout: int = 30
     e2e_tests_enabled: bool = False

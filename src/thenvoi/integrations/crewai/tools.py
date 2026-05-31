@@ -22,6 +22,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
@@ -34,14 +35,8 @@ from typing import (
 
 from pydantic import BaseModel, Field, field_validator
 
-try:
+if TYPE_CHECKING:
     from crewai.tools import BaseTool
-except ImportError as e:  # pragma: no cover - same import guard as the adapter
-    raise ImportError(
-        "crewai is required for CrewAI adapter.\n"
-        "Install with: pip install 'thenvoi-sdk[crewai]'\n"
-        "Or: uv add crewai nest-asyncio"
-    ) from e
 
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.tool_filter import filter_tool_schemas
@@ -434,6 +429,7 @@ def _make_platform_tools(
     is responsible for stitching them together based on the requested
     capabilities.
     """
+    from crewai.tools import BaseTool
 
     def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
         return _execute_tool(
@@ -929,6 +925,8 @@ def _make_custom_tools(
     fallback_loop: asyncio.AbstractEventLoop | None,
 ) -> list[BaseTool]:
     """Convert CustomToolDef tuples to CrewAI BaseTool instances."""
+    from crewai.tools import BaseTool
+
     crewai_tools: list[BaseTool] = []
 
     def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:

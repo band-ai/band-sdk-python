@@ -345,7 +345,7 @@ class ListMyAgentsInput(BaseModel):
 
 
 class RegisterMyAgentInput(BaseModel):
-    """Register a new external agent.
+    """Register a new remote agent.
 
     Returns the agent details including API key. Save the API key - it's only shown once!
     """
@@ -2239,7 +2239,7 @@ class HumanTools:
         )
 
     async def register_my_agent(self, name: str, description: str) -> Any:
-        """Register a new external agent owned by the user."""
+        """Register a new remote agent owned by the user."""
         from thenvoi_rest import AgentRegisterRequest
 
         logger.debug("Registering my agent: name=%s", name)

@@ -50,6 +50,12 @@ def parse_tool_call(content: str) -> ParsedToolCall | None:
         logger.warning("Failed to parse tool_call: %s", repr(content[:100]))
         return None
 
+    if not isinstance(event, dict):
+        logger.warning(
+            "Skipping tool_call with non-object payload: %s", repr(content[:100])
+        )
+        return None
+
     tool_call_id = event.get("tool_call_id")
     tool_name = event.get("name")
 
@@ -67,9 +73,17 @@ def parse_tool_call(content: str) -> ParsedToolCall | None:
         )
         return None
 
+    args = event.get("args", {})
+    if not isinstance(args, dict):
+        logger.warning(
+            "Tool_call args were not an object; using empty args: %s",
+            repr(content[:100]),
+        )
+        args = {}
+
     return ParsedToolCall(
         name=tool_name,
-        args=event.get("args", {}),
+        args=args,
         tool_call_id=tool_call_id,
     )
 
@@ -89,6 +103,12 @@ def parse_tool_result(content: str) -> ParsedToolResult | None:
         event = json.loads(content)
     except json.JSONDecodeError:
         logger.warning("Failed to parse tool_result: %s", repr(content[:100]))
+        return None
+
+    if not isinstance(event, dict):
+        logger.warning(
+            "Skipping tool_result with non-object payload: %s", repr(content[:100])
+        )
         return None
 
     tool_call_id = event.get("tool_call_id")

@@ -18,6 +18,13 @@ import pytest
 from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from thenvoi.core.types import AdapterFeatures, Capability
 
+try:
+    import crewai  # noqa: F401
+
+    _HAS_CREWAI = True
+except ImportError:
+    _HAS_CREWAI = False
+
 
 @pytest.mark.asyncio
 class TestCapabilityGatingEndToEnd:
@@ -106,7 +113,7 @@ class TestCapabilityGatingEndToEnd:
         from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
 
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             features=AdapterFeatures(capabilities={Capability.MEMORY}),
         )
         await adapter.on_started("test-agent", "A test agent")
@@ -185,13 +192,14 @@ class TestCapabilityGatingEndToEnd:
         )
         assert "Contact Management Tools" in prompt["append"]
 
+    @pytest.mark.skipif(not _HAS_CREWAI, reason="crewai not installed")
     async def test_crewai_adapter_renders_memory_section_when_enabled(self) -> None:
         """CrewAI backstory should contain memory instructions when MEMORY capability is set."""
         from unittest.mock import MagicMock, patch
 
         with (
-            patch("thenvoi.adapters.crewai.CrewAIAgent") as mock_agent_cls,
-            patch("thenvoi.adapters.crewai.LLM"),
+            patch("crewai.Agent") as mock_agent_cls,
+            patch("crewai.LLM"),
         ):
             mock_agent_cls.return_value = MagicMock()
             from thenvoi.adapters.crewai import CrewAIAdapter
@@ -204,12 +212,13 @@ class TestCapabilityGatingEndToEnd:
             backstory = mock_agent_cls.call_args[1]["backstory"]
             assert "Memory Tools" in backstory
 
+    @pytest.mark.skipif(not _HAS_CREWAI, reason="crewai not installed")
     async def test_crewai_adapter_omits_memory_section_when_disabled(self) -> None:
         from unittest.mock import MagicMock, patch
 
         with (
-            patch("thenvoi.adapters.crewai.CrewAIAgent") as mock_agent_cls,
-            patch("thenvoi.adapters.crewai.LLM"),
+            patch("crewai.Agent") as mock_agent_cls,
+            patch("crewai.LLM"),
         ):
             mock_agent_cls.return_value = MagicMock()
             from thenvoi.adapters.crewai import CrewAIAdapter

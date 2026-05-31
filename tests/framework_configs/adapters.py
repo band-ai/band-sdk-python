@@ -284,7 +284,7 @@ def _google_adk_factory(**kw: Any) -> Any:
 # The conformance factory injects this value so the adapter can be instantiated
 # without a real API key.  ``expected_initial_values["model"]`` then verifies
 # the factory injection, NOT a real adapter default.
-_PYDANTIC_AI_INJECTED_MODEL = "openai:gpt-4o"
+_PYDANTIC_AI_INJECTED_MODEL = "openai:gpt-5.4"
 
 
 def _build_anthropic_config() -> AdapterConfig:
@@ -337,6 +337,13 @@ def _build_langgraph_config() -> AdapterConfig:
 def _build_crewai_config() -> AdapterConfig:
     crewai_cls = _get_crewai_adapter_cls()
 
+    try:
+        import crewai  # noqa: F401
+
+        _crewai_available = True
+    except ImportError:
+        _crewai_available = False
+
     return AdapterConfig(
         framework_id="crewai",
         display_name="CrewAI",
@@ -351,7 +358,7 @@ def _build_crewai_config() -> AdapterConfig:
             "allow_delegation": _default_from_init(crewai_cls, "allow_delegation"),
         },
         custom_kwargs={
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
             "role": "Research Analyst",
             "goal": "Find and analyze information",
             "backstory": "Expert researcher",
@@ -362,7 +369,7 @@ def _build_crewai_config() -> AdapterConfig:
             "allow_delegation": True,
         },
         custom_expected={
-            "model": "gpt-4o-mini",
+            "model": "gpt-5.4-mini",
             "role": "Research Analyst",
             "goal": "Find and analyze information",
             "backstory": "Expert researcher",
@@ -372,6 +379,9 @@ def _build_crewai_config() -> AdapterConfig:
             "max_rpm": 10,
             "allow_delegation": True,
         },
+        # on_started does a runtime `from crewai import Agent, LLM` which fails
+        # when crewai is not installed (conflict group with parlant/pydantic-ai).
+        skip_on_started_conformance=not _crewai_available,
     )
 
 

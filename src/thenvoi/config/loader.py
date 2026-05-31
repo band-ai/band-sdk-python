@@ -3,7 +3,7 @@ Agent configuration management utilities.
 
 This module provides functions to load agent credentials from a YAML
 configuration file. Agents must be created manually on the platform
-as external agents before use.
+as remote agents before use.
 """
 
 from __future__ import annotations
@@ -105,7 +105,7 @@ def load_agent_config(
         if missing_fields:
             raise ValueError(
                 f"Missing required fields for agent '{agent_key}': {', '.join(missing_fields)}. "
-                f"Please create an external agent on the platform and add the credentials to {path}"
+                f"Please create a remote agent on the platform and add the credentials to {path}"
             )
 
         return agent_id, api_key

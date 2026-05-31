@@ -161,7 +161,7 @@ def run_orchestrator() -> None:
     agent = OrchestratorAgent(
         gateway_url=gateway_url,
         available_peers=available_peers,
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+        model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
     )
 
     # Define agent capabilities and card

@@ -35,6 +35,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -42,7 +45,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
-from thenvoi.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -66,9 +68,35 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    agent_key = os.getenv("AGENT_KEY", "darter")
-    agent_id, api_key = load_agent_config(agent_key)
+    codex_bin = shutil.which("codex")
+    if codex_bin is None:
+        logger.error(
+            "Codex CLI not found on PATH. Install it: npm install -g @openai/codex"
+        )
+        sys.exit(1)
 
+    login_check = subprocess.run(
+        [codex_bin, "login", "status"],
+        capture_output=True,
+        text=True,
+    )
+    if login_check.returncode != 0:
+        print("Codex is not logged in.")
+        try:
+            answer = input("Run 'codex login' now? [Y/n] ").strip().lower()
+        except EOFError:
+            print("Non-interactive shell. Run 'codex login' manually, then retry.")
+            sys.exit(1)
+        if answer in ("", "y", "yes"):
+            result = subprocess.run([codex_bin, "login"], check=False)
+            if result.returncode != 0:
+                print("Login failed. Check the output above and retry.")
+                sys.exit(1)
+        else:
+            print("Exiting. Run 'codex login' manually, then retry.")
+            sys.exit(1)
+
+    agent_key = os.getenv("AGENT_KEY", "darter")
     codex_transport = os.getenv("CODEX_TRANSPORT", "stdio")
     if codex_transport not in {"stdio", "ws"}:
         raise ValueError("CODEX_TRANSPORT must be 'stdio' or 'ws'")
@@ -103,10 +131,9 @@ async def main() -> None:
         )
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        agent_key,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

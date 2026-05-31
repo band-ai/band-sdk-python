@@ -121,8 +121,21 @@ class TestInitialization:
     def test_requires_model(self):
         """Should require model parameter."""
         # model is required - no default
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
-        assert adapter.model == "openai:gpt-4o"
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        assert adapter.model == "openai:gpt-5.4"
+
+    def test_create_agent_uses_str_output_type(self):
+        """INT-488: Agent must be constructed with output_type=str, never None.
+
+        pydantic-ai-slim 1.87+ raises UserError("At least one output type must
+        be provided other than `None`") when output_type is None or omitted.
+        """
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        adapter.agent_name = "TestBot"
+
+        with patch("thenvoi.adapters.pydantic_ai.Agent") as MockAgent:
+            adapter._create_agent()
+            assert MockAgent.call_args.kwargs["output_type"] is str
 
 
 class TestOnStarted:
@@ -131,7 +144,7 @@ class TestOnStarted:
     @pytest.mark.asyncio
     async def test_sets_agent_name_and_description(self, mock_pydantic_agent):
         """Should set agent_name and agent_description."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started(
@@ -144,7 +157,7 @@ class TestOnStarted:
     @pytest.mark.asyncio
     async def test_creates_pydantic_agent(self, mock_pydantic_agent):
         """Should create Pydantic AI agent after start."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         assert adapter._agent is None
 
@@ -160,7 +173,7 @@ class TestOnStarted:
         """Should persist rendered prompt for capability-gating visibility."""
         with patch("thenvoi.adapters.pydantic_ai.Agent"):
             adapter = PydanticAIAdapter(
-                model="openai:gpt-4o",
+                model="openai:gpt-5.4",
                 features=AdapterFeatures(capabilities={Capability.MEMORY}),
             )
             await adapter.on_started(
@@ -173,7 +186,7 @@ class TestOnStarted:
     @pytest.mark.asyncio
     async def test_agent_has_tools_registered(self, mock_pydantic_agent):
         """Should register all platform tools on the agent."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started(
@@ -205,7 +218,7 @@ class TestOnMessage:
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
         """Should initialize room history on first message."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -232,7 +245,7 @@ class TestOnMessage:
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
         """Should load historical messages on bootstrap."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -269,7 +282,7 @@ class TestOnMessage:
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
         """Should inject participants update when provided."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -303,7 +316,7 @@ class TestOnMessage:
     ):
         """Should create agent lazily if on_started wasn't called."""
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             custom_section="Test section",
         )
         # Don't call on_started - set agent_name directly for prompt rendering
@@ -335,7 +348,7 @@ class TestOnCleanup:
     @pytest.mark.asyncio
     async def test_cleans_up_room_history(self):
         """Should remove room history on cleanup."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         # Add some history
         adapter._message_history["room-123"] = [
@@ -356,7 +369,7 @@ class TestHistoryManagement:
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
         """Should update stored history with all messages from run."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -387,7 +400,7 @@ class TestHistoryManagement:
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
         """Should create history if not bootstrap and room doesn't exist."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -419,7 +432,7 @@ class TestExecutionReporting:
     ):
         """Should emit tool_call events when enable_execution_reporting=True."""
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             enable_execution_reporting=True,
         )
 
@@ -455,7 +468,7 @@ class TestExecutionReporting:
     ):
         """Should emit tool_result events when enable_execution_reporting=True."""
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             enable_execution_reporting=True,
         )
 
@@ -492,7 +505,7 @@ class TestExecutionReporting:
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
         """Should NOT emit events when enable_execution_reporting=False (default)."""
-        adapter = PydanticAIAdapter(model="openai:gpt-4o")  # Default is False
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")  # Default is False
 
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
@@ -526,7 +539,7 @@ class TestExecutionReporting:
     ):
         """Should emit events for all tool calls in sequence."""
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             enable_execution_reporting=True,
         )
 
@@ -580,7 +593,7 @@ class TestExecutionReporting:
     ):
         """Should continue running if send_event fails."""
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             enable_execution_reporting=True,
         )
 
@@ -624,7 +637,7 @@ class TestCustomTools:
             return f"Echo: {message}"
 
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             additional_tools=[my_tool],
         )
 
@@ -647,7 +660,7 @@ class TestCustomTools:
             return x + y
 
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             additional_tools=[tool_one, tool_two, tool_three],
         )
 
@@ -662,7 +675,7 @@ class TestCustomTools:
             return f"Echo: {message}"
 
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             additional_tools=[my_echo],
         )
 
@@ -693,7 +706,7 @@ class TestCustomTools:
             return a + b
 
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             additional_tools=[calculator],
         )
 
@@ -723,7 +736,7 @@ class TestCustomTools:
             return f"Helped: {value}"
 
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             additional_tools=[my_helper],
         )
 

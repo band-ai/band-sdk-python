@@ -13,7 +13,7 @@ to the Thenvoi platform. Messages from Thenvoi rooms are forwarded to Cursor,
 and Cursor's responses (including tool calls, plans, and streaming text) are
 posted back to the room.
 
-Note: Cursor IDE does NOT yet support connecting to external ACP agents (i.e.,
+Note: Cursor IDE does NOT yet support connecting to remote ACP agents (i.e.,
 you cannot add Thenvoi as an agent inside Cursor's UI). This integration works
 the other direction — Thenvoi spawns Cursor's agent as a backend.
 
@@ -60,7 +60,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import ACPClientAdapter
-from thenvoi.config import load_agent_config
 from thenvoi.integrations.acp.client_profiles import CursorACPClientProfile
 
 setup_logging()
@@ -74,10 +73,6 @@ async def main() -> None:
         "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
     )
     rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("cursor_agent")
-
     # Working directory for Cursor sessions
     cwd = os.getenv("ACP_AGENT_CWD", ".")
 
@@ -104,10 +99,9 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "cursor_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

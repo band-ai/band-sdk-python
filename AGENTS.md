@@ -5,7 +5,7 @@ This is a Python SDK that connects AI agents to the Thenvoi collaborative platfo
 ## Core Features
 
 1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode)
-2. A2A protocol support: Bridge to external A2A agents and expose Thenvoi peers as A2A endpoints
+2. A2A protocol support: Bridge to remote A2A agents and expose Thenvoi peers as A2A endpoints
 3. ACP integration: Editor-facing server and subprocess client adapters (Cursor, Codex, Claude Code)
 4. Platform tools for chat, contacts, and memory management
 5. WebSocket + REST transport: Real-time messaging with REST API fallback
@@ -181,20 +181,20 @@ The SDK supports the [A2A (Agent-to-Agent) protocol](https://google.github.io/A2
 
 ### A2A Adapter (outbound)
 
-`A2AAdapter` forwards Thenvoi messages to an external A2A-compliant agent. Each Thenvoi room maps to an A2A context, with automatic session state persistence via task events and session rehydration on room rejoin.
+`A2AAdapter` forwards Thenvoi messages to a remote A2A-compliant agent. Each Thenvoi room maps to an A2A context, with automatic session state persistence via task events and session rehydration on room rejoin.
 
 ```python
 from thenvoi.adapters.a2a import A2AAdapter, A2AAuth
 
 adapter = A2AAdapter(
-    a2a_url="http://localhost:10000",
+    remote_url="http://localhost:10000",
     auth=A2AAuth(api_key="..."),  # optional
 )
 ```
 
 ### A2A Gateway (inbound)
 
-`A2AGatewayAdapter` + `GatewayServer` expose Thenvoi peers as A2A JSON-RPC endpoints. External A2A clients can send messages to Thenvoi agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
+`A2AGatewayAdapter` + `GatewayServer` expose Thenvoi peers as A2A JSON-RPC endpoints. Remote A2A clients can send messages to Thenvoi agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
 
 ```python
 from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
@@ -232,7 +232,7 @@ Two-layer pattern (mirrors A2A Gateway):
 |------|---------|
 | `src/thenvoi/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
 | `src/thenvoi/integrations/acp/server_adapter.py` | `ThenvoiACPServerAdapter` — REST client, room/session mapping |
-| `src/thenvoi/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns external ACP agent subprocess |
+| `src/thenvoi/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
 | `src/thenvoi/integrations/acp/client_types.py` | `ThenvoiACPClient` — per-session chunk buffering |
 | `src/thenvoi/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/thenvoi/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
@@ -320,11 +320,11 @@ tests/
 ## Commands
 
 ```bash
-# Install dependencies (all extras except parlant — see Dependency Conflicts below)
+# Install dependencies (all extras except crewai — see Dependency Conflicts below)
 uv sync --extra dev
 
-# Install parlant adapter deps (isolated from dev/crewai)
-uv sync --extra dev-parlant
+# Install crewai adapter deps (isolated from dev/parlant/pydantic-ai)
+uv sync --extra dev-crewai
 
 # Run unit tests
 uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
@@ -352,24 +352,24 @@ uv run pyrefly check
 
 ## Dependency Conflicts
 
-**crewai and parlant cannot coexist** in the same Python environment due to
-conflicting transitive dependencies:
+**crewai cannot coexist** with parlant or pydantic-ai in the same Python
+environment due to conflicting transitive dependencies:
 
-| Package | `opentelemetry-sdk` requirement |
-|---|---|
-| crewai 1.14.2 | `~=1.34.0` (>=1.34.0, <1.35.0) |
-| parlant >=3.1.0 | `>=1.37.0` |
+| Conflict | crewai 1.14.3 requires | Other package requires |
+|---|---|---|
+| pydantic | `~=2.11.9` (<2.12) | pydantic-ai-slim >=1.61 needs `>=2.12` |
+| opentelemetry-sdk | `~=1.34.0` (<1.35) | parlant >=3.1 needs `>=1.37` |
 
 This is declared in `pyproject.toml` via `[tool.uv] conflicts` so `uv lock`
 resolves each in a separate fork.
 
 **Extras layout:**
-- `dev` — includes all framework deps **except** parlant
-- `dev-parlant` — includes parlant + test tooling only (no crewai)
-- `crewai` and `parlant` are mutually exclusive runtime extras
+- `dev` — includes all framework deps **except** crewai
+- `dev-crewai` — includes crewai + test tooling only (no parlant/pydantic-ai)
+- `crewai` is mutually exclusive with `parlant` and `pydantic-ai` runtime extras
 
-**For CI:** parlant adapter tests require a separate job/step using
-`uv sync --extra dev-parlant`.
+**For CI:** crewai adapter tests require a separate job/step using
+`uv sync --extra dev-crewai`.
 
 ## Environment Variables
 
@@ -378,6 +378,9 @@ resolves each in a separate fork.
 - `THENVOI_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages
 - `OPENAI_API_KEY`: OpenAI API key (for LangGraph examples)
 - `ANTHROPIC_API_KEY`: Anthropic API key (for Anthropic/Claude SDK examples)
+- `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
+- `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
+- `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-4o-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-3-haiku-20240307`)

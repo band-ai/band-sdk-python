@@ -3,10 +3,10 @@
 This example puts multiple integration styles in one shared Thenvoi room:
 
 - 2 native CrewAI agents running as normal Thenvoi agents
-- 2 external A2A services running as local HTTP agents
-- 1 bridge process that connects both external A2A services to Thenvoi so they act like room participants
+- 2 remote A2A services running as local HTTP agents
+- 1 bridge process that connects both remote A2A services to Thenvoi so they act like room participants
 
-The result is a room where native agents and bridged external agents can all react to the same engineering request.
+The result is a room where native agents and bridged remote agents can all react to the same engineering request.
 
 ## Scenario
 
@@ -31,12 +31,12 @@ Without the bridge, the A2A services are just local HTTP agents. You can call th
 
 With the bridge running:
 
-- each external A2A service gets a Thenvoi-facing bridge agent
+- each remote A2A service gets a Thenvoi-facing bridge agent
 - those bridge agents connect to the platform WebSocket
-- room messages are forwarded to the external A2A services
+- room messages are forwarded to the remote A2A services
 - A2A replies come back into the room as normal agent messages
 
-That is what makes the external services bidirectional participants instead of isolated A2A endpoints.
+That is what makes the remote services bidirectional participants instead of isolated A2A endpoints.
 
 ## Files
 
@@ -44,8 +44,8 @@ That is what makes the external services bidirectional participants instead of i
 |------|------|
 | `01_strategy_coordinator.py` | CrewAI coordinator |
 | `02_draft_writer.py` | CrewAI engineering handoff writer |
-| `03_fact_checker_a2a.py` | External A2A contract checker |
-| `04_risk_reviewer_a2a.py` | External A2A risk reviewer |
+| `03_fact_checker_a2a.py` | Remote A2A contract checker |
+| `04_risk_reviewer_a2a.py` | Remote A2A risk reviewer |
 | `05_a2a_bridge.py` | Dual bridge launcher for both A2A services |
 
 ## Prerequisites
@@ -53,7 +53,7 @@ That is what makes the external services bidirectional participants instead of i
 You need:
 
 - `OPENAI_API_KEY` for the CrewAI agents
-- optional: `OPENAI_MODEL` if you do not want the default `gpt-4o`
+- optional: `OPENAI_MODEL` if you do not want the default `gpt-5.4-mini`
 - four Thenvoi agent credentials in `examples/mixed/agents.yaml`
 
 The mixed examples default to the hosted Thenvoi URLs:
@@ -113,7 +113,7 @@ uv sync --extra crewai --extra a2a
 
 Run each component in its own terminal.
 
-### 1. Start the external A2A services
+### 1. Start the remote A2A services
 
 Terminal 1:
 
@@ -134,7 +134,7 @@ curl http://127.0.0.1:10121/.well-known/agent.json
 curl http://127.0.0.1:10122/.well-known/agent.json
 ```
 
-At this point they are still external A2A services only. They are not Thenvoi participants yet.
+At this point they are still remote A2A services only. They are not Thenvoi participants yet.
 
 ### 2. Start the bridge process
 
@@ -187,8 +187,8 @@ existing users, and what we should watch after deploy.
 You should see the room split into distinct roles:
 
 - the coordinator frames the engineering task and assigns the room
-- the contract checker bridge posts API, config, test, and doc-surface details that came from the external A2A service
-- the risk reviewer bridge posts compatibility, rollout, rollback, and observability concerns that came from the external A2A service
+- the contract checker bridge posts API, config, test, and doc-surface details that came from the remote A2A service
+- the risk reviewer bridge posts compatibility, rollout, rollback, and observability concerns that came from the remote A2A service
 - the writer posts a final engineering handoff note with concrete next steps
 
 From the platform's point of view, the two bridged A2A services behave like normal participants.

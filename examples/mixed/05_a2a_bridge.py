@@ -9,10 +9,10 @@
 Mixed-example bridge launcher.
 
 Starts two Thenvoi bridge agents in one process:
-- one bridge for the external contract checker A2A service
-- one bridge for the external risk reviewer A2A service
+- one bridge for the remote contract checker A2A service
+- one bridge for the remote risk reviewer A2A service
 
-This is the piece that makes both external A2A services show up as normal,
+This is the piece that makes both remote A2A services show up as normal,
 bidirectional participants in the shared engineering review room.
 
 Run with:
@@ -31,7 +31,6 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from thenvoi import Agent
 from thenvoi.adapters import A2AAdapter
-from thenvoi.config import load_agent_config
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
@@ -55,13 +54,12 @@ def _build_bridge_agent(
     rest_url: str,
 ) -> Agent:
     """Create one Thenvoi bridge agent for a remote A2A service."""
-    agent_id, api_key = load_agent_config(config_name, config_path=CONFIG_PATH)
     adapter = A2AAdapter(remote_url=remote_url, streaming=True)
 
-    return Agent.create(
+    return Agent.from_config(
+        config_name,
+        config_path=CONFIG_PATH,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
