@@ -78,13 +78,13 @@ Common `Agent.create(...)` parameters:
 
 When a message arrives in a Thenvoi room, the adapter gives your graph the conversation context in LangChain message format and invokes it with `thread_id` set to the Thenvoi room ID. If your graph is compiled with a checkpointer, that thread ID lets the graph persist conversation state across messages in the room.
 
-The simple setup builds a `create_react_agent` graph for you. The adapter adds Thenvoi collaboration tools to that graph, including tools such as `thenvoi_send_message`, `thenvoi_lookup_peers`, `thenvoi_add_participant`, and `thenvoi_create_chatroom`. Your graph must call `thenvoi_send_message` to post a reply to the room; plain graph output is not automatically posted.
+The simple setup builds a LangChain 1.x `create_agent` graph for you. The adapter adds Thenvoi collaboration tools to that graph, including tools such as `thenvoi_send_message`, `thenvoi_lookup_peers`, `thenvoi_add_participant`, and `thenvoi_create_chatroom`. Your graph must call `thenvoi_send_message` to post a reply to the room; plain graph output is not automatically posted.
 
 ## Usage Patterns
 
 ### Simple Pattern
 
-Provide an LLM and, usually, a checkpointer. The adapter builds the LangGraph `create_react_agent` graph for you and includes Thenvoi collaboration tools.
+Provide an LLM. The adapter builds a LangChain 1.x `create_agent` graph for you, includes Thenvoi collaboration tools, and creates an in-memory checkpointer when you do not pass one explicitly.
 
 ```python
 from langchain_openai import ChatOpenAI
@@ -103,14 +103,14 @@ adapter = LangGraphAdapter(
 Use `graph_factory` when you want to build the graph yourself but still want the adapter to provide room-specific Thenvoi tools. The factory receives the Thenvoi tools as LangChain tools. Merge them with your own tools and return a compiled graph.
 
 ```python
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 
 from thenvoi.adapters import LangGraphAdapter
 
 
 def graph_factory(thenvoi_tools):
     all_tools = my_tools + thenvoi_tools
-    return create_react_agent(
+    return create_agent(
         model=llm,
         tools=all_tools,
         checkpointer=checkpointer,
@@ -133,14 +133,14 @@ This section covers `LangGraphAdapter(...)` constructor parameters. Pass these d
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `llm` | `BaseChatModel \| None` | `None` | LangChain chat model. Used by the simple pattern. |
-| `checkpointer` | `BaseCheckpointSaver \| None` | `None` | LangGraph checkpointer for state persistence. Used by the simple pattern. |
+| `checkpointer` | `BaseCheckpointSaver \| None` | `None` | LangGraph checkpointer for state persistence. The simple pattern creates an in-memory checkpointer when this is omitted. |
 | `graph_factory` | `Callable[[list], Pregel] \| None` | `None` | Function that receives Thenvoi tools and returns a graph. Use for custom graphs that need Thenvoi tools. |
 | `graph` | `Pregel \| None` | `None` | Fully self-contained static graph. Advanced use only. |
 | `prompt_template` | `str` | `"default"` | Thenvoi system prompt template name. Applies when the adapter injects the prompt in the simple or `graph_factory` path. |
 | `custom_section` | `str` | `""` | Custom instructions appended to Thenvoi's generated system prompt. Applies in the simple or `graph_factory` path. |
 | `additional_tools` | `list \| None` | `None` | Extra LangChain tools merged with Thenvoi tools in the simple pattern. For a custom factory, merge your tools inside the factory. |
 | `recursion_limit` | `int` | `50` | LangGraph recursion limit for each invocation. |
-| `features` | `AdapterFeatures \| None` | `None` | Optional Thenvoi feature settings. For this adapter, use it for capabilities only; configurable emit flags are not supported. |
+| `features` | `AdapterFeatures \| None` | `None` | Optional Thenvoi feature settings for capability gates, tool filters, and supported emit telemetry. |
 | `history_converter` | `LangChainHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |
 
 You must provide one of these:
@@ -154,7 +154,7 @@ You must provide one of these:
 `AdapterFeatures` is passed to the adapter constructor as `features=AdapterFeatures(...)`. It has two common groups:
 
 - `capabilities` exposes optional Thenvoi tool categories to the model.
-- `emit` usually controls telemetry events, but this adapter does not support configurable emit flags today.
+- `emit` controls supported telemetry events emitted while the graph streams.
 
 For this adapter, optional capabilities are off by default.
 
@@ -162,7 +162,7 @@ For this adapter, optional capabilities are off by default.
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to the graph. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Thenvoi workspace. |
-| `Emit.EXECUTION` | No configurable support | Setting this in `features` is not required and will log an unsupported-value warning. LangGraph tool start/end events are currently forwarded as platform events during graph streaming. |
+| `Emit.EXECUTION` | Yes | Emits LangGraph tool start/end/error events as Thenvoi `tool_call` and `tool_result` events with shared `{name, args|output, tool_call_id}` payloads. |
 | `Emit.THOUGHTS` | No | Not supported by this adapter. |
 | `Emit.TASK_EVENTS` | No | Not supported by this adapter. |
 

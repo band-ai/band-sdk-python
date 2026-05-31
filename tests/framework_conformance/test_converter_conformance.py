@@ -157,10 +157,10 @@ class TestThoughtMessageSkipping:
 
 
 class TestOwnMessageFiltering:
-    """Converters filter own messages (except Parlant which includes all)."""
+    """Converters filter own messages unless their framework needs them for transcript rehydration."""
 
     def test_own_message_handling(self, converter_config, make_converter, output):
-        """Own agent text messages: filtered for most, included for Parlant."""
+        """Own agent text messages: filtered for most, included for explicit framework contracts."""
         converter = make_converter(agent_name="Agent")
         raw = [
             {
@@ -174,9 +174,12 @@ class TestOwnMessageFiltering:
         result = converter.convert(raw)
 
         if converter_config.filters_own_messages:
-            assert output.is_empty(result)
+            if converter_config.includes_own_text_without_tool_events:
+                assert output.result_length(result) == 1
+            else:
+                assert output.is_empty(result)
         else:
-            # Parlant includes own messages
+            # Some frameworks keep own text to preserve model-role turn structure.
             assert output.result_length(result) == 1
 
     def test_includes_other_agents_messages(
@@ -221,9 +224,14 @@ class TestOwnMessageFiltering:
         result = converter.convert(raw)
 
         if converter_config.filters_own_messages:
-            assert output.result_length(result) == 1  # Only Weather Agent
+            if converter_config.includes_own_text_without_tool_events:
+                assert (
+                    output.result_length(result) == 2
+                )  # Both kept for transcript rehydration
+            else:
+                assert output.result_length(result) == 1  # Only Weather Agent
         else:
-            assert output.result_length(result) == 2  # Both kept (Parlant)
+            assert output.result_length(result) == 2  # Both kept
 
     def test_set_agent_name_updates_filtering(
         self, converter_config, make_converter, output
@@ -247,9 +255,11 @@ class TestOwnMessageFiltering:
         result_after = converter.convert(raw)
 
         if converter_config.filters_own_messages:
-            assert output.is_empty(result_after)
+            if converter_config.includes_own_text_without_tool_events:
+                assert output.result_length(result_after) == 1
+            else:
+                assert output.is_empty(result_after)
         else:
-            # Parlant still includes own messages
             assert output.result_length(result_after) == 1
 
     def test_includes_all_when_no_agent_name(

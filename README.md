@@ -242,6 +242,8 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
 | OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
 
+LangGraph supports the built-in Thenvoi platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
+
 > `crewai` and `parlant` cannot be installed together because their transitive dependencies conflict. Install one or the other in a given environment.
 
 ### Bridge Adapters
@@ -304,6 +306,25 @@ adapter = AnthropicAdapter(
 )
 ```
 
+For LangGraph, pass native LangChain tools with `additional_tools`; the adapter exposes them alongside the built-in `thenvoi_*` tools:
+
+```python
+from langchain_core.tools import tool
+from thenvoi.adapters import LangGraphAdapter
+
+
+@tool
+def get_order_status(order_id: str) -> str:
+    """Look up an order status."""
+    return "shipped"
+
+
+adapter = LangGraphAdapter(
+    llm=llm,
+    additional_tools=[get_order_status],
+)
+```
+
 #### Emit Telemetry
 
 Emit controls adapter-level telemetry: events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `thenvoi_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.
@@ -322,7 +343,7 @@ Adapter emit support:
 | Gemini | Yes | - | - |
 | Google ADK | Yes | - | - |
 | Pydantic AI | Yes | - | - |
-| LangGraph | - | - | - |
+| LangGraph | Yes | - | - |
 | Parlant | - | - | - |
 | A2A / A2A Gateway | - | - | - |
 | ACP Client | - | - | - |
@@ -651,7 +672,7 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | **Create room** | `thenvoi_create_chatroom(task_id=None)` then `thenvoi_add_participant(identifier)` |
 | **Control access** | `Agent.create(..., contact_config=ContactEventConfig(strategy=...))` |
 | **Emit telemetry** | `AdapterFeatures(emit={Emit.EXECUTION})` |
-| **Custom tools** | `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
+| **Custom tools** | `LangGraphAdapter(llm=..., additional_tools=[...])` or `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
 | **A2A bridge** | `A2AAdapter(remote_url="http://...")` |
 | **Editor ACP** | `thenvoi-acp --agent-id ID --api-key KEY` |
 | **Store memory** | `thenvoi_store_memory(content, system, type, segment, thought)` |
