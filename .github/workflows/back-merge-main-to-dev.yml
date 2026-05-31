@@ -45,6 +45,20 @@ jobs:
           installation_id: ${{ secrets.INSTALLATION_ID }}
           private_key: ${{ secrets.APP_PRIVATE_KEY }}
 
+      # Re-persist credentials as the App token so `git push` authenticates as
+      # the App rather than the default GITHUB_TOKEN. The first checkout (needed
+      # to reach the local ./.github/actions/GithubToken action) persists
+      # GITHUB_TOKEN as an http.extraheader that wins over any token in the
+      # remote URL, so re-checking out with the App token is the reliable way to
+      # swap it. This also lets the back-merge branch push trigger CI on the PR
+      # (GITHUB_TOKEN pushes do not trigger workflows; App-token pushes do).
+      - name: Re-checkout with App token
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ steps.app_token_generator.outputs.token }}
+
       - name: Fetch dev
         run: git fetch origin dev
 
@@ -66,8 +80,6 @@ jobs:
       - name: Prepare back-merge branch
         id: branch
         if: steps.check.outputs.needs_backmerge == 'true'
-        env:
-          GH_TOKEN: ${{ steps.app_token_generator.outputs.token }}
         run: |
           BRANCH="back-merge/main-to-dev"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
