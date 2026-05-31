@@ -12,7 +12,18 @@ import asyncio
 import logging
 import warnings
 from contextvars import ContextVar
-from typing import ClassVar, TYPE_CHECKING, Any, Literal
+from typing import ClassVar, Any, Literal
+
+try:
+    from crewai import Agent as CrewAIAgent
+    from crewai import LLM
+    from crewai.tools import BaseTool
+except ImportError as e:
+    raise ImportError(
+        "crewai is required for CrewAI adapter.\n"
+        "Install with: pip install 'thenvoi-sdk[crewai]'\n"
+        "Or: uv add crewai nest-asyncio"
+    ) from e
 
 from thenvoi.core.exceptions import ThenvoiConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
@@ -27,12 +38,6 @@ from thenvoi.integrations.crewai import (
 )
 from thenvoi.runtime.custom_tools import CustomToolDef
 from thenvoi.runtime.prompts import render_system_prompt
-
-if TYPE_CHECKING:
-    from crewai import Agent as CrewAIAgent
-    from crewai.tools import BaseTool
-
-    from thenvoi.integrations.crewai import CrewAIToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -182,16 +187,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Initialize CrewAI agent after metadata is fetched."""
-        try:
-            from crewai import Agent as CrewAIAgent
-            from crewai import LLM
-        except ImportError as e:
-            raise ImportError(
-                "crewai is required for CrewAI adapter.\n"
-                "Install with: pip install 'thenvoi-sdk[crewai]'\n"
-                "Or: uv add crewai nest-asyncio"
-            ) from e
-
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
 
@@ -244,8 +239,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         otherwise None (which the shared wrapper translates into a
         ``"No room context available"`` error JSON).
         """
-        from thenvoi.integrations.crewai import CrewAIToolContext
-
         ctx = _current_room_context.get()
         if ctx is None:
             return None
@@ -263,11 +256,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         ``_current_room_context`` ContextVar), its own reporter
         (gated by ``Emit.EXECUTION``), and its event loop fallback.
         """
-        from thenvoi.integrations.crewai import (
-            EmitExecutionReporter,
-            build_thenvoi_crewai_tools,
-        )
-
         return build_thenvoi_crewai_tools(
             get_context=self._get_context,
             reporter=EmitExecutionReporter(self.features),
