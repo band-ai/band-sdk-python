@@ -244,7 +244,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 LangGraph supports the built-in Thenvoi platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
 
-> `crewai` and `parlant` cannot be installed together because their transitive dependencies conflict. Install one or the other in a given environment.
+> `crewai` and `parlant` cannot be installed together because their transitive dependencies conflict. `crewai` and `pydantic-ai` are also incompatible (crewai pins `pydantic<2.12`, pydantic-ai requires `>=2.12`). Install one per environment.
 
 ### Bridge Adapters
 
@@ -598,15 +598,16 @@ The SDK reconnects automatically and resubscribes to active rooms. No action is 
 - Check network and firewall rules for WebSocket (`wss://`) traffic.
 - Make sure only one process is running per agent ID. Two processes sharing the same credentials can fight over the connection.
 
-### `crewai` And `parlant` Dependency Conflict
+### Adapter Dependency Conflicts
 
-These two extras cannot be installed in the same environment:
+Three extras have mutually exclusive transitive dependencies and cannot share an environment:
 
-```bash
-uv add "thenvoi-sdk[crewai,parlant]"
-```
+| Conflict | Reason |
+| -------- | ------ |
+| `crewai` + `parlant` | crewai pins `opentelemetry-sdk~=1.34`, parlant requires `>=1.37` |
+| `crewai` + `pydantic-ai` | crewai pins `pydantic~=2.11.9` (<2.12), pydantic-ai-slim >=1.61 requires `pydantic>=2.12` |
 
-Their transitive dependencies are mutually exclusive. Install one or the other per environment.
+Install one per environment. The lockfile declares these as `[tool.uv] conflicts` so `uv lock` resolves each in a separate fork automatically.
 
 ---
 

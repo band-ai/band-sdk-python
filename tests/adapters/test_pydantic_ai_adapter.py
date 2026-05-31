@@ -124,6 +124,19 @@ class TestInitialization:
         adapter = PydanticAIAdapter(model="openai:gpt-5.4")
         assert adapter.model == "openai:gpt-5.4"
 
+    def test_create_agent_uses_str_output_type(self):
+        """INT-488: Agent must be constructed with output_type=str, never None.
+
+        pydantic-ai-slim 1.87+ raises UserError("At least one output type must
+        be provided other than `None`") when output_type is None or omitted.
+        """
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        adapter.agent_name = "TestBot"
+
+        with patch("thenvoi.adapters.pydantic_ai.Agent") as MockAgent:
+            adapter._create_agent()
+            assert MockAgent.call_args.kwargs["output_type"] is str
+
 
 class TestOnStarted:
     """Tests for on_started() method."""
