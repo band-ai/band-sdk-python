@@ -14,18 +14,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-try:
-    import crewai  # noqa: F401
-
-    _HAS_CREWAI = True
-except ImportError:
-    _HAS_CREWAI = False
-
-pytestmark = pytest.mark.skipif(
-    not _HAS_CREWAI,
-    reason="crewai not installed — run in test-crewai CI job",
-)
-
 
 class MockBaseTool:
     """Minimal stand-in for crewai.tools.BaseTool at import time."""

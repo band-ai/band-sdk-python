@@ -337,6 +337,13 @@ def _build_langgraph_config() -> AdapterConfig:
 def _build_crewai_config() -> AdapterConfig:
     crewai_cls = _get_crewai_adapter_cls()
 
+    try:
+        import crewai  # noqa: F401
+
+        _crewai_available = True
+    except ImportError:
+        _crewai_available = False
+
     return AdapterConfig(
         framework_id="crewai",
         display_name="CrewAI",
@@ -372,6 +379,9 @@ def _build_crewai_config() -> AdapterConfig:
             "max_rpm": 10,
             "allow_delegation": True,
         },
+        # on_started does a runtime `from crewai import Agent, LLM` which fails
+        # when crewai is not installed (conflict group with parlant/pydantic-ai).
+        skip_on_started_conformance=not _crewai_available,
     )
 
 

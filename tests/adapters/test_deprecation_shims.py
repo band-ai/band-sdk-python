@@ -13,13 +13,6 @@ from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from thenvoi.core.exceptions import ThenvoiConfigError
 from thenvoi.core.types import AdapterFeatures, Capability, Emit
 
-try:
-    import crewai  # noqa: F401
-
-    _HAS_CREWAI = True
-except ImportError:
-    _HAS_CREWAI = False
-
 
 class TestUniversalBooleanShims:
     """Every adapter with legacy booleans must shim them with DeprecationWarning."""
@@ -107,10 +100,6 @@ class TestUniversalBooleanShims:
         assert Emit.EXECUTION in adapter.features.emit
         assert Emit.THOUGHTS in adapter.features.emit
 
-    @pytest.mark.skipif(
-        not _HAS_CREWAI,
-        reason="crewai not installed (pip install thenvoi-sdk[crewai])",
-    )
     def test_crewai_enable_execution_reporting_warns(self) -> None:
         from thenvoi.adapters.crewai import CrewAIAdapter
 
@@ -120,10 +109,6 @@ class TestUniversalBooleanShims:
             adapter = CrewAIAdapter(enable_execution_reporting=True)
         assert Emit.EXECUTION in adapter.features.emit
 
-    @pytest.mark.skipif(
-        not _HAS_CREWAI,
-        reason="crewai not installed (pip install thenvoi-sdk[crewai])",
-    )
     def test_crewai_enable_memory_tools_warns(self) -> None:
         from thenvoi.adapters.crewai import CrewAIAdapter
 
@@ -133,10 +118,6 @@ class TestUniversalBooleanShims:
             adapter = CrewAIAdapter(enable_memory_tools=True)
         assert Capability.MEMORY in adapter.features.capabilities
 
-    @pytest.mark.skipif(
-        not _HAS_CREWAI,
-        reason="crewai not installed (pip install thenvoi-sdk[crewai])",
-    )
     def test_crewai_both_booleans_and_features_raises(self) -> None:
         from thenvoi.adapters.crewai import CrewAIAdapter
 
@@ -146,10 +127,6 @@ class TestUniversalBooleanShims:
                 features=AdapterFeatures(capabilities={Capability.MEMORY}),
             )
 
-    @pytest.mark.skipif(
-        not _HAS_CREWAI,
-        reason="crewai not installed (pip install thenvoi-sdk[crewai])",
-    )
     def test_crewai_system_prompt_warns(self) -> None:
         from thenvoi.adapters.crewai import CrewAIAdapter
 

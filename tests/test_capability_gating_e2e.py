@@ -198,8 +198,8 @@ class TestCapabilityGatingEndToEnd:
         from unittest.mock import MagicMock, patch
 
         with (
-            patch("thenvoi.adapters.crewai.CrewAIAgent") as mock_agent_cls,
-            patch("thenvoi.adapters.crewai.LLM"),
+            patch("crewai.Agent") as mock_agent_cls,
+            patch("crewai.LLM"),
         ):
             mock_agent_cls.return_value = MagicMock()
             from thenvoi.adapters.crewai import CrewAIAdapter
@@ -217,8 +217,8 @@ class TestCapabilityGatingEndToEnd:
         from unittest.mock import MagicMock, patch
 
         with (
-            patch("thenvoi.adapters.crewai.CrewAIAgent") as mock_agent_cls,
-            patch("thenvoi.adapters.crewai.LLM"),
+            patch("crewai.Agent") as mock_agent_cls,
+            patch("crewai.LLM"),
         ):
             mock_agent_cls.return_value = MagicMock()
             from thenvoi.adapters.crewai import CrewAIAdapter

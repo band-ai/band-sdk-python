@@ -6568,6 +6568,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b4/2e/089df86adaf904dd97a1b139d29fe728af0e41430d747f5b6315df3b0c1e/pydantic_ai_slim-1.102.0-py3-none-any.whl", hash = "sha256:f9fa9c3fb58a76f85522f78d1037d201b424de46d532263ed780b3730060449f", size = 919311, upload-time = "2026-05-23T01:14:23.464Z" },
 ]
 
+[package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
+
 [[package]]
 name = "pydantic-core"
 version = "2.33.2"
@@ -8282,9 +8287,8 @@ parlant = [
     { name = "werkzeug" },
 ]
 pydantic-ai = [
-    { name = "anthropic" },
     { name = "openai" },
-    { name = "pydantic-ai-slim" },
+    { name = "pydantic-ai-slim", extra = ["anthropic"], marker = "extra == 'extra-11-thenvoi-sdk-pydantic-ai' or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-dev') or (extra == 'extra-11-thenvoi-sdk-crewai' and extra == 'extra-11-thenvoi-sdk-parlant') or (extra == 'extra-11-thenvoi-sdk-dev' and extra == 'extra-11-thenvoi-sdk-dev-crewai') or (extra == 'extra-11-thenvoi-sdk-dev-crewai' and extra == 'extra-11-thenvoi-sdk-parlant')" },
 ]
 
 [package.metadata]
@@ -8300,7 +8304,6 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
-    { name = "anthropic", marker = "extra == 'pydantic-ai'", specifier = ">=0.75.0" },
     { name = "beautifulsoup4", marker = "extra == 'dev'", specifier = ">=4.12.0" },
     { name = "beautifulsoup4", marker = "extra == 'langgraph'", specifier = ">=4.12.0" },
     { name = "boto3", marker = "extra == 'bridge-agentcore'", specifier = ">=1.35.0" },
@@ -8354,7 +8357,7 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "pydantic-ai-slim", marker = "extra == 'dev'", specifier = ">=1.56.0" },
-    { name = "pydantic-ai-slim", marker = "extra == 'pydantic-ai'", specifier = ">=1.56.0" },
+    { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'pydantic-ai'", specifier = ">=1.56.0" },
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.18.0" },
     { name = "pyrefly", marker = "extra == 'dev-crewai'", specifier = ">=0.18.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },

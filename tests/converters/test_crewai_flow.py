@@ -22,17 +22,6 @@ from thenvoi.converters.crewai_flow import (
     normalize_participant_key,
 )
 
-try:
-    import crewai  # noqa: F401
-
-    _HAS_CREWAI = True
-except ImportError:
-    _HAS_CREWAI = False
-
-pytestmark = pytest.mark.skipif(
-    not _HAS_CREWAI,
-    reason="crewai not installed — run in test-crewai CI job",
-)
 
 NS = "crewai_flow"
 

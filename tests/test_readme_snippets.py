@@ -27,20 +27,12 @@ try:
 except (ImportError, Exception):
     _has_claude_sdk = False
 
-try:
-    import crewai  # noqa: F401
-
-    _has_crewai = True
-except ImportError:
-    _has_crewai = False
-
 skip_no_pydantic_ai = pytest.mark.skipif(
     not _has_pydantic_ai, reason="pydantic-ai not installed or broken"
 )
 skip_no_claude_sdk = pytest.mark.skipif(
     not _has_claude_sdk, reason="claude-agent-sdk not installed"
 )
-skip_no_crewai = pytest.mark.skipif(not _has_crewai, reason="crewai not installed")
 
 
 # ---------------------------------------------------------------------------
@@ -185,13 +177,11 @@ class TestSupportedAdaptersTable:
 
         assert ClaudeSDKAdapter is not None
 
-    @skip_no_crewai
     def test_crewai_adapter(self) -> None:
         from thenvoi.adapters import CrewAIAdapter
 
         assert CrewAIAdapter is not None
 
-    @skip_no_crewai
     def test_crewai_flow_adapter(self) -> None:
         from thenvoi.adapters import CrewAIFlowAdapter
 
