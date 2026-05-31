@@ -3,8 +3,6 @@ name: Promote Dev to Main
 run-name: Promote dev to main by @${{ github.actor }}
 
 on:
-  push:
-    branches: [ci/promote-dev-to-main-workflow]   # TEMP test trigger — remove before merge
   workflow_dispatch:
     inputs:
       dry_run:
@@ -102,7 +100,7 @@ jobs:
           cat pr_body.md
 
       - name: Create Pull Request
-        if: steps.check_promotion.outputs.needs_promotion == 'true' && inputs.dry_run == false && github.event_name != 'push'   # TEMP guard — never create a PR during push test
+        if: steps.check_promotion.outputs.needs_promotion == 'true' && inputs.dry_run == false
         env:
           GH_TOKEN: ${{ steps.app_token_generator.outputs.token }}
         run: |
