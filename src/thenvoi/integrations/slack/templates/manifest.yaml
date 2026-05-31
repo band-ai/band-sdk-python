@@ -9,6 +9,12 @@
 #      → "Generate Token and Scopes" → name it `socket`, add scope
 #      `connections:write`. Copy the resulting xapp-… token.
 #   6. /invite @your-bot in every channel you want it to read.
+#   7. (Optional, recommended) Enable Delayed Events in the GUI: app
+#      settings → "Event Subscriptions" → toggle "Delayed Events" On.
+#      This is NOT a manifest field (no schema support as of 2026-02);
+#      it must be set manually. With it on, Slack keeps retrying missed
+#      events hourly for 24h while the bridge is offline (default 2h).
+#      See https://docs.slack.dev/changelog/2026/02/05/retry-events-feature/.
 #
 # This manifest defaults to Socket Mode (no public URL required). To use
 # HTTP webhooks instead, set `socket_mode_enabled: false` and uncomment
@@ -75,10 +81,10 @@ settings:
       - message.im
       - assistant_thread_started
 
-    # Slack will retry-deliver events for up to 24 hours when the bridge
-    # is offline (default is 2 hours). Recommended for production.
-    # See https://docs.slack.dev/changelog/2026/02/05/retry-events-feature/.
-    delayed_events_enabled: true
+    # NOTE: "Delayed Events" (retry missed events hourly for 24h while the
+    # bridge is offline, vs the 2h default) is recommended for production
+    # but has NO manifest field — enable it manually in the GUI under
+    # "Event Subscriptions" → "Delayed Events". See step 7 in the header.
 
   interactivity:
     is_enabled: false                  # Phase 3 candidate (buttons/modals)

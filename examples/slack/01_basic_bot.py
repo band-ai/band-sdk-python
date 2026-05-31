@@ -15,7 +15,9 @@ Setup
 1. Register your Slack app from the bundled manifest:
    ``src/thenvoi/integrations/slack/templates/manifest.yaml``.
    That manifest declares every scope and event subscription this
-   example expects, plus the recommended "Delayed Events" toggle.
+   example expects. (The recommended "Delayed Events" toggle has no
+   manifest field — enable it manually under Event Subscriptions; see
+   step 7 in the manifest header.)
 
 2. Install the app to your workspace, then grab the Bot Token
    (``xoxb-...``). For Socket Mode also generate an App-Level Token
