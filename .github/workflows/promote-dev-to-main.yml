@@ -1,0 +1,128 @@
+name: Promote Dev to Main
+
+run-name: Promote dev to main by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (just generate the PR description without creating the PR)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: promote-dev-to-main
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: dev
+
+      - name: Generate GitHub App Token
+        id: app_token_generator
+        uses: ./.github/actions/GithubToken
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          installation_id: ${{ secrets.INSTALLATION_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Fetch main
+        run: git fetch origin main
+
+      - name: Check if promotion is needed
+        id: check_promotion
+        run: |
+          COMMITS_AHEAD=$(git rev-list --count origin/main..dev)
+
+          if [ "$COMMITS_AHEAD" -eq 0 ]; then
+            echo "No commits to promote from dev to main"
+            echo "needs_promotion=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "needs_promotion=true" >> $GITHUB_OUTPUT
+          echo "commits_ahead=$COMMITS_AHEAD" >> $GITHUB_OUTPUT
+          echo "Found $COMMITS_AHEAD commits to promote from dev to main"
+
+      - name: Generate PR description
+        id: generate_pr
+        if: steps.check_promotion.outputs.needs_promotion == 'true'
+        run: |
+          {
+            echo "## Summary"
+            echo ""
+            echo "Promotes ${{ steps.check_promotion.outputs.commits_ahead }} commit(s) from \`dev\` to \`main\` (production / release)."
+            echo ""
+            echo "## Commits Being Promoted"
+            echo ""
+            git log origin/main..dev --pretty=format:"- **%s** (%h) — %an, %ad" --date=short
+            echo ""
+            echo ""
+            echo "## Files Changed"
+            echo ""
+            echo '```'
+            git diff --stat origin/main...dev
+            echo '```'
+            echo ""
+            echo "## Pull Requests Included"
+            echo ""
+            PRS=$(git log origin/main..dev --grep="#[0-9]\+" --pretty=format:"%s" | grep -oE "#[0-9]+" | sort -u || true)
+            if [ -n "$PRS" ]; then
+              echo "$PRS" | sed 's/^/- /'
+            else
+              echo "- No PR references found in commit messages"
+            fi
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Promotion Details**"
+            echo "- Source: \`dev\`"
+            echo "- Target: \`main\` (production / release)"
+            echo "- Commits: ${{ steps.check_promotion.outputs.commits_ahead }}"
+            echo "- Triggered by: @${{ github.actor }}"
+            echo "- Workflow: [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+            echo ""
+            echo "Merging this PR triggers \`release.yml\` (release-please) on \`main\`."
+          } > pr_body.md
+
+          echo "Generated PR description:"
+          cat pr_body.md
+
+      - name: Create Pull Request
+        if: steps.check_promotion.outputs.needs_promotion == 'true' && inputs.dry_run == false
+        env:
+          GH_TOKEN: ${{ steps.app_token_generator.outputs.token }}
+        run: |
+          gh pr create \
+            --base main \
+            --head dev \
+            --title "chore: promote dev to main" \
+            --body-file pr_body.md \
+            --assignee "${{ github.actor }}"
+
+      - name: Dry Run Summary
+        if: steps.check_promotion.outputs.needs_promotion == 'true' && inputs.dry_run == true
+        run: |
+          {
+            echo "## 🔍 Dry Run — PR was NOT created"
+            echo ""
+            echo "The PR would have been created with the following description:"
+            echo ""
+            cat pr_body.md
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: No promotion needed
+        if: steps.check_promotion.outputs.needs_promotion == 'false'
+        run: |
+          echo "## ✅ main is already up to date with dev. No promotion needed." >> $GITHUB_STEP_SUMMARY
