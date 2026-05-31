@@ -23,6 +23,12 @@ jobs:
       pull-requests: write
 
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: dev
+
       - name: Generate GitHub App Token
         id: app_token_generator
         uses: ./.github/actions/GithubToken
@@ -30,13 +36,6 @@ jobs:
           app_id: ${{ secrets.APP_ID }}
           installation_id: ${{ secrets.INSTALLATION_ID }}
           private_key: ${{ secrets.APP_PRIVATE_KEY }}
-
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          token: ${{ steps.app_token_generator.outputs.token }}
-          ref: dev
 
       - name: Fetch main
         run: git fetch origin main
