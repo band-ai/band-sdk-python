@@ -1,0 +1,176 @@
+name: Back-merge Main to Dev
+
+run-name: Back-merge main to dev (${{ github.event_name }})
+
+# release-please cuts releases by committing the version bump + CHANGELOG
+# directly onto `main` (see release.yml). Those commits never exist on `dev`,
+# so `dev` drifts behind `main` after every release and dev->main PRs show
+# "This branch is out-of-date with the base branch". This workflow closes the
+# loop by opening a PR that merges those main-only commits back into `dev`.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (report what would happen without creating the PR)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: back-merge-main-to-dev
+  cancel-in-progress: false
+
+jobs:
+  back-merge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Generate GitHub App Token
+        id: app_token_generator
+        uses: ./.github/actions/GithubToken
+        with:
+          app_id: ${{ secrets.APP_ID }}
+          installation_id: ${{ secrets.INSTALLATION_ID }}
+          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Fetch dev
+        run: git fetch origin dev
+
+      - name: Check if back-merge is needed
+        id: check
+        run: |
+          COMMITS_AHEAD=$(git rev-list --count origin/dev..origin/main)
+
+          if [ "$COMMITS_AHEAD" -eq 0 ]; then
+            echo "dev already contains every commit on main. Nothing to back-merge."
+            echo "needs_backmerge=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "needs_backmerge=true" >> "$GITHUB_OUTPUT"
+          echo "commits_ahead=$COMMITS_AHEAD" >> "$GITHUB_OUTPUT"
+          echo "Found $COMMITS_AHEAD commit(s) on main missing from dev."
+
+      - name: Prepare back-merge branch
+        id: branch
+        if: steps.check.outputs.needs_backmerge == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app_token_generator.outputs.token }}
+        run: |
+          BRANCH="back-merge/main-to-dev"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+          # Start the branch from dev, then merge main into it. Resolving the
+          # merge here (rather than pushing main straight onto dev) keeps any
+          # conflicts off the protected dev branch and lets CI validate the
+          # result before it lands.
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH" origin/dev
+
+          if git merge --no-edit origin/main; then
+            echo "conflicts=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "conflicts=true" >> "$GITHUB_OUTPUT"
+            # Capture the conflicting paths, then abort so we push a clean
+            # branch the PR author can rebase/resolve manually.
+            git diff --name-only --diff-filter=U > conflicts.txt || true
+            git merge --abort
+            # Push main as-is so the PR still surfaces the divergence.
+            git checkout -B "$BRANCH" origin/main
+          fi
+
+          git push --force-with-lease origin "$BRANCH"
+
+      - name: Generate PR description
+        id: generate_pr
+        if: steps.check.outputs.needs_backmerge == 'true'
+        run: |
+          {
+            echo "## Summary"
+            echo ""
+            echo "Back-merges ${{ steps.check.outputs.commits_ahead }} commit(s) that exist on \`main\` but not on \`dev\`."
+            echo "These are typically the release-please version bump + CHANGELOG commits produced by \`release.yml\`."
+            echo "Merging this keeps \`dev\` from drifting behind \`main\`."
+            echo ""
+            if [ "${{ steps.branch.outputs.conflicts }}" = "true" ]; then
+              echo "> ⚠️ **Merge conflicts detected.** This branch points at \`main\` as-is;"
+              echo "> resolve the conflicts against \`dev\` before merging. Conflicting files:"
+              echo ""
+              echo '```'
+              cat conflicts.txt 2>/dev/null || echo "(see CI)"
+              echo '```'
+              echo ""
+            fi
+            echo "## Commits Being Back-merged"
+            echo ""
+            git log origin/dev..origin/main --pretty=format:"- **%s** (%h) — %an, %ad" --date=short
+            echo ""
+            echo ""
+            echo "## Files Changed"
+            echo ""
+            echo '```'
+            git diff --stat origin/dev...origin/main
+            echo '```'
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Back-merge Details**"
+            echo "- Source: \`main\` (production / release)"
+            echo "- Target: \`dev\`"
+            echo "- Commits: ${{ steps.check.outputs.commits_ahead }}"
+            echo "- Triggered by: ${{ github.event_name }}"
+            echo "- Workflow: [View Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          } > pr_body.md
+
+          echo "Generated PR description:"
+          cat pr_body.md
+
+      - name: Create or update Pull Request
+        if: steps.check.outputs.needs_backmerge == 'true' && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ steps.app_token_generator.outputs.token }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+
+          EXISTING=$(gh pr list --head "$BRANCH" --base dev --state open --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing PR #$EXISTING"
+            gh pr edit "$EXISTING" --body-file pr_body.md
+            echo "## ♻️ Updated existing back-merge PR #$EXISTING" >> "$GITHUB_STEP_SUMMARY"
+          else
+            gh pr create \
+              --base dev \
+              --head "$BRANCH" \
+              --title "chore: back-merge main into dev" \
+              --body-file pr_body.md
+            echo "## ✅ Opened back-merge PR (main -> dev)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Dry Run Summary
+        if: steps.check.outputs.needs_backmerge == 'true' && inputs.dry_run == true
+        run: |
+          {
+            echo "## 🔍 Dry Run — PR was NOT created"
+            echo ""
+            echo "The PR would have been created with the following description:"
+            echo ""
+            cat pr_body.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: No back-merge needed
+        if: steps.check.outputs.needs_backmerge == 'false'
+        run: |
+          echo "## ✅ dev is already up to date with main. No back-merge needed." >> "$GITHUB_STEP_SUMMARY"

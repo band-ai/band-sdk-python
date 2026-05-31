@@ -94,6 +94,37 @@ A manual (`workflow_dispatch`) workflow that opens the promotion PR for you.
 
 The workflow never merges; a human reviews and merges, so all rulesets apply.
 
+## Back-merge Workflow
+
+### Back-merge Main to Dev — `back-merge-main-to-dev.yml`
+
+release-please cuts releases by committing the version bump + `CHANGELOG.md`
+directly onto `main`. Those commits never exist on `dev`, so after every release
+`dev` drifts behind `main` and the next `dev → main` PR shows *"This branch is
+out-of-date with the base branch"* (blocked by `main`'s strict status checks).
+This workflow closes the loop automatically.
+
+**Trigger:** runs on every push to `main` (so it catches release-please commits
+and any direct hotfix), and can also be run manually via `workflow_dispatch`
+(with an optional **Dry run**).
+
+**What it does:**
+
+1. Mints a GitHub App token (via `./.github/actions/GithubToken`).
+2. Counts commits on `main` missing from `dev` (`origin/dev..origin/main`). If
+   zero — e.g. right after a promotion PR merges — it reports "already up to
+   date" and creates nothing.
+3. Builds a `back-merge/main-to-dev` branch from `dev` and merges `main` into it.
+   If the merge is clean it pushes the resolved branch; if it conflicts, it
+   pushes `main` as-is and flags the conflicting files in the PR body so they can
+   be resolved against `dev`.
+4. Opens (or updates, if one is already open) a PR from `back-merge/main-to-dev`
+   → `dev`, titled `chore: back-merge main into dev`.
+
+Resolving the merge on a side branch keeps conflicts off the protected `dev`
+branch and lets CI validate before it lands. Like the promotion workflow, it
+never merges for you — a human reviews and merges, so all `dev` rulesets apply.
+
 ## Typical Development Flow
 
 1. Branch off `dev` (e.g. `feat/...-INT-123`).
@@ -101,8 +132,12 @@ The workflow never merges; a human reviews and merges, so all rulesets apply.
 3. Get 1 approval, **squash** merge to `dev`.
 4. When ready to release, run **Promote Dev to Main** and merge the resulting PR.
 5. The merge to `main` triggers `release.yml`, which publishes to PyPI.
+6. release-please's release commit on `main` triggers `back-merge-main-to-dev.yml`,
+   which opens a PR bringing that commit back into `dev`. Merge it to keep `dev`
+   in sync before the next promotion.
 
 > **Note on strict checks:** because `main` uses strict required status checks, a
-> release commit that release-please lands on `main` will leave `dev` behind. The
-> next `dev → main` promotion PR cannot merge until `dev` contains that commit, so
-> `main` must be brought back into `dev` before promoting again.
+> release commit that release-please lands on `main` will leave `dev` behind, and
+> the next `dev → main` promotion PR cannot merge until `dev` contains that commit.
+> `back-merge-main-to-dev.yml` handles this automatically by opening a `main → dev`
+> PR after each release — merge it before promoting again.
