@@ -54,7 +54,7 @@ async def main() -> None:
         raise ValueError("THENVOI_REST_URL environment variable is required")
     # Create adapter with custom configuration
     adapter = GoogleADKAdapter(
-        model="gemini-2.5-pro",
+        model="gemini-2.5-flash",
         custom_section=(
             "You are a research assistant specializing in summarizing information. "
             "Always provide sources when possible and be thorough but concise."
