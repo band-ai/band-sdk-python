@@ -516,7 +516,7 @@ The Slack bridge expects an installed Slack app with the right scopes. A maintai
 - Events `app_mention`, `message.im`, `assistant_thread_started`.
 - Socket Mode enabled — no public URL, no signing secret needed for the example.
 
-Two operational gotchas worth surfacing:
+Three operational gotchas worth surfacing:
 
 - **Bot must be a channel member.** `/invite @your-bot` in any channel you want it to read. `channels:history` alone doesn't grant access to channels it isn't in.
 - **Delayed Events is a GUI toggle, not a manifest field.** For production, enable "Delayed Events" under the app's Event Subscriptions settings so Slack keeps retrying missed events hourly for 24h while the bridge is offline (default is 2h). There is no manifest schema field for it — it must be set manually after the app is created. See the [retry events changelog](https://docs.slack.dev/changelog/2026/02/05/retry-events-feature/).

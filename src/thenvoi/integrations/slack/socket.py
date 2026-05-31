@@ -24,6 +24,8 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from thenvoi.integrations.slack.dedup import _SeenEvents
+
 if TYPE_CHECKING:
     from slack_sdk.socket_mode.aiohttp import SocketModeClient
     from slack_sdk.web.async_client import AsyncWebClient
@@ -68,6 +70,7 @@ async def start_socket_listeners(
     client_factory: (
         Callable[[SlackApp, AsyncWebClient], SocketModeClient] | None
     ) = None,
+    seen_events: _SeenEvents | None = None,
 ) -> list[SlackSocketListener]:
     """Open one Socket Mode websocket per ``SlackApp`` and start listening.
 
@@ -85,6 +88,10 @@ async def start_socket_listeners(
         client_factory: Test seam. Defaults to constructing
             ``slack_sdk.socket_mode.aiohttp.SocketModeClient`` with the
             app's ``app_token`` and the provided web client.
+        seen_events: Optional shared ``event_id`` dedup cache. Defaults to
+            a fresh one shared across all apps' listeners. Socket Mode can
+            redeliver the same event across reconnects, so we drop dupes
+            before dispatching (parallel to the HTTP route's dedup).
 
     Returns:
         Connected listeners, in input order, so ``SlackAdapter`` can hold
@@ -95,12 +102,15 @@ async def start_socket_listeners(
             triggered when ``transport="socket"``.
     """
     factory = client_factory or _default_client_factory
+    seen_events = seen_events or _SeenEvents()
     listeners: list[SlackSocketListener] = []
     for app in apps:
         web_client = web_client_factory(app)
         client = factory(app, web_client)
         client.socket_mode_request_listeners.append(
-            _make_request_handler(app=app, dispatcher=dispatcher)
+            _make_request_handler(
+                app=app, dispatcher=dispatcher, seen_events=seen_events
+            )
         )
         await client.connect()
         listeners.append(SlackSocketListener(app=app, client=client))
@@ -129,13 +139,15 @@ def _make_request_handler(
     *,
     app: SlackApp,
     dispatcher: SocketDispatcher,
+    seen_events: _SeenEvents,
 ) -> Callable[[SocketModeClient, Any], Awaitable[None]]:
     """Build a per-app Socket Mode request listener.
 
     Acks every envelope immediately (Slack will retry otherwise), then
     routes Events API payloads through ``dispatcher``. Slash commands
     and interactive components are out of v1 scope; we still ack them to
-    avoid retries.
+    avoid retries. Redelivered events (same ``event_id``) are dropped via
+    ``seen_events`` so a reconnect can't double-invoke the brain.
     """
     from slack_sdk.socket_mode.response import SocketModeResponse
 
@@ -167,6 +179,17 @@ def _make_request_handler(
                 "Slack Socket Mode payload not a dict (app=%s type=%s)",
                 app.slug,
                 type(payload).__name__,
+            )
+            return
+
+        # Drop redeliveries before dispatching — the envelope is already
+        # acked above, so we just skip the duplicate work.
+        event_id = payload.get("event_id")
+        if event_id and seen_events.is_dupe(event_id):
+            logger.info(
+                "Dropping duplicate Slack Socket Mode event %s (app=%s)",
+                event_id,
+                app.slug,
             )
             return
 

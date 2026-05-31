@@ -9,6 +9,7 @@ work progresses.
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -180,7 +181,9 @@ def test_default_write_tool_names_includes_known_mutators():
 # The plan-rendering hook now lives in ``execute_tool_call`` (not
 # ``send_event``) so Slack progress is independent of the brain's
 # ``Emit.EXECUTION`` setting. Tests patch the parent class's
-# ``execute_tool_call`` to return controlled results.
+# ``execute_tool_call_structured`` to return controlled outcomes — the
+# Slack hook derives task success/failure from the structured ``ok``
+# flag, not from the returned string.
 
 
 def _make_tools(
@@ -202,10 +205,22 @@ def _make_tools(
     return tools, rest, slack
 
 
-def _patch_super_execute(return_value: object = "ok") -> AsyncMock:
-    """Patch ``AgentTools.execute_tool_call`` so super calls return controlled results."""
-    mock = AsyncMock(return_value=return_value)
-    return patch.object(AgentTools, "execute_tool_call", mock), mock  # type: ignore[return-value]
+def _patch_super_execute(
+    return_value: object = "ok",
+    *,
+    ok: bool = True,
+    error_message: str | None = None,
+) -> tuple[Any, AsyncMock]:
+    """Patch ``AgentTools.execute_tool_call_structured`` so super calls return
+    controlled :class:`ToolCallOutcome` results."""
+    from thenvoi.runtime.tools import ToolCallOutcome
+
+    mock = AsyncMock(
+        return_value=ToolCallOutcome(
+            value=return_value, ok=ok, error_message=error_message
+        )
+    )
+    return patch.object(AgentTools, "execute_tool_call_structured", mock), mock
 
 
 @pytest.mark.asyncio
@@ -265,15 +280,26 @@ async def test_tool_completes_flips_task_to_completed():
 
 
 @pytest.mark.asyncio
-async def test_tool_result_with_error_prefix_flips_task_to_error():
-    tools, _, slack = _make_tools()
-    ctx, _ = _patch_super_execute(return_value="Error: participant not found")
-    with ctx:
-        await tools.execute_tool_call("thenvoi_add_participant", {})
+async def test_failed_tool_call_flips_task_to_error():
+    """A *real* base-tool failure must mark the task ERROR.
 
+    Regression for the string-heuristic bug: ``AgentTools`` failures have
+    no single ``Error:`` prefix (they surface as "Invalid arguments for
+    …", "Error executing …", "Unknown tool: …"), so the plan UI must
+    derive failure from the structured ``ok`` flag. Here we drive a real
+    validation failure (missing required args) — no REST call, no mock —
+    so the test exercises the actual error string the base tools produce.
+    """
+    tools, _, slack = _make_tools()
+
+    result = await tools.execute_tool_call("thenvoi_add_participant", {})
+
+    # Real base-class failure string — explicitly NOT "Error:"-prefixed.
+    assert isinstance(result, str)
+    assert result.startswith("Invalid arguments for thenvoi_add_participant")
     task = tools._plan.tasks[0]
     assert task.state == TaskState.ERROR
-    assert task.error_message == "participant not found"
+    assert task.error_message and "Invalid arguments" in task.error_message
     update_blocks = slack.chat_update.await_args.kwargs["blocks"]
     assert update_blocks[0]["text"]["text"] == "*⚠️ Done with errors*"
 
@@ -282,14 +308,13 @@ async def test_tool_result_with_error_prefix_flips_task_to_error():
 async def test_super_exception_marks_task_error_and_reraises():
     tools, _, _ = _make_tools()
     err = RuntimeError("boom")
-    ctx, _ = _patch_super_execute()
-    with ctx:
-        # Replace the patched super with one that raises.
-        from thenvoi.runtime.tools import AgentTools as _AT
+    from thenvoi.runtime.tools import AgentTools as _AT
 
-        with patch.object(_AT, "execute_tool_call", AsyncMock(side_effect=err)):
-            with pytest.raises(RuntimeError, match="boom"):
-                await tools.execute_tool_call("thenvoi_lookup_peers", {})
+    # ThenvoiToolError (and anything else that propagates out of the
+    # structured call) must mark the task ERROR and re-raise.
+    with patch.object(_AT, "execute_tool_call_structured", AsyncMock(side_effect=err)):
+        with pytest.raises(RuntimeError, match="boom"):
+            await tools.execute_tool_call("thenvoi_lookup_peers", {})
 
     task = tools._plan.tasks[0]
     assert task.state == TaskState.ERROR

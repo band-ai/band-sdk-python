@@ -31,7 +31,14 @@ import pytest
 from httpx import ASGITransport
 
 from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
+from thenvoi.core.types import (
+    AdapterFeatures,
+    AgentInput,
+    Capability,
+    Emit,
+    HistoryProvider,
+    PlatformMessage,
+)
 from thenvoi.integrations.slack.adapter import (
     SLACK_CONTEXT_NOTE,
     SLACK_SEND_MESSAGE_TOOL_NAME,
@@ -259,6 +266,40 @@ async def test_on_started_requires_api_key_when_no_rest_client_injected():
     adapter = SlackAdapter(inner=inner, apps=[_slack_app()])
     with pytest.raises(ValueError, match="requires api_key"):
         await adapter.on_started("MyBot", "")
+
+
+class _EmitBrain(_SlackReplyBrain):
+    """Inner brain that declares (and is configured to use) execution emit."""
+
+    SUPPORTED_EMIT = frozenset({Emit.EXECUTION})
+    SUPPORTED_CAPABILITIES = frozenset({Capability.MEMORY})
+
+
+@pytest.mark.asyncio
+async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
+    """SlackAdapter must not warn that it 'does not support' what the brain does.
+
+    We adopt ``inner.features`` and delegate reasoning to the inner, so the
+    base feature-mismatch check has to run against the inner's declared
+    support — not the wrapper's empty defaults.
+    """
+    inner = _EmitBrain(reply=None)
+    inner.features = AdapterFeatures(
+        emit=frozenset({Emit.EXECUTION}),
+        capabilities=frozenset({Capability.MEMORY}),
+    )
+    adapter, _, _, _ = _make_adapter(inner=inner)
+
+    with caplog.at_level("WARNING"):
+        await adapter.on_started("MyBot", "")
+
+    # Wrapper now reflects the inner's declared support.
+    assert adapter.SUPPORTED_EMIT == frozenset({Emit.EXECUTION})
+    assert adapter.SUPPORTED_CAPABILITIES == frozenset({Capability.MEMORY})
+    # No misleading "does not support" warning for values the brain handles.
+    assert not any("does not support" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
 
 
 # ── Slack ingress (HTTP webhook → brain invocation) ─────────────────────────
@@ -765,12 +806,19 @@ async def test_execute_tool_call_rejects_empty_content():
 
 @pytest.mark.asyncio
 async def test_execute_tool_call_delegates_non_slack_tools_to_super():
-    """Tools other than ``slack_send_message`` flow through to AgentTools."""
+    """Tools other than ``slack_send_message`` flow through to AgentTools.
+
+    The tee derives task success/failure from the structured outcome, so
+    it delegates via ``execute_tool_call_structured`` and returns its
+    ``value``.
+    """
     from unittest.mock import patch
 
+    from thenvoi.runtime.tools import ToolCallOutcome
+
     tools, _, _ = _make_tee_tools()
-    super_mock = AsyncMock(return_value="ok")
-    with patch.object(AgentTools, "execute_tool_call", super_mock):
+    super_mock = AsyncMock(return_value=ToolCallOutcome(value="ok", ok=True))
+    with patch.object(AgentTools, "execute_tool_call_structured", super_mock):
         result = await tools.execute_tool_call("thenvoi_lookup_peers", {})
 
     assert result == "ok"
@@ -967,6 +1015,68 @@ async def test_bot_replies_in_thread_history_become_assistant_role():
     assert bot_turn["sender_type"] == "Agent"
     assert bot_turn["sender_name"] == "MyBot"
     assert bot_turn["content"] == "hello, how can I help?"
+
+
+@pytest.mark.asyncio
+async def test_bridge_progress_blocks_excluded_from_thread_history():
+    """The bridge's own Block Kit plan/status messages must not pollute history.
+
+    Progress messages are posted with ``blocks`` and a placeholder
+    fallback ("Working on it…"/"Done"). They carry ``bot_id`` like a real
+    reply, so without filtering they'd be re-ingested as fake assistant
+    turns on every follow-up. Plain-text bot replies must still survive.
+    """
+    brain = _SlackReplyBrain(reply=None, history_converter=_RawHistoryConverter())
+    adapter, inner, web_mocks, _ = _make_adapter(inner=brain)
+    await adapter.on_started("MyBot", "")
+    app = adapter.apps[0]
+
+    web_mocks[app.slug].conversations_replies = AsyncMock(
+        return_value={
+            "messages": [
+                {"ts": "100.0", "user": "U001", "text": "hi bot"},
+                # Real plain-text reply — keep.
+                {
+                    "ts": "101.0",
+                    "user": "UBOT",
+                    "bot_id": "B999",
+                    "text": "hello, how can I help?",
+                },
+                # Block Kit progress message — drop (has blocks + fallback).
+                {
+                    "ts": "101.5",
+                    "user": "UBOT",
+                    "bot_id": "B999",
+                    "text": "Done",
+                    "blocks": [
+                        {"type": "section", "text": {"type": "mrkdwn", "text": "✅"}}
+                    ],
+                },
+                {"ts": "102.0", "user": "U001", "text": "<@BOT> what time is it?"},
+            ]
+        }
+    )
+
+    await _post_slack_event(
+        adapter,
+        app,
+        _mention_event(
+            channel="C1",
+            ts="102.0",
+            thread_ts="100.0",
+            text="<@BOT> what time is it?",
+            user="U001",
+        ),
+    )
+    await adapter.wait_idle()
+
+    assert isinstance(inner, _SlackReplyBrain)
+    history = inner.invocations[0]["history"]
+    # Only the user turn + the plain-text bot reply; the "Done" plan block
+    # is excluded.
+    contents = [m["content"] for m in history]
+    assert contents == ["hi bot", "hello, how can I help?"]
+    assert "Done" not in contents
 
 
 @pytest.mark.asyncio

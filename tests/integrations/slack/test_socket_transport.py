@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from thenvoi.integrations.slack.adapter import SlackAdapter
+from thenvoi.integrations.slack.dedup import _SeenEvents
 from thenvoi.integrations.slack.socket import (
     SlackSocketListener,
     start_socket_listeners,
@@ -111,11 +112,12 @@ def _events_api_request(
     *,
     envelope_id: str = "env-1",
     event: dict[str, Any] | None = None,
+    event_id: str | None = None,
 ) -> SimpleNamespace:
     """A minimal SocketModeRequest stand-in. The real class has more on
     it, but our listener only touches ``envelope_id``, ``type``, and
     ``payload``."""
-    payload = {
+    payload: dict[str, Any] = {
         "type": "event_callback",
         "event": event
         or {
@@ -127,6 +129,8 @@ def _events_api_request(
             "user": "U999",
         },
     }
+    if event_id is not None:
+        payload["event_id"] = event_id
     return SimpleNamespace(envelope_id=envelope_id, type="events_api", payload=payload)
 
 
@@ -384,7 +388,9 @@ async def test_events_api_envelope_routes_through_dispatch_event(monkeypatch):
             from thenvoi.integrations.slack.socket import _make_request_handler
 
             client.socket_mode_request_listeners.append(
-                _make_request_handler(app=app, dispatcher=dispatcher)
+                _make_request_handler(
+                    app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+                )
             )
             await client.connect()
             listeners.append(SlackSocketListener(app=app, client=client))
@@ -420,7 +426,9 @@ async def test_socket_listener_drops_bot_events(monkeypatch):
 
         for app in apps:
             fake.socket_mode_request_listeners.append(
-                _make_request_handler(app=app, dispatcher=dispatcher)
+                _make_request_handler(
+                    app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+                )
             )
             await fake.connect()
         return [SlackSocketListener(app=adapter.apps[0], client=fake)]
@@ -448,3 +456,30 @@ async def test_socket_listener_drops_bot_events(monkeypatch):
     assert inner.invocations == []
     # Still acked though, so Slack doesn't retry.
     fake.send_socket_mode_response.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_socket_listener_drops_duplicate_event_id():
+    """A redelivered event (same event_id) is acked but dispatched once.
+
+    Socket Mode can replay events across reconnects; like the HTTP route,
+    the listener dedups on ``event_id`` so the brain isn't invoked twice.
+    """
+    from unittest.mock import AsyncMock
+
+    from thenvoi.integrations.slack.socket import _make_request_handler
+
+    dispatcher = AsyncMock()
+    client = SimpleNamespace(send_socket_mode_response=AsyncMock())
+    app = SlackApp(slug="dev", bot_token="xoxb-x", app_token="xapp-x")
+    handler = _make_request_handler(
+        app=app, dispatcher=dispatcher, seen_events=_SeenEvents()
+    )
+
+    await handler(client, _events_api_request(envelope_id="e1", event_id="Ev123"))
+    await handler(client, _events_api_request(envelope_id="e2", event_id="Ev123"))
+
+    # Both envelopes acked (so Slack stops), but the brain runs once.
+    assert client.send_socket_mode_response.await_count == 2
+    dispatcher.assert_awaited_once()
+    assert dispatcher.await_args.args[1]["event_id"] == "Ev123"

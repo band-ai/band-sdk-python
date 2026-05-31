@@ -285,8 +285,13 @@ class _SlackTeeingTools(AgentTools):
             self._plan.tasks_by_id[task.id] = task
             await self._upsert_plan_message()
 
+        # Use the structured variant so success/failure comes from the
+        # ``ok`` flag rather than sniffing the returned string — the base
+        # tools have no single ``Error:`` prefix (failures surface as
+        # "Invalid arguments for …", "Error executing …", "Unknown tool: …"),
+        # so prefix matching would silently mark failed calls ✅.
         try:
-            result = await super().execute_tool_call(tool_name, arguments)
+            outcome = await super().execute_tool_call_structured(tool_name, arguments)
         except Exception as exc:
             if task is not None:
                 task.state = TaskState.ERROR
@@ -295,13 +300,13 @@ class _SlackTeeingTools(AgentTools):
             raise
 
         if task is not None:
-            if isinstance(result, str) and result.startswith("Error:"):
-                task.state = TaskState.ERROR
-                task.error_message = result[len("Error:") :].strip()
-            else:
+            if outcome.ok:
                 task.state = TaskState.COMPLETED
+            else:
+                task.state = TaskState.ERROR
+                task.error_message = outcome.error_message
             await self._upsert_plan_message()
-        return result
+        return outcome.value
 
 
 class SlackAdapter(SimpleAdapter[Any]):
@@ -493,6 +498,17 @@ class SlackAdapter(SimpleAdapter[Any]):
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Build the REST client and start the inner adapter."""
+        # We adopt ``inner.features`` (see __init__) and delegate all
+        # reasoning to the inner brain, so the inner — not this wrapper — is
+        # what actually acts on emit/capability values. Mirror its declared
+        # support before the base feature-mismatch check runs, otherwise
+        # SimpleAdapter warns "SlackAdapter does not support emit values:
+        # execution" even though the brain handles it. The inner's own
+        # on_started still performs the authoritative check.
+        # type: ignore[read-only] — base declares these ClassVar; shadowing
+        # per-instance is intentional since support is the inner's, not ours.
+        self.SUPPORTED_EMIT = self._inner.SUPPORTED_EMIT  # type: ignore[read-only]
+        self.SUPPORTED_CAPABILITIES = self._inner.SUPPORTED_CAPABILITIES  # type: ignore[read-only]
         await super().on_started(agent_name, agent_description)
 
         if self._rest is None:
@@ -1081,6 +1097,15 @@ class SlackAdapter(SimpleAdapter[Any]):
             if not text:
                 continue
             is_bot = bool(m.get("bot_id")) or m.get("subtype") == "bot_message"
+            # Skip the bridge's own Block Kit progress/plan/status messages.
+            # Those are posted with ``blocks`` and a placeholder fallback
+            # ("Working on it…"/"Done"); re-ingesting them would feed the
+            # brain fake assistant turns on every follow-up. Real replies
+            # (slack_send_message) are plain text with no blocks, so they're
+            # kept. Other apps' block messages are dropped too — arbitrary
+            # block payloads don't convert to useful plain-text history.
+            if is_bot and m.get("blocks"):
+                continue
             if is_bot:
                 sender_name = agent_name
                 sender_type = "Agent"
