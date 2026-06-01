@@ -8,6 +8,7 @@ from thenvoi.integrations.crewai.tools import (
     CrewAIToolReporter,
     EmitExecutionReporter,
     NoopReporter,
+    ReplyTracker,
     build_thenvoi_crewai_tools,
     serialize_success_result,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "CrewAIToolReporter",
     "EmitExecutionReporter",
     "NoopReporter",
+    "ReplyTracker",
     "build_thenvoi_crewai_tools",
     "run_async",
     "serialize_success_result",

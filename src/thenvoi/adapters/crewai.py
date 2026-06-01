@@ -19,14 +19,18 @@ from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from thenvoi.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
+from thenvoi.integrations.crewai import (
+    CrewAIToolContext,
+    EmitExecutionReporter,
+    ReplyTracker,
+    build_thenvoi_crewai_tools,
+)
 from thenvoi.runtime.custom_tools import CustomToolDef
 from thenvoi.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
     from crewai import Agent as CrewAIAgent
     from crewai.tools import BaseTool
-
-    from thenvoi.integrations.crewai import CrewAIToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +39,14 @@ logger = logging.getLogger(__name__)
 # Set automatically when processing messages, accessed by tools.
 _current_room_context: ContextVar[tuple[str, AgentToolsProtocol] | None] = ContextVar(
     "_current_room_context", default=None
+)
+
+# Per-turn marker for whether the agent already delivered a reply via
+# thenvoi_send_message. Set in on_message, read by the tool wrappers (through
+# _get_context) and the error handler. Shared by reference so the mark is
+# visible across CrewAI's sync-to-async tool execution boundary.
+_reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
+    "_crewai_reply_tracker", default=None
 )
 
 MessageType = Literal["thought", "error", "task"]
@@ -230,13 +242,13 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         otherwise None (which the shared wrapper translates into a
         ``"No room context available"`` error JSON).
         """
-        from thenvoi.integrations.crewai import CrewAIToolContext
-
         ctx = _current_room_context.get()
         if ctx is None:
             return None
         room_id, tools = ctx
-        return CrewAIToolContext(room_id=room_id, tools=tools)
+        return CrewAIToolContext(
+            room_id=room_id, tools=tools, reply_tracker=_reply_tracker_var.get()
+        )
 
     def create_crewai_tools(self) -> list[BaseTool]:
         """Build the CrewAI BaseTool list via the shared integrations builder.
@@ -247,11 +259,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         ``_current_room_context`` ContextVar), its own reporter
         (gated by ``Emit.EXECUTION``), and its event loop fallback.
         """
-        from thenvoi.integrations.crewai import (
-            EmitExecutionReporter,
-            build_thenvoi_crewai_tools,
-        )
-
         return build_thenvoi_crewai_tools(
             get_context=self._get_context,
             reporter=EmitExecutionReporter(self.features),
@@ -282,7 +289,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         # Set context variable for tool access (thread-safe room context).
         # Wrap in try/finally immediately to ensure cleanup even if code
         # before the main try block raises an exception.
+        reply_tracker = ReplyTracker()
         _current_room_context.set((room_id, tools))
+        _reply_tracker_var.set(reply_tracker)
         try:
             await self._process_message(
                 msg=msg,
@@ -292,11 +301,13 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                 contacts_msg=contacts_msg,
                 is_session_bootstrap=is_session_bootstrap,
                 room_id=room_id,
+                reply_tracker=reply_tracker,
             )
         finally:
             # Clear context after processing to prevent stale context in async
             # environments with task reuse
             _current_room_context.set(None)
+            _reply_tracker_var.set(None)
 
     async def _process_message(
         self,
@@ -308,6 +319,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         *,
         is_session_bootstrap: bool,
         room_id: str,
+        reply_tracker: ReplyTracker | None = None,
     ) -> None:
         """Internal message processing logic."""
         if is_session_bootstrap:
@@ -398,6 +410,27 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             )
 
         except Exception as e:
+            # CrewAI raises ValueError("Invalid response from LLM call - None or
+            # empty.") when its ReAct loop yields an empty final answer. In this
+            # adapter the agent replies via the thenvoi_send_message tool, so an
+            # empty final answer AFTER a successful reply is benign noise — the
+            # user already got their response. Match that specific ValueError
+            # narrowly so genuine failures after a reply (downstream errors,
+            # later-processing bugs, a second tool call throwing) still surface
+            # as error events and propagate.
+            if (
+                reply_tracker is not None
+                and reply_tracker.replied
+                and isinstance(e, ValueError)
+                and "Invalid response from LLM call" in str(e)
+            ):
+                logger.warning(
+                    "Room %s: CrewAI returned an empty final answer after a reply "
+                    "was already delivered; treating as non-fatal: %s",
+                    room_id,
+                    e,
+                )
+                return
             logger.error("Error processing message: %s", e, exc_info=True)
             await self._report_error(tools, str(e))
             raise
