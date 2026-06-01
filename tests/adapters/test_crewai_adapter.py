@@ -458,6 +458,57 @@ class TestErrorHandling:
         mock_tools.send_event.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [
+            RuntimeError("downstream failure after reply"),
+            ValueError("a different, genuine LLM problem"),
+        ],
+        ids=["non-value-error", "unrelated-value-error"],
+    )
+    async def test_genuine_error_after_reply_still_reports_and_raises(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent, error
+    ):
+        """A genuine failure AFTER a reply went out must NOT be swallowed.
+
+        The empty-final-answer suppression only matches CrewAI's specific
+        ValueError("Invalid response from LLM call ..."). Any other exception —
+        even one raised after thenvoi_send_message already replied — must still
+        post an error event and propagate, so real bugs stay visible.
+        """
+        import importlib
+
+        module = importlib.import_module("thenvoi.adapters.crewai")
+
+        async def _kickoff(_messages):
+            # Simulate thenvoi_send_message having succeeded earlier this turn.
+            tracker = module._reply_tracker_var.get()
+            if tracker is not None:
+                tracker.replied = True
+            raise error
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        # The genuine error must propagate despite the prior reply.
+        with pytest.raises(type(error), match=str(error)):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        # And it must surface as an error event in the room.
+        mock_tools.send_event.assert_called()
+
+    @pytest.mark.asyncio
     async def test_raises_error_when_agent_not_initialized(
         self, CrewAIAdapter, sample_message, mock_tools
     ):

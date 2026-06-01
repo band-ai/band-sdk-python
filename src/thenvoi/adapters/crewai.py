@@ -414,12 +414,19 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             # empty.") when its ReAct loop yields an empty final answer. In this
             # adapter the agent replies via the thenvoi_send_message tool, so an
             # empty final answer AFTER a successful reply is benign noise — the
-            # user already got their response. Only surface the error when no
-            # reply was delivered this turn.
-            if reply_tracker is not None and reply_tracker.replied:
+            # user already got their response. Match that specific ValueError
+            # narrowly so genuine failures after a reply (downstream errors,
+            # later-processing bugs, a second tool call throwing) still surface
+            # as error events and propagate.
+            if (
+                reply_tracker is not None
+                and reply_tracker.replied
+                and isinstance(e, ValueError)
+                and "Invalid response from LLM call" in str(e)
+            ):
                 logger.warning(
-                    "Room %s: CrewAI raised after a reply was already delivered; "
-                    "treating as non-fatal: %s",
+                    "Room %s: CrewAI returned an empty final answer after a reply "
+                    "was already delivered; treating as non-fatal: %s",
                     room_id,
                     e,
                 )
