@@ -36,23 +36,19 @@ The adapter uses the Parlant SDK directly - no separate HTTP server needed:
 import parlant.sdk as p
 from thenvoi import Agent
 from thenvoi.adapters import ParlantAdapter
-from thenvoi.integrations.parlant.tools import create_parlant_tools
-
 async with p.Server(nlp_service=p.NLPServices.openai) as server:
-    # Create Parlant agent with guidelines
+    # Create Parlant agent with example-specific behavior
     parlant_agent = await server.create_agent(
         name="Assistant",
         description="A helpful assistant.",
     )
 
-    parlant_tools = create_parlant_tools()
     await parlant_agent.create_guideline(
         condition="User asks for help",
-        action="Acknowledge their request and respond with thenvoi_send_message",
-        tools=parlant_tools,
+        action="Acknowledge their request and answer clearly.",
     )
 
-    # Create Thenvoi adapter
+    # Create Thenvoi adapter. It installs the Band platform contract and tools.
     adapter = ParlantAdapter(
         server=server,
         parlant_agent=parlant_agent,
@@ -73,11 +69,11 @@ async with p.Server(nlp_service=p.NLPServices.openai) as server:
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | **Minimal setup** - OpenAI-backed Parlant SDK agent with Band platform tools. |
-| `02_with_guidelines.py` | **Behavioral guidelines** - Condition/action rules with Band platform tools. |
-| `03_support_agent.py` | **Customer support** - Support flow with lookup, add participant, and @mention escalation. |
-| `04_tom_agent.py` | **Tom character agent** - Character guidelines with Band messages. |
-| `05_jerry_agent.py` | **Jerry character agent** - Character guidelines with Band messages. |
+| `01_basic_agent.py` | **Minimal setup** - OpenAI-backed Parlant SDK agent with a basic assistant persona. |
+| `02_with_guidelines.py` | **Behavioral guidelines** - Condition/action rules for example-specific behavior. |
+| `03_support_agent.py` | **Customer support** - Support flow with refund, troubleshooting, urgency, and escalation behavior. |
+| `04_tom_agent.py` | **Tom character agent** - Character prompt and guideline for staying in character. |
+| `05_jerry_agent.py` | **Jerry character agent** - Character prompt and guideline for staying in character. |
 
 ---
 
@@ -184,7 +180,7 @@ ParlantAdapter(
 )
 ```
 
-`ParlantAdapter` supports `additional_tools` with the same `CustomToolDef` tuple format used by other adapters. You can also define custom tools with Parlant's native `@p.tool` decorator when you are building Parlant-specific guidelines. Contact and memory tools are capability-gated; memory is supported on enterprise accounts only. Execution reporting is available with `features=AdapterFeatures(emit={Emit.EXECUTION})`.
+`ParlantAdapter` installs the Band platform contract as an always-match Parlant guideline, including the platform tools available for the configured capabilities. Example code should keep Parlant descriptions and guidelines focused on the example-specific behavior, not duplicate Band tool-use instructions. The adapter also supports `additional_tools` with the same `CustomToolDef` tuple format used by other adapters. You can define custom tools with Parlant's native `@p.tool` decorator when you are building Parlant-specific guidelines. Contact and memory tools are capability-gated; memory is supported on enterprise accounts only. Execution reporting is available with `features=AdapterFeatures(emit={Emit.EXECUTION})`.
 
 ---
 
@@ -206,7 +202,7 @@ Ideal when you need:
 Works well for:
 - Support agents with specific escalation rules
 - Specialist agents with domain-specific guidelines
-- Agents that find peers with `thenvoi_lookup_peers`, add them with `thenvoi_add_participant`, and @mention them with context
+- Agents that identify a useful specialist, add them to the room, and @mention them with context
 
 Band is still the collaboration layer. Parlant does not replace Band's room model or become a central orchestrator; it decides how one participant behaves after that participant is mentioned.
 
