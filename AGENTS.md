@@ -490,6 +490,7 @@ Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anth
 - Use async/await everywhere in async codebases; use `AsyncMock` for testing async methods
 - Catch `pydantic.ValidationError` separately from generic `Exception`
 - Use `raise ValueError(...)` for missing required config, not `logger.error()` + `sys.exit()`
+- Never put issue-tracker references in code — no Linear issue IDs (e.g. `INT-123`), Linear URLs, or ticket numbers in comments, docstrings, or strings. Explain the *why* in plain terms instead. (Branch names, commit messages, and PR descriptions may reference issues.)
 
 ## Pre-Commit Checklist
 
