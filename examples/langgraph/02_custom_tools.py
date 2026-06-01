@@ -78,7 +78,6 @@ def get_weather(city: str) -> str:
 
 async def main() -> None:
     load_dotenv()
-
     ws_url = os.getenv("THENVOI_WS_URL")
     rest_url = os.getenv("THENVOI_REST_URL")
 
@@ -88,7 +87,7 @@ async def main() -> None:
         raise ValueError("THENVOI_REST_URL environment variable is required")
     # Create adapter with custom tools
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-5.4-mini"),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
         additional_tools=[calculate, get_weather],  # Add your tools here
         custom_section="""You are a helpful assistant with access to:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -13,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 # Type alias for Google ADK messages (dict-based, converted to Content by adapter)
 GoogleADKMessages = list[dict[str, Any]]
+
+# Truncate long tool-result strings in transcript previews so a single
+# noisy tool result cannot dominate the rehydrated context window.
+_MAX_TOOL_OUTPUT_PREVIEW = 200
 
 
 def _patch_orphaned_tool_calls(messages: GoogleADKMessages) -> None:
@@ -138,10 +143,16 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
     Output: [{"role": "user"|"model", "content": "..." | [...]}]
 
     Handles:
-    - text messages: User messages with [name] prefix, other agents as user messages
-    - tool_call: Model message with function_call content blocks
-    - tool_result: User message with function_response content blocks
-    - This agent's text messages are skipped (redundant with tool results)
+    - text from this agent: ``role="model"`` with bare content (matches the
+      shape the adapter appends live in ``_room_history`` after each reply,
+      so a rehydrated own-reply has the same role/content shape as a live
+      one — the surrounding transcript is not byte-identical because tool
+      events are folded into separate ``function_call``/``function_response``
+      blocks and peer messages carry a ``[name]:`` prefix)
+    - text from other agents and users: ``role="user"`` with ``[name]:``
+      prefix so the LLM can attribute speakers
+    - tool_call: ``role="model"`` message with ``function_call`` content blocks
+    - tool_result: ``role="user"`` message with ``function_response`` blocks
 
     Tool events are stored in platform as JSON:
     - tool_call: {"name": "...", "args": {...}, "tool_call_id": "..."}
@@ -152,6 +163,18 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
     structured function_call/function_response blocks produced here are
     consumed only for transcript formatting and conformance validation, not
     passed directly to ADK as ``Content`` objects.
+
+    Why own-agent text is kept (and not dropped as "redundant with tool
+    results"): the agent's text replies are NOT recorded as tool results,
+    they are recorded as ``message_type="text"`` rows.  Dropping them on
+    rehydration leaves the LLM looking at a series of unanswered user
+    messages and re-answering questions it already handled — the bug
+    documented in INT-509 (ADK duplicate response after crash recovery).
+
+    Own-agent attribution requires a non-empty ``agent_name`` to be set
+    via the constructor or ``set_agent_name()``.  Without it, every
+    nameless assistant row would be attributed to this agent, swapping
+    one false-attribution bug for another.
     """
 
     def __init__(self, agent_name: str = ""):
@@ -159,15 +182,17 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with tool results). Messages from other
-                       agents are included as user messages.
+            agent_name: Name of this agent. Used to decide whether an
+                       assistant text message came from this agent (in which
+                       case it is emitted with ``role="model"``) or from a
+                       peer (emitted as ``role="user"`` with a ``[name]:``
+                       prefix).
         """
         self._agent_name = agent_name
 
     def set_agent_name(self, name: str) -> None:
         """
-        Set agent name so converter knows which messages to skip.
+        Set this agent's name for own-vs-peer attribution.
 
         Args:
             name: Name of this agent
@@ -223,8 +248,19 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
                 role = hist.get("role", "user")
                 sender_name = hist.get("sender_name", "")
 
-                if role == "assistant" and sender_name == self._agent_name:
-                    # Skip THIS agent's text (redundant with tool results)
+                if (
+                    role == "assistant"
+                    and self._agent_name
+                    and sender_name == self._agent_name
+                ):
+                    # Own-agent text reply: emit as model turn with bare
+                    # content (no [name]: prefix). This matches the shape the
+                    # adapter appends to ``_room_history`` live after each
+                    # response, so the LLM sees its own prior replies in
+                    # context.  The empty-name guard prevents a default
+                    # ``agent_name=""`` from misattributing every nameless
+                    # assistant row to this agent.
+                    messages.append({"role": "model", "content": content})
                     continue
 
                 messages.append(
@@ -245,3 +281,53 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
         _patch_orphaned_tool_calls(messages)
 
         return messages
+
+    def format_transcript(self, history: GoogleADKMessages) -> str:
+        """Render converted history as a labeled text transcript.
+
+        The ADK adapter creates a fresh ``InMemoryRunner`` per message and
+        injects accumulated history as a text transcript, so this is the
+        layer where rehydration becomes a single string the LLM reads.
+
+        Own-agent text turns (``role="model"`` with string content) are
+        labeled with this agent's own name so the LLM can distinguish its
+        prior replies from peer turns.  Peer turns are already prefixed
+        with ``[sender_name]:`` by ``convert()``; passing them through
+        unchanged keeps the prefix shape uniform across the transcript.
+        Without the own-turn label the bootstrap transcript looks like a
+        series of speakerless lines between peer messages, which is what
+        produced the duplicate-reply behavior in INT-509.
+
+        Tool events render as compact ``[Tool Call]`` / ``[Tool Result]``
+        previews so the rehydrated context shows what work was already
+        done in the prior session.
+        """
+        lines: list[str] = []
+        for msg in history:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                if msg.get("role") == "model" and self._agent_name:
+                    lines.append(f"[{self._agent_name}]: {content}")
+                else:
+                    lines.append(content)
+            elif isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    block_type = block.get("type", "")
+                    if block_type == "function_call":
+                        lines.append(
+                            f"[Tool Call] {block.get('name', 'unknown')}"
+                            f" ({json.dumps(block.get('args', {}), default=str)})"
+                        )
+                    elif block_type == "function_response":
+                        output = str(block.get("output", ""))
+                        truncated = (
+                            output[:_MAX_TOOL_OUTPUT_PREVIEW] + "..."
+                            if len(output) > _MAX_TOOL_OUTPUT_PREVIEW
+                            else output
+                        )
+                        lines.append(
+                            f"[Tool Result] {block.get('name', 'unknown')}: {truncated}"
+                        )
+        return "\n".join(lines)

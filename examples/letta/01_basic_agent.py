@@ -74,7 +74,7 @@ async def main() -> None:
             # Letta Cloud by default; override with LETTA_BASE_URL for self-hosted
             base_url=os.getenv("LETTA_BASE_URL", "https://api.letta.com"),
             # Required for Letta Cloud, optional for self-hosted
-            api_key=os.getenv("LETTA_API_KEY"),
+            provider_key=os.getenv("LETTA_API_KEY"),
             # Letta Cloud project scoping (optional)
             project=os.getenv("LETTA_PROJECT"),
             # LLM model to use

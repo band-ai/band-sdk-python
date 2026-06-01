@@ -17,15 +17,6 @@ import logging
 import threading
 from typing import Any, Coroutine, TypeVar
 
-try:
-    import nest_asyncio
-except ImportError as e:  # pragma: no cover - same import guard as the adapter
-    raise ImportError(
-        "crewai is required for CrewAI adapter.\n"
-        "Install with: pip install 'thenvoi-sdk[crewai]'\n"
-        "Or: uv add crewai nest-asyncio"
-    ) from e
-
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -47,6 +38,15 @@ def _ensure_nest_asyncio() -> None:
     global _nest_asyncio_applied
     if _nest_asyncio_applied:
         return
+
+    try:
+        import nest_asyncio
+    except ImportError as e:  # pragma: no cover - same import guard as the adapter
+        raise ImportError(
+            "crewai is required for CrewAI adapter.\n"
+            "Install with: pip install 'thenvoi-sdk[crewai]'\n"
+            "Or: uv add crewai nest-asyncio"
+        ) from e
 
     with _nest_asyncio_lock:
         # Double-check after acquiring lock (double-checked locking pattern)

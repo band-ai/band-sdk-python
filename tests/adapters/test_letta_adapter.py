@@ -136,7 +136,7 @@ class TestLettaAdapterInit:
         adapter = LettaAdapter()
         assert adapter.config == LettaAdapterConfig()
         assert adapter.config.base_url == "https://api.letta.com"
-        assert adapter.config.api_key is None
+        assert adapter.config.provider_key is None
         assert adapter.config.project is None
         assert adapter.config.mode == "per_room"
         assert adapter.config.mcp_server_url == "http://localhost:8002/sse"
@@ -145,14 +145,14 @@ class TestLettaAdapterInit:
     def test_custom_config(self) -> None:
         config = LettaAdapterConfig(
             base_url="http://custom:8283",
-            api_key="sk-test",
+            provider_key="sk-test",
             mode="shared",
             mcp_server_url="http://mcp:9000/sse",
             enable_execution_reporting=True,
         )
         adapter = LettaAdapter(config=config)
         assert adapter.config.base_url == "http://custom:8283"
-        assert adapter.config.api_key == "sk-test"
+        assert adapter.config.provider_key == "sk-test"
         assert adapter.config.mode == "shared"
         assert adapter.config.enable_execution_reporting is True
 
@@ -160,7 +160,7 @@ class TestLettaAdapterInit:
         """Default config targets Letta Cloud."""
         config = LettaAdapterConfig()
         assert config.base_url == "https://api.letta.com"
-        assert config.api_key is None
+        assert config.provider_key is None
         assert config.project is None
 
     def test_no_client_tools_attribute(self) -> None:
@@ -210,11 +210,11 @@ class TestLettaAdapterOnStarted:
 
     @pytest.mark.asyncio
     async def test_on_started_forwards_cloud_params(self) -> None:
-        """api_key and project are forwarded to AsyncLetta when configured."""
+        """provider_key and project are forwarded to AsyncLetta when configured."""
         adapter = LettaAdapter(
             config=LettaAdapterConfig(
                 base_url="https://api.letta.com",
-                api_key="letta-key-123",
+                provider_key="letta-key-123",
                 project="my-project",
             )
         )
