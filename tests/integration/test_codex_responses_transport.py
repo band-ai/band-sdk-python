@@ -1,24 +1,23 @@
-"""Reproduction for INT-501: Codex 401 on the WebSocket Responses API.
+"""Reproduction for the Codex 401 on the WebSocket Responses API.
 
 The Codex CLI defaults to the WebSocket transport for the OpenAI Responses API
 (``wss://api.openai.com/v1/responses``). For API-key auth (``sk-proj`` /
 ``sk-svcacct``) that endpoint returns ``401 Unauthorized`` even though the REST
 ``POST /v1/responses`` succeeds (HTTP 200) with the *same* key — the WebSocket
-Responses API appears to require separate, account-level access. See:
-https://linear.app/thenvoi/issue/INT-501
+Responses API appears to require separate, account-level access.
 
 This test drives the real ``codex`` binary against the real OpenAI API and
 classifies each run as WEBSOCKET_401 / SUCCESS / OTHER. It serves two purposes:
 
 1. **Reproduce** — with the default (WebSocket-capable) provider, expect the
-   ``responses_websocket ... 401`` failure documented in INT-501.
+   ``responses_websocket ... 401`` failure.
 2. **Validate the fix** — with a custom provider that sets
    ``supports_websockets = false``, Codex falls back to the HTTP/REST Responses
    path (which already works) and the run succeeds.
 
 The 401 is account-gated, so it only reproduces against an affected OpenAI
-account (e.g. the band deployment key). The test is therefore opt-in and skips
-unless all of the following hold:
+account. The test is therefore opt-in and skips unless all of the following
+hold:
 
 * ``CODEX_REPRO_ENABLED=true``
 * ``OPENAI_API_KEY`` is set
@@ -106,8 +105,8 @@ requires_codex_repro = pytest.mark.skipif(
         and _CODEX is not None
     ),
     reason=(
-        "INT-501 repro is opt-in: set CODEX_REPRO_ENABLED=true, OPENAI_API_KEY, "
-        "and ensure a runnable `codex` binary is on PATH."
+        "Codex transport repro is opt-in: set CODEX_REPRO_ENABLED=true, "
+        "OPENAI_API_KEY, and ensure a runnable `codex` binary is on PATH."
     ),
 )
 
@@ -177,7 +176,7 @@ class TestCodexResponsesTransport:
     """Reproduce the WebSocket 401 and validate the REST-provider workaround."""
 
     def test_default_provider_reproduces_websocket_401(self, tmp_path: Path) -> None:
-        """Default (WebSocket-capable) provider hits the INT-501 401.
+        """Default (WebSocket-capable) provider hits the 401.
 
         Empty config.toml -> built-in `openai` provider, which uses the
         WebSocket Responses transport. Against an affected account this emits
@@ -191,12 +190,12 @@ class TestCodexResponsesTransport:
 
         if outcome == SUCCESS:
             pytest.skip(
-                "Could not reproduce INT-501 here: the default WebSocket "
-                "transport succeeded, so this account/key is not WS-gated. "
-                "Reproduction requires the affected (band) OpenAI account."
+                "Could not reproduce here: the default WebSocket transport "
+                "succeeded, so this account/key is not WS-gated. Reproduction "
+                "requires an affected OpenAI account."
             )
         assert outcome == WEBSOCKET_401, (
-            "Expected a WebSocket 401 on the default provider (INT-501), "
+            "Expected a WebSocket 401 on the default provider, "
             f"got {outcome!r} (rc={rc}).\n--- stdout ---\n{out}\n--- stderr ---\n{err}"
         )
 

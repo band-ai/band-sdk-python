@@ -75,8 +75,8 @@ fi
 # that endpoint returns 401 Unauthorized even though REST POST /v1/responses
 # succeeds (HTTP 200) with the same key, and Codex's WS->HTTPS fallback drops
 # the auth header (openai/codex#15492) so it 401s too. Route Codex through a
-# custom provider pinned to the HTTP/REST Responses transport instead. See
-# INT-501 (verified against a live sk-svcacct key).
+# custom provider pinned to the HTTP/REST Responses transport instead
+# (verified against a live sk-svcacct key).
 #
 # Gated on OPENAI_API_KEY because the REST provider authenticates via env_key;
 # OAuth/ChatGPT logins (auth.json) use a different transport and are left alone.
@@ -107,7 +107,7 @@ force_rest_responses_api() {
 
   cat >> "${config_file}" <<EOF
 
-# Forces the HTTP/REST Responses API instead of the WebSocket transport (INT-501).
+# Forces the HTTP/REST Responses API instead of the WebSocket transport.
 [model_providers.${CODEX_REST_PROVIDER_ID}]
 name = "OpenAI (REST)"
 base_url = "https://api.openai.com/v1"
@@ -158,7 +158,7 @@ sandbox_mode = "danger-full-access"
 EOF
   fi
 
-  # Pin Codex to the REST Responses transport to avoid the WebSocket 401 (INT-501).
+  # Pin Codex to the REST Responses transport to avoid the WebSocket 401.
   force_rest_responses_api "${runtime_config}"
 
   chmod 600 "${runtime_config}" || true
