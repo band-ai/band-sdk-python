@@ -19,13 +19,14 @@ tool calls produced by Claude.
 
 This wrapper sits in front of the per-room ``AgentToolsProtocol`` that the
 ``ClaudeSDKAdapter`` registers in ``_room_tools[room_id]``. It dedupes
-``send_message`` invocations by ``(dedup_scope, content, frozenset(mentions))``
-within a short TTL window and returns the cached result for any repeat. The
-scope is set by the adapter from the inbound platform message id so repeated
-identical messages in separate turns do not suppress each other. Every other
-tool call (``send_event``, ``add_participant``, ``lookup_peers``, ...) is
-forwarded unchanged via ``__getattr__`` so the wrapper does not silently
-become a stale interface when ``AgentToolsProtocol`` grows new methods.
+``send_message`` invocations by ``(content, frozenset(mentions))`` within
+a short per-room TTL window and returns the cached result for any repeat. MCP
+retries only identify the room; they do not carry the original inbound message
+id, so a per-message cache key would miss the late cross-turn retry this wrapper
+exists to suppress. Every other tool call (``send_event``, ``add_participant``,
+``lookup_peers``, ...) is forwarded unchanged via ``__getattr__`` so the wrapper
+does not silently become a stale interface when ``AgentToolsProtocol`` grows new
+methods.
 
 The wrapper is intentionally scoped to ``ClaudeSDKAdapter`` because that is
 the only adapter whose framework runs a heavy subprocess that can
@@ -112,41 +113,37 @@ class DedupingAgentTools:
         # ``suppressing duplicate`` lines that cannot be attributed to a
         # specific room across a multi-room tenant.
         self._label = label
-        self._dedup_scope: str | None = None
         # Ordered for LRU eviction; values are (timestamp, cached_result).
         self._recent_sends: OrderedDict[
-            tuple[str | None, str, frozenset[str]], tuple[float, Any]
+            tuple[str, frozenset[str]], tuple[float, Any]
         ] = OrderedDict()
         # Tracks cache misses currently POSTing to the platform. Racing
-        # duplicates await the same task, but distinct sends are not blocked
-        # behind unrelated network I/O.
+        # duplicates within the TTL window await the same task, but distinct
+        # sends are not blocked behind unrelated network I/O.
         self._in_flight: dict[
-            tuple[str | None, str, frozenset[str]], asyncio.Task[Any]
+            tuple[str, frozenset[str]], tuple[float, asyncio.Task[Any]]
         ] = {}
         self._lock = asyncio.Lock()
 
     # --- public API used by callers -----------------------------------
 
-    async def update_inner(
-        self, inner: AgentToolsProtocol, *, dedup_scope: str | None = None
-    ) -> None:
+    async def update_inner(self, inner: AgentToolsProtocol) -> None:
         """Swap the wrapped tools object while preserving the dedup cache.
 
         ``AgentTools.from_context`` is called per inbound message in
         ``preprocessing/default.py`` and produces a fresh ``AgentTools``
         instance each time. If the adapter rebuilt the wrapper on every
         call the cache would be discarded after every turn and the
-        dominant INT-502 failure mode (a duplicate tool call landing
+        dominant failure mode (a duplicate tool call landing
         *after* the original turn's ``Complete`` event) would still slip
         through.
 
-        ``dedup_scope`` should identify the inbound platform message or
-        execution turn. The adapter passes ``msg.id`` so identical content
-        sent in separate user turns is not treated as a duplicate retry.
+        MCP tool invocations resolve by room id and do not include the
+        inbound platform message id, so the cache key intentionally stays
+        scoped to this room wrapper plus the outgoing payload.
         """
         async with self._lock:
             self._inner = inner
-            self._dedup_scope = dedup_scope
 
     async def send_message(
         self,
@@ -154,13 +151,12 @@ class DedupingAgentTools:
         mentions: list[str] | list[dict[str, str]] | None = None,
     ) -> Any:
         now = time.monotonic()
-        key: tuple[str | None, str, frozenset[str]]
+        key: tuple[str, frozenset[str]]
         task: asyncio.Task[Any]
-        owns_task = False
 
         async with self._lock:
             self._evict_expired_locked(now)
-            key = (self._dedup_scope, content, _normalize_mentions(mentions))
+            key = (content, _normalize_mentions(mentions))
 
             cached = self._recent_sends.get(key)
             if cached is not None:
@@ -171,41 +167,34 @@ class DedupingAgentTools:
                 # genuinely-new identical message can go through.
                 logger.warning(
                     "ClaudeSDK send_message dedup: suppressing duplicate "
-                    "send%s (scope=%s, content_len=%d, mentions=%d)",
+                    "send%s (content_len=%d, mentions=%d)",
                     f" [{self._label}]" if self._label else "",
-                    key[0],
                     len(content),
-                    len(key[2]),
+                    len(key[1]),
                 )
                 return cached_result
 
-            existing_task = self._in_flight.get(key)
-            if existing_task is None:
+            existing = self._in_flight.get(key)
+            if existing is None:
                 inner = self._inner
                 task = asyncio.create_task(inner.send_message(content, mentions))
-                self._in_flight[key] = task
-                owns_task = True
+                self._in_flight[key] = (now, task)
+                task.add_done_callback(
+                    lambda completed_task: asyncio.create_task(
+                        self._finalize_in_flight_send(key, completed_task, now)
+                    )
+                )
             else:
-                task = existing_task
+                _started_at, task = existing
 
         try:
-            result = await task
-        except Exception:
-            if owns_task:
-                async with self._lock:
-                    if self._in_flight.get(key) is task:
-                        self._in_flight.pop(key, None)
+            result = await asyncio.shield(task)
+        except BaseException:
+            if task.done():
+                await self._finalize_in_flight_send(key, task, now)
             raise
 
-        if owns_task:
-            async with self._lock:
-                if self._in_flight.get(key) is task:
-                    self._in_flight.pop(key, None)
-                    # Insertion order equals timestamp order because we never
-                    # mutate cache entries after insert.
-                    self._recent_sends[key] = (now, result)
-                    while len(self._recent_sends) > self._max_entries:
-                        self._recent_sends.popitem(last=False)
+        await self._finalize_in_flight_send(key, task, now)
         return result
 
     # --- transparent passthrough --------------------------------------
@@ -219,16 +208,47 @@ class DedupingAgentTools:
 
     # --- internals ----------------------------------------------------
 
+    async def _finalize_in_flight_send(
+        self,
+        key: tuple[str, frozenset[str]],
+        task: asyncio.Task[Any],
+        timestamp: float,
+    ) -> None:
+        try:
+            result = task.result()
+        except BaseException:
+            should_cache = False
+            result = None
+        else:
+            should_cache = True
+
+        async with self._lock:
+            existing = self._in_flight.get(key)
+            if existing is None or existing[1] is not task:
+                return
+            self._in_flight.pop(key, None)
+            if not should_cache:
+                return
+            # Insertion order equals timestamp order because we never mutate
+            # cache entries after insert.
+            self._recent_sends[key] = (timestamp, result)
+            while len(self._recent_sends) > self._max_entries:
+                self._recent_sends.popitem(last=False)
+
     def _evict_expired_locked(self, now: float) -> None:
         """Drop entries older than the TTL window. Caller holds ``_lock``.
 
         Cache entries are append-only after insert (see ``send_message`` —
         we never refresh timestamps on hit), so insertion order equals
         timestamp order and we can stop scanning at the first fresh entry.
-        In-flight sends are not evicted here; they remove themselves on
-        success or failure.
+        In-flight sends older than the same TTL are also evicted so a stalled
+        platform POST cannot extend the dedup window indefinitely.
         """
         cutoff = now - self._ttl_seconds
+        for key, (ts, _task) in list(self._in_flight.items()):
+            if ts < cutoff:
+                self._in_flight.pop(key, None)
+
         while self._recent_sends:
             key, (ts, _result) = next(iter(self._recent_sends.items()))
             if ts >= cutoff:

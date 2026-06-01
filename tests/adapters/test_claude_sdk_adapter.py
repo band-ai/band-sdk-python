@@ -2036,7 +2036,7 @@ class TestSendMessageDedupWiring:
 
     @pytest.mark.asyncio
     async def test_wrapper_persists_across_on_message_calls(self, sample_message):
-        """Cross-turn regression: the dominant INT-502 pattern is a duplicate
+        """Cross-turn regression: the dominant pattern is a duplicate
         tool call arriving *after* the original turn's Complete event. Since
         SimpleAdapter constructs a fresh AgentTools per inbound message, a
         wrapper rebuilt per on_message would drop the cache and let the
@@ -2048,7 +2048,7 @@ class TestSendMessageDedupWiring:
         and one after the second on_message — and assert the duplicate is
         suppressed across the turn boundary.
         """
-        from thenvoi.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -2063,7 +2063,7 @@ class TestSendMessageDedupWiring:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -2087,9 +2087,21 @@ class TestSendMessageDedupWiring:
             await wrapper_after_turn1.send_message("hi", ["alice"])
             assert tools_turn1.send_message.await_count == 1
 
-            # Turn 2 arrives; SimpleAdapter builds a fresh AgentTools.
+            # Turn 2 arrives with a distinct platform message id;
+            # SimpleAdapter builds a fresh AgentTools.
+            turn2_message = PlatformMessage(
+                id="msg-456",
+                room_id=sample_message.room_id,
+                content=sample_message.content,
+                sender_id=sample_message.sender_id,
+                sender_type=sample_message.sender_type,
+                sender_name=sample_message.sender_name,
+                message_type=sample_message.message_type,
+                metadata=sample_message.metadata,
+                created_at=sample_message.created_at,
+            )
             await adapter.on_message(
-                msg=sample_message,
+                msg=turn2_message,
                 tools=tools_turn2,
                 history=ClaudeSDKSessionState(text=""),
                 participants_msg=None,
@@ -2123,7 +2135,7 @@ class TestSendMessageDedupWiring:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -2156,7 +2168,7 @@ class TestSendMessageDedupWiring:
         a per-session or singleton tools cache) cannot silently turn the
         dedup wrapper into a tenant-wide message suppressor.
         """
-        from thenvoi.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -2171,7 +2183,7 @@ class TestSendMessageDedupWiring:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -2217,9 +2229,8 @@ class TestSendMessageDedupWiring:
     ):
         """When the runtime hands the adapter the same tools object twice,
         ``update_inner`` is a no-op and must be skipped — otherwise we'd
-        briefly contend on the wrapper's lock for no reason and could
-        wait behind an in-flight send."""
-        from thenvoi.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+        briefly contend on the wrapper's lock for no reason."""
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
 
         adapter = ClaudeSDKAdapter()
         mock_client = MagicMock()
@@ -2232,7 +2243,7 @@ class TestSendMessageDedupWiring:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),

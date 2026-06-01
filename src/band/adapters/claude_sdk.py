@@ -485,10 +485,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # the operator has explicitly opted out via ttl=0.
         #
         # The wrapper MUST persist for the room so a lingering MCP retry can
-        # still see the cache through self._room_tools.get.  The active
-        # dedup scope is updated from the inbound platform message id so two
-        # legitimate turns with identical text do not suppress each other.
-        # Swap the inner reference instead of rebuilding the wrapper.
+        # still see the cache through self._room_tools.get. MCP tool calls
+        # only resolve by room id, not by the original inbound message id, so
+        # the cache is intentionally keyed by the outgoing payload within the
+        # per-room wrapper. Swap the inner reference instead of rebuilding the
+        # wrapper.
         #
         # DedupingAgentTools is structurally a superset of AgentToolsProtocol
         # (the dedup shim only intercepts send_message and __getattr__-forwards
@@ -497,15 +498,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if self.send_message_dedup_ttl_seconds > 0:
             existing = self._room_tools.get(room_id)
             if isinstance(existing, DedupingAgentTools):
-                # ``AgentTools.from_context`` returns a fresh instance per
-                # inbound message, so the identity check is normally false
-                # — but skipping a no-op swap avoids briefly contending on
-                # the wrapper lock for the rare case where the runtime
-                # hands us the same instance twice.
                 if existing._inner is not tools:
-                    await existing.update_inner(tools, dedup_scope=msg.id)
-                else:
-                    await existing.update_inner(existing._inner, dedup_scope=msg.id)
+                    await existing.update_inner(tools)
                 tools = cast(AgentToolsProtocol, existing)
             else:
                 wrapper = DedupingAgentTools(
@@ -513,7 +507,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     ttl_seconds=self.send_message_dedup_ttl_seconds,
                     label=room_id,
                 )
-                await wrapper.update_inner(tools, dedup_scope=msg.id)
                 tools = cast(AgentToolsProtocol, wrapper)
                 self._room_tools[room_id] = tools
         else:

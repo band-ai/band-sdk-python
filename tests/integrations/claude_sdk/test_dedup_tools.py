@@ -78,16 +78,17 @@ class TestSendMessageDedup:
         assert inner.send_message.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_distinct_dedup_scope_does_not_dedup(self):
-        inner = _make_inner()
-        wrapper = DedupingAgentTools(inner)
+    async def test_inner_swap_does_not_bypass_late_retry_dedup(self):
+        inner_a = _make_inner()
+        wrapper = DedupingAgentTools(inner_a)
 
-        await wrapper.update_inner(inner, dedup_scope="platform-msg-1")
         await wrapper.send_message("Done.", ["alice"])
-        await wrapper.update_inner(inner, dedup_scope="platform-msg-2")
+        inner_b = _make_inner()
+        await wrapper.update_inner(inner_b)
         await wrapper.send_message("Done.", ["alice"])
 
-        assert inner.send_message.await_count == 2
+        assert inner_a.send_message.await_count == 1
+        assert inner_b.send_message.await_count == 0
 
     @pytest.mark.asyncio
     async def test_mention_order_does_not_matter(self):
@@ -166,6 +167,76 @@ class TestSendMessageDedup:
         assert inner.send_message.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_cancelled_waiter_does_not_poison_in_flight_cache(self):
+        """Caller cancellation must not leave a stale in-flight task.
+
+        Claude SDK transports can cancel a request while the underlying POST is
+        still running. The in-flight dedup entry should keep tracking that POST,
+        let the next identical caller await it, then move the successful result
+        into the completed-send cache.
+        """
+        inner = _make_inner()
+        gate = asyncio.Event()
+
+        async def slow_send(content, mentions=None):
+            await gate.wait()
+            return {"id": "msg-after-cancel"}
+
+        inner.send_message.side_effect = slow_send
+        wrapper = DedupingAgentTools(inner)
+
+        first_waiter = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+        await asyncio.sleep(0)
+        first_waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first_waiter
+
+        second_waiter = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+        await asyncio.sleep(0)
+        gate.set()
+        result = await second_waiter
+
+        assert result == {"id": "msg-after-cancel"}
+        assert inner.send_message.await_count == 1
+        await wrapper.send_message("hi", ["alice"])
+        assert inner.send_message.await_count == 1
+        assert wrapper._in_flight == {}
+
+    @pytest.mark.asyncio
+    async def test_in_flight_send_expires_at_ttl(self, monkeypatch):
+        """A stalled POST must not extend the dedup window forever."""
+        inner = _make_inner()
+        gate = asyncio.Event()
+        calls: list[int] = []
+
+        async def slow_first_send(content, mentions=None):
+            calls.append(len(calls) + 1)
+            if len(calls) == 1:
+                await gate.wait()
+                return {"id": "first"}
+            return {"id": "second"}
+
+        inner.send_message.side_effect = slow_first_send
+        wrapper = DedupingAgentTools(inner, ttl_seconds=1.0)
+        clock = {"t": 1000.0}
+        monkeypatch.setattr(
+            "band.integrations.claude_sdk.dedup_tools.time.monotonic",
+            lambda: clock["t"],
+        )
+
+        first_waiter = asyncio.create_task(wrapper.send_message("hi", ["alice"]))
+        await asyncio.sleep(0)
+        clock["t"] += 1.1
+
+        second_result = await wrapper.send_message("hi", ["alice"])
+        assert second_result == {"id": "second"}
+        assert inner.send_message.await_count == 2
+
+        gate.set()
+        assert await first_waiter == {"id": "first"}
+        assert wrapper._in_flight == {}
+
+    @pytest.mark.asyncio
     async def test_distinct_concurrent_sends_do_not_block_each_other(self):
         inner = _make_inner()
         slow_gate = asyncio.Event()
@@ -231,9 +302,8 @@ class TestUpdateInner:
     """update_inner() swaps tools without discarding cache state.
 
     The adapter keeps one wrapper per room so lingering MCP retries can still
-    resolve through ``_room_tools``. The adapter also supplies a per-message
-    dedup scope; tests that omit it exercise the backwards-compatible default
-    scope.
+    resolve through ``_room_tools`` after the next inbound message has installed
+    fresh per-message tools.
     """
 
     @pytest.mark.asyncio
@@ -315,7 +385,7 @@ class TestDedupHitLogging:
 
         await wrapper.send_message("hello", ["alice"])
         with caplog.at_level(
-            "WARNING", logger="thenvoi.integrations.claude_sdk.dedup_tools"
+            "WARNING", logger="band.integrations.claude_sdk.dedup_tools"
         ):
             await wrapper.send_message("hello", ["alice"])
 
@@ -338,7 +408,7 @@ class TestDedupHitLogging:
 
         await wrapper.send_message("hello", ["alice"])
         with caplog.at_level(
-            "WARNING", logger="thenvoi.integrations.claude_sdk.dedup_tools"
+            "WARNING", logger="band.integrations.claude_sdk.dedup_tools"
         ):
             await wrapper.send_message("hello", ["alice"])
 
@@ -355,7 +425,7 @@ class TestDedupHitLogging:
 
         await wrapper.send_message("hello", ["alice"])
         with caplog.at_level(
-            "WARNING", logger="thenvoi.integrations.claude_sdk.dedup_tools"
+            "WARNING", logger="band.integrations.claude_sdk.dedup_tools"
         ):
             await wrapper.send_message("hello", ["alice"])
 
