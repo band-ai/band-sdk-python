@@ -46,7 +46,7 @@ from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
 adapter = CodexAdapter(
     config=CodexAdapterConfig(
         cwd=os.getcwd(),
-        model="gpt-5.2",
+        model="gpt-5.5",
     ),
 )
 
@@ -117,7 +117,7 @@ Pass these to `CodexAdapterConfig(...)`:
 |-----------|------|---------|-------------|
 | `transport` | `"stdio" \| "ws"` | `"stdio"` | How the adapter connects to Codex. Use `"stdio"` to spawn a process, or `"ws"` to connect to `codex app-server`. |
 | `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and prefers Codex-optimized models. |
-| `fallback_models` | `tuple[str, ...]` | `("gpt-5.2", "gpt-5.3-codex")` | Models tried if model discovery fails or returns no usable model. |
+| `fallback_models` | `tuple[str, ...]` | `("gpt-5.5", "gpt-5.4-mini")` | Models tried if model discovery fails or returns no usable model. |
 | `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
 | `personality` | `"friendly" \| "pragmatic" \| "none"` | `"pragmatic"` | Codex response style. |
@@ -213,7 +213,7 @@ from thenvoi import AdapterFeatures, Capability, Emit
 from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(model="gpt-5.2"),
+    config=CodexAdapterConfig(model="gpt-5.5"),
     features=AdapterFeatures(
         capabilities={Capability.CONTACTS, Capability.MEMORY},
         emit={Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS},
@@ -295,7 +295,7 @@ def get_weather(args: WeatherInput) -> str:
 
 
 adapter = CodexAdapter(
-    config=CodexAdapterConfig(model="gpt-5.2"),
+    config=CodexAdapterConfig(model="gpt-5.5"),
     additional_tools=[(WeatherInput, get_weather)],
 )
 ```

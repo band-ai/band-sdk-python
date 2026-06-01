@@ -25,7 +25,7 @@ Optional env overrides:
     CODEX_TRANSPORT=stdio|ws
     CODEX_WS_URL=ws://127.0.0.1:8765
     CODEX_ROLE=coding|planner|reviewer
-    CODEX_MODEL=gpt-5.3-codex
+    CODEX_MODEL=gpt-5.5
     CODEX_APPROVAL_MODE=manual|auto_accept|auto_decline
     CODEX_TURN_TASK_MARKERS=true|false
 """

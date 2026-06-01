@@ -21,7 +21,7 @@ Run with (from repo root):
 
     # Explicit model
     uv run examples/20-questions-arena/thinker_agent.py --model claude-sonnet-4-6
-    uv run examples/20-questions-arena/thinker_agent.py -m gpt-5.2
+    uv run examples/20-questions-arena/thinker_agent.py -m gpt-5.5
 """
 
 from __future__ import annotations
@@ -52,7 +52,7 @@ def _parse_args() -> argparse.Namespace:
         "--model",
         "-m",
         default=None,
-        help="LLM model name (e.g. gpt-5.2, claude-sonnet-4-6). "
+        help="LLM model name (e.g. gpt-5.5, claude-sonnet-4-6). "
         "If omitted, auto-detects from env vars.",
     )
     return parser.parse_args()

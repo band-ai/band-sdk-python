@@ -152,7 +152,7 @@ bootstrap_codex_home() {
     ' "${source_config}" > "${runtime_config}"
   else
     cat > "${runtime_config}" <<EOF
-model = "${CODEX_MODEL:-gpt-5.3-codex}"
+model = "${CODEX_MODEL:-gpt-5.5}"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 EOF

@@ -131,7 +131,7 @@ class FakeCodexClient:
         if method == "model/list":
             if self._model_list_result is not None:
                 return self._model_list_result
-            return {"data": [{"id": "gpt-5.3-codex", "hidden": False}]}
+            return {"data": [{"id": "gpt-5.5", "hidden": False}]}
 
         if method == "thread/resume":
             if self._resume_error is not None:
@@ -308,7 +308,7 @@ class TestCodexAdapter:
             turn_start_error_once=True,
         )
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", model="gpt-5.3-codex"),
+            config=CodexAdapterConfig(transport="ws", model="gpt-5.5"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -3225,13 +3225,13 @@ class TestHistoryInjection:
             events=events,
             turn_start_error=CodexJsonRpcError(
                 code=-32000,
-                message="Model gpt-5.3-codex is not available for this account",
+                message="Model gpt-5.5 is not available for this account",
             ),
             turn_start_error_once=True,
             model_list_result={
                 "data": [
-                    {"id": "gpt-5.3-codex", "hidden": False},
-                    {"id": "gpt-5.2", "hidden": False},
+                    {"id": "gpt-5.5", "hidden": False},
+                    {"id": "gpt-5.4-mini", "hidden": False},
                 ]
             },
         )
@@ -3260,33 +3260,19 @@ class TestHistoryInjection:
         ]
         assert len(turn_start_calls) == 2
         # First attempt used auto-selected model
-        assert turn_start_calls[0][1]["model"] == "gpt-5.3-codex"
-        # Retry used fallback (gpt-5.2 since gpt-5.3-codex is excluded)
-        assert turn_start_calls[1][1]["model"] == "gpt-5.2"
-        assert adapter._selected_model == "gpt-5.2"
+        assert turn_start_calls[0][1]["model"] == "gpt-5.5"
+        # Retry used the remaining visible model since the configured fallback was excluded
+        assert turn_start_calls[1][1]["model"] == "gpt-5.4-mini"
+        assert adapter._selected_model == "gpt-5.4-mini"
 
     @pytest.mark.asyncio
-    async def test_model_fallback_prefers_gpt_5_2(self) -> None:
-        """Fallback prefers gpt-5.2 over other models."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {"turn": {"id": "turn-1", "status": "completed"}},
-            ),
-        ]
-        # Auto-select picks gpt-5.3-codex (first codex model).
-        # After turn/start fails, fallback should pick gpt-5.2 (preferred fallback).
+    async def test_model_selection_prefers_configured_fallback_order(self) -> None:
+        """Auto-selection prefers configured fallback order over server order."""
         fake_client = FakeCodexClient(
-            events=events,
-            turn_start_error=CodexJsonRpcError(
-                code=-32000, message="Model unavailable"
-            ),
-            turn_start_error_once=True,
             model_list_result={
                 "data": [
-                    {"id": "gpt-5.3-codex", "hidden": False},
-                    {"id": "gpt-5.1", "hidden": False},
-                    {"id": "gpt-5.2", "hidden": False},
+                    {"id": "gpt-5.4-mini", "hidden": False},
+                    {"id": "gpt-5.5", "hidden": False},
                 ]
             },
         )
@@ -3294,22 +3280,10 @@ class TestHistoryInjection:
             config=CodexAdapterConfig(model=None),
             client_factory=lambda _config: fake_client,
         )
-        tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        msg = make_platform_message(room_id="room-1", content="hello")
-        await adapter.on_message(
-            msg,
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
-
-        # Should prefer gpt-5.2 over gpt-5.1
-        assert adapter._selected_model == "gpt-5.2"
+        # Should prefer gpt-5.5 over gpt-5.4-mini even if the server lists mini first.
+        assert adapter._selected_model == "gpt-5.5"
 
     @pytest.mark.asyncio
     async def test_explicit_model_error_propagates_without_fallback(self) -> None:
@@ -3317,19 +3291,19 @@ class TestHistoryInjection:
         fake_client = FakeCodexClient(
             turn_start_error=CodexJsonRpcError(
                 code=-32000,
-                message="Model gpt-5.3-codex-spark is not available",
+                message="Model unavailable-test-model is not available",
             ),
             turn_start_error_once=False,
             model_list_result={
                 "data": [
-                    {"id": "gpt-5.3-codex", "hidden": False},
-                    {"id": "gpt-5.2", "hidden": False},
+                    {"id": "gpt-5.5", "hidden": False},
+                    {"id": "gpt-5.4-mini", "hidden": False},
                 ]
             },
         )
         # Explicitly configured model — user chose this, don't override
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(model="gpt-5.3-codex-spark"),
+            config=CodexAdapterConfig(model="unavailable-test-model"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -3415,14 +3389,17 @@ class TestHistoryInjection:
             turn_start_error_once=True,
         )
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(model=None),
+            config=CodexAdapterConfig(
+                model=None,
+                fallback_models=("gpt-5.5", "gpt-5.4-mini"),
+            ),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        # Auto-selection without model/list picks fallback_models[0] = gpt-5.2
-        assert adapter._selected_model == "gpt-5.2"
+        # Auto-selection without model/list picks fallback_models[0] = gpt-5.5
+        assert adapter._selected_model == "gpt-5.5"
 
         msg = make_platform_message(room_id="room-1", content="hello")
         await adapter.on_message(
@@ -3435,9 +3412,9 @@ class TestHistoryInjection:
             room_id="room-1",
         )
 
-        # turn/start with gpt-5.2 fails; fallback excludes it and picks the
-        # next configured default (gpt-5.3-codex).
-        assert adapter._selected_model == "gpt-5.3-codex"
+        # turn/start with gpt-5.5 fails; fallback excludes it and picks the
+        # next configured default (gpt-5.4-mini).
+        assert adapter._selected_model == "gpt-5.4-mini"
 
     @pytest.mark.asyncio
     async def test_select_model_honours_custom_fallback_when_model_list_empty(
@@ -3501,7 +3478,7 @@ class TestHistoryInjection:
         adapter = CodexAdapter(
             config=CodexAdapterConfig(
                 transport="stdio",
-                model="gpt-5.3-codex",
+                model="gpt-5.5",
                 sandbox="workspace-write",
                 approval_mode="manual",
             ),
@@ -3518,7 +3495,7 @@ class TestHistoryInjection:
         log_msg = startup_logs[0].message
         assert "agent=TestBot" in log_msg
         assert "transport=stdio" in log_msg
-        assert "model=gpt-5.3-codex" in log_msg
+        assert "model=gpt-5.5" in log_msg
         assert "sandbox=workspace-write" in log_msg
         assert "approval_mode=manual" in log_msg
 

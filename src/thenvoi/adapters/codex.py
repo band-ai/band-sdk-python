@@ -117,7 +117,7 @@ _MAX_DIFF_METADATA_BYTES = 64 * 1024
 class SetModelInput(BaseModel):
     """Switch the model used for subsequent turns. Call this when a different model would be more appropriate for the task (e.g. a faster model for simple queries, a stronger model for complex reasoning)."""
 
-    model: str = Field(description="Model ID to use (e.g. 'gpt-5.3-codex', 'gpt-5.2').")
+    model: str = Field(description="Model ID to use (e.g. 'gpt-5.5').")
 
 
 class SetReasoningInput(BaseModel):
@@ -135,7 +135,7 @@ class SetReasoningInput(BaseModel):
 
 # Hardcoded default — update when OpenAI rotates model IDs.
 # Override at runtime via CodexAdapterConfig.model or CODEX_MODEL env var.
-_DEFAULT_MODEL = "gpt-5.3-codex"
+_DEFAULT_MODEL = "gpt-5.5"
 
 
 class _CodexClientProtocol(Protocol):
@@ -246,7 +246,7 @@ class CodexAdapterConfig:
     max_history_messages: int = 50
     # Fallback models tried when model/list fails or returns empty.
     # Update when OpenAI rotates model IDs.
-    fallback_models: tuple[str, ...] = ("gpt-5.2", "gpt-5.3-codex")
+    fallback_models: tuple[str, ...] = ("gpt-5.5", "gpt-5.4-mini")
     max_pending_approvals_per_room: int = 50
     max_approval_audit_per_room: int = 100
     # Upper bound on session-level approvals retained per room
@@ -1062,12 +1062,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             and isinstance(entry.get("id"), str)
             and not bool(entry.get("hidden", False))
         ]
-        for entry in visible_models:
-            model_id = str(entry["id"])
-            if "codex" in model_id:
+        visible_model_ids = [str(entry["id"]) for entry in visible_models]
+        for model_id in self.config.fallback_models:
+            if model_id in visible_model_ids:
                 return model_id
-        if visible_models:
-            return str(visible_models[0]["id"])
+        if visible_model_ids:
+            return visible_model_ids[0]
         return self._first_configured_fallback()
 
     def _first_configured_fallback(self) -> str:
@@ -2864,9 +2864,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     return model_id
             return None
         models = self._visible_model_ids(result)
-        # Prefer configured fallback models if available
-        for model_id in models:
-            if model_id != exclude and model_id in fallbacks:
+        # Prefer configured fallback models in operator-defined priority order.
+        for model_id in fallbacks:
+            if model_id != exclude and model_id in models:
                 return model_id
         for model_id in models:
             if model_id != exclude:
