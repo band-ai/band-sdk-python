@@ -140,18 +140,21 @@ class TestClaudeSDKPromptsToolDrift:
 
 
 class TestLangGraphToolDrift:
-    """LangGraph integration (integrations/langgraph/langchain_tools.py)."""
+    """LangGraph integration (integrations/langgraph/langchain_tools.py).
+
+    The integration is registry-driven (via ``iter_tool_definitions``) so the
+    drift check verifies the import rather than scanning for literal tool
+    names — there are intentionally no per-tool string literals to find.
+    """
 
     _FILE = _SRC_ROOT / "integrations" / "langgraph" / "langchain_tools.py"
 
-    def test_all_tools_registered(self):
-        """Every tool in TOOL_MODELS has a StructuredTool wrapper."""
+    def test_derives_tools_from_central_registry(self):
         source = self._FILE.read_text()
-        found = _extract_tool_names(source)
-        missing = ALL_TOOL_NAMES - found
-        assert not missing, (
-            f"LangGraph integration is missing StructuredTool wrappers for: "
-            f"{sorted(missing)}. Add wrappers in create_langchain_tools()."
+        assert "iter_tool_definitions" in source, (
+            "LangGraph integration should derive its StructuredTool wrappers "
+            "from iter_tool_definitions() in thenvoi.runtime.tools instead of "
+            "hand-rolling per-tool wrappers."
         )
 
 

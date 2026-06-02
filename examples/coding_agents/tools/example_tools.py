@@ -41,7 +41,6 @@ _FUNCTIONS = {
     "pow": pow,
 }
 
-
 # Maximum recursion depth for expression evaluation
 _MAX_DEPTH = 50
 

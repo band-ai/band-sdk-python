@@ -4,83 +4,116 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-# Add thenvoi-bridge directory to sys.path so we can import bridge_core.* and handlers.*
-# Use os.path.abspath for the check and insertion to avoid duplicates from
-# different relative representations of the same path.
 _bridge_dir = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "thenvoi-bridge")
 )
 if _bridge_dir not in sys.path:
     sys.path.insert(0, _bridge_dir)
 
-from bridge_core.bridge import BridgeConfig, BandBridge  # noqa: E402
+from bridge_core.bridge import BandBridge  # noqa: E402
+from bridge_core.config import (  # noqa: E402
+    AgentConfig,
+    AgentCoreTarget,
+    BridgeConfig,
+    HTTPTarget,
+)
+from bridge_core.forwarder import Forwarder  # noqa: E402
 
 
-def make_tools(
-    participants: list[dict] | None = None,
-    send_event_side_effect: Exception | None = None,
-) -> MagicMock:
-    """Create a mock AgentTools with common defaults.
+class FakeForwarder:
+    """Records all forward() calls; for use in tests."""
 
-    Shared across all bridge handler tests.
-    """
-    tools = MagicMock()
-    tools.send_message = AsyncMock()
-    tools.send_event = AsyncMock(side_effect=send_event_side_effect)
-    tools.participants = participants or []
-    return tools
+    def __init__(self) -> None:
+        self.forwarded: list[dict[str, Any]] = []
+        self.closed = False
+        self.forward_side_effect: Exception | None = None
+
+    async def forward(self, payload: dict[str, Any]) -> None:
+        if self.forward_side_effect is not None:
+            raise self.forward_side_effect
+        self.forwarded.append(payload)
+
+    async def close(self) -> None:
+        self.closed = True
 
 
-@pytest.fixture
-def bridge_config() -> BridgeConfig:
-    """Standard bridge config for tests."""
-    return BridgeConfig(
-        agent_id="agent-1",
-        api_key="key-1",
-        agent_mapping="alice:handler_a",
+def make_http_agent(
+    agent_id: str = "agent-1",
+    api_key: str = "key-1",
+    url: str = "https://example.com/invocations",
+) -> AgentConfig:
+    return AgentConfig(
+        agent_id=agent_id,
+        api_key=api_key,
+        target=HTTPTarget(url=url),
     )
 
 
-@pytest.fixture
-def bridge_with_mock_link(bridge_config: BridgeConfig) -> BandBridge:
-    """Bridge instance with a mocked link and handler."""
-    handler = AsyncMock()
-    b = BandBridge(config=bridge_config, handlers={"handler_a": handler})
-    mock_link = MagicMock()
-    mock_link.subscribe_room = AsyncMock()
-    mock_link.unsubscribe_room = AsyncMock()
-    mock_link.rest = MagicMock()
-    b._link = mock_link
-    b._router._link = mock_link
-    return b
+def make_agentcore_agent(
+    agent_id: str = "agent-1",
+    api_key: str = "key-1",
+    runtime_arn: str = "arn:aws:bedrock-agentcore:us-east-1:123:runtime/abc",
+    region: str = "us-east-1",
+) -> AgentConfig:
+    return AgentConfig(
+        agent_id=agent_id,
+        api_key=api_key,
+        target=AgentCoreTarget(runtime_arn=runtime_arn, region=region),
+    )
 
 
-@pytest.fixture
-def bridge_with_full_mock(bridge_config: BridgeConfig) -> BandBridge:
-    """Bridge with all link methods mocked (superset of bridge_with_mock_link).
+def make_link_mock() -> MagicMock:
+    """Build a MagicMock BandLink with all async methods stubbed.
 
-    Covers connect, disconnect, subscribe/unsubscribe, lifecycle marks,
-    and REST endpoints needed by dedup, participant cache, and
-    connect-and-consume tests.
+    Used by tests that construct a BandBridge or AgentRunner without
+    a real WS connection.
     """
-    handler = AsyncMock()
-    b = BandBridge(config=bridge_config, handlers={"handler_a": handler})
-    mock_link = MagicMock()
-    mock_link.connect = AsyncMock()
-    mock_link.disconnect = AsyncMock()
-    mock_link.subscribe_room = AsyncMock()
-    mock_link.unsubscribe_room = AsyncMock()
-    mock_link.subscribe_agent_rooms = AsyncMock()
-    mock_link.mark_processing = AsyncMock()
-    mock_link.mark_processed = AsyncMock()
-    mock_link.rest = MagicMock()
-    mock_link.rest.agent_api_chats.list_agent_chats = AsyncMock(
+    link = MagicMock()
+    link.connect = AsyncMock()
+    link.disconnect = AsyncMock()
+    link.subscribe_room = AsyncMock()
+    link.unsubscribe_room = AsyncMock()
+    link.subscribe_agent_rooms = AsyncMock()
+    link.get_next_message = AsyncMock(return_value=None)
+    link.is_connected = True
+    link.rest = MagicMock()
+    link.rest.agent_api_chats.list_agent_chats = AsyncMock(
         return_value=MagicMock(data=None)
     )
-    b._link = mock_link
-    b._router._link = mock_link
-    return b
+    return link
+
+
+@pytest.fixture
+def http_agent() -> AgentConfig:
+    return make_http_agent()
+
+
+@pytest.fixture
+def bridge_config(http_agent: AgentConfig) -> BridgeConfig:
+    return BridgeConfig(agents=[http_agent])
+
+
+@pytest.fixture
+def fake_forwarder() -> FakeForwarder:
+    return FakeForwarder()
+
+
+@pytest.fixture
+def bridge_with_fakes(
+    bridge_config: BridgeConfig, fake_forwarder: FakeForwarder
+) -> BandBridge:
+    """BandBridge wired with a FakeForwarder and a mock link per agent."""
+    forwarders: dict[str, Forwarder] = {
+        a.agent_id: fake_forwarder for a in bridge_config.agents
+    }
+    links = {a.agent_id: make_link_mock() for a in bridge_config.agents}
+    return BandBridge(
+        config=bridge_config,
+        forwarders=forwarders,
+        links=links,
+    )

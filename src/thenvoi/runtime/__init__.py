@@ -32,6 +32,7 @@ from .types import (
 from .presence import RoomPresence
 from .execution import Execution, ExecutionContext, ExecutionHandler
 from .runtime import AgentRuntime
+from .oneshot import OneShotInvoker, OneShotEnvelopeError
 
 # Tools
 from .tools import (
@@ -71,6 +72,8 @@ __all__ = [
     "ExecutionContext",
     "ExecutionHandler",
     "AgentRuntime",
+    "OneShotInvoker",
+    "OneShotEnvelopeError",
     # Tools
     "AgentTools",
     "HumanTools",

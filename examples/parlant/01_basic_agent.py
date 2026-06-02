@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[parlant]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Basic Parlant agent example using the official Parlant SDK.
@@ -29,8 +29,7 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.config import load_agent_config
-from band.integrations.parlant.tools import create_parlant_tools
+from thenvoi.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -124,10 +123,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("parlant_agent")
-
     # Start Parlant server with OpenAI (requires OPENAI_API_KEY env var)
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
         # Create Parlant tools INSIDE server context
@@ -149,10 +144,9 @@ async def main() -> None:
         )
 
         # Create and start Band agent
-        agent = Agent.create(
+        agent = Agent.from_config(
+            "parlant_agent",
             adapter=adapter,
-            agent_id=agent_id,
-            api_key=api_key,
             ws_url=ws_url,
             rest_url=rest_url,
         )

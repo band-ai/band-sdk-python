@@ -4,7 +4,7 @@ This example puts multiple integration styles in one shared Band room:
 
 - 2 native CrewAI agents running as normal Band agents
 - 2 remote A2A services running as local HTTP agents
-- 1 bridge process that connects both remote A2A services to Thenvoi so they act like room participants
+- 1 bridge process that connects both remote A2A services to Band so they act like room participants
 
 The result is a room where native agents and bridged remote agents can all react to the same engineering request.
 
@@ -19,9 +19,9 @@ The user asks the room to sanity-check a change before ship. The agents split th
 - `02_draft_writer.py`
   Waits for the room's findings, then writes the final engineering note.
 - `03_fact_checker_a2a.py`
-  Runs outside Thenvoi as a local A2A service. It acts like an API contract checker and returns concrete implementation facts.
+  Runs outside Band as a local A2A service. It acts like an API contract checker and returns concrete implementation facts.
 - `04_risk_reviewer_a2a.py`
-  Runs outside Thenvoi as a local A2A service. It returns compatibility, rollout, rollback, and observability risks.
+  Runs outside Band as a local A2A service. It returns compatibility, rollout, rollback, and observability risks.
 - `05_a2a_bridge.py`
   Starts two Band bridge agents in one process. One forwards room messages to the contract checker A2A service. The other forwards room messages to the risk reviewer A2A service.
 
@@ -31,7 +31,7 @@ Without the bridge, the A2A services are just local HTTP agents. You can call th
 
 With the bridge running:
 
-- each remote A2A service gets a Thenvoi-facing bridge agent
+- each remote A2A service gets a Band-facing bridge agent
 - those bridge agents connect to the platform WebSocket
 - room messages are forwarded to the remote A2A services
 - A2A replies come back into the room as normal agent messages
@@ -53,13 +53,13 @@ That is what makes the remote services bidirectional participants instead of iso
 You need:
 
 - `OPENAI_API_KEY` for the CrewAI agents
-- optional: `OPENAI_MODEL` if you do not want the default `gpt-4o`
+- optional: `OPENAI_MODEL` if you do not want the default `gpt-5.4-mini`
 - four Band agent credentials in `examples/mixed/agents.yaml`
 
-The mixed examples default to the hosted Thenvoi URLs:
+The mixed examples default to the hosted Band URLs:
 
-- `THENVOI_WS_URL=wss://app.band.ai/api/v1/socket/websocket`
-- `THENVOI_REST_URL=https://app.band.ai`
+- `THENVOI_WS_URL=wss://app.thenvoi.com/api/v1/socket/websocket`
+- `THENVOI_REST_URL=https://app.thenvoi.com`
 
 Only set those vars if you want to point the example at another environment.
 
@@ -134,7 +134,7 @@ curl http://127.0.0.1:10121/.well-known/agent.json
 curl http://127.0.0.1:10122/.well-known/agent.json
 ```
 
-At this point they are still remote A2A services only. They are not Thenvoi participants yet.
+At this point they are still remote A2A services only. They are not Band participants yet.
 
 ### 2. Start the bridge process
 
@@ -195,7 +195,7 @@ From the platform's point of view, the two bridged A2A services behave like norm
 
 ## Troubleshooting
 
-### The A2A services are up, but nothing appears in Thenvoi
+### The A2A services are up, but nothing appears in Band
 
 The bridge is the missing piece. Starting `03_fact_checker_a2a.py` and `04_risk_reviewer_a2a.py` alone does not connect them to the platform.
 

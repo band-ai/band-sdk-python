@@ -76,7 +76,7 @@ class TestAgentCallbackFlow:
             on_event=capture_event,
         )
 
-        adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini")
         agent = Agent.create(
             adapter=adapter,
             agent_id=agent_id,
@@ -112,7 +112,7 @@ class TestAgentBroadcastFlow:
             broadcast_changes=True,
         )
 
-        adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini")
         agent = Agent.create(
             adapter=adapter,
             agent_id=agent_id,
@@ -144,7 +144,7 @@ class TestAgentGracefulShutdown:
             on_event=lambda e, t: None,
         )
 
-        adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4-mini")
         agent = Agent.create(
             adapter=adapter,
             agent_id=agent_id,

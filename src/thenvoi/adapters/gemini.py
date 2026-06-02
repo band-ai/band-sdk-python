@@ -70,7 +70,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
     def __init__(
         self,
         model: str = "gemini-2.5-flash",
-        api_key: str | None = None,
+        provider_key: str | None = None,
         system_prompt: str | None = None,
         prompt: str | None = None,
         max_output_tokens: int | None = None,
@@ -84,21 +84,34 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         features: AdapterFeatures | None = None,
         include_base_instructions: bool = True,
         # --- Deprecated (one release, then remove) ---
+        api_key: str | None = None,
         gemini_api_key: str | None = None,
         custom_section: str | None = None,
         enable_execution_reporting: bool = False,
         enable_memory_tools: bool = False,
     ) -> None:
-        # --- Selective: api_key rename ---
+        # --- Selective: provider_key rename ---
         if gemini_api_key is not None:
             warnings.warn(
-                "gemini_api_key is deprecated, use api_key instead",
+                "gemini_api_key is deprecated, use provider_key instead",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            if api_key is not None:
-                raise BandConfigError("Cannot pass both api_key and gemini_api_key")
-            api_key = gemini_api_key
+            if provider_key is not None or api_key is not None:
+                raise BandConfigError(
+                    "Cannot pass gemini_api_key together with provider_key or api_key"
+                )
+            provider_key = gemini_api_key
+
+        if api_key is not None:
+            warnings.warn(
+                "api_key is deprecated on GeminiAdapter, use provider_key instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if provider_key is not None:
+                raise BandConfigError("Cannot pass both provider_key and api_key")
+            provider_key = api_key
 
         # --- Selective: prompt rename ---
         if custom_section is not None:
@@ -148,7 +161,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         self.retry_base_delay_s = retry_base_delay_s
         self.max_history_messages = max_history_messages
 
-        self._api_key = api_key
+        self._provider_key = provider_key
         self.client: genai.Client | None = None
         self._message_history: dict[str, GeminiMessages] = {}
         self._system_prompt: str = ""
@@ -334,11 +347,12 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             return self.client
 
         try:
-            self.client = genai.Client(api_key=self._api_key)
+            self.client = genai.Client(api_key=self._provider_key)
         except ValueError as e:
             raise ValueError(
-                "Gemini client initialization failed. Provide GEMINI_API_KEY or "
-                "pass api_key explicitly."
+                "Gemini client initialization failed. Either set GOOGLE_API_KEY "
+                "/ GEMINI_API_KEY, or enable Vertex AI mode "
+                "(GOOGLE_GENAI_USE_VERTEXAI=true + GOOGLE_CLOUD_PROJECT)."
             ) from e
         return self.client
 

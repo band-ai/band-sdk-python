@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[letta]", "python-dotenv"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Basic Letta agent example.
@@ -19,7 +19,7 @@ Environment variables:
                         Set to http://localhost:8283 for self-hosted.
     LETTA_API_KEY       Letta API key (required for Cloud, optional for self-hosted)
     LETTA_PROJECT       Letta Cloud project name (optional)
-    LETTA_MODEL         LLM model ID (default: openai/gpt-4o)
+    LETTA_MODEL         LLM model ID (default: openai/gpt-5.4-mini)
     MCP_SERVER_URL      thenvoi-mcp server URL (default: http://localhost:8002/sse)
                         Must be reachable by the Letta server. For Letta Cloud
                         this must be a publicly reachable URL (e.g. via ngrok).
@@ -51,8 +51,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from setup_logging import setup_logging
 
 from band import Agent
-from band.adapters.letta import LettaAdapter, LettaAdapterConfig
-from band.config import load_agent_config
+from thenvoi.adapters.letta import LettaAdapter, LettaAdapterConfig
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -68,10 +67,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("letta_agent")
-
     # Create adapter — defaults to Letta Cloud (https://api.letta.com).
     # For self-hosted, set LETTA_BASE_URL=http://localhost:8283
     adapter = LettaAdapter(
@@ -79,11 +74,11 @@ async def main() -> None:
             # Letta Cloud by default; override with LETTA_BASE_URL for self-hosted
             base_url=os.getenv("LETTA_BASE_URL", "https://api.letta.com"),
             # Required for Letta Cloud, optional for self-hosted
-            api_key=os.getenv("LETTA_API_KEY"),
+            provider_key=os.getenv("LETTA_API_KEY"),
             # Letta Cloud project scoping (optional)
             project=os.getenv("LETTA_PROJECT"),
             # LLM model to use
-            model=os.getenv("LETTA_MODEL", "openai/gpt-4o"),
+            model=os.getenv("LETTA_MODEL", "openai/gpt-5.4-mini"),
             # thenvoi-mcp server for platform tool execution
             mcp_server_url=os.getenv("MCP_SERVER_URL", "http://localhost:8002/sse"),
             # Custom prompt section
@@ -92,10 +87,9 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "letta_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

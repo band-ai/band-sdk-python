@@ -12,9 +12,16 @@ import logging
 from unittest.mock import AsyncMock
 
 import pytest
+from phoenix_channels_python_client.exceptions import PHXConnectionError
+from websockets.datastructures import Headers
+from websockets.exceptions import InvalidStatus
+from websockets.http11 import Response
 
 from thenvoi.client.streaming import (
     MessageCreatedPayload,
+    SupersedePayload,
+    WebSocketDisconnectReason,
+    WebSocketUpgradeError,
     ParticipantAddedPayload,
     ParticipantRemovedPayload,
     RoomAddedPayload,
@@ -39,6 +46,19 @@ VALID_MESSAGE_CREATED_PAYLOAD: dict = {
     "inserted_at": "2025-11-17T11:20:10.284136Z",
     "updated_at": "2025-11-17T11:20:10.284136Z",
 }
+
+
+def _upgrade_exception(
+    status_code: int, body: bytes, headers: dict[str, str] | None = None
+):
+    return InvalidStatus(
+        Response(
+            status_code=status_code,
+            reason_phrase="error",
+            headers=Headers(headers or {}),
+            body=body,
+        )
+    )
 
 
 # --- Invalid payload tests: verify graceful handling (log + skip) ---
@@ -204,6 +224,253 @@ async def test_skips_invalid_participant_removed_payload(caplog):
 
     assert not callback_called, "Callback should not be called for invalid payload"
     assert "Invalid participant_removed payload" in caplog.text
+
+
+async def test_supersede_event_records_terminal_reason_and_disables_reconnect():
+    """agent_control supersede should record the server reason and stop reconnects."""
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    client.client = type("MockPhoenix", (), {"auto_reconnect": True})()
+    received_payload = None
+
+    async def on_supersede(payload: SupersedePayload):
+        nonlocal received_payload
+        received_payload = payload
+        client.record_terminal_disconnect(payload.to_disconnect_reason())
+
+    class MockMessage:
+        event = "supersede"
+        payload = {
+            "reason": "session.already_connected",
+            "message": "This connection has been superseded by a newer session for this agent.",
+            "retryable": False,
+            "retry_after": 15,
+            "target_socket_id": "agent_socket:agent-123",
+            "correlation_id": "evict-123",
+        }
+
+    await client._handle_events(MockMessage(), {"supersede": on_supersede})
+
+    assert isinstance(received_payload, SupersedePayload)
+    assert client.client.auto_reconnect is False
+    assert client.last_disconnect_reason == WebSocketDisconnectReason(
+        reason="session.already_connected",
+        message="This connection has been superseded by a newer session for this agent.",
+        retryable=False,
+        retry_after=15,
+        target_socket_id="agent_socket:agent-123",
+        correlation_id="evict-123",
+    )
+
+
+def test_parses_distinct_upgrade_errors_from_http_json_response():
+    cases = [
+        (
+            409,
+            b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
+            "connection_conflict",
+            None,
+        ),
+        (
+            400,
+            b'{"error":{"code":"invalid_on_conflict","message":"bad on_conflict","request_id":"req-400"}}',
+            "invalid_on_conflict",
+            None,
+        ),
+        (
+            503,
+            b'{"error":{"code":"tracking_failed","message":"tracking unavailable","request_id":"req-503"}}',
+            "tracking_failed",
+            None,
+        ),
+        (
+            429,
+            b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-429","retry_after":12}}',
+            "too_many_requests",
+            12,
+        ),
+    ]
+
+    for status_code, body, code, retry_after in cases:
+        err = WebSocketUpgradeError.from_exception(
+            _upgrade_exception(status_code, body, {"Retry-After": "30"})
+        )
+
+        assert err is not None
+        assert err.status_code == status_code
+        assert err.code == code
+        assert err.request_id == f"req-{status_code}"
+        assert err.retry_after == retry_after
+
+
+def test_uses_retry_after_header_for_429_upgrade_error():
+    err = WebSocketUpgradeError.from_exception(
+        _upgrade_exception(
+            429,
+            b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-header"}}',
+            {"Retry-After": "30"},
+        )
+    )
+
+    assert err is not None
+    assert err.retry_after == 30
+
+
+def test_ignores_generic_auth_upgrade_error_without_json_contract():
+    err = WebSocketUpgradeError.from_exception(_upgrade_exception(403, b""))
+
+    assert err is None
+
+
+async def test_aenter_wraps_upgrade_error(monkeypatch):
+    upgrade_exc = _upgrade_exception(
+        409,
+        b'{"error":{"code":"connection_conflict","message":"already connected","request_id":"req-409"}}',
+    )
+
+    class FailingPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+
+        async def __aenter__(self):
+            raise upgrade_exc
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(WebSocketUpgradeError) as exc_info:
+        await client.__aenter__()
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "connection_conflict"
+    assert exc_info.value.request_id == "req-409"
+
+
+async def test_aenter_probes_initial_phx_connection_error(monkeypatch):
+    upgrade_exc = _upgrade_exception(
+        429,
+        b'{"error":{"code":"too_many_requests","message":"slow down","request_id":"req-429"}}',
+        {"Retry-After": "30"},
+    )
+    probed_urls = []
+
+    class FailingPHXClient:
+        def __init__(self, *args, **kwargs):
+            assert kwargs["auto_reconnect"] is False
+            self.channel_socket_url = "wss://test/socket"
+
+        async def __aenter__(self):
+            raise PHXConnectionError("Connection supervisor stopped before connecting")
+
+    class FailingProbe:
+        async def __aenter__(self):
+            raise upgrade_exc
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    def fake_connect(url, *, open_timeout):
+        probed_urls.append((url, open_timeout))
+        return FailingProbe()
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+    )
+    monkeypatch.setattr("thenvoi.client.streaming.errors.connect", fake_connect)
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(WebSocketUpgradeError) as exc_info:
+        await client.__aenter__()
+
+    assert probed_urls == [("wss://test/socket&agent_id=agent-123", 5)]
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.code == "too_many_requests"
+    assert exc_info.value.retry_after == 30
+
+
+async def test_aenter_restores_reconnect_after_successful_initial_connect(monkeypatch):
+    init_kwargs = {}
+
+    class SuccessfulPHXClient:
+        def __init__(self, *args, **kwargs):
+            init_kwargs.update(kwargs)
+            self.channel_socket_url = "wss://test/socket"
+            self.auto_reconnect = kwargs["auto_reconnect"]
+
+        async def __aenter__(self):
+            return self
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", SuccessfulPHXClient
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    await client.__aenter__()
+
+    assert init_kwargs["auto_reconnect"] is False
+    assert client.client.auto_reconnect is True
+
+
+async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch):
+    attempts = 0
+    sleep_delays = []
+
+    class FlakyPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+            self.auto_reconnect = kwargs["auto_reconnect"]
+
+        async def __aenter__(self):
+            nonlocal attempts
+            attempts += 1
+            if attempts < 3:
+                raise PHXConnectionError("temporary network failure")
+            return self
+
+    async def no_upgrade_error(exc, websocket_url):
+        return None
+
+    async def fake_sleep(delay):
+        sleep_delays.append(delay)
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", FlakyPHXClient
+    )
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.classify_initial_upgrade_error",
+        no_upgrade_error,
+    )
+    monkeypatch.setattr("thenvoi.client.streaming.client.asyncio.sleep", fake_sleep)
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    await client.__aenter__()
+
+    assert attempts == 3
+    assert len(sleep_delays) == 2
+    assert client.client.auto_reconnect is True
+
+
+async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
+    original_exc = RuntimeError("socket exploded")
+
+    class FailingPHXClient:
+        def __init__(self, *args, **kwargs):
+            self.channel_socket_url = "wss://test/socket"
+
+        async def __aenter__(self):
+            raise original_exc
+
+    monkeypatch.setattr(
+        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+    )
+
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+
+    with pytest.raises(RuntimeError, match="socket exploded"):
+        await client.__aenter__()
 
 
 # --- Valid payload tests ---

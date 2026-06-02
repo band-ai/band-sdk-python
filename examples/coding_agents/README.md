@@ -8,7 +8,7 @@ Run a 2-agent team (Claude SDK planner + Codex reviewer) sharing a workspace, co
 docker compose up
 ├── planner        (ClaudeSDKAdapter, Claude model)
 │   └── Role: planner — designs plans, coordinates agents
-├── reviewer       (CodexAdapter, gpt-5.3-codex, reasoning: xhigh)
+├── reviewer       (CodexAdapter, gpt-5.5, reasoning: xhigh)
 │   └── Role: reviewer — reviews plans and code, finds gaps and risks
 ```
 
@@ -113,7 +113,7 @@ docker compose logs -f reviewer
 | `GIT_SSH_STRICT_HOST_KEY_CHECKING` | `true` | Enforce host-key precheck for SSH remotes |
 | `REPO_INIT_LOCK_TIMEOUT_S` | `120` | Max wait for repo-init lock |
 | `REVIEWER_AGENT_KEY` | `reviewer` | Agent config key for reviewer |
-| `REVIEWER_MODEL` | `gpt-5.3-codex` | Model for reviewer |
+| `REVIEWER_MODEL` | `gpt-5.5` | Model for reviewer |
 | `REVIEWER_REASONING_EFFORT` | `xhigh` | Reasoning effort for reviewer |
 
 ### `agent_config.yaml`

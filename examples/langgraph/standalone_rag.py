@@ -14,6 +14,7 @@ This graph implements an intelligent RAG system that:
 It can be imported and used as a tool in any agent, or used standalone.
 """
 
+import os
 from typing import Literal, cast
 from pydantic import BaseModel, Field
 
@@ -70,8 +71,9 @@ def create_rag_graph():
     retriever_tool = retrieve_blog_posts
 
     # Step 3: Set up LLMs
-    response_model = ChatOpenAI(model="gpt-4o", temperature=0)
-    grader_model = ChatOpenAI(model="gpt-4o", temperature=0)
+    model = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
+    response_model = ChatOpenAI(model=model, temperature=0)
+    grader_model = ChatOpenAI(model=model, temperature=0)
 
     # Step 4: Define graph nodes
 

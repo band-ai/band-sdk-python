@@ -32,7 +32,6 @@ from setup_logging import setup_logging  # noqa: E402
 from thenvoi import Agent  # noqa: E402
 from thenvoi.adapters import CrewAIFlowAdapter  # noqa: E402
 from thenvoi.adapters.crewai_flow import get_current_flow_runtime  # noqa: E402
-from thenvoi.config import load_agent_config  # noqa: E402
 from thenvoi.core.types import AdapterFeatures, Emit  # noqa: E402
 
 setup_logging()
@@ -99,19 +98,15 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    agent_id, api_key = load_agent_config("crewai_flow_custom_tools")
-
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
         additional_tools=[(EmailsInput, emails)],
         features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "crewai_flow_custom_tools",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

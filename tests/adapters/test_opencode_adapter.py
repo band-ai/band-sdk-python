@@ -837,7 +837,7 @@ class TestOpencodeAdapter:
             ]
         )
         adapter = OpencodeAdapter(
-            config=OpencodeAdapterConfig(provider_id="openai", model_id="gpt-5.2"),
+            config=OpencodeAdapterConfig(provider_id="openai", model_id="gpt-5.5"),
             client_factory=lambda _config: fake_client,
         )
         tools = FakeAgentTools()

@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Simple LangGraph agent example using the composition API.
@@ -28,7 +28,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import LangGraphAdapter
-from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -36,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     load_dotenv()
-
     ws_url = os.getenv("THENVOI_WS_URL")
     rest_url = os.getenv("THENVOI_REST_URL")
 
@@ -45,20 +43,16 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("simple_agent")
-
     # Create adapter with LLM and checkpointer
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-4o"),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "simple_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

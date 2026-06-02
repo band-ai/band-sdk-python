@@ -1,4 +1,4 @@
-# LangGraph Examples for Thenvoi
+# LangGraph Examples for Band
 
 This guide explains how to integrate LangGraph agents with the Band platform using the composition-based SDK.
 
@@ -12,26 +12,26 @@ uv sync --extra langgraph
 
 **If using as external library:**
 ```bash
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[langgraph]"
+uv add "git+https://github.com/thenvoi/band-sdk-python.git[langgraph]"
 ```
 
 **Configuration:**
-- Set `OPENAI_API_KEY` environment variable
-- Configure agent credentials (see main [README](../../README.md#creating-remote-agents-on-thenvoi-platform))
+- Set `OPENAI_API_KEY` environment variable. Optionally set `OPENAI_MODEL` to override the default `gpt-5.4-mini` model.
+- Configure agent credentials (see main [README](../../README.md#creating-remote-agents-on-thenvoi-platform)).
 
 ---
 
 ## Quick Start
 
 ```python
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
+from band import Agent
+from band.adapters import LangGraphAdapter
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
 # Create adapter with LLM and checkpointer
 adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
+    llm=ChatOpenAI(model="gpt-5.4-mini"),
     checkpointer=InMemorySaver(),
 )
 
@@ -40,8 +40,6 @@ agent = Agent.create(
     adapter=adapter,
     agent_id="your-agent-id",
     api_key="your-api-key",
-    ws_url="wss://app.band.ai/api/v1/socket/websocket",
-    rest_url="https://app.band.ai",
 )
 await agent.run()
 ```
@@ -56,7 +54,7 @@ await agent.run()
 |------|-------------|
 | `01_simple_agent.py` | **Minimal setup** - Just LLM + platform tools. Great starting point. |
 | `02_custom_tools.py` | **Custom tools** - Built-in agent + calculator and weather tools using `additional_tools`. |
-| `03_custom_personality.py` | **Custom personality** - Built-in agent + pirate personality using `custom_instructions`. |
+| `03_custom_personality.py` | Custom personality - built-in agent plus pirate behavior using `custom_section`. |
 
 ### Advanced: Delegating to Sub-Agents
 
@@ -66,6 +64,14 @@ await agent.run()
 | `05_rag_as_tool.py` | **RAG sub-graph** - Delegates research to RAG sub-graph with vector search. |
 | `06_delegate_to_sql_agent.py` | **SQL sub-agent** - Delegates database queries to SQL expert. |
 
+### Multi-Agent and Custom Graphs
+
+| File | Description |
+|------|-------------|
+| `07_tom_agent.py` | Character agent that can look up and invite another agent into the room. |
+| `08_jerry_agent.py` | Paired character agent for multi-agent room demos. |
+| `09_research_ops_orchestrator.py` | **Custom operations graph** - Multi-node graph with platform events, calculator delegation, and SQL delegation. |
+
 **Supporting files:** `standalone_calculator.py`, `standalone_rag.py`, `standalone_sql_agent.py`
 
 ---
@@ -74,8 +80,8 @@ await agent.run()
 
 ```python
 from langchain_core.tools import tool
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
+from band import Agent
+from band.adapters import LangGraphAdapter
 
 @tool
 def my_custom_tool(query: str) -> str:
@@ -83,7 +89,7 @@ def my_custom_tool(query: str) -> str:
     return "result"
 
 adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
+    llm=ChatOpenAI(model="gpt-5.4-mini"),
     checkpointer=InMemorySaver(),
     additional_tools=[my_custom_tool],  # Your tools added here
 )
@@ -108,7 +114,12 @@ calculator_graph = create_calculator_graph()
 calculator_tool = graph_as_tool(
     calculator_graph,
     name="calculator",
-    description="Evaluates math expressions"
+    description="Evaluates math expressions",
+    input_schema={
+        "operation": "add, subtract, multiply, or divide",
+        "a": "First number",
+        "b": "Second number",
+    },
 )
 
 # Add to main agent
@@ -125,7 +136,7 @@ adapter = LangGraphAdapter(
 
 ```python
 adapter = LangGraphAdapter(
-    llm=ChatOpenAI(model="gpt-4o"),
+    llm=ChatOpenAI(model="gpt-5.4-mini"),
     checkpointer=InMemorySaver(),
     custom_section="You are a pirate assistant. Always respond in pirate speak!",
 )
@@ -142,10 +153,14 @@ All LangGraph agents automatically have access to:
 | `thenvoi_send_message` | Send a message to the chat room |
 | `thenvoi_add_participant` | Add a user or agent to the room |
 | `thenvoi_remove_participant` | Remove a participant from the room |
-| `thenvoi_get_participants` | List current room participants |
 | `thenvoi_lookup_peers` | List users/agents that can be added |
+| `thenvoi_get_participants` | List current room participants |
+| `thenvoi_create_chatroom` | Create a new chat room |
+| `thenvoi_send_event` | Send a non-message event such as thought, task, or error |
 
-**Note:** All tools automatically know which room they're operating in (via `thread_id`). No need to pass room IDs manually.
+Contact tools are available when `Capability.CONTACTS` is enabled. Memory tools are available when `Capability.MEMORY` is enabled.
+
+All tools automatically know which room they're operating in through the LangGraph `thread_id`; do not pass room IDs manually. Use `thenvoi_send_message` when another participant should be woken up, and include the participant in `mentions`. Use `thenvoi_send_event` for non-waking telemetry such as thoughts, task status, or errors.
 
 ---
 
@@ -170,6 +185,13 @@ uv run --extra langgraph python examples/langgraph/05_rag_as_tool.py
 
 # SQL sub-agent
 uv run --extra langgraph python examples/langgraph/06_delegate_to_sql_agent.py
+
+# Multi-agent character demos
+uv run --extra langgraph python examples/langgraph/07_tom_agent.py
+uv run --extra langgraph python examples/langgraph/08_jerry_agent.py
+
+# Custom operations graph with platform reporting and subgraph delegation
+uv run --extra langgraph python examples/langgraph/09_research_ops_orchestrator.py
 ```
 
 **Using as external library:**
@@ -192,12 +214,41 @@ simple_agent:
 custom_tools_agent:
   agent_id: "agent_789"
   api_key: "key_012"
+
+custom_personality_agent:
+  agent_id: "agent_345"
+  api_key: "key_678"
+
+calculator_agent:
+  agent_id: "agent_901"
+  api_key: "key_234"
+
+rag_agent:
+  agent_id: "agent_567"
+  api_key: "key_890"
+
+sql_agent:
+  agent_id: "agent_246"
+  api_key: "key_135"
+
+research_ops_agent:
+  agent_id: "agent_ops"
+  api_key: "key_ops"
+
+# Also used by multi-agent examples:
+tom_agent:
+  agent_id: "agent_tom"
+  api_key: "key_tom"
+
+jerry_agent:
+  agent_id: "agent_jerry"
+  api_key: "key_jerry"
 ```
 
 Load config in your code:
 
 ```python
-from thenvoi.config import load_agent_config
+from band.config import load_agent_config
 
 agent_id, api_key = load_agent_config("simple_agent")
 ```

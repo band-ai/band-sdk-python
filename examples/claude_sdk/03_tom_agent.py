@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[claude_sdk]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Tom the cat agent using Claude SDK.
@@ -39,8 +39,7 @@ from prompts.characters import generate_tom_prompt
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ClaudeSDKAdapter
-from band.config import load_agent_config
-from band.core.types import AdapterFeatures, Emit
+from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -58,26 +57,20 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    # Load Tom's credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("tom_agent")
-
-    # Create adapter with Tom's character prompt
     adapter = ClaudeSDKAdapter(
         custom_section=generate_tom_prompt("Tom"),
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
     )
 
-    # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "tom_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Tom is on the prowl, looking for Jerry...")
-    logger.info("Agent ID: %s", agent_id)
+    logger.info("Agent ID: %s", agent.runtime.agent_id)
     logger.info("Press Ctrl+C to stop")
 
     try:

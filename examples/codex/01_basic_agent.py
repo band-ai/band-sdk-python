@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[codex]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Basic Codex adapter agent example.
@@ -25,7 +25,7 @@ Optional env overrides:
     CODEX_TRANSPORT=stdio|ws
     CODEX_WS_URL=ws://127.0.0.1:8765
     CODEX_ROLE=coding|planner|reviewer
-    CODEX_MODEL=gpt-5.3-codex
+    CODEX_MODEL=gpt-5.5
     CODEX_APPROVAL_MODE=manual|auto_accept|auto_decline
     CODEX_TURN_TASK_MARKERS=true|false
 """
@@ -44,8 +44,7 @@ from dotenv import load_dotenv
 
 from setup_logging import setup_logging
 from band import Agent
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.config import load_agent_config
+from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -61,13 +60,13 @@ def _env_bool(name: str, default: bool) -> bool:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL") or os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL") or os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("THENVOI_WS_URL")
+    rest_url = os.getenv("THENVOI_REST_URL")
 
     if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
+        raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
+        raise ValueError("THENVOI_REST_URL environment variable is required")
 
     codex_bin = shutil.which("codex")
     if codex_bin is None:
@@ -98,8 +97,6 @@ async def main() -> None:
             sys.exit(1)
 
     agent_key = os.getenv("AGENT_KEY", "darter")
-    agent_id, api_key = load_agent_config(agent_key)
-
     codex_transport = os.getenv("CODEX_TRANSPORT", "stdio")
     if codex_transport not in {"stdio", "ws"}:
         raise ValueError("CODEX_TRANSPORT must be 'stdio' or 'ws'")
@@ -134,10 +131,9 @@ async def main() -> None:
         )
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        agent_key,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

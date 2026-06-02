@@ -1,4 +1,9 @@
-"""Health check endpoint for the bridge."""
+"""Health check endpoint for the bridge.
+
+Reports aggregate health (200 = all agents connected, 503 = any disconnected)
+plus per-agent connection status. The bridge holds N agents; the health
+server exposes their state at ``GET /health``.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +13,7 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 if TYPE_CHECKING:
-    from thenvoi.platform.link import ThenvoiLink
-
-    from .session import SessionStore
+    from .bridge import AgentRunner
 
 logger = logging.getLogger(__name__)
 
@@ -18,37 +21,29 @@ logger = logging.getLogger(__name__)
 class HealthServer:
     """HTTP health check server.
 
-    Exposes GET /health to report bridge connectivity and runtime status.
+    Exposes ``GET /health``:
+
+    - 200 OK when every runner is connected (or there are no runners).
+    - 503 Service Unavailable when any runner is disconnected.
+
+    Response body lists each agent's connection status, useful when only
+    a subset of agents are healthy.
     """
 
     def __init__(
         self,
-        link: ThenvoiLink,
+        runners: list[AgentRunner],
         port: int = 8080,
         host: str = "0.0.0.0",
-        session_store: SessionStore | None = None,
-        handler_count: int = 0,
     ) -> None:
-        """Initialize the health server.
-
-        Args:
-            link: ThenvoiLink to check connection status.
-            port: Port to bind on. Defaults to 8080.
-            host: Host to bind on. Defaults to "0.0.0.0".
-            session_store: Optional session store for active session count.
-            handler_count: Number of registered handlers.
-        """
-        self._link = link
+        self._runners = runners
         self._port = port
         self._host = host
-        self._session_store = session_store
-        self._handler_count = handler_count
         self._app = web.Application()
         self._app.router.add_get("/health", self._health_handler)
         self._runner: web.AppRunner | None = None
 
     async def start(self) -> None:
-        """Start the health server."""
         if self._runner is not None:
             return
         runner = web.AppRunner(self._app)
@@ -59,7 +54,6 @@ class HealthServer:
         logger.info("Health server listening on port %s", self._port)
 
     async def stop(self) -> None:
-        """Stop the health server."""
         if self._runner:
             try:
                 await self._runner.cleanup()
@@ -69,25 +63,15 @@ class HealthServer:
             logger.info("Health server stopped")
 
     async def _health_handler(self, request: web.Request) -> web.Response:
-        """Handle GET /health requests.
-
-        Note: ``count()`` triggers lazy eviction of expired sessions,
-        so the Docker healthcheck (default: every 30 s) doubles as the
-        eviction driver.  See ``InMemorySessionStore`` for details.
-        """
-        connected = self._link.is_connected
-        status = "healthy" if connected else "unhealthy"
-
+        per_agent = [
+            {"agent_id": r.agent_id, "connected": r.is_connected} for r in self._runners
+        ]
+        all_connected = all(a["connected"] for a in per_agent) if per_agent else True
         body: dict[str, Any] = {
-            "status": status,
-            "websocket_connected": connected,
-            "handlers_registered": self._handler_count,
+            "status": "healthy" if all_connected else "unhealthy",
+            "agents": per_agent,
+            "agent_count": len(self._runners),
         }
-
-        if self._handler_count == 0:
-            body["warning"] = "no handlers registered"
-
-        if self._session_store is not None:
-            body["active_sessions"] = await self._session_store.count()
-
-        return web.json_response(body, status=200 if connected else 503)
+        if not self._runners:
+            body["warning"] = "no agents configured"
+        return web.json_response(body, status=200 if all_connected else 503)

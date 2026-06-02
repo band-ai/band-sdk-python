@@ -403,7 +403,7 @@ class TestACPServerSetSessionModel:
         server = ACPServer(adapter)
 
         response = await server.set_session_model(
-            model_id="gpt-4o", session_id="session-1"
+            model_id="gpt-5.4", session_id="session-1"
         )
 
         assert response is not None

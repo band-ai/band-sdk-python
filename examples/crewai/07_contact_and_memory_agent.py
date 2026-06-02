@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 CrewAI agent with contact and memory tools enabled.
@@ -34,9 +34,8 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import CrewAIAdapter
-from band.config import load_agent_config
-from band.runtime.types import ContactEventConfig, ContactEventStrategy
-from band.core.types import AdapterFeatures, Capability
+from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from thenvoi.core.types import AdapterFeatures, Capability
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -55,10 +54,8 @@ async def main() -> None:
 
     ws_url = get_required_env("THENVOI_WS_URL")
     rest_url = get_required_env("THENVOI_REST_URL")
-    agent_id, api_key = load_agent_config("crewai_contact_memory_agent")
-
     adapter = CrewAIAdapter(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         role="Contact-aware relationship manager",
         goal=(
             "Help users manage contacts, keep track of relationship context, "
@@ -85,10 +82,9 @@ async def main() -> None:
         broadcast_changes=True,
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "crewai_contact_memory_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
         contact_config=contact_config,

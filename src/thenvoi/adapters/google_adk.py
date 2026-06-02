@@ -11,9 +11,10 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import re
 import uuid
 import warnings
-from typing import ClassVar, TYPE_CHECKING, Any
+from typing import ClassVar, TYPE_CHECKING, Any, cast
 
 from pydantic import ValidationError
 
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _APP_NAME = "thenvoi"
-_MAX_TOOL_OUTPUT_PREVIEW = 200
 _DEFAULT_MAX_HISTORY_MESSAGES = 50
 _DEFAULT_MAX_TRANSCRIPT_CHARS = 100_000
 
@@ -48,6 +48,20 @@ _DECLARATION_CANDIDATES: tuple[str, ...] = (
     "_get_declaration",  # google-adk 1.x (current internal API)
     "get_declaration",  # likely public rename candidate
 )
+
+
+def _sanitize_adk_agent_name(agent_name: str) -> str:
+    """Return an ADK-valid internal agent name.
+
+    Band display names may contain spaces, punctuation, start with digits,
+    or use ADK-reserved words. Google ADK requires ``Agent.name`` to be a
+    Python identifier and reserves ``user`` for end-user input, so this
+    internal name is normalized separately from the public Band name.
+    """
+    safe_name = re.sub(r"[^A-Za-z0-9_]", "_", agent_name or "thenvoi_agent")
+    if not safe_name.isidentifier() or safe_name == "user":
+        safe_name = f"thenvoi_{safe_name}"
+    return safe_name
 
 
 @functools.lru_cache(maxsize=1)
@@ -424,7 +438,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         adk_tools = self._build_adk_tools(tools)
 
         adk_agent = ADKAgent(
-            name=self.agent_name or "thenvoi_agent",
+            name=_sanitize_adk_agent_name(self.agent_name),
             model=self.model,
             instruction=self._system_prompt,
             tools=adk_tools,
@@ -598,34 +612,21 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             logger.debug("Room %s: Cleaned up ADK session", room_id)
 
     def _format_history_transcript(self, history: GoogleADKMessages) -> str:
-        """Format converted history as a text transcript for context injection."""
-        lines: list[str] = []
-        for msg in history:
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                lines.append(content)
-            elif isinstance(content, list):
-                # Tool call/result blocks - summarize
-                for block in content:
-                    if isinstance(block, dict):
-                        block_type = block.get("type", "")
-                        if block_type == "function_call":
-                            lines.append(
-                                f"[Tool Call] {block.get('name', 'unknown')}"
-                                f" ({json.dumps(block.get('args', {}), default=str)})"
-                            )
-                        elif block_type == "function_response":
-                            output = str(block.get("output", ""))
-                            truncated = (
-                                output[:_MAX_TOOL_OUTPUT_PREVIEW] + "..."
-                                if len(output) > _MAX_TOOL_OUTPUT_PREVIEW
-                                else output
-                            )
-                            lines.append(
-                                f"[Tool Result] {block.get('name', 'unknown')}: "
-                                f"{truncated}"
-                            )
-        return "\n".join(lines)
+        """Render converted history as a labeled text transcript.
+
+        Delegates to the converter so the own-agent name used for labeling
+        comes from a single source of truth (the converter, which already
+        owns own-vs-peer attribution during ``convert()``).  The converter
+        also owns the tool-call/tool-result preview format.
+
+        ``SimpleAdapter`` types ``self.history_converter`` as the generic
+        ``HistoryConverter | None``; the ADK constructor always installs a
+        concrete ``GoogleADKHistoryConverter`` (defaulting to a fresh one
+        if the caller omits it), so the narrowing here is a no-op at
+        runtime that lets the type checker see ``format_transcript``.
+        """
+        converter = cast(GoogleADKHistoryConverter, self.history_converter)
+        return converter.format_transcript(history)
 
     @staticmethod
     def _extract_event_text(event: Any) -> str:

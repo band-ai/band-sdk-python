@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 ACP Bridge Architecture example.
@@ -29,14 +29,14 @@ Relation to A2A:
     - ACP outbound can spawn a local ACP subprocess and manage its lifecycle.
 
 Prerequisites:
-    1. Set BAND_API_KEY in your environment.
+    1. Set THENVOI_API_KEY in your environment.
     2. Install an ACP-capable runtime (default command uses codex-acp).
 
 Optional environment variables:
     - ACP_AGENT_COMMAND (default: "npx @zed-industries/codex-acp")
     - ACP_AGENT_CWD (default: ".")
     - ACP_AUTH_METHOD (example: "cursor_login")
-    - ACP_INJECT_BAND_TOOLS (default: true; legacy: ACP_INJECT_THENVOI_TOOLS)
+    - ACP_INJECT_THENVOI_TOOLS (default: true)
 
 Run with:
     uv run examples/acp/08_acp_bridge_architecture.py
@@ -55,9 +55,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ACPClientAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import ACPClientAdapter
 from thenvoi.integrations.acp.client_profiles import CursorACPClientProfile
 
 setup_logging()
@@ -67,23 +66,17 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL") or os.getenv(
-        "THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"
+    ws_url = os.getenv(
+        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
     )
-    rest_url = os.getenv("BAND_REST_URL") or os.getenv(
-        "THENVOI_REST_URL", "https://app.band.ai"
-    )
-
-    agent_id, api_key = load_agent_config("acp_client_agent")
-
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
     command = shlex.split(
         os.getenv("ACP_AGENT_COMMAND", "npx @zed-industries/codex-acp")
     )
     cwd = os.getenv("ACP_AGENT_CWD", ".")
     auth_method = os.getenv("ACP_AUTH_METHOD")
-    inject_thenvoi_tools = (
-        os.getenv("ACP_INJECT_BAND_TOOLS")
-        or os.getenv("ACP_INJECT_THENVOI_TOOLS", "true")
+    inject_thenvoi_tools = os.getenv(
+        "ACP_INJECT_THENVOI_TOOLS", "true"
     ).lower() not in {
         "0",
         "false",
@@ -101,10 +94,9 @@ async def main() -> None:
         profile=profile,
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "acp_client_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

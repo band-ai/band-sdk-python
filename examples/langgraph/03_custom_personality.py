@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Example showing how to customize agent personality with custom instructions.
@@ -25,7 +25,6 @@ from langgraph.checkpoint.memory import InMemorySaver
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import LangGraphAdapter
-from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -40,10 +39,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("custom_personality_agent")
-
     # Define pirate personality to add on top of base system prompt
     pirate_personality = """
 
@@ -72,16 +67,15 @@ But speak like a PIRATE while doin' it! Arrr!
 
     # Create adapter with pirate personality
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-4o"),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
         custom_section=pirate_personality,
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "custom_personality_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

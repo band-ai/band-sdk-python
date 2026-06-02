@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Guesser agent for the 20 Questions Arena game.
@@ -20,7 +20,7 @@ Run with (from repo root):
     uv run examples/20-questions-arena/guesser_agent.py
 
     # Multi-guesser: each terminal runs a different config + model
-    uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_2 --model gpt-5.2
+    uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_2 --model gpt-5.5
     uv run examples/20-questions-arena/guesser_agent.py -c arena_guesser_3 -m claude-opus-4-6
 """
 
@@ -42,7 +42,6 @@ from prompts import create_llm, create_llm_by_name, generate_guesser_prompt
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import LangGraphAdapter
-from band.config import load_agent_config
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def _parse_args() -> argparse.Namespace:
         "--model",
         "-m",
         default=None,
-        help="LLM model name (e.g. gpt-5.2, claude-opus-4-6). "
+        help="LLM model name (e.g. gpt-5.5, claude-opus-4-6). "
         "If omitted, auto-detects from env vars.",
     )
     return parser.parse_args()
@@ -87,9 +86,6 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    # Load Guesser's credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config(args.config)
-    logger.info("  agent_id   : %s", agent_id)
     logger.info("  ws_url     : %s", ws_url)
     logger.info("  rest_url   : %s", rest_url)
 
@@ -112,10 +108,9 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        args.config,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

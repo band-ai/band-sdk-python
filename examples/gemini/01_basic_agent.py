@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[gemini]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Basic Gemini agent example.
@@ -13,7 +13,12 @@ The adapter handles tool registration and function-calling loops automatically.
 
 Requires:
     - agent_config.yaml with gemini_agent credentials
-    - GEMINI_API_KEY environment variable
+    - Authentication via one of:
+      - GOOGLE_API_KEY or GEMINI_API_KEY environment variable (Gemini Developer API)
+      - gcloud CLI with Application Default Credentials (Vertex AI):
+          gcloud auth application-default login
+          export GOOGLE_GENAI_USE_VERTEXAI=true
+          export GOOGLE_CLOUD_PROJECT=your-project-id
 
 Run with:
     uv run examples/gemini/01_basic_agent.py
@@ -26,7 +31,6 @@ import logging
 import os
 import sys
 
-from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -34,40 +38,23 @@ from setup_logging import setup_logging
 
 from band import Agent
 from band.adapters import GeminiAdapter
-from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    load_dotenv()
-
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
-
-    if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("gemini_agent")
-
     # Create adapter with Gemini settings
-    # Requires GEMINI_API_KEY environment variable or pass api_key explicitly
+    # Requires GEMINI_API_KEY environment variable or pass provider_key explicitly
     adapter = GeminiAdapter(
         model="gemini-2.5-flash",
         prompt="You are a helpful assistant. Be concise and friendly.",
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "gemini_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
     )
 
     logger.info("Starting Gemini agent...")

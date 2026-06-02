@@ -10,7 +10,7 @@ Use the new composition-based pattern instead:
     from langgraph.checkpoint.memory import MemorySaver
 
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-4o"),
+        llm=ChatOpenAI(model="gpt-5.4"),
         checkpointer=MemorySaver(),
     )
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")

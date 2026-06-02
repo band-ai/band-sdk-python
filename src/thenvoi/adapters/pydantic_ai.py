@@ -46,7 +46,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     Example:
         adapter = PydanticAIAdapter(
-            model="openai:gpt-4o",
+            model="openai:gpt-5.4",
             custom_section="You are a helpful assistant.",
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
@@ -73,7 +73,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         Initialize the Pydantic AI adapter.
 
         Args:
-            model: Pydantic AI model string (e.g., "openai:gpt-4o", "anthropic:claude-3-5-sonnet-latest")
+            model: Pydantic AI model string (e.g., "openai:gpt-5.4", "anthropic:claude-3-5-sonnet-latest")
             system_prompt: Optional custom system prompt (overrides default)
             custom_section: Optional custom section added to default system prompt
             enable_execution_reporting: Deprecated. Use features=AdapterFeatures(emit={Emit.EXECUTION}).
@@ -121,7 +121,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self.custom_section = custom_section
         self._system_prompt: str | None = None
 
-        self._agent: Agent[AgentToolsProtocol, None] | None = None
+        self._agent: Agent[AgentToolsProtocol, str] | None = None
         # Conversation history per room (Pydantic AI is stateless, we maintain state)
         self._message_history: dict[str, list] = {}
         # Custom tools (PydanticAI-compatible functions)
@@ -135,7 +135,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         logger.info("Pydantic AI adapter started for agent: %s", agent_name)
 
     # --- Copied from BandPydanticAgent._create_agent ---
-    def _create_agent(self) -> Agent[AgentToolsProtocol, None]:
+    def _create_agent(self) -> Agent[AgentToolsProtocol, str]:
         """Create Pydantic AI Agent with platform tools."""
         system = self.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
@@ -145,12 +145,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
         self._system_prompt = system
 
-        # output_type=None disables output validation - we respond via tools only
-        agent: Agent[AgentToolsProtocol, None] = Agent(  # type: ignore[call-overload]
+        # We respond via tools only, so the model output is unused. Using `str`
+        # (instead of `None`) keeps newer pydantic-ai-slim versions happy —
+        # 1.87+ rejects `output_type=None` with `UserError("At least one output
+        # type must be provided other than `None`")`.
+        agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
             system_prompt=system,
             deps_type=AgentToolsProtocol,
-            output_type=None,
+            output_type=str,
         )
 
         # Register platform tools dynamically from centralized definitions

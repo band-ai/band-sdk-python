@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """CrewAI Flow router example.
 
@@ -37,7 +37,6 @@ from setup_logging import setup_logging  # noqa: E402
 
 from band import Agent  # noqa: E402
 from band.adapters import CrewAIFlowAdapter  # noqa: E402
-from band.config import load_agent_config  # noqa: E402
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -139,19 +138,15 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    agent_id, api_key = load_agent_config("crewai_flow_router")
-
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
         join_policy="all",
         sequential_chains={"data-fetcher": "presenter"},
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "crewai_flow_router",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

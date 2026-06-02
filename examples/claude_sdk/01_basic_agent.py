@@ -4,7 +4,7 @@
 # dependencies = ["band-sdk[claude_sdk]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Basic Claude SDK Agent Example.
@@ -40,8 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ClaudeSDKAdapter
-from band.config import load_agent_config
-from band.core.types import AdapterFeatures, Emit
+from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -59,9 +58,6 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
 
-    # Load credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("claude_sdk_basic")
-
     # Create adapter with Claude SDK settings.  Omitting `model` lets the
     # npm `claude` binary pick its own default (latest installed model).
     adapter = ClaudeSDKAdapter(
@@ -69,17 +65,15 @@ async def main() -> None:
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
     )
 
-    # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "claude_sdk_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting Claude SDK agent...")
-    logger.info("Agent ID: %s", agent_id)
+    logger.info("Agent ID: %s", agent.runtime.agent_id)
     logger.info("Press Ctrl+C to stop")
 
     try:

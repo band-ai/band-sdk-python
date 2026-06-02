@@ -12,6 +12,21 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
+try:
+    import nest_asyncio  # noqa: F401
+
+    _HAS_NEST_ASYNCIO = True
+except ImportError:
+    _HAS_NEST_ASYNCIO = False
+
+# Tests that drive the real sync-to-async bridge (send_tool._run -> run_async ->
+# nest_asyncio.apply()) need nest_asyncio, which ships with the crewai extra and
+# cannot be mocked (run_until_complete on a running loop requires the real patch).
+requires_nest_asyncio = pytest.mark.skipif(
+    not _HAS_NEST_ASYNCIO,
+    reason="nest_asyncio not installed (ships with thenvoi-sdk[crewai])",
+)
+
 
 @pytest.fixture(autouse=True)
 def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
@@ -370,7 +385,6 @@ class TestNestAsyncioNotInvoked:
 class TestIdempotentFinalization:
     @pytest.mark.asyncio
     async def test_finalized_state_does_not_double_send(self) -> None:
-
         # Pre-populate the state source with a finalized record for msg-1.
         finalized_payload = {
             "schema_version": 1,
@@ -758,6 +772,7 @@ class TestRuntimeTools:
         assert "thenvoi_send_message" not in captured["tool_names"]
         assert "thenvoi_remove_contact" not in captured["tool_names"]
 
+    @requires_nest_asyncio
     @pytest.mark.asyncio
     async def test_subcrew_send_failure_aborts_parent_finalization(
         self, monkeypatch: pytest.MonkeyPatch
@@ -890,6 +905,7 @@ class TestRuntimeTools:
 
         assert tools.messages_sent == []
 
+    @requires_nest_asyncio
     @pytest.mark.asyncio
     async def test_subcrew_tools_run_on_adapter_loop_from_worker_thread(self) -> None:
         expected_loop = asyncio.get_running_loop()

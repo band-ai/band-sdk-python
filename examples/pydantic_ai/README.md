@@ -26,7 +26,7 @@ from thenvoi import Agent
 from thenvoi.adapters import PydanticAIAdapter
 
 adapter = PydanticAIAdapter(
-    model="openai:gpt-4o",
+    model="openai:gpt-5.4-mini",
     custom_section="You are a helpful assistant.",
 )
 
@@ -86,8 +86,8 @@ uv run python examples/pydantic_ai/02_custom_instructions.py
 
 Pydantic AI uses model strings in the format `provider:model-name`:
 
-- `openai:gpt-4o`
-- `openai:gpt-4o-mini`
+- `openai:gpt-5.4-mini`
+- `openai:gpt-5.4-mini`
 - `anthropic:claude-3-5-sonnet-latest`
 - `anthropic:claude-3-5-haiku-latest`
 - `google:gemini-2.5-pro`

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import warnings
-from typing import ClassVar, TYPE_CHECKING, Any, Callable, List
+from collections import OrderedDict
+from typing import ClassVar, TYPE_CHECKING, Any, Callable
 
 from langgraph.pregel import Pregel
 
@@ -34,30 +36,43 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
     1. Simple (recommended for most users):
         adapter = LangGraphAdapter(
-            llm=ChatOpenAI(model="gpt-4o"),
+            llm=ChatOpenAI(model="gpt-5.4"),
             checkpointer=InMemorySaver(),
             custom_section="You are a helpful assistant.",
         )
 
     2. Advanced (custom graph):
         def graph_factory(tools):
-            return create_react_agent(llm, tools, checkpointer=checkpointer)
+            return create_agent(llm, tools, checkpointer=checkpointer)
 
         adapter = LangGraphAdapter(graph_factory=graph_factory)
+
+    System prompt:
+        The adapter renders a system prompt from ``prompt_template`` /
+        ``custom_section`` / agent metadata in :meth:`on_started`. In the
+        simple ``llm=`` pattern, it prepends that prompt as the first
+        ``("system", ...)`` message on session bootstrap and the LangGraph
+        checkpointer carries it forward across turns.
+
+        Advanced ``graph=`` / ``graph_factory=`` callers often manage their
+        own system messages, so prompt injection is opt-in there via
+        ``inject_system_prompt=True``. If enabled, the graph should read
+        ``state["messages"]`` (or whatever your state schema names them).
+        See ``examples/langgraph/09_research_ops_orchestrator.py``.
 
     Example:
         from langchain_openai import ChatOpenAI
         from langgraph.checkpoint.memory import InMemorySaver
 
         adapter = LangGraphAdapter(
-            llm=ChatOpenAI(model="gpt-4o"),
+            llm=ChatOpenAI(model="gpt-5.4"),
             checkpointer=InMemorySaver(),
         )
         agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -68,32 +83,42 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         llm: "BaseChatModel | None" = None,
         checkpointer: "BaseCheckpointSaver | None" = None,
         # Advanced pattern: provide a graph factory or static graph
-        graph_factory: Callable[[List[Any]], Pregel] | None = None,
+        graph_factory: Callable[[list[Any]], Pregel] | None = None,
         graph: Pregel | None = None,
         # Common options
         prompt_template: str = "default",
         custom_section: str = "",
-        additional_tools: List[Any] | None = None,
+        additional_tools: list[Any] | None = None,
         enable_memory_tools: bool = False,
+        enable_execution_reporting: bool = False,
         history_converter: LangChainHistoryConverter | None = None,
         recursion_limit: int = 50,
         features: AdapterFeatures | None = None,
+        inject_system_prompt: bool | None = None,
     ):
         # --- Deprecation shim: boolean → features migration ---
-        if enable_memory_tools and features is not None:
+        if (enable_memory_tools or enable_execution_reporting) and features is not None:
             raise BandConfigError(
-                "Cannot pass both 'enable_memory_tools' and 'features'. "
-                "Use features=AdapterFeatures(capabilities={Capability.MEMORY}) instead."
+                "Cannot pass both 'features' and legacy boolean params "
+                "(enable_memory_tools, enable_execution_reporting)."
             )
 
-        if enable_memory_tools:
+        if enable_memory_tools or enable_execution_reporting:
             warnings.warn(
-                "enable_memory_tools is deprecated. "
-                "Use features=AdapterFeatures(capabilities={Capability.MEMORY}) instead.",
+                "enable_memory_tools/enable_execution_reporting are deprecated. "
+                "Use features=AdapterFeatures(...) instead.",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            features = AdapterFeatures(capabilities=frozenset({Capability.MEMORY}))
+            capabilities = (
+                frozenset({Capability.MEMORY}) if enable_memory_tools else frozenset()
+            )
+            emit = (
+                frozenset({Emit.EXECUTION})
+                if enable_execution_reporting
+                else frozenset()
+            )
+            features = AdapterFeatures(capabilities=capabilities, emit=emit)
 
         # Use default LangChain converter if not provided
         super().__init__(
@@ -101,22 +126,32 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             features=features,
         )
 
-        # Simple pattern: create graph_factory from llm + checkpointer
-        if llm is not None and graph_factory is None and graph is None:
-            from langgraph.prebuilt import create_react_agent
+        uses_simple_pattern = (
+            llm is not None and graph_factory is None and graph is None
+        )
+
+        # Simple pattern: build a graph_factory that delegates to create_agent.
+        # We do NOT pass system_prompt= here; the adapter prepends a single
+        # ("system", ...) message on bootstrap and the checkpointer carries it
+        # forward, matching the pattern used by every other Band adapter.
+        if uses_simple_pattern:
+            from langchain.agents import create_agent
+            from langgraph.checkpoint.memory import InMemorySaver
+
+            if checkpointer is None:
+                checkpointer = InMemorySaver()
 
             additional = additional_tools or []
 
-            def _make_graph_factory(llm, checkpointer, additional):
-                def factory(thenvoi_tools: List[Any]) -> Pregel:
-                    all_tools = thenvoi_tools + additional
-                    return create_react_agent(
-                        model=llm, tools=all_tools, checkpointer=checkpointer
-                    )
+            def factory(band_tools: list[Any]) -> Pregel:
+                all_tools = band_tools + additional
+                return create_agent(
+                    model=llm,
+                    tools=all_tools,
+                    checkpointer=checkpointer,
+                )
 
-                return factory
-
-            graph_factory = _make_graph_factory(llm, checkpointer, additional)
+            graph_factory = factory
             # Clear additional_tools since they're now baked into the factory
             additional_tools = []
 
@@ -131,11 +166,18 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         self.custom_section = custom_section
         self.additional_tools = additional_tools or []
         self.recursion_limit = recursion_limit
+        self._inject_system_prompt = (
+            uses_simple_pattern
+            if inject_system_prompt is None
+            else inject_system_prompt
+        )
         self._system_prompt: str = ""
-        # Track rooms that have already been bootstrapped to avoid injecting
-        # duplicate system prompts when the checkpointer retains state across
-        # reconnections (on_cleanup doesn't clear checkpointer state).
-        self._bootstrapped_rooms: set[str] = set()
+        self._simple_checkpointer = checkpointer
+        self._room_checkpointers: dict[str, Any] = {}
+        # Track rooms that have already had hydrated history pushed in, so
+        # reconnects that re-deliver bootstrap don't duplicate messages on
+        # top of the checkpointer's already-stored state.
+        self._bootstrapped_rooms: OrderedDict[str, None] = OrderedDict()
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render system prompt after agent metadata is fetched."""
@@ -148,6 +190,48 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             features=self.features,
         )
         logger.info("LangGraph adapter started for agent: %s", agent_name)
+
+    async def _checkpointer_has_messages(self, checkpointer: Any, room_id: str) -> bool:
+        """Best-effort check for existing LangGraph messages in a thread."""
+        config = {"configurable": {"thread_id": room_id}}
+        for method_name in ("aget_tuple", "get_tuple"):
+            method = getattr(checkpointer, method_name, None)
+            if not callable(method):
+                continue
+
+            try:
+                result = method(config)
+                if inspect.isawaitable(result):
+                    result = await result
+            except (KeyError, NotImplementedError, TypeError, ValueError):
+                logger.debug(
+                    "Checkpointer %s cannot inspect thread %s via %s",
+                    type(checkpointer).__name__,
+                    room_id,
+                    method_name,
+                )
+                continue
+            except Exception:
+                logger.debug(
+                    "Failed to inspect LangGraph checkpointer thread %s",
+                    room_id,
+                    exc_info=True,
+                )
+                continue
+
+            checkpoint = getattr(result, "checkpoint", None)
+            if not isinstance(checkpoint, dict):
+                continue
+
+            channel_values = checkpoint.get("channel_values")
+            if not isinstance(channel_values, dict):
+                continue
+
+            messages = channel_values.get("messages")
+            if isinstance(messages, list) and messages:
+                return True
+
+        return False
 
     async def on_message(
         self,
@@ -171,8 +255,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         langchain_tools = (
             agent_tools_to_langchain(
                 tools,
-                include_memory_tools=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
+                features=self.features,
             )
             + self.additional_tools
         )
@@ -186,24 +269,29 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         if not graph:
             raise RuntimeError("No graph available")
 
+        checkpointer = getattr(graph, "checkpointer", None) or self._simple_checkpointer
+        if checkpointer is not None:
+            self._room_checkpointers[room_id] = checkpointer
+
         # Build messages
         messages: list[Any] = []
 
-        # Session bootstrap: inject system prompt and any hydrated history.
-        # Only inject the system prompt once per room to avoid duplicate system
-        # messages when the checkpointer retains state across reconnections.
-        if is_session_bootstrap:
-            if self.graph_factory and room_id not in self._bootstrapped_rooms:
-                messages.append(("system", self._system_prompt))
-                self._bootstrapped_rooms.add(room_id)
-                if len(self._bootstrapped_rooms) == _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
-                    logger.warning(
-                        "Bootstrap tracking has %d rooms; "
-                        "on_cleanup may not be called for all rooms",
-                        len(self._bootstrapped_rooms),
-                    )
-            if history:
-                messages.extend(history)  # Already converted by history_converter
+        # Session bootstrap: prepend the rendered system prompt and hydrate
+        # platform history exactly once per room. After that, the LangGraph
+        # checkpointer carries the system message and prior turns forward and
+        # we just append the new user turn.
+        should_mark_bootstrapped = False
+        if is_session_bootstrap and room_id not in self._bootstrapped_rooms:
+            checkpointer_already_has_messages = (
+                checkpointer is not None
+                and await self._checkpointer_has_messages(checkpointer, room_id)
+            )
+            if not checkpointer_already_has_messages:
+                if self._inject_system_prompt and self._system_prompt:
+                    messages.append(("system", self._system_prompt))
+                if history:
+                    messages.extend(history)  # Already converted by history_converter
+            should_mark_bootstrapped = True
 
         # Inject metadata updates as user messages with [System]: prefix.
         # Many LLM providers (including Anthropic) require a single system
@@ -223,21 +311,40 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             async for event in graph.astream_events(
                 graph_input,
                 config={
-                    "configurable": {"thread_id": room_id},
+                    "configurable": {
+                        "thread_id": room_id,
+                    },
                     "recursion_limit": self.recursion_limit,
                 },
                 version="v2",
             ):
                 await self._handle_stream_event(event, room_id, tools)
 
+            if should_mark_bootstrapped:
+                self._bootstrapped_rooms[room_id] = None
+                if len(self._bootstrapped_rooms) > _BOOTSTRAP_TRACKING_WARN_THRESHOLD:
+                    oldest_room_id, _ = self._bootstrapped_rooms.popitem(last=False)
+                    logger.warning(
+                        "Bootstrap tracking reached %d rooms; evicting oldest room %s",
+                        _BOOTSTRAP_TRACKING_WARN_THRESHOLD,
+                        oldest_room_id,
+                    )
+
             logger.info("[DONE] Message %s processed successfully", msg.id)
 
-        except Exception as e:
-            logger.error("Error processing message %s: %s", msg.id, e, exc_info=True)
+        except Exception:
+            logger.exception("Error processing message %s", msg.id)
             try:
-                await tools.send_event(content=f"Error: {e}", message_type="error")
+                # Keep the user-facing payload generic; the full traceback is
+                # in the agent log via logger.exception above. Tool/error
+                # internals can include DB strings, paths, and tokens that
+                # should not surface in chat.
+                await tools.send_event(
+                    content="Internal error while processing message; see agent logs.",
+                    message_type="error",
+                )
             except Exception:
-                pass
+                logger.exception("Failed to report error event for message %s", msg.id)
             raise
 
     async def _handle_stream_event(
@@ -247,33 +354,55 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         tools: AgentToolsProtocol,
     ) -> None:
         """Handle streaming events from LangGraph."""
+        if not isinstance(event, dict):
+            logger.warning("Ignoring malformed LangGraph stream event: %r", event)
+            return
+
         event_type = event.get("event")
 
         if event_type == "on_tool_start":
+            if Emit.EXECUTION not in self.features.emit:
+                return
+
             tool_name = event.get("name", "unknown")
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            payload = {
+                "name": tool_name,
+                "args": data.get("input", {}),
+                "tool_call_id": event.get("run_id", "unknown"),
+            }
             logger.info("[STREAM] on_tool_start: %s", tool_name)
             try:
                 await tools.send_event(
-                    content=json.dumps(event, default=str),
+                    content=json.dumps(payload, default=str),
                     message_type="tool_call",
                 )
             except Exception as e:
                 logger.warning("Failed to send tool_call event: %s", e)
 
-        elif event_type == "on_tool_end":
+        elif event_type in {"on_tool_end", "on_tool_error"}:
+            if Emit.EXECUTION not in self.features.emit:
+                return
+
             tool_name = event.get("name", "unknown")
-            logger.info("[STREAM] on_tool_end: %s", tool_name)
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            is_error = event_type == "on_tool_error" or bool(data.get("error"))
+            payload = {
+                "name": tool_name,
+                "output": data.get("error") or data.get("output", ""),
+                "tool_call_id": event.get("run_id", "unknown"),
+                "is_error": is_error,
+            }
+            logger.info("[STREAM] %s: %s", event_type, tool_name)
             try:
                 await tools.send_event(
-                    content=json.dumps(event, default=str),
+                    content=json.dumps(payload, default=str),
                     message_type="tool_result",
                 )
             except Exception as e:
                 logger.warning("Failed to send tool_result event: %s", e)
 
     async def on_cleanup(self, room_id: str) -> None:
-        """Clean up LangGraph state for a room."""
-        self._bootstrapped_rooms.discard(room_id)
-        if not self.graph_factory:
-            return
-        # Future graph_factory-specific cleanup (e.g. checkpointer) goes here
+        """Clean up process-local LangGraph bookkeeping for a room."""
+        self._bootstrapped_rooms.pop(room_id, None)
+        self._room_checkpointers.pop(room_id, None)

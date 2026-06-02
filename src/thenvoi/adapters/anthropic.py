@@ -63,7 +63,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
     def __init__(
         self,
         model: str = "claude-sonnet-4-5-20250929",
-        api_key: str | None = None,
+        provider_key: str | None = None,
         system_prompt: str | None = None,
         prompt: str | None = None,
         max_tokens: int = 4096,
@@ -72,21 +72,34 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         features: AdapterFeatures | None = None,
         include_base_instructions: bool = True,
         # --- Deprecated (one release, then remove) ---
+        api_key: str | None = None,
         anthropic_api_key: str | None = None,
         custom_section: str | None = None,
         enable_execution_reporting: bool = False,
         enable_memory_tools: bool = False,
     ):
-        # --- Selective: api_key rename ---
+        # --- Selective: provider_key rename ---
         if anthropic_api_key is not None:
             warnings.warn(
-                "anthropic_api_key is deprecated, use api_key instead",
+                "anthropic_api_key is deprecated, use provider_key instead",
                 DeprecationWarning,
                 stacklevel=2,
             )
-            if api_key is not None:
-                raise BandConfigError("Cannot pass both api_key and anthropic_api_key")
-            api_key = anthropic_api_key
+            if provider_key is not None or api_key is not None:
+                raise BandConfigError(
+                    "Cannot pass anthropic_api_key together with provider_key or api_key"
+                )
+            provider_key = anthropic_api_key
+
+        if api_key is not None:
+            warnings.warn(
+                "api_key is deprecated on AnthropicAdapter, use provider_key instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            if provider_key is not None:
+                raise BandConfigError("Cannot pass both provider_key and api_key")
+            provider_key = api_key
 
         # --- Selective: prompt rename ---
         if custom_section is not None:
@@ -132,7 +145,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         self.max_tokens = max_tokens
 
         # Anthropic client (uses ANTHROPIC_API_KEY env var if not provided)
-        self.client = AsyncAnthropic(api_key=api_key)
+        self.client = AsyncAnthropic(api_key=provider_key)
 
         # Per-room conversation history (Anthropic SDK is stateless)
         self._message_history: dict[str, list[dict[str, Any]]] = {}

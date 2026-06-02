@@ -71,7 +71,6 @@ def runtime_mod(crewai_mocks):
 
 class TestToolSetComposition:
     def test_base_tools_only(self, builder_mod):
-
         tools = builder_mod.build_thenvoi_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
@@ -289,6 +288,48 @@ class TestToolSetComposition:
 
         assert result["status"] == "success"
         tools_obj.lookup_peers.assert_awaited_once_with(2, 25)
+
+    def test_send_message_marks_reply_tracker(self, builder_mod):
+        """A successful thenvoi_send_message flips the per-turn ReplyTracker so
+        the adapter can treat a later empty final answer as benign."""
+        tools_obj = MagicMock()
+        tools_obj.send_message = AsyncMock(return_value={"status": "sent"})
+        tracker = builder_mod.ReplyTracker()
+        context = builder_mod.CrewAIToolContext(
+            room_id="room-1", tools=tools_obj, reply_tracker=tracker
+        )
+        tools = builder_mod.build_thenvoi_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_message = next(t for t in tools if t.name == "thenvoi_send_message")
+
+        result = json.loads(send_message._run(content="hello", mentions="[]"))
+
+        assert result["status"] == "success"
+        tools_obj.send_message.assert_awaited_once()
+        assert tracker.replied is True
+
+    def test_reply_tracker_not_marked_on_send_failure(self, builder_mod):
+        """A failed send must NOT mark the tracker — the turn produced no reply."""
+        tools_obj = MagicMock()
+        tools_obj.send_message = AsyncMock(side_effect=RuntimeError("boom"))
+        tracker = builder_mod.ReplyTracker()
+        context = builder_mod.CrewAIToolContext(
+            room_id="room-1", tools=tools_obj, reply_tracker=tracker
+        )
+        tools = builder_mod.build_thenvoi_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_message = next(t for t in tools if t.name == "thenvoi_send_message")
+
+        result = json.loads(send_message._run(content="hello", mentions="[]"))
+
+        assert result["status"] == "error"
+        assert tracker.replied is False
 
 
 # --- Reporter behavior ---

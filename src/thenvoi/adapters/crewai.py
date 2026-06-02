@@ -12,18 +12,7 @@ import asyncio
 import logging
 import warnings
 from contextvars import ContextVar
-from typing import ClassVar, Any, Literal
-
-try:
-    from crewai import Agent as CrewAIAgent
-    from crewai import LLM
-    from crewai.tools import BaseTool
-except ImportError as e:
-    raise ImportError(
-        "crewai is required for CrewAI adapter.\n"
-        "Install with: pip install 'band-sdk[crewai]'\n"
-        "Or: uv add crewai nest-asyncio"
-    ) from e
+from typing import ClassVar, TYPE_CHECKING, Any, Literal
 
 from thenvoi.core.exceptions import BandConfigError
 from thenvoi.core.protocols import AgentToolsProtocol
@@ -33,10 +22,15 @@ from thenvoi.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from thenvoi.integrations.crewai import (
     CrewAIToolContext,
     EmitExecutionReporter,
+    ReplyTracker,
     build_thenvoi_crewai_tools,
 )
 from thenvoi.runtime.custom_tools import CustomToolDef
 from thenvoi.runtime.prompts import render_system_prompt
+
+if TYPE_CHECKING:
+    from crewai import Agent as CrewAIAgent
+    from crewai.tools import BaseTool
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +39,14 @@ logger = logging.getLogger(__name__)
 # Set automatically when processing messages, accessed by tools.
 _current_room_context: ContextVar[tuple[str, AgentToolsProtocol] | None] = ContextVar(
     "_current_room_context", default=None
+)
+
+# Per-turn marker for whether the agent already delivered a reply via
+# thenvoi_send_message. Set in on_message, read by the tool wrappers (through
+# _get_context) and the error handler. Shared by reference so the mark is
+# visible across CrewAI's sync-to-async tool execution boundary.
+_reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
+    "_crewai_reply_tracker", default=None
 )
 
 MessageType = Literal["thought", "error", "task"]
@@ -58,7 +60,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     Example:
         adapter = CrewAIAdapter(
-            model="gpt-4o",
+            model="gpt-5.4",
             role="Research Assistant",
             goal="Help users find and analyze information",
             backstory="Expert researcher with deep knowledge across domains",
@@ -78,7 +80,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     def __init__(
         self,
-        model: str = "gpt-4o",
+        model: str = "gpt-5.4",
         role: str | None = None,
         goal: str | None = None,
         backstory: str | None = None,
@@ -97,7 +99,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         """Initialize the CrewAI adapter.
 
         Args:
-            model: Model name (e.g., "gpt-4o", "gpt-4o-mini", "claude-3-5-sonnet").
+            model: Model name (e.g., "gpt-5.4", "gpt-5.4-mini", "claude-3-5-sonnet").
                    API keys are read from environment variables by CrewAI's LLM class.
             role: Agent's role in the crew (e.g., "Research Assistant")
             goal: Agent's primary goal or objective
@@ -178,6 +180,16 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Initialize CrewAI agent after metadata is fetched."""
+        try:
+            from crewai import Agent as CrewAIAgent
+            from crewai import LLM
+        except ImportError as e:
+            raise ImportError(
+                "crewai is required for CrewAI adapter.\n"
+                "Install with: pip install 'band-sdk[crewai]'\n"
+                "Or: uv add crewai nest-asyncio"
+            ) from e
+
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
 
@@ -234,7 +246,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         if ctx is None:
             return None
         room_id, tools = ctx
-        return CrewAIToolContext(room_id=room_id, tools=tools)
+        return CrewAIToolContext(
+            room_id=room_id, tools=tools, reply_tracker=_reply_tracker_var.get()
+        )
 
     def create_crewai_tools(self) -> list[BaseTool]:
         """Build the CrewAI BaseTool list via the shared integrations builder.
@@ -275,7 +289,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         # Set context variable for tool access (thread-safe room context).
         # Wrap in try/finally immediately to ensure cleanup even if code
         # before the main try block raises an exception.
+        reply_tracker = ReplyTracker()
         _current_room_context.set((room_id, tools))
+        _reply_tracker_var.set(reply_tracker)
         try:
             await self._process_message(
                 msg=msg,
@@ -285,11 +301,13 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                 contacts_msg=contacts_msg,
                 is_session_bootstrap=is_session_bootstrap,
                 room_id=room_id,
+                reply_tracker=reply_tracker,
             )
         finally:
             # Clear context after processing to prevent stale context in async
             # environments with task reuse
             _current_room_context.set(None)
+            _reply_tracker_var.set(None)
 
     async def _process_message(
         self,
@@ -301,6 +319,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         *,
         is_session_bootstrap: bool,
         room_id: str,
+        reply_tracker: ReplyTracker | None = None,
     ) -> None:
         """Internal message processing logic."""
         if is_session_bootstrap:
@@ -391,6 +410,27 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             )
 
         except Exception as e:
+            # CrewAI raises ValueError("Invalid response from LLM call - None or
+            # empty.") when its ReAct loop yields an empty final answer. In this
+            # adapter the agent replies via the thenvoi_send_message tool, so an
+            # empty final answer AFTER a successful reply is benign noise — the
+            # user already got their response. Match that specific ValueError
+            # narrowly so genuine failures after a reply (downstream errors,
+            # later-processing bugs, a second tool call throwing) still surface
+            # as error events and propagate.
+            if (
+                reply_tracker is not None
+                and reply_tracker.replied
+                and isinstance(e, ValueError)
+                and "Invalid response from LLM call" in str(e)
+            ):
+                logger.warning(
+                    "Room %s: CrewAI returned an empty final answer after a reply "
+                    "was already delivered; treating as non-fatal: %s",
+                    room_id,
+                    e,
+                )
+                return
             logger.error("Error processing message: %s", e, exc_info=True)
             await self._report_error(tools, str(e))
             raise

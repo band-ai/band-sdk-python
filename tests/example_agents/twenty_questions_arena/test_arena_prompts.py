@@ -113,7 +113,7 @@ class TestCreateLlmByName:
 
     def test_openai_model(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False):
-            llm = create_llm_by_name("gpt-5.2")
+            llm = create_llm_by_name("gpt-5.5")
             assert "ChatOpenAI" in type(llm).__name__
 
     def test_anthropic_model(self):
@@ -139,7 +139,7 @@ class TestCreateLlmByName:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_API_KEY", None)
             with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-                create_llm_by_name("gpt-5.2")
+                create_llm_by_name("gpt-5.5")
 
     def test_missing_anthropic_key_raises(self):
         with patch.dict(os.environ, {}, clear=False):

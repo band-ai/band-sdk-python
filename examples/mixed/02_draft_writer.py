@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Mixed-example CrewAI writer.
@@ -28,8 +28,7 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import CrewAIAdapter
-from band.config import load_agent_config
-from band.core.types import AdapterFeatures, Emit
+from thenvoi.core.types import AdapterFeatures, Emit
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
@@ -39,16 +38,12 @@ async def main() -> None:
     setup_logging()
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
-
-    agent_id, api_key = load_agent_config(
-        "mixed_writer_agent",
-        config_path=CONFIG_PATH,
+    ws_url = os.getenv(
+        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
     )
-
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
     adapter = CrewAIAdapter(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+        model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
         role="Engineering Handoff Writer",
         goal=(
             "Turn room input into a final engineering note that reflects the "
@@ -75,10 +70,10 @@ Do not try to coordinate the room. Your job is to synthesize.
         verbose=True,
     )
 
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "mixed_writer_agent",
+        config_path=CONFIG_PATH,
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

@@ -3,10 +3,10 @@
 # dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
-Cursor ACP Client - Use Cursor's AI agent from Thenvoi.
+Cursor ACP Client - Use Cursor's AI agent from Band.
 
 Spawns Cursor's CLI agent (`cursor agent acp`) as a subprocess and bridges it
 to the Band platform. Messages from Band rooms are forwarded to Cursor,
@@ -14,13 +14,13 @@ and Cursor's responses (including tool calls, plans, and streaming text) are
 posted back to the room.
 
 Note: Cursor IDE does NOT yet support connecting to remote ACP agents (i.e.,
-you cannot add Thenvoi as an agent inside Cursor's UI). This integration works
-the other direction — Thenvoi spawns Cursor's agent as a backend.
+you cannot add Band as an agent inside Cursor's UI). This integration works
+the other direction — Band spawns Cursor's agent as a backend.
 
-For the reverse direction (IDE connects to Thenvoi), see:
+For the reverse direction (IDE connects to Band), see:
 - JetBrains: examples/acp/07_jetbrains_server.py
 - Zed: examples/acp/01_basic_acp_server.py
-- Any ACP client: band-acp CLI
+- Any ACP client: thenvoi-acp CLI
 
 Architecture:
     Band Platform (message arrives in room)
@@ -58,9 +58,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ACPClientAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import ACPClientAdapter
 from thenvoi.integrations.acp.client_profiles import CursorACPClientProfile
 
 setup_logging()
@@ -70,12 +69,10 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("cursor_agent")
-
+    ws_url = os.getenv(
+        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
+    )
+    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
     # Working directory for Cursor sessions
     cwd = os.getenv("ACP_AGENT_CWD", ".")
 
@@ -102,16 +99,15 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "cursor_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting Cursor ACP client bridge...")
-    logger.info("Messages from Thenvoi will be forwarded to Cursor's agent.")
+    logger.info("Messages from Band will be forwarded to Cursor's agent.")
     await agent.run()
 
 

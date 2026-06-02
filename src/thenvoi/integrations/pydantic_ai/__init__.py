@@ -7,7 +7,7 @@ Use the new composition-based pattern instead:
     from thenvoi import Agent
     from thenvoi.adapters import PydanticAIAdapter
 
-    adapter = PydanticAIAdapter(model="openai:gpt-4o")
+    adapter = PydanticAIAdapter(model="openai:gpt-5.4")
     agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
     await agent.run()
 """

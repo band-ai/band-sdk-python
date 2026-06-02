@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 CrewAI agent with role, goal, and backstory.
@@ -26,8 +26,7 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import CrewAIAdapter
-from band.config import load_agent_config
-from band.core.types import AdapterFeatures, Emit
+from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -43,13 +42,9 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load agent credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("crewai_agent")
-
     # Create adapter with CrewAI-style role definition
     adapter = CrewAIAdapter(
-        model="gpt-4o-mini",
+        model="gpt-5.4-mini",
         role="Research Assistant",
         goal="Help users find, analyze, and synthesize information efficiently",
         backstory="""You are an expert research assistant with years of experience
@@ -62,10 +57,9 @@ async def main() -> None:
     )
 
     # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "crewai_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )

@@ -4,7 +4,7 @@
 # dependencies = ["band-sdk[claude_sdk]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
 # ///
 """
 Extended Thinking Claude SDK Agent Example.
@@ -46,8 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ClaudeSDKAdapter
-from band.config import load_agent_config
-from band.core.types import AdapterFeatures, Emit
+from thenvoi.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -64,9 +63,6 @@ async def main() -> None:
         raise ValueError("THENVOI_WS_URL environment variable is required")
     if not rest_url:
         raise ValueError("THENVOI_REST_URL environment variable is required")
-
-    # Load credentials from agent_config.yaml
-    agent_id, api_key = load_agent_config("claude_sdk_extended_thinking")
 
     # Create adapter with extended thinking enabled.  `model="opus"` is a
     # family alias resolved by the npm `claude` binary at runtime — always
@@ -86,17 +82,15 @@ complex problem-solving. When faced with challenging questions:
         ),  # Report execution and thinking as events
     )
 
-    # Create and start agent
-    agent = Agent.create(
+    agent = Agent.from_config(
+        "claude_sdk_agent",
         adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
         ws_url=ws_url,
         rest_url=rest_url,
     )
 
     logger.info("Starting Claude SDK agent with extended thinking...")
-    logger.info("Agent ID: %s", agent_id)
+    logger.info("Agent ID: %s", agent.runtime.agent_id)
     logger.info("Max thinking tokens: 10000")
     logger.info("Press Ctrl+C to stop")
 
