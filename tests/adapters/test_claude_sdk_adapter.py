@@ -16,18 +16,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.adapters.claude_sdk import (
+from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
     _PendingApproval,
     _pre_tool_use_continue_hook,
-    THENVOI_ALL_TOOLS,
-    THENVOI_BASE_TOOLS,
-    THENVOI_MEMORY_TOOLS,
+    BAND_ALL_TOOLS,
+    BAND_BASE_TOOLS,
+    BAND_MEMORY_TOOLS,
 )
-from thenvoi.converters.claude_sdk import ClaudeSDKSessionState
-from thenvoi.runtime.tools import ALL_TOOL_NAMES
-from thenvoi.core.types import PlatformMessage
+from band.converters.claude_sdk import ClaudeSDKSessionState
+from band.runtime.tools import ALL_TOOL_NAMES
+from band.core.types import PlatformMessage
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
@@ -71,7 +71,7 @@ class TestInitialization:
         """Should initialize with no memory capability by default."""
         adapter = ClaudeSDKAdapter()
 
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
         assert Capability.MEMORY not in adapter.features.capabilities
 
@@ -79,7 +79,7 @@ class TestInitialization:
         """Should accept enable_memory_tools parameter (deprecated)."""
         adapter = ClaudeSDKAdapter(enable_memory_tools=True)
 
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
         assert Capability.MEMORY in adapter.features.capabilities
 
@@ -94,7 +94,7 @@ class TestOnStarted:
 
         # Mock the session manager
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
@@ -114,7 +114,7 @@ class TestOnStarted:
         adapter = ClaudeSDKAdapter()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager_class.return_value = MagicMock()
 
@@ -132,7 +132,7 @@ class TestOnStarted:
         adapter = ClaudeSDKAdapter(model="opus")
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager_class.return_value = MagicMock()
 
@@ -154,7 +154,7 @@ class TestOnStarted:
         adapter = ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager_class.return_value = MagicMock()
 
@@ -181,7 +181,7 @@ class TestOnMessage:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(
@@ -223,7 +223,7 @@ class TestOnMessage:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -257,7 +257,7 @@ class TestOnMessage:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(
@@ -297,7 +297,7 @@ class TestErrorHandling:
         mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ):
             await adapter.on_started(
@@ -341,7 +341,7 @@ class TestCLIConnectionError:
         mock_manager.invalidate_session = AsyncMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ):
             await adapter.on_started(
@@ -379,7 +379,7 @@ class TestCLIConnectionError:
         mock_manager.invalidate_session = AsyncMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ):
             await adapter.on_started(
@@ -421,7 +421,7 @@ class TestCLIConnectionError:
         mock_manager.invalidate_session = AsyncMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ):
             await adapter.on_started(
@@ -511,56 +511,52 @@ class TestCleanupAll:
 class TestBandTools:
     """Tests for Band tool names constants."""
 
-    def test_thenvoi_base_tools_list(self):
+    def test_band_base_tools_list(self):
         """Should define base platform tools (always included)."""
         expected = {
-            "mcp__thenvoi__thenvoi_send_message",
-            "mcp__thenvoi__thenvoi_send_event",
-            "mcp__thenvoi__thenvoi_add_participant",
-            "mcp__thenvoi__thenvoi_remove_participant",
-            "mcp__thenvoi__thenvoi_get_participants",
-            "mcp__thenvoi__thenvoi_lookup_peers",
-            "mcp__thenvoi__thenvoi_create_chatroom",
+            "mcp__band__band_send_message",
+            "mcp__band__band_send_event",
+            "mcp__band__band_add_participant",
+            "mcp__band__band_remove_participant",
+            "mcp__band__band_get_participants",
+            "mcp__band__band_lookup_peers",
+            "mcp__band__band_create_chatroom",
             # Contact management tools
-            "mcp__thenvoi__thenvoi_list_contacts",
-            "mcp__thenvoi__thenvoi_add_contact",
-            "mcp__thenvoi__thenvoi_remove_contact",
-            "mcp__thenvoi__thenvoi_list_contact_requests",
-            "mcp__thenvoi__thenvoi_respond_contact_request",
+            "mcp__band__band_list_contacts",
+            "mcp__band__band_add_contact",
+            "mcp__band__band_remove_contact",
+            "mcp__band__band_list_contact_requests",
+            "mcp__band__band_respond_contact_request",
         }
 
-        assert set(THENVOI_BASE_TOOLS) == expected
-        assert len(THENVOI_BASE_TOOLS) == len(set(THENVOI_BASE_TOOLS)), (
-            "duplicate entries in THENVOI_BASE_TOOLS"
+        assert set(BAND_BASE_TOOLS) == expected
+        assert len(BAND_BASE_TOOLS) == len(set(BAND_BASE_TOOLS)), (
+            "duplicate entries in BAND_BASE_TOOLS"
         )
 
-    def test_thenvoi_memory_tools_list(self):
+    def test_band_memory_tools_list(self):
         """Should define memory tools (enterprise only - opt-in)."""
         expected = {
-            "mcp__thenvoi__thenvoi_list_memories",
-            "mcp__thenvoi__thenvoi_store_memory",
-            "mcp__thenvoi__thenvoi_get_memory",
-            "mcp__thenvoi__thenvoi_supersede_memory",
-            "mcp__thenvoi__thenvoi_archive_memory",
+            "mcp__band__band_list_memories",
+            "mcp__band__band_store_memory",
+            "mcp__band__band_get_memory",
+            "mcp__band__band_supersede_memory",
+            "mcp__band__band_archive_memory",
         }
 
-        assert set(THENVOI_MEMORY_TOOLS) == expected
-        assert len(THENVOI_MEMORY_TOOLS) == len(set(THENVOI_MEMORY_TOOLS)), (
-            "duplicate entries in THENVOI_MEMORY_TOOLS"
+        assert set(BAND_MEMORY_TOOLS) == expected
+        assert len(BAND_MEMORY_TOOLS) == len(set(BAND_MEMORY_TOOLS)), (
+            "duplicate entries in BAND_MEMORY_TOOLS"
         )
 
-    def test_thenvoi_all_tools_combines_base_and_memory(self):
-        """THENVOI_ALL_TOOLS should combine base and memory tools without duplicates."""
-        from thenvoi.runtime.tools import mcp_tool_names
+    def test_band_all_tools_combines_base_and_memory(self):
+        """BAND_ALL_TOOLS should combine base and memory tools without duplicates."""
+        from band.runtime.tools import mcp_tool_names
 
-        assert set(THENVOI_ALL_TOOLS) == set(THENVOI_BASE_TOOLS) | set(
-            THENVOI_MEMORY_TOOLS
-        )
-        assert len(THENVOI_ALL_TOOLS) == len(set(THENVOI_ALL_TOOLS)), (
-            "duplicate entries"
-        )
-        assert set(THENVOI_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
-            "THENVOI_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "
+        assert set(BAND_ALL_TOOLS) == set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS)
+        assert len(BAND_ALL_TOOLS) == len(set(BAND_ALL_TOOLS)), "duplicate entries"
+        assert set(BAND_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
+            "BAND_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "
             "a tool may have been dropped from the registry"
         )
 
@@ -633,7 +629,7 @@ class TestCustomTools:
 
         # Mock the session manager creation
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
@@ -648,9 +644,9 @@ class TestCustomTools:
             sdk_options = call_args[0][0]
 
             # Verify custom tool is in allowed_tools
-            assert "mcp__thenvoi__calculator" in sdk_options.allowed_tools
+            assert "mcp__band__calculator" in sdk_options.allowed_tools
             # Platform tools should still be there
-            assert "mcp__thenvoi__thenvoi_send_message" in sdk_options.allowed_tools
+            assert "mcp__band__band_send_message" in sdk_options.allowed_tools
 
     @pytest.mark.asyncio
     async def test_custom_tools_registered_in_mcp_server(self):
@@ -674,7 +670,7 @@ class TestCustomTools:
         mock_backend.server = MagicMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.create_thenvoi_mcp_backend",
+            "band.adapters.claude_sdk.create_band_mcp_backend",
             new=AsyncMock(return_value=mock_backend),
         ) as mock_create_backend:
             backend = await adapter._create_mcp_backend()
@@ -684,16 +680,16 @@ class TestCustomTools:
         tool_definitions = mock_create_backend.await_args.kwargs["tool_definitions"]
         tool_names = [td.name for td in tool_definitions]
         # Base platform tools registered
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_send_event" in tool_names
-        assert "thenvoi_add_participant" in tool_names
-        assert "thenvoi_remove_participant" in tool_names
-        assert "thenvoi_get_participants" in tool_names
-        assert "thenvoi_lookup_peers" in tool_names
-        assert "thenvoi_create_chatroom" in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_send_event" in tool_names
+        assert "band_add_participant" in tool_names
+        assert "band_remove_participant" in tool_names
+        assert "band_get_participants" in tool_names
+        assert "band_lookup_peers" in tool_names
+        assert "band_create_chatroom" in tool_names
         # Memory and contacts excluded (no capabilities set)
-        assert "thenvoi_list_contacts" not in tool_names
-        assert "thenvoi_list_memories" not in tool_names
+        assert "band_list_contacts" not in tool_names
+        assert "band_list_memories" not in tool_names
 
     @pytest.mark.asyncio
     async def test_custom_tools_registered_with_memory_tools_enabled(self):
@@ -718,7 +714,7 @@ class TestCustomTools:
         mock_backend.server = MagicMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.create_thenvoi_mcp_backend",
+            "band.adapters.claude_sdk.create_band_mcp_backend",
             new=AsyncMock(return_value=mock_backend),
         ) as mock_create_backend:
             backend = await adapter._create_mcp_backend()
@@ -728,18 +724,18 @@ class TestCustomTools:
         tool_definitions = mock_create_backend.await_args.kwargs["tool_definitions"]
         tool_names = [td.name for td in tool_definitions]
         # Base platform tools
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_create_chatroom" in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_create_chatroom" in tool_names
         # Memory tools included
-        assert "thenvoi_list_memories" in tool_names
-        assert "thenvoi_store_memory" in tool_names
-        assert "thenvoi_get_memory" in tool_names
+        assert "band_list_memories" in tool_names
+        assert "band_store_memory" in tool_names
+        assert "band_get_memory" in tool_names
         # Contacts excluded (not in capabilities)
-        assert "thenvoi_list_contacts" not in tool_names
+        assert "band_list_contacts" not in tool_names
 
     def test_tool_name_derived_from_input_model(self):
         """Tool name should be derived from Pydantic model class name."""
-        from thenvoi.runtime.custom_tools import get_custom_tool_name
+        from band.runtime.custom_tools import get_custom_tool_name
         from pydantic import BaseModel
 
         class MyCustomToolInput(BaseModel):
@@ -782,7 +778,7 @@ class TestSessionPersistence:
         mock_client.receive_response = mock_receive
 
         # Patch isinstance checks for ResultMessage
-        with patch("thenvoi.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
+        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
             await adapter._process_response(mock_client, "room-123", mock_tools)
 
         # Verify task event was emitted
@@ -805,7 +801,7 @@ class TestSessionPersistence:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -840,7 +836,7 @@ class TestSessionPersistence:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -880,7 +876,7 @@ class TestSessionPersistence:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -922,7 +918,7 @@ class TestSessionPersistence:
 
         mock_client.receive_response = mock_receive
 
-        with patch("thenvoi.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
+        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
             # Should not raise despite send_event failure
             await adapter._process_response(mock_client, "room-123", mock_tools)
 
@@ -1638,7 +1634,7 @@ class TestOnMessageCommandInterception:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -1682,7 +1678,7 @@ class TestOnMessageCommandInterception:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -1714,7 +1710,7 @@ class TestOnMessageCommandInterception:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -1743,7 +1739,7 @@ class TestApprovalOnStarted:
     async def test_passes_factory_when_approval_enabled(self):
         adapter = ClaudeSDKAdapter(approval_mode="manual")
 
-        with patch("thenvoi.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
+        with patch("band.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
             mock_cls.return_value = MagicMock()
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -1756,7 +1752,7 @@ class TestApprovalOnStarted:
     async def test_no_factory_when_approval_disabled(self):
         adapter = ClaudeSDKAdapter()  # approval_mode=None
 
-        with patch("thenvoi.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
+        with patch("band.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
             mock_cls.return_value = MagicMock()
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -1770,7 +1766,7 @@ class TestApprovalOnStarted:
         """PreToolUse hook must be set so the SDK delegates to can_use_tool."""
         adapter = ClaudeSDKAdapter(approval_mode="auto_accept")
 
-        with patch("thenvoi.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
+        with patch("band.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
             mock_cls.return_value = MagicMock()
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -1786,7 +1782,7 @@ class TestApprovalOnStarted:
     async def test_no_hooks_when_approval_disabled(self):
         adapter = ClaudeSDKAdapter()  # approval_mode=None
 
-        with patch("thenvoi.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
+        with patch("band.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
             mock_cls.return_value = MagicMock()
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"

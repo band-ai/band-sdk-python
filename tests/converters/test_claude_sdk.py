@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 
-from thenvoi.converters.claude_sdk import (
+from band.converters.claude_sdk import (
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
 )

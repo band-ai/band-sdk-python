@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Thinker agent for the 20 Questions Arena game.
@@ -68,13 +68,13 @@ async def main() -> None:
     logger.info("  model flag : %s", args.model or "(auto-detect)")
     logger.info("=" * 60)
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     logger.info("  ws_url     : %s", ws_url)
     logger.info("  rest_url   : %s", rest_url)

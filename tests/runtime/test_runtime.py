@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.runtime.execution import ExecutionContext
-from thenvoi.runtime.runtime import AgentRuntime
+from band.runtime.execution import ExecutionContext
+from band.runtime.runtime import AgentRuntime
 
 # Import test helpers from conftest
 from tests.conftest import make_message_event, make_participant_added_event

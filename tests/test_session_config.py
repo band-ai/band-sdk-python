@@ -13,8 +13,8 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
-from thenvoi.runtime.types import SessionConfig
-from thenvoi.runtime.execution import ExecutionContext
+from band.runtime.types import SessionConfig
+from band.runtime.execution import ExecutionContext
 
 # Import test helpers from conftest
 from tests.conftest import make_message_event

@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.core.types import PlatformMessage
+from band.core.types import PlatformMessage
 
 
 class MockBaseTool:
@@ -36,10 +36,10 @@ def crewai_mocks(monkeypatch):
     mock_crewai_tools_module.BaseTool = MockBaseTool
 
     for mod in (
-        "thenvoi.adapters.crewai",
-        "thenvoi.integrations.crewai",
-        "thenvoi.integrations.crewai.runtime",
-        "thenvoi.integrations.crewai.tools",
+        "band.adapters.crewai",
+        "band.integrations.crewai",
+        "band.integrations.crewai.runtime",
+        "band.integrations.crewai.tools",
     ):
         sys.modules.pop(mod, None)
 
@@ -51,10 +51,10 @@ def crewai_mocks(monkeypatch):
         yield {"crewai": mock_crewai_module, "nest_asyncio": mock_nest_asyncio}
     finally:
         for mod in (
-            "thenvoi.adapters.crewai",
-            "thenvoi.integrations.crewai",
-            "thenvoi.integrations.crewai.runtime",
-            "thenvoi.integrations.crewai.tools",
+            "band.adapters.crewai",
+            "band.integrations.crewai",
+            "band.integrations.crewai.runtime",
+            "band.integrations.crewai.tools",
         ):
             sys.modules.pop(mod, None)
 
@@ -79,7 +79,7 @@ async def test_soak_100_turns_3_rooms(crewai_mocks):
     """Drive 100 on_message calls across 3 rooms; assert no leaks."""
     import importlib
 
-    module = importlib.import_module("thenvoi.adapters.crewai")
+    module = importlib.import_module("band.adapters.crewai")
     CrewAIAdapter = module.CrewAIAdapter
 
     adapter = CrewAIAdapter(model="gpt-5.4-mini")

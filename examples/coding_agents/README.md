@@ -106,8 +106,8 @@ docker compose logs -f reviewer
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `THENVOI_REST_URL` | `https://app.band.ai` | Platform REST API |
-| `THENVOI_WS_URL` | `wss://app.band.ai/...` | Platform WebSocket |
+| `BAND_REST_URL` | `https://app.band.ai` | Platform REST API |
+| `BAND_WS_URL` | `wss://app.band.ai/...` | Platform WebSocket |
 | `ANTHROPIC_API_KEY` | -- | Anthropic API key for planner |
 | `OPENAI_API_KEY` | -- | OpenAI API key for reviewer |
 | `GIT_SSH_STRICT_HOST_KEY_CHECKING` | `true` | Enforce host-key precheck for SSH remotes |

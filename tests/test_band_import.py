@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+
 
 def test_band_import_surface_exposes_agent_and_link() -> None:
     from band import Agent, BandLink
@@ -8,33 +10,48 @@ def test_band_import_surface_exposes_agent_and_link() -> None:
     assert BandLink.__name__ == "BandLink"
 
 
-def test_thenvoi_import_surface_keeps_compatibility_aliases() -> None:
-    from thenvoi import BandLink, ThenvoiLink
+def test_legacy_packages_are_not_available() -> None:
+    legacy_root = "then" + "voi"
+    legacy_packages = [
+        legacy_root,
+        f"{legacy_root}_rest",
+        f"{legacy_root}_testing",
+    ]
 
-    assert ThenvoiLink is BandLink
+    for package in legacy_packages:
+        assert importlib.util.find_spec(package) is None
 
 
-def test_band_submodule_imports_alias_thenvoi_modules() -> None:
+def test_band_submodule_imports_use_band_modules() -> None:
     import band.adapters
-    import thenvoi.adapters
+    import band.integrations.acp
 
-    assert band.adapters is thenvoi.adapters
+    assert band.adapters.__name__ == "band.adapters"
+    assert band.integrations.acp.__name__ == "band.integrations.acp"
 
 
-def test_acp_facades_expose_band_and_thenvoi_aliases() -> None:
+def test_acp_facades_expose_band_names_only() -> None:
+    import band.adapters as adapters
+    import band.integrations.acp as acp
     from band.adapters import BandACPServerAdapter as BandAdapterFacade
-    from band.adapters import ThenvoiACPServerAdapter as ThenvoiAdapterFacade
     from band.integrations.acp import BandACPClient, BandACPServerAdapter
-    from band.integrations.acp import ThenvoiACPClient, ThenvoiACPServerAdapter
 
-    assert ThenvoiAdapterFacade is BandAdapterFacade
-    assert ThenvoiACPServerAdapter is BandACPServerAdapter
-    assert ThenvoiACPClient is BandACPClient
+    legacy_prefix = "Then" + "voi"
+
+    assert BandAdapterFacade is BandACPServerAdapter
+    assert BandACPClient.__name__ == "BandACPClient"
+    assert not hasattr(adapters, f"{legacy_prefix}ACPServerAdapter")
+    assert not hasattr(acp, f"{legacy_prefix}ACPClient")
+    assert not hasattr(acp, f"{legacy_prefix}ACPServerAdapter")
 
 
-def test_mcp_facade_keeps_thenvoi_backend_aliases() -> None:
-    from band.integrations.mcp import BandMCPBackend, ThenvoiMCPBackend
-    from band.integrations.mcp import BandMCPBackendKind, ThenvoiMCPBackendKind
+def test_mcp_facade_exposes_band_backend_names_only() -> None:
+    import band.integrations.mcp as mcp
+    from band.integrations.mcp import BandMCPBackend, BandMCPBackendKind
 
-    assert ThenvoiMCPBackend is BandMCPBackend
-    assert ThenvoiMCPBackendKind == BandMCPBackendKind
+    legacy_prefix = "Then" + "voi"
+
+    assert BandMCPBackend.__name__ == "BandMCPBackend"
+    assert BandMCPBackendKind.__name__ == "BandMCPBackendKind"
+    assert not hasattr(mcp, f"{legacy_prefix}MCPBackend")
+    assert not hasattr(mcp, f"{legacy_prefix}MCPBackendKind")

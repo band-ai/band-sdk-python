@@ -20,11 +20,6 @@ services:
       # Override with BAND_REST_URL_DOCKER / BAND_WS_URL_DOCKER if needed.
       BAND_REST_URL: ${BAND_REST_URL_DOCKER:-http://host.docker.internal:4000}
       BAND_WS_URL: ${BAND_WS_URL_DOCKER:-ws://host.docker.internal:4000/api/v1/socket/websocket}
-      # Optional local override when PyPI thenvoi-client-rest is behind:
-      # Example:
-      #   THENVOI_CLIENT_REST_WHEEL_DIR=/path/to/thenvoi-client-rest/dist
-      #   THENVOI_CLIENT_REST_WHEEL=/opt/thenvoi-client-rest/thenvoi_client_rest-0.0.1.dev6-py3-none-any.whl
-      THENVOI_CLIENT_REST_WHEEL: ${THENVOI_CLIENT_REST_WHEEL:-}
       # Optional local override for phoenix channels client wheel:
       #   PHOENIX_CHANNELS_CLIENT_WHEEL_DIR=/path/to/dist
       #   PHOENIX_CHANNELS_CLIENT_WHEEL=/opt/phoenix-client
@@ -38,7 +33,6 @@ services:
       - ${HOME}/.config/gh:/home/codex/.config/gh:ro
       - ${HOME}/.ssh:/home/codex/.ssh:ro
       - ${HOME}/.gitconfig:/home/codex/.gitconfig:ro
-      - ${THENVOI_CLIENT_REST_WHEEL_DIR:-/tmp/thenvoi-client-rest}:/opt/thenvoi-client-rest:ro
       - ${PHOENIX_CHANNELS_CLIENT_WHEEL_DIR:-/tmp/phoenix-client}:/opt/phoenix-client:ro
       - codex_state:/state
       - codex_prompts:/prompts

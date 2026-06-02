@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.core.exceptions import (
+from band.core.exceptions import (
     BandConfigError,
     BandConnectionError,
     BandError,
@@ -13,12 +13,12 @@ from thenvoi.core.exceptions import (
 
 
 class TestExceptionHierarchy:
-    def test_all_inherit_from_thenvoi_error(self) -> None:
+    def test_all_inherit_from_band_error(self) -> None:
         assert issubclass(BandConfigError, BandError)
         assert issubclass(BandConnectionError, BandError)
         assert issubclass(BandToolError, BandError)
 
-    def test_thenvoi_error_inherits_from_exception(self) -> None:
+    def test_band_error_inherits_from_exception(self) -> None:
         assert issubclass(BandError, Exception)
 
     def test_can_catch_with_base_class(self) -> None:
@@ -88,7 +88,7 @@ class TestConfigErrorWithSuggestion:
         )
         assert "Did you mean" not in str(err_strict)
 
-    def test_returns_thenvoi_config_error(self) -> None:
+    def test_returns_band_config_error(self) -> None:
         err = BandConfigError.with_suggestion("msg", "x", ["y"], max_distance=5)
         assert isinstance(err, BandConfigError)
         assert isinstance(err, BandError)

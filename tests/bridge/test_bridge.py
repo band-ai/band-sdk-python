@@ -10,8 +10,8 @@ from unittest.mock import MagicMock
 from bridge_core.bridge import AgentRunner, BandBridge
 from bridge_core.config import BridgeConfig, ReconnectConfig
 from bridge_core.forwarder import Forwarder
-from thenvoi.runtime.types import PlatformMessage
-from thenvoi.platform.event import (
+from band.runtime.types import PlatformMessage
+from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
     RoomAddedEvent,

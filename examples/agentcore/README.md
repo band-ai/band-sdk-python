@@ -1,7 +1,7 @@
 # AgentCore demo — three agents orchestrating in a Band room
 
 A working example of three AWS Bedrock AgentCore-hosted agents that
-coordinate inside a single Thenvoi (Band) chatroom: `@weather`, `@math`, and
+coordinate inside a single Band (Band) chatroom: `@weather`, `@math`, and
 `@personal_assistant`. The personal assistant adds the other two when it
 needs them, asks each a targeted question, reads their replies, and posts
 a final answer back to the user. No human relay between agents.
@@ -20,12 +20,12 @@ a final answer back to the user. No human relay between agents.
 ## Architecture
 
 ```
-                    Thenvoi platform (WS + REST)
+                    Band platform (WS + REST)
                               ▲
                               │ Phoenix WS
         ┌─────────────────────┼─────────────────────┐
         │                     │                     │
-   THENVOI_BRIDGE_AGENTS = three identities, three forwarders
+   BAND_BRIDGE_AGENTS = three identities, three forwarders
         │                     │                     │
         ▼                     ▼                     ▼
    bedrock-agentcore       bedrock-agentcore     bedrock-agentcore
@@ -36,12 +36,12 @@ a final answer back to the user. No human relay between agents.
    │ weather  │         │   math   │          │ personal_assistant │
    │ container│         │ container│          │     container      │
    └──────────┘         └──────────┘          └────────────────────┘
-   (Thenvoi SDK + Anthropic — one container image, different env per ARN)
+   (Band SDK + Anthropic — one container image, different env per ARN)
 ```
 
-The bridge has no Band logic. Each container runs the Thenvoi SDK against
-its own `THENVOI_API_KEY` and uses the standard `AgentTools` surface
-(`thenvoi_send_message`, `thenvoi_add_participant`, `thenvoi_lookup_peers`,
+The bridge has no Band logic. Each container runs the Band SDK against
+its own `BAND_API_KEY` and uses the standard `AgentTools` surface
+(`band_send_message`, `band_add_participant`, `band_lookup_peers`,
 …) to operate as a first-class platform participant.
 
 Topology: everyone in **one** Band room. PA adds peers to the user's room;
@@ -51,14 +51,14 @@ the user can see the back-and-forth.
 
 - AWS account with Bedrock AgentCore enabled in your region (us-east-1
   recommended).
-- Thenvoi platform account; three agents created on the platform — one per
+- Band platform account; three agents created on the platform — one per
   role. Note each agent's `agent_id` and `api_key`.
 - An Anthropic API key.
 - Docker and the `uv` Python package manager locally.
 
-## Step 1 — Create three Thenvoi agents
+## Step 1 — Create three Band agents
 
-On the Thenvoi platform, create three agents. Suggested handles:
+On the Band platform, create three agents. Suggested handles:
 
 - `weather`
 - `math`
@@ -71,12 +71,12 @@ the platform shows it as the agent's profile). Record the `agent_id` and
 ## Step 2 — Build the container image
 
 The same image runs all three agents; per-agent behaviour comes from env
-vars (`THENVOI_AGENT_ID`, `THENVOI_API_KEY`, `SYSTEM_PROMPT`).
+vars (`BAND_AGENT_ID`, `BAND_API_KEY`, `SYSTEM_PROMPT`).
 
 ```bash
 # From the repo root
 docker build \
-    -t thenvoi-agentcore-agent:latest \
+    -t band-agentcore-agent:latest \
     -f examples/agentcore/Dockerfile \
     .
 ```
@@ -86,14 +86,14 @@ docker build \
 ```bash
 AWS_REGION=us-east-1
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-REPO=thenvoi-agentcore-agent
+REPO=band-agentcore-agent
 
 aws ecr create-repository --repository-name "$REPO" --region "$AWS_REGION" || true
 aws ecr get-login-password --region "$AWS_REGION" \
   | docker login --username AWS --password-stdin "$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
 
 IMAGE="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:latest"
-docker tag thenvoi-agentcore-agent:latest "$IMAGE"
+docker tag band-agentcore-agent:latest "$IMAGE"
 docker push "$IMAGE"
 ```
 
@@ -106,8 +106,8 @@ For each agent (weather, math, personal_assistant):
 
 1. Create a runtime with the image URI from step 3.
 2. Set runtime environment variables:
-   - `THENVOI_AGENT_ID` — that agent's Thenvoi UUID.
-   - `THENVOI_API_KEY` — that agent's Thenvoi API key.
+   - `BAND_AGENT_ID` — that agent's Band UUID.
+   - `BAND_API_KEY` — that agent's Band API key.
    - `ANTHROPIC_API_KEY` — your Anthropic key.
    - `ANTHROPIC_MODEL` — e.g. `claude-sonnet-4-5-20250929`.
    - `SYSTEM_PROMPT` — paste contents of
@@ -120,12 +120,12 @@ rather than a plain env var if you prefer.
 ## Step 5 — Configure the bridge
 
 The bridge needs three (agent_id, api_key, target) tuples — one per agent.
-Compose them into the `THENVOI_BRIDGE_AGENTS` JSON env var. Use
+Compose them into the `BAND_BRIDGE_AGENTS` JSON env var. Use
 `examples/agentcore/agent_config.yaml.example` as a checklist (copy it to
 `agent_config.yaml`, which is gitignored, and fill in your values).
 
 ```bash
-export THENVOI_BRIDGE_AGENTS='[
+export BAND_BRIDGE_AGENTS='[
   {
     "agent_id": "<weather agent_id>",
     "api_key": "<weather api_key>",
@@ -169,10 +169,10 @@ uv sync --extra bridge_agentcore
 # Start the bridge (loads .env automatically)
 uv run python examples/agentcore/run_agentcore.py
 # or run the module directly:
-PYTHONPATH=thenvoi-bridge uv run python -m bridge_core
+PYTHONPATH=band-bridge uv run python -m bridge_core
 ```
 
-Watch the logs; you should see three agents connect to Thenvoi's WS, each
+Watch the logs; you should see three agents connect to Band's WS, each
 subscribed to its own rooms. The bridge health endpoint is at
 <http://localhost:8080/health> and reports per-agent connection state.
 
@@ -186,7 +186,7 @@ subscribed to its own rooms. The bridge health endpoint is at
 
 ## Step 7 — Try it
 
-In the Thenvoi UI:
+In the Band UI:
 
 1. Open (or create) a room with **yourself** + `@personal_assistant`.
 2. Ask: *"What is the temperature difference now, in percents, between
@@ -233,4 +233,4 @@ room id so each room gets its own AgentCore microVM.
   and that the peers' agent handles match what the prompt references.
 - Two agents in the same room can't hear each other → was a known kill-shot
   bug pre-INT-506. If you see it again, check that each agent has its own
-  entry (with its own agent_id) in `THENVOI_BRIDGE_AGENTS`.
+  entry (with its own agent_id) in `BAND_BRIDGE_AGENTS`.

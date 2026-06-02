@@ -13,8 +13,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from thenvoi.runtime.execution import ExecutionContext
-from thenvoi.runtime.types import SessionConfig
+from band.runtime.execution import ExecutionContext
+from band.runtime.types import SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import make_message_event

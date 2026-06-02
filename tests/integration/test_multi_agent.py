@@ -24,14 +24,14 @@ import logging
 
 import pytest
 
-from thenvoi_rest import ChatEventRequest, ChatMessageRequest
-from thenvoi_rest.core.api_error import ApiError
-from thenvoi_rest.types import (
+from band_rest import ChatEventRequest, ChatMessageRequest
+from band_rest.core.api_error import ApiError
+from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
     ParticipantRequest,
 )
 
-from thenvoi.client.streaming import MessageCreatedPayload, WebSocketClient
+from band.client.streaming import MessageCreatedPayload, WebSocketClient
 from tests.integration.conftest import fetch_all_context, requires_multi_agent
 
 logger = logging.getLogger(__name__)
@@ -164,8 +164,8 @@ class TestMultiAgentChatRoom:
 
         # Agent 2 connects to WebSocket and subscribes to the chat room
         agent2_ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key_2,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key_2,
             agent_id=agent2_id,
         )
 

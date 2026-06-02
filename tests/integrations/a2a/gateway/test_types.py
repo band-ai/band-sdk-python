@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 from a2a.types import Task, TaskState, TaskStatus, TaskStatusUpdateEvent
 
-from thenvoi.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
+from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 
 
 class TestGatewaySessionState:

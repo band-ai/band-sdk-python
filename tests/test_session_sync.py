@@ -13,9 +13,9 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timezone
 
-from thenvoi.platform.event import ReconnectedEvent
-from thenvoi.runtime.execution import ExecutionContext
-from thenvoi.runtime.types import PlatformMessage, SessionConfig
+from band.platform.event import ReconnectedEvent
+from band.runtime.execution import ExecutionContext
+from band.runtime.types import PlatformMessage, SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import make_message_event, make_participant_added_event

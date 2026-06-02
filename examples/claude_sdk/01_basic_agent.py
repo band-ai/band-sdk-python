@@ -4,7 +4,7 @@
 # dependencies = ["band-sdk[claude_sdk]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Claude SDK Agent Example.
@@ -17,8 +17,8 @@ Prerequisites:
     2. Claude Code CLI: npm install -g @anthropic-ai/claude-code
     3. Add claude_sdk_agent credentials to agent_config.yaml
     4. Set environment variables in .env:
-       - THENVOI_WS_URL
-       - THENVOI_REST_URL
+       - BAND_WS_URL
+       - BAND_REST_URL
        - ANTHROPIC_API_KEY
 
 Run with:
@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ClaudeSDKAdapter
-from thenvoi.core.types import AdapterFeatures, Emit
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -50,13 +50,13 @@ async def main() -> None:
     """Run the basic Claude SDK agent."""
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     # Create adapter with Claude SDK settings.  Omitting `model` lets the
     # npm `claude` binary pick its own default (latest installed model).

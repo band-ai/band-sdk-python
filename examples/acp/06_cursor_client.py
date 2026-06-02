@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Cursor ACP Client - Use Cursor's AI agent from Band.
@@ -20,7 +20,7 @@ the other direction — Band spawns Cursor's agent as a backend.
 For the reverse direction (IDE connects to Band), see:
 - JetBrains: examples/acp/07_jetbrains_server.py
 - Zed: examples/acp/01_basic_acp_server.py
-- Any ACP client: thenvoi-acp CLI
+- Any ACP client: band-acp CLI
 
 Architecture:
     Band Platform (message arrives in room)
@@ -36,7 +36,7 @@ Prerequisites:
        # OR set CURSOR_API_KEY / CURSOR_AUTH_TOKEN environment variable
 
     2. Set environment variables:
-       - THENVOI_API_KEY: Your Band API key (required for tool injection)
+       - BAND_API_KEY: Your Band API key (required for tool injection)
 
     3. Optionally configure:
        - CURSOR_API_KEY: Cursor API key (alternative to `cursor agent login`)
@@ -60,7 +60,7 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ACPClientAdapter
-from thenvoi.integrations.acp.client_profiles import CursorACPClientProfile
+from band.integrations.acp.client_profiles import CursorACPClientProfile
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -69,10 +69,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     # Working directory for Cursor sessions
     cwd = os.getenv("ACP_AGENT_CWD", ".")
 
@@ -93,7 +91,7 @@ async def main() -> None:
         cwd=cwd,
         env=cursor_env or None,
         rest_url=rest_url,
-        inject_thenvoi_tools=True,
+        inject_band_tools=True,
         auth_method="cursor_login",
         profile=CursorACPClientProfile(),
     )

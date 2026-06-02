@@ -30,7 +30,7 @@ JetBrains Configuration (~/.jetbrains/acp.json):
                 "command": "band-acp",
                 "args": ["--agent-id", "YOUR_AGENT_ID"],
                 "env": {
-                    "THENVOI_API_KEY": "YOUR_API_KEY"
+                    "BAND_API_KEY": "YOUR_API_KEY"
                 }
             }
         }
@@ -47,7 +47,7 @@ JetBrains Configuration (~/.jetbrains/acp.json):
                     "band-acp", "--agent-id", "YOUR_AGENT_ID"
                 ],
                 "env": {
-                    "THENVOI_API_KEY": "YOUR_API_KEY"
+                    "BAND_API_KEY": "YOUR_API_KEY"
                 }
             }
         }
@@ -55,10 +55,10 @@ JetBrains Configuration (~/.jetbrains/acp.json):
 
 Prerequisites:
     1. Install: pip install band-sdk[acp]
-    2. Set THENVOI_API_KEY and THENVOI_AGENT_ID
+    2. Set BAND_API_KEY and BAND_AGENT_ID
 
 Run standalone for testing:
-    THENVOI_API_KEY=... THENVOI_AGENT_ID=... uv run examples/acp/07_jetbrains_server.py
+    BAND_API_KEY=... BAND_AGENT_ID=... uv run examples/acp/07_jetbrains_server.py
 """
 
 from __future__ import annotations
@@ -88,25 +88,25 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     # JetBrains IDEs inject credentials via ~/.jetbrains/acp.json env config.
     # Fall back to agent_config.yaml for standalone testing.
-    api_key = os.getenv("THENVOI_API_KEY")
+    api_key = os.getenv("BAND_API_KEY")
 
     if not api_key:
         try:
             agent_id, api_key = load_agent_config("jetbrains_acp_agent")
         except Exception:
             raise ValueError(
-                "THENVOI_API_KEY environment variable is required, "
+                "BAND_API_KEY environment variable is required, "
                 "or configure 'jetbrains_acp_agent' in agent_config.yaml"
             )
     else:
-        agent_id = os.getenv("THENVOI_AGENT_ID")
+        agent_id = os.getenv("BAND_AGENT_ID")
         if not agent_id:
             raise ValueError(
-                "THENVOI_AGENT_ID is required. Pass via --agent-id or set THENVOI_AGENT_ID."
+                "BAND_AGENT_ID is required. Pass via --agent-id or set BAND_AGENT_ID."
             )
 
     # Create ACP server adapter

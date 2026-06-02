@@ -19,10 +19,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.runtime.execution import ExecutionContext, _ResyncRequest
-from thenvoi.runtime.presence import RoomPresence
-from thenvoi.runtime.runtime import AgentRuntime
-from thenvoi.runtime.types import PlatformMessage, SessionConfig
+from band.runtime.execution import ExecutionContext, _ResyncRequest
+from band.runtime.presence import RoomPresence
+from band.runtime.runtime import AgentRuntime
+from band.runtime.types import PlatformMessage, SessionConfig
 
 
 async def wait_for_condition(

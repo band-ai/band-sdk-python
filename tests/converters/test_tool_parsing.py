@@ -1,6 +1,6 @@
 """Tests for shared tool parsing utilities."""
 
-from thenvoi.converters._tool_parsing import (
+from band.converters._tool_parsing import (
     ParsedToolCall,
     ParsedToolResult,
     parse_tool_call,

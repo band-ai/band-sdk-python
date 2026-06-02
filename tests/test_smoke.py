@@ -2,7 +2,7 @@
 Smoke tests - verify basic imports and setup work.
 """
 
-from thenvoi import (
+from band import (
     AdapterFeatures,
     AgentRuntime,
     AgentTools,
@@ -65,7 +65,7 @@ def test_adapter_features_constructible():
 
 def test_can_import_letta_adapter_via_lazy_loader():
     """LettaAdapter resolves through the adapters lazy loader."""
-    from thenvoi.adapters import LettaAdapter, LettaAdapterConfig
+    from band.adapters import LettaAdapter, LettaAdapterConfig
 
     assert LettaAdapter is not None
     assert LettaAdapterConfig is not None
@@ -73,7 +73,7 @@ def test_can_import_letta_adapter_via_lazy_loader():
 
 def test_can_import_langgraph_integrations():
     """Verify we can import LangGraph integration utilities."""
-    from thenvoi.integrations.langgraph import (
+    from band.integrations.langgraph import (
         agent_tools_to_langchain,
         graph_as_tool,
     )

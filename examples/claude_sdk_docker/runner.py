@@ -4,7 +4,7 @@
 # dependencies = ["band-sdk[claude_sdk]", "pyyaml"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 YAML-based agent runner for Band Claude SDK.
@@ -28,7 +28,7 @@ from typing import Any
 
 import yaml
 
-from thenvoi.core.types import AdapterFeatures, Emit
+from band.core.types import AdapterFeatures, Emit
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -162,14 +162,12 @@ async def main() -> None:
         raise ValueError("AGENT_CONFIG environment variable not set")
 
     # Validate Band platform URLs
-    ws_url = os.environ.get(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is empty")
+        raise ValueError("BAND_WS_URL environment variable is empty")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is empty")
+        raise ValueError("BAND_REST_URL environment variable is empty")
 
     # Validate required mount points (NFR-007a)
     validate_mounts()

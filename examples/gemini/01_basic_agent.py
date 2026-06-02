@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[gemini]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Gemini agent example.

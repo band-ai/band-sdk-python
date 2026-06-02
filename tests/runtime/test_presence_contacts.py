@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.platform.event import (
+from band.platform.event import (
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
     ContactAddedEvent,
@@ -12,7 +12,7 @@ from thenvoi.platform.event import (
     MessageEvent,
     RoomAddedEvent,
 )
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     ContactRequestReceivedPayload,
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
@@ -20,7 +20,7 @@ from thenvoi.client.streaming import (
     MessageCreatedPayload,
     RoomAddedPayload,
 )
-from thenvoi.runtime.presence import RoomPresence
+from band.runtime.presence import RoomPresence
 
 
 @pytest.fixture

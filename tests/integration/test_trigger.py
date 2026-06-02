@@ -6,7 +6,7 @@ participant addition, and message delivery using real REST endpoints.
 Run with:
     uv run pytest tests/integration/test_trigger.py -v -s
 
-Requires .env.test credentials (THENVOI_API_KEY at minimum).
+Requires .env.test credentials (BAND_API_KEY at minimum).
 """
 
 from __future__ import annotations
@@ -16,13 +16,13 @@ import logging
 
 import pytest
 
-from thenvoi.cli.trigger import (
+from band.cli.trigger import (
     _format_api_error,
     find_peer_by_handle,
     run,
 )
-from thenvoi_rest import AsyncRestClient
-from thenvoi_rest.core.api_error import ApiError
+from band_rest import AsyncRestClient
+from band_rest.core.api_error import ApiError
 
 from tests.conftest_integration import (
     AgentInfo,
@@ -171,7 +171,7 @@ class TestTriggerAgentMode:
         """Trigger a real ApiError and verify _format_api_error extracts the message."""
         # Use an invalid participant_id to trigger a real API error
         # First create a room we can use
-        from thenvoi_rest import ChatRoomRequest
+        from band_rest import ChatRoomRequest
 
         chat_response = await api_client.agent_api_chats.create_agent_chat(
             chat=ChatRoomRequest()
@@ -179,7 +179,7 @@ class TestTriggerAgentMode:
         room_id = chat_response.data.id
 
         try:
-            from thenvoi_rest.types import ParticipantRequest
+            from band_rest.types import ParticipantRequest
 
             with pytest.raises(ApiError) as exc_info:
                 await api_client.agent_api_participants.add_agent_chat_participant(

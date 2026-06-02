@@ -11,16 +11,16 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     ContactRequestReceivedPayload,
 )
-from thenvoi.platform.event import (
+from band.platform.event import (
     ContactRequestReceivedEvent,
 )
-from thenvoi.platform.link import BandLink
-from thenvoi.runtime.contact_handler import ContactEventHandler
-from thenvoi.runtime.contact_tools import ContactTools
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.platform.link import BandLink
+from band.runtime.contact_handler import ContactEventHandler
+from band.runtime.contact_tools import ContactTools
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 from tests.integration.conftest import (
     fetch_all_context,
     requires_api,
@@ -118,9 +118,9 @@ class TestHubRoomReceivesEvents:
         # Create handler with HUB_ROOM strategy
         link = BandLink(
             agent_id=integration_settings.test_agent_id,
-            api_key=integration_settings.thenvoi_api_key,
-            rest_url=integration_settings.thenvoi_base_url,
-            ws_url=integration_settings.thenvoi_ws_url,
+            api_key=integration_settings.band_api_key,
+            rest_url=integration_settings.band_base_url,
+            ws_url=integration_settings.band_ws_url,
         )
 
         config = ContactEventConfig(
@@ -186,9 +186,9 @@ class TestHubRoomAgentActions:
         # Create handler for Agent 1
         link = BandLink(
             agent_id=integration_settings.test_agent_id,
-            api_key=integration_settings.thenvoi_api_key,
-            rest_url=integration_settings.thenvoi_base_url,
-            ws_url=integration_settings.thenvoi_ws_url,
+            api_key=integration_settings.band_api_key,
+            rest_url=integration_settings.band_base_url,
+            ws_url=integration_settings.band_ws_url,
         )
 
         config = ContactEventConfig(
@@ -283,9 +283,9 @@ class TestHubRoomAgentActions:
 
         link = BandLink(
             agent_id=integration_settings.test_agent_id,
-            api_key=integration_settings.thenvoi_api_key,
-            rest_url=integration_settings.thenvoi_base_url,
-            ws_url=integration_settings.thenvoi_ws_url,
+            api_key=integration_settings.band_api_key,
+            rest_url=integration_settings.band_base_url,
+            ws_url=integration_settings.band_ws_url,
         )
 
         config = ContactEventConfig(
@@ -371,9 +371,9 @@ class TestHubRoomPersistence:
 
         link = BandLink(
             agent_id=integration_settings.test_agent_id,
-            api_key=integration_settings.thenvoi_api_key,
-            rest_url=integration_settings.thenvoi_base_url,
-            ws_url=integration_settings.thenvoi_ws_url,
+            api_key=integration_settings.band_api_key,
+            rest_url=integration_settings.band_base_url,
+            ws_url=integration_settings.band_ws_url,
         )
 
         # First handler with pre-set hub room
@@ -448,9 +448,9 @@ class TestHubRoomIsolation:
 
         link = BandLink(
             agent_id=integration_settings.test_agent_id,
-            api_key=integration_settings.thenvoi_api_key,
-            rest_url=integration_settings.thenvoi_base_url,
-            ws_url=integration_settings.thenvoi_ws_url,
+            api_key=integration_settings.band_api_key,
+            rest_url=integration_settings.band_base_url,
+            ws_url=integration_settings.band_ws_url,
         )
 
         # Capture injected events

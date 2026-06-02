@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from thenvoi.core.protocols import AgentToolsProtocol
-from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.protocols import AgentToolsProtocol
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 
 
 class _TestAdapter(SimpleAdapter[list[Any]]):
@@ -66,18 +66,18 @@ class TestSimpleAdapterFeatures:
         features = AdapterFeatures(
             capabilities=[Capability.MEMORY],
             emit=[Emit.EXECUTION],
-            include_tools=["thenvoi_send_message", "thenvoi_lookup_peers"],
-            exclude_tools={"thenvoi_remove_participant"},
+            include_tools=["band_send_message", "band_lookup_peers"],
+            exclude_tools={"band_remove_participant"},
             include_categories=("chat", "memory"),
         )
 
         assert features.capabilities == frozenset({Capability.MEMORY})
         assert features.emit == frozenset({Emit.EXECUTION})
         assert features.include_tools == (
-            "thenvoi_send_message",
-            "thenvoi_lookup_peers",
+            "band_send_message",
+            "band_lookup_peers",
         )
-        assert features.exclude_tools == ("thenvoi_remove_participant",)
+        assert features.exclude_tools == ("band_remove_participant",)
         assert features.include_categories == ("chat", "memory")
 
     @pytest.mark.asyncio

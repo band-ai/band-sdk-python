@@ -61,7 +61,7 @@ services:
   # Uncomment and duplicate for additional agents:
   # agent2:
   #   <<: *agent-base
-  #   container_name: thenvoi-agent2
+  #   container_name: band-agent2
   #   environment:
   #     AGENT_CONFIG: /app/config/agent2.yaml
 ```

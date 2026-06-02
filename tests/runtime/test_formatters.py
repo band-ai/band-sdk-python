@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from thenvoi.runtime.formatters import (
+from band.runtime.formatters import (
     format_message_for_llm,
     format_history_for_llm,
     build_participants_message,
@@ -164,7 +164,7 @@ class TestBuildParticipantsMessage:
     def test_includes_mention_instruction(self):
         participants = [{"id": "1", "name": "Test", "type": "User", "handle": "test"}]
         result = build_participants_message(participants)
-        assert "thenvoi_send_message" in result
+        assert "band_send_message" in result
         # Instruction emphasizes using exact handles, not display names
         assert "handle" in result
         assert "NOT the display name" in result

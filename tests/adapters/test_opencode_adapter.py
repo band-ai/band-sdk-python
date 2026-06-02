@@ -13,11 +13,11 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from thenvoi.core.protocols import AgentToolsProtocol
-from thenvoi.core.types import PlatformMessage
-from thenvoi.integrations.opencode.types import OpencodeSessionState
-from thenvoi.testing import FakeAgentTools
+from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.core.protocols import AgentToolsProtocol
+from band.core.types import PlatformMessage
+from band.integrations.opencode.types import OpencodeSessionState
+from band.testing import FakeAgentTools
 
 
 def make_platform_message(
@@ -376,7 +376,7 @@ class TestOpencodeAdapter:
     def _patch_mcp_backend(self) -> Any:
         """Patch MCP backend creation for all tests by default."""
         with patch(
-            "thenvoi.adapters.opencode.create_thenvoi_mcp_backend",
+            "band.adapters.opencode.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(),
         ):
             yield
@@ -408,7 +408,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "thenvoi.adapters.opencode.create_thenvoi_mcp_backend",
+            "band.adapters.opencode.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -423,7 +423,7 @@ class TestOpencodeAdapter:
             )
 
         assert fake_client.registered_mcp_servers == [
-            {"name": "thenvoi", "url": "http://127.0.0.1:50000/sse"},
+            {"name": "band", "url": "http://127.0.0.1:50000/sse"},
         ]
 
         await adapter.on_cleanup("room-1")
@@ -446,7 +446,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "thenvoi.adapters.opencode.create_thenvoi_mcp_backend",
+            "band.adapters.opencode.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -461,11 +461,11 @@ class TestOpencodeAdapter:
             )
 
         assert fake_client.registered_mcp_servers == [
-            {"name": "thenvoi", "url": "http://127.0.0.1:50000/sse"}
+            {"name": "band", "url": "http://127.0.0.1:50000/sse"}
         ]
 
         await adapter.on_cleanup("room-1")
-        assert fake_client.deregistered_mcp_servers == ["thenvoi"]
+        assert fake_client.deregistered_mcp_servers == ["band"]
         assert fake_backend.stop_calls == 1
 
     @pytest.mark.asyncio
@@ -986,7 +986,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "thenvoi.adapters.opencode.create_thenvoi_mcp_backend",
+            "band.adapters.opencode.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")

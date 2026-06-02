@@ -8,14 +8,14 @@ replies, and posts a final synthesized answer.
 Prerequisites (the test skips otherwise):
 
 1. ``E2E_TESTS_ENABLED=true``
-2. ``THENVOI_API_KEY`` and ``THENVOI_API_KEY_USER`` configured in
+2. ``BAND_API_KEY`` and ``BAND_API_KEY_USER`` configured in
    ``.env.test`` (standard E2E setup).
 3. The agentcore demo deployed and running externally:
    - Three AgentCore Runtimes (weather/math/personal_assistant).
-   - The bridge running with ``THENVOI_BRIDGE_AGENTS`` pointing at the
+   - The bridge running with ``BAND_BRIDGE_AGENTS`` pointing at the
      three identities and their runtime ARNs.
 4. ``AGENTCORE_DEMO_PA_AGENT_ID`` env var set to the personal_assistant's
-   Thenvoi agent UUID so the test knows whom to @-mention. (The other two
+   Band agent UUID so the test knows whom to @-mention. (The other two
    agents are recruited by PA at runtime; the test doesn't address them
    directly.)
 
@@ -33,8 +33,8 @@ import logging
 import os
 
 import pytest
-from thenvoi_rest import AsyncRestClient, CreateMyChatRoomRequestChat
-from thenvoi_rest.types import ParticipantRequest
+from band_rest import AsyncRestClient, CreateMyChatRoomRequestChat
+from band_rest.types import ParticipantRequest
 
 from tests.e2e.conftest import E2ESettings, requires_e2e
 from tests.e2e.helpers import (

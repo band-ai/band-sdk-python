@@ -4,9 +4,9 @@ Examples showing how to expose Band peers as inbound A2A endpoints.
 
 ## Why the gateway exists
 
-The gateway is the inbound side of the Thenvoi A2A story.
+The gateway is the inbound side of the Band A2A story.
 
-- the **bridge** connects a remote A2A agent into Thenvoi
+- the **bridge** connects a remote A2A agent into Band
 - the **gateway** exposes Band peers out to remote A2A clients
 
 A remote A2A client can call the gateway, discover Band peers through AgentCard routes, and send requests that the gateway turns into Band room activity.
@@ -23,7 +23,7 @@ Remote A2A Client
  Band Platform
         |
         v
-   Thenvoi Peer
+   Band Peer
 ```
 
 Context is preserved by mapping the incoming A2A `contextId` to a Band room.
@@ -40,7 +40,7 @@ Context is preserved by mapping the incoming A2A `contextId` to a Band room.
 
 - `01_basic_gateway.py` worked live for startup and `/peers`
 - per-peer agent card discovery worked live
-- a deterministic Thenvoi peer completed a real gateway round-trip
+- a deterministic Band peer completed a real gateway round-trip
 - the gateway reused the same room when the same `context_id` was used
 - the README startup flow was re-run after fixing credential selection and local source execution
 - `02_with_demo_agent.py` was exercised as the higher-level gateway demo path
@@ -50,8 +50,8 @@ Context is preserved by mapping the incoming A2A `contextId` to a Band room.
 
 You need:
 
-- `.env` or `agent_config.yaml` with Thenvoi credentials
-- at least one Thenvoi peer available in the workspace
+- `.env` or `agent_config.yaml` with Band credentials
+- at least one Band peer available in the workspace
 - `OPENAI_API_KEY` if you want to run the demo orchestrator
 
 Recommended: use `gateway_agent` in `agent_config.yaml`.
@@ -66,8 +66,8 @@ gateway_agent:
 Fallback: you can also use environment variables:
 
 ```bash
-export THENVOI_API_KEY=your-thenvoi-api-key
-export THENVOI_AGENT_ID=a2a-gateway
+export BAND_API_KEY=your-band-api-key
+export BAND_AGENT_ID=a2a-gateway
 ```
 
 ## Install
@@ -161,7 +161,7 @@ curl -N -X POST http://localhost:10000/agents/<peer-id>/v1/message:stream \
 What success looks like:
 
 - the gateway accepts the request
-- the mapped Thenvoi peer replies
+- the mapped Band peer replies
 - reusing `contextId: "ctx-1"` continues the same conversation
 
 ## Context reuse test
@@ -217,7 +217,7 @@ The orchestrator's job is to accept an incoming A2A request and route it to one 
 
 Check that:
 
-- your Thenvoi credentials are valid
+- your Band credentials are valid
 - the workspace actually has peers to expose
 
 ### The gateway fails with a permissions error

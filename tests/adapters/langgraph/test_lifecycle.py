@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from thenvoi.adapters.langgraph import LangGraphAdapter
-from thenvoi.core.types import PlatformMessage
+from band.adapters.langgraph import LangGraphAdapter
+from band.core.types import PlatformMessage
 
 from .helpers import make_capture_graph
 
@@ -124,7 +124,7 @@ class TestOnCleanup:
         self, sample_message, mock_tools, mock_llm, mock_checkpointer
     ):
         """Should log a warning when _bootstrapped_rooms reaches threshold."""
-        from thenvoi.adapters.langgraph import _BOOTSTRAP_TRACKING_WARN_THRESHOLD
+        from band.adapters.langgraph import _BOOTSTRAP_TRACKING_WARN_THRESHOLD
 
         adapter = LangGraphAdapter(
             llm=mock_llm,
@@ -141,9 +141,9 @@ class TestOnCleanup:
 
         with (
             patch(
-                "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+                "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
             ) as mock_convert,
-            patch("thenvoi.adapters.langgraph.logger") as mock_logger,
+            patch("band.adapters.langgraph.logger") as mock_logger,
         ):
             mock_convert.return_value = []
 
@@ -317,7 +317,7 @@ class TestErrorHandling:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 

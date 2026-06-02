@@ -6,14 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.cli.trigger import (
+from band.cli.trigger import (
     _format_api_error,
     build_parser,
     find_peer_by_handle,
     main,
     run,
 )
-from thenvoi_rest.core.api_error import ApiError
+from band_rest.core.api_error import ApiError
 
 
 # --- Helpers ---
@@ -92,10 +92,10 @@ def _make_mock_client():
 
 class TestBuildParser:
     def test_defaults_from_env(self, monkeypatch):
-        monkeypatch.setenv("THENVOI_API_KEY", "env-key")
-        monkeypatch.setenv("THENVOI_TARGET_HANDLE", "@env/agent")
-        monkeypatch.setenv("THENVOI_MESSAGE", "env message")
-        monkeypatch.setenv("THENVOI_AUTH_MODE", "user")
+        monkeypatch.setenv("BAND_API_KEY", "env-key")
+        monkeypatch.setenv("BAND_TARGET_HANDLE", "@env/agent")
+        monkeypatch.setenv("BAND_MESSAGE", "env message")
+        monkeypatch.setenv("BAND_AUTH_MODE", "user")
 
         parser = build_parser()
         args = parser.parse_args([])
@@ -106,7 +106,7 @@ class TestBuildParser:
         assert args.auth_mode == "user"
 
     def test_cli_overrides_env(self, monkeypatch):
-        monkeypatch.setenv("THENVOI_API_KEY", "env-key")
+        monkeypatch.setenv("BAND_API_KEY", "env-key")
 
         parser = build_parser()
         args = parser.parse_args(["--api-key", "cli-key"])
@@ -300,11 +300,11 @@ class TestRun:
 
         with (
             patch(
-                "thenvoi.cli.trigger.find_peer_by_handle",
+                "band.cli.trigger.find_peer_by_handle",
                 new_callable=AsyncMock,
                 return_value=None,
             ),
-            patch("thenvoi.cli.trigger.AsyncRestClient") as MockClient,
+            patch("band.cli.trigger.AsyncRestClient") as MockClient,
         ):
             MockClient.return_value = _make_mock_client()
             with pytest.raises(ValueError, match="not found"):
@@ -317,11 +317,11 @@ class TestRun:
 
         with (
             patch(
-                "thenvoi.cli.trigger.find_peer_by_handle",
+                "band.cli.trigger.find_peer_by_handle",
                 new_callable=AsyncMock,
                 return_value=peer,
             ),
-            patch("thenvoi.cli.trigger.AsyncRestClient") as MockClient,
+            patch("band.cli.trigger.AsyncRestClient") as MockClient,
         ):
             mock_client = _make_mock_client()
             MockClient.return_value = mock_client
@@ -342,11 +342,11 @@ class TestRun:
 
         with (
             patch(
-                "thenvoi.cli.trigger.find_peer_by_handle",
+                "band.cli.trigger.find_peer_by_handle",
                 new_callable=AsyncMock,
                 return_value=peer,
             ),
-            patch("thenvoi.cli.trigger.AsyncRestClient") as MockClient,
+            patch("band.cli.trigger.AsyncRestClient") as MockClient,
         ):
             mock_client = _make_mock_client()
             MockClient.return_value = mock_client
@@ -368,11 +368,11 @@ class TestRun:
 
         with (
             patch(
-                "thenvoi.cli.trigger.find_peer_by_handle",
+                "band.cli.trigger.find_peer_by_handle",
                 new_callable=AsyncMock,
                 return_value=peer,
             ),
-            patch("thenvoi.cli.trigger.AsyncRestClient") as MockClient,
+            patch("band.cli.trigger.AsyncRestClient") as MockClient,
         ):
             mock_client = _make_mock_client()
             MockClient.return_value = mock_client
@@ -394,12 +394,12 @@ class TestRun:
 
         with (
             patch(
-                "thenvoi.cli.trigger.find_peer_by_handle",
+                "band.cli.trigger.find_peer_by_handle",
                 new_callable=AsyncMock,
                 return_value=peer,
             ),
-            patch("thenvoi.cli.trigger.AsyncRestClient") as MockClient,
-            patch("thenvoi.cli.trigger.logger") as mock_logger,
+            patch("band.cli.trigger.AsyncRestClient") as MockClient,
+            patch("band.cli.trigger.logger") as mock_logger,
         ):
             mock_client = _make_mock_client()
             MockClient.return_value = mock_client
@@ -432,11 +432,11 @@ class TestRun:
 
         with (
             patch(
-                "thenvoi.cli.trigger.find_peer_by_handle",
+                "band.cli.trigger.find_peer_by_handle",
                 new_callable=AsyncMock,
                 return_value=peer,
             ),
-            patch("thenvoi.cli.trigger.AsyncRestClient") as MockClient,
+            patch("band.cli.trigger.AsyncRestClient") as MockClient,
         ):
             mock_client = _make_mock_client()
             MockClient.return_value = mock_client
@@ -455,11 +455,11 @@ class TestRun:
 
         with (
             patch(
-                "thenvoi.cli.trigger.find_peer_by_handle",
+                "band.cli.trigger.find_peer_by_handle",
                 new_callable=AsyncMock,
                 return_value=peer,
             ),
-            patch("thenvoi.cli.trigger.AsyncRestClient") as MockClient,
+            patch("band.cli.trigger.AsyncRestClient") as MockClient,
         ):
             mock_client = _make_mock_client()
             MockClient.return_value = mock_client
@@ -517,7 +517,7 @@ class TestMain:
         )
         with (
             patch(
-                "thenvoi.cli.trigger.asyncio.run",
+                "band.cli.trigger.asyncio.run",
                 side_effect=_fake_asyncio_run(return_value="room-ok"),
             ),
             pytest.raises(SystemExit) as exc_info,
@@ -526,12 +526,12 @@ class TestMain:
         assert exc_info.value.code == 0
 
     def test_exits_1_on_missing_api_key(self, monkeypatch):
-        monkeypatch.delenv("THENVOI_API_KEY", raising=False)
+        monkeypatch.delenv("BAND_API_KEY", raising=False)
         monkeypatch.setattr("sys.argv", ["band-trigger"])
 
         with (
             patch(
-                "thenvoi.cli.trigger.asyncio.run",
+                "band.cli.trigger.asyncio.run",
                 side_effect=_fake_asyncio_run(
                     side_effect=ValueError("API key is required")
                 ),
@@ -556,7 +556,7 @@ class TestMain:
         )
         with (
             patch(
-                "thenvoi.cli.trigger.asyncio.run",
+                "band.cli.trigger.asyncio.run",
                 side_effect=_fake_asyncio_run(side_effect=Exception("boom")),
             ),
             pytest.raises(SystemExit) as exc_info,
@@ -583,7 +583,7 @@ class TestMain:
 
         with (
             patch(
-                "thenvoi.cli.trigger.asyncio.run",
+                "band.cli.trigger.asyncio.run",
                 side_effect=_fake_asyncio_run(side_effect=_asyncio.TimeoutError()),
             ),
             pytest.raises(SystemExit) as exc_info,
@@ -610,7 +610,7 @@ class TestMain:
 
         with (
             patch(
-                "thenvoi.cli.trigger.asyncio.run",
+                "band.cli.trigger.asyncio.run",
                 side_effect=_fake_asyncio_run(side_effect=_asyncio.TimeoutError()),
             ),
             pytest.raises(SystemExit),
@@ -634,7 +634,7 @@ class TestMain:
         )
         with (
             patch(
-                "thenvoi.cli.trigger.asyncio.run",
+                "band.cli.trigger.asyncio.run",
                 side_effect=_fake_asyncio_run(return_value="room-xyz"),
             ),
             pytest.raises(SystemExit),
@@ -658,7 +658,7 @@ class TestMain:
         )
         with (
             patch(
-                "thenvoi.cli.trigger.asyncio.run",
+                "band.cli.trigger.asyncio.run",
                 side_effect=_fake_asyncio_run(side_effect=ValueError("bad input")),
             ),
             pytest.raises(SystemExit),

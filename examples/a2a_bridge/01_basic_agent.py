@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[a2a]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic A2A adapter example.
@@ -50,13 +50,13 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
     # URL of the remote A2A agent
     # Default: LangGraph currency agent sample running locally
     a2a_url = os.getenv("A2A_AGENT_URL", "http://localhost:10000")

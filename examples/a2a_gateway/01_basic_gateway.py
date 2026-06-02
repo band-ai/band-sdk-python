@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[a2a_gateway]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic A2A Gateway adapter example.
@@ -32,9 +32,9 @@ Features:
 Prerequisites:
     1. Configure gateway credentials:
        - preferred: gateway_agent in agent_config.yaml
-       - fallback: THENVOI_API_KEY and optional THENVOI_AGENT_ID
-       - THENVOI_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
-       - THENVOI_REST_URL: REST API URL (default: https://app.band.ai)
+       - fallback: BAND_API_KEY and optional BAND_AGENT_ID
+       - BAND_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+       - BAND_REST_URL: REST API URL (default: https://app.band.ai)
 
     2. Have peers configured on the Band platform
 
@@ -56,9 +56,9 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import A2AGatewayAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import A2AGatewayAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -67,19 +67,19 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     try:
         agent_id, api_key = load_agent_config("gateway_agent")
         logger.info("Loaded gateway credentials from agent_config.yaml")
     except Exception:
-        api_key = os.getenv("THENVOI_API_KEY")
+        api_key = os.getenv("BAND_API_KEY")
         if not api_key:
             raise ValueError(
                 "Configure 'gateway_agent' in agent_config.yaml, or set "
-                "THENVOI_API_KEY and THENVOI_AGENT_ID environment variables"
+                "BAND_API_KEY and BAND_AGENT_ID environment variables"
             )
-        agent_id = os.getenv("THENVOI_AGENT_ID", "a2a-gateway")
+        agent_id = os.getenv("BAND_AGENT_ID", "a2a-gateway")
         logger.info("Loaded gateway credentials from environment variables")
 
     # Gateway configuration
@@ -96,7 +96,7 @@ async def main() -> None:
     )
 
     # Create and start agent
-    # The gateway connects to Thenvoi and starts its HTTP server
+    # The gateway connects to Band and starts its HTTP server
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,

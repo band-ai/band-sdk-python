@@ -19,20 +19,20 @@ from dataclasses import dataclass
 import pytest
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
-from thenvoi_rest import (
+from band_rest import (
     AgentRegisterRequest,
     AsyncRestClient,
     ChatMessageRequest,
     ChatRoomRequest,
 )
-from thenvoi_rest.types import (
+from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
     ParticipantRequest,
 )
 
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
-from thenvoi.client.streaming import MessageCreatedPayload, WebSocketClient
+from band import Agent
+from band.adapters import LangGraphAdapter
+from band.client.streaming import MessageCreatedPayload, WebSocketClient
 from tests.e2e.conftest import requires_e2e
 
 
@@ -89,7 +89,7 @@ def _make_adapter() -> LangGraphAdapter:
         llm=ChatOpenAI(model=os.environ.get("E2E_LLM_MODEL", "gpt-4o-mini")),
         checkpointer=InMemorySaver(),
         custom_section=(
-            "Keep responses short. Always reply by calling thenvoi_send_message. "
+            "Keep responses short. Always reply by calling band_send_message. "
             "If asked what nonce to remember, answer with exactly that nonce."
         ),
     )
@@ -169,15 +169,15 @@ async def _wait_for_agent_messages(
     reason="LANGGRAPH_RESTART_SMOKE=true is required for the live restart smoke",
 )
 async def test_langgraph_answers_down_message_once_after_restart() -> None:
-    base_url = os.environ.get("THENVOI_BASE_URL") or os.environ.get("THENVOI_REST_URL")
+    base_url = os.environ.get("BAND_BASE_URL") or os.environ.get("BAND_REST_URL")
     if not base_url:
-        pytest.skip("THENVOI_BASE_URL or THENVOI_REST_URL is required")
-    ws_url = _require_env("THENVOI_WS_URL")
-    user_key = os.environ.get("THENVOI_API_KEY_USER") or os.environ.get(
-        "THENVOI_USER_API_KEY"
+        pytest.skip("BAND_BASE_URL or BAND_REST_URL is required")
+    ws_url = _require_env("BAND_WS_URL")
+    user_key = os.environ.get("BAND_API_KEY_USER") or os.environ.get(
+        "BAND_USER_API_KEY"
     )
     if not user_key:
-        pytest.skip("THENVOI_API_KEY_USER or THENVOI_USER_API_KEY is required")
+        pytest.skip("BAND_API_KEY_USER or BAND_USER_API_KEY is required")
     _require_env("OPENAI_API_KEY")
 
     nonce = f"REHYDRATE_{uuid.uuid4().hex[:12]}"

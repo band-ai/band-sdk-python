@@ -1,4 +1,4 @@
-# Parlant Examples for Thenvoi
+# Parlant Examples for Band
 
 Examples showing how to use the Band SDK with [Parlant](https://github.com/emcie-co/parlant) - an AI agent framework designed for controlled, guideline-based agent behavior.
 
@@ -16,7 +16,7 @@ Parlant provides:
 ### Install with Parlant support
 
 ```bash
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[parlant]"
+uv add "git+https://github.com/band-ai/band-sdk-python.git[parlant]"
 ```
 
 **Or from repository:**
@@ -32,8 +32,8 @@ The adapter uses the Parlant SDK directly - no separate HTTP server needed:
 
 ```python
 import parlant.sdk as p
-from thenvoi import Agent
-from thenvoi.adapters import ParlantAdapter
+from band import Agent
+from band.adapters import ParlantAdapter
 
 async with p.Server() as server:
     # Create Parlant agent with guidelines
@@ -47,7 +47,7 @@ async with p.Server() as server:
         action="Acknowledge their request and provide detailed assistance",
     )
 
-    # Create Thenvoi adapter
+    # Create Band adapter
     adapter = ParlantAdapter(
         server=server,
         parlant_agent=parlant_agent,
@@ -107,8 +107,8 @@ cp agent_config.yaml.example agent_config.yaml
 
 ```bash
 # Band platform URLs (required)
-THENVOI_WS_URL=wss://app.band.ai/api/v1/socket/websocket
-THENVOI_REST_URL=https://app.band.ai
+BAND_WS_URL=wss://app.band.ai/api/v1/socket/websocket
+BAND_REST_URL=https://app.band.ai
 
 # OpenAI API key (used by Parlant for LLM)
 OPENAI_API_KEY=your-openai-key

@@ -3,14 +3,14 @@
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from thenvoi.platform.link import BandLink
-from thenvoi.platform.event import (
+from band.platform.link import BandLink
+from band.platform.event import (
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
     ContactAddedEvent,
     ContactRemovedEvent,
 )
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     ContactRequestReceivedPayload,
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
@@ -33,7 +33,7 @@ def mock_ws_client():
 class TestContactSubscription:
     """Tests for contact channel subscription."""
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_agent_contacts_joins_channel(
         self, mock_ws_class, mock_ws_client
     ):
@@ -48,7 +48,7 @@ class TestContactSubscription:
         call_args = mock_ws_client.join_agent_contacts_channel.call_args
         assert call_args[0][0] == "agent-123"  # agent_id
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_agent_contacts_passes_all_handlers(
         self, mock_ws_class, mock_ws_client
     ):
@@ -65,7 +65,7 @@ class TestContactSubscription:
         assert "on_contact_added" in call_kwargs
         assert "on_contact_removed" in call_kwargs
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_agent_contacts_requires_connection(
         self, mock_ws_class, mock_ws_client
     ):
@@ -78,7 +78,7 @@ class TestContactSubscription:
         with pytest.raises(RuntimeError, match="Not connected"):
             await link.subscribe_agent_contacts("agent-123")
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_unsubscribe_agent_contacts_leaves_channel(
         self, mock_ws_class, mock_ws_client
     ):
@@ -91,7 +91,7 @@ class TestContactSubscription:
 
         mock_ws_client.leave_agent_contacts_channel.assert_called_once_with("agent-123")
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_unsubscribe_agent_contacts_handles_errors(
         self, mock_ws_class, mock_ws_client
     ):
@@ -117,7 +117,7 @@ class TestContactSubscription:
 class TestContactEventHandlers:
     """Tests for contact event handlers."""
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_on_contact_request_received_queues_event(
         self, mock_ws_class, mock_ws_client
     ):
@@ -141,7 +141,7 @@ class TestContactEventHandlers:
         assert event.payload.id == "req-123"
         assert event.room_id is None
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_on_contact_request_updated_queues_event(
         self, mock_ws_class, mock_ws_client
     ):
@@ -162,7 +162,7 @@ class TestContactEventHandlers:
         assert event.payload.status == "approved"
         assert event.room_id is None
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_on_contact_added_queues_event(self, mock_ws_class, mock_ws_client):
         """_on_contact_added() should queue ContactAddedEvent."""
         mock_ws_class.return_value = mock_ws_client
@@ -184,7 +184,7 @@ class TestContactEventHandlers:
         assert event.payload.name == "Jane Smith"
         assert event.room_id is None
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_on_contact_removed_queues_event(self, mock_ws_class, mock_ws_client):
         """_on_contact_removed() should queue ContactRemovedEvent."""
         mock_ws_class.return_value = mock_ws_client
@@ -204,7 +204,7 @@ class TestContactEventHandlers:
 class TestPublicQueueMethod:
     """Tests for public queue_event() method."""
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_queue_event_public_method(self, mock_ws_class, mock_ws_client):
         """queue_event() should add event to queue (public API)."""
         mock_ws_class.return_value = mock_ws_client

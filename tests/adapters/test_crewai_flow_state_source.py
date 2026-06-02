@@ -6,12 +6,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from thenvoi.adapters.crewai_flow import (
+from band.adapters.crewai_flow import (
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from thenvoi.core.exceptions import BandConfigError, BandToolError
-from thenvoi.testing.fake_tools import FakeAgentTools
+from band.core.exceptions import BandConfigError, BandToolError
+from band.testing.fake_tools import FakeAgentTools
 
 NS = "crewai_flow:agent-1"
 
@@ -257,7 +257,7 @@ class TestRestStateSourceCache:
 
 class TestRestStateSourceFailure:
     @pytest.mark.asyncio
-    async def test_raises_thenvoi_tool_error_after_retry(self) -> None:
+    async def test_raises_band_tool_error_after_retry(self) -> None:
         class FailingTools:
             async def fetch_room_context(self, **_: object) -> dict:
                 raise RuntimeError("boom")

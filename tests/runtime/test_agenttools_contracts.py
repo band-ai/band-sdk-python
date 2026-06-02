@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.core.exceptions import BandToolError
-from thenvoi.testing.fake_tools import FakeAgentTools
+from band.core.exceptions import BandToolError
+from band.testing.fake_tools import FakeAgentTools
 
 
 class TestFakeAgentToolsSeededData:

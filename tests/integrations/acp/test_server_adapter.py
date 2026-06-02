@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.integrations.acp.router import AgentRouter
-from thenvoi.integrations.acp.server_adapter import BandACPServerAdapter
-from thenvoi.integrations.acp.types import ACPSessionState, PendingACPPrompt
-from thenvoi.testing import FakeAgentTools
+from band.integrations.acp.router import AgentRouter
+from band.integrations.acp.server_adapter import BandACPServerAdapter
+from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
+from band.testing import FakeAgentTools
 
 from .conftest import make_platform_message, make_tool_call_message
 
@@ -262,7 +262,7 @@ class TestBandACPServerAdapterOnMessage:
     ) -> None:
         """Should set done_event on text message after the grace period."""
         monkeypatch.setattr(
-            "thenvoi.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS",
+            "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS",
             0.01,
         )
         adapter = BandACPServerAdapter()
@@ -296,7 +296,7 @@ class TestBandACPServerAdapterOnMessage:
     ) -> None:
         """Should debounce completion so split text replies are not truncated."""
         monkeypatch.setattr(
-            "thenvoi.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS",
+            "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS",
             0.02,
         )
         adapter = BandACPServerAdapter()
@@ -913,7 +913,7 @@ class TestBandACPServerAdapterTimeout:
     ) -> None:
         """Should raise TimeoutError when peer never responds."""
         monkeypatch.setattr(
-            "thenvoi.integrations.acp.server_adapter._PROMPT_TIMEOUT_SECONDS",
+            "band.integrations.acp.server_adapter._PROMPT_TIMEOUT_SECONDS",
             0.05,
         )
 
@@ -965,7 +965,7 @@ class TestBandACPServerAdapterCreateSessionRollback:
     ) -> None:
         """Should reject new sessions once the configured limit is reached."""
         monkeypatch.setattr(
-            "thenvoi.integrations.acp.server_adapter._MAX_SESSIONS",
+            "band.integrations.acp.server_adapter._MAX_SESSIONS",
             1,
         )
         adapter = BandACPServerAdapter()

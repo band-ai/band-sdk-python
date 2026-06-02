@@ -16,7 +16,6 @@ services:
       PYTHONPATH: /workspace/repo/src
       BAND_REST_URL: ${BAND_REST_URL_DOCKER:-http://host.docker.internal:4000}
       BAND_WS_URL: ${BAND_WS_URL_DOCKER:-ws://host.docker.internal:4000/api/v1/socket/websocket}
-      THENVOI_CLIENT_REST_WHEEL: ${THENVOI_CLIENT_REST_WHEEL:-}
       PHOENIX_CHANNELS_CLIENT_WHEEL: ${PHOENIX_CHANNELS_CLIENT_WHEEL:-}
     volumes:
       - ../../agent_config.yaml:/app/agent_config.yaml:ro
@@ -26,7 +25,6 @@ services:
       - ${HOME}/.config/gh:/home/codex/.config/gh:ro
       - ${HOME}/.ssh:/home/codex/.ssh:ro
       - ${HOME}/.gitconfig:/home/codex/.gitconfig:ro
-      - ${THENVOI_CLIENT_REST_WHEEL_DIR:-/tmp/thenvoi-client-rest}:/opt/thenvoi-client-rest:ro
       - ${PHOENIX_CHANNELS_CLIENT_WHEEL_DIR:-/tmp/phoenix-client}:/opt/phoenix-client:ro
       - codex_state:/state
       - codex_prompts:/prompts
@@ -75,7 +73,6 @@ services:
       PYTHONPATH: /workspace/repo/src
       BAND_REST_URL: ${BAND_REST_URL_DOCKER:-http://host.docker.internal:4000}
       BAND_WS_URL: ${BAND_WS_URL_DOCKER:-ws://host.docker.internal:4000/api/v1/socket/websocket}
-      THENVOI_CLIENT_REST_WHEEL: ${THENVOI_CLIENT_REST_WHEEL:-}
       PHOENIX_CHANNELS_CLIENT_WHEEL: ${PHOENIX_CHANNELS_CLIENT_WHEEL:-}
     volumes:
       - ../../agent_config.yaml:/app/agent_config.yaml:ro
@@ -85,7 +82,6 @@ services:
       - ${HOME}/.config/gh:/home/codex/.config/gh:ro
       - ${HOME}/.ssh:/home/codex/.ssh:ro
       - ${HOME}/.gitconfig:/home/codex/.gitconfig:ro
-      - ${THENVOI_CLIENT_REST_WHEEL_DIR:-/tmp/thenvoi-client-rest}:/opt/thenvoi-client-rest:ro
       - ${PHOENIX_CHANNELS_CLIENT_WHEEL_DIR:-/tmp/phoenix-client}:/opt/phoenix-client:ro
       - codex_state:/state
       - codex_prompts:/prompts

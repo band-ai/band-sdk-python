@@ -33,14 +33,14 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-from thenvoi.adapters.crewai_flow import (  # noqa: E402
+from band.adapters.crewai_flow import (  # noqa: E402
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from thenvoi.core.exceptions import BandConfigError  # noqa: E402
-from thenvoi.core.types import PlatformMessage  # noqa: E402
-from thenvoi.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.core.exceptions import BandConfigError  # noqa: E402
+from band.core.types import PlatformMessage  # noqa: E402
+from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 
 
 def _factory():
@@ -262,7 +262,7 @@ class TestOnStartedAndNamespace:
     @pytest.mark.asyncio
     async def test_default_namespace_resolves_with_agent_id(self) -> None:
         adapter = CrewAIFlowAdapter(flow_factory=_factory)
-        adapter._thenvoi_agent_id = "agent-id-A"
+        adapter._band_agent_id = "agent-id-A"
         await adapter.on_started("Router", "desc")
         assert adapter.metadata_namespace == "crewai_flow:agent-id-A"
 
@@ -270,8 +270,8 @@ class TestOnStartedAndNamespace:
     async def test_two_adapters_get_distinct_namespaces(self) -> None:
         a = CrewAIFlowAdapter(flow_factory=_factory)
         b = CrewAIFlowAdapter(flow_factory=_factory)
-        a._thenvoi_agent_id = "agent-id-X"
-        b._thenvoi_agent_id = "agent-id-Y"
+        a._band_agent_id = "agent-id-X"
+        b._band_agent_id = "agent-id-Y"
         await a.on_started("Router", "")
         await b.on_started("Router", "")
         assert a.metadata_namespace != b.metadata_namespace
@@ -486,15 +486,15 @@ class TestOnCleanup:
 
 
 class TestPublicImportPath:
-    def test_lazy_import_from_thenvoi_adapters(self) -> None:
-        # The example imports `from thenvoi.adapters import CrewAIFlowAdapter`.
-        from thenvoi.adapters import CrewAIFlowAdapter as Imported
+    def test_lazy_import_from_band_adapters(self) -> None:
+        # The example imports `from band.adapters import CrewAIFlowAdapter`.
+        from band.adapters import CrewAIFlowAdapter as Imported
 
         assert Imported is CrewAIFlowAdapter
 
     @pytest.mark.asyncio
     async def test_default_namespace_matches_documented_format(self) -> None:
         adapter = CrewAIFlowAdapter(flow_factory=_factory)
-        adapter._thenvoi_agent_id = "crewai-flow-router-id"
+        adapter._band_agent_id = "crewai-flow-router-id"
         await adapter.on_started("crewai_flow_router", "")
         assert adapter.metadata_namespace == "crewai_flow:crewai-flow-router-id"

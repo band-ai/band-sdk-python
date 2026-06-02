@@ -7,7 +7,7 @@
 # ]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Run Band SDK agents using the composition pattern.
@@ -44,8 +44,8 @@ Configure agent in agent_config.yaml:
 
 Setup:
 1. Copy .env.example to .env and configure:
-   - THENVOI_REST_URL (default: production, change for local dev)
-   - THENVOI_WS_URL (default: production, change for local dev)
+   - BAND_REST_URL (default: production, change for local dev)
+   - BAND_WS_URL (default: production, change for local dev)
    - OPENAI_API_KEY (required for langgraph/openai/parlant/crewai models)
    - ANTHROPIC_API_KEY (required for anthropic models)
 
@@ -66,12 +66,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from thenvoi import Agent
-from thenvoi.config import load_agent_config
-from thenvoi.core.types import AdapterFeatures, Emit
-from thenvoi.platform.event import ContactRequestReceivedEvent, ContactEvent
-from thenvoi.runtime.contact_tools import ContactTools
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band import Agent
+from band.config import load_agent_config
+from band.core.types import AdapterFeatures, Emit
+from band.platform.event import ContactRequestReceivedEvent, ContactEvent
+from band.runtime.contact_tools import ContactTools
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 # Load environment from .env
 load_dotenv()
@@ -189,12 +189,12 @@ You help manage contacts and contact requests on the Band platform.
 
 When the user asks you to manage contacts, use these tools:
 
-1. **List contacts**: Use `thenvoi_list_contacts` to show current contacts
-2. **Check requests**: Use `thenvoi_list_contact_requests` to see pending requests
-3. **Approve request**: Use `thenvoi_respond_contact_request` with action="approve"
-4. **Reject request**: Use `thenvoi_respond_contact_request` with action="reject"
-5. **Add contact**: Use `thenvoi_add_contact` to send a contact request
-6. **Remove contact**: Use `thenvoi_remove_contact` to remove an existing contact
+1. **List contacts**: Use `band_list_contacts` to show current contacts
+2. **Check requests**: Use `band_list_contact_requests` to see pending requests
+3. **Approve request**: Use `band_respond_contact_request` with action="approve"
+4. **Reject request**: Use `band_respond_contact_request` with action="reject"
+5. **Add contact**: Use `band_add_contact` to send a contact request
+6. **Remove contact**: Use `band_remove_contact` to remove an existing contact
 
 ### Response Format
 
@@ -206,19 +206,19 @@ When listing contacts or requests, format the information clearly:
 ### Examples
 
 User: "check my contact requests"
-→ Call thenvoi_list_contact_requests()
+→ Call band_list_contact_requests()
 
 User: "approve alice's request"
-→ Call thenvoi_respond_contact_request(action="approve", handle="alice")
+→ Call band_respond_contact_request(action="approve", handle="alice")
 
 User: "reject the request from bob"
-→ Call thenvoi_respond_contact_request(action="reject", handle="bob")
+→ Call band_respond_contact_request(action="reject", handle="bob")
 
 User: "list my contacts"
-→ Call thenvoi_list_contacts()
+→ Call band_list_contacts()
 
 User: "add john as a contact"
-→ Call thenvoi_add_contact(handle="john")
+→ Call band_add_contact(handle="john")
 """
 
 
@@ -234,7 +234,7 @@ async def run_langgraph_agent(
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from thenvoi.adapters import LangGraphAdapter
+    from band.adapters import LangGraphAdapter
 
     adapter = LangGraphAdapter(
         llm=ChatOpenAI(model="gpt-5.4-mini"),
@@ -266,7 +266,7 @@ async def run_pydantic_ai_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Pydantic AI agent."""
-    from thenvoi.adapters import PydanticAIAdapter
+    from band.adapters import PydanticAIAdapter
 
     # Augment custom_section for contact modes
     section = custom_section
@@ -322,7 +322,7 @@ async def run_anthropic_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Anthropic SDK agent."""
-    from thenvoi.adapters import AnthropicAdapter
+    from band.adapters import AnthropicAdapter
 
     adapter = AnthropicAdapter(
         model=model,
@@ -366,7 +366,7 @@ async def run_claude_sdk_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Claude Agent SDK agent."""
-    from thenvoi.adapters import ClaudeSDKAdapter
+    from band.adapters import ClaudeSDKAdapter
 
     adapter = ClaudeSDKAdapter(
         model=model,
@@ -412,7 +412,7 @@ async def run_parlant_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Parlant agent."""
-    from thenvoi.adapters import ParlantAdapter
+    from band.adapters import ParlantAdapter
 
     adapter = ParlantAdapter(
         model=model,
@@ -444,7 +444,7 @@ async def run_crewai_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the CrewAI agent."""
-    from thenvoi.adapters import CrewAIAdapter
+    from band.adapters import CrewAIAdapter
 
     adapter = CrewAIAdapter(
         model=model,
@@ -486,8 +486,8 @@ async def run_codex_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the Codex app-server adapter."""
-    from thenvoi.adapters import CodexAdapter
-    from thenvoi.adapters.codex import CodexAdapterConfig
+    from band.adapters import CodexAdapter
+    from band.adapters.codex import CodexAdapterConfig
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
@@ -545,7 +545,7 @@ async def run_pydantic_ai_contacts_agent(
     - "reject bob"
     - "add john as a contact"
     """
-    from thenvoi.adapters import PydanticAIAdapter
+    from band.adapters import PydanticAIAdapter
 
     adapter = PydanticAIAdapter(
         model=model,
@@ -581,8 +581,8 @@ async def run_contacts_auto_agent(
     - Auto-approve logic for contact requests
     - broadcast_changes=True to notify all rooms of contact updates
     """
-    from thenvoi.adapters import PydanticAIAdapter
-    from thenvoi.platform.event import ContactRequestReceivedEvent
+    from band.adapters import PydanticAIAdapter
+    from band.platform.event import ContactRequestReceivedEvent
 
     async def auto_approve(event: "ContactEvent", tools: "ContactTools") -> None:
         """Auto-approve all contact requests."""
@@ -639,7 +639,7 @@ async def run_contacts_hub_agent(
     - Agent can reason about requests and respond using tools
     - broadcast_changes=True to notify all rooms of outcomes
     """
-    from thenvoi.adapters import PydanticAIAdapter
+    from band.adapters import PydanticAIAdapter
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.HUB_ROOM,
@@ -654,15 +654,15 @@ async def run_contacts_hub_agent(
 When you receive contact request notifications in the hub room:
 1. Review the request details (who sent it, any message included)
 2. Decide whether to approve or reject based on the context
-3. Use thenvoi_respond_contact_request tool to take action
+3. Use band_respond_contact_request tool to take action
 4. Explain your decision to the user
 
 Contact request format:
 - [Contact Request] name (@handle) wants to connect. Message: "..."
 
 Actions available:
-- thenvoi_respond_contact_request(action="approve", handle="...")
-- thenvoi_respond_contact_request(action="reject", handle="...")
+- band_respond_contact_request(action="approve", handle="...")
+- band_respond_contact_request(action="reject", handle="...")
 """,
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
@@ -697,7 +697,7 @@ async def run_contacts_broadcast_agent(
     - broadcast_changes=True for awareness in all rooms
     - User can manually manage contacts via chat commands
     """
-    from thenvoi.adapters import PydanticAIAdapter
+    from band.adapters import PydanticAIAdapter
 
     config = ContactEventConfig(
         strategy=ContactEventStrategy.DISABLED,  # No auto-handling
@@ -742,12 +742,12 @@ async def run_a2a_agent(
     logger: logging.Logger,
 ) -> None:
     """Run the A2A bridge agent."""
-    from thenvoi.adapters import A2AAdapter
+    from band.adapters import A2AAdapter
 
     # Enable debug logging for A2A adapter to trace context_id and rehydration
     if enable_debug:
-        logging.getLogger("thenvoi.integrations.a2a").setLevel(logging.DEBUG)
-        logging.getLogger("thenvoi.converters.a2a").setLevel(logging.DEBUG)
+        logging.getLogger("band.integrations.a2a").setLevel(logging.DEBUG)
+        logging.getLogger("band.converters.a2a").setLevel(logging.DEBUG)
 
     adapter = A2AAdapter(
         remote_url=a2a_url,
@@ -781,11 +781,11 @@ async def run_a2a_gateway_agent(
     as A2A endpoints. Remote A2A agents can call these peers via standard
     A2A protocol.
     """
-    from thenvoi.adapters import A2AGatewayAdapter
+    from band.adapters import A2AGatewayAdapter
 
     # Enable debug logging for gateway adapter
     if enable_debug:
-        logging.getLogger("thenvoi.integrations.a2a.gateway").setLevel(logging.DEBUG)
+        logging.getLogger("band.integrations.a2a.gateway").setLevel(logging.DEBUG)
 
     gateway_url = f"http://localhost:{gateway_port}"
 
@@ -1034,13 +1034,13 @@ Examples:
         args.agent = default_agents.get(args.example, "simple_agent")
 
     # Load URLs from environment
-    rest_url = os.getenv("THENVOI_REST_URL")
-    ws_url = os.getenv("THENVOI_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
 
     if not rest_url:
-        parser.error("THENVOI_REST_URL environment variable is required")
+        parser.error("BAND_REST_URL environment variable is required")
     if not ws_url:
-        parser.error("THENVOI_WS_URL environment variable is required")
+        parser.error("BAND_WS_URL environment variable is required")
 
     # Load agent credentials
     try:

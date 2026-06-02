@@ -1,4 +1,4 @@
-"""Production runner for Thenvoi Claude SDK agents.
+"""Production runner for Band Claude SDK agents.
 
 Reads agent configuration from a YAML file and runs the agent with
 retry logic and graceful shutdown support.  Designed for Docker
@@ -9,8 +9,8 @@ Environment variables:
     AGENT_KEY      Key to look up in keyed config (default: "agent")
     AGENT_ROLE     Role override (planner, reviewer)
     WORKSPACE      Working directory override
-    BAND_WS_URL        Platform WebSocket URL (legacy: THENVOI_WS_URL)
-    BAND_REST_URL      Platform REST URL (legacy: THENVOI_REST_URL)
+    BAND_WS_URL        Platform WebSocket URL
+    BAND_REST_URL      Platform REST URL
     ANTHROPIC_API_KEY  Anthropic API key
 """
 
@@ -26,8 +26,8 @@ from typing import Any
 
 import yaml
 
-from thenvoi.docker.repo_init import initialize_repo
-from thenvoi.config.loader import load_agent_config
+from band.docker.repo_init import initialize_repo
+from band.config.loader import load_agent_config
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -153,10 +153,10 @@ async def main() -> None:
 
     ws_url = os.environ.get(
         "BAND_WS_URL",
-        os.environ.get("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
+        os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
     )
     rest_url = os.environ.get(
-        "BAND_REST_URL", os.environ.get("THENVOI_REST_URL", "https://app.band.ai")
+        "BAND_REST_URL", os.environ.get("BAND_REST_URL", "https://app.band.ai")
     )
     if not ws_url:
         raise ValueError("BAND_WS_URL environment variable is empty")
@@ -174,8 +174,8 @@ async def main() -> None:
         lock_timeout_s=lock_timeout_s,
     )
 
-    from thenvoi import Agent
-    from thenvoi.adapters import ClaudeSDKAdapter
+    from band import Agent
+    from band.adapters import ClaudeSDKAdapter
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]

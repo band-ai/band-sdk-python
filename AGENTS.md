@@ -13,27 +13,27 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 ## Platform Tools
 
 ### Chat Tools
-- `thenvoi_send_message`: Send message to chat room (requires mentions)
-- `thenvoi_send_event`: Send non-message event (thought, error, task)
-- `thenvoi_add_participant`: Add agent/user to room
-- `thenvoi_remove_participant`: Remove participant from room
-- `thenvoi_get_participants`: List room participants
-- `thenvoi_lookup_peers`: Find available agents/users
-- `thenvoi_create_chatroom`: Create new chat room
+- `band_send_message`: Send message to chat room (requires mentions)
+- `band_send_event`: Send non-message event (thought, error, task)
+- `band_add_participant`: Add agent/user to room
+- `band_remove_participant`: Remove participant from room
+- `band_get_participants`: List room participants
+- `band_lookup_peers`: Find available agents/users
+- `band_create_chatroom`: Create new chat room
 
 ### Contact Tools
-- `thenvoi_list_contacts`: List agent's contacts with pagination
-- `thenvoi_add_contact`: Send contact request to add someone
-- `thenvoi_remove_contact`: Remove existing contact
-- `thenvoi_list_contact_requests`: List received and sent requests
-- `thenvoi_respond_contact_request`: Approve, reject, or cancel requests
+- `band_list_contacts`: List agent's contacts with pagination
+- `band_add_contact`: Send contact request to add someone
+- `band_remove_contact`: Remove existing contact
+- `band_list_contact_requests`: List received and sent requests
+- `band_respond_contact_request`: Approve, reject, or cancel requests
 
 ### Memory Tools
-- `thenvoi_list_memories`: List memories with filters (scope, system, type)
-- `thenvoi_store_memory`: Store new memory with content, system, type, segment
-- `thenvoi_get_memory`: Retrieve a specific memory by ID
-- `thenvoi_supersede_memory`: Mark memory as superseded (soft delete)
-- `thenvoi_archive_memory`: Archive memory (hide but preserve)
+- `band_list_memories`: List memories with filters (scope, system, type)
+- `band_store_memory`: Store new memory with content, system, type, segment
+- `band_get_memory`: Retrieve a specific memory by ID
+- `band_supersede_memory`: Mark memory as superseded (soft delete)
+- `band_archive_memory`: Archive memory (hide but preserve)
 
 ## REST Client API Pattern
 
@@ -133,7 +133,7 @@ The SDK supports three strategies for handling contact WebSocket events via `Con
 ### Configuration
 
 ```python
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 # CALLBACK strategy - programmatic handling (auto-approve example)
 async def auto_approve(event, tools):
@@ -184,7 +184,7 @@ The SDK supports the [A2A (Agent-to-Agent) protocol](https://google.github.io/A2
 `A2AAdapter` forwards Band messages to a remote A2A-compliant agent. Each Band room maps to an A2A context, with automatic session state persistence via task events and session rehydration on room rejoin.
 
 ```python
-from thenvoi.adapters.a2a import A2AAdapter, A2AAuth
+from band.adapters.a2a import A2AAdapter, A2AAuth
 
 adapter = A2AAdapter(
     remote_url="http://localhost:10000",
@@ -197,7 +197,7 @@ adapter = A2AAdapter(
 `A2AGatewayAdapter` + `GatewayServer` expose Band peers as A2A JSON-RPC endpoints. Remote A2A clients can send messages to Band agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
 
 ```python
-from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
+from band.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
 
 adapter = A2AGatewayAdapter(gateway_port=10000)
 ```
@@ -206,9 +206,9 @@ adapter = A2AGatewayAdapter(gateway_port=10000)
 
 | Purpose | Path |
 |---|---|
-| A2A Adapter | `src/thenvoi/adapters/a2a.py`, `src/thenvoi/integrations/a2a/adapter.py` |
-| A2A Gateway | `src/thenvoi/adapters/a2a_gateway.py`, `src/thenvoi/integrations/a2a/gateway/` |
-| A2A Types | `src/thenvoi/integrations/a2a/types.py` |
+| A2A Adapter | `src/band/adapters/a2a.py`, `src/band/integrations/a2a/adapter.py` |
+| A2A Gateway | `src/band/adapters/a2a_gateway.py`, `src/band/integrations/a2a/gateway/` |
+| A2A Types | `src/band/integrations/a2a/types.py` |
 
 ## ACP (Agent Client Protocol) Integration
 
@@ -221,34 +221,34 @@ Two-layer pattern (mirrors A2A Gateway):
 | Layer | Server Side | Client Side |
 |-------|-------------|-------------|
 | Protocol | `ACPServer` (JSON-RPC handler) | ACP SDK's `spawn_agent_process` |
-| Platform Bridge | `ThenvoiACPServerAdapter` | `ACPClientAdapter` |
+| Platform Bridge | `BandACPServerAdapter` | `ACPClientAdapter` |
 
-**Server**: Editor -> ACP -> `ACPServer` -> `ThenvoiACPServerAdapter` -> Band REST/WS -> Peers
+**Server**: Editor -> ACP -> `ACPServer` -> `BandACPServerAdapter` -> Band REST/WS -> Peers
 **Client**: Band room message -> `ACPClientAdapter` -> spawned subprocess (Codex, Claude Code, etc.)
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/thenvoi/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
-| `src/thenvoi/integrations/acp/server_adapter.py` | `ThenvoiACPServerAdapter` — REST client, room/session mapping |
-| `src/thenvoi/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
-| `src/thenvoi/integrations/acp/client_types.py` | `ThenvoiACPClient` — per-session chunk buffering |
-| `src/thenvoi/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
-| `src/thenvoi/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
-| `src/thenvoi/integrations/acp/event_converter.py` | `EventConverter` — PlatformMessage -> ACP session_update chunks |
-| `src/thenvoi/integrations/acp/cli.py` | `band-acp` CLI entry point |
-| `src/thenvoi/converters/acp_server.py` | History converter for server adapter |
-| `src/thenvoi/converters/acp_client.py` | History converter for client adapter |
+| `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
+| `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
+| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
+| `src/band/integrations/acp/client_types.py` | `BandACPClient` — per-session chunk buffering |
+| `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
+| `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
+| `src/band/integrations/acp/event_converter.py` | `EventConverter` — PlatformMessage -> ACP session_update chunks |
+| `src/band/integrations/acp/cli.py` | `band-acp` CLI entry point |
+| `src/band/converters/acp_server.py` | History converter for server adapter |
+| `src/band/converters/acp_client.py` | History converter for client adapter |
 
 ### CLI
 
 ```bash
 # Installed via pip/uv as console_scripts entry point
-band-acp --agent-id my-agent --api-key $THENVOI_API_KEY
+band-acp --agent-id my-agent --api-key $BAND_API_KEY
 
 # Or with environment variables
-THENVOI_AGENT_ID=my-agent THENVOI_API_KEY=key band-acp
+BAND_AGENT_ID=my-agent BAND_API_KEY=key band-acp
 ```
 
 ### Session Lifecycle
@@ -261,7 +261,7 @@ THENVOI_AGENT_ID=my-agent THENVOI_API_KEY=key band-acp
 
 ### Per-Session Buffers (Client Adapter)
 
-`ThenvoiACPClient` uses per-session chunk buffers (`_session_chunks: dict[str, list[CollectedChunk]]`) to allow concurrent rooms without global locking. Each session's buffer is reset before a prompt and read after.
+`BandACPClient` uses per-session chunk buffers (`_session_chunks: dict[str, list[CollectedChunk]]`) to allow concurrent rooms without global locking. Each session's buffer is reset before a prompt and read after.
 
 ### Optional Dependency
 
@@ -288,7 +288,7 @@ await client.respond_to_agent_contact_request(**kwargs)
 ## Code Structure
 
 ```
-src/thenvoi/
+src/band/
 ├── adapters/       # Framework adapters (langgraph, anthropic, crewai, a2a, etc.)
 ├── converters/     # History converters per framework
 ├── core/           # Protocols, types, base classes
@@ -333,7 +333,7 @@ uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 uv run pytest tests/ -k "test_name"
 
 # Run with coverage
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/thenvoi
+uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/band
 
 # Run integration tests (requires API key)
 uv run pytest tests/integration/ -v -s --no-cov
@@ -373,9 +373,9 @@ resolves each in a separate fork.
 
 ## Environment Variables
 
-- `THENVOI_REST_URL`: REST API URL (default: https://app.band.ai)
-- `THENVOI_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
-- `THENVOI_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages
+- `BAND_REST_URL`: REST API URL (default: https://app.band.ai)
+- `BAND_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+- `BAND_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages
 - `OPENAI_API_KEY`: OpenAI API key (for LangGraph examples)
 - `ANTHROPIC_API_KEY`: Anthropic API key (for Anthropic/Claude SDK examples)
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
@@ -392,8 +392,8 @@ When adding a new framework adapter and converter, follow this TDD workflow. Use
 
 ### Phase 1: Scaffold Source Files
 
-1. Create converter at `src/thenvoi/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from thenvoi.converters._tool_parsing import parse_tool_call, parse_tool_result`.
-2. Create adapter at `src/thenvoi/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `enable_execution_reporting`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`.
+1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters._tool_parsing import parse_tool_call, parse_tool_result`.
+2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `enable_execution_reporting`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`.
 3. If the framework needs an external SDK, add an optional dependency group in `pyproject.toml`.
 
 ### Phase 2: Register with Conformance Infrastructure
@@ -412,11 +412,11 @@ uv run pytest tests/framework_conformance/test_converter_conformance.py -v -k "<
 
 ### Phase 4: Implement the Converter
 
-In `src/thenvoi/converters/<framework>.py`, implement `convert()`: text messages as `[sender_name]: content`, own agent filtering, other agent remapping, tool events via `parse_tool_call`/`parse_tool_result`, skip thought messages, default role to `"user"`.
+In `src/band/converters/<framework>.py`, implement `convert()`: text messages as `[sender_name]: content`, own agent filtering, other agent remapping, tool events via `parse_tool_call`/`parse_tool_result`, skip thought messages, default role to `"user"`.
 
 ### Phase 5: Implement the Adapter
 
-In `src/thenvoi/adapters/<framework>.py`: `on_started` sets agent name/description and creates client, `on_message` converts history and invokes LLM, `on_cleanup` cleans per-room state safely.
+In `src/band/adapters/<framework>.py`: `on_started` sets agent name/description and creates client, `on_message` converts history and invokes LLM, `on_cleanup` cleans per-room state safely.
 
 ### Phase 6: Write Framework-Specific Tests
 
@@ -436,8 +436,8 @@ uv run ruff check . && uv run ruff format .
 
 | Purpose | Path |
 |---|---|
-| Adapter source | `src/thenvoi/adapters/<framework>.py` |
-| Converter source | `src/thenvoi/converters/<framework>.py` |
+| Adapter source | `src/band/adapters/<framework>.py` |
+| Converter source | `src/band/converters/<framework>.py` |
 | Adapter config registry | `tests/framework_configs/adapters.py` |
 | Converter config registry | `tests/framework_configs/converters.py` |
 | Output adapters | `tests/framework_configs/output_adapters.py` |
@@ -457,7 +457,7 @@ Every example file must include PEP 723 inline script metadata at the top for st
 # dependencies = ["band-sdk[<extra>]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Brief description of what this example does.
@@ -472,7 +472,7 @@ Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anth
 ### Other Requirements
 
 - Use `load_agent_config("agent_name")` for credentials, NOT direct `os.environ.get()`
-- Always load and validate `THENVOI_WS_URL` and `THENVOI_REST_URL` with `ValueError`
+- Always load and validate `BAND_WS_URL` and `BAND_REST_URL` with `ValueError`
 - Use `raise ValueError(...)` for missing required config, NOT `logger.error()` + `sys.exit()`
 - Use single sys.path line: `sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))`
 - Never hardcode UUIDs in docstrings - reference `agent_config.yaml` instead

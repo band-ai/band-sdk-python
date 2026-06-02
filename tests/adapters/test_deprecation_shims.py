@@ -9,30 +9,30 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
-from thenvoi.core.exceptions import BandConfigError
-from thenvoi.core.types import AdapterFeatures, Capability, Emit
+from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
+from band.core.exceptions import BandConfigError
+from band.core.types import AdapterFeatures, Capability, Emit
 
 
 class TestUniversalBooleanShims:
     """Every adapter with legacy booleans must shim them with DeprecationWarning."""
 
     def test_anthropic_enable_memory_tools_warns(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(DeprecationWarning, match="enable_memory_tools"):
             adapter = AnthropicAdapter(enable_memory_tools=True)
         assert Capability.MEMORY in adapter.features.capabilities
 
     def test_anthropic_enable_execution_reporting_warns(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(DeprecationWarning, match="enable_execution_reporting"):
             adapter = AnthropicAdapter(enable_execution_reporting=True)
         assert Emit.EXECUTION in adapter.features.emit
 
     def test_anthropic_both_booleans_and_features_raises(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             AnthropicAdapter(
@@ -41,14 +41,14 @@ class TestUniversalBooleanShims:
             )
 
     def test_gemini_enable_memory_tools_warns(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(DeprecationWarning, match="enable_memory_tools"):
             adapter = GeminiAdapter(enable_memory_tools=True)
         assert Capability.MEMORY in adapter.features.capabilities
 
     def test_gemini_enable_execution_reporting_warns(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(
             DeprecationWarning, match="enable_memory_tools|enable_execution_reporting"
@@ -57,7 +57,7 @@ class TestUniversalBooleanShims:
         assert Emit.EXECUTION in adapter.features.emit
 
     def test_gemini_both_booleans_and_features_raises(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             GeminiAdapter(
@@ -68,7 +68,7 @@ class TestUniversalBooleanShims:
     def test_langgraph_enable_memory_tools_warns(self) -> None:
         from unittest.mock import MagicMock
 
-        from thenvoi.adapters.langgraph import LangGraphAdapter
+        from band.adapters.langgraph import LangGraphAdapter
 
         with pytest.warns(DeprecationWarning, match="enable_memory_tools"):
             adapter = LangGraphAdapter(
@@ -77,7 +77,7 @@ class TestUniversalBooleanShims:
         assert Capability.MEMORY in adapter.features.capabilities
 
     def test_pydantic_ai_enable_execution_reporting_warns(self) -> None:
-        from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+        from band.adapters.pydantic_ai import PydanticAIAdapter
 
         with pytest.warns(DeprecationWarning, match="enable_execution_reporting"):
             adapter = PydanticAIAdapter(
@@ -93,7 +93,7 @@ class TestUniversalBooleanShims:
         self,
     ) -> None:
         """ClaudeSDK historically emitted thoughts under enable_execution_reporting."""
-        from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter
+        from band.adapters.claude_sdk import ClaudeSDKAdapter
 
         with pytest.warns(DeprecationWarning, match="enable_execution_reporting"):
             adapter = ClaudeSDKAdapter(enable_execution_reporting=True)
@@ -101,7 +101,7 @@ class TestUniversalBooleanShims:
         assert Emit.THOUGHTS in adapter.features.emit
 
     def test_crewai_enable_execution_reporting_warns(self) -> None:
-        from thenvoi.adapters.crewai import CrewAIAdapter
+        from band.adapters.crewai import CrewAIAdapter
 
         with pytest.warns(
             DeprecationWarning, match="enable_execution_reporting|enable_memory_tools"
@@ -110,7 +110,7 @@ class TestUniversalBooleanShims:
         assert Emit.EXECUTION in adapter.features.emit
 
     def test_crewai_enable_memory_tools_warns(self) -> None:
-        from thenvoi.adapters.crewai import CrewAIAdapter
+        from band.adapters.crewai import CrewAIAdapter
 
         with pytest.warns(
             DeprecationWarning, match="enable_execution_reporting|enable_memory_tools"
@@ -119,7 +119,7 @@ class TestUniversalBooleanShims:
         assert Capability.MEMORY in adapter.features.capabilities
 
     def test_crewai_both_booleans_and_features_raises(self) -> None:
-        from thenvoi.adapters.crewai import CrewAIAdapter
+        from band.adapters.crewai import CrewAIAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             CrewAIAdapter(
@@ -128,13 +128,13 @@ class TestUniversalBooleanShims:
             )
 
     def test_crewai_system_prompt_warns(self) -> None:
-        from thenvoi.adapters.crewai import CrewAIAdapter
+        from band.adapters.crewai import CrewAIAdapter
 
         with pytest.warns(DeprecationWarning, match="system_prompt.*deprecated"):
             CrewAIAdapter(system_prompt="Be a helpful agent.")
 
     def test_google_adk_enable_execution_reporting_warns(self) -> None:
-        from thenvoi.adapters.google_adk import GoogleADKAdapter
+        from band.adapters.google_adk import GoogleADKAdapter
 
         with pytest.warns(
             DeprecationWarning, match="enable_execution_reporting|enable_memory_tools"
@@ -143,7 +143,7 @@ class TestUniversalBooleanShims:
         assert Emit.EXECUTION in adapter.features.emit
 
     def test_google_adk_enable_memory_tools_warns(self) -> None:
-        from thenvoi.adapters.google_adk import GoogleADKAdapter
+        from band.adapters.google_adk import GoogleADKAdapter
 
         with pytest.warns(
             DeprecationWarning, match="enable_execution_reporting|enable_memory_tools"
@@ -152,7 +152,7 @@ class TestUniversalBooleanShims:
         assert Capability.MEMORY in adapter.features.capabilities
 
     def test_google_adk_both_booleans_and_features_raises(self) -> None:
-        from thenvoi.adapters.google_adk import GoogleADKAdapter
+        from band.adapters.google_adk import GoogleADKAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             GoogleADKAdapter(
@@ -161,7 +161,7 @@ class TestUniversalBooleanShims:
             )
 
     def test_codex_enable_execution_reporting_warns(self) -> None:
-        from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+        from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
         config = CodexAdapterConfig(enable_execution_reporting=True)
         with pytest.warns(DeprecationWarning, match="enable_execution_reporting"):
@@ -169,7 +169,7 @@ class TestUniversalBooleanShims:
         assert Emit.EXECUTION in adapter.features.emit
 
     def test_codex_emit_thought_events_warns(self) -> None:
-        from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+        from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
         config = CodexAdapterConfig(emit_thought_events=True)
         with pytest.warns(DeprecationWarning, match="emit_thought_events"):
@@ -177,7 +177,7 @@ class TestUniversalBooleanShims:
         assert Emit.THOUGHTS in adapter.features.emit
 
     def test_codex_config_booleans_and_features_raises(self) -> None:
-        from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+        from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
         config = CodexAdapterConfig(enable_execution_reporting=True)
         with pytest.raises(BandConfigError, match="Cannot pass both"):
@@ -190,7 +190,7 @@ class TestUniversalBooleanShims:
         """Default CodexAdapterConfig enables task events without firing a warning."""
         import warnings as _warnings
 
-        from thenvoi.adapters.codex import CodexAdapter
+        from band.adapters.codex import CodexAdapter
 
         with _warnings.catch_warnings():
             _warnings.simplefilter("error", DeprecationWarning)
@@ -203,7 +203,7 @@ class TestUniversalBooleanShims:
         """Passing features= bypasses config-boolean mapping."""
         import warnings as _warnings
 
-        from thenvoi.adapters.codex import CodexAdapter
+        from band.adapters.codex import CodexAdapter
 
         with _warnings.catch_warnings():
             _warnings.simplefilter("error", DeprecationWarning)
@@ -213,7 +213,7 @@ class TestUniversalBooleanShims:
 
     def test_codex_supported_features_surface(self) -> None:
         """SUPPORTED_EMIT advertises the three Codex-supported emit channels."""
-        from thenvoi.adapters.codex import CodexAdapter
+        from band.adapters.codex import CodexAdapter
 
         assert CodexAdapter.SUPPORTED_EMIT == frozenset(
             {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS}
@@ -224,7 +224,7 @@ class TestSelectiveRenameShims:
     """Anthropic and Gemini get the api_key/prompt selective renames."""
 
     def test_anthropic_anthropic_api_key_warns(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(DeprecationWarning, match="anthropic_api_key"):
             AnthropicAdapter(anthropic_api_key="sk-test-key")
@@ -232,15 +232,15 @@ class TestSelectiveRenameShims:
     def test_anthropic_anthropic_api_key_resolves_to_provider_key(self) -> None:
         from unittest.mock import patch
 
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
-        with patch("thenvoi.adapters.anthropic.AsyncAnthropic") as mock_cls:
+        with patch("band.adapters.anthropic.AsyncAnthropic") as mock_cls:
             with pytest.warns(DeprecationWarning, match="anthropic_api_key"):
                 AnthropicAdapter(anthropic_api_key="sk-old-key")
         mock_cls.assert_called_once_with(api_key="sk-old-key")
 
     def test_anthropic_api_key_warns(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(
             DeprecationWarning, match="api_key.*deprecated.*provider_key"
@@ -250,9 +250,9 @@ class TestSelectiveRenameShims:
     def test_anthropic_api_key_resolves_to_provider_key(self) -> None:
         from unittest.mock import patch
 
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
-        with patch("thenvoi.adapters.anthropic.AsyncAnthropic") as mock_cls:
+        with patch("band.adapters.anthropic.AsyncAnthropic") as mock_cls:
             with pytest.warns(
                 DeprecationWarning, match="api_key.*deprecated.*provider_key"
             ):
@@ -260,44 +260,44 @@ class TestSelectiveRenameShims:
         mock_cls.assert_called_once_with(api_key="sk-test-key")
 
     def test_anthropic_custom_section_warns(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(DeprecationWarning, match="custom_section"):
             AnthropicAdapter(custom_section="Be helpful.")
 
     def test_anthropic_provider_key_and_api_key_conflict(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             AnthropicAdapter(provider_key="sk-new", api_key="sk-old")
 
     def test_anthropic_anthropic_api_key_and_provider_key_conflict(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass"):
             AnthropicAdapter(provider_key="sk-new", anthropic_api_key="sk-old")
 
     def test_anthropic_prompt_and_custom_section_conflict(self) -> None:
-        from thenvoi.adapters.anthropic import AnthropicAdapter
+        from band.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             AnthropicAdapter(prompt="new", custom_section="old")
 
     def test_gemini_gemini_api_key_warns(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(DeprecationWarning, match="gemini_api_key"):
             GeminiAdapter(gemini_api_key="AIza-test-key")
 
     def test_gemini_gemini_api_key_resolves_to_provider_key(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(DeprecationWarning, match="gemini_api_key"):
             adapter = GeminiAdapter(gemini_api_key="AIza-old-key")
         assert adapter._provider_key == "AIza-old-key"
 
     def test_gemini_api_key_warns(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(
             DeprecationWarning, match="api_key.*deprecated.*provider_key"
@@ -305,7 +305,7 @@ class TestSelectiveRenameShims:
             GeminiAdapter(api_key="AIza-test-key")
 
     def test_gemini_api_key_resolves_to_provider_key(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(
             DeprecationWarning, match="api_key.*deprecated.*provider_key"
@@ -314,25 +314,25 @@ class TestSelectiveRenameShims:
         assert adapter._provider_key == "AIza-test-key"
 
     def test_gemini_custom_section_warns(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.warns(DeprecationWarning, match="custom_section"):
             GeminiAdapter(custom_section="Be concise.")
 
     def test_gemini_provider_key_and_api_key_conflict(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             GeminiAdapter(provider_key="AIza-new", api_key="AIza-old")
 
     def test_gemini_gemini_api_key_and_provider_key_conflict(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass"):
             GeminiAdapter(provider_key="AIza-new", gemini_api_key="AIza-old")
 
     def test_gemini_prompt_and_custom_section_conflict(self) -> None:
-        from thenvoi.adapters.gemini import GeminiAdapter
+        from band.adapters.gemini import GeminiAdapter
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             GeminiAdapter(prompt="new", custom_section="old")
@@ -342,7 +342,7 @@ class TestLettaApiKeyShim:
     """LettaAdapterConfig.api_key must warn and resolve to provider_key."""
 
     def test_letta_api_key_warns(self) -> None:
-        from thenvoi.adapters.letta import LettaAdapterConfig
+        from band.adapters.letta import LettaAdapterConfig
 
         with pytest.warns(
             DeprecationWarning, match="api_key.*deprecated.*provider_key"
@@ -352,7 +352,7 @@ class TestLettaApiKeyShim:
         assert config.api_key is None
 
     def test_letta_provider_key_and_api_key_conflict(self) -> None:
-        from thenvoi.adapters.letta import LettaAdapterConfig
+        from band.adapters.letta import LettaAdapterConfig
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             LettaAdapterConfig(provider_key="new-key", api_key="old-key")
@@ -362,7 +362,7 @@ class TestOpencodeDeprecationShims:
     """Opencode config booleans must warn when non-default."""
 
     def test_enable_execution_reporting_warns(self) -> None:
-        from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+        from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 
         config = OpencodeAdapterConfig(enable_execution_reporting=True)
         with pytest.warns(
@@ -372,7 +372,7 @@ class TestOpencodeDeprecationShims:
             OpencodeAdapter(config=config)
 
     def test_enable_memory_tools_warns(self) -> None:
-        from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+        from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 
         config = OpencodeAdapterConfig(enable_memory_tools=True)
         with pytest.warns(
@@ -382,7 +382,7 @@ class TestOpencodeDeprecationShims:
             OpencodeAdapter(config=config)
 
     def test_conflict_raises(self) -> None:
-        from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+        from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 
         config = OpencodeAdapterConfig(enable_execution_reporting=True)
         with pytest.raises(BandConfigError, match="Cannot pass both"):
@@ -393,7 +393,7 @@ class TestLettaDeprecationShims:
     """Letta config booleans must warn when non-default."""
 
     def test_enable_execution_reporting_warns(self) -> None:
-        from thenvoi.adapters.letta import LettaAdapter, LettaAdapterConfig
+        from band.adapters.letta import LettaAdapter, LettaAdapterConfig
 
         config = LettaAdapterConfig(enable_execution_reporting=True)
         with pytest.warns(
@@ -403,7 +403,7 @@ class TestLettaDeprecationShims:
             LettaAdapter(config=config)
 
     def test_enable_memory_tools_warns(self) -> None:
-        from thenvoi.adapters.letta import LettaAdapter, LettaAdapterConfig
+        from band.adapters.letta import LettaAdapter, LettaAdapterConfig
 
         config = LettaAdapterConfig(enable_memory_tools=True)
         with pytest.warns(
@@ -413,7 +413,7 @@ class TestLettaDeprecationShims:
             LettaAdapter(config=config)
 
     def test_conflict_raises(self) -> None:
-        from thenvoi.adapters.letta import LettaAdapter, LettaAdapterConfig
+        from band.adapters.letta import LettaAdapter, LettaAdapterConfig
 
         config = LettaAdapterConfig(enable_memory_tools=True)
         with pytest.raises(BandConfigError, match="Cannot pass both"):

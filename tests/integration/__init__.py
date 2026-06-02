@@ -1,1 +1,1 @@
-"""Integration tests for thenvoi SDK against real API."""
+"""Integration tests for Band SDK against real API."""

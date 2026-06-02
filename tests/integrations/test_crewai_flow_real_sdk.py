@@ -7,13 +7,13 @@ import pytest
 
 from pydantic import BaseModel
 
-from thenvoi.adapters.crewai_flow import (
+from band.adapters.crewai_flow import (
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     get_current_flow_runtime,
 )
-from thenvoi.core.types import PlatformMessage
-from thenvoi.testing.fake_tools import FakeAgentTools
+from band.core.types import PlatformMessage
+from band.testing.fake_tools import FakeAgentTools
 
 try:
     from crewai.flow.flow import Flow, start  # noqa: F401
@@ -24,7 +24,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(
     not _HAS_CREWAI,
-    reason="crewai not installed (pip install thenvoi-sdk[crewai])",
+    reason="crewai not installed (pip install band-sdk[crewai])",
 )
 
 

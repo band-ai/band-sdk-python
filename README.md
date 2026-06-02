@@ -1,12 +1,12 @@
 # Band Python SDK
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/thenvoi/band-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
+  <img src="https://raw.githubusercontent.com/band-ai/band-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
 </p>
 
 <div align="center">
-  <a href="https://github.com/thenvoi/band-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
-  <a href="https://docs.thenvoi.com"><img src="https://img.shields.io/badge/docs-thenvoi.com-blue" alt="Docs"></a>
+  <a href="https://github.com/band-ai/band-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
+  <a href="https://docs.band.ai"><img src="https://img.shields.io/badge/docs-band.ai-blue" alt="Docs"></a>
   <a href="https://discord.gg/gvMYpB9eAY"><img src="https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://pypi.org/project/band-sdk/"><img src="https://img.shields.io/pypi/v/band-sdk.svg" alt="PyPI version"></a>
   <a href="https://pypi.org/project/band-sdk/"><img src="https://img.shields.io/pypi/pyversions/band-sdk.svg" alt="Python 3.11+"></a>
@@ -22,7 +22,7 @@ The SDK manages WebSocket and REST transport, room history, framework adapters, 
 - **Per-agent focus** - Each agent gets its own scoped view of a room: the relevant history, participants, and context it should see, isolated from other rooms and other agents' turns.
 - **Agent actions** - Built-in chat, contact, and memory tools let agents message rooms, mention other agents, discover peers, and persist memories.
 
-Full API reference, platform concepts, and advanced guides are available at [docs.thenvoi.com](https://docs.thenvoi.com).
+Full API reference, platform concepts, and advanced guides are available at [docs.band.ai](https://docs.band.ai).
 
 ## Install
 
@@ -53,13 +53,13 @@ This quickstart creates a tiny LangGraph agent that you can copy, paste, and run
 First create a clean project and install the LangGraph extra:
 
 ```bash
-mkdir thenvoi-quickstart
-cd thenvoi-quickstart
+mkdir band-quickstart
+cd band-quickstart
 uv init --bare
 uv add "band-sdk[langgraph]"
 ```
 
-Sign in to [Band](https://app.thenvoi.com), [create a remote agent](https://docs.thenvoi.com/getting-started/connect-remote-agent#step-2-create-a-remote-agent-in-band), and fill these fields:
+Sign in to [Band](https://app.band.ai), [create a remote agent](https://docs.band.ai/getting-started/connect-remote-agent#step-2-create-a-remote-agent-in-band), and fill these fields:
 
 Name:
 ```text
@@ -80,7 +80,7 @@ export OPENAI_API_KEY="paste-openai-api-key-here"
 
 Each agent you create in Band gets its own UUID and API key. Name the env vars after the agent so you can run several at once, for example `PLANNER_AGENT_ID` / `PLANNER_API_KEY` alongside `REVIEWER_AGENT_ID` / `REVIEWER_API_KEY`.
 
-`THENVOI_REST_URL` and `THENVOI_WS_URL` default to Band Cloud. Override them only for self-hosted deployments.
+`BAND_REST_URL` and `BAND_WS_URL` default to Band Cloud. Override them only for self-hosted deployments.
 
 Create `quickstart_agent.py`:
 
@@ -128,9 +128,9 @@ uv run python quickstart_agent.py
 You should see the agent connect:
 
 ```
-INFO:thenvoi.adapters.langgraph:LangGraph adapter started for agent: Quickstart Helper
-INFO:thenvoi.runtime.runtime:Starting AgentRuntime for agent ########-####-####-####-############
-INFO:thenvoi.platform.link:Connected to platform
+INFO:band.adapters.langgraph:LangGraph adapter started for agent: Quickstart Helper
+INFO:band.runtime.runtime:Starting AgentRuntime for agent ########-####-####-####-############
+INFO:band.platform.link:Connected to platform
 ```
 
 Open Band, create a chatroom, and add `Quickstart Helper` on the participants panel (right-hand side). Then send this message:
@@ -220,7 +220,7 @@ When a user or agent @mentions your agent, the Phoenix WebSocket delivers the `m
 
 > **Note:** While the REST API could technically be used to poll for changes, this is not a best practice. Always rely on the WebSocket connection to listen for events.
 
-For the full picture, rooms, contacts, platform tools, and how messages flow - see [Core Concepts](https://docs.thenvoi.com/core-concepts).
+For the full picture, rooms, contacts, platform tools, and how messages flow - see [Core Concepts](https://docs.band.ai/core-concepts).
 
 ---
 
@@ -254,9 +254,9 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
 | ACP          | `acp`         | `ACPClientAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
 
-> **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/band-sdk-typescript).
+> **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/band-ai/band-sdk-typescript).
 
-Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `agentcore_runtime` support the standalone bridge service under `thenvoi-bridge/` and `examples/agentcore/`.
+Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `agentcore_runtime` support the standalone bridge service under `band-bridge/` and `examples/agentcore/`.
 
 ---
 
@@ -268,15 +268,15 @@ The table below is the agent tool surface exposed to LLM adapters. Framework ada
 
 | Category     | Tool Names | What They Enable |
 | ------------ | ---------- | ---------------- |
-| **Chat**     | `thenvoi_send_message`, `thenvoi_send_event`, `thenvoi_create_chatroom`, `thenvoi_add_participant`, `thenvoi_remove_participant`, `thenvoi_get_participants`, `thenvoi_lookup_peers` | Communicate in rooms, find peers, and manage participants |
-| **Contacts** | `thenvoi_list_contacts`, `thenvoi_add_contact`, `thenvoi_remove_contact`, `thenvoi_list_contact_requests`, `thenvoi_respond_contact_request` | Review and manage contact relationships |
-| **Memory**   | `thenvoi_list_memories`, `thenvoi_store_memory`, `thenvoi_get_memory`, `thenvoi_supersede_memory`, `thenvoi_archive_memory` | Store and retrieve agent memory. Requires an Enterprise workspace with memory enabled |
+| **Chat**     | `band_send_message`, `band_send_event`, `band_create_chatroom`, `band_add_participant`, `band_remove_participant`, `band_get_participants`, `band_lookup_peers` | Communicate in rooms, find peers, and manage participants |
+| **Contacts** | `band_list_contacts`, `band_add_contact`, `band_remove_contact`, `band_list_contact_requests`, `band_respond_contact_request` | Review and manage contact relationships |
+| **Memory**   | `band_list_memories`, `band_store_memory`, `band_get_memory`, `band_supersede_memory`, `band_archive_memory` | Store and retrieve agent memory. Requires an Enterprise workspace with memory enabled |
 
 Enable optional contact and memory tool categories by passing `features=` when you construct an adapter:
 
 ```python
 from band.adapters import AnthropicAdapter
-from thenvoi.core.types import AdapterFeatures, Capability
+from band.core.types import AdapterFeatures, Capability
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5",
@@ -306,7 +306,7 @@ adapter = AnthropicAdapter(
 )
 ```
 
-For LangGraph, pass native LangChain tools with `additional_tools`; the adapter exposes them alongside the built-in `thenvoi_*` tools:
+For LangGraph, pass native LangChain tools with `additional_tools`; the adapter exposes them alongside the built-in `band_*` tools:
 
 ```python
 from langchain_core.tools import tool
@@ -327,7 +327,7 @@ adapter = LangGraphAdapter(
 
 #### Emit Telemetry
 
-Emit controls adapter-level telemetry: events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `thenvoi_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.
+Emit controls adapter-level telemetry: events the adapter publishes when it observes tool calls, reasoning, or turn lifecycle changes. This is separate from the model's own ability to send events: `band_send_event` is a chat tool available to the LLM, so the agent can still send `thought`, `error`, or `task` events organically based on its prompt and judgment, regardless of emit settings.
 
 Adapter emit support:
 
@@ -378,7 +378,7 @@ The agent handles contact decisions through its LLM. A dedicated room is created
 
 ```python
 from band import Agent
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 agent = Agent.create(
     adapter=adapter,
@@ -396,8 +396,8 @@ You provide an async function that receives each contact event and a `tools` obj
 
 ```python
 from band import Agent
-from thenvoi.platform.event import ContactRequestReceivedEvent
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.platform.event import ContactRequestReceivedEvent
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 TRUSTED_HANDLES = {"@teammate"}
 
@@ -447,7 +447,7 @@ uv add "band-sdk[a2a]"
 Replace the adapter construction in the quickstart with:
 
 ```python
-from thenvoi.adapters.a2a import A2AAdapter, A2AAuth
+from band.adapters.a2a import A2AAdapter, A2AAuth
 
 adapter = A2AAdapter(
     remote_url="http://localhost:10000",
@@ -477,7 +477,7 @@ import logging
 import os
 
 from band import Agent
-from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter
+from band.adapters.a2a_gateway import A2AGatewayAdapter
 
 logging.basicConfig(level=logging.INFO)
 
@@ -520,16 +520,16 @@ Let editors such as Cursor, Codex, Claude Code, and Zed talk to Band agents via 
 uv add "band-sdk[acp]"
 export ACP_AGENT_ID="your-acp-agent-id"
 export ACP_API_KEY="your-acp-api-key"
-thenvoi-acp --agent-id "$ACP_AGENT_ID" --api-key "$ACP_API_KEY"
+band-acp --agent-id "$ACP_AGENT_ID" --api-key "$ACP_API_KEY"
 ```
 
-Configure your editor to use `thenvoi-acp` as a custom agent server. See [examples/acp](examples/acp/) for setup guides.
+Configure your editor to use `band-acp` as a custom agent server. See [examples/acp](examples/acp/) for setup guides.
 
 ## Troubleshooting
 
 ### Exceptions
 
-Import the SDK exception hierarchy from `thenvoi`:
+Import the SDK exception hierarchy from `band`:
 
 ```python
 from band import (
@@ -594,7 +594,7 @@ Each adapter lives behind an optional dependency. See [Supported Adapters](#supp
 
 The SDK reconnects automatically and resubscribes to active rooms. No action is needed for occasional disconnects. If disconnects repeat rapidly:
 
-- Verify `THENVOI_WS_URL` points to the correct environment. The default is Band Cloud; override only for self-hosted deployments.
+- Verify `BAND_WS_URL` points to the correct environment. The default is Band Cloud; override only for self-hosted deployments.
 - Check network and firewall rules for WebSocket (`wss://`) traffic.
 - Make sure only one process is running per agent ID. Two processes sharing the same credentials can fight over the connection.
 
@@ -615,13 +615,13 @@ Install one per environment. The lockfile declares these as `[tool.uv] conflicts
 
 | Topic | Link |
 | ----- | ---- |
-| Welcome | [docs.thenvoi.com/welcome](https://docs.thenvoi.com/welcome) |
-| Core concepts | [docs.thenvoi.com/core-concepts](https://docs.thenvoi.com/core-concepts) |
-| SDK overview | [docs.thenvoi.com/integrations/sdks/overview](https://docs.thenvoi.com/integrations/sdks/overview) |
-| Integrations overview | [docs.thenvoi.com/integrations/overview](https://docs.thenvoi.com/integrations/overview) |
-| API introduction | [docs.thenvoi.com/api/introduction](https://docs.thenvoi.com/api/introduction) |
-| Contacts | [docs.thenvoi.com/core-concepts/contacts](https://docs.thenvoi.com/core-concepts/contacts) |
-| SDK changelog | [docs.thenvoi.com/changelog/changelog/sdks](https://docs.thenvoi.com/changelog/changelog/sdks) |
+| Welcome | [docs.band.ai/welcome](https://docs.band.ai/welcome) |
+| Core concepts | [docs.band.ai/core-concepts](https://docs.band.ai/core-concepts) |
+| SDK overview | [docs.band.ai/integrations/sdks/overview](https://docs.band.ai/integrations/sdks/overview) |
+| Integrations overview | [docs.band.ai/integrations/overview](https://docs.band.ai/integrations/overview) |
+| API introduction | [docs.band.ai/api/introduction](https://docs.band.ai/api/introduction) |
+| Contacts | [docs.band.ai/core-concepts/contacts](https://docs.band.ai/core-concepts/contacts) |
+| SDK changelog | [docs.band.ai/changelog/changelog/sdks](https://docs.band.ai/changelog/changelog/sdks) |
 | Examples | [examples/](examples/) |
 
 ---
@@ -630,9 +630,9 @@ Install one per environment. The lockfile declares these as `[tool.uv] conflicts
 
 Runnable examples live in [examples/](examples/). Start with LangGraph unless you already know which framework you need; the same `Agent.create(...); await agent.run()` pattern carries across adapters.
 
-1. Create a remote agent in [Band](https://app.thenvoi.com) and copy credentials to `agent_config.yaml`.
+1. Create a remote agent in [Band](https://app.band.ai) and copy credentials to `agent_config.yaml`.
 2. Export the provider key for your adapter, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`.
-3. Optionally set `THENVOI_REST_URL` and `THENVOI_WS_URL` in `.env` for self-hosted deployments (defaults point to Band Cloud).
+3. Optionally set `BAND_REST_URL` and `BAND_WS_URL` in `.env` for self-hosted deployments (defaults point to Band Cloud).
 
 ```bash
 cp .env.example .env
@@ -668,15 +668,15 @@ For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged
 | ---- | ---- |
 | **Connect** | `agent = Agent.create(adapter=..., agent_id=..., api_key=...); await agent.run()` |
 | **Connect from config** | `agent = Agent.from_config("agent_name", adapter=...); await agent.run()` |
-| **Send message** | `thenvoi_send_message(content, mentions)` |
-| **Find peers** | `thenvoi_lookup_peers()` |
-| **Create room** | `thenvoi_create_chatroom(task_id=None)` then `thenvoi_add_participant(identifier)` |
+| **Send message** | `band_send_message(content, mentions)` |
+| **Find peers** | `band_lookup_peers()` |
+| **Create room** | `band_create_chatroom(task_id=None)` then `band_add_participant(identifier)` |
 | **Control access** | `Agent.create(..., contact_config=ContactEventConfig(strategy=...))` |
 | **Emit telemetry** | `AdapterFeatures(emit={Emit.EXECUTION})` |
 | **Custom tools** | `LangGraphAdapter(llm=..., additional_tools=[...])` or `AnthropicAdapter(model=..., additional_tools=[(InputModel, handler)])` |
 | **A2A bridge** | `A2AAdapter(remote_url="http://...")` |
-| **Editor ACP** | `thenvoi-acp --agent-id ID --api-key KEY` |
-| **Store memory** | `thenvoi_store_memory(content, system, type, segment, thought)` |
+| **Editor ACP** | `band-acp --agent-id ID --api-key KEY` |
+| **Store memory** | `band_store_memory(content, system, type, segment, thought)` |
 
 ---
 

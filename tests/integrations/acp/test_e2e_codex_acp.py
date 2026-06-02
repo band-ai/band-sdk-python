@@ -22,14 +22,14 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel
 
-from thenvoi.integrations.acp.client_profiles import NoopACPClientProfile
-from thenvoi.integrations.acp.client_types import BandACPClient
-from thenvoi.runtime.mcp_server import (
+from band.integrations.acp.client_profiles import NoopACPClientProfile
+from band.integrations.acp.client_types import BandACPClient
+from band.runtime.mcp_server import (
     LocalMCPServer,
     MCPToolRegistration,
-    build_thenvoi_mcp_tool_registrations,
+    build_band_mcp_tool_registrations,
 )
-from thenvoi.runtime.tools import AgentTools
+from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_thenvoi_mcp_tool_call(
+async def test_codex_acp_band_mcp_tool_call(
     acp_client: BandACPClient,
 ) -> None:
     """Should discover and call a real Band MCP tool."""
@@ -271,8 +271,8 @@ async def test_codex_acp_thenvoi_mcp_tool_call(
     )
     agent_tools = AgentTools("room-123", rest)
     local_server = LocalMCPServer(
-        name="test-thenvoi-http-mcp",
-        tool_registrations=build_thenvoi_mcp_tool_registrations(agent_tools),
+        name="test-band-http-mcp",
+        tool_registrations=build_band_mcp_tool_registrations(agent_tools),
         port_min=55120,
         port_max=55129,
     )
@@ -303,7 +303,7 @@ async def test_codex_acp_thenvoi_mcp_tool_call(
                     mcp_servers=[
                         HttpMcpServer(
                             type="http",
-                            name="thenvoi",
+                            name="band",
                             url=local_server.http_url,
                             headers=[],
                         )
@@ -337,7 +337,7 @@ async def test_codex_acp_thenvoi_mcp_tool_call(
                 pytest.skip("codex-acp did not invoke the Band MCP tool in this run")
             if not any(
                 chunk.metadata.get("raw_input", {}).get("tool")
-                == "thenvoi_get_participants"
+                == "band_get_participants"
                 for chunk in tool_calls
             ):
                 pytest.skip(

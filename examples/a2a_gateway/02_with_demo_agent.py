@@ -27,9 +27,9 @@ This will start:
 Prerequisites:
     1. Configure gateway credentials:
        - preferred: gateway_agent in agent_config.yaml
-       - fallback: THENVOI_API_KEY and optional THENVOI_AGENT_ID
-       - THENVOI_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
-       - THENVOI_REST_URL: REST API URL (default: https://app.band.ai)
+       - fallback: BAND_API_KEY and optional BAND_AGENT_ID
+       - BAND_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+       - BAND_REST_URL: REST API URL (default: https://app.band.ai)
        - OPENAI_API_KEY: OpenAI API key for the orchestrator
 
     2. Have peers configured on the Band platform
@@ -101,12 +101,12 @@ def _load_gateway_credentials() -> tuple[str, str]:
     try:
         return load_agent_config("gateway_agent")
     except Exception as exc:
-        api_key = os.getenv("THENVOI_API_KEY")
+        api_key = os.getenv("BAND_API_KEY")
         if api_key:
-            return os.getenv("THENVOI_AGENT_ID", "a2a-gateway"), api_key
+            return os.getenv("BAND_AGENT_ID", "a2a-gateway"), api_key
         raise ValueError(
             "Configure 'gateway_agent' in agent_config.yaml, or set "
-            "THENVOI_API_KEY and THENVOI_AGENT_ID environment variables"
+            "BAND_API_KEY and BAND_AGENT_ID environment variables"
         ) from exc
 
 
@@ -122,8 +122,8 @@ def _require_openai_api_key() -> str:
 
 async def run_gateway() -> None:
     """Run the A2A Gateway that exposes Band peers."""
-    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     agent_id, api_key = _load_gateway_credentials()
 
     gateway_url = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}"

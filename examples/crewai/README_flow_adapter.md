@@ -1,6 +1,6 @@
 # CrewAI Flow Adapter
 
-`CrewAIFlowAdapter` is the CrewAI integration for room routers that need durable multi-turn orchestration. It is intentionally narrower than `CrewAIAdapter`: a Flow handles one inbound room message, returns a structured routing decision, and the adapter persists the orchestration state in Thenvoi task events so later room messages can resume the same run.
+`CrewAIFlowAdapter` is the CrewAI integration for room routers that need durable multi-turn orchestration. It is intentionally narrower than `CrewAIAdapter`: a Flow handles one inbound room message, returns a structured routing decision, and the adapter persists the orchestration state in Band task events so later room messages can resume the same run.
 
 Use it when the agent is acting as a coordinator, not as a normal chat participant.
 
@@ -35,12 +35,12 @@ On each turn the adapter:
 4. runs a fresh Flow instance with the current message and state snapshot
 5. applies the returned decision through reserve-send-confirm side effects
 
-The Flow instance is local scratch state. If the process restarts, only Thenvoi task events are authoritative.
+The Flow instance is local scratch state. If the process restarts, only Band task events are authoritative.
 
 ## Adapter setup
 
 ```python
-from thenvoi.adapters import CrewAIFlowAdapter
+from band.adapters import CrewAIFlowAdapter
 
 adapter = CrewAIFlowAdapter(
     flow_factory=flow_factory,
@@ -247,7 +247,7 @@ The default state source is `RestCrewAIFlowStateSource`. It fetches room context
 Inside a Flow, `get_current_flow_runtime()` exposes runtime helpers. Use `ensure_participant()` with a peer UUID before delegating to a peer that may not already be in the room:
 
 ```python
-from thenvoi.adapters.crewai_flow import get_current_flow_runtime
+from band.adapters.crewai_flow import get_current_flow_runtime
 
 runtime = get_current_flow_runtime()
 participant = await runtime.ensure_participant("12345678-1234-1234-1234-123456789abc")
@@ -260,13 +260,13 @@ This updates the adapter's participant snapshot for the current turn so a subseq
 Use the runtime when a sub-Crew needs Band tools:
 
 ```python
-from thenvoi.adapters.crewai_flow import get_current_flow_runtime
+from band.adapters.crewai_flow import get_current_flow_runtime
 
 runtime = get_current_flow_runtime()
 tools = runtime.create_crewai_tools()
 ```
 
-The returned tools are CrewAI `BaseTool` instances bound to the active run. Visible `thenvoi_send_message` calls still go through the adapter's reserve-send-confirm path. Read tools such as lookup, contacts, and memory use the same shared CrewAI tool wrappers as `CrewAIAdapter`.
+The returned tools are CrewAI `BaseTool` instances bound to the active run. Visible `band_send_message` calls still go through the adapter's reserve-send-confirm path. Read tools such as lookup, contacts, and memory use the same shared CrewAI tool wrappers as `CrewAIAdapter`.
 
 The parent Flow should still return a final decision. Sub-Crew visible sends are for intermediate room-visible work, not for completing the parent run.
 
@@ -305,7 +305,7 @@ uv run pytest tests/adapters/test_crewai_flow_adapter.py \
   tests/converters/test_crewai_flow.py \
   tests/integrations/test_crewai_tools.py -q
 
-uv run ruff check src/thenvoi/adapters/crewai_flow.py \
-  src/thenvoi/converters/crewai_flow.py \
-  src/thenvoi/integrations/crewai/tools.py
+uv run ruff check src/band/adapters/crewai_flow.py \
+  src/band/converters/crewai_flow.py \
+  src/band/integrations/crewai/tools.py
 ```

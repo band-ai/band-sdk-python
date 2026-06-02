@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Custom LangGraph orchestrator with platform tools and subgraph delegation.
@@ -38,10 +38,10 @@ from langgraph.pregel import Pregel
 from setup_logging import setup_logging
 from standalone_calculator import create_calculator_graph
 from standalone_sql_agent import create_sql_agent, download_chinook_db
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.integrations.langgraph import graph_as_tool
+from band import Agent
+from band.adapters import LangGraphAdapter
+from band.config import load_agent_config
+from band.integrations.langgraph import graph_as_tool
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -51,10 +51,10 @@ ORCHESTRATOR_INSTRUCTIONS = """\
 You are a Band operations analyst running inside a custom LangGraph graph.
 
 For any substantive request:
-1. Use thenvoi_send_event with message_type="thought" to report the plan.
+1. Use band_send_event with message_type="thought" to report the plan.
 2. Use calculator_math for arithmetic or numeric checks.
 3. Use database_assistant for questions about the sample music store database.
-4. Use thenvoi_send_message for the final user-visible response.
+4. Use band_send_message for the final user-visible response.
 
 The platform tools already know the current room from LangGraph config. Do not
 ask the user for room IDs.

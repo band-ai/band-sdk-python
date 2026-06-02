@@ -18,7 +18,7 @@ adapter = AnthropicAdapter(
 )
 
 # After (v0.3.0)
-from thenvoi import AdapterFeatures, Capability, Emit
+from band import AdapterFeatures, Capability, Emit
 
 adapter = AnthropicAdapter(
     api_key="sk-...",
@@ -106,10 +106,10 @@ adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
 ### Conflict detection
 
 Passing both old booleans and the new `features=` raises
-`ThenvoiConfigError`:
+`BandConfigError`:
 
 ```python
-# Raises ThenvoiConfigError
+# Raises BandConfigError
 adapter = AnthropicAdapter(
     enable_memory_tools=True,
     features=AdapterFeatures(capabilities={Capability.MEMORY}),
@@ -186,30 +186,30 @@ that capability enabled for hub-room contact management on those adapters.
 v0.3.0 adds four exception classes at the package root:
 
 ```python
-from thenvoi import (
-    ThenvoiError,           # Base for all SDK exceptions
-    ThenvoiConfigError,     # Configuration / setup errors
-    ThenvoiConnectionError, # Transport (WebSocket / REST) failures
-    ThenvoiToolError,       # Tool execution failures
+from band import (
+    BandError,           # Base for all SDK exceptions
+    BandConfigError,     # Configuration / setup errors
+    BandConnectionError, # Transport (WebSocket / REST) failures
+    BandToolError,       # Tool execution failures
 )
 ```
 
-`AgentTools.send_message()` now raises `ThenvoiToolError` when called
+`AgentTools.send_message()` now raises `BandToolError` when called
 with no resolvable mentions, instead of returning a `{"error": "..."}`
 dict. The dispatch path through `execute_tool_call()` still surfaces the
 error as a string for the LLM, so adapters using `execute_tool_call()`
 need no changes.
 
-`ThenvoiConfigError` ships with a `with_suggestion()` factory that
+`BandConfigError` ships with a `with_suggestion()` factory that
 attaches "Did you mean 'X'?" hints based on Levenshtein distance:
 
 ```python
-raise ThenvoiConfigError.with_suggestion(
+raise BandConfigError.with_suggestion(
     "Unknown capability 'memry'.",
     "memry",
     [c.value for c in Capability],
 )
-# ThenvoiConfigError: Unknown capability 'memry'. Did you mean 'memory'?
+# BandConfigError: Unknown capability 'memry'. Did you mean 'memory'?
 ```
 
 ## `Agent.from_config()`
@@ -217,7 +217,7 @@ raise ThenvoiConfigError.with_suggestion(
 A new convenience factory loads credentials from a YAML config file:
 
 ```python
-from thenvoi import Agent
+from band import Agent
 
 agent = Agent.from_config(
     "researcher",

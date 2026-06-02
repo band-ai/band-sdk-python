@@ -1,14 +1,14 @@
 # A2A Bridge Examples
 
-Examples showing how to connect a remote A2A agent to Thenvoi through the A2A bridge adapter.
+Examples showing how to connect a remote A2A agent to Band through the A2A bridge adapter.
 
 ## Why the bridge exists
 
-Band rooms speak Thenvoi's platform API and WebSocket event model. Remote A2A agents speak A2A.
+Band rooms speak Band's platform API and WebSocket event model. Remote A2A agents speak A2A.
 
 The bridge lets a remote A2A agent behave like a normal Band room participant:
 
-- the bridge connects to Thenvoi as a platform agent
+- the bridge connects to Band as a platform agent
 - it receives room messages and room lifecycle events
 - it forwards user messages to a remote A2A agent
 - it posts the A2A agent's replies back into the room
@@ -20,7 +20,7 @@ Without the bridge, a remote A2A agent is not automatically a bidirectional Band
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | **Basic bridge** - Connect a remote A2A agent to Thenvoi with no A2A auth. |
+| `01_basic_agent.py` | **Basic bridge** - Connect a remote A2A agent to Band with no A2A auth. |
 | `02_with_auth.py` | **Authenticated bridge** - Same bridge flow, but with API key, bearer token, or custom auth headers for the remote A2A agent. |
 
 ## What was validated during `INT-245`
@@ -36,11 +36,11 @@ Without the bridge, a remote A2A agent is not automatically a bidirectional Band
 
 ## Prerequisites
 
-### Thenvoi setup
+### Band setup
 
 You need:
 
-- `.env` with `THENVOI_WS_URL` and `THENVOI_REST_URL`
+- `.env` with `BAND_WS_URL` and `BAND_REST_URL`
 - `agent_config.yaml` with credentials for `a2a_agent`
 
 The config name must be exactly `a2a_agent`.
@@ -144,7 +144,7 @@ What success looks like:
 
 ## Session persistence test
 
-The bridge persists A2A session state by writing task metadata into Thenvoi history.
+The bridge persists A2A session state by writing task metadata into Band history.
 
 To test that:
 

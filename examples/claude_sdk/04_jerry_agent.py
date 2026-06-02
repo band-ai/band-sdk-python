@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[claude_sdk]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Jerry the mouse agent using Claude SDK.
@@ -39,7 +39,7 @@ from prompts.characters import generate_jerry_prompt
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ClaudeSDKAdapter
-from thenvoi.core.types import AdapterFeatures, Emit
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -49,13 +49,13 @@ async def main() -> None:
     """Run Jerry the mouse agent."""
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     adapter = ClaudeSDKAdapter(
         custom_section=generate_jerry_prompt("Jerry"),

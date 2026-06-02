@@ -1,4 +1,4 @@
-"""Production runner for Thenvoi Letta agents.
+"""Production runner for Band Letta agents.
 
 Reads agent configuration from a YAML file and runs the Letta adapter
 with retry logic and graceful shutdown support.  Designed for Docker
@@ -13,10 +13,10 @@ Environment variables:
     LETTA_MODEL                Model ID (e.g., openai/gpt-5.4)
     LETTA_MODE                 Operating mode: per_room or shared (default: per_room)
     LETTA_PROJECT              Letta Cloud project name (optional, ignored for self-hosted)
-    MCP_SERVER_URL             thenvoi-mcp server URL (default: http://localhost:8002/sse)
-    MCP_SERVER_NAME            MCP server name (default: thenvoi)
-    BAND_WS_URL                Platform WebSocket URL (legacy: THENVOI_WS_URL)
-    BAND_REST_URL              Platform REST URL (legacy: THENVOI_REST_URL)
+    MCP_SERVER_URL             band-mcp server URL (default: http://localhost:8002/sse)
+    MCP_SERVER_NAME            MCP server name (default: band)
+    BAND_WS_URL                Platform WebSocket URL
+    BAND_REST_URL              Platform REST URL
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ except ImportError:
         "pyyaml is required for the Letta runner. Install with: pip install pyyaml"
     )
 
-from thenvoi.config.loader import load_agent_config
+from band.config.loader import load_agent_config
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -124,10 +124,10 @@ async def main() -> None:
 
     ws_url = os.environ.get(
         "BAND_WS_URL",
-        os.environ.get("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
+        os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
     )
     rest_url = os.environ.get(
-        "BAND_REST_URL", os.environ.get("THENVOI_REST_URL", "https://app.band.ai")
+        "BAND_REST_URL", os.environ.get("BAND_REST_URL", "https://app.band.ai")
     )
     if not ws_url:
         raise ValueError("BAND_WS_URL environment variable is empty")
@@ -137,8 +137,8 @@ async def main() -> None:
     logger.info("Loading config from: %s (key: %s)", config_path, agent_key)
     config = load_config(config_path, agent_key)
 
-    from thenvoi import Agent
-    from thenvoi.adapters.letta import LettaAdapter, LettaAdapterConfig
+    from band import Agent
+    from band.adapters.letta import LettaAdapter, LettaAdapterConfig
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]
@@ -168,7 +168,7 @@ async def main() -> None:
     mcp_server_name = (
         _optional_str(os.environ.get("MCP_SERVER_NAME"))
         or _optional_str(config.get("mcp_server_name"))
-        or "thenvoi"
+        or "band"
     )
     letta_project = _optional_str(os.environ.get("LETTA_PROJECT")) or _optional_str(
         config.get("letta_project")

@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.client.streaming import SupersedePayload
-from thenvoi.platform.event import WebSocketDisconnectedEvent
-from thenvoi.platform.link import BandLink
+from band.client.streaming import SupersedePayload
+from band.platform.event import WebSocketDisconnectedEvent
+from band.platform.link import BandLink
 
 
 @pytest.fixture
@@ -97,7 +97,7 @@ class TestBandLinkConstruction:
 class TestBandLinkConnection:
     """Test connection lifecycle."""
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_connect_creates_websocket(self, mock_ws_class, mock_ws_client):
         """connect() should create WebSocketClient and enter context."""
         mock_ws_class.return_value = mock_ws_client
@@ -119,7 +119,7 @@ class TestBandLinkConnection:
         )
         assert link.is_connected is True
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_connect_when_already_connected_logs_warning(
         self, mock_ws_class, mock_ws_client
     ):
@@ -133,7 +133,7 @@ class TestBandLinkConnection:
         # Should only create WS once
         assert mock_ws_class.call_count == 1
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_disconnect_exits_websocket_context(
         self, mock_ws_class, mock_ws_client
     ):
@@ -148,7 +148,7 @@ class TestBandLinkConnection:
         assert link.is_connected is False
         assert link._ws is None
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_disconnect_clears_subscribed_rooms(
         self, mock_ws_class, mock_ws_client
     ):
@@ -180,7 +180,7 @@ class TestBandLinkConnection:
 
         assert link.is_connected is False
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_run_forever_delegates_to_websocket(
         self, mock_ws_class, mock_ws_client
     ):
@@ -268,7 +268,7 @@ class TestBandLinkConnection:
 class TestBandLinkSubscriptions:
     """Test subscription management."""
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_agent_rooms_joins_channel(
         self, mock_ws_class, mock_ws_client
     ):
@@ -292,7 +292,7 @@ class TestBandLinkSubscriptions:
         with pytest.raises(RuntimeError, match="Not connected"):
             await link.subscribe_agent_rooms("agent-123")
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_room_joins_channels(self, mock_ws_class, mock_ws_client):
         """subscribe_room() should join chat room and participants channels."""
         mock_ws_class.return_value = mock_ws_client
@@ -304,7 +304,7 @@ class TestBandLinkSubscriptions:
         mock_ws_client.join_chat_room_channel.assert_called_once()
         mock_ws_client.join_room_participants_channel.assert_called_once()
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_room_tracks_subscription(
         self, mock_ws_class, mock_ws_client
     ):
@@ -317,7 +317,7 @@ class TestBandLinkSubscriptions:
 
         assert "room-123" in link._subscribed_rooms
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_subscribe_room_idempotent(self, mock_ws_class, mock_ws_client):
         """subscribe_room() twice should not re-subscribe."""
         mock_ws_class.return_value = mock_ws_client
@@ -337,7 +337,7 @@ class TestBandLinkSubscriptions:
         with pytest.raises(RuntimeError, match="Not connected"):
             await link.subscribe_room("room-123")
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_unsubscribe_room_leaves_channels(
         self, mock_ws_class, mock_ws_client
     ):
@@ -354,7 +354,7 @@ class TestBandLinkSubscriptions:
             "room-123"
         )
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_unsubscribe_room_removes_from_tracking(
         self, mock_ws_class, mock_ws_client
     ):
@@ -368,7 +368,7 @@ class TestBandLinkSubscriptions:
 
         assert "room-123" not in link._subscribed_rooms
 
-    @patch("thenvoi.platform.link.WebSocketClient")
+    @patch("band.platform.link.WebSocketClient")
     async def test_unsubscribe_room_handles_leave_errors(
         self, mock_ws_class, mock_ws_client
     ):
@@ -443,7 +443,7 @@ class TestBandLinkEventHandlers:
 
     async def test_on_room_added_queues_room_added_event(self):
         """_on_room_added() should queue RoomAddedEvent."""
-        from thenvoi.platform.event import RoomAddedEvent
+        from band.platform.event import RoomAddedEvent
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
 
@@ -470,7 +470,7 @@ class TestBandLinkEventHandlers:
 
     async def test_on_room_removed_queues_room_removed_event(self):
         """_on_room_removed() should queue RoomRemovedEvent."""
-        from thenvoi.platform.event import RoomRemovedEvent
+        from band.platform.event import RoomRemovedEvent
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
 
@@ -493,7 +493,7 @@ class TestBandLinkEventHandlers:
 
     async def test_on_message_created_queues_message_event(self):
         """_on_message_created() should queue MessageEvent."""
-        from thenvoi.platform.event import MessageEvent
+        from band.platform.event import MessageEvent
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
 
@@ -520,8 +520,8 @@ class TestBandLinkEventHandlers:
 
     async def test_on_participant_added_queues_participant_added_event(self):
         """_on_participant_added() should queue ParticipantAddedEvent."""
-        from thenvoi.client.streaming import ParticipantAddedPayload
-        from thenvoi.platform.event import ParticipantAddedEvent
+        from band.client.streaming import ParticipantAddedPayload
+        from band.platform.event import ParticipantAddedEvent
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
 
@@ -537,8 +537,8 @@ class TestBandLinkEventHandlers:
 
     async def test_on_participant_removed_queues_participant_removed_event(self):
         """_on_participant_removed() should queue ParticipantRemovedEvent."""
-        from thenvoi.client.streaming import ParticipantRemovedPayload
-        from thenvoi.platform.event import ParticipantRemovedEvent
+        from band.client.streaming import ParticipantRemovedPayload
+        from band.platform.event import ParticipantRemovedEvent
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
 
@@ -553,8 +553,8 @@ class TestBandLinkEventHandlers:
 
     async def test_on_room_deleted_queues_room_deleted_event(self):
         """_on_room_deleted() should queue RoomDeletedEvent."""
-        from thenvoi.client.streaming import RoomDeletedPayload
-        from thenvoi.platform.event import RoomDeletedEvent
+        from band.client.streaming import RoomDeletedPayload
+        from band.platform.event import RoomDeletedEvent
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
 
@@ -690,7 +690,7 @@ class TestGetNextMessage:
     async def test_returns_none_on_204(self) -> None:
         """204 No Content is the platform's "no actionable message" signal —
         the only ``ApiError`` that should resolve to ``None``."""
-        from thenvoi_rest.core.api_error import ApiError
+        from band_rest.core.api_error import ApiError
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
@@ -706,7 +706,7 @@ class TestGetNextMessage:
         can distinguish "no pending" from "lookup failed." The old behavior
         swallowed both as ``None``, which silently dropped messages at the
         OneShot claim step."""
-        from thenvoi_rest.core.api_error import ApiError
+        from band_rest.core.api_error import ApiError
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()

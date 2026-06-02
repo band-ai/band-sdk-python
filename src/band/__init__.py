@@ -1,58 +1,145 @@
-"""Band SDK public import surface.
+"""
+Band SDK - Connect AI agents to the Band platform.
 
-The implementation currently lives in the compatibility ``thenvoi`` package so
-existing integrations keep working during the Band rename.
+Platform Layer:
+    BandLink: WebSocket + REST transport
+    PlatformEvent: Typed events from the platform
+
+Runtime Layer:
+    AgentRuntime: Convenience wrapper (RoomPresence + Execution)
+    RoomPresence: Cross-room lifecycle management
+    ExecutionContext: Per-room context accumulation
+    AgentTools: Platform tools bound to a room (send_message, add_participant, etc.)
+    PlatformMessage: Message data structure
+
+Configuration:
+    AgentConfig: Agent-level configuration
+    SessionConfig: Per-session configuration
+
+Example (SDK-heavy pattern):
+    from band import BandLink, AgentRuntime, ExecutionContext, AgentTools
+    from band.platform import PlatformEvent
+
+    async def handle_event(ctx: ExecutionContext, event: PlatformEvent):
+        tools = AgentTools.from_context(ctx)
+        # Your LLM logic here
+        await tools.send_message("Hello!", mentions=["@john"])
+
+    link = BandLink(agent_id="...", api_key="...", ws_url="...", rest_url="...")
+    runtime = AgentRuntime(link, agent_id="...", on_execute=handle_event)
+    await runtime.run()
+
+Example (Framework-light pattern):
+    from band import BandLink, RoomPresence
+
+    link = BandLink(agent_id="...", api_key="...", ws_url="...", rest_url="...")
+    presence = RoomPresence(link)
+    presence.on_room_joined = my_join_handler
+    presence.on_room_event = my_event_handler
+    await presence.start()
+    await link.run_forever()
 """
 
-from __future__ import annotations
+from importlib.metadata import version as _get_version, PackageNotFoundError
 
-import importlib
-import importlib.abc
-import importlib.util
-import sys
-from types import ModuleType
+# Composition layer (new pattern)
+from .agent import Agent
 
-import thenvoi as _thenvoi
-from thenvoi import *  # noqa: F403
+# Core types (v0.3.0)
+from .core.types import AdapterFeatures, Capability, Emit
+from .core.exceptions import (
+    BandError,
+    BandConfigError,
+    BandConnectionError,
+    BandToolError,
+)
 
+# Platform layer
+from .platform import BandLink, PlatformEvent
 
-class _BandAliasLoader(importlib.abc.Loader):
-    def __init__(self, target_name: str) -> None:
-        self._target_name = target_name
+# Runtime layer
+from .runtime import (
+    AgentRuntime,
+    RoomPresence,
+    Execution,
+    ExecutionContext,
+    ExecutionHandler,
+    AgentTools,
+    PlatformMessage,
+    AgentConfig,
+    SessionConfig,
+    ConversationContext,
+    render_system_prompt,
+    TOOL_MODELS,
+    ALL_TOOL_NAMES,
+    BASE_TOOL_NAMES,
+    CHAT_TOOL_NAMES,
+    CONTACT_TOOL_NAMES,
+    MEMORY_TOOL_NAMES,
+    MCP_TOOL_PREFIX,
+    mcp_tool_names,
+    # Formatters
+    format_message_for_llm,
+    format_history_for_llm,
+    build_participants_message,
+    # Trackers
+    ParticipantTracker,
+    MessageRetryTracker,
+    # Shutdown
+    GracefulShutdown,
+    run_with_graceful_shutdown,
+)
 
-    def create_module(self, spec: importlib.machinery.ModuleSpec) -> ModuleType | None:
-        return importlib.import_module(self._target_name)
+__all__ = [
+    # Composition
+    "Agent",
+    # Core types (v0.3.0)
+    "AdapterFeatures",
+    "Capability",
+    "Emit",
+    "BandError",
+    "BandConfigError",
+    "BandConnectionError",
+    "BandToolError",
+    # Platform
+    "BandLink",
+    "PlatformEvent",
+    # Runtime - Core
+    "AgentRuntime",
+    "RoomPresence",
+    "Execution",
+    "ExecutionContext",
+    "ExecutionHandler",
+    "AgentTools",
+    # Runtime - Types
+    "PlatformMessage",
+    "AgentConfig",
+    "SessionConfig",
+    "ConversationContext",
+    # Runtime - Prompts
+    "render_system_prompt",
+    # Runtime - Tools
+    "TOOL_MODELS",
+    "ALL_TOOL_NAMES",
+    "BASE_TOOL_NAMES",
+    "CHAT_TOOL_NAMES",
+    "CONTACT_TOOL_NAMES",
+    "MEMORY_TOOL_NAMES",
+    "MCP_TOOL_PREFIX",
+    "mcp_tool_names",
+    # Runtime - Formatters
+    "format_message_for_llm",
+    "format_history_for_llm",
+    "build_participants_message",
+    # Runtime - Trackers
+    "ParticipantTracker",
+    "MessageRetryTracker",
+    # Runtime - Shutdown
+    "GracefulShutdown",
+    "run_with_graceful_shutdown",
+]
 
-    def exec_module(self, module: ModuleType) -> None:
-        return None
-
-
-class _BandAliasFinder(importlib.abc.MetaPathFinder):
-    def find_spec(
-        self,
-        fullname: str,
-        path: object | None,
-        target: object | None = None,
-    ) -> importlib.machinery.ModuleSpec | None:
-        if not fullname.startswith("band."):
-            return None
-        target_name = f"thenvoi.{fullname[len('band.') :]}"
-        target_spec = importlib.util.find_spec(target_name)
-        if target_spec is None:
-            return None
-        spec = importlib.util.spec_from_loader(
-            fullname,
-            _BandAliasLoader(target_name),
-            is_package=target_spec.submodule_search_locations is not None,
-        )
-        if spec is not None:
-            spec.submodule_search_locations = target_spec.submodule_search_locations
-        return spec
-
-
-if not any(isinstance(finder, _BandAliasFinder) for finder in sys.meta_path):
-    sys.meta_path.insert(0, _BandAliasFinder())
-
-__all__ = _thenvoi.__all__
-__path__ = _thenvoi.__path__
-__version__ = _thenvoi.__version__
+try:
+    __version__ = _get_version("band-sdk")
+except PackageNotFoundError:
+    __version__ = "0.1.0"  # Fallback for editable installs

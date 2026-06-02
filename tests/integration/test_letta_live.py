@@ -1,13 +1,13 @@
 """Live integration tests for Letta adapter.
 
-Requires a running self-hosted Letta server and thenvoi-mcp server.
+Requires a running self-hosted Letta server and band-mcp server.
 Skipped in CI by default.
 
 Environment variables:
     LETTA_BASE_URL     Letta server URL (default: http://localhost:8283)
     LETTA_API_KEY      Letta API key (optional for self-hosted)
     LETTA_AGENT_ID     Pre-existing agent ID for reuse tests
-    MCP_SERVER_URL     thenvoi-mcp server URL (default: http://localhost:8002/sse)
+    MCP_SERVER_URL     band-mcp server URL (default: http://localhost:8002/sse)
 
 Run with:
     uv run pytest tests/integration/test_letta_live.py -v -s --no-cov
@@ -88,7 +88,7 @@ async def test_mcp_server_registration() -> None:
     client = AsyncLetta(**client_kwargs)
 
     server = await client.mcp_servers.create(
-        server_name="thenvoi-test",
+        server_name="band-test",
         config={
             "mcp_server_type": "sse",
             "server_url": MCP_SERVER_URL,

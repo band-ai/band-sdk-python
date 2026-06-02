@@ -1,4 +1,4 @@
-"""Conftest for bridge tests — adds thenvoi-bridge to sys.path and shared fixtures."""
+"""Conftest for bridge tests — adds band-bridge to sys.path and shared fixtures."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 _bridge_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "thenvoi-bridge")
+    os.path.join(os.path.dirname(__file__), "..", "..", "band-bridge")
 )
 if _bridge_dir not in sys.path:
     sys.path.insert(0, _bridge_dir)

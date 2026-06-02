@@ -1,6 +1,6 @@
-# Dockerfile for Thenvoi Claude SDK Agent Runner
+# Dockerfile for Band Claude SDK Agent Runner
 #
-# Build:   docker build -t thenvoi-claude-sdk .
+# Build:   docker build -t band-claude-sdk .
 # Run:     docker compose up
 #
 # This image provides a YAML-configured agent runner for the Band platform.
@@ -27,7 +27,7 @@ RUN curl -LsSf https://astral.sh/uv/0.5.18/install.sh | sh && \
 COPY pyproject.toml uv.lock ./
 COPY src/ ./src/
 
-# Install thenvoi SDK with claude_sdk extras
+# Install Band SDK with claude_sdk extras
 # Rewrite SSH URLs to HTTPS to avoid SSH auth issues in Docker
 RUN git config --global url."https://github.com/".insteadOf "git@github.com:" && \
     uv sync --extra claude_sdk

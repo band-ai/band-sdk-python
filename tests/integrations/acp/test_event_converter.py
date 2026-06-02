@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from thenvoi.integrations.acp.event_converter import EventConverter
+from band.integrations.acp.event_converter import EventConverter
 
 from .conftest import (
     make_platform_message,

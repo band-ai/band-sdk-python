@@ -13,10 +13,10 @@ import logging
 
 import pytest
 
-from thenvoi.integrations.a2a.gateway import A2AGatewayAdapter
-from thenvoi_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
-from thenvoi_rest.core.api_error import ApiError
-from thenvoi_rest.types import ChatMessageRequestMentionsItem as Mention
+from band.integrations.a2a.gateway import A2AGatewayAdapter
+from band_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
+from band_rest.core.api_error import ApiError
+from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from .conftest import fetch_all_context, requires_api
 
@@ -73,8 +73,8 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with real REST client credentials
         adapter = A2AGatewayAdapter(
-            rest_url=integration_settings.thenvoi_base_url,
-            api_key=integration_settings.thenvoi_api_key,
+            rest_url=integration_settings.band_base_url,
+            api_key=integration_settings.band_api_key,
             gateway_url="http://localhost:10000",
             port=10000,
         )
@@ -159,8 +159,8 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with both peers
         adapter = A2AGatewayAdapter(
-            rest_url=integration_settings.thenvoi_base_url,
-            api_key=integration_settings.thenvoi_api_key,
+            rest_url=integration_settings.band_base_url,
+            api_key=integration_settings.band_api_key,
             gateway_url="http://localhost:10000",
             port=10000,
         )

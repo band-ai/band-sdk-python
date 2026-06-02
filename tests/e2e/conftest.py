@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING
 import pytest
 from dotenv import load_dotenv
 from pydantic import ValidationError
-from thenvoi_rest import AsyncRestClient, ChatRoomRequest
-from thenvoi_rest.types import (
+from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest.types import (
     ParticipantRequest,
 )
-from thenvoi_testing.settings import ThenvoiTestSettings as BandTestSettings
+from band_testing.settings import BandTestSettings as BandTestSettings
 
-from thenvoi.client.streaming import WebSocketClient
+from band.client.streaming import WebSocketClient
 
 from tests.conftest_integration import is_room_alive
 from tests.e2e.helpers import TrackingWebSocketClient
@@ -110,8 +110,8 @@ def _check_e2e_status() -> tuple[bool, str]:
         settings = E2ESettings()
         if not settings.e2e_tests_enabled:
             return True, "E2E_TESTS_ENABLED is not set to true"
-        if not settings.thenvoi_api_key:
-            return True, "THENVOI_API_KEY is not set"
+        if not settings.band_api_key:
+            return True, "BAND_API_KEY is not set"
         return False, "E2E tests enabled"
     except (ValidationError, ValueError, OSError) as exc:
         logger.warning(
@@ -178,12 +178,12 @@ def e2e_session_client(
     session-scoped fixture. AsyncRestClient has no close() method — the
     underlying httpx client is managed internally.
     """
-    if not e2e_config.thenvoi_api_key:
-        pytest.skip("THENVOI_API_KEY not set")
+    if not e2e_config.band_api_key:
+        pytest.skip("BAND_API_KEY not set")
 
     return AsyncRestClient(
-        api_key=e2e_config.thenvoi_api_key,
-        base_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key,
+        base_url=e2e_config.band_base_url,
     )
 
 
@@ -197,12 +197,12 @@ def e2e_user_client(
     (not the agent). The agent runtime skips self-authored messages, so
     using the agent client would silently fail to trigger processing.
     """
-    if not e2e_config.thenvoi_api_key_user:
-        pytest.skip("THENVOI_API_KEY_USER not set (needed for user REST client)")
+    if not e2e_config.band_api_key_user:
+        pytest.skip("BAND_API_KEY_USER not set (needed for user REST client)")
 
     return AsyncRestClient(
-        api_key=e2e_config.thenvoi_api_key_user,
-        base_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key_user,
+        base_url=e2e_config.band_base_url,
     )
 
 
@@ -378,7 +378,7 @@ async def ws_client(
 ) -> AsyncGenerator[TrackingWebSocketClient, None]:
     """Session-scoped WebSocket client for observing agent responses.
 
-    Connects as the **User** (via ``thenvoi_api_key_user``) rather than
+    Connects as the **User** (via ``band_api_key_user``) rather than
     the agent. The platform enforces one WS connection per agent, so a
     second agent connection would kill the Agent's own connection. The
     User is a room participant and receives the same ``message_created``
@@ -390,12 +390,12 @@ async def ws_client(
     Wraps the raw WebSocketClient in a TrackingWebSocketClient that tracks
     joined channels and explicitly leaves them on teardown.
     """
-    if not e2e_config.thenvoi_api_key_user:
-        pytest.skip("THENVOI_API_KEY_USER not set (needed for WS observer)")
+    if not e2e_config.band_api_key_user:
+        pytest.skip("BAND_API_KEY_USER not set (needed for WS observer)")
 
     ws = WebSocketClient(
-        ws_url=e2e_config.thenvoi_ws_url,
-        api_key=e2e_config.thenvoi_api_key_user,
+        ws_url=e2e_config.band_ws_url,
+        api_key=e2e_config.band_api_key_user,
         agent_id=None,  # User connection, not agent
     )
 

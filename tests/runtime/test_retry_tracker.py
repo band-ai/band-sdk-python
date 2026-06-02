@@ -1,6 +1,6 @@
 """Unit tests for MessageRetryTracker."""
 
-from thenvoi.runtime.retry_tracker import MessageRetryTracker
+from band.runtime.retry_tracker import MessageRetryTracker
 
 
 class TestMessageRetryTracker:

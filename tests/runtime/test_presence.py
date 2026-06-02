@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.runtime.presence import RoomPresence
+from band.runtime.presence import RoomPresence
 
 # Import test helpers from conftest
-from thenvoi.platform.event import ReconnectedEvent
+from band.platform.event import ReconnectedEvent
 
 from tests.conftest import (
     make_message_event,

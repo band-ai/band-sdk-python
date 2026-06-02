@@ -4,10 +4,10 @@ import logging
 
 
 def setup_logging(level=logging.INFO):
-    """Configure logging to show only thenvoi logs, hiding noisy dependencies.
+    """Configure logging to show only band logs, hiding noisy dependencies.
 
     Args:
-        level: Log level for thenvoi namespace (default INFO)
+        level: Log level for band namespace (default INFO)
     """
     logging.basicConfig(
         level=logging.WARNING,
@@ -15,6 +15,6 @@ def setup_logging(level=logging.INFO):
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    logging.getLogger("thenvoi").setLevel(level)
+    logging.getLogger("band").setLevel(level)
     # Also enable logging for the parlant adapter module
-    logging.getLogger("thenvoi_parlant_agent").setLevel(level)
+    logging.getLogger("band_parlant_agent").setLevel(level)

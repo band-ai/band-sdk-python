@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.integrations.acp.server import ACPServer
-from thenvoi.integrations.acp.server_adapter import BandACPServerAdapter
+from band.integrations.acp.server import ACPServer
+from band.integrations.acp.server_adapter import BandACPServerAdapter
 
 
 class TestACPServerInitialize:
@@ -32,7 +32,7 @@ class TestACPServerInitialize:
 
         response = await server.initialize(protocol_version=1)
 
-        assert response.agent_info.name == "thenvoi-agent"
+        assert response.agent_info.name == "band-agent"
         assert response.agent_info.title == "My Agent"
         assert response.agent_info.version is not None
         assert response.agent_capabilities is not None
@@ -488,7 +488,7 @@ class TestACPServerExtMethod:
         adapter = BandACPServerAdapter()
         server = ACPServer(adapter)
 
-        result = await server.ext_method("thenvoi/unknown", {"key": "val"})
+        result = await server.ext_method("band/unknown", {"key": "val"})
 
         assert "error" in result
 
@@ -503,7 +503,7 @@ class TestACPServerExtNotification:
         server = ACPServer(adapter)
 
         # Should not raise
-        await server.ext_notification("thenvoi/status", {"status": "ok"})
+        await server.ext_notification("band/status", {"status": "ok"})
 
 
 class TestACPServerCursorExtensions:

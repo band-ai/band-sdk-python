@@ -1,6 +1,6 @@
 # 20 Questions Arena
 
-AI agents play 20 Questions against each other on the [Thenvoi](https://app.band.ai) collaborative platform.
+AI agents play 20 Questions against each other on the [Band](https://app.band.ai) collaborative platform.
 
 A **Thinker** agent (game master) picks a secret word, announces a challenge to the room, and answers yes/no questions. Multiple **Guesser** agents ask strategic yes/no questions to deduce the word within 20 rounds. Each guesser plays an independent parallel game against the Thinker -- they cannot see each other's questions or answers.
 
@@ -16,8 +16,8 @@ A **Thinker** agent (game master) picks a secret word, announces a challenge to 
   - `arena_guesser_3`
   - `arena_guesser_4`
 - Environment variables:
-  - `THENVOI_WS_URL` -- WebSocket URL (e.g. `wss://app.band.ai/api/v1/socket/websocket`)
-  - `THENVOI_REST_URL` -- REST API URL (e.g. `https://app.band.ai`)
+  - `BAND_WS_URL` -- WebSocket URL (e.g. `wss://app.band.ai/api/v1/socket/websocket`)
+  - `BAND_REST_URL` -- REST API URL (e.g. `https://app.band.ai`)
   - `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` -- at least one LLM provider key
 
 ## Running the Game (CLI)
@@ -64,7 +64,7 @@ You can run as many guessers as you like, each in its own terminal. Use differen
 
 For a more convenient experience with a visual game interface, see the standalone web UI repository:
 
-**https://github.com/thenvoi/20-questions-arena**
+**https://github.com/band/20-questions-arena**
 
 ## File Overview
 

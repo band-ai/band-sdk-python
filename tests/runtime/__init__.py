@@ -1,1 +1,1 @@
-"""Tests for thenvoi.runtime module."""
+"""Tests for band.runtime module."""

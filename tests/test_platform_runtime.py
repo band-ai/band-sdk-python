@@ -1,12 +1,12 @@
 """Tests for PlatformRuntime."""
 
-from thenvoi_rest.core.api_error import ApiError
+from band_rest.core.api_error import ApiError
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.runtime.platform_runtime import PlatformRuntime
-from thenvoi.runtime.types import AgentConfig, SessionConfig
+from band.runtime.platform_runtime import PlatformRuntime
+from band.runtime.types import AgentConfig, SessionConfig
 
 
 @pytest.fixture
@@ -150,10 +150,10 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_creates_link(self, mock_link, mock_runtime):
         """Should create BandLink on start."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 
@@ -175,10 +175,10 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_fetches_agent_metadata(self, mock_link, mock_runtime):
         """Should fetch agent metadata after creating link."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 
@@ -197,10 +197,10 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_creates_agent_runtime(self, mock_link, mock_runtime):
         """Should create AgentRuntime with correct config."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 
@@ -228,10 +228,10 @@ class TestStart:
         self, mock_link, mock_runtime
     ):
         """Should forward participant callbacks into AgentRuntime."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 
@@ -253,10 +253,10 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_uses_noop_cleanup_when_none_provided(self, mock_link, mock_runtime):
         """Should use noop cleanup when none provided."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 
@@ -275,10 +275,10 @@ class TestStart:
     @pytest.mark.asyncio
     async def test_starts_agent_runtime(self, mock_link, mock_runtime):
         """Should start the AgentRuntime."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 
@@ -299,7 +299,7 @@ class TestStart:
             return_value=MagicMock(data=None)
         )
 
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
 
             runtime = PlatformRuntime(
@@ -322,7 +322,7 @@ class TestStart:
             return_value=MagicMock(data=mock_agent)
         )
 
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
 
             runtime = PlatformRuntime(
@@ -348,14 +348,14 @@ class TestStart:
             ]
         )
 
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
                 with patch(
-                    "thenvoi.runtime.platform_runtime.asyncio.sleep",
+                    "band.runtime.platform_runtime.asyncio.sleep",
                     new=AsyncMock(),
                 ) as mock_sleep:
                     runtime = PlatformRuntime(
@@ -377,10 +377,10 @@ class TestStop:
     @pytest.mark.asyncio
     async def test_stops_runtime(self, mock_link, mock_runtime):
         """Should stop the AgentRuntime."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 
@@ -397,10 +397,10 @@ class TestStop:
     @pytest.mark.asyncio
     async def test_disconnects_link(self, mock_link, mock_runtime):
         """Should disconnect the BandLink."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 
@@ -432,10 +432,10 @@ class TestRunForever:
     @pytest.mark.asyncio
     async def test_delegates_to_link(self, mock_link, mock_runtime):
         """Should delegate to link.run_forever()."""
-        with patch("thenvoi.runtime.platform_runtime.BandLink") as mock_link_class:
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
             mock_link_class.return_value = mock_link
             with patch(
-                "thenvoi.runtime.platform_runtime.AgentRuntime"
+                "band.runtime.platform_runtime.AgentRuntime"
             ) as mock_runtime_class:
                 mock_runtime_class.return_value = mock_runtime
 

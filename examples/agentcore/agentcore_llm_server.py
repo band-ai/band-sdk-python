@@ -7,7 +7,7 @@
 # ]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """AgentCore container that runs the Band SDK per invocation.
 
@@ -23,12 +23,12 @@ owns all the lifecycle logic; this file is just the AgentCore Runtime transport
 (``/ping`` + ``/invocations``) and env-driven adapter construction.
 
 Environment variables:
-    THENVOI_AGENT_ID — agent's Band identity (required)
-    THENVOI_API_KEY  — Band REST API key (required)
+    BAND_AGENT_ID — agent's Band identity (required)
+    BAND_API_KEY  — Band REST API key (required)
     ANTHROPIC_API_KEY — Anthropic API key for the LLM loop (required)
-    THENVOI_WS_URL   — defaults to wss://app.thenvoi.com/api/v1/socket/websocket
+    BAND_WS_URL   — defaults to wss://app.band.ai/api/v1/socket/websocket
                        (unused by the container; reserved for SDK consistency)
-    THENVOI_REST_URL — defaults to https://app.thenvoi.com
+    BAND_REST_URL — defaults to https://app.band.ai
     ANTHROPIC_MODEL  — defaults to claude-sonnet-4-5-20250929
     SYSTEM_PROMPT    — optional custom system prompt for the adapter
     EMIT_EXECUTION   — "true" (default) emits tool_call/tool_result as platform
@@ -37,7 +37,7 @@ Environment variables:
 
 Run locally::
 
-    THENVOI_AGENT_ID=... THENVOI_API_KEY=... ANTHROPIC_API_KEY=... \\
+    BAND_AGENT_ID=... BAND_API_KEY=... ANTHROPIC_API_KEY=... \\
         uv run python examples/agentcore/agentcore_llm_server.py
 """
 
@@ -52,10 +52,10 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 
-from thenvoi.adapters.anthropic import AnthropicAdapter
-from thenvoi.core.types import AdapterFeatures, Emit
-from thenvoi.platform.link import BandLink
-from thenvoi.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
+from band.adapters.anthropic import AnthropicAdapter
+from band.core.types import AdapterFeatures, Emit
+from band.platform.link import BandLink
+from band.runtime.oneshot import OneShotEnvelopeError, OneShotInvoker
 
 logging.basicConfig(
     level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO),
@@ -99,13 +99,11 @@ def _build_adapter(anthropic_api_key: str) -> AnthropicAdapter:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialize link + adapter + invoker; prime the adapter."""
-    agent_id = _require_env("THENVOI_AGENT_ID")
-    api_key = _require_env("THENVOI_API_KEY")
+    agent_id = _require_env("BAND_AGENT_ID")
+    api_key = _require_env("BAND_API_KEY")
     anthropic_api_key = _require_env("ANTHROPIC_API_KEY")
-    ws_url = os.environ.get(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
 
     link = BandLink(
         agent_id=agent_id, api_key=api_key, ws_url=ws_url, rest_url=rest_url

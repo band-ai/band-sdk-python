@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from thenvoi.integrations.acp.push_handler import ACPPushHandler
-from thenvoi.integrations.acp.server_adapter import BandACPServerAdapter
+from band.integrations.acp.push_handler import ACPPushHandler
+from band.integrations.acp.server_adapter import BandACPServerAdapter
 
 from .conftest import make_platform_message
 
@@ -28,7 +28,7 @@ class TestACPPushHandler:
         msg = make_platform_message("New activity", room_id="room-123")
 
         with patch(
-            "thenvoi.integrations.acp.push_handler.EventConverter"
+            "band.integrations.acp.push_handler.EventConverter"
         ) as mock_converter:
             mock_converter.convert.return_value = "mock-chunk"
             await handler.handle_push_event(msg, "room-123")
@@ -52,7 +52,7 @@ class TestACPPushHandler:
         )
 
         with patch(
-            "thenvoi.integrations.acp.push_handler.EventConverter"
+            "band.integrations.acp.push_handler.EventConverter"
         ) as mock_converter:
             mock_converter.convert.return_value = "thought-chunk"
             await handler.handle_push_event(msg, "room-123")
@@ -98,7 +98,7 @@ class TestACPPushHandler:
         msg = make_platform_message("Hello", room_id="room-123")
 
         with patch(
-            "thenvoi.integrations.acp.push_handler.EventConverter"
+            "band.integrations.acp.push_handler.EventConverter"
         ) as mock_converter:
             mock_converter.convert.return_value = None
             await handler.handle_push_event(msg, "room-123")

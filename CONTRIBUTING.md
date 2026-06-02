@@ -21,7 +21,7 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
 2. **Add the upstream remote**
 
    ```bash
-   git remote add upstream https://github.com/thenvoi/thenvoi-sdk-python.git
+   git remote add upstream https://github.com/band-ai/band-sdk-python.git
    ```
 
 3. **Install dependencies**
@@ -76,7 +76,7 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
    uv run pytest tests/ --ignore=tests/integration/ -v
 
    # Run with coverage
-   uv run pytest tests/ --ignore=tests/integration/ --cov=src/thenvoi
+   uv run pytest tests/ --ignore=tests/integration/ --cov=src/band
 
    # Run a specific test
    uv run pytest tests/ -k "test_name"
@@ -120,7 +120,7 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
 
 - Always use type hints for function parameters and return types
 - Use `from __future__ import annotations` for forward references
-- Use absolute imports from `thenvoi`
+- Use absolute imports from `band`
 - Use Pydantic for data models and validation
 - Follow existing patterns in the codebase
 

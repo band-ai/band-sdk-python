@@ -41,9 +41,9 @@ def _load_agent_id(config_key: str) -> str | None:
 
 
 async def start_game(user_api_key: str) -> str:
-    rest_url = os.getenv("THENVOI_REST_URL")
+    rest_url = os.getenv("BAND_REST_URL")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     thinker_agent_id = _load_agent_id("arena_thinker")
     if not thinker_agent_id:

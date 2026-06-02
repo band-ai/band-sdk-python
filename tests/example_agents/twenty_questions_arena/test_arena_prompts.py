@@ -56,15 +56,15 @@ class TestThinkerPrompt:
 
     def test_includes_lookup_peers_instruction(self):
         prompt = generate_thinker_prompt("Thinker")
-        assert "thenvoi_lookup_peers" in prompt
+        assert "band_lookup_peers" in prompt
 
     def test_includes_add_participant_instruction(self):
         prompt = generate_thinker_prompt("Thinker")
-        assert "thenvoi_add_participant" in prompt
+        assert "band_add_participant" in prompt
 
     def test_includes_thought_event_instruction(self):
         prompt = generate_thinker_prompt("Thinker")
-        assert "thenvoi_send_event" in prompt
+        assert "band_send_event" in prompt
 
     def test_must_not_reveal_word(self):
         prompt = generate_thinker_prompt("Thinker")
@@ -105,7 +105,7 @@ class TestGuesserPrompt:
 
     def test_includes_thought_event_instruction(self):
         prompt = generate_guesser_prompt("Guesser")
-        assert "thenvoi_send_event" in prompt
+        assert "band_send_event" in prompt
 
 
 class TestCreateLlmByName:

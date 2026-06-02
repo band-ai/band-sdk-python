@@ -1,4 +1,4 @@
-# Pydantic AI Examples for Thenvoi
+# Pydantic AI Examples for Band
 
 Examples showing how to use the Band SDK with Pydantic AI using the composition-based pattern.
 
@@ -6,7 +6,7 @@ Examples showing how to use the Band SDK with Pydantic AI using the composition-
 
 **Install with Pydantic AI support:**
 ```bash
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[pydantic_ai]"
+uv add "git+https://github.com/band-ai/band-sdk-python.git[pydantic_ai]"
 
 # Plus your model provider:
 pip install "pydantic-ai-slim[openai]"  # or [anthropic], [google], etc.
@@ -22,8 +22,8 @@ uv sync --extra pydantic_ai
 ## Quick Start
 
 ```python
-from thenvoi import Agent
-from thenvoi.adapters import PydanticAIAdapter
+from band import Agent
+from band.adapters import PydanticAIAdapter
 
 adapter = PydanticAIAdapter(
     model="openai:gpt-5.4-mini",
@@ -65,8 +65,8 @@ support_agent:
 
 Set environment variables:
 ```bash
-export THENVOI_WS_URL="wss://app.band.ai/api/v1/socket/websocket"
-export THENVOI_REST_URL="https://app.band.ai"
+export BAND_WS_URL="wss://app.band.ai/api/v1/socket/websocket"
+export BAND_REST_URL="https://app.band.ai"
 export OPENAI_API_KEY="your-openai-key"  # for OpenAI models
 export ANTHROPIC_API_KEY="your-anthropic-key"  # for Anthropic models
 ```
@@ -120,7 +120,7 @@ This is a [known issue in Pydantic AI](https://github.com/pydantic/pydantic-ai/i
 
 2. **Use the LangGraph adapter** - handles message history differently:
    ```python
-   from thenvoi.adapters import LangGraphAdapter
+   from band.adapters import LangGraphAdapter
    ```
 
 3. **Simple conversations work fine** - the issue mainly occurs with complex multi-turn tool sequences.

@@ -3,10 +3,10 @@
 # dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-ACP Client example - Use a remote ACP agent from Thenvoi.
+ACP Client example - Use a remote ACP agent from Band.
 
 This example connects to a remote ACP-compliant agent (Codex CLI, Gemini CLI,
 Claude Code, Goose, etc.) and makes it available as a Band platform agent.
@@ -23,8 +23,8 @@ Architecture:
 
 Prerequisites:
     1. Set environment variables:
-       - THENVOI_WS_URL: WebSocket URL
-       - THENVOI_REST_URL: REST API URL
+       - BAND_WS_URL: WebSocket URL
+       - BAND_REST_URL: REST API URL
        - ACP_AGENT_COMMAND: Command to spawn the ACP agent
          (default: "npx @zed-industries/codex-acp")
 
@@ -47,9 +47,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ACPClientAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import ACPClientAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -58,8 +58,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
 
     # Load agent credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("acp_client_agent")
@@ -91,7 +91,7 @@ async def main() -> None:
         "Starting ACP client bridge (forwarding to '%s')...",
         " ".join(acp_command),
     )
-    logger.info("Messages from Thenvoi will be forwarded to the ACP agent.")
+    logger.info("Messages from Band will be forwarded to the ACP agent.")
     await agent.run()
 
 

@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Example showing how to customize agent personality with custom instructions.
@@ -32,13 +32,13 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     load_dotenv()
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
     # Define pirate personality to add on top of base system prompt
     pirate_personality = """
 
@@ -61,7 +61,7 @@ Ye be a PIRATE AGENT sailing the digital seas!
 - "Shiver me timbers! I'll add that scallywag to the crew right away!"
 - "Aye aye, captain! Sendin' the message now!"
 
-**IMPORTANT:** Ye still need to use all yer tools properly (thenvoi_send_message, thenvoi_add_participant, etc.)
+**IMPORTANT:** Ye still need to use all yer tools properly (band_send_message, band_add_participant, etc.)
 But speak like a PIRATE while doin' it! Arrr!
 """
 

@@ -13,7 +13,7 @@ class TestCheckAndFormatParticipants:
 
     def test_returns_none_when_no_change(self):
         """Should return None when participants haven't changed."""
-        from thenvoi.integrations.base import check_and_format_participants
+        from band.integrations.base import check_and_format_participants
 
         ctx = MagicMock()
         ctx.participants_changed.return_value = False
@@ -25,7 +25,7 @@ class TestCheckAndFormatParticipants:
 
     def test_returns_message_when_changed(self):
         """Should return formatted message when participants changed."""
-        from thenvoi.integrations.base import check_and_format_participants
+        from band.integrations.base import check_and_format_participants
 
         ctx = MagicMock()
         ctx.participants_changed.return_value = True
@@ -38,12 +38,12 @@ class TestCheckAndFormatParticipants:
         # Should contain participant info and usage hint
         assert "## Current Participants" in result
         assert "Alice" in result
-        assert "thenvoi_send_message" in result
+        assert "band_send_message" in result
         ctx.mark_participants_sent.assert_called_once()
 
     def test_marks_participants_sent_automatically(self):
         """Should automatically call mark_participants_sent() when returning message."""
-        from thenvoi.integrations.base import check_and_format_participants
+        from band.integrations.base import check_and_format_participants
 
         ctx = MagicMock()
         ctx.participants_changed.return_value = True
@@ -59,12 +59,12 @@ class TestIntegrationsImport:
 
     def test_can_import_from_integrations(self):
         """Should be able to import check_and_format_participants from integrations."""
-        from thenvoi.integrations import check_and_format_participants
+        from band.integrations import check_and_format_participants
 
         assert check_and_format_participants is not None
 
     def test_check_and_format_participants_in_all(self):
         """Should be listed in __all__."""
-        from thenvoi import integrations
+        from band import integrations
 
         assert "check_and_format_participants" in integrations.__all__

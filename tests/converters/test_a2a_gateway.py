@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.converters.a2a_gateway import GatewayHistoryConverter
-from thenvoi.integrations.a2a.gateway.types import GatewaySessionState
+from band.converters.a2a_gateway import GatewayHistoryConverter
+from band.integrations.a2a.gateway.types import GatewaySessionState
 
 
 class TestGatewayHistoryConverter:
@@ -291,7 +291,7 @@ class TestGatewayHistoryConverter:
                 "metadata": {
                     "gateway_context_id": "ctx-from-tool",
                     "gateway_room_id": "room-1",
-                    "tool_name": "thenvoi_send_message",
+                    "tool_name": "band_send_message",
                 },
             },
             {
@@ -300,7 +300,7 @@ class TestGatewayHistoryConverter:
                 "sender_type": "agent",
                 "room_id": "room-1",
                 "metadata": {
-                    "tool_name": "thenvoi_send_message",
+                    "tool_name": "band_send_message",
                     "status": "success",
                 },
             },

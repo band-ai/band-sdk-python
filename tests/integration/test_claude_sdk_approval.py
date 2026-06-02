@@ -16,15 +16,15 @@ import asyncio
 import logging
 
 import pytest
-from thenvoi_rest import AsyncRestClient, ChatMessageRequest, ChatRoomRequest
-from thenvoi_rest.types import (
+from band_rest import AsyncRestClient, ChatMessageRequest, ChatRoomRequest
+from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
     ParticipantRequest,
 )
 
-from thenvoi import Agent
-from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter
-from thenvoi.client.streaming import MessageCreatedPayload, WebSocketClient
+from band import Agent
+from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.client.streaming import MessageCreatedPayload, WebSocketClient
 from tests.integration.conftest import (
     get_api_key,
     get_api_key_2,
@@ -50,7 +50,7 @@ def _get_claude_agent_key() -> str:
     """Return the primary agent API key, or skip if not configured."""
     api_key = get_api_key()
     if not api_key:
-        pytest.skip("THENVOI_API_KEY not set")
+        pytest.skip("BAND_API_KEY not set")
     return api_key
 
 
@@ -66,7 +66,7 @@ def _get_sender_agent_key() -> str:
     """Return the secondary agent API key, or skip if not configured."""
     api_key = get_api_key_2()
     if not api_key:
-        pytest.skip("THENVOI_API_KEY_2 not set")
+        pytest.skip("BAND_API_KEY_2 not set")
     return api_key
 
 

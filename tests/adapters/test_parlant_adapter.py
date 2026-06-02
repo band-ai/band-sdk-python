@@ -13,8 +13,8 @@ import sys
 
 import pytest
 
-from thenvoi.adapters.parlant import ParlantAdapter
-from thenvoi.core.types import PlatformMessage
+from band.adapters.parlant import ParlantAdapter
+from band.core.types import PlatformMessage
 
 
 @pytest.fixture
@@ -299,7 +299,7 @@ class TestOnMessage:
         self, initialized_adapter, sample_message, mock_tools
     ):
         """Should set session tools for Parlant tool execution."""
-        with patch("thenvoi.adapters.parlant.set_session_tools") as mock_set_tools:
+        with patch("band.adapters.parlant.set_session_tools") as mock_set_tools:
             mock_moderation = MagicMock()
             mock_moderation.NONE = "none"
 
@@ -558,7 +558,7 @@ class TestErrorHandling:
         mock_moderation = MagicMock()
         mock_moderation.NONE = "none"
 
-        with patch("thenvoi.adapters.parlant.set_session_tools") as mock_set_tools:
+        with patch("band.adapters.parlant.set_session_tools") as mock_set_tools:
             with patch.dict(
                 sys.modules,
                 {
