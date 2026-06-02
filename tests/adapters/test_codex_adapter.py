@@ -3213,21 +3213,14 @@ class TestHistoryInjection:
         assert "room-1" not in adapter._needs_history_injection
 
     @pytest.mark.asyncio
-    async def test_model_fallback_on_auto_selected_model(self) -> None:
-        """When auto-selected model fails, adapter falls back to another model."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {"turn": {"id": "turn-1", "status": "completed"}},
-            ),
-        ]
+    async def test_auto_selected_model_error_propagates_without_retry(self) -> None:
+        """Auto-selected model errors propagate instead of trying another model."""
         fake_client = FakeCodexClient(
-            events=events,
             turn_start_error=CodexJsonRpcError(
                 code=-32000,
                 message="Model gpt-5.5 is not available for this account",
             ),
-            turn_start_error_once=True,
+            turn_start_error_once=False,
             model_list_result={
                 "data": [
                     {"id": "gpt-5.5", "hidden": False},
@@ -3235,7 +3228,6 @@ class TestHistoryInjection:
                 ]
             },
         )
-        # model=None means auto-select — fallback should trigger
         adapter = CodexAdapter(
             config=CodexAdapterConfig(model=None),
             client_factory=lambda _config: fake_client,
@@ -3244,30 +3236,24 @@ class TestHistoryInjection:
         await adapter.on_started("Agent", "An agent")
 
         msg = make_platform_message(room_id="room-1", content="hello")
-        await adapter.on_message(
-            msg,
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(CodexJsonRpcError, match="not available"):
+            await adapter.on_message(
+                msg,
+                tools,
+                CodexSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
-        # Should have retried with fallback model
-        turn_start_calls = [
-            (m, p) for m, p in fake_client.requests if m == "turn/start"
-        ]
-        assert len(turn_start_calls) == 2
-        # First attempt used auto-selected model
-        assert turn_start_calls[0][1]["model"] == "gpt-5.5"
-        # Retry used the remaining visible model since the configured fallback was excluded
-        assert turn_start_calls[1][1]["model"] == "gpt-5.4-mini"
-        assert adapter._selected_model == "gpt-5.4-mini"
+        turn_start_calls = [m for m, _ in fake_client.requests if m == "turn/start"]
+        assert len(turn_start_calls) == 1
+        assert adapter._selected_model == "gpt-5.5"
 
     @pytest.mark.asyncio
-    async def test_model_selection_prefers_configured_fallback_order(self) -> None:
-        """Auto-selection prefers configured fallback order over server order."""
+    async def test_model_selection_uses_first_visible_model(self) -> None:
+        """Auto-selection uses Codex's first visible model without fallback ordering."""
         fake_client = FakeCodexClient(
             model_list_result={
                 "data": [
@@ -3282,8 +3268,7 @@ class TestHistoryInjection:
         )
         await adapter.on_started("Agent", "An agent")
 
-        # Should prefer gpt-5.5 over gpt-5.4-mini even if the server lists mini first.
-        assert adapter._selected_model == "gpt-5.5"
+        assert adapter._selected_model == "gpt-5.4-mini"
 
     @pytest.mark.asyncio
     async def test_explicit_model_error_propagates_without_fallback(self) -> None:
@@ -3301,7 +3286,6 @@ class TestHistoryInjection:
                 ]
             },
         )
-        # Explicitly configured model — user chose this, don't override
         adapter = CodexAdapter(
             config=CodexAdapterConfig(model="unavailable-test-model"),
             client_factory=lambda _config: fake_client,
@@ -3321,50 +3305,24 @@ class TestHistoryInjection:
                 room_id="room-1",
             )
 
-        # No model/list query for fallback should have been attempted
         model_list_calls = [m for m, _ in fake_client.requests if m == "model/list"]
         assert len(model_list_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_model_fallback_raises_when_no_alternative(self) -> None:
-        """When no fallback model is available, the original error propagates."""
-        fake_client = FakeCodexClient(
-            turn_start_error=CodexJsonRpcError(
-                code=-32000, message="Model not available"
-            ),
-            turn_start_error_once=False,
-            model_list_result={"data": []},
-        )
+    async def test_model_selection_uses_default_when_model_list_empty(self) -> None:
+        """Auto-selection uses the adapter default when Codex returns no visible models."""
+        fake_client = FakeCodexClient(model_list_result={"data": []})
         adapter = CodexAdapter(
             config=CodexAdapterConfig(model=None),
             client_factory=lambda _config: fake_client,
         )
-        tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        msg = make_platform_message(room_id="room-1", content="hello")
-        with pytest.raises(CodexJsonRpcError, match="not available"):
-            await adapter.on_message(
-                msg,
-                tools,
-                CodexSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+        assert adapter._selected_model == "gpt-5.5"
 
     @pytest.mark.asyncio
-    async def test_model_fallback_uses_configured_defaults_when_model_list_fails(
-        self,
-    ) -> None:
-        """When model/list fails during fallback, ``config.fallback_models`` is used."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {"turn": {"id": "turn-1", "status": "completed"}},
-            ),
-        ]
+    async def test_model_selection_uses_default_when_model_list_fails(self) -> None:
+        """Auto-selection uses the adapter default if model discovery fails."""
 
         class ModelListFailsClient(FakeCodexClient):
             async def request(
@@ -3374,76 +3332,24 @@ class TestHistoryInjection:
                 *,
                 retry_on_overload: bool = True,
             ) -> dict[str, Any]:
-                if method == "model/list" and self.initialized:
-                    # First call during init succeeds, subsequent calls fail
+                if method == "model/list":
                     raise RuntimeError("model/list unavailable")
                 return await super().request(
                     method, params, retry_on_overload=retry_on_overload
                 )
 
-        fake_client = ModelListFailsClient(
-            events=events,
-            turn_start_error=CodexJsonRpcError(
-                code=-32000, message="Model not available"
-            ),
-            turn_start_error_once=True,
-        )
+        fake_client = ModelListFailsClient()
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                model=None,
-                fallback_models=("gpt-5.5", "gpt-5.4-mini"),
-            ),
+            config=CodexAdapterConfig(model=None),
             client_factory=lambda _config: fake_client,
         )
-        tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        # Auto-selection without model/list picks fallback_models[0] = gpt-5.5
         assert adapter._selected_model == "gpt-5.5"
 
-        msg = make_platform_message(room_id="room-1", content="hello")
-        await adapter.on_message(
-            msg,
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
-
-        # turn/start with gpt-5.5 fails; fallback excludes it and picks the
-        # next configured default (gpt-5.4-mini).
-        assert adapter._selected_model == "gpt-5.4-mini"
-
     @pytest.mark.asyncio
-    async def test_select_model_honours_custom_fallback_when_model_list_empty(
-        self,
-    ) -> None:
-        """Operator-configured ``fallback_models[0]`` wins when model/list returns no data."""
-        fake_client = FakeCodexClient(
-            events=[
-                _event_notification(
-                    "turn/completed",
-                    {"turn": {"id": "turn-1", "status": "completed"}},
-                ),
-            ],
-            model_list_result={"data": []},
-        )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                model=None,
-                fallback_models=("custom-model-x", "custom-model-y"),
-            ),
-            client_factory=lambda _config: fake_client,
-        )
-        await adapter.on_started("Agent", "An agent")
-
-        assert adapter._selected_model == "custom-model-x"
-
-    @pytest.mark.asyncio
-    async def test_non_model_error_not_caught_by_fallback(self) -> None:
-        """Non-model-related errors propagate without fallback attempt."""
+    async def test_non_model_error_propagates(self) -> None:
+        """Non-model-related errors propagate from turn startup."""
         fake_client = FakeCodexClient(
             turn_start_error=CodexJsonRpcError(
                 code=-32001, message="Server overloaded"
@@ -6222,40 +6128,6 @@ class TestSessionApprovalKeying:
         )
         assert any("No pending approvals" in m["content"] for m in tools.messages_sent)
         assert "room-1" not in adapter._session_approved
-
-
-class TestModelUnavailableDetection:
-    """_is_model_unavailable_error across structured and unstructured errors."""
-
-    def test_model_unavailable_matches_structured_error_type(self) -> None:
-        """_is_model_unavailable_error trusts codexErrorInfo.type when present."""
-        err = CodexJsonRpcError(
-            code=-32000,
-            message="some opaque server message",
-            data={"codexErrorInfo": {"type": "ModelNotFound"}},
-        )
-        assert CodexAdapter._is_model_unavailable_error(err) is True
-
-    def test_model_unavailable_matches_http_404(self) -> None:
-        """HTTP 404 signals model-not-found regardless of message wording."""
-        err = CodexJsonRpcError(
-            code=-32000,
-            message="",
-            data={"codexErrorInfo": {"httpStatus": 404}},
-        )
-        assert CodexAdapter._is_model_unavailable_error(err) is True
-
-    def test_model_unavailable_falls_back_to_substring(self) -> None:
-        """When no structured info is present, substring matching still works."""
-        err = CodexJsonRpcError(
-            code=-32000,
-            message="Requested model not available on this account",
-        )
-        assert CodexAdapter._is_model_unavailable_error(err) is True
-
-    def test_model_unavailable_returns_false_for_unrelated_error(self) -> None:
-        err = CodexJsonRpcError(code=-32000, message="network blip")
-        assert CodexAdapter._is_model_unavailable_error(err) is False
 
 
 class TestTokenUsageCounterMonotonicity:

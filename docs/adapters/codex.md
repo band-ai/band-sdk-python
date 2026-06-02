@@ -116,8 +116,7 @@ Pass these to `CodexAdapterConfig(...)`:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `transport` | `"stdio" \| "ws"` | `"stdio"` | How the adapter connects to Codex. Use `"stdio"` to spawn a process, or `"ws"` to connect to `codex app-server`. |
-| `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and prefers Codex-optimized models. |
-| `fallback_models` | `tuple[str, ...]` | `("gpt-5.5", "gpt-5.4-mini")` | Models tried if model discovery fails or returns no usable model. |
+| `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and uses the first visible model, or the adapter default if discovery fails or returns no usable model. |
 | `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
 | `personality` | `"friendly" \| "pragmatic" \| "none"` | `"pragmatic"` | Codex response style. |
