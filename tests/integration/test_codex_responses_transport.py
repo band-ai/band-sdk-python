@@ -47,7 +47,7 @@ import pytest
 logger = logging.getLogger(__name__)
 
 # Model to exercise. Override via CODEX_MODEL; default matches the entrypoint.
-CODEX_MODEL = os.environ.get("CODEX_MODEL", "gpt-5.3-codex")
+CODEX_MODEL = os.environ.get("CODEX_MODEL", "gpt-5.5")
 
 # A trivial prompt — we only care which transport Codex chooses, not the answer.
 PROMPT = "Reply with the single word: pong"

@@ -117,7 +117,7 @@ _MAX_DIFF_METADATA_BYTES = 64 * 1024
 class SetModelInput(BaseModel):
     """Switch the model used for subsequent turns. Call this when a different model would be more appropriate for the task (e.g. a faster model for simple queries, a stronger model for complex reasoning)."""
 
-    model: str = Field(description="Model ID to use (e.g. 'gpt-5.3-codex', 'gpt-5.2').")
+    model: str = Field(description="Model ID to use (e.g. 'gpt-5.5').")
 
 
 class SetReasoningInput(BaseModel):
@@ -135,7 +135,7 @@ class SetReasoningInput(BaseModel):
 
 # Hardcoded default — update when OpenAI rotates model IDs.
 # Override at runtime via CodexAdapterConfig.model or CODEX_MODEL env var.
-_DEFAULT_MODEL = "gpt-5.3-codex"
+_DEFAULT_MODEL = "gpt-5.5"
 
 
 class _CodexClientProtocol(Protocol):
@@ -244,9 +244,6 @@ class CodexAdapterConfig:
     additional_dynamic_tools: list[dict[str, Any]] = field(default_factory=list)
     inject_history_on_resume_failure: bool = True
     max_history_messages: int = 50
-    # Fallback models tried when model/list fails or returns empty.
-    # Update when OpenAI rotates model IDs.
-    fallback_models: tuple[str, ...] = ("gpt-5.2", "gpt-5.3-codex")
     max_pending_approvals_per_room: int = 50
     max_approval_audit_per_room: int = 100
     # Upper bound on session-level approvals retained per room
@@ -364,7 +361,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._client: _CodexClientProtocol | None = None
         self._initialized = False
         self._selected_model: str | None = None
-        self._model_explicitly_set: bool = bool(self.config.model)
         self._system_prompt: str = ""
         self._room_threads: dict[str, str] = {}
         self._prompt_injected_rooms: set[str] = set()
@@ -406,7 +402,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 raise RuntimeError("_handle_set_model must run under _rpc_lock")
             adapter.config.model = inp.model
             adapter._selected_model = inp.model
-            adapter._model_explicitly_set = True
             return f"Model changed to {inp.model} for subsequent turns."
 
         def _handle_set_reasoning(inp: SetReasoningInput) -> str:
@@ -565,7 +560,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             }
             self._apply_turn_overrides(turn_params, room_id=room_id)
 
-            turn_started = await self._start_turn_with_model_fallback(turn_params)
+            turn_started = await self._start_turn(turn_params)
             if has_pending_prompt_injection:
                 self._prompt_injected_rooms.add(room_id)
             turn = turn_started.get("turn") if isinstance(turn_started, dict) else {}
@@ -1046,41 +1041,14 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             result = await self._client.request("model/list", {})
         except Exception:
             logger.warning(
-                "model/list failed; using first configured fallback model",
+                "model/list failed; using default Codex model",
                 exc_info=True,
             )
-            return self._first_configured_fallback()
+            return _DEFAULT_MODEL
 
-        data = result.get("data") if isinstance(result, dict) else None
-        if not isinstance(data, list):
-            return self._first_configured_fallback()
-
-        visible_models = [
-            entry
-            for entry in data
-            if isinstance(entry, dict)
-            and isinstance(entry.get("id"), str)
-            and not bool(entry.get("hidden", False))
-        ]
-        for entry in visible_models:
-            model_id = str(entry["id"])
-            if "codex" in model_id:
-                return model_id
-        if visible_models:
-            return str(visible_models[0]["id"])
-        return self._first_configured_fallback()
-
-    def _first_configured_fallback(self) -> str:
-        """Return the first operator-configured fallback, or the hard default.
-
-        ``_select_model`` calls this when ``model/list`` fails or returns no
-        visible models — honouring ``config.fallback_models`` here keeps the
-        operator's override authoritative across both initial auto-selection
-        and post-failure retries (``_find_fallback_model``).
-        """
-        fallbacks = self.config.fallback_models
-        if fallbacks:
-            return fallbacks[0]
+        visible_model_ids = self._visible_model_ids(result)
+        if visible_model_ids:
+            return visible_model_ids[0]
         return _DEFAULT_MODEL
 
     async def _ensure_thread(
@@ -2499,7 +2467,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
             self.config.model = model_arg
             self._selected_model = model_arg
-            self._model_explicitly_set = True
             await tools.send_message(
                 f"Model override set to `{model_arg}` for subsequent turns.",
                 mentions=mention,
@@ -2813,116 +2780,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             params["summary"] = self.config.reasoning_summary
         self._apply_turn_sandbox(params, room_id=room_id)
 
-    async def _start_turn_with_model_fallback(
-        self, params: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Start a turn, falling back to an available model if the auto-selected one is unavailable.
-
-        Only attempts fallback when the model was auto-selected (config.model was None).
-        When the user explicitly configured a model, the error propagates — they may
-        be using unlisted models that model/list doesn't report.
-        """
+    async def _start_turn(self, params: dict[str, Any]) -> dict[str, Any]:
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None — was on_started() called?")
-        try:
-            return await self._client.request("turn/start", params)
-        except CodexJsonRpcError as exc:
-            if self._model_explicitly_set:
-                raise
-            if not self._is_model_unavailable_error(exc):
-                raise
-            original_model = params.get("model", self._selected_model)
-            logger.warning(
-                "Model %s unavailable (code=%s): %s. Querying available models...",
-                original_model,
-                exc.code,
-                exc.message,
-            )
-            fallback = await self._find_fallback_model(exclude=original_model)
-            if fallback is None:
-                raise
-            logger.warning(
-                "Falling back from %s to %s",
-                original_model,
-                fallback,
-            )
-            self._selected_model = fallback
-            params["model"] = fallback
-            return await self._client.request("turn/start", params)
-
-    async def _find_fallback_model(self, exclude: Any = None) -> str | None:
-        """Query model/list and return a fallback model, or None if unavailable."""
-        if self._client is None:
-            raise RuntimeError("CodexAdapter client is None — was on_started() called?")
-        fallbacks = self.config.fallback_models
-        try:
-            result = await self._client.request("model/list", {})
-        except Exception:
-            logger.warning("model/list failed during fallback lookup", exc_info=True)
-            for model_id in fallbacks:
-                if model_id != exclude:
-                    return model_id
-            return None
-        models = self._visible_model_ids(result)
-        # Prefer configured fallback models if available
-        for model_id in models:
-            if model_id != exclude and model_id in fallbacks:
-                return model_id
-        for model_id in models:
-            if model_id != exclude:
-                return model_id
-        # No visible models — try configured defaults
-        for model_id in fallbacks:
-            if model_id != exclude:
-                return model_id
-        return None
-
-    # Known structured error type tags that indicate the model is not
-    # available.  Codex's codexErrorInfo.type is the authoritative signal
-    # when present; message substrings are a fragile fallback for servers
-    # that don't yet emit structured error info.
-    _MODEL_UNAVAILABLE_ERROR_TYPES: frozenset[str] = frozenset(
-        {
-            "ModelNotFound",
-            "ModelNotAvailable",
-            "ModelUnavailable",
-            "Unauthorized",  # "no access to model X"
-        }
-    )
-    _MODEL_UNAVAILABLE_PHRASES: tuple[str, ...] = (
-        "model not found",
-        "model not available",
-        "is not available",
-        "model_not_found",
-        "model unavailable",
-        "does not have access",
-        "no access to model",
-    )
-
-    @classmethod
-    def _is_model_unavailable_error(cls, exc: CodexJsonRpcError) -> bool:
-        """Check if the error indicates the requested model is not available.
-
-        Prefers structured ``codexErrorInfo.type`` signals on ``exc.data``
-        when available; falls back to substring matching on the message for
-        server versions that don't yet emit structured error info.
-        """
-        data = exc.data if isinstance(exc.data, dict) else None
-        if data is not None:
-            codex_info = data.get("codexErrorInfo")
-            if isinstance(codex_info, dict):
-                err_type = codex_info.get("type")
-                if (
-                    isinstance(err_type, str)
-                    and err_type in cls._MODEL_UNAVAILABLE_ERROR_TYPES
-                ):
-                    return True
-                # HTTP 404 on turn/start with any model-shaped error.
-                if codex_info.get("httpStatus") == 404:
-                    return True
-
-        msg = exc.message.lower()
-        return any(phrase in msg for phrase in cls._MODEL_UNAVAILABLE_PHRASES)
+        return await self._client.request("turn/start", params)
 
     def _apply_thread_sandbox(
         self, params: dict[str, Any], *, room_id: str | None = None

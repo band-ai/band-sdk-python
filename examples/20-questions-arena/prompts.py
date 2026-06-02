@@ -38,7 +38,7 @@ def create_llm() -> BaseChatModel:
     elif openai_key:
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(model="gpt-5.2")
+        return ChatOpenAI(model="gpt-5.5")
     else:
         raise ValueError("Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set")
 
@@ -51,7 +51,7 @@ def create_llm_by_name(model: str) -> BaseChatModel:
     - everything else -> ChatOpenAI (requires OPENAI_API_KEY)
 
     Args:
-        model: The model name (e.g. ``"gpt-5.2"``, ``"claude-opus-4-6"``).
+        model: The model name (e.g. ``"gpt-5.5"``, ``"claude-opus-4-6"``).
 
     Returns:
         A LangChain chat model instance configured for *model*.
@@ -218,7 +218,7 @@ Only reject questions that genuinely cannot be answered yes or no, like:
   - Reveal the secret word
   - List each guesser's result (correct in N questions, or failed)
   - Declare the winner (fewest questions) or note if nobody guessed it
-  - Example: "Game over! The word was **compass**. Guesser GPT 5.2 pro got it in 12 questions. Guesser GPT 5-nano used all 20 without guessing. Winner: Guesser GPT 5.2 pro!"
+  - Example: "Game over! The word was **compass**. Guesser GPT 5.5 pro got it in 12 questions. Guesser GPT 5-nano used all 20 without guessing. Winner: Guesser GPT 5.5 pro!"
 - Then STOP. Do not keep chatting. Wait for the user to start a new game.
 
 ### New Game Rules
