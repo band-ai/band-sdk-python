@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from thenvoi.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
-from thenvoi.client.streaming import WebSocketClient
+from thenvoi.client.streaming import WebSocketClient, WebSocketDisconnectReason
 from thenvoi.runtime.types import PlatformMessage
 from thenvoi_rest.core.api_error import ApiError
 
@@ -23,6 +23,7 @@ from .event import (
     RoomRemovedEvent,
     RoomDeletedEvent,
     ReconnectedEvent,
+    WebSocketDisconnectedEvent,
     ParticipantAddedEvent,
     ParticipantRemovedEvent,
     ContactRequestReceivedEvent,
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         ContactRequestUpdatedPayload,
         ContactAddedPayload,
         ContactRemovedPayload,
+        SupersedePayload,
     )
 
 logger = logging.getLogger(__name__)
@@ -97,9 +99,17 @@ class ThenvoiLink:
         # Event queue for async iteration
         self._event_queue: asyncio.Queue[PlatformEvent] = asyncio.Queue(maxsize=1000)
 
+        # Durable terminal disconnect reason for the current connection lifecycle.
+        self._last_disconnect_reason: WebSocketDisconnectReason | None = None
+
     @property
     def is_connected(self) -> bool:
         return self._is_connected
+
+    @property
+    def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
+        """Most recent terminal WebSocket disconnect reason, if reported."""
+        return self._last_disconnect_reason
 
     # --- Async iterator protocol ---
 
@@ -123,6 +133,7 @@ class ThenvoiLink:
             logger.warning("Already connected")
             return
 
+        self._last_disconnect_reason = None
         self._ws = WebSocketClient(
             self.ws_url,
             self.api_key,
@@ -131,6 +142,15 @@ class ThenvoiLink:
             on_disconnect=self._on_disconnected,
         )
         await self._ws.__aenter__()
+        try:
+            await self._ws.join_agent_control_channel(
+                self.agent_id,
+                on_supersede=self._on_supersede,
+            )
+        except Exception:
+            await self._ws.__aexit__(None, None, None)
+            self._ws = None
+            raise
         self._is_connected = True
         logger.info("Connected to platform")
 
@@ -140,8 +160,13 @@ class ThenvoiLink:
 
         Extracted from ThenvoiAgent.stop() lines 193-195.
         """
-        if not self._is_connected or not self._ws:
+        if not self._ws:
             return
+
+        try:
+            await self._ws.leave_agent_control_channel(self.agent_id)
+        except Exception as e:
+            logger.warning("Error unsubscribing from agent_control: %s", e)
 
         await self._ws.__aexit__(None, None, None)
         self._ws = None
@@ -287,8 +312,29 @@ class ThenvoiLink:
         logger.info("WebSocket reconnected — reconciling room state")
         self._queue_event(ReconnectedEvent())
 
+    async def _on_supersede(self, payload: "SupersedePayload") -> None:
+        """Handle terminal supersede event before the platform closes the socket."""
+        reason = payload.to_disconnect_reason()
+        self._last_disconnect_reason = reason
+        self._is_connected = False
+        if self._ws:
+            self._ws.record_terminal_disconnect(reason)
+        logger.warning(
+            "WebSocket connection superseded: reason=%s retryable=%s correlation_id=%s",
+            reason.reason,
+            reason.retryable,
+            reason.correlation_id,
+        )
+        self._queue_event(WebSocketDisconnectedEvent(payload=reason))
+
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""
+        if self.last_disconnect_reason:
+            logger.warning(
+                "WebSocket disconnected after terminal platform reason: %s",
+                self.last_disconnect_reason.reason,
+            )
+            return
         logger.warning("WebSocket disconnected: %s", error)
 
     def _queue_event(self, event: PlatformEvent) -> None:
