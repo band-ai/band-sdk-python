@@ -50,6 +50,10 @@ LETTA_AGENT_CONFIG="$REPO_ROOT/examples/letta/agent_config.yaml"
 LETTA_ENV_FILE="$REPO_ROOT/examples/letta/.env"
 QA_ENV_FILE="$QA_DIR/.env"
 
+# Prefer the project venv python (has PyYAML); fall back to system python3.
+PYTHON="$REPO_ROOT/.venv/bin/python"
+[ -x "$PYTHON" ] || PYTHON="python3"
+
 log() { printf '\033[1;36m[letta-stack]\033[0m %s\n' "$*"; }
 err() { printf '\033[1;31m[letta-stack] ERROR:\033[0m %s\n' "$*" >&2; }
 
@@ -58,7 +62,13 @@ read_env() {  # read_env VAR FILE -> value of VAR= in FILE
 }
 
 read_yaml_key() {  # read letta agent api_key from agent_config.yaml
-  python3 -c "import yaml,sys;print((yaml.safe_load(open('$1')) or {}).get('letta_agent',{}).get('api_key',''))" 2>/dev/null || true
+  "$PYTHON" -c "import yaml;print((yaml.safe_load(open('$1')) or {}).get('letta_agent',{}).get('api_key',''))" 2>/dev/null || true
+}
+
+http_code() {  # http_code URL -> status code, or 000 if unreachable (SSE-safe)
+  local code
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$1" 2>/dev/null)"
+  [ -n "$code" ] && echo "$code" || echo "000"
 }
 
 apply_ssrf_relaxation() {
@@ -120,11 +130,20 @@ up() {
 
   # 3. SSRF relaxation (test-only) + restart so the module reloads -----------
   log "Applying test-only MCP URL relaxation to $LETTA_CONTAINER"
-  apply_ssrf_relaxation
-  docker restart "$LETTA_CONTAINER" >/dev/null; sleep 8
+  local relax_out
+  relax_out="$(apply_ssrf_relaxation)"
+  echo "  $relax_out"
+  if printf '%s' "$relax_out" | grep -q "applied"; then
+    log "Restarting Letta so the relaxation takes effect"
+    docker restart "$LETTA_CONTAINER" >/dev/null
+    for _ in $(seq 1 60); do
+      [ "$(http_code "http://localhost:${LETTA_PORT}/v1/health/")" = "200" ] && break
+      sleep 1
+    done
+  fi
 
   # 4. band-mcp host process -------------------------------------------------
-  if curl -s -o /dev/null --max-time 3 "http://localhost:${BAND_MCP_PORT}/sse"; then
+  if [ "$(http_code "http://localhost:${BAND_MCP_PORT}/sse")" = "200" ]; then
     log "band-mcp already serving on :$BAND_MCP_PORT"
   else
     log "Starting band-mcp on :$BAND_MCP_PORT (agent scope)"
@@ -162,11 +181,8 @@ down() {
 }
 
 status() {
-  local lh mc
-  lh="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://localhost:${LETTA_PORT}/v1/health/" 2>/dev/null || echo 000)"
-  mc="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://localhost:${BAND_MCP_PORT}/sse" 2>/dev/null || echo 000)"
-  log "Letta server  http://localhost:${LETTA_PORT}     -> HTTP $lh"
-  log "band-mcp      http://localhost:${BAND_MCP_PORT}/sse -> HTTP $mc"
+  log "Letta server  http://localhost:${LETTA_PORT}        -> HTTP $(http_code "http://localhost:${LETTA_PORT}/v1/health/")"
+  log "band-mcp      http://localhost:${BAND_MCP_PORT}/sse -> HTTP $(http_code "http://localhost:${BAND_MCP_PORT}/sse")"
 }
 
 case "${1:-}" in
