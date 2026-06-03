@@ -443,7 +443,11 @@ async def run_parlant_agent(
         else None
     )
 
-    async with p.Server(nlp_service=p.NLPServices.openai) as server:
+    async with p.Server(
+        port=0,
+        tool_service_port=0,
+        nlp_service=p.NLPServices.openai,
+    ) as server:
         parlant_tools = create_parlant_tools(
             parlant_features,
             legacy_defaults=False,

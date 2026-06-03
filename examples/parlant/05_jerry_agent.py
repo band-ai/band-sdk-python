@@ -51,7 +51,11 @@ async def main() -> None:
         raise ValueError("BAND_REST_URL environment variable is required")
 
     # Load Jerry's credentials from agent_config.yaml
-    async with p.Server(nlp_service=p.NLPServices.openai) as server:
+    async with p.Server(
+        port=0,
+        tool_service_port=0,
+        nlp_service=p.NLPServices.openai,
+    ) as server:
         # Create Parlant agent with Jerry's personality
         parlant_agent = await server.create_agent(
             name="Jerry",

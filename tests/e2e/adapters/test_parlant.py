@@ -18,7 +18,6 @@ import asyncio
 import contextlib
 import json
 import os
-import socket
 import uuid
 
 import pytest
@@ -138,13 +137,6 @@ def _configure_parlant_agent_credentials() -> None:
 _configure_parlant_agent_credentials()
 
 
-def _unused_local_port() -> int:
-    """Reserve a free localhost port for a short-lived in-process Parlant server."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 @pytest.fixture
 async def e2e_parlant_room(
     e2e_session_client: AsyncRestClient,
@@ -201,8 +193,8 @@ class TestParlantE2E:
 
         server = p.Server(
             host="127.0.0.1",
-            port=_unused_local_port(),
-            tool_service_port=_unused_local_port(),
+            port=0,
+            tool_service_port=0,
             nlp_service=p.NLPServices.openai,
         )
         await server.__aenter__()

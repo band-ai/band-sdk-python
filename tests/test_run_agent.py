@@ -31,9 +31,12 @@ def fake_parlant_sdk(monkeypatch):
     sdk = ModuleType("parlant.sdk")
     sdk.NLPServices = SimpleNamespace(openai=object())
 
+    sdk.server_kwargs = None
+
     class FakeServer:
-        def __init__(self, *, nlp_service):
-            self.nlp_service = nlp_service
+        def __init__(self, **kwargs):
+            sdk.server_kwargs = kwargs
+            self.nlp_service = kwargs["nlp_service"]
             self.created_agent = SimpleNamespace(create_guideline=AsyncMock())
 
         async def __aenter__(self):
@@ -104,6 +107,8 @@ async def test_run_parlant_agent_enables_contacts_for_runtime_and_tools(
         logger=SimpleNamespace(warning=lambda *args: None, info=lambda *args: None),
     )
 
+    assert fake_parlant_sdk.server_kwargs["port"] == 0
+    assert fake_parlant_sdk.server_kwargs["tool_service_port"] == 0
     assert captured["agent_create_kwargs"]["contact_config"] is contact_config
     assert captured["adapter_kwargs"]["features"] is captured["tool_features"]
     assert captured["tool_features"].capabilities == frozenset({Capability.CONTACTS})

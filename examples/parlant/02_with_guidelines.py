@@ -86,7 +86,11 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
     # Start Parlant server with OpenAI
-    async with p.Server(nlp_service=p.NLPServices.openai) as server:
+    async with p.Server(
+        port=0,
+        tool_service_port=0,
+        nlp_service=p.NLPServices.openai,
+    ) as server:
         parlant_agent = await setup_agent_with_guidelines(server)
         logger.info("Parlant agent with guidelines created: %s", parlant_agent.id)
 
