@@ -13,8 +13,8 @@ import asyncio
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from thenvoi.runtime.execution import ExecutionContext
-from thenvoi.runtime.types import SessionConfig
+from band.runtime.execution import ExecutionContext
+from band.runtime.types import SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import make_message_event
@@ -25,7 +25,7 @@ class TestIsRunningProperty:
 
     @pytest.fixture
     def mock_link(self):
-        """Create mock ThenvoiLink."""
+        """Create mock BandLink."""
         link = MagicMock()
         link.rest = MagicMock()
         link.rest.agent_api_participants = MagicMock()
@@ -81,7 +81,7 @@ class TestInstantShutdown:
 
     @pytest.fixture
     def mock_link(self):
-        """Create mock ThenvoiLink."""
+        """Create mock BandLink."""
         link = MagicMock()
         link.rest = MagicMock()
         link.rest.agent_api_participants = MagicMock()
@@ -149,7 +149,7 @@ class TestCancellationDuringSync:
 
     @pytest.fixture
     def mock_link_slow_sync(self):
-        """Create mock ThenvoiLink with slow /next that can be cancelled."""
+        """Create mock BandLink with slow /next that can be cancelled."""
         link = MagicMock()
         link.rest = MagicMock()
         link.rest.agent_api_participants = MagicMock()
@@ -207,7 +207,7 @@ class TestCancellationDuringProcessing:
 
     @pytest.fixture
     def mock_link(self):
-        """Create mock ThenvoiLink."""
+        """Create mock BandLink."""
         link = MagicMock()
         link.rest = MagicMock()
         link.rest.agent_api_participants = MagicMock()

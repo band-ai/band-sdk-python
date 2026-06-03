@@ -42,7 +42,6 @@ install_wheel() {
   fi
 }
 
-install_wheel "THENVOI_CLIENT_REST_WHEEL" "${THENVOI_CLIENT_REST_WHEEL:-}" "thenvoi-client-rest"
 install_wheel "PHOENIX_CHANNELS_CLIENT_WHEEL" "${PHOENIX_CHANNELS_CLIENT_WHEEL:-}" "phoenix client"
 
 # Validate required workspace mount

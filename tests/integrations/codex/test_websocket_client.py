@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from thenvoi.integrations.codex import (
+from band.integrations.codex import (
     CodexJsonRpcError,
     CodexWebSocketClient,
     OverloadRetryPolicy,

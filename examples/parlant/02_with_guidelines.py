@@ -1,15 +1,15 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[parlant]"]
+# dependencies = ["band-sdk[parlant]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Parlant agent with behavioral guidelines using the official Parlant SDK.
 
 This example shows how to use Parlant's guideline system for controlled
-agent behavior with the full Thenvoi toolset.
+agent behavior with the full Band toolset.
 
 Run with:
     uv run examples/parlant/02_with_guidelines.py
@@ -27,15 +27,15 @@ import parlant.sdk as p
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ParlantAdapter
-from thenvoi.integrations.parlant.tools import create_parlant_tools
+from band import Agent
+from band.adapters import ParlantAdapter
+from band.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
 
 CUSTOM_DESCRIPTION = """
-You are a collaborative assistant in the Thenvoi multi-agent platform.
+You are a collaborative assistant in the Band multi-agent platform.
 
 ## Your Role
 - Help users navigate multi-agent conversations
@@ -44,19 +44,19 @@ You are a collaborative assistant in the Thenvoi multi-agent platform.
 - Create new chat rooms when needed for specific topics
 
 ## Your Tools
-- thenvoi_send_message: Respond to users (requires mentions)
-- thenvoi_send_event: Share thoughts, errors, or task progress
-- thenvoi_lookup_peers: Find available agents
-- thenvoi_add_participant: Add agents/users to room
-- thenvoi_remove_participant: Remove participants
-- thenvoi_get_participants: List current participants
-- thenvoi_create_chatroom: Create new rooms
+- band_send_message: Respond to users (requires mentions)
+- band_send_event: Share thoughts, errors, or task progress
+- band_lookup_peers: Find available agents
+- band_add_participant: Add agents/users to room
+- band_remove_participant: Remove participants
+- band_get_participants: List current participants
+- band_create_chatroom: Create new rooms
 
 ## Guidelines
 1. Be proactive about suggesting relevant agents to add
 2. Keep responses focused and actionable
 3. Always confirm actions taken with the user
-4. Use thenvoi_send_event with type='thought' before complex actions
+4. Use band_send_event with type='thought' before complex actions
 """
 
 
@@ -73,59 +73,59 @@ async def setup_agent_with_guidelines(
     # Communication guidelines
     await agent.create_guideline(
         condition="User asks a question or sends a message",
-        action="Use thenvoi_send_message to respond, with the user's name in the mentions field",
+        action="Use band_send_message to respond, with the user's name in the mentions field",
         tools=tools,
     )
 
     await agent.create_guideline(
         condition="You are about to perform a complex action or multi-step process",
-        action="First use thenvoi_send_event with type='thought' to explain what you're about to do and why",
+        action="First use band_send_event with type='thought' to explain what you're about to do and why",
         tools=tools,
     )
 
     # Participant management guidelines
     await agent.create_guideline(
         condition="User mentions a specific participant, agent name, or asks to add someone",
-        action="First use thenvoi_lookup_peers to find available agents. Then IMMEDIATELY call thenvoi_add_participant with the name parameter set to the exact name from the thenvoi_lookup_peers result. Do NOT ask for confirmation - just add them. If user wants multiple agents, call thenvoi_add_participant once for each.",
+        action="First use band_lookup_peers to find available agents. Then IMMEDIATELY call band_add_participant with the name parameter set to the exact name from the band_lookup_peers result. Do NOT ask for confirmation - just add them. If user wants multiple agents, call band_add_participant once for each.",
         tools=tools,
     )
 
     await agent.create_guideline(
         condition="User asks about current participants or who is in the room",
-        action="Use thenvoi_get_participants to list all current room members",
+        action="Use band_get_participants to list all current room members",
         tools=tools,
     )
 
     await agent.create_guideline(
         condition="User asks to remove someone from the chat",
-        action="Use thenvoi_remove_participant with the name parameter set to the exact name to remove",
+        action="Use band_remove_participant with the name parameter set to the exact name to remove",
         tools=tools,
     )
 
     # Room management guidelines
     await agent.create_guideline(
         condition="User wants to create a new chat, discussion space, or separate topic",
-        action="Use thenvoi_create_chatroom to create a dedicated space for the new topic",
+        action="Use band_create_chatroom to create a dedicated space for the new topic",
         tools=tools,
     )
 
     # Error handling guideline
     await agent.create_guideline(
         condition="An error occurs or something goes wrong",
-        action="Use thenvoi_send_event with type='error' to report the problem, then try to suggest alternatives",
+        action="Use band_send_event with type='error' to report the problem, then try to suggest alternatives",
         tools=tools,
     )
 
     # Conversation flow guidelines
     await agent.create_guideline(
         condition="User asks for help and you cannot directly provide it",
-        action="Use thenvoi_lookup_peers to find specialized agents, explain your plan using thenvoi_send_event with type='thought', then add the most relevant agent",
+        action="Use band_lookup_peers to find specialized agents, explain your plan using band_send_event with type='thought', then add the most relevant agent",
         tools=tools,
     )
 
     await agent.create_guideline(
         condition="Conversation is ending or user says goodbye",
-        action="Use thenvoi_send_message to summarize what was discussed and offer to help with anything else",
+        action="Use band_send_message to summarize what was discussed and offer to help with anything else",
         tools=tools,
     )
 
@@ -135,13 +135,13 @@ async def setup_agent_with_guidelines(
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
     # Start Parlant server with OpenAI
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
         # Create Parlant tools INSIDE server context
@@ -162,7 +162,7 @@ async def main() -> None:
             parlant_agent=parlant_agent,
         )
 
-        # Create and start Thenvoi agent
+        # Create and start Band agent
         agent = Agent.from_config(
             "parlant_agent",
             adapter=adapter,
@@ -171,7 +171,7 @@ async def main() -> None:
         )
 
         logger.info(
-            "Starting Thenvoi agent with Parlant SDK and comprehensive guidelines..."
+            "Starting Band agent with Parlant SDK and comprehensive guidelines..."
         )
         await agent.run()
 

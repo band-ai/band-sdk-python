@@ -1,7 +1,7 @@
 # Shared configuration using YAML anchors
 x-common-env: &common-env
-  THENVOI_REST_URL: ${THENVOI_REST_URL}
-  THENVOI_WS_URL: ${THENVOI_WS_URL}
+  BAND_REST_URL: ${BAND_REST_URL}
+  BAND_WS_URL: ${BAND_WS_URL}
   OPENAI_API_KEY: ${OPENAI_API_KEY}
   OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
   # Note: Agent-specific API keys are in agent_config.yaml (mounted as volume)

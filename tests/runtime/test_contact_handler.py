@@ -4,26 +4,26 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.platform.event import (
+from band.platform.event import (
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
     ContactAddedEvent,
     ContactRemovedEvent,
 )
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     ContactRequestReceivedPayload,
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
 )
-from thenvoi.runtime.contact_handler import ContactEventHandler, MAX_DEDUP_CACHE_SIZE
-from thenvoi.runtime.contact_tools import ContactTools
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contact_handler import ContactEventHandler, MAX_DEDUP_CACHE_SIZE
+from band.runtime.contact_tools import ContactTools
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 
 @pytest.fixture
 def mock_link():
-    """Mock ThenvoiLink for testing."""
+    """Mock BandLink for testing."""
     link = MagicMock()
     link.rest = MagicMock()
     return link
@@ -421,7 +421,7 @@ class TestHubRoomStrategy:
 
     @pytest.fixture
     def mock_hub_link(self):
-        """Mock ThenvoiLink for HUB_ROOM testing."""
+        """Mock BandLink for HUB_ROOM testing."""
         link = MagicMock()
         link.rest = MagicMock()
 
@@ -553,7 +553,7 @@ class TestHubRoomStrategy:
         self, mock_hub_link, mock_hub_event_callback, sample_request_received_event
     ):
         """Events should be injected as MessageEvent with type 'text'."""
-        from thenvoi.platform.event import MessageEvent
+        from band.platform.event import MessageEvent
 
         config = ContactEventConfig(strategy=ContactEventStrategy.HUB_ROOM)
         handler = ContactEventHandler(
@@ -758,7 +758,7 @@ class TestHubRoomStrategy:
         self, mock_hub_link, mock_hub_event_callback, sample_request_received_event
     ):
         """System prompt should be injected on first event only."""
-        from thenvoi.runtime.contact_handler import HUB_ROOM_SYSTEM_PROMPT
+        from band.runtime.contact_handler import HUB_ROOM_SYSTEM_PROMPT
 
         mock_hub_init_callback = AsyncMock()
 
@@ -792,18 +792,18 @@ class TestHubRoomStrategy:
 
     async def test_hub_room_system_prompt_contains_instructions(self):
         """System prompt should contain contact management instructions."""
-        from thenvoi.runtime.contact_handler import HUB_ROOM_SYSTEM_PROMPT
+        from band.runtime.contact_handler import HUB_ROOM_SYSTEM_PROMPT
 
         # Verify key instructions are present
         assert "contact requests" in HUB_ROOM_SYSTEM_PROMPT.lower()
-        assert "thenvoi_respond_contact_request" in HUB_ROOM_SYSTEM_PROMPT
+        assert "band_respond_contact_request" in HUB_ROOM_SYSTEM_PROMPT
         assert "approve" in HUB_ROOM_SYSTEM_PROMPT.lower()
         assert "reject" in HUB_ROOM_SYSTEM_PROMPT.lower()
         assert "thought" in HUB_ROOM_SYSTEM_PROMPT.lower()
 
         # Verify override instructions to prevent delegation
         assert "do not delegate" in HUB_ROOM_SYSTEM_PROMPT.lower()
-        assert "do not call thenvoi_lookup_peers" in HUB_ROOM_SYSTEM_PROMPT.lower()
+        assert "do not call band_lookup_peers" in HUB_ROOM_SYSTEM_PROMPT.lower()
         assert (
             "do not" in HUB_ROOM_SYSTEM_PROMPT.lower()
             and "add_participant" in HUB_ROOM_SYSTEM_PROMPT.lower()

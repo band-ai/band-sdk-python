@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel, Field
 
-from thenvoi.adapters.anthropic import AnthropicAdapter
-from thenvoi.core.types import PlatformMessage
+from band.adapters.anthropic import AnthropicAdapter
+from band.core.types import PlatformMessage
 
 
 @pytest.fixture
@@ -249,7 +249,7 @@ class TestToolExecution:
             ToolUseBlock(
                 type="tool_use",
                 id="tool-1",
-                name="thenvoi_send_message",
+                name="band_send_message",
                 input={"content": "Hello"},
             )
         ]
@@ -273,7 +273,7 @@ class TestToolExecution:
             ToolUseBlock(
                 type="tool_use",
                 id="tool-1",
-                name="thenvoi_send_message",
+                name="band_send_message",
                 input={"content": "Hello"},
             )
         ]
@@ -304,7 +304,7 @@ class TestToolExecution:
             ToolUseBlock(
                 type="tool_use",
                 id="tool-1",
-                name="thenvoi_send_message",
+                name="band_send_message",
                 input={"content": "Hello"},
             )
         ]
@@ -440,7 +440,7 @@ class TestCustomTools:
         # Mock platform tools returning some schemas
         mock_tools.get_anthropic_tool_schemas = MagicMock(
             return_value=[
-                {"name": "thenvoi_send_message", "description": "Send a message"}
+                {"name": "band_send_message", "description": "Send a message"}
             ]
         )
 
@@ -470,7 +470,7 @@ class TestCustomTools:
         # Should have both platform and custom tool
         assert len(captured_tools) == 2
         tool_names = [t["name"] for t in captured_tools]
-        assert "thenvoi_send_message" in tool_names
+        assert "band_send_message" in tool_names
         assert "echo" in tool_names
 
     @pytest.mark.asyncio
@@ -516,7 +516,7 @@ class TestCustomTools:
             ToolUseBlock(
                 type="tool_use",
                 id="tool-1",
-                name="thenvoi_send_message",
+                name="band_send_message",
                 input={"content": "Hello", "mentions": ["User"]},
             )
         ]
@@ -527,7 +527,7 @@ class TestCustomTools:
 
         # Should have called platform execute_tool_call
         mock_tools.execute_tool_call.assert_called_once_with(
-            "thenvoi_send_message", {"content": "Hello", "mentions": ["User"]}
+            "band_send_message", {"content": "Hello", "mentions": ["User"]}
         )
 
         assert len(results) == 1

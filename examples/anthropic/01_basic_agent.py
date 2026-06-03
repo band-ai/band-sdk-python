@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[anthropic]"]
+# dependencies = ["band-sdk[anthropic]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Basic Anthropic SDK agent example.
 
-This is the simplest way to create a Thenvoi agent using the Anthropic Python SDK.
+This is the simplest way to create a Band agent using the Anthropic Python SDK.
 The adapter handles conversation history, tool calling, and platform integration.
 
 Run with:
@@ -24,8 +24,8 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import AnthropicAdapter
+from band import Agent
+from band.adapters import AnthropicAdapter
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -34,13 +34,13 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
     # Create adapter with framework-specific settings
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",

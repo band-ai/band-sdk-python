@@ -1,6 +1,6 @@
 """Unit tests for ParticipantTracker."""
 
-from thenvoi.runtime.participant_tracker import ParticipantTracker
+from band.runtime.participant_tracker import ParticipantTracker
 
 
 class TestParticipantTracker:

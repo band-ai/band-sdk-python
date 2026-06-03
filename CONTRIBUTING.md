@@ -1,6 +1,6 @@
-# Contributing to Thenvoi Python SDK
+# Contributing to Band Python SDK
 
-Thank you for your interest in contributing to the Thenvoi Python SDK! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to the Band Python SDK! This document provides guidelines and instructions for contributing.
 
 ## Development Setup
 
@@ -14,8 +14,8 @@ Thank you for your interest in contributing to the Thenvoi Python SDK! This docu
 1. **Fork and clone the repository**
 
    ```bash
-   git clone https://github.com/<your-username>/thenvoi-sdk-python.git
-   cd thenvoi-sdk-python
+   git clone https://github.com/<your-username>/band-sdk-python.git
+   cd band-sdk-python
    ```
 
 2. **Add the upstream remote**
@@ -76,7 +76,7 @@ Thank you for your interest in contributing to the Thenvoi Python SDK! This docu
    uv run pytest tests/ --ignore=tests/integration/ -v
 
    # Run with coverage
-   uv run pytest tests/ --ignore=tests/integration/ --cov=src/thenvoi
+   uv run pytest tests/ --ignore=tests/integration/ --cov=src/band
 
    # Run a specific test
    uv run pytest tests/ -k "test_name"
@@ -120,7 +120,7 @@ Thank you for your interest in contributing to the Thenvoi Python SDK! This docu
 
 - Always use type hints for function parameters and return types
 - Use `from __future__ import annotations` for forward references
-- Use absolute imports from `thenvoi`
+- Use absolute imports from `band`
 - Use Pydantic for data models and validation
 - Follow existing patterns in the codebase
 
@@ -143,7 +143,7 @@ Use Google-style docstrings for public functions and classes:
 
 ```python
 def connect_agent(agent_id: str, api_key: str) -> Agent:
-    """Connect an agent to the Thenvoi platform.
+    """Connect an agent to the Band platform.
 
     Args:
         agent_id: The unique identifier for the agent.
@@ -173,7 +173,7 @@ def get_items() -> dict[str, list[int]]:
 
 ## Running Integration Tests
 
-Integration tests require a valid Thenvoi API key:
+Integration tests require a valid Band API key:
 
 ```bash
 # Set up your API key in .env or agent_config.yaml

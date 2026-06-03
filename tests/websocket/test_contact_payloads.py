@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     ContactRequestReceivedPayload,
     ContactRequestUpdatedPayload,
     ContactAddedPayload,

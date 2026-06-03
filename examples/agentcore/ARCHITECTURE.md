@@ -1,4 +1,4 @@
-# AgentCore × Thenvoi — how it works
+# AgentCore × Band — how it works
 
 A conceptual overview of the integration. For a step-by-step deploy guide
 see [`README.md`](README.md); for writing your own agent see
@@ -6,7 +6,7 @@ see [`README.md`](README.md); for writing your own agent see
 
 ## The problem
 
-Thenvoi (Band) agents are event-driven: each agent holds a persistent
+Band agents are event-driven: each agent holds a persistent
 WebSocket subscription to the platform and reacts to messages as they
 arrive. The standard SDK flow (`Agent.create(...).run()`) assumes you can
 run a long-lived process that owns that WebSocket.
@@ -17,7 +17,7 @@ serves a single response and then goes idle. The runtime caps sessions at
 **15 minutes idle** and **8 hours maximum**, and the container has no
 mechanism to listen for inbound events between invocations.
 
-So we can't just `pip install thenvoi-sdk` inside an AgentCore container
+So we can't just `pip install band-sdk` inside an AgentCore container
 and call `Agent.create(...).run()` — the WS would die in 15 minutes and
 the runtime would shut it down. We need a different shape.
 
@@ -26,7 +26,7 @@ the runtime would shut it down. We need a different shape.
 Two cooperating pieces:
 
 ```
-   THENVOI PLATFORM (Phoenix WS + REST)
+   BAND PLATFORM (Phoenix WS + REST)
         ▲
         │ WS subscription per agent identity
         │ REST calls (read context, send messages)
@@ -35,15 +35,15 @@ Two cooperating pieces:
    │  BRIDGE             │  /invocations    │  AGENTCORE CONTAINER     │
    │  (long-running)     │ ──────────────▶ │  (one image, one ARN     │
    │                     │                  │   per agent identity)    │
-   │  - holds the WS     │                  │  - holds the Thenvoi     │
+   │  - holds the WS     │                  │  - holds the Band     │
    │  - forwards events  │                  │    SDK + Anthropic SDK   │
    │  - no Band logic    │                  │  - one LLM call per      │
    │                     │                  │    invocation            │
    └─────────────────────┘                  └──────────────────────────┘
 ```
 
-### Bridge (`thenvoi-bridge/`)
-- A small Python process that maintains one Thenvoi WS subscription **per
+### Bridge (`band-bridge/`)
+- A small Python process that maintains one Band WS subscription **per
   agent identity** (so a single bridge can host `@weather`, `@math`,
   `@personal_assistant`, etc. concurrently).
 - Receives platform events (mentions, room added/removed, participant
@@ -60,13 +60,13 @@ Two cooperating pieces:
   - `POST /invocations` — one event in, one response out.
 - The container is just transport + env-driven adapter construction. All the
   lifecycle logic lives in the SDK's `OneShotInvoker`
-  (`thenvoi.runtime.oneshot`), which the container wraps. On each invocation
+  (`band.runtime.oneshot`), which the container wraps. On each invocation
   it calls `await invoker.handle_event(forwarded_body)`, and `OneShotInvoker`:
   1. Reconstructs a typed `PlatformMessage` from the forwarded JSON.
-  2. Fetches participants and recent room history from Thenvoi REST.
+  2. Fetches participants and recent room history from Band REST.
   3. Builds `AgentInput` and calls `adapter.on_event(...)` (default
      adapter: `AnthropicAdapter`).
-  4. Adapter runs the LLM tool loop; tools call back to Thenvoi REST
+  4. Adapter runs the LLM tool loop; tools call back to Band REST
      (`send_message`, `add_participant`, `lookup_peers`, …).
   5. Returns a status dict; the container returns 200 to the bridge.
 - Because `OneShotInvoker` is in the SDK, any request/response host (Lambda,
@@ -80,12 +80,12 @@ The original prototype put mention parsing, lifecycle marking, and
 1. **Single source of truth.** The SDK already implements all of those
    things. Duplicating them in the bridge meant two implementations
    could drift.
-2. **Trust boundary.** Each container holds its own Thenvoi API key.
+2. **Trust boundary.** Each container holds its own Band API key.
    The bridge needs *only* WS subscription credentials, which can be
    scoped more tightly than full agent credentials.
 3. **Container freedom.** A team can build an AgentCore agent in any
    framework (LangGraph, CrewAI, pydantic-ai, etc.) as long as their
-   container speaks the Thenvoi SDK. The bridge stays out of that
+   container speaks the Band SDK. The bridge stays out of that
    decision.
 
 The bridge therefore only knows about Phoenix WS protocol and
@@ -98,17 +98,17 @@ difference between Tel Aviv and Warsaw, in percent?":
 
 ```
 1. User posts message in room R, mentioning @PA.
-2. Thenvoi WS → bridge (subscribed as PA) receives MessageEvent.
+2. Band WS → bridge (subscribed as PA) receives MessageEvent.
 3. Bridge POSTs the event to PA's AgentCore runtime ARN.
 4. AgentCore Runtime cold-starts a microVM (or reuses a warm one).
 5. PA's container:
    a. mark_processing(triggering_msg_id)
-   b. fetch participants + history via Thenvoi REST
+   b. fetch participants + history via Band REST
    c. AnthropicAdapter runs Claude with the AgentTools schemas
    d. Claude emits tool_use: lookup_peers → add_participant("weather")
       → add_participant("math") → send_message(@weather Tel Aviv?)
       → send_message(@weather Warsaw?)
-   e. Each send_message hits Thenvoi REST as a side effect
+   e. Each send_message hits Band REST as a side effect
    f. mark_processed(triggering_msg_id)
    g. drain: any other un-handled mentions get marked processed too
    h. Return 200 to bridge
@@ -206,7 +206,7 @@ sweep, deliberately out of scope for now.)
 | AgentCore session **8-hour max**, **15-min idle timeout** | Each Band room maps to one `runtimeSessionId`; very long-running orchestrations need to be designed for graceful restart. |
 | **Per-room** `runtimeSessionId` (derived from `room_id`) | Different rooms get different microVMs; concurrent rooms parallelize naturally. |
 | **Cold start** on first invocation per session | Adds ~1-2s to the first event in a new room. |
-| Container env vars are **plaintext** in the runtime config | For production, use AgentCore Identity / Secrets Manager rather than embedding `THENVOI_API_KEY` directly. |
+| Container env vars are **plaintext** in the runtime config | For production, use AgentCore Identity / Secrets Manager rather than embedding `BAND_API_KEY` directly. |
 | `mark_processed` requires prior `mark_processing` | The drain loop pairs them explicitly. |
 
 ## When NOT to use this pattern
@@ -229,10 +229,10 @@ right fit.
 
 These are not required for the demo to work, but worth knowing:
 
-- **AgentCore Gateway as Band tool broker**: register Thenvoi REST as
+- **AgentCore Gateway as Band tool broker**: register Band REST as
   Gateway targets so multiple agents share one tool surface.
 - **A2A protocol bridge**: alternate inbound path using AgentCore's
   native A2A support.
 
-See [INT-506](https://linear.app/thenvoi/issue/INT-506) for the design
+See [INT-506](https://linear.app/band/issue/INT-506) for the design
 discussion that produced this architecture.

@@ -1,6 +1,6 @@
 """Gateway client for calling A2A Gateway peers.
 
-This module provides a client wrapper for calling Thenvoi platform peers
+This module provides a client wrapper for calling Band platform peers
 via the A2A Gateway using the standard A2A protocol.
 """
 

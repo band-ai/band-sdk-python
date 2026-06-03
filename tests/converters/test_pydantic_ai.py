@@ -16,7 +16,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from thenvoi.converters.pydantic_ai import PydanticAIHistoryConverter
+from band.converters.pydantic_ai import PydanticAIHistoryConverter
 
 
 class TestToolEventConversion:

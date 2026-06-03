@@ -1,4 +1,4 @@
-"""Tests for thenvoi.runtime.oneshot.OneShotInvoker.
+"""Tests for band.runtime.oneshot.OneShotInvoker.
 
 OneShotInvoker is the request/response counterpart to Agent: one forwarded
 bridge event in, one adapter execution out, no per-room state across calls.
@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.runtime.oneshot import (
+from band.runtime.oneshot import (
     OneShotEnvelopeError,
     OneShotInvoker,
     _build_platform_message,
@@ -82,7 +82,7 @@ def _make_link_mock(
     agent_name: str = "TestBot",
     agent_description: str = "a test agent",
 ) -> MagicMock:
-    """Build a fake ThenvoiLink.
+    """Build a fake BandLink.
 
     ``next_messages`` controls successive ``get_next_message`` returns; once
     exhausted, all further calls return ``None``. The identity endpoint is
@@ -265,7 +265,7 @@ class TestStartup:
         assert invoker.agent_name == "Weather"
         assert invoker.agent_description == "forecasts"
         # Adapter primed with identity + metadata.
-        assert getattr(adapter, "_thenvoi_agent_id") == "agent-1"
+        assert getattr(adapter, "_band_agent_id") == "agent-1"
         adapter.on_started.assert_awaited_once_with("Weather", "forecasts")
 
     async def test_startup_is_idempotent(self) -> None:

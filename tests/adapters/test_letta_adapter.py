@@ -10,15 +10,15 @@ from uuid import uuid4
 
 import pytest
 
-from thenvoi.adapters.letta import (
+from band.adapters.letta import (
     LettaAdapter,
     LettaAdapterConfig,
     _LETTA_TOOL_ENFORCEMENT,
     _RoomContext,
 )
-from thenvoi.converters.letta import LettaSessionState
-from thenvoi.core.types import PlatformMessage
-from thenvoi.testing import FakeAgentTools
+from band.converters.letta import LettaSessionState
+from band.core.types import PlatformMessage
+from band.testing import FakeAgentTools
 
 
 def make_platform_message(
@@ -51,7 +51,7 @@ def _make_assistant_message(content: str = "Hello!") -> MagicMock:
 
 
 def _make_tool_call_message(
-    tool_name: str = "thenvoi_send_message",
+    tool_name: str = "band_send_message",
     arguments: str = '{"content": "Hi", "mentions": ["@alice"]}',
 ) -> MagicMock:
     tool_call = MagicMock()
@@ -61,7 +61,7 @@ def _make_tool_call_message(
 
 
 def _make_tool_return_message(
-    tool_name: str = "thenvoi_send_message",
+    tool_name: str = "band_send_message",
     tool_return: str = '{"status": "ok"}',
 ) -> MagicMock:
     return _make_letta_message(
@@ -140,7 +140,7 @@ class TestLettaAdapterInit:
         assert adapter.config.project is None
         assert adapter.config.mode == "per_room"
         assert adapter.config.mcp_server_url == "http://localhost:8002/sse"
-        assert adapter.config.mcp_server_name == "thenvoi"
+        assert adapter.config.mcp_server_name == "band"
 
     def test_custom_config(self) -> None:
         config = LettaAdapterConfig(
@@ -183,8 +183,8 @@ class TestLettaAdapterOnStarted:
         mock_server = _make_mock_mcp_server()
         mock_client.mcp_servers.create.return_value = mock_server
         mock_tools = [
-            _make_mock_mcp_tool("t1", "thenvoi_send_message"),
-            _make_mock_mcp_tool("t2", "thenvoi_send_event"),
+            _make_mock_mcp_tool("t1", "band_send_message"),
+            _make_mock_mcp_tool("t2", "band_send_event"),
         ]
         mock_client.mcp_servers.tools.list.return_value = mock_tools
 
@@ -198,7 +198,7 @@ class TestLettaAdapterOnStarted:
             base_url="https://api.letta.com",
         )
         mock_client.mcp_servers.create.assert_called_once_with(
-            server_name="thenvoi",
+            server_name="band",
             config={
                 "mcp_server_type": "sse",
                 "server_url": "http://localhost:8002/sse",
@@ -352,8 +352,8 @@ class TestLettaAdapterOnMessagePerRoom:
         adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = _make_letta_response(
-            _make_tool_call_message("thenvoi_send_message"),
-            _make_tool_return_message("thenvoi_send_message"),
+            _make_tool_call_message("band_send_message"),
+            _make_tool_return_message("band_send_message"),
             _make_assistant_message("Done!"),
         )
 
@@ -701,8 +701,8 @@ class TestExecutionReporting:
         adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = _make_letta_response(
-            _make_tool_call_message("thenvoi_lookup_peers", "{}"),
-            _make_tool_return_message("thenvoi_lookup_peers", '{"peers": []}'),
+            _make_tool_call_message("band_lookup_peers", "{}"),
+            _make_tool_return_message("band_lookup_peers", '{"peers": []}'),
             _make_assistant_message("Done"),
         )
 
@@ -740,8 +740,8 @@ class TestExecutionReporting:
         adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
 
         mock_client.agents.messages.create.return_value = _make_letta_response(
-            _make_tool_call_message("thenvoi_send_message"),
-            _make_tool_return_message("thenvoi_send_message"),
+            _make_tool_call_message("band_send_message"),
+            _make_tool_return_message("band_send_message"),
         )
 
         tools = FakeAgentTools()

@@ -1,6 +1,6 @@
-# Claude Agent SDK Examples for Thenvoi
+# Claude Agent SDK Examples for Band
 
-Examples of using the Claude Agent SDK with the Thenvoi platform using the composition-based pattern.
+Examples of using the Claude Agent SDK with the Band platform using the composition-based pattern.
 
 ## Prerequisites
 
@@ -37,8 +37,8 @@ uv sync --extra claude_sdk
 ### 3. Environment Variables
 
 ```bash
-export THENVOI_AGENT_ID="your-agent-id"
-export THENVOI_API_KEY="your-api-key"
+export BAND_AGENT_ID="your-agent-id"
+export BAND_API_KEY="your-api-key"
 export ANTHROPIC_API_KEY="your-anthropic-api-key"
 ```
 
@@ -47,8 +47,8 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key"
 ## Quick Start
 
 ```python
-from thenvoi import Agent
-from thenvoi.adapters import ClaudeSDKAdapter
+from band import Agent
+from band.adapters import ClaudeSDKAdapter
 
 adapter = ClaudeSDKAdapter(
     # Omit `model` to use the npm `claude` binary's default, or pass a
@@ -130,9 +130,9 @@ Tools are defined as MCP stubs in the SDK. The actual execution happens via `Age
 
 ```python
 # MCP tool name -> AgentTools method
-"mcp__thenvoi__thenvoi_send_message" -> tools.send_message()
-"mcp__thenvoi__thenvoi_send_event" -> tools.send_event()
-"mcp__thenvoi__thenvoi_add_participant" -> tools.add_participant()
+"mcp__band__band_send_message" -> tools.send_message()
+"mcp__band__band_send_event" -> tools.send_event()
+"mcp__band__band_add_participant" -> tools.add_participant()
 # etc.
 ```
 
@@ -149,8 +149,8 @@ You can run the examples using Docker without installing Node.js or Python depen
 cd examples/claude_sdk
 
 # Set environment variables (or use .env file)
-export THENVOI_AGENT_ID="your-agent-id"
-export THENVOI_API_KEY="your-api-key"
+export BAND_AGENT_ID="your-agent-id"
+export BAND_API_KEY="your-api-key"
 export ANTHROPIC_API_KEY="your-anthropic-api-key"
 
 # Run the basic agent
@@ -168,17 +168,17 @@ docker build -f examples/claude_sdk/Dockerfile -t claude-sdk-example .
 
 # Run the basic agent
 docker run --rm \
-  -e THENVOI_AGENT_ID="your-agent-id" \
-  -e THENVOI_API_KEY="your-api-key" \
+  -e BAND_AGENT_ID="your-agent-id" \
+  -e BAND_API_KEY="your-api-key" \
   -e ANTHROPIC_API_KEY="your-anthropic-api-key" \
-  -e THENVOI_REST_URL="${THENVOI_REST_URL:-}" \
-  -e THENVOI_WS_URL="${THENVOI_WS_URL:-}" \
+  -e BAND_REST_URL="${BAND_REST_URL:-}" \
+  -e BAND_WS_URL="${BAND_WS_URL:-}" \
   claude-sdk-example
 
 # Run extended thinking example
 docker run --rm \
-  -e THENVOI_AGENT_ID="your-agent-id" \
-  -e THENVOI_API_KEY="your-api-key" \
+  -e BAND_AGENT_ID="your-agent-id" \
+  -e BAND_API_KEY="your-api-key" \
   -e ANTHROPIC_API_KEY="your-anthropic-api-key" \
   claude-sdk-example \
   uv run --extra claude_sdk python examples/claude_sdk/02_extended_thinking.py
@@ -210,4 +210,4 @@ uv sync --extra claude_sdk
 Or use Docker (see [Docker Usage](#docker-usage) above).
 
 ### Session not found for room
-Ensure the agent is properly connected to the Thenvoi platform and has joined the room.
+Ensure the agent is properly connected to the Band platform and has joined the room.

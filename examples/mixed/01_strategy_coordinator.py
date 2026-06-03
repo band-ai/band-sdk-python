@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[crewai]"]
+# dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Mixed-example CrewAI coordinator.
@@ -27,9 +27,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import CrewAIAdapter
-from thenvoi.core.types import AdapterFeatures, Emit
+from band import Agent
+from band.adapters import CrewAIAdapter
+from band.core.types import AdapterFeatures, Emit
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
@@ -39,10 +39,8 @@ async def main() -> None:
     setup_logging()
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     adapter = CrewAIAdapter(
         model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
         role="Release Readiness Coordinator",
@@ -50,7 +48,7 @@ async def main() -> None:
             "Turn an engineering request into a release-readiness review with "
             "clear asks for contract checking, risk review, and final handoff"
         ),
-        backstory="""You run mixed integration drills where native Thenvoi agents
+        backstory="""You run mixed integration drills where native Band agents
         and bridged A2A services work in one shared room. You are good at
         turning a code or rollout request into a concrete engineering review.
         You focus on what changed, what can break, and what another developer

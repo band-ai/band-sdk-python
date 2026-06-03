@@ -1,4 +1,4 @@
-"""Conftest for bridge tests — adds thenvoi-bridge to sys.path and shared fixtures."""
+"""Conftest for bridge tests — adds band-bridge to sys.path and shared fixtures."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 _bridge_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "thenvoi-bridge")
+    os.path.join(os.path.dirname(__file__), "..", "..", "band-bridge")
 )
 if _bridge_dir not in sys.path:
     sys.path.insert(0, _bridge_dir)
 
-from bridge_core.bridge import ThenvoiBridge  # noqa: E402
+from bridge_core.bridge import BandBridge  # noqa: E402
 from bridge_core.config import (  # noqa: E402
     AgentConfig,
     AgentCoreTarget,
@@ -68,9 +68,9 @@ def make_agentcore_agent(
 
 
 def make_link_mock() -> MagicMock:
-    """Build a MagicMock ThenvoiLink with all async methods stubbed.
+    """Build a MagicMock BandLink with all async methods stubbed.
 
-    Used by tests that construct a ThenvoiBridge or AgentRunner without
+    Used by tests that construct a BandBridge or AgentRunner without
     a real WS connection.
     """
     link = MagicMock()
@@ -106,13 +106,13 @@ def fake_forwarder() -> FakeForwarder:
 @pytest.fixture
 def bridge_with_fakes(
     bridge_config: BridgeConfig, fake_forwarder: FakeForwarder
-) -> ThenvoiBridge:
-    """ThenvoiBridge wired with a FakeForwarder and a mock link per agent."""
+) -> BandBridge:
+    """BandBridge wired with a FakeForwarder and a mock link per agent."""
     forwarders: dict[str, Forwarder] = {
         a.agent_id: fake_forwarder for a in bridge_config.agents
     }
     links = {a.agent_id: make_link_mock() for a in bridge_config.agents}
-    return ThenvoiBridge(
+    return BandBridge(
         config=bridge_config,
         forwarders=forwarders,
         links=links,

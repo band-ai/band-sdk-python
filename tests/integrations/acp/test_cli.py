@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.integrations.acp.cli import main, parse_args
+from band.integrations.acp.cli import main, parse_args
 
 
 class TestParseArgs:
@@ -29,8 +29,8 @@ class TestParseArgs:
 
     def test_parse_args_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Should use default values for optional args."""
-        monkeypatch.delenv("THENVOI_REST_URL", raising=False)
-        monkeypatch.delenv("THENVOI_WS_URL", raising=False)
+        monkeypatch.delenv("BAND_REST_URL", raising=False)
+        monkeypatch.delenv("BAND_WS_URL", raising=False)
 
         args = parse_args(
             [
@@ -41,8 +41,8 @@ class TestParseArgs:
             ]
         )
 
-        assert args.rest_url == "https://app.thenvoi.com"
-        assert args.ws_url == "wss://app.thenvoi.com/api/v1/socket/websocket"
+        assert args.rest_url == "https://app.band.ai"
+        assert args.ws_url == "wss://app.band.ai/api/v1/socket/websocket"
         assert args.log_level == "INFO"
 
     def test_parse_args_custom_urls(self) -> None:
@@ -83,8 +83,8 @@ class TestParseArgs:
         with patch.dict(
             os.environ,
             {
-                "THENVOI_AGENT_ID": "env-agent-id",
-                "THENVOI_API_KEY": "env-api-key",
+                "BAND_AGENT_ID": "env-agent-id",
+                "BAND_API_KEY": "env-api-key",
             },
         ):
             args = parse_args([])
@@ -97,7 +97,7 @@ class TestParseArgs:
         with patch.dict(
             os.environ,
             {
-                "THENVOI_AGENT_ID": "env-agent-id",
+                "BAND_AGENT_ID": "env-agent-id",
             },
         ):
             args = parse_args(["--agent-id", "cli-agent-id", "--api-key", "k"])
@@ -136,13 +136,13 @@ class TestMain:
         mock_agent.__aenter__ = AsyncMock(return_value=mock_agent)
         mock_agent.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("thenvoi.Agent.create", return_value=mock_agent):
+        with patch("band.Agent.create", return_value=mock_agent):
             with patch(
-                "thenvoi.integrations.acp.server_adapter.ThenvoiACPServerAdapter",
+                "band.integrations.acp.server_adapter.BandACPServerAdapter",
                 return_value=mock_adapter,
             ):
-                with patch("thenvoi.integrations.acp.push_handler.ACPPushHandler"):
-                    with patch("thenvoi.integrations.acp.server.ACPServer"):
+                with patch("band.integrations.acp.push_handler.ACPPushHandler"):
+                    with patch("band.integrations.acp.server.ACPServer"):
                         with patch("acp.run_agent", new=AsyncMock(return_value=None)):
                             await main(args)
 

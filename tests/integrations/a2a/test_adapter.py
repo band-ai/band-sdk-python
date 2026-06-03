@@ -19,10 +19,10 @@ from a2a.types import (
     TextPart,
 )
 
-from thenvoi.converters.a2a import A2AHistoryConverter
-from thenvoi.core.types import PlatformMessage
-from thenvoi.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
-from thenvoi.testing import FakeAgentTools
+from band.converters.a2a import A2AHistoryConverter
+from band.core.types import PlatformMessage
+from band.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
+from band.testing import FakeAgentTools
 
 
 def make_platform_message(content: str, room_id: str = "room-123") -> PlatformMessage:
@@ -151,7 +151,7 @@ class TestA2AAdapterOnStarted:
         """Should connect to remote A2A agent."""
         adapter = A2AAdapter(remote_url="http://localhost:10000")
 
-        with patch("thenvoi.integrations.a2a.adapter.ClientFactory") as mock_factory:
+        with patch("band.integrations.a2a.adapter.ClientFactory") as mock_factory:
             mock_client = MagicMock()
             mock_factory.connect = AsyncMock(return_value=mock_client)
 
@@ -170,7 +170,7 @@ class TestA2AAdapterOnStarted:
         )
         adapter = A2AAdapter(remote_url="http://localhost:10000", auth=auth)
 
-        with patch("thenvoi.integrations.a2a.adapter.ClientFactory") as mock_factory:
+        with patch("band.integrations.a2a.adapter.ClientFactory") as mock_factory:
             mock_factory.connect = AsyncMock(return_value=MagicMock())
 
             await adapter.on_started("Test Agent", "A test agent")
@@ -209,7 +209,7 @@ class TestA2AAdapterOnStarted:
         """Should store agent name and description."""
         adapter = A2AAdapter(remote_url="http://localhost:10000")
 
-        with patch("thenvoi.integrations.a2a.adapter.ClientFactory") as mock_factory:
+        with patch("band.integrations.a2a.adapter.ClientFactory") as mock_factory:
             mock_factory.connect = AsyncMock(return_value=MagicMock())
 
             await adapter.on_started("Test Agent", "A test agent")
@@ -507,7 +507,7 @@ class TestA2AAdapterMessageConversion:
     """Tests for message conversion."""
 
     def test_to_a2a_message_basic(self):
-        """Should convert Thenvoi message to A2A format."""
+        """Should convert Band message to A2A format."""
         adapter = A2AAdapter(remote_url="http://localhost:10000")
         msg = make_platform_message("Hello world")
 

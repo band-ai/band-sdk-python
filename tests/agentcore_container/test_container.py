@@ -3,7 +3,7 @@
 The container is now a thin transport over the SDK's OneShotInvoker: env-driven
 adapter construction, a lifespan that builds the invoker, and the two AgentCore
 Runtime routes (/ping, /invocations). The lifecycle logic lives in
-thenvoi.runtime.oneshot and is tested in tests/runtime/test_oneshot.py.
+band.runtime.oneshot and is tested in tests/runtime/test_oneshot.py.
 
 These tests cover only the container's own surface: env parsing and the HTTP
 routes (including error mapping). The container is in examples/, so we load it
@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
-from thenvoi.runtime.oneshot import OneShotEnvelopeError
+from band.runtime.oneshot import OneShotEnvelopeError
 
 _CONTAINER_PATH = (
     Path(__file__).resolve().parents[2]
@@ -40,8 +40,8 @@ def _load_container_module():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     # Provide env vars so the module imports cleanly (lifespan is lazy, not eager)
-    os.environ.setdefault("THENVOI_AGENT_ID", "test-agent")
-    os.environ.setdefault("THENVOI_API_KEY", "test-key")
+    os.environ.setdefault("BAND_AGENT_ID", "test-agent")
+    os.environ.setdefault("BAND_API_KEY", "test-key")
     os.environ.setdefault("ANTHROPIC_API_KEY", "test-anthropic")
     spec.loader.exec_module(module)
     sys.modules["agentcore_llm_server"] = module

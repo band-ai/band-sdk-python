@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[crewai]"]
+# dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """CrewAI Flow custom tools example.
 
@@ -29,10 +29,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from setup_logging import setup_logging  # noqa: E402
 
-from thenvoi import Agent  # noqa: E402
-from thenvoi.adapters import CrewAIFlowAdapter  # noqa: E402
-from thenvoi.adapters.crewai_flow import get_current_flow_runtime  # noqa: E402
-from thenvoi.core.types import AdapterFeatures, Emit  # noqa: E402
+from band import Agent  # noqa: E402
+from band.adapters import CrewAIFlowAdapter  # noqa: E402
+from band.adapters.crewai_flow import get_current_flow_runtime  # noqa: E402
+from band.core.types import AdapterFeatures, Emit  # noqa: E402
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -92,12 +92,12 @@ def flow_factory() -> InboxAwareFlow:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
     adapter = CrewAIFlowAdapter(
         flow_factory=flow_factory,
         additional_tools=[(EmailsInput, emails)],

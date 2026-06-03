@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.agent import Agent
-from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.runtime.platform_runtime import PlatformRuntime
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.agent import Agent
+from band.core.simple_adapter import SimpleAdapter
+from band.runtime.platform_runtime import PlatformRuntime
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 
 @pytest.fixture
@@ -406,7 +406,7 @@ class TestStartupOrder:
         runtime._agent_description = "Test"
 
         # Patch AgentRuntime to track when it starts
-        with patch("thenvoi.runtime.platform_runtime.AgentRuntime") as MockAgentRuntime:
+        with patch("band.runtime.platform_runtime.AgentRuntime") as MockAgentRuntime:
             mock_runtime_instance = MagicMock()
 
             async def track_start():
@@ -476,7 +476,7 @@ class TestStartupOrder:
         runtime._agent_description = "Test"
 
         # Patch AgentRuntime - its start() method connects WebSocket
-        with patch("thenvoi.runtime.platform_runtime.AgentRuntime") as MockAgentRuntime:
+        with patch("band.runtime.platform_runtime.AgentRuntime") as MockAgentRuntime:
             mock_runtime_instance = MagicMock()
 
             async def simulate_ws_connect():

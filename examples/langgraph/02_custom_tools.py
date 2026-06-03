@@ -1,12 +1,12 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
-Example showing how to add custom tools to a Thenvoi agent.
+Example showing how to add custom tools to a Band agent.
 
 The composition architecture makes it trivial to add your own tools alongside
 the platform tools.
@@ -27,8 +27,8 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
+from band import Agent
+from band.adapters import LangGraphAdapter
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -78,26 +78,26 @@ def get_weather(city: str) -> str:
 
 async def main() -> None:
     load_dotenv()
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
     # Create adapter with custom tools
     adapter = LangGraphAdapter(
         llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
         additional_tools=[calculate, get_weather],  # Add your tools here
         custom_section="""You are a helpful assistant with access to:
-        - Platform tools (thenvoi_send_message, thenvoi_add_participant, etc.)
+        - Platform tools (band_send_message, band_add_participant, etc.)
         - Calculator tool for math
         - Weather tool for weather info
 
         When users ask math questions, use the calculator.
         When users ask about weather, use get_weather.
-        Always send your response using thenvoi_send_message.""",
+        Always send your response using band_send_message.""",
     )
 
     # Create and start agent

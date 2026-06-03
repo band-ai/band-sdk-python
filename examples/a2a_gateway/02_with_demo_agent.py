@@ -1,19 +1,19 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[a2a_gateway_demo]"]
+# dependencies = ["band-sdk[a2a_gateway_demo]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Run A2A Gateway with Demo Orchestrator Agent.
 
 This example demonstrates end-to-end agent-to-agent communication:
-1. A2A Gateway connects to Thenvoi platform and exposes peers as A2A endpoints
+1. A2A Gateway connects to Band platform and exposes peers as A2A endpoints
 2. Demo Orchestrator Agent receives user requests and routes them to peers via A2A
 
 Architecture:
-    User → Demo Orchestrator (port 10001) → A2A Gateway (port 10000) → Thenvoi → Peer
+    User → Demo Orchestrator (port 10001) → A2A Gateway (port 10000) → Band → Peer
                                           ↑                                        ↓
                                           ←←←←←←←←←←← SSE Response ←←←←←←←←←←←←←←←
 
@@ -21,18 +21,18 @@ Run with:
     uv run examples/a2a_gateway/02_with_demo_agent.py
 
 This will start:
-- A2A Gateway on port 10000 (connects to Thenvoi, exposes peers)
+- A2A Gateway on port 10000 (connects to Band, exposes peers)
 - Demo Orchestrator on port 10001 (calls gateway peers via A2A protocol)
 
 Prerequisites:
     1. Configure gateway credentials:
        - preferred: gateway_agent in agent_config.yaml
-       - fallback: THENVOI_API_KEY and optional THENVOI_AGENT_ID
-       - THENVOI_WS_URL: WebSocket URL (default: wss://app.thenvoi.com/api/v1/socket/websocket)
-       - THENVOI_REST_URL: REST API URL (default: https://app.thenvoi.com)
+       - fallback: BAND_API_KEY and optional BAND_AGENT_ID
+       - BAND_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+       - BAND_REST_URL: REST API URL (default: https://app.band.ai)
        - OPENAI_API_KEY: OpenAI API key for the orchestrator
 
-    2. Have peers configured on the Thenvoi platform
+    2. Have peers configured on the Band platform
 
 Test the demo:
     # Check orchestrator agent card
@@ -80,9 +80,9 @@ from dotenv import load_dotenv
 from demo_orchestrator.agent import OrchestratorAgent
 from demo_orchestrator.agent_executor import OrchestratorAgentExecutor
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import A2AGatewayAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import A2AGatewayAdapter
+from band.config import load_agent_config
 
 setup_logging()
 load_dotenv()
@@ -101,12 +101,12 @@ def _load_gateway_credentials() -> tuple[str, str]:
     try:
         return load_agent_config("gateway_agent")
     except Exception as exc:
-        api_key = os.getenv("THENVOI_API_KEY")
+        api_key = os.getenv("BAND_API_KEY")
         if api_key:
-            return os.getenv("THENVOI_AGENT_ID", "a2a-gateway"), api_key
+            return os.getenv("BAND_AGENT_ID", "a2a-gateway"), api_key
         raise ValueError(
             "Configure 'gateway_agent' in agent_config.yaml, or set "
-            "THENVOI_API_KEY and THENVOI_AGENT_ID environment variables"
+            "BAND_API_KEY and BAND_AGENT_ID environment variables"
         ) from exc
 
 
@@ -121,11 +121,9 @@ def _require_openai_api_key() -> str:
 
 
 async def run_gateway() -> None:
-    """Run the A2A Gateway that exposes Thenvoi peers."""
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    """Run the A2A Gateway that exposes Band peers."""
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     agent_id, api_key = _load_gateway_credentials()
 
     gateway_url = f"http://{GATEWAY_HOST}:{GATEWAY_PORT}"
@@ -169,14 +167,14 @@ def run_orchestrator() -> None:
     skill = AgentSkill(
         id="orchestrate_peers",
         name="Peer Orchestration",
-        description="Routes requests to Thenvoi platform peers via A2A Gateway",
+        description="Routes requests to Band platform peers via A2A Gateway",
         tags=["orchestration", "routing"],
         examples=["Ask the weather peer about NYC conditions"],
     )
 
     agent_card = AgentCard(
         name="Demo Orchestrator",
-        description="Routes user requests to Thenvoi platform peers via A2A Gateway",
+        description="Routes user requests to Band platform peers via A2A Gateway",
         url=f"http://{ORCHESTRATOR_HOST}:{ORCHESTRATOR_PORT}/",
         version="1.0.0",
         default_input_modes=OrchestratorAgent.SUPPORTED_CONTENT_TYPES,
@@ -217,7 +215,7 @@ async def main() -> None:
     logger.info("=" * 60)
     logger.info("")
     logger.info("This example runs:")
-    logger.info("  1. A2A Gateway on port %s (exposes Thenvoi peers)", GATEWAY_PORT)
+    logger.info("  1. A2A Gateway on port %s (exposes Band peers)", GATEWAY_PORT)
     logger.info(
         "  2. Demo Orchestrator on port %s (calls gateway peers)", ORCHESTRATOR_PORT
     )

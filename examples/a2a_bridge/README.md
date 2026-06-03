@@ -1,26 +1,26 @@
 # A2A Bridge Examples
 
-Examples showing how to connect a remote A2A agent to Thenvoi through the A2A bridge adapter.
+Examples showing how to connect a remote A2A agent to Band through the A2A bridge adapter.
 
 ## Why the bridge exists
 
-Thenvoi rooms speak Thenvoi's platform API and WebSocket event model. Remote A2A agents speak A2A.
+Band rooms speak Band's platform API and WebSocket event model. Remote A2A agents speak A2A.
 
-The bridge lets a remote A2A agent behave like a normal Thenvoi room participant:
+The bridge lets a remote A2A agent behave like a normal Band room participant:
 
-- the bridge connects to Thenvoi as a platform agent
+- the bridge connects to Band as a platform agent
 - it receives room messages and room lifecycle events
 - it forwards user messages to a remote A2A agent
 - it posts the A2A agent's replies back into the room
 - it persists `context_id`, `task_id`, and task state so a conversation can resume after reconnect
 
-Without the bridge, a remote A2A agent is not automatically a bidirectional Thenvoi room participant.
+Without the bridge, a remote A2A agent is not automatically a bidirectional Band room participant.
 
 ## What these examples cover
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | **Basic bridge** - Connect a remote A2A agent to Thenvoi with no A2A auth. |
+| `01_basic_agent.py` | **Basic bridge** - Connect a remote A2A agent to Band with no A2A auth. |
 | `02_with_auth.py` | **Authenticated bridge** - Same bridge flow, but with API key, bearer token, or custom auth headers for the remote A2A agent. |
 
 ## What was validated during `INT-245`
@@ -31,16 +31,16 @@ Without the bridge, a remote A2A agent is not automatically a bidirectional Then
 - the auth path is fixed in the adapter so auth is applied during:
   - remote agent-card discovery
   - outbound A2A RPC calls
-- `02_with_auth.py` now passes end to end against a local auth-protected A2A server, with a real Thenvoi room message forwarded through the bridge and echoed back
+- `02_with_auth.py` now passes end to end against a local auth-protected A2A server, with a real Band room message forwarded through the bridge and echoed back
 - the README command shape was re-run from a clean checkout after switching the examples to the local repo source
 
 ## Prerequisites
 
-### Thenvoi setup
+### Band setup
 
 You need:
 
-- `.env` with `THENVOI_WS_URL` and `THENVOI_REST_URL`
+- `.env` with `BAND_WS_URL` and `BAND_REST_URL`
 - `agent_config.yaml` with credentials for `a2a_agent`
 
 The config name must be exactly `a2a_agent`.
@@ -81,7 +81,7 @@ From the repo root:
 uv sync --extra a2a
 ```
 
-When you run these examples from this repository, `uv run` uses the local checkout of `thenvoi-sdk`.
+When you run these examples from this repository, `uv run` uses the local checkout of `band-sdk`.
 
 ## Running the examples
 
@@ -131,7 +131,7 @@ uv run examples/a2a_bridge/02_with_auth.py
 
 Once the bridge is running:
 
-1. Create a Thenvoi room
+1. Create a Band room
 2. Add the bridge agent to the room
 3. Send a message in the room
 4. Confirm the remote A2A agent replies in the same room
@@ -140,11 +140,11 @@ What success looks like:
 
 - the bridge process stays connected
 - the remote A2A agent receives the forwarded message
-- the reply appears back in the Thenvoi room
+- the reply appears back in the Band room
 
 ## Session persistence test
 
-The bridge persists A2A session state by writing task metadata into Thenvoi history.
+The bridge persists A2A session state by writing task metadata into Band history.
 
 To test that:
 
@@ -177,7 +177,7 @@ Check:
 
 - `A2A_AGENT_URL` is correct
 - the remote agent is actually running
-- the bridge agent was added to the Thenvoi room
+- the bridge agent was added to the Band room
 
 ### `401 Unauthorized`
 
@@ -199,8 +199,8 @@ Run it from the repo root with the checked-in script metadata intact:
 uv run examples/a2a_bridge/01_basic_agent.py
 ```
 
-That command now uses the local checkout of `thenvoi-sdk`.
+That command now uses the local checkout of `band-sdk`.
 
 ### The conversation restarts after reconnect
 
-Make sure you restarted the same bridge agent and sent the follow-up message in the same Thenvoi room.
+Make sure you restarted the same bridge agent and sent the follow-up message in the same Band room.

@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[acp]"]
+# dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 ACP Server with routing - Target specific peers via slash commands or modes.
 
-This example demonstrates how to route editor prompts to specific Thenvoi
+This example demonstrates how to route editor prompts to specific Band
 peers using the AgentRouter. Users can:
 
   1. Use slash commands: "/codex fix this bug" -> routes to "codex" peer
@@ -19,16 +19,16 @@ Architecture:
     Editor prompt "/codex fix bug"
       -> ACPServer.prompt()
         -> AgentRouter.resolve() -> ("fix bug", "codex")
-          -> ThenvoiACPServerAdapter.handle_prompt(mention=["codex"])
-            -> Thenvoi Platform (only @codex is mentioned)
+          -> BandACPServerAdapter.handle_prompt(mention=["codex"])
+            -> Band Platform (only @codex is mentioned)
 
 Prerequisites:
     1. Set environment variables:
-       - THENVOI_API_KEY: Your Thenvoi API key
-       - THENVOI_WS_URL: WebSocket URL (default: wss://app.thenvoi.com/api/v1/socket/websocket)
-       - THENVOI_REST_URL: REST API URL (default: https://app.thenvoi.com)
+       - BAND_API_KEY: Your Band API key
+       - BAND_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+       - BAND_REST_URL: REST API URL (default: https://app.band.ai)
 
-    2. Have peers configured on the Thenvoi platform
+    2. Have peers configured on the Band platform
 
 Run with:
     uv run examples/acp/03_acp_server_with_routing.py
@@ -47,10 +47,10 @@ from acp import run_agent
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ACPServer, ThenvoiACPServerAdapter
-from thenvoi.config import load_agent_config
-from thenvoi.integrations.acp import AgentRouter
+from band import Agent
+from band.adapters import ACPServer, BandACPServerAdapter
+from band.config import load_agent_config
+from band.integrations.acp import AgentRouter
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -59,24 +59,22 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     # ACP server examples check env vars first because editors (Zed, Cursor)
     # typically inject credentials via environment when spawning the subprocess.
-    api_key = os.getenv("THENVOI_API_KEY")
+    api_key = os.getenv("BAND_API_KEY")
 
     if not api_key:
         try:
             agent_id, api_key = load_agent_config("acp_server_agent")
         except Exception:
             raise ValueError(
-                "THENVOI_API_KEY environment variable is required, "
+                "BAND_API_KEY environment variable is required, "
                 "or configure 'acp_server_agent' in agent_config.yaml"
             )
     else:
-        agent_id = os.getenv("THENVOI_AGENT_ID", "acp-server")
+        agent_id = os.getenv("BAND_AGENT_ID", "acp-server")
 
     # Configure routing: slash commands and mode-based routing
     router = AgentRouter(
@@ -92,7 +90,7 @@ async def main() -> None:
     )
 
     # Create ACP server adapter with routing
-    adapter = ThenvoiACPServerAdapter(
+    adapter = BandACPServerAdapter(
         rest_url=rest_url,
         api_key=api_key,
     )
@@ -101,7 +99,7 @@ async def main() -> None:
     # Create ACP protocol handler
     server = ACPServer(adapter)
 
-    # Create Thenvoi agent (manages WebSocket connection)
+    # Create Band agent (manages WebSocket connection)
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,

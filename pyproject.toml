@@ -3,14 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "thenvoi-sdk"
+name = "band-sdk"
 version = "0.2.9"
-description = "A Python SDK for Thenvoi API"
+description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
-authors = [{ name = "thenvoi" }]
+authors = [{ name = "band.ai" }]
 license = { text = "MIT" }
-keywords = ["sdk", "thenvoi", "api", "agents"]
+keywords = ["sdk", "band", "api", "agents"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -22,7 +22,10 @@ classifiers = [
 ]
 
 dependencies = [
-    "thenvoi-client-rest==0.0.7",
+    "httpx>=0.21.2",
+    "pydantic>=1.9.2",
+    "pydantic-core>=2.18.2",
+    "typing-extensions>=4.0.0",
     "phoenix-channels-python-client>=0.2.1",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0",
@@ -125,7 +128,7 @@ google_adk = [
 # which conflicts with both parlant and pydantic-ai (see tool.uv.conflicts).
 # To run crewai tests, install with: uv sync --extra dev-crewai
 dev = [
-    "thenvoi-testing-python>=0.1.2",
+    "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.10.0",
@@ -179,7 +182,7 @@ dev = [
 # CrewAI-only dev extra for testing crewai adapter in isolation.
 # Cannot be combined with dev/parlant/pydantic-ai due to pydantic + opentelemetry conflicts.
 dev-crewai = [
-    "thenvoi-testing-python>=0.1.2",
+    "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-mock>=3.10.0",
@@ -198,12 +201,12 @@ dev-crewai = [
 ]
 
 [project.scripts]
-thenvoi-acp = "thenvoi.integrations.acp.cli:entry_point"
-thenvoi-trigger = "thenvoi.cli.trigger:main"
+band-acp = "band.integrations.acp.cli:entry_point"
+band-trigger = "band.cli.trigger:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["thenvoi", "thenvoi.*"]
+include = ["band", "band.*", "band_rest", "band_rest.*", "band_testing", "band_testing.*"]
 namespaces = false
 
 [tool.setuptools]
@@ -269,7 +272,8 @@ project_includes = [
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing
     "examples/**",              # Examples use local imports
-    "thenvoi-bridge/**",        # Standalone bridge app, not in src/ import root
+    "src/band_rest/**",         # Fern-generated REST client code
+    "band-bridge/**",        # Standalone bridge app, not in src/ import root
 ]
 # CrewAI is in a conflict group with parlant/pydantic-ai and not installed in
 # the default venv. Rather than excluding the files (which loses type coverage
@@ -287,7 +291,7 @@ name = "cz_conventional_commits"
 version = "0.1.2"
 version_files = [
     "pyproject.toml:version",
-    "src/thenvoi/__init__.py:__version__",
+    "src/band/__init__.py:__version__",
 ]
 # Tag format aligned with release-please (package-name-v$version)
-tag_format = "thenvoi-sdk-python-v$version"
+tag_format = "band-sdk-python-v$version"

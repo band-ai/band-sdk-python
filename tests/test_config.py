@@ -8,14 +8,14 @@ from YAML configuration files.
 from __future__ import annotations
 
 import pytest
-from thenvoi.config import load_agent_config
+from band.config import load_agent_config
 
 
 @pytest.fixture
 def config_file(tmp_path, monkeypatch):
     """Provide a writable config path wired into the loader."""
     path = tmp_path / "agent_config.yaml"
-    monkeypatch.setattr("thenvoi.config.loader.get_config_path", lambda: path)
+    monkeypatch.setattr("band.config.loader.get_config_path", lambda: path)
     return path
 
 
@@ -36,7 +36,7 @@ simple_agent:
 def test_missing_config_file(tmp_path, monkeypatch):
     """Should raise FileNotFoundError with helpful message when config missing."""
     non_existent = tmp_path / "does_not_exist.yaml"
-    monkeypatch.setattr("thenvoi.config.loader.get_config_path", lambda: non_existent)
+    monkeypatch.setattr("band.config.loader.get_config_path", lambda: non_existent)
 
     with pytest.raises(FileNotFoundError) as exc_info:
         load_agent_config("any_agent")

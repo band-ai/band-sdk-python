@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[acp]"]
+# dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 ACP Client with rich streaming - Thoughts, tool calls, and plans.
@@ -15,7 +15,7 @@ chunks from remote ACP agents. Beyond plain text, it captures:
   - Tool calls: Tool invocations with name, args, and results
   - Plans: Task plans with status tracking
 
-All rich events are posted back to the Thenvoi platform with full type
+All rich events are posted back to the Band platform with full type
 fidelity, so other participants can see exactly what the remote agent
 is doing.
 
@@ -23,7 +23,7 @@ Permission requests from the ACP agent are also posted to the platform
 as visible events (auto-allowed by default).
 
 Architecture:
-    Thenvoi Platform (message arrives in room)
+    Band Platform (message arrives in room)
       -> ACPClientAdapter.on_message()
         -> remote ACP prompt/session handling
           -> Remote ACP Agent (e.g., Claude Code)
@@ -31,12 +31,12 @@ Architecture:
             -> session_update: tool_call -> tools.send_event("tool_call")
             -> session_update: text -> tools.send_message()
             -> request_permission -> tools.send_event("tool_call", permission)
-        -> All events visible on Thenvoi platform
+        -> All events visible on Band platform
 
 Prerequisites:
     1. Set environment variables:
-       - THENVOI_WS_URL: WebSocket URL
-       - THENVOI_REST_URL: REST API URL
+       - BAND_WS_URL: WebSocket URL
+       - BAND_REST_URL: REST API URL
        - ACP_AGENT_COMMAND: Command to spawn
          (default: "npx @zed-industries/codex-acp")
 
@@ -59,9 +59,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ACPClientAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import ACPClientAdapter
+from band.config import load_agent_config
 
 setup_logging(logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -70,10 +70,8 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
 
     # Load agent credentials from agent_config.yaml
     agent_id, api_key = load_agent_config("acp_client_agent")

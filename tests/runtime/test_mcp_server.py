@@ -8,15 +8,15 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from pydantic import BaseModel
 
-from thenvoi.runtime.custom_tools import get_custom_tool_name
-from thenvoi.runtime.mcp_server import (
+from band.runtime.custom_tools import get_custom_tool_name
+from band.runtime.mcp_server import (
     LOCAL_MCP_HOST,
     MCPToolRegistration,
     LocalMCPServer,
-    build_thenvoi_mcp_tool_registrations,
-    build_resolved_thenvoi_mcp_tool_registrations,
+    build_band_mcp_tool_registrations,
+    build_resolved_band_mcp_tool_registrations,
 )
-from thenvoi.runtime.tools import AgentTools
+from band.runtime.tools import AgentTools
 
 
 class EchoInput(BaseModel):
@@ -29,24 +29,24 @@ async def echo_tool(input_data: EchoInput) -> dict[str, str]:
     return {"echo": input_data.message}
 
 
-class TestBuildThenvoiMcpToolRegistrations:
+class TestBuildBandMcpToolRegistrations:
     def test_includes_builtin_and_custom_tools(self) -> None:
         agent_tools = AgentTools("room-123", MagicMock(), [])
 
-        registrations = build_thenvoi_mcp_tool_registrations(
+        registrations = build_band_mcp_tool_registrations(
             agent_tools,
             additional_tools=[(EchoInput, echo_tool)],
         )
 
         tool_names = {registration.name for registration in registrations}
-        assert "thenvoi_send_message" in tool_names
+        assert "band_send_message" in tool_names
         assert get_custom_tool_name(EchoInput) in tool_names
 
     def test_rejects_duplicate_tool_names(self) -> None:
         agent_tools = AgentTools("room-123", MagicMock(), [])
 
         with pytest.raises(ValueError, match="Duplicate MCP tool names"):
-            build_thenvoi_mcp_tool_registrations(
+            build_band_mcp_tool_registrations(
                 agent_tools,
                 additional_tools=[
                     (EchoInput, echo_tool),
@@ -59,12 +59,12 @@ class TestBuildThenvoiMcpToolRegistrations:
         tools_by_room = {
             "room-123": AgentTools("room-123", MagicMock(), []),
         }
-        registrations = build_resolved_thenvoi_mcp_tool_registrations(
+        registrations = build_resolved_band_mcp_tool_registrations(
             get_tools=tools_by_room.get
         )
 
         registration = next(
-            item for item in registrations if item.name == "thenvoi_get_participants"
+            item for item in registrations if item.name == "band_get_participants"
         )
         schema = registration.to_mcp_tool().inputSchema
 
@@ -80,11 +80,11 @@ class TestBuildThenvoiMcpToolRegistrations:
         )
 
         room_tools = AgentTools("room-123", rest, [])
-        registrations = build_resolved_thenvoi_mcp_tool_registrations(
+        registrations = build_resolved_band_mcp_tool_registrations(
             get_tools={"room-123": room_tools}.get
         )
         registration = next(
-            item for item in registrations if item.name == "thenvoi_get_participants"
+            item for item in registrations if item.name == "band_get_participants"
         )
 
         await registration.execute({"room_id": "room-123"})

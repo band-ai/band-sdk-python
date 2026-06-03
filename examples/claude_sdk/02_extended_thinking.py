@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[claude_sdk]"]
+# dependencies = ["band-sdk[claude_sdk]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Extended Thinking Claude SDK Agent Example.
@@ -23,8 +23,8 @@ Prerequisites:
     2. Claude Code CLI: npm install -g @anthropic-ai/claude-code
     3. Add claude_sdk_agent credentials to agent_config.yaml
     4. Set environment variables in .env:
-       - THENVOI_WS_URL
-       - THENVOI_REST_URL
+       - BAND_WS_URL
+       - BAND_REST_URL
        - ANTHROPIC_API_KEY
 
 Run with:
@@ -44,9 +44,9 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ClaudeSDKAdapter
-from thenvoi.core.types import AdapterFeatures, Emit
+from band import Agent
+from band.adapters import ClaudeSDKAdapter
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -56,13 +56,13 @@ async def main() -> None:
     """Run the extended thinking Claude SDK agent."""
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     # Create adapter with extended thinking enabled.  `model="opus"` is a
     # family alias resolved by the npm `claude` binary at runtime — always

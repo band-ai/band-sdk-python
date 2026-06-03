@@ -9,8 +9,8 @@ from uuid import uuid4
 
 import pytest
 
-from thenvoi.core.types import PlatformMessage
-from thenvoi.integrations.acp.types import ACPSessionState
+from band.core.types import PlatformMessage
+from band.integrations.acp.types import ACPSessionState
 
 
 def make_platform_message(

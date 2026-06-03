@@ -1,1 +1,1 @@
-"""Tests for thenvoi-sdk"""
+"""Tests for band-sdk"""

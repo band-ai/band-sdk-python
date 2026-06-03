@@ -1,12 +1,12 @@
 """Unit tests for contact event types and pattern matching."""
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     ContactRequestReceivedPayload,
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
 )
-from thenvoi.platform.event import (
+from band.platform.event import (
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
     ContactAddedEvent,

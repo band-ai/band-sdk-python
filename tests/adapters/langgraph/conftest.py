@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.core.types import PlatformMessage
+from band.core.types import PlatformMessage
 
 
 @pytest.fixture

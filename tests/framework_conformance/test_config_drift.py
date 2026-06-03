@@ -18,7 +18,7 @@ from tests.framework_configs.converters import (
     CONVERTER_EXCLUDED_MODULES,
 )
 
-_SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "thenvoi"
+_SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "band"
 
 
 def _discover_modules(package_dir: Path) -> set[str]:
@@ -37,7 +37,7 @@ class TestAdapterConfigDrift:
     """Every adapter module must be registered or explicitly excluded."""
 
     def test_all_adapter_modules_are_covered(self):
-        """Each module in src/thenvoi/adapters/ has a config or is excluded."""
+        """Each module in src/band/adapters/ has a config or is excluded."""
         adapter_dir = _SRC_ROOT / "adapters"
         source_modules = _discover_modules(adapter_dir)
         registered_ids = {cfg.framework_id for cfg in ADAPTER_CONFIGS}
@@ -79,7 +79,7 @@ class TestConverterConfigDrift:
     """Every converter module must be registered or explicitly excluded."""
 
     def test_all_converter_modules_are_covered(self):
-        """Each module in src/thenvoi/converters/ has a config or is excluded."""
+        """Each module in src/band/converters/ has a config or is excluded."""
         converter_dir = _SRC_ROOT / "converters"
         source_modules = _discover_modules(converter_dir)
         registered_ids = {cfg.framework_id for cfg in CONVERTER_CONFIGS}

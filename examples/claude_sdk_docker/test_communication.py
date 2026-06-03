@@ -34,8 +34,8 @@ def load_agent_config(filename: str) -> dict:
 
 
 async def main() -> None:
-    from thenvoi_rest import AsyncRestClient
-    from thenvoi_rest.types import (
+    from band_rest import AsyncRestClient
+    from band_rest.types import (
         ChatMessageRequest,
         ChatMessageRequestMentionsItem,
         ChatRoomRequest,
@@ -46,7 +46,7 @@ async def main() -> None:
     planner = load_agent_config("planner.yaml")
     reviewer = load_agent_config("reviewer.yaml")
 
-    base_url = os.environ.get("THENVOI_REST_URL", "https://app.thenvoi.com")
+    base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
 
     # Use planner as the "orchestrator" to create the room
     client = AsyncRestClient(api_key=planner["api_key"], base_url=base_url)

@@ -23,13 +23,13 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-from thenvoi.adapters.crewai_flow import (  # noqa: E402
+from band.adapters.crewai_flow import (  # noqa: E402
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from thenvoi.core.types import PlatformMessage  # noqa: E402
-from thenvoi.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.core.types import PlatformMessage  # noqa: E402
+from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 
 NS_PREFIX = "crewai_flow:"
 

@@ -7,8 +7,8 @@ These tests verify ContactTools operations against a real API:
 - respond_contact_request (approve, reject)
 
 Setup:
-- Agent 1: Primary test agent (THENVOI_API_KEY)
-- Agent 2: Secondary test agent (THENVOI_API_KEY_2)
+- Agent 1: Primary test agent (BAND_API_KEY)
+- Agent 2: Secondary test agent (BAND_API_KEY_2)
 
 Run with: uv run pytest tests/integration/test_contact_tools.py -v -s
 """
@@ -16,7 +16,7 @@ Run with: uv run pytest tests/integration/test_contact_tools.py -v -s
 import asyncio
 import logging
 
-from thenvoi.runtime.contact_tools import ContactTools
+from band.runtime.contact_tools import ContactTools
 from tests.integration.conftest import requires_api, requires_multi_agent
 
 logger = logging.getLogger(__name__)

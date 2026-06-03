@@ -9,8 +9,8 @@ These tests verify the full contact flow with real WebSocket events:
 6. On removal, both receive contact_removed event
 
 Setup:
-- Agent 1: Primary test agent (THENVOI_API_KEY)
-- Agent 2: Secondary test agent (THENVOI_API_KEY_2)
+- Agent 1: Primary test agent (BAND_API_KEY)
+- Agent 2: Secondary test agent (BAND_API_KEY_2)
 
 Run with: uv run pytest tests/integration/test_contact_websocket.py -v -s
 """
@@ -20,7 +20,7 @@ import logging
 
 import pytest
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     WebSocketClient,
     ContactRequestReceivedPayload,
     ContactRequestUpdatedPayload,
@@ -174,8 +174,8 @@ class TestContactWebSocketEvents:
 
         # Agent 2 connects and subscribes to contacts channel
         ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key_2,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key_2,
             agent_id=agent2_id,
         )
 
@@ -277,8 +277,8 @@ class TestContactWebSocketEvents:
             pass
 
         ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key_2,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key_2,
             agent_id=agent2_id,
         )
 
@@ -401,8 +401,8 @@ class TestContactWebSocketEvents:
             pass
 
         ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key_2,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key_2,
             agent_id=agent2_id,
         )
 
@@ -496,8 +496,8 @@ class TestContactWebSocketEvents:
             pass
 
         ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key_2,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key_2,
             agent_id=agent2_id,
         )
 
@@ -567,8 +567,8 @@ class TestContactWebSocketSubscription:
             pass
 
         ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key,
             agent_id=agent_id,
         )
 
@@ -596,8 +596,8 @@ class TestContactWebSocketSubscription:
             pass
 
         ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key,
             agent_id=agent_id,
         )
 

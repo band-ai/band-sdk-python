@@ -5,10 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from thenvoi.platform.event import MessageEvent
-from thenvoi.client.streaming import MessageCreatedPayload, MessageMetadata
-from thenvoi.preprocessing.default import DefaultPreprocessor
-from thenvoi.runtime.execution import ExecutionContext
+from band.platform.event import MessageEvent
+from band.client.streaming import MessageCreatedPayload, MessageMetadata
+from band.preprocessing.default import DefaultPreprocessor
+from band.runtime.execution import ExecutionContext
 
 
 @pytest.fixture

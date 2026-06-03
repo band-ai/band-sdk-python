@@ -519,7 +519,7 @@ class ClaudeSDKOutputAdapter(OutputAdapter):
         self._inner = StringOutputAdapter()
 
     def assert_result_type(self, result: Any) -> None:
-        from thenvoi.converters.claude_sdk import ClaudeSDKSessionState
+        from band.converters.claude_sdk import ClaudeSDKSessionState
 
         assert isinstance(result, ClaudeSDKSessionState), (
             f"Expected ClaudeSDKSessionState, got {type(result).__name__}"

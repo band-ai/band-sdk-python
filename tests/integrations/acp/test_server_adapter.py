@@ -1,4 +1,4 @@
-"""Tests for ThenvoiACPServerAdapter."""
+"""Tests for BandACPServerAdapter."""
 
 from __future__ import annotations
 
@@ -7,16 +7,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.integrations.acp.router import AgentRouter
-from thenvoi.integrations.acp.server_adapter import ThenvoiACPServerAdapter
-from thenvoi.integrations.acp.types import ACPSessionState, PendingACPPrompt
-from thenvoi.testing import FakeAgentTools
+from band.integrations.acp.router import AgentRouter
+from band.integrations.acp.server_adapter import BandACPServerAdapter
+from band.integrations.acp.types import ACPSessionState, PendingACPPrompt
+from band.testing import FakeAgentTools
 
 from .conftest import make_platform_message, make_tool_call_message
 
 
 async def _wait_for_pending_prompt(
-    adapter: ThenvoiACPServerAdapter, room_id: str
+    adapter: BandACPServerAdapter, room_id: str
 ) -> PendingACPPrompt:
     """Wait until a pending prompt is registered for a room."""
     while True:
@@ -26,12 +26,12 @@ async def _wait_for_pending_prompt(
         await asyncio.sleep(0)
 
 
-class TestThenvoiACPServerAdapterInit:
-    """Tests for ThenvoiACPServerAdapter initialization."""
+class TestBandACPServerAdapterInit:
+    """Tests for BandACPServerAdapter initialization."""
 
     def test_init_default_values(self) -> None:
         """Should initialize with default values."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
 
         assert adapter._session_to_room == {}
         assert adapter._room_to_session == {}
@@ -40,7 +40,7 @@ class TestThenvoiACPServerAdapterInit:
 
     def test_init_creates_rest_client(self) -> None:
         """Should create AsyncRestClient."""
-        adapter = ThenvoiACPServerAdapter(
+        adapter = BandACPServerAdapter(
             rest_url="https://api.example.com",
             api_key="my-key",
         )
@@ -49,18 +49,18 @@ class TestThenvoiACPServerAdapterInit:
 
     def test_init_sets_history_converter(self) -> None:
         """Should set ACPServerHistoryConverter."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
 
         assert adapter.history_converter is not None
 
 
-class TestThenvoiACPServerAdapterOnStarted:
-    """Tests for ThenvoiACPServerAdapter.on_started()."""
+class TestBandACPServerAdapterOnStarted:
+    """Tests for BandACPServerAdapter.on_started()."""
 
     @pytest.mark.asyncio
     async def test_on_started_stores_agent_info(self) -> None:
         """Should store agent name and description."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
 
         await adapter.on_started("Test ACP Agent", "An ACP agent for testing")
 
@@ -68,15 +68,15 @@ class TestThenvoiACPServerAdapterOnStarted:
         assert adapter.agent_description == "An ACP agent for testing"
 
 
-class TestThenvoiACPServerAdapterCreateSession:
-    """Tests for ThenvoiACPServerAdapter.create_session()."""
+class TestBandACPServerAdapterCreateSession:
+    """Tests for BandACPServerAdapter.create_session()."""
 
     @pytest.mark.asyncio
     async def test_create_session_creates_room(
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should create room via REST and map session -> room."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
 
         session_id = await adapter.create_session()
@@ -93,7 +93,7 @@ class TestThenvoiACPServerAdapterCreateSession:
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should emit task event with session mapping."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
 
         session_id = await adapter.create_session()
@@ -114,7 +114,7 @@ class TestThenvoiACPServerAdapterCreateSession:
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should normalize editor MCP servers into session state and history."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
 
         mcp_servers = [
@@ -158,7 +158,7 @@ class TestThenvoiACPServerAdapterCreateSession:
             side_effect=create_room_side_effect
         )
 
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
 
         session_1 = await adapter.create_session()
@@ -169,15 +169,15 @@ class TestThenvoiACPServerAdapterCreateSession:
         assert adapter._session_to_room[session_2] == "room-2"
 
 
-class TestThenvoiACPServerAdapterHandlePrompt:
-    """Tests for ThenvoiACPServerAdapter.handle_prompt()."""
+class TestBandACPServerAdapterHandlePrompt:
+    """Tests for BandACPServerAdapter.handle_prompt()."""
 
     @pytest.mark.asyncio
     async def test_handle_prompt_sends_message(
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should send message to room with mentions."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
@@ -200,7 +200,7 @@ class TestThenvoiACPServerAdapterHandlePrompt:
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should register pending prompt before sending."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
@@ -219,21 +219,21 @@ class TestThenvoiACPServerAdapterHandlePrompt:
     @pytest.mark.asyncio
     async def test_handle_prompt_unknown_session_raises(self) -> None:
         """Should raise KeyError for unknown session_id."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
 
         with pytest.raises(KeyError):
             await adapter.handle_prompt("unknown-session", "Hello")
 
 
-class TestThenvoiACPServerAdapterOnMessage:
-    """Tests for ThenvoiACPServerAdapter.on_message()."""
+class TestBandACPServerAdapterOnMessage:
+    """Tests for BandACPServerAdapter.on_message()."""
 
     @pytest.mark.asyncio
     async def test_on_message_streams_to_acp_client(
         self, mock_acp_client: AsyncMock
     ) -> None:
         """Should stream response to ACP client via session_update."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         tools = FakeAgentTools()
         msg = make_platform_message("Hello from peer", room_id="room-123")
@@ -262,10 +262,10 @@ class TestThenvoiACPServerAdapterOnMessage:
     ) -> None:
         """Should set done_event on text message after the grace period."""
         monkeypatch.setattr(
-            "thenvoi.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS",
+            "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS",
             0.01,
         )
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         tools = FakeAgentTools()
         msg = make_platform_message("Done", room_id="room-123", message_type="text")
@@ -296,10 +296,10 @@ class TestThenvoiACPServerAdapterOnMessage:
     ) -> None:
         """Should debounce completion so split text replies are not truncated."""
         monkeypatch.setattr(
-            "thenvoi.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS",
+            "band.integrations.acp.server_adapter._PROMPT_COMPLETION_GRACE_SECONDS",
             0.02,
         )
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         tools = FakeAgentTools()
         first = make_platform_message("Part 1", room_id="room-123", message_type="text")
@@ -341,7 +341,7 @@ class TestThenvoiACPServerAdapterOnMessage:
         self, mock_acp_client: AsyncMock
     ) -> None:
         """Should not set done_event on thought message (non-terminal)."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         tools = FakeAgentTools()
         msg = make_platform_message(
@@ -369,7 +369,7 @@ class TestThenvoiACPServerAdapterOnMessage:
         self, mock_acp_client: AsyncMock
     ) -> None:
         """Should not set done_event on tool_call message."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         tools = FakeAgentTools()
         msg = make_tool_call_message(name="get_weather", tool_call_id="tc-1")
@@ -394,7 +394,7 @@ class TestThenvoiACPServerAdapterOnMessage:
         self, mock_acp_client: AsyncMock
     ) -> None:
         """Should not set done_event on tool_result message."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         tools = FakeAgentTools()
         msg = make_platform_message(
@@ -421,7 +421,7 @@ class TestThenvoiACPServerAdapterOnMessage:
         self, mock_acp_client: AsyncMock
     ) -> None:
         """Should use EventConverter for rich message type forwarding."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         tools = FakeAgentTools()
         msg = make_platform_message(
@@ -451,7 +451,7 @@ class TestThenvoiACPServerAdapterOnMessage:
         self, mock_acp_client: AsyncMock
     ) -> None:
         """Should forward tool_call as ToolCallStart via EventConverter."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         tools = FakeAgentTools()
         msg = make_tool_call_message(
@@ -481,7 +481,7 @@ class TestThenvoiACPServerAdapterOnMessage:
         self, mock_acp_client: AsyncMock
     ) -> None:
         """Should call push handler when no pending prompt exists."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._acp_client = mock_acp_client
         adapter._room_to_session["room-123"] = "session-1"
         tools = FakeAgentTools()
@@ -507,7 +507,7 @@ class TestThenvoiACPServerAdapterOnMessage:
     @pytest.mark.asyncio
     async def test_on_message_rehydrates_on_bootstrap(self) -> None:
         """Should rehydrate session state on bootstrap."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
@@ -537,7 +537,7 @@ class TestThenvoiACPServerAdapterOnMessage:
     @pytest.mark.asyncio
     async def test_on_message_no_pending_no_crash(self) -> None:
         """Should handle messages without pending prompt gracefully."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
@@ -553,13 +553,13 @@ class TestThenvoiACPServerAdapterOnMessage:
         )
 
 
-class TestThenvoiACPServerAdapterCleanup:
+class TestBandACPServerAdapterCleanup:
     """Tests for cleanup methods."""
 
     @pytest.mark.asyncio
     async def test_on_cleanup_removes_pending_prompts(self) -> None:
         """Should remove pending prompt for room."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._pending_prompts["room-123"] = PendingACPPrompt(session_id="session-1")
 
         await adapter.on_cleanup("room-123")
@@ -569,7 +569,7 @@ class TestThenvoiACPServerAdapterCleanup:
     @pytest.mark.asyncio
     async def test_on_cleanup_removes_session_mappings(self) -> None:
         """Should remove all session state for a room."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._session_to_room["session-1"] = "room-123"
         adapter._room_to_session["room-123"] = "session-1"
         adapter._session_modes["session-1"] = "code"
@@ -585,7 +585,7 @@ class TestThenvoiACPServerAdapterCleanup:
     @pytest.mark.asyncio
     async def test_on_cleanup_idempotent(self) -> None:
         """Should handle cleanup of non-existent room."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
 
         # Should not raise
         await adapter.on_cleanup("nonexistent-room")
@@ -593,7 +593,7 @@ class TestThenvoiACPServerAdapterCleanup:
     @pytest.mark.asyncio
     async def test_on_cleanup_twice(self) -> None:
         """Should handle cleanup called twice for same room."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._pending_prompts["room-123"] = PendingACPPrompt(session_id="session-1")
         adapter._session_to_room["session-1"] = "room-123"
         adapter._room_to_session["room-123"] = "session-1"
@@ -608,7 +608,7 @@ class TestThenvoiACPServerAdapterCleanup:
     @pytest.mark.asyncio
     async def test_on_cleanup_with_pending_prompts(self) -> None:
         """Should clean up even with active pending prompts."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         pending = PendingACPPrompt(session_id="session-1")
         adapter._pending_prompts["room-123"] = pending
 
@@ -618,13 +618,13 @@ class TestThenvoiACPServerAdapterCleanup:
         assert pending.done_event.is_set()
 
 
-class TestThenvoiACPServerAdapterCancelPrompt:
+class TestBandACPServerAdapterCancelPrompt:
     """Tests for cancel_prompt()."""
 
     @pytest.mark.asyncio
     async def test_cancel_prompt_sets_done_event(self) -> None:
         """Should set done_event to unblock handle_prompt."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._session_to_room["session-1"] = "room-123"
         pending = PendingACPPrompt(session_id="session-1")
         adapter._pending_prompts["room-123"] = pending
@@ -637,7 +637,7 @@ class TestThenvoiACPServerAdapterCancelPrompt:
     @pytest.mark.asyncio
     async def test_cancel_prompt_unknown_session(self) -> None:
         """Should handle unknown session_id gracefully."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
 
         # Should not raise
         await adapter.cancel_prompt("unknown-session")
@@ -645,19 +645,19 @@ class TestThenvoiACPServerAdapterCancelPrompt:
     @pytest.mark.asyncio
     async def test_cancel_prompt_no_pending(self) -> None:
         """Should handle cancel when no pending prompt exists."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._session_to_room["session-1"] = "room-123"
 
         # Should not raise
         await adapter.cancel_prompt("session-1")
 
 
-class TestThenvoiACPServerAdapterRehydration:
+class TestBandACPServerAdapterRehydration:
     """Tests for session rehydration."""
 
     def test_rehydrate_restores_session_mapping(self) -> None:
         """Should restore session -> room mappings."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
 
         history = ACPSessionState(
             session_to_room={"session-1": "room-1", "session-2": "room-2"},
@@ -694,7 +694,7 @@ class TestThenvoiACPServerAdapterRehydration:
 
     def test_rehydrate_does_not_overwrite_existing(self) -> None:
         """Should not overwrite existing session mappings."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._session_to_room["session-1"] = "current-room"
         adapter._room_to_session["current-room"] = "session-1"
 
@@ -708,7 +708,7 @@ class TestThenvoiACPServerAdapterRehydration:
 
     def test_rehydrate_merges_with_existing(self) -> None:
         """Should merge new mappings with existing ones."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._session_to_room["existing"] = "existing-room"
         adapter._room_to_session["existing-room"] = "existing"
 
@@ -722,7 +722,7 @@ class TestThenvoiACPServerAdapterRehydration:
         assert adapter._session_to_room["new-session"] == "new-room"
 
 
-class TestThenvoiACPServerAdapterRouting:
+class TestBandACPServerAdapterRouting:
     """Tests for router-based prompt routing."""
 
     @pytest.mark.asyncio
@@ -730,7 +730,7 @@ class TestThenvoiACPServerAdapterRouting:
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should mention only target peer when router resolves."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
@@ -775,7 +775,7 @@ class TestThenvoiACPServerAdapterRouting:
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should mention all peers when no router is set."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
@@ -797,7 +797,7 @@ class TestThenvoiACPServerAdapterRouting:
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should prepend editor cwd and MCP server info to forwarded prompts."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
         adapter._session_cwd["session-1"] = "/workspace/project"
@@ -830,12 +830,12 @@ class TestThenvoiACPServerAdapterRouting:
         assert "Check the repo" in message.content
 
 
-class TestThenvoiACPServerAdapterPublicAccessors:
+class TestBandACPServerAdapterPublicAccessors:
     """Tests for public accessor methods added for encapsulation."""
 
     def test_has_session(self) -> None:
         """Should return True for known sessions."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._session_to_room["session-1"] = "room-1"
 
         assert adapter.has_session("session-1") is True
@@ -843,7 +843,7 @@ class TestThenvoiACPServerAdapterPublicAccessors:
 
     def test_get_session_ids(self) -> None:
         """Should iterate over all session IDs."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._session_to_room["s1"] = "r1"
         adapter._session_to_room["s2"] = "r2"
 
@@ -851,20 +851,20 @@ class TestThenvoiACPServerAdapterPublicAccessors:
 
     def test_set_and_get_session_mode(self) -> None:
         """Should store session mode."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter.set_session_mode("session-1", "code")
 
         assert adapter._session_modes["session-1"] == "code"
 
     def test_set_session_model_logs(self) -> None:
         """Should store the selected model."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter.set_session_model("session-1", "gpt-4")
         assert adapter._session_models["session-1"] == "gpt-4"
 
     def test_get_session_for_room(self) -> None:
         """Should return session_id for known rooms, None otherwise."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._room_to_session["room-1"] = "session-1"
 
         assert adapter.get_session_for_room("room-1") == "session-1"
@@ -872,12 +872,12 @@ class TestThenvoiACPServerAdapterPublicAccessors:
 
     def test_get_acp_client_none_by_default(self) -> None:
         """Should return None when no client is connected."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         assert adapter.get_acp_client() is None
 
     def test_get_acp_client_after_set(self) -> None:
         """Should return the client after it's been set."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         mock_client = MagicMock()
         adapter.set_acp_client(mock_client)
 
@@ -886,7 +886,7 @@ class TestThenvoiACPServerAdapterPublicAccessors:
     @pytest.mark.asyncio
     async def test_verify_credentials_success(self) -> None:
         """Should return True when identity endpoint succeeds."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = MagicMock()
         adapter._rest.agent_api_identity.get_agent_me = AsyncMock()
 
@@ -895,7 +895,7 @@ class TestThenvoiACPServerAdapterPublicAccessors:
     @pytest.mark.asyncio
     async def test_verify_credentials_failure(self) -> None:
         """Should return False when identity endpoint fails."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = MagicMock()
         adapter._rest.agent_api_identity.get_agent_me = AsyncMock(
             side_effect=Exception("401 Unauthorized")
@@ -904,7 +904,7 @@ class TestThenvoiACPServerAdapterPublicAccessors:
         assert await adapter.verify_credentials() is False
 
 
-class TestThenvoiACPServerAdapterTimeout:
+class TestBandACPServerAdapterTimeout:
     """Tests for prompt timeout behavior."""
 
     @pytest.mark.asyncio
@@ -913,11 +913,11 @@ class TestThenvoiACPServerAdapterTimeout:
     ) -> None:
         """Should raise TimeoutError when peer never responds."""
         monkeypatch.setattr(
-            "thenvoi.integrations.acp.server_adapter._PROMPT_TIMEOUT_SECONDS",
+            "band.integrations.acp.server_adapter._PROMPT_TIMEOUT_SECONDS",
             0.05,
         )
 
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
 
@@ -930,13 +930,13 @@ class TestThenvoiACPServerAdapterTimeout:
     @pytest.mark.asyncio
     async def test_handle_prompt_unknown_session_descriptive_error(self) -> None:
         """Should raise KeyError with descriptive message."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
 
         with pytest.raises(KeyError, match="Unknown ACP session"):
             await adapter.handle_prompt("nonexistent", "Hello")
 
 
-class TestThenvoiACPServerAdapterCreateSessionRollback:
+class TestBandACPServerAdapterCreateSessionRollback:
     """Tests for create_session atomicity."""
 
     @pytest.mark.asyncio
@@ -944,7 +944,7 @@ class TestThenvoiACPServerAdapterCreateSessionRollback:
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should roll back mappings if emit_session_event fails."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         mock_rest_client.agent_api_events.create_agent_chat_event = AsyncMock(
             side_effect=Exception("Network error")
@@ -965,10 +965,10 @@ class TestThenvoiACPServerAdapterCreateSessionRollback:
     ) -> None:
         """Should reject new sessions once the configured limit is reached."""
         monkeypatch.setattr(
-            "thenvoi.integrations.acp.server_adapter._MAX_SESSIONS",
+            "band.integrations.acp.server_adapter._MAX_SESSIONS",
             1,
         )
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["existing-session"] = "room-existing"
 
@@ -980,7 +980,7 @@ class TestThenvoiACPServerAdapterCreateSessionRollback:
         self, mock_rest_client: MagicMock
     ) -> None:
         """Should drop the pending prompt immediately when message creation fails."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._rest = mock_rest_client
         adapter._session_to_room["session-1"] = "room-123"
         mock_rest_client.agent_api_messages.create_agent_chat_message = AsyncMock(

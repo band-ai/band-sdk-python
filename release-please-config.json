@@ -3,10 +3,10 @@
   "release-type": "python",
   "packages": {
     ".": {
-      "package-name": "thenvoi-sdk-python",
+      "package-name": "band-sdk",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
-        "src/thenvoi/__init__.py",
+        "src/band/__init__.py",
         {
           "type": "generic",
           "path": "pyproject.toml",
