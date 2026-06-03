@@ -9,9 +9,9 @@ import asyncio
 
 from _common import run_parlant_agent
 
-from thenvoi.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import AdapterFeatures, Capability, Emit
 
-FULL_DESCRIPTION = """You are a full-featured assistant on the Thenvoi platform.
+FULL_DESCRIPTION = """You are a full-featured assistant on the Band platform.
 
 You have access to memory management, contact management, and all platform tools.
 Use them when appropriate, and answer questions directly when no tool is needed.

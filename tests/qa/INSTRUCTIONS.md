@@ -1,6 +1,6 @@
 # QA Test Harness
 
-End-to-end QA for Thenvoi SDK adapters. Spawns real agent processes, connects them to the platform, sends messages via REST API, and verifies responses through platform-level observation.
+End-to-end QA for Band SDK adapters. Spawns real agent processes, connects them to the platform, sends messages via REST API, and verifies responses through platform-level observation.
 
 **Full stack tested:** example code → SDK adapter → platform WebSocket → REST API → agent response. If one example passes, the platform and that adapter are capable — narrowing down suspects for failures.
 

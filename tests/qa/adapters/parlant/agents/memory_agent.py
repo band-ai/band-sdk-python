@@ -6,9 +6,9 @@ import asyncio
 
 from _common import run_parlant_agent
 
-from thenvoi.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import AdapterFeatures, Capability, Emit
 
-MEMORY_DESCRIPTION = """You are a memory-management assistant on the Thenvoi platform.
+MEMORY_DESCRIPTION = """You are a memory-management assistant on the Band platform.
 
 When the user asks you to store, retrieve, list, supersede, or archive memories,
 use the appropriate memory tools. Always report the memory ID after storing, and

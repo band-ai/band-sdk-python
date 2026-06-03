@@ -28,7 +28,7 @@ If you prefer to register agents manually or use existing ones:
 
 ```bash
 cp tests/qa/.env.example tests/qa/.env
-# Edit tests/qa/.env — fill in THENVOI_API_KEY_USER and LLM keys
+# Edit tests/qa/.env — fill in BAND_API_KEY_USER and LLM keys
 
 cp tests/qa/adapters/langgraph/agent_config.yaml.example \
    tests/qa/adapters/langgraph/agent_config.yaml
@@ -67,8 +67,8 @@ The harness loads environment variables in this order:
 
 **Default target: production** (`https://app.band.ai`). Override in `.env` for localhost:
 ```bash
-THENVOI_REST_URL=http://localhost:4000
-THENVOI_WS_URL=ws://localhost:4000/api/v1/socket/websocket
+BAND_REST_URL=http://localhost:4000
+BAND_WS_URL=ws://localhost:4000/api/v1/socket/websocket
 ```
 
 ## Agent Registration
@@ -84,14 +84,14 @@ python tests/qa/setup_agents.py --adapters langgraph,anthropic
 python tests/qa/setup_agents.py --dry-run      # preview without registering
 ```
 
-The script finds `THENVOI_API_KEY_USER` by searching `.env` and
+The script finds `BAND_API_KEY_USER` by searching `.env` and
 `.env.userkey` files in the repo and its worktrees. LLM keys are read
 from the repo-root `.env`.
 
 **Manual (single agent):**
 ```bash
-curl -X POST $THENVOI_REST_URL/api/v1/me/agents/register \
-  -H "X-API-Key: $THENVOI_API_KEY_USER" \
+curl -X POST $BAND_REST_URL/api/v1/me/agents/register \
+  -H "X-API-Key: $BAND_API_KEY_USER" \
   -H "Content-Type: application/json" \
   -d '{"agent": {"name": "QA-langgraph-simple", "description": "QA test agent"}}'
 ```

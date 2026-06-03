@@ -62,8 +62,8 @@ This is the highest-priority area. Known failure modes:
 
 ### Platform Tools (Scenarios A, G)
 
-- `thenvoi_get_participants`: agent uses it when asked to list participants.
-- `thenvoi_lookup_peers`: agent uses it when asked about available agents.
+- `band_get_participants`: agent uses it when asked to list participants.
+- `band_lookup_peers`: agent uses it when asked about available agents.
 - Both tool_call and tool_result events should appear in the message stream.
 
 ### Multi-Participant (Scenario D)
@@ -74,8 +74,8 @@ This is the highest-priority area. Known failure modes:
 
 ### Memory (Scenario E)
 
-- `thenvoi_store_memory` returns a memory ID.
-- `thenvoi_list_memories` shows stored content. Known issue: PLT-915 may return empty without explicit `subject_id`.
+- `band_store_memory` returns a memory ID.
+- `band_list_memories` shows stored content. Known issue: PLT-915 may return empty without explicit `subject_id`.
 - Memory persists across rooms.
 
 ### Contacts (Scenarios F1-F3)

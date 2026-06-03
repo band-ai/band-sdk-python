@@ -10,10 +10,10 @@ import asyncio
 
 from _common import run_parlant_agent
 
-from thenvoi.core.types import AdapterFeatures, Capability, Emit
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.core.types import AdapterFeatures, Capability, Emit
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
-HUB_DESCRIPTION = """You are a contact-management assistant on the Thenvoi platform.
+HUB_DESCRIPTION = """You are a contact-management assistant on the Band platform.
 
 When the user asks you to manage contacts — list, add, remove, list requests, or
 respond to requests — use the appropriate contact tools. When a contact request

@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 TOOL_PROBES = [
     {
         "message": "List the participants in this chat room.",
-        "tool": "thenvoi_get_participants",
+        "tool": "band_get_participants",
         "label": "get_participants",
     },
     {
         "message": "Look up what other agents or users are available on the platform.",
-        "tool": "thenvoi_lookup_peers",
+        "tool": "band_lookup_peers",
         "label": "lookup_peers",
     },
 ]

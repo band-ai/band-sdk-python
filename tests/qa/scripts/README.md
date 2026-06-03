@@ -7,7 +7,7 @@ adapter at fault, or the platform?*
 
 The scenario harness only sees what the agent says in chat ("I've stored that").
 These scripts bypass the LLM and the adapter and call the REST client the SDK
-uses (`thenvoi.client.rest.AsyncRestClient`), so a PARTIAL can be traced to a
+uses (`band.client.rest.AsyncRestClient`), so a PARTIAL can be traced to a
 specific endpoint.
 
 ## Why they were written
@@ -28,7 +28,7 @@ these probes against the agent's own key showed that was wrong:
 So the real issue is a **platform list-visibility / scoping** problem, not the
 Parlant adapter. The LLM stores fine but its follow-up "list my memories / fetch
 the one I stored" comes back empty, which breaks the store→list→get/supersede
-workflow the scenarios exercise. (`app.band.ai` and `app.thenvoi.com` resolve to
+workflow the scenarios exercise. (`app.band.ai` and `app.band.ai` resolve to
 the same backend — identical data.)
 
 ## The scripts
@@ -42,15 +42,15 @@ the same backend — identical data.)
 
 Credentials come from the (gitignored) `tests/qa/adapters/parlant/agent_config.yaml`
 under the `parlant_full_test` key. The config path resolves relative to the
-script, so they run from anywhere. Host comes from `THENVOI_REST_URL` (falling
-back to `https://app.thenvoi.com`).
+script, so they run from anywhere. Host comes from `BAND_REST_URL` (falling
+back to `https://app.band.ai`).
 
 ```bash
 # read-only probe
-THENVOI_REST_URL=https://app.thenvoi.com .venv-parlant/bin/python tests/qa/scripts/verify_memory_api.py
+BAND_REST_URL=https://app.band.ai .venv-parlant/bin/python tests/qa/scripts/verify_memory_api.py
 
 # live write+read probe (creates + archives one test memory)
-THENVOI_REST_URL=https://app.thenvoi.com .venv-parlant/bin/python tests/qa/scripts/verify_memory_store.py
+BAND_REST_URL=https://app.band.ai .venv-parlant/bin/python tests/qa/scripts/verify_memory_store.py
 ```
 
 Any venv with the SDK installed works; `.venv-parlant` is just the one the QA

@@ -24,14 +24,14 @@ from pathlib import Path
 
 import yaml
 
-from thenvoi.client.rest import AsyncRestClient
+from band.client.rest import AsyncRestClient
 
 CONFIG = Path(__file__).resolve().parents[1] / "adapters/parlant/agent_config.yaml"
 CONFIG_KEY = "parlant_full_test"
 NEEDLES = ["quinn", "teal", "green", "alpha", "bravo", "charlie"]
 HOSTS = [
-    os.environ.get("THENVOI_REST_URL"),
-    "https://app.thenvoi.com",
+    os.environ.get("BAND_REST_URL"),
+    "https://app.band.ai",
     "https://app.band.ai",
 ]
 

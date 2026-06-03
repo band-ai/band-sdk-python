@@ -13,9 +13,9 @@ import logging
 
 from _common import run_parlant_agent
 
-from thenvoi.core.types import AdapterFeatures, Capability, Emit
-from thenvoi.platform.event import ContactRequestReceivedEvent
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.core.types import AdapterFeatures, Capability, Emit
+from band.platform.event import ContactRequestReceivedEvent
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ APPROVED_HANDLE_PATTERNS = [
     "nir.singhertest/qa-lg-*",
 ]
 
-CONTACTS_DESCRIPTION = """You are a contact-management assistant on the Thenvoi platform.
+CONTACTS_DESCRIPTION = """You are a contact-management assistant on the Band platform.
 
 When the user asks you to manage contacts — list, add, remove, list requests, or
 respond to requests — use the appropriate contact tools.

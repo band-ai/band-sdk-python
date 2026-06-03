@@ -23,9 +23,9 @@ sys.path.insert(
 
 import parlant.sdk as p  # noqa: E402
 from setup_logging import setup_logging  # noqa: E402
-from thenvoi import Agent  # noqa: E402
-from thenvoi.adapters import ParlantAdapter  # noqa: E402
-from thenvoi.core.types import AdapterFeatures  # noqa: E402
+from band import Agent  # noqa: E402
+from band.adapters import ParlantAdapter  # noqa: E402
+from band.core.types import AdapterFeatures  # noqa: E402
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -38,15 +38,15 @@ async def run_parlant_agent(
     description: str,
     contact_config: object | None = None,
 ) -> None:
-    """Start a Parlant-backed Thenvoi agent for an expanded QA scenario."""
+    """Start a Parlant-backed Band agent for an expanded QA scenario."""
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
         parlant_agent = await server.create_agent(

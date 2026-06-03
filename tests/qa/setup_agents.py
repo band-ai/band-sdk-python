@@ -193,9 +193,9 @@ def write_qa_env(rest_url: str, ws_url: str, user_key: str, llm_keys: dict) -> N
     """Write tests/qa/.env with platform and LLM credentials."""
     env_path = QA_DIR / ".env"
     lines = [
-        f"THENVOI_REST_URL={rest_url}",
-        f"THENVOI_WS_URL={ws_url}",
-        f"THENVOI_API_KEY_USER={user_key}",
+        f"BAND_REST_URL={rest_url}",
+        f"BAND_WS_URL={ws_url}",
+        f"BAND_API_KEY_USER={user_key}",
         "",
     ]
     for k, v in sorted(llm_keys.items()):
@@ -245,7 +245,7 @@ def main() -> None:
                 env_vars[k.strip()] = v.strip()
 
     # Also try to load user key from known locations
-    user_key = env_vars.get("THENVOI_API_KEY_USER", "")
+    user_key = env_vars.get("BAND_API_KEY_USER", "")
     main_repo = Path.home() / "band" / "thenvoi-sdk-python"
     if not user_key:
         for candidate in [
@@ -256,18 +256,18 @@ def main() -> None:
             if candidate.exists():
                 with open(candidate) as f:
                     for line in f:
-                        if line.startswith("THENVOI_API_KEY_USER="):
+                        if line.startswith("BAND_API_KEY_USER="):
                             user_key = line.strip().split("=", 1)[1]
                             break
             if user_key:
                 break
 
     if not user_key:
-        print("ERROR: THENVOI_API_KEY_USER not found in .env or .env.userkey")
+        print("ERROR: BAND_API_KEY_USER not found in .env or .env.userkey")
         sys.exit(1)
 
-    rest_url = env_vars.get("THENVOI_REST_URL", "https://app.thenvoi.com")
-    ws_url = env_vars.get("THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket")
+    rest_url = env_vars.get("BAND_REST_URL", "https://app.band.ai")
+    ws_url = env_vars.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
 
     llm_keys = {
         k: env_vars.get(k, "")

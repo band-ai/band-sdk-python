@@ -1,6 +1,6 @@
 # QA Test Harness
 
-End-to-end testing harness for the Thenvoi Python SDK. It maps the health of every adapter and example in the SDK by spawning real agent processes against the live platform, sending messages, and verifying correct behavior through platform-level observation.
+End-to-end testing harness for the Band Python SDK. It maps the health of every adapter and example in the SDK by spawning real agent processes against the live platform, sending messages, and verifying correct behavior through platform-level observation.
 
 ## Purpose
 

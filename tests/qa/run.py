@@ -466,10 +466,10 @@ async def run_all_adapters(args: argparse.Namespace) -> None:
     adapters = discover_adapters()
     logger.info("Discovered adapters: %s", ", ".join(adapters))
 
-    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.band.ai")
-    user_api_key = os.environ.get("THENVOI_API_KEY_USER", "")
+    rest_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
+    user_api_key = os.environ.get("BAND_API_KEY_USER", "")
     if not user_api_key:
-        raise ValueError("THENVOI_API_KEY_USER environment variable required")
+        raise ValueError("BAND_API_KEY_USER environment variable required")
 
     reports_dir = QA_DIR / "reports"
     reports_dir.mkdir(exist_ok=True)
@@ -579,7 +579,7 @@ def _run_setup(adapters: list[str] | None) -> None:
 
 async def main() -> None:
     parser = argparse.ArgumentParser(
-        description="QA test runner for Thenvoi SDK adapters",
+        description="QA test runner for Band SDK adapters",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -610,7 +610,7 @@ async def main() -> None:
     parser.add_argument(
         "--setup", action="store_true",
         help="Register agents and generate credential files before running. "
-             "Requires THENVOI_API_KEY_USER (in .env or environment).",
+             "Requires BAND_API_KEY_USER (in .env or environment).",
     )
     args = parser.parse_args()
 
@@ -646,10 +646,10 @@ async def main() -> None:
         if env_path.exists():
             load_dotenv(env_path, override=True)
 
-    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.band.ai")
-    user_api_key = os.environ.get("THENVOI_API_KEY_USER", "")
+    rest_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
+    user_api_key = os.environ.get("BAND_API_KEY_USER", "")
     if not user_api_key:
-        raise ValueError("THENVOI_API_KEY_USER environment variable required")
+        raise ValueError("BAND_API_KEY_USER environment variable required")
 
     client = PlatformClient(rest_url, user_api_key)
 

@@ -40,7 +40,7 @@ class MemoryToolsScenario(Scenario):
         )
         self._check(result, resp,
             action="Store personal info as memory",
-            expected="Agent calls thenvoi_store_memory and confirms",
+            expected="Agent calls band_store_memory and confirms",
             keywords=["stored", "saved", "memory", "created"],
         )
 
@@ -83,7 +83,7 @@ class MemoryToolsScenario(Scenario):
         )
         self._check(result, resp,
             action="Supersede old memory",
-            expected="Agent calls thenvoi_supersede_memory",
+            expected="Agent calls band_supersede_memory",
             keywords=["supersed", "replaced", "updated", "marked"],
         )
 
@@ -103,7 +103,7 @@ class MemoryToolsScenario(Scenario):
         )
         self._check(result, resp,
             action="Archive superseded memory",
-            expected="Agent calls thenvoi_archive_memory",
+            expected="Agent calls band_archive_memory",
             keywords=["archived", "archive"],
         )
 

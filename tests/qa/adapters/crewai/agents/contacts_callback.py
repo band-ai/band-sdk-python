@@ -12,11 +12,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "examples", "crewai"))
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import CrewAIAdapter
-from thenvoi.core.types import AdapterFeatures, Capability, Emit
-from thenvoi.platform.event import ContactRequestReceivedEvent
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band import Agent
+from band.adapters import CrewAIAdapter
+from band.core.types import AdapterFeatures, Capability, Emit
+from band.platform.event import ContactRequestReceivedEvent
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -38,12 +38,12 @@ async def whitelist_approve(event, tools):
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     adapter = CrewAIAdapter(
         model="gpt-5.4-mini",

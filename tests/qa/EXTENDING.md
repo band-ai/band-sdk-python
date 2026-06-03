@@ -87,8 +87,8 @@ Each script is ~50 lines: load env, create adapter with features, create agent f
 
 ```bash
 # Register each agent on the platform
-curl -X POST $THENVOI_REST_URL/api/v1/me/agents/register \
-  -H "X-API-Key: $THENVOI_API_KEY_USER" \
+curl -X POST $BAND_REST_URL/api/v1/me/agents/register \
+  -H "X-API-Key: $BAND_API_KEY_USER" \
   -H "Content-Type: application/json" \
   -d '{"agent": {"name": "QA-<name>-basic", "description": "QA test agent"}}'
 

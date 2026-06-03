@@ -30,13 +30,13 @@ CONVERSATION_STEPS = [
     {
         "label": "List participants",
         "message": "Can you list who is in this chat room?",
-        "expect": "Agent uses thenvoi_get_participants or describes participants",
+        "expect": "Agent uses band_get_participants or describes participants",
         "check": lambda text: len(text) > 10,
     },
     {
         "label": "Lookup peers",
         "message": "Can you look up what other agents or users are available on the platform?",
-        "expect": "Agent uses thenvoi_lookup_peers or responds about peers",
+        "expect": "Agent uses band_lookup_peers or responds about peers",
         "check": lambda text: len(text) > 10,
     },
     {
