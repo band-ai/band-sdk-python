@@ -5,8 +5,6 @@
     ".": {
       "package-name": "band-sdk",
       "changelog-path": "CHANGELOG.md",
-      "bump-minor-pre-major": true,
-      "bump-patch-for-minor-pre-major": true,
       "extra-files": [
         "src/band/__init__.py",
         {
