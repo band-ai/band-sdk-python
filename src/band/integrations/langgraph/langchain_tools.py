@@ -27,6 +27,8 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
+TOOL_EXECUTION_ERROR_PREFIX = "Error executing "
+
 
 _TOOL_CATEGORIES: dict[str, str] = {
     **{name: "chat" for name in CHAT_TOOL_NAMES},
@@ -119,7 +121,7 @@ def agent_tools_to_langchain(
                 # traceback (with paths, DB strings, tokens, etc.) only
                 # lives in the agent log.
                 logger.exception("Error executing platform tool %s", _tool_name)
-                return f"Error executing {_tool_name}: see agent logs."
+                return f"{TOOL_EXECUTION_ERROR_PREFIX}{_tool_name}: see agent logs."
 
         def validation_error_message(
             error: Any,

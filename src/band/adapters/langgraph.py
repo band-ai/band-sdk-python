@@ -16,6 +16,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
+from band.integrations.langgraph.langchain_tools import TOOL_EXECUTION_ERROR_PREFIX
 from band.runtime.prompts import render_system_prompt
 
 if TYPE_CHECKING:
@@ -24,6 +25,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Platform tools whose execution should not be reported as tool_call/tool_result
+# events because the tool call itself already creates visible platform output.
+_SILENT_REPORTING_TOOLS: frozenset[str] = frozenset(
+    {
+        "band_send_message",
+        "band_send_event",
+    }
+)
 
 _BOOTSTRAP_TRACKING_WARN_THRESHOLD = 1000
 
@@ -365,6 +374,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 return
 
             tool_name = event.get("name", "unknown")
+            if tool_name in _SILENT_REPORTING_TOOLS:
+                return
+
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             payload = {
                 "name": tool_name,
@@ -386,7 +398,30 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
-            is_error = event_type == "on_tool_error" or bool(data.get("error"))
+            output = data.get("output", "")
+            wrapper_reported_error = isinstance(output, str) and output.startswith(
+                TOOL_EXECUTION_ERROR_PREFIX
+            )
+            is_error = (
+                event_type == "on_tool_error"
+                or bool(data.get("error"))
+                or wrapper_reported_error
+            )
+
+            if tool_name in _SILENT_REPORTING_TOOLS:
+                if not is_error:
+                    return
+
+                logger.info("[STREAM] platform tool error: %s", tool_name)
+                try:
+                    await tools.send_event(
+                        content=f"{tool_name} failed: {data.get('error') or output or 'unknown error'}",
+                        message_type="error",
+                    )
+                except Exception as e:
+                    logger.warning("Failed to send platform tool error event: %s", e)
+                return
+
             payload = {
                 "name": tool_name,
                 "output": data.get("error") or data.get("output", ""),
