@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     load_dotenv()
-
     ws_url = os.getenv("THENVOI_WS_URL")
     rest_url = os.getenv("THENVOI_REST_URL")
 
@@ -46,7 +45,7 @@ async def main() -> None:
 
     # Create adapter with LLM and checkpointer
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-5.4-mini"),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
     )
 

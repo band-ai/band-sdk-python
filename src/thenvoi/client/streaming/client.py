@@ -2,16 +2,34 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 import logging
+import random
 
 from phoenix_channels_python_client.client import (
     PHXChannelsClient,
     PhoenixChannelsProtocolVersion,
 )
+from phoenix_channels_python_client.client_types import ReconnectPolicy
+from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from thenvoi.client.streaming.errors import classify_initial_upgrade_error
+
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class WebSocketDisconnectReason:
+    """Terminal WebSocket disconnect reason reported by the platform."""
+
+    reason: str
+    message: str
+    retryable: bool
+    retry_after: int | None = None
+    target_socket_id: str | None = None
+    correlation_id: str | None = None
 
 
 # WebSocket message payloads (based on actual backend messages)
@@ -168,6 +186,29 @@ class ContactRemovedPayload(BaseModel):
     id: str
 
 
+class SupersedePayload(BaseModel):
+    """Payload for terminal agent_control supersede events."""
+
+    model_config = ConfigDict(extra="allow")
+
+    reason: str
+    message: str
+    retryable: bool
+    retry_after: int | None = None
+    target_socket_id: str | None = None
+    correlation_id: str | None = None
+
+    def to_disconnect_reason(self) -> WebSocketDisconnectReason:
+        return WebSocketDisconnectReason(
+            reason=self.reason,
+            message=self.message,
+            retryable=self.retryable,
+            retry_after=self.retry_after,
+            target_socket_id=self.target_socket_id,
+            correlation_id=self.correlation_id,
+        )
+
+
 _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
     "message_created": MessageCreatedPayload,
     "room_added": RoomAddedPayload,
@@ -179,7 +220,17 @@ _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
     "contact_request_updated": ContactRequestUpdatedPayload,
     "contact_added": ContactAddedPayload,
     "contact_removed": ContactRemovedPayload,
+    "supersede": SupersedePayload,
 }
+
+
+def _initial_reconnect_delay(policy: ReconnectPolicy, attempt: int) -> float:
+    delay = min(
+        policy.max_delay_s, policy.base_delay_s * (policy.factor ** max(attempt, 0))
+    )
+    if delay <= 0:
+        return 0.0
+    return (delay / 2) + (random.random() * (delay / 2))
 
 
 class WebSocketClient:
@@ -194,14 +245,21 @@ class WebSocketClient:
         self.ws_url = ws_url
         self.api_key = api_key
         self.agent_id = agent_id
+        self.client: PHXChannelsClient | None = None
         self._on_reconnect = on_reconnect
         self._on_disconnect = on_disconnect
         self._validation_error_count: int = 0
+        self._last_disconnect_reason: WebSocketDisconnectReason | None = None
 
     @property
     def validation_error_count(self) -> int:
         """Number of events dropped due to payload validation errors."""
         return self._validation_error_count
+
+    @property
+    def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
+        """Most recent terminal disconnect reason reported by the platform."""
+        return self._last_disconnect_reason
 
     def reset_validation_error_count(self) -> int:
         """Reset the validation error counter and return the previous value.
@@ -212,19 +270,49 @@ class WebSocketClient:
         self._validation_error_count = 0
         return count
 
+    def _require_client(self) -> PHXChannelsClient:
+        if self.client is None:
+            raise RuntimeError("WebSocket client is not connected")
+        return self.client
+
     async def __aenter__(self):
         """Create and enter the PHXChannelsClient context"""
-        self.client = PHXChannelsClient(
-            self.ws_url,
-            self.api_key,
-            protocol_version=PhoenixChannelsProtocolVersion.V2,
-            on_reconnect=self._on_reconnect,
-            on_disconnect=self._on_disconnect,
-        )
-        if self.agent_id:
-            self.client.channel_socket_url += f"&agent_id={self.agent_id}"
-        await self.client.__aenter__()
-        return self
+        policy = ReconnectPolicy()
+        for attempt in range(policy.rapid_suppress_disconnect_count + 1):
+            self.client = PHXChannelsClient(
+                self.ws_url,
+                self.api_key,
+                protocol_version=PhoenixChannelsProtocolVersion.V2,
+                auto_reconnect=False,
+                on_reconnect=self._on_reconnect,
+                on_disconnect=self._on_disconnect,
+            )
+            if self.agent_id:
+                self.client.channel_socket_url += f"&agent_id={self.agent_id}"
+            try:
+                await self.client.__aenter__()
+            except Exception as exc:
+                upgrade_error = await classify_initial_upgrade_error(
+                    exc, self.client.channel_socket_url
+                )
+                if upgrade_error is not None:
+                    raise upgrade_error from exc
+                if not isinstance(exc, PHXConnectionError):
+                    raise
+                if attempt >= policy.rapid_suppress_disconnect_count:
+                    raise
+                delay = _initial_reconnect_delay(policy, attempt)
+                logger.warning(
+                    "Initial WebSocket connection failed; retrying in %.2fs: %s",
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+            else:
+                self.client.auto_reconnect = True
+                return self
+
+        raise RuntimeError("WebSocket client failed to connect")
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the PHXChannelsClient context"""
@@ -282,6 +370,32 @@ class WebSocketClient:
                     "[WebSocket] Callback error for %s event", message.event
                 )
 
+    def record_terminal_disconnect(self, reason: WebSocketDisconnectReason) -> None:
+        """Record a terminal platform disconnect reason and disable reconnect."""
+        self._last_disconnect_reason = reason
+        self.disable_reconnect()
+
+    def disable_reconnect(self) -> None:
+        """Disable PHX auto-reconnect for a terminal platform disconnect."""
+        if self.client:
+            self.client.auto_reconnect = False
+
+    async def join_agent_control_channel(
+        self,
+        agent_id: str,
+        on_supersede: Callable[[SupersedePayload], Awaitable[None]],
+    ):
+        """Subscribe to terminal agent-control events for this agent."""
+        topic = f"agent_control:{agent_id}"
+        logger.info("[WebSocket] Subscribing to topic: %s", topic)
+
+        async def message_handler(message):
+            await self._handle_events(message, {"supersede": on_supersede})
+
+        result = await self._require_client().subscribe_to_topic(topic, message_handler)
+        logger.info("[WebSocket] Subscribed to topic: %s", topic)
+        return result
+
     async def join_agent_rooms_channel(
         self,
         agent_id: str,
@@ -297,7 +411,7 @@ class WebSocketClient:
                 message, {"room_added": on_room_added, "room_removed": on_room_removed}
             )
 
-        result = await self.client.subscribe_to_topic(topic, message_handler)
+        result = await self._require_client().subscribe_to_topic(topic, message_handler)
         logger.info("[WebSocket] Subscribed to topic: %s", topic)
         return result
 
@@ -313,7 +427,7 @@ class WebSocketClient:
         async def message_handler(message):
             await self._handle_events(message, {"message_created": on_message_created})
 
-        return await self.client.subscribe_to_topic(topic, message_handler)
+        return await self._require_client().subscribe_to_topic(topic, message_handler)
 
     async def join_user_rooms_channel(
         self,
@@ -329,7 +443,7 @@ class WebSocketClient:
                 message, {"room_added": on_room_added, "room_removed": on_room_removed}
             )
 
-        return await self.client.subscribe_to_topic(topic, message_handler)
+        return await self._require_client().subscribe_to_topic(topic, message_handler)
 
     async def join_room_participants_channel(
         self,
@@ -354,7 +468,7 @@ class WebSocketClient:
                 },
             )
 
-        return await self.client.subscribe_to_topic(topic, message_handler)
+        return await self._require_client().subscribe_to_topic(topic, message_handler)
 
     async def join_tasks_channel(
         self,
@@ -371,35 +485,41 @@ class WebSocketClient:
                 {"task_created": on_task_created, "task_updated": on_task_updated},
             )
 
-        return await self.client.subscribe_to_topic(topic, message_handler)
+        return await self._require_client().subscribe_to_topic(topic, message_handler)
+
+    async def leave_agent_control_channel(self, agent_id: str):
+        """Unsubscribe from agent control topic"""
+        topic = f"agent_control:{agent_id}"
+        logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
+        return await self._require_client().unsubscribe_from_topic(topic)
 
     async def leave_agent_rooms_channel(self, agent_id: str):
         """Unsubscribe from agent rooms topic"""
         topic = f"agent_rooms:{agent_id}"
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self.client.unsubscribe_from_topic(topic)
+        return await self._require_client().unsubscribe_from_topic(topic)
 
     async def leave_chat_room_channel(self, chat_room_id: str):
         """Unsubscribe from chat room topic"""
         topic = f"chat_room:{chat_room_id}"
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self.client.unsubscribe_from_topic(topic)
+        return await self._require_client().unsubscribe_from_topic(topic)
 
     async def leave_user_rooms_channel(self, user_id: str):
         """Unsubscribe from user rooms topic"""
         topic = f"user_rooms:{user_id}"
-        return await self.client.unsubscribe_from_topic(topic)
+        return await self._require_client().unsubscribe_from_topic(topic)
 
     async def leave_room_participants_channel(self, chat_room_id: str):
         """Unsubscribe from room participants topic"""
         topic = f"room_participants:{chat_room_id}"
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self.client.unsubscribe_from_topic(topic)
+        return await self._require_client().unsubscribe_from_topic(topic)
 
     async def leave_tasks_channel(self, user_id: str):
         """Unsubscribe from tasks topic"""
         topic = f"tasks:{user_id}"
-        return await self.client.unsubscribe_from_topic(topic)
+        return await self._require_client().unsubscribe_from_topic(topic)
 
     async def join_agent_contacts_channel(
         self,
@@ -428,7 +548,7 @@ class WebSocketClient:
                 },
             )
 
-        result = await self.client.subscribe_to_topic(topic, message_handler)
+        result = await self._require_client().subscribe_to_topic(topic, message_handler)
         logger.info("[WebSocket] Subscribed to topic: %s", topic)
         return result
 
@@ -436,7 +556,7 @@ class WebSocketClient:
         """Unsubscribe from agent contacts topic."""
         topic = f"agent_contacts:{agent_id}"
         logger.info("[WebSocket] Unsubscribing from topic: %s", topic)
-        return await self.client.unsubscribe_from_topic(topic)
+        return await self._require_client().unsubscribe_from_topic(topic)
 
     async def run_forever(self):
-        await self.client.run_forever()
+        await self._require_client().run_forever()

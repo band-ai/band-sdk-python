@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from thenvoi.client.streaming import SupersedePayload
+from thenvoi.platform.event import WebSocketDisconnectedEvent
 from thenvoi.platform.link import ThenvoiLink
 
 
@@ -21,6 +23,14 @@ def mock_ws_client():
     # Mock channel operations
     ws.join_chat_room_channel = AsyncMock()
     ws.leave_chat_room_channel = AsyncMock()
+    ws.join_agent_control_channel = AsyncMock()
+    ws.leave_agent_control_channel = AsyncMock()
+    ws.last_disconnect_reason = None
+
+    def record_terminal_disconnect(reason):
+        ws.last_disconnect_reason = reason
+
+    ws.record_terminal_disconnect = MagicMock(side_effect=record_terminal_disconnect)
     ws.join_agent_rooms_channel = AsyncMock()
     ws.join_room_participants_channel = AsyncMock()
     ws.leave_room_participants_channel = AsyncMock()
@@ -103,6 +113,10 @@ class TestThenvoiLinkConnection:
             on_disconnect=link._on_disconnected,
         )
         mock_ws_client.__aenter__.assert_called_once()
+        mock_ws_client.join_agent_control_channel.assert_called_once_with(
+            link.agent_id,
+            on_supersede=link._on_supersede,
+        )
         assert link.is_connected is True
 
     @patch("thenvoi.platform.link.WebSocketClient")
@@ -185,6 +199,70 @@ class TestThenvoiLinkConnection:
 
         with pytest.raises(RuntimeError, match="Not connected"):
             await link.run_forever()
+
+    async def test_supersede_records_terminal_reason_and_queues_event(
+        self, mock_ws_client
+    ):
+        """supersede records the platform reason and disables reconnect before close."""
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link._ws = mock_ws_client
+        link._is_connected = True
+        payload = SupersedePayload(
+            reason="session.already_connected",
+            message="This connection has been superseded by a newer session for this agent.",
+            retryable=False,
+            retry_after=15,
+            target_socket_id="agent_socket:agent-123",
+            correlation_id="evict-123",
+        )
+
+        await link._on_supersede(payload)
+
+        mock_ws_client.record_terminal_disconnect.assert_called_once_with(
+            link.last_disconnect_reason
+        )
+        assert link.is_connected is False
+        assert link.last_disconnect_reason is not None
+        assert link.last_disconnect_reason.reason == "session.already_connected"
+        event = await link.__anext__()
+        assert isinstance(event, WebSocketDisconnectedEvent)
+        assert event.payload == link.last_disconnect_reason
+
+    async def test_disconnect_after_supersede_still_cleans_up_websocket(
+        self, mock_ws_client
+    ):
+        """disconnect() should clean up the websocket even after terminal state flips."""
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link._ws = mock_ws_client
+        link._is_connected = True
+        link._subscribed_rooms.add("room-1")
+        payload = SupersedePayload(
+            reason="session.already_connected",
+            message="This connection has been superseded by a newer session for this agent.",
+            retryable=False,
+            retry_after=15,
+            target_socket_id="agent_socket:agent-123",
+            correlation_id="evict-123",
+        )
+
+        await link._on_supersede(payload)
+        await link.disconnect()
+
+        mock_ws_client.__aexit__.assert_called_once_with(None, None, None)
+        assert link.is_connected is False
+        assert link._ws is None
+        assert link._subscribed_rooms == set()
+        assert link.last_disconnect_reason is not None
+        assert link.last_disconnect_reason.reason == "session.already_connected"
+
+    async def test_close_without_supersede_leaves_disconnect_reason_empty(self):
+        """An empty Phoenix close should not invent a terminal reason."""
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+
+        await link._on_disconnected(None)
+
+        assert link.last_disconnect_reason is None
+        assert link._event_queue.empty()
 
 
 class TestThenvoiLinkSubscriptions:
@@ -491,6 +569,79 @@ class TestThenvoiLinkEventHandlers:
         assert event.payload.id == "room-123"
 
 
+class TestMessageLifecycleMarks:
+    """Tests for message lifecycle status return values."""
+
+    @pytest.mark.asyncio
+    async def test_mark_processing_returns_true_on_success(self):
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.mark_agent_message_processing = AsyncMock()
+
+        result = await link.mark_processing("room-1", "msg-1")
+
+        assert result is True
+        link.rest.agent_api_messages.mark_agent_message_processing.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_mark_processing_returns_false_on_error(self):
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.mark_agent_message_processing = AsyncMock(
+            side_effect=Exception("network down")
+        )
+
+        result = await link.mark_processing("room-1", "msg-1")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_mark_processed_returns_true_on_success(self):
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.mark_agent_message_processed = AsyncMock()
+
+        result = await link.mark_processed("room-1", "msg-1")
+
+        assert result is True
+        link.rest.agent_api_messages.mark_agent_message_processed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_mark_processed_returns_false_on_error(self):
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.mark_agent_message_processed = AsyncMock(
+            side_effect=Exception("network down")
+        )
+
+        result = await link.mark_processed("room-1", "msg-1")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_mark_failed_returns_true_on_success(self):
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.mark_agent_message_failed = AsyncMock()
+
+        result = await link.mark_failed("room-1", "msg-1", "boom")
+
+        assert result is True
+        link.rest.agent_api_messages.mark_agent_message_failed.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_mark_failed_returns_false_on_error(self):
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.mark_agent_message_failed = AsyncMock(
+            side_effect=Exception("network down")
+        )
+
+        result = await link.mark_failed("room-1", "msg-1", "boom")
+
+        assert result is False
+
+
 class TestMarkFailed:
     """Tests for mark_failed error normalization."""
 
@@ -530,6 +681,53 @@ class TestMarkFailed:
 
         call_kwargs = link.rest.agent_api_messages.mark_agent_message_failed.call_args
         assert call_kwargs.kwargs["error"] == "connection reset"
+
+
+class TestGetNextMessage:
+    """Tests for the /next REST wrapper."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_204(self) -> None:
+        """204 No Content is the platform's "no actionable message" signal —
+        the only ``ApiError`` that should resolve to ``None``."""
+        from thenvoi_rest.core.api_error import ApiError
+
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            side_effect=ApiError(status_code=204, body=None)
+        )
+
+        assert await link.get_next_message("room-1") is None
+
+    @pytest.mark.asyncio
+    async def test_raises_on_non_204_api_error(self) -> None:
+        """Regression: a 5xx or other API failure must propagate so callers
+        can distinguish "no pending" from "lookup failed." The old behavior
+        swallowed both as ``None``, which silently dropped messages at the
+        OneShot claim step."""
+        from thenvoi_rest.core.api_error import ApiError
+
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            side_effect=ApiError(status_code=503, body="upstream down")
+        )
+
+        with pytest.raises(ApiError):
+            await link.get_next_message("room-1")
+
+    @pytest.mark.asyncio
+    async def test_raises_on_transport_error(self) -> None:
+        """Connection errors / timeouts also propagate — same reason."""
+        link = ThenvoiLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_messages.get_agent_next_message = AsyncMock(
+            side_effect=ConnectionError("dns failure")
+        )
+
+        with pytest.raises(ConnectionError):
+            await link.get_next_message("room-1")
 
 
 class TestGetStaleProcessingMessages:

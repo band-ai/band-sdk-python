@@ -112,7 +112,7 @@ class _FakeCodexClient:
         self.requests.append((method, payload))
 
         if method == "model/list":
-            return {"data": [{"id": "gpt-5.3-codex", "hidden": False}]}
+            return {"data": [{"id": "gpt-5.5", "hidden": False}]}
         if method == "thread/resume":
             if self._resume_error is not None:
                 raise self._resume_error

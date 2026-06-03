@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from thenvoi.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
-from thenvoi.client.streaming import WebSocketClient
+from thenvoi.client.streaming import WebSocketClient, WebSocketDisconnectReason
 from thenvoi.runtime.types import PlatformMessage
 from thenvoi_rest.core.api_error import ApiError
 
@@ -23,6 +23,7 @@ from .event import (
     RoomRemovedEvent,
     RoomDeletedEvent,
     ReconnectedEvent,
+    WebSocketDisconnectedEvent,
     ParticipantAddedEvent,
     ParticipantRemovedEvent,
     ContactRequestReceivedEvent,
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         ContactRequestUpdatedPayload,
         ContactAddedPayload,
         ContactRemovedPayload,
+        SupersedePayload,
     )
 
 logger = logging.getLogger(__name__)
@@ -97,9 +99,17 @@ class ThenvoiLink:
         # Event queue for async iteration
         self._event_queue: asyncio.Queue[PlatformEvent] = asyncio.Queue(maxsize=1000)
 
+        # Durable terminal disconnect reason for the current connection lifecycle.
+        self._last_disconnect_reason: WebSocketDisconnectReason | None = None
+
     @property
     def is_connected(self) -> bool:
         return self._is_connected
+
+    @property
+    def last_disconnect_reason(self) -> WebSocketDisconnectReason | None:
+        """Most recent terminal WebSocket disconnect reason, if reported."""
+        return self._last_disconnect_reason
 
     # --- Async iterator protocol ---
 
@@ -123,6 +133,7 @@ class ThenvoiLink:
             logger.warning("Already connected")
             return
 
+        self._last_disconnect_reason = None
         self._ws = WebSocketClient(
             self.ws_url,
             self.api_key,
@@ -131,6 +142,15 @@ class ThenvoiLink:
             on_disconnect=self._on_disconnected,
         )
         await self._ws.__aenter__()
+        try:
+            await self._ws.join_agent_control_channel(
+                self.agent_id,
+                on_supersede=self._on_supersede,
+            )
+        except Exception:
+            await self._ws.__aexit__(None, None, None)
+            self._ws = None
+            raise
         self._is_connected = True
         logger.info("Connected to platform")
 
@@ -140,8 +160,13 @@ class ThenvoiLink:
 
         Extracted from ThenvoiAgent.stop() lines 193-195.
         """
-        if not self._is_connected or not self._ws:
+        if not self._ws:
             return
+
+        try:
+            await self._ws.leave_agent_control_channel(self.agent_id)
+        except Exception as e:
+            logger.warning("Error unsubscribing from agent_control: %s", e)
 
         await self._ws.__aexit__(None, None, None)
         self._ws = None
@@ -287,8 +312,29 @@ class ThenvoiLink:
         logger.info("WebSocket reconnected — reconciling room state")
         self._queue_event(ReconnectedEvent())
 
+    async def _on_supersede(self, payload: "SupersedePayload") -> None:
+        """Handle terminal supersede event before the platform closes the socket."""
+        reason = payload.to_disconnect_reason()
+        self._last_disconnect_reason = reason
+        self._is_connected = False
+        if self._ws:
+            self._ws.record_terminal_disconnect(reason)
+        logger.warning(
+            "WebSocket connection superseded: reason=%s retryable=%s correlation_id=%s",
+            reason.reason,
+            reason.retryable,
+            reason.correlation_id,
+        )
+        self._queue_event(WebSocketDisconnectedEvent(payload=reason))
+
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""
+        if self.last_disconnect_reason:
+            logger.warning(
+                "WebSocket disconnected after terminal platform reason: %s",
+                self.last_disconnect_reason.reason,
+            )
+            return
         logger.warning("WebSocket disconnected: %s", error)
 
     def _queue_event(self, event: PlatformEvent) -> None:
@@ -446,7 +492,7 @@ class ThenvoiLink:
 
     # --- Message lifecycle (SDK internal operations) ---
 
-    async def mark_processing(self, room_id: str, message_id: str) -> None:
+    async def mark_processing(self, room_id: str, message_id: str) -> bool:
         """
         Mark message as being processed on the server.
 
@@ -461,8 +507,10 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as processing: %s", message_id, e)
+            return False
+        return True
 
-    async def mark_processed(self, room_id: str, message_id: str) -> None:
+    async def mark_processed(self, room_id: str, message_id: str) -> bool:
         """
         Mark message as successfully processed on the server.
 
@@ -477,8 +525,10 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as processed: %s", message_id, e)
+            return False
+        return True
 
-    async def mark_failed(self, room_id: str, message_id: str, error: str) -> None:
+    async def mark_failed(self, room_id: str, message_id: str, error: str) -> bool:
         """
         Mark message as failed on the server.
 
@@ -495,16 +545,25 @@ class ThenvoiLink:
             )
         except Exception as e:
             logger.warning("Failed to mark message %s as failed: %s", message_id, e)
+            return False
+        return True
 
     async def get_next_message(self, room_id: str) -> PlatformMessage | None:
         """
-        Get next unprocessed message for a room from the server.
-
-        Used during sync to process backlog messages missed while offline.
+        Get the next actionable message for a room from the server.
 
         Returns:
-            PlatformMessage if there's an unprocessed message,
-            None if no unprocessed messages (204 No Content) or on error.
+            ``PlatformMessage`` if there's an actionable message, or ``None``
+            if the platform returned no content (204). ``None`` means *the
+            platform told us there's nothing pending* — not "the call failed."
+
+        Raises:
+            ApiError: REST call failed with a non-204 status.
+            Exception: Transport-level failure (connection error, timeout).
+                Callers that want to swallow transient failures should wrap
+                this call explicitly; the previous behavior of conflating
+                "no pending" with "lookup failed" silently dropped messages
+                at the claim step.
         """
         logger.debug("Getting next message for room %s", room_id)
         try:
@@ -512,31 +571,30 @@ class ThenvoiLink:
                 chat_id=room_id,
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
-            if response.data is None:
-                return None
-
-            item = response.data
-            return PlatformMessage(
-                id=item.id,
-                room_id=item.chat_room_id or room_id,
-                content=item.content,
-                sender_id=item.sender_id,
-                sender_type=item.sender_type,
-                sender_name=item.sender_name or "",
-                message_type=item.message_type,
-                metadata=item.metadata or {},
-                created_at=item.inserted_at or datetime.now(timezone.utc),
-            )
         except ApiError as e:
-            # 204 No Content means no unprocessed messages - expected
+            # 204 No Content means no actionable messages — the only "None"
+            # case the platform expresses through an ApiError.
             if e.status_code == 204:
-                logger.debug("No unprocessed messages for room %s", room_id)
+                logger.debug("No actionable messages for room %s", room_id)
                 return None
             logger.warning("Failed to get next message: %s", e)
+            raise
+
+        if response.data is None:
             return None
-        except Exception as e:
-            logger.warning("Failed to get next message: %s", e)
-            return None
+
+        item = response.data
+        return PlatformMessage(
+            id=item.id,
+            room_id=item.chat_room_id or room_id,
+            content=item.content,
+            sender_id=item.sender_id,
+            sender_type=item.sender_type,
+            sender_name=item.sender_name or "",
+            message_type=item.message_type,
+            metadata=item.metadata or {},
+            created_at=item.inserted_at or datetime.now(timezone.utc),
+        )
 
     async def get_stale_processing_messages(
         self, room_id: str
@@ -545,8 +603,17 @@ class ThenvoiLink:
         Get messages stuck in 'processing' state for a room.
 
         On agent restart, messages that were being processed when the agent
-        crashed remain in 'processing' state. The /next endpoint skips them,
-        so we need to find and re-process them explicitly.
+        crashed remain in 'processing' state. The long-running runtime uses
+        this as an explicit recovery sweep at startup.
+
+        Note: ``get_next_message`` (the ``/next`` REST endpoint) already
+        includes stuck-processing messages in its "actionable" result set —
+        see ``Chat.get_next_actionable_message`` on the platform side, which
+        excludes only ``processed``. Callers that drive recovery solely
+        through ``/next`` (e.g. the bridge's rehydration nudge and
+        ``OneShotInvoker``'s claim step) do not need to call this method;
+        it exists for paths that want to drain *every* stuck message up
+        front rather than one-per-room.
 
         Returns:
             List of PlatformMessage objects in processing state.

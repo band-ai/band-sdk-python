@@ -229,17 +229,53 @@ class TestSelectiveRenameShims:
         with pytest.warns(DeprecationWarning, match="anthropic_api_key"):
             AnthropicAdapter(anthropic_api_key="sk-test-key")
 
+    def test_anthropic_anthropic_api_key_resolves_to_provider_key(self) -> None:
+        from unittest.mock import patch
+
+        from thenvoi.adapters.anthropic import AnthropicAdapter
+
+        with patch("thenvoi.adapters.anthropic.AsyncAnthropic") as mock_cls:
+            with pytest.warns(DeprecationWarning, match="anthropic_api_key"):
+                AnthropicAdapter(anthropic_api_key="sk-old-key")
+        mock_cls.assert_called_once_with(api_key="sk-old-key")
+
+    def test_anthropic_api_key_warns(self) -> None:
+        from thenvoi.adapters.anthropic import AnthropicAdapter
+
+        with pytest.warns(
+            DeprecationWarning, match="api_key.*deprecated.*provider_key"
+        ):
+            AnthropicAdapter(api_key="sk-test-key")
+
+    def test_anthropic_api_key_resolves_to_provider_key(self) -> None:
+        from unittest.mock import patch
+
+        from thenvoi.adapters.anthropic import AnthropicAdapter
+
+        with patch("thenvoi.adapters.anthropic.AsyncAnthropic") as mock_cls:
+            with pytest.warns(
+                DeprecationWarning, match="api_key.*deprecated.*provider_key"
+            ):
+                AnthropicAdapter(api_key="sk-test-key")
+        mock_cls.assert_called_once_with(api_key="sk-test-key")
+
     def test_anthropic_custom_section_warns(self) -> None:
         from thenvoi.adapters.anthropic import AnthropicAdapter
 
         with pytest.warns(DeprecationWarning, match="custom_section"):
             AnthropicAdapter(custom_section="Be helpful.")
 
-    def test_anthropic_api_key_and_anthropic_api_key_conflict(self) -> None:
+    def test_anthropic_provider_key_and_api_key_conflict(self) -> None:
         from thenvoi.adapters.anthropic import AnthropicAdapter
 
         with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
-            AnthropicAdapter(api_key="sk-new", anthropic_api_key="sk-old")
+            AnthropicAdapter(provider_key="sk-new", api_key="sk-old")
+
+    def test_anthropic_anthropic_api_key_and_provider_key_conflict(self) -> None:
+        from thenvoi.adapters.anthropic import AnthropicAdapter
+
+        with pytest.raises(ThenvoiConfigError, match="Cannot pass"):
+            AnthropicAdapter(provider_key="sk-new", anthropic_api_key="sk-old")
 
     def test_anthropic_prompt_and_custom_section_conflict(self) -> None:
         from thenvoi.adapters.anthropic import AnthropicAdapter
@@ -253,23 +289,73 @@ class TestSelectiveRenameShims:
         with pytest.warns(DeprecationWarning, match="gemini_api_key"):
             GeminiAdapter(gemini_api_key="AIza-test-key")
 
+    def test_gemini_gemini_api_key_resolves_to_provider_key(self) -> None:
+        from thenvoi.adapters.gemini import GeminiAdapter
+
+        with pytest.warns(DeprecationWarning, match="gemini_api_key"):
+            adapter = GeminiAdapter(gemini_api_key="AIza-old-key")
+        assert adapter._provider_key == "AIza-old-key"
+
+    def test_gemini_api_key_warns(self) -> None:
+        from thenvoi.adapters.gemini import GeminiAdapter
+
+        with pytest.warns(
+            DeprecationWarning, match="api_key.*deprecated.*provider_key"
+        ):
+            GeminiAdapter(api_key="AIza-test-key")
+
+    def test_gemini_api_key_resolves_to_provider_key(self) -> None:
+        from thenvoi.adapters.gemini import GeminiAdapter
+
+        with pytest.warns(
+            DeprecationWarning, match="api_key.*deprecated.*provider_key"
+        ):
+            adapter = GeminiAdapter(api_key="AIza-test-key")
+        assert adapter._provider_key == "AIza-test-key"
+
     def test_gemini_custom_section_warns(self) -> None:
         from thenvoi.adapters.gemini import GeminiAdapter
 
         with pytest.warns(DeprecationWarning, match="custom_section"):
             GeminiAdapter(custom_section="Be concise.")
 
-    def test_gemini_api_key_and_gemini_api_key_conflict(self) -> None:
+    def test_gemini_provider_key_and_api_key_conflict(self) -> None:
         from thenvoi.adapters.gemini import GeminiAdapter
 
         with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
-            GeminiAdapter(api_key="AIza-new", gemini_api_key="AIza-old")
+            GeminiAdapter(provider_key="AIza-new", api_key="AIza-old")
+
+    def test_gemini_gemini_api_key_and_provider_key_conflict(self) -> None:
+        from thenvoi.adapters.gemini import GeminiAdapter
+
+        with pytest.raises(ThenvoiConfigError, match="Cannot pass"):
+            GeminiAdapter(provider_key="AIza-new", gemini_api_key="AIza-old")
 
     def test_gemini_prompt_and_custom_section_conflict(self) -> None:
         from thenvoi.adapters.gemini import GeminiAdapter
 
         with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
             GeminiAdapter(prompt="new", custom_section="old")
+
+
+class TestLettaApiKeyShim:
+    """LettaAdapterConfig.api_key must warn and resolve to provider_key."""
+
+    def test_letta_api_key_warns(self) -> None:
+        from thenvoi.adapters.letta import LettaAdapterConfig
+
+        with pytest.warns(
+            DeprecationWarning, match="api_key.*deprecated.*provider_key"
+        ):
+            config = LettaAdapterConfig(api_key="letta-key")
+        assert config.provider_key == "letta-key"
+        assert config.api_key is None
+
+    def test_letta_provider_key_and_api_key_conflict(self) -> None:
+        from thenvoi.adapters.letta import LettaAdapterConfig
+
+        with pytest.raises(ThenvoiConfigError, match="Cannot pass both"):
+            LettaAdapterConfig(provider_key="new-key", api_key="old-key")
 
 
 class TestOpencodeDeprecationShims:

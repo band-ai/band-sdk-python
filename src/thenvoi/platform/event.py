@@ -13,6 +13,7 @@ from typing import Any, Literal
 # Import payload models from streaming client
 from thenvoi.client.streaming import (
     MessageCreatedPayload,
+    WebSocketDisconnectReason,
     RoomAddedPayload,
     RoomRemovedPayload,
     RoomDeletedPayload,
@@ -126,6 +127,16 @@ class ContactRemovedEvent:
 
 
 @dataclass
+class WebSocketDisconnectedEvent:
+    """Emitted when the platform reports a terminal WebSocket disconnect reason."""
+
+    type: Literal["websocket_disconnected"] = "websocket_disconnected"
+    room_id: str | None = None
+    payload: WebSocketDisconnectReason | None = None
+    raw: dict[str, Any] | None = None
+
+
+@dataclass
 class ReconnectedEvent:
     """Emitted when the WebSocket reconnects after a disconnection.
 
@@ -160,5 +171,6 @@ PlatformEvent = (
     | ContactRequestUpdatedEvent
     | ContactAddedEvent
     | ContactRemovedEvent
+    | WebSocketDisconnectedEvent
     | ReconnectedEvent
 )

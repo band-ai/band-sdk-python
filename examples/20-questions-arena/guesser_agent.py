@@ -20,7 +20,7 @@ Run with (from repo root):
     uv run examples/20-questions-arena/guesser_agent.py
 
     # Multi-guesser: each terminal runs a different config + model
-    uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_2 --model gpt-5.2
+    uv run examples/20-questions-arena/guesser_agent.py --config arena_guesser_2 --model gpt-5.5
     uv run examples/20-questions-arena/guesser_agent.py -c arena_guesser_3 -m claude-opus-4-6
 """
 
@@ -58,7 +58,7 @@ def _parse_args() -> argparse.Namespace:
         "--model",
         "-m",
         default=None,
-        help="LLM model name (e.g. gpt-5.2, claude-opus-4-6). "
+        help="LLM model name (e.g. gpt-5.5, claude-opus-4-6). "
         "If omitted, auto-detects from env vars.",
     )
     return parser.parse_args()
