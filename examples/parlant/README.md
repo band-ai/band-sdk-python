@@ -21,10 +21,10 @@ uv add "git+https://github.com/band-ai/band-sdk-python.git[parlant]"
 
 **Or from repository:**
 ```bash
-uv sync --extra dev-parlant
+uv sync --extra dev
 ```
 
-`dev-parlant` is the isolated development extra for this repo. It intentionally avoids CrewAI because Parlant and CrewAI currently require incompatible OpenTelemetry SDK versions.
+`dev` is the development extra for this repo. It intentionally avoids CrewAI because Parlant and CrewAI currently require incompatible OpenTelemetry SDK versions; use `dev-crewai` when running CrewAI tests.
 
 ---
 
@@ -218,7 +218,7 @@ ImportError: parlant package required for ParlantAdapter
 
 Install the Parlant extra:
 ```bash
-uv sync --extra dev-parlant
+uv sync --extra dev
 # or, for package consumers
 pip install 'band-sdk[parlant]'
 ```

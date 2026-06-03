@@ -416,8 +416,8 @@ async def run_parlant_agent(
     except ImportError as e:
         raise RuntimeError(
             "Parlant conflicts with CrewAI in the generic runner metadata; run "
-            "`uv sync --extra dev-parlant` from the repo or use "
-            "examples/parlant/... in a Parlant-enabled environment."
+            "`uv sync --extra dev` from the repo or use examples/parlant/... "
+            "in a Parlant-enabled environment."
         ) from e
 
     from band.adapters import ParlantAdapter
