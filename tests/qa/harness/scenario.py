@@ -35,6 +35,24 @@ class ScenarioResult:
     steps: list[StepResult] = field(default_factory=list)
     error: str | None = None
     room_id: str | None = None
+    # All rooms this scenario used, in order. Single-room scenarios can leave
+    # this empty and just set room_id; multi-room scenarios (e.g. D) append
+    # each room via note_room() so every room is reported alongside results.
+    rooms: list[str] = field(default_factory=list)
+
+    def note_room(self, room_id: str) -> None:
+        """Record a room used by this scenario (sets room_id if unset)."""
+        if self.room_id is None:
+            self.room_id = room_id
+        if room_id not in self.rooms:
+            self.rooms.append(room_id)
+
+    @property
+    def all_rooms(self) -> list[str]:
+        """Every room this scenario touched (rooms list, else room_id)."""
+        if self.rooms:
+            return self.rooms
+        return [self.room_id] if self.room_id else []
 
     def add_step(
         self, action: str, expected: str, actual: str, status: Status

@@ -7,9 +7,20 @@ venv: .venv-parlant
 # due to conflicting opentelemetry-sdk transitive dependencies.
 # This adapter uses a dedicated venv. Create it once:
 #   UV_PROJECT_ENVIRONMENT=.venv-parlant uv sync --extra dev-parlant
-#
-# Core scenarios only — Parlant's complex async setup (server context,
-# agent creation, guideline wiring) makes expanded scripts impractical.
+
+# Scenario D: Multi-Participant — Parlant + langgraph in one room.
+# Each agent runs in its own subprocess/venv (parlant -> .venv-parlant,
+# langgraph -> default .venv via uv run), so the crewai/parlant env conflict
+# does not apply here.
+multi_participant:
+  agent_1:
+    adapter: parlant
+    example: 01_basic_agent
+    config_key: parlant_agent
+  agent_2:
+    adapter: langgraph
+    example: 01_simple_agent
+    config_key: simple_agent
 
 examples:
   working_dir: examples/parlant
@@ -18,3 +29,33 @@ examples:
     01_basic_agent:
       file: 01_basic_agent.py
       config_key: parlant_agent
+
+# Expanded scenarios (E-I) run purpose-built Parlant agent scripts that enable
+# the relevant features (memory / contacts / execution emit) via AdapterFeatures.
+# Scripts live in agents/ and share agents/_common.py. config_keys resolve from
+# tests/qa/adapters/parlant/agent_config.yaml (E/G/I reuse parlant_agent;
+# contacts use the same target with simple_agent as the REST-only requester).
+expanded:
+  config_file: agent_config.yaml
+  scenarios:
+    E:
+      script: agents/memory_agent.py
+      config_key: parlant_memory_test
+    F1:
+      script: agents/contacts_disabled.py
+      config_key: parlant_contacts_test
+    F2:
+      script: agents/contacts_callback.py
+      config_key: parlant_contacts_test
+    F3:
+      script: agents/contacts_hub.py
+      config_key: parlant_contacts_test
+    G:
+      script: agents/full_agent.py
+      config_key: parlant_full_test
+    I:
+      script: agents/full_agent.py
+      config_key: parlant_full_test
+  contacts:
+    requester_config_key: parlant_requester
+    target_handle: "nir.singhertest/qa-parlant-parlant-age-2"

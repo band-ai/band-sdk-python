@@ -56,6 +56,12 @@ class Reporter:
             for sr in report.scenario_results:
                 lines.append(f"### {sr.name}")
                 lines.append(f"**Status:** {sr.status.value}")
+                rooms = sr.all_rooms
+                if rooms:
+                    label = "Room" if len(rooms) == 1 else "Rooms"
+                    lines.append(
+                        f"**{label}:** " + ", ".join(f"`{r}`" for r in rooms)
+                    )
                 if sr.description:
                     lines.append(f"*{sr.description}*")
                 lines.append("")
@@ -76,15 +82,13 @@ class Reporter:
                         )
                     lines.append("")
 
-        room_ids = [
-            (sr.name, sr.room_id)
-            for sr in report.scenario_results
-            if sr.room_id
+        room_entries = [
+            (sr.name, sr.all_rooms) for sr in report.scenario_results if sr.all_rooms
         ]
-        if room_ids:
+        if room_entries:
             lines.append("## Chat Rooms")
-            for name, rid in room_ids:
-                lines.append(f"- **{name}**: `{rid}`")
+            for name, rooms in room_entries:
+                lines.append(f"- **{name}**: " + ", ".join(f"`{r}`" for r in rooms))
             lines.append("")
 
         if report.errors:

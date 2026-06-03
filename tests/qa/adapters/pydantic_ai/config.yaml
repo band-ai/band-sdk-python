@@ -1,6 +1,7 @@
 adapter: pydantic_ai
 llm_model: openai:gpt-5.4-mini
 env_file: examples/pydantic_ai/.env
+venv: .venv-int488  # INT-488 QA: dev extra, pydantic-ai-slim 1.102 (output_type fix)
 
 # Core scenarios (A-C) run per example file
 examples:

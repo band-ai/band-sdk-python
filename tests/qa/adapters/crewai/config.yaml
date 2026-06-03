@@ -1,6 +1,7 @@
 adapter: crewai
 llm_model: gpt-5.4-mini
 env_file: examples/crewai/.env
+venv: .venv-crewai  # INT-488 QA: dev-crewai extra, validates lazy crewai import
 
 # NOTE: crewai and parlant cannot coexist in the same Python environment
 # due to conflicting opentelemetry-sdk transitive dependencies.

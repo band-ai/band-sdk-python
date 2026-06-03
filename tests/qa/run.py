@@ -742,7 +742,8 @@ def print_summary(
             s = {"PASS": "+", "FAIL": "X", "PARTIAL": "~", "SKIP": "-"}.get(
                 sr.status.value, "?"
             )
-            print(f"      [{s}] {sr.name}: {sr.status.value}")
+            rooms = ", ".join(sr.all_rooms) if sr.all_rooms else "n/a"
+            print(f"      [{s}] {sr.name}: {sr.status.value}  (room: {rooms})")
     print(f"\nReports: {reports_dir}/")
 
 
