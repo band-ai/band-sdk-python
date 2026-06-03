@@ -59,6 +59,43 @@ If an adapter's `venv` is not found at runtime, the runner falls back to
 | `.venv` (default) | langgraph, google_adk, anthropic, crewai, gemini, pydantic_ai, claude_sdk, letta | `uv sync --extra dev` |
 | `.venv-parlant` | parlant | `UV_PROJECT_ENVIRONMENT=.venv-parlant uv sync --extra dev-parlant` |
 
+## Letta: Local Server Stack
+
+The letta example is the only adapter that needs extra services. The Letta
+agent runtime runs in a **Letta server**, and it reaches Band platform tools
+through a **band-mcp** MCP server. Pointing at Letta Cloud needs a
+`LETTA_API_KEY` and a publicly reachable band-mcp; instead we run both locally
+so letta can be tested with no external accounts.
+
+```bash
+# Brings up Letta (Docker :8283) + band-mcp (:8002), wires examples/letta/.env
+tests/qa/scripts/letta_local_stack.sh up
+
+python tests/qa/run.py --adapter letta --examples 01 --all
+
+tests/qa/scripts/letta_local_stack.sh down   # tear down when finished
+```
+
+What `up` does:
+
+1. Ensures the band-mcp source repo is on the band branch and synced
+   (`BAND_MCP_DIR`, default `~/band/thenvoi-mcp`, branch `rename-band-mcp`).
+2. Starts the Letta server in Docker (`band-qa-letta`, `letta/letta:latest`)
+   with `OPENAI_API_KEY` from `tests/qa/.env`.
+3. Starts band-mcp on `0.0.0.0:8002` using the letta agent's key from
+   `examples/letta/agent_config.yaml` (agent scope) against `BAND_REST_URL`.
+4. Writes `examples/letta/.env` so the harness points the agent at
+   `LETTA_BASE_URL=http://localhost:8283` and
+   `MCP_SERVER_URL=http://host.docker.internal:8002/sse`.
+
+> **MCP URL relaxation (test-only).** The Letta *server* (in Docker) reaches
+> band-mcp on the host via `host.docker.internal`. Stock `letta/letta` images
+> reject private/loopback MCP targets via an SSRF guard
+> (`validate_mcp_server_url`), with no env toggle — which blocks every local
+> self-hosted MCP server. `up` applies a small, documented relaxation **only to
+> the disposable `band-qa-letta` container** so local MCP works. It is never
+> applied anywhere else; `down` discards the container entirely.
+
 ## Environment Variables
 
 The harness loads environment variables in this order:
