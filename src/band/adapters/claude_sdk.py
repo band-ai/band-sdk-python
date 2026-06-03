@@ -83,6 +83,14 @@ BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
 
 _BAND_TOOLS: list[str] = BAND_ALL_TOOLS
 
+# Default model used when the caller does not specify one. Letting the npm
+# `claude` CLI auto-select its default fails under API-key auth: the CLI sends
+# the legacy `thinking.type.enabled` request shape, which current models reject
+# ("thinking.type.enabled is not supported for this model. Use
+# thinking.type.adaptive"), so the run returns an error result with no output.
+# Pinning a known-good model avoids that path; callers can override via `model=`.
+_DEFAULT_MODEL = "claude-sonnet-4-6"
+
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
 ApprovalDecision = Literal["accept", "decline"]
@@ -199,8 +207,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             model: Claude model to use. Pass a full ID (e.g.
                 ``"claude-opus-4-7-20251224"``) or a family alias
                 (``"sonnet"`` / ``"opus"`` / ``"haiku"`` / ``"inherit"``).
-                When ``None`` (default), the npm ``claude`` binary picks
-                its own default — no ``--model`` flag is sent.
+                When ``None`` (default), the adapter pins ``_DEFAULT_MODEL``
+                rather than letting the npm ``claude`` binary auto-select,
+                which fails under API-key auth (legacy thinking request shape).
             fallback_model: Optional fallback model passed to
                 ``ClaudeAgentOptions.fallback_model``. The npm ``claude``
                 binary uses it when the primary model is unavailable.
@@ -348,11 +357,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features=self.features,
         )
 
-        # Build SDK options. Both model and fallback_model upstream default
-        # to None — passing None is equivalent to omitting them, which lets
-        # the npm `claude` binary pick its own default.
+        # Build SDK options. When the caller doesn't pin a model, default to a
+        # known-good one rather than the npm `claude` binary's auto-selection,
+        # which fails under API-key auth (see _DEFAULT_MODEL). fallback_model
+        # stays None unless explicitly set.
+        resolved_model = self.model or _DEFAULT_MODEL
         sdk_options = ClaudeAgentOptions(
-            model=self.model,
+            model=resolved_model,
             fallback_model=self.fallback_model,
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
@@ -392,7 +403,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         logger.info(
             "Claude SDK adapter started for agent: %s (model=%s, fallback_model=%s, thinking=%s, approval=%s)",
             agent_name,
-            self.model or "auto",
+            resolved_model,
             self.fallback_model or "none",
             self.max_thinking_tokens,
             self.approval_mode,

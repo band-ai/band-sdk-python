@@ -19,6 +19,7 @@ import pytest
 from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
+    _DEFAULT_MODEL,
     _PendingApproval,
     _pre_tool_use_continue_hook,
     BAND_ALL_TOOLS,
@@ -109,8 +110,9 @@ class TestOnStarted:
             assert adapter._mcp_server is not None
 
     @pytest.mark.asyncio
-    async def test_default_options_have_no_model(self):
-        """Default ClaudeSDKAdapter() should pass model=None and fallback_model=None."""
+    async def test_default_options_pin_default_model(self):
+        """Default ClaudeSDKAdapter() pins _DEFAULT_MODEL (the npm `claude`
+        binary's auto-selection fails under API-key auth), fallback_model=None."""
         adapter = ClaudeSDKAdapter()
 
         with patch(
@@ -123,7 +125,7 @@ class TestOnStarted:
             )
 
             sdk_options = mock_manager_class.call_args[0][0]
-            assert sdk_options.model is None
+            assert sdk_options.model == _DEFAULT_MODEL
             assert sdk_options.fallback_model is None
 
     @pytest.mark.asyncio
