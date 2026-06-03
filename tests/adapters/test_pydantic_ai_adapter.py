@@ -7,6 +7,7 @@ This file contains PydanticAI-specific behavior: agent creation, tool registrati
 stream event handling, execution reporting, and custom tools.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from typing import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -20,6 +21,7 @@ from pydantic_ai import (
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
 from band.adapters.pydantic_ai import PydanticAIAdapter
+from band.agent import Agent as BandAgent
 from band.core.types import AdapterFeatures, Capability, PlatformMessage
 
 
@@ -208,6 +210,122 @@ class TestOnStarted:
 
         for tool in expected_tools:
             assert tool in tool_names, f"Tool {tool} not found"
+
+
+class TestStartupRoomSubscription:
+    """Tests for startup room subscription through the public Agent entry point."""
+
+    @pytest.mark.asyncio
+    async def test_start_processes_existing_room_backlog_without_room_added_event(
+        self, mock_pydantic_agent
+    ):
+        """Agent.start() should subscribe existing rooms and process /next backlog."""
+        room = MagicMock()
+        room.id = "room-existing"
+        room.model_dump.return_value = {"id": "room-existing", "title": "Existing"}
+
+        list_rooms_response = MagicMock()
+        list_rooms_response.data = [room]
+        list_rooms_response.metadata = MagicMock(total_pages=1)
+
+        metadata_response = MagicMock()
+        metadata_response.data = MagicMock(
+            name="TestBot",
+            description="A test bot for restart hydration",
+        )
+
+        link = MagicMock()
+        link.agent_id = "agent-123"
+        link.is_connected = False
+        link.connect = AsyncMock()
+        link.disconnect = AsyncMock()
+        link.subscribe_agent_rooms = AsyncMock()
+        link.subscribe_room = AsyncMock()
+        link.unsubscribe_room = AsyncMock()
+        backlog_message = PlatformMessage(
+            id="msg-existing",
+            room_id="room-existing",
+            content="Recover this message after restart",
+            sender_id="user-456",
+            sender_type="User",
+            sender_name="Alice",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        link.get_next_message = AsyncMock(side_effect=[backlog_message, None])
+        link.get_stale_processing_messages = AsyncMock(return_value=[])
+        link.mark_processing = AsyncMock(return_value=True)
+        link.mark_processed = AsyncMock(return_value=True)
+        link.mark_failed = AsyncMock(return_value=True)
+
+        link.rest = MagicMock()
+        link.rest.agent_api_identity = MagicMock()
+        link.rest.agent_api_identity.get_agent_me = AsyncMock(
+            return_value=metadata_response
+        )
+        link.rest.agent_api_chats = MagicMock()
+        link.rest.agent_api_chats.list_agent_chats = AsyncMock(
+            return_value=list_rooms_response
+        )
+        link.rest.agent_api_participants = MagicMock()
+        link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+            return_value=MagicMock(data=[])
+        )
+        link.rest.agent_api_context = MagicMock()
+        link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
+            return_value=MagicMock(data=[])
+        )
+
+        async def empty_aiter():
+            return
+            yield
+
+        link.__aiter__ = lambda self: empty_aiter()
+
+        mock_pydantic_agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(result_messages=[])
+        )
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+
+        with (
+            patch("band.runtime.platform_runtime.BandLink", return_value=link),
+            patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent),
+        ):
+            agent = BandAgent.create(
+                adapter=adapter,
+                agent_id="agent-123",
+                api_key="test-api-key",
+            )
+
+            await agent.start()
+
+            try:
+                for _ in range(50):
+                    if mock_pydantic_agent.run_stream_events.called:
+                        break
+                    await asyncio.sleep(0.01)
+                else:
+                    pytest.fail(
+                        "startup backlog message was not delivered to Pydantic AI"
+                    )
+
+                link.subscribe_agent_rooms.assert_awaited_once_with("agent-123")
+                link.subscribe_room.assert_awaited_once_with("room-existing")
+                link.get_next_message.assert_any_await("room-existing")
+                link.mark_processing.assert_awaited_once_with(
+                    "room-existing", "msg-existing"
+                )
+                link.mark_processed.assert_awaited_once_with(
+                    "room-existing", "msg-existing"
+                )
+                assert "room-existing" in agent.runtime.runtime.presence.rooms
+                assert "room-existing" in agent.runtime.runtime.executions
+
+                call_args = mock_pydantic_agent.run_stream_events.call_args
+                assert call_args.args[0] == "[User]: Recover this message after restart"
+            finally:
+                await agent.stop()
 
 
 class TestOnMessage:
