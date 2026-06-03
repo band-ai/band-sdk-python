@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+# Global multiplier for all agent-wait timeouts. Set QA_TIMEOUT_SCALE=4 (etc.)
+# to give slow adapters (claude_sdk, letta) much longer to respond without
+# editing every scenario. Defaults to 1.0 (no change).
+try:
+    TIMEOUT_SCALE = float(os.environ.get("QA_TIMEOUT_SCALE", "1") or "1")
+except ValueError:
+    TIMEOUT_SCALE = 1.0
+if TIMEOUT_SCALE != 1.0:
+    logger.info("QA_TIMEOUT_SCALE=%s — scaling agent-wait timeouts", TIMEOUT_SCALE)
 
 
 @dataclass
@@ -132,6 +143,7 @@ class PlatformClient:
         timeout: float = 120.0,
         poll_interval: float = 2.0,
     ) -> dict | None:
+        timeout *= TIMEOUT_SCALE
         start = time.monotonic()
         seen_ids: set[str] = set()
 
@@ -166,6 +178,7 @@ class PlatformClient:
         timeout: float = 120.0,
         poll_interval: float = 2.0,
     ) -> dict | None:
+        timeout *= TIMEOUT_SCALE
         start = time.monotonic()
         while time.monotonic() - start < timeout:
             messages = await self.get_messages(room_id)
@@ -195,6 +208,8 @@ class PlatformClient:
         After first seeing new agent messages, waits *settle_time* extra
         seconds for a text follow-up before returning the best match.
         """
+        timeout *= TIMEOUT_SCALE
+        settle_time *= TIMEOUT_SCALE
         start = time.monotonic()
         first_activity_at: float | None = None
         best: dict | None = None

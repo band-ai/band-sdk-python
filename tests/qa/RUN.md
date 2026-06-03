@@ -96,6 +96,21 @@ What `up` does:
 > the disposable `band-qa-letta` container** so local MCP works. It is never
 > applied anywhere else; `down` discards the container entirely.
 
+## Slow Adapters — Timeout Scaling
+
+Some adapters (claude_sdk, letta) can take minutes per response. Set
+`QA_TIMEOUT_SCALE` to multiply **all** agent-wait and startup timeouts at once,
+so you don't have to edit individual scenarios:
+
+```bash
+# Give every wait 5x as long (e.g. 120s response wait -> 600s)
+QA_TIMEOUT_SCALE=5 python tests/qa/run.py --adapter claude_sdk --examples 01 --all
+QA_TIMEOUT_SCALE=5 python tests/qa/run.py --adapter letta --examples 01 --all
+```
+
+Default is `1.0` (unchanged). Applies to response/activity waits and the
+agent-startup wait alike.
+
 ## Environment Variables
 
 The harness loads environment variables in this order:

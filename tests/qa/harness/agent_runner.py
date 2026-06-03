@@ -70,6 +70,12 @@ class AgentRunner:
         self._process = None
 
     async def start(self, timeout: float = 30.0) -> bool:
+        # Honor QA_TIMEOUT_SCALE so slow adapters get longer to reach the
+        # startup marker (matches the agent-wait scaling in api_client).
+        try:
+            timeout *= float(os.environ.get("QA_TIMEOUT_SCALE", "1") or "1")
+        except ValueError:
+            pass
         logger.info("Starting agent: %s", self.example_file)
 
         # Clean up any leftover state from a previous run so we start fresh.
