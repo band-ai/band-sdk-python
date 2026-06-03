@@ -9,8 +9,7 @@
 Tom the cat agent using Parlant.
 
 This example shows how to create a character agent with a custom personality
-using Parlant. Tom uses platform tools to find and invite Jerry,
-then tries various tactics to lure Jerry out of his mouse hole.
+using Parlant. Tom tries various tactics to lure Jerry out of his mouse hole.
 
 Run with (from repo root):
     uv run examples/parlant/04_tom_agent.py
@@ -34,7 +33,6 @@ from prompts.characters import generate_tom_prompt
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -53,28 +51,22 @@ async def main() -> None:
 
     # Load Tom's credentials from agent_config.yaml
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
-        parlant_tools = create_parlant_tools()
-
         # Create Parlant agent with Tom's personality
         parlant_agent = await server.create_agent(
             name="Tom",
             description=generate_tom_prompt("Tom"),
         )
 
-        # Add guideline for using tools
         await parlant_agent.create_guideline(
             condition="User sends a message or asks something",
-            action="Respond using band_send_message with the user's name in mentions. Stay in character as Tom the cat.",
-            tools=parlant_tools,
+            action="Stay in character as Tom the Cat.",
         )
 
-        # Create adapter with Parlant server and agent
         adapter = ParlantAdapter(
             server=server,
             parlant_agent=parlant_agent,
         )
 
-        # Create and start agent
         agent = Agent.from_config(
             "tom_agent",
             adapter=adapter,

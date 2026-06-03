@@ -34,7 +34,6 @@ from prompts.characters import generate_jerry_prompt
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ParlantAdapter
-from band.integrations.parlant.tools import create_parlant_tools
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -53,28 +52,22 @@ async def main() -> None:
 
     # Load Jerry's credentials from agent_config.yaml
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
-        parlant_tools = create_parlant_tools()
-
         # Create Parlant agent with Jerry's personality
         parlant_agent = await server.create_agent(
             name="Jerry",
             description=generate_jerry_prompt("Jerry"),
         )
 
-        # Add guideline for using tools
         await parlant_agent.create_guideline(
             condition="User sends a message or asks something",
-            action="Respond using band_send_message with the user's name in mentions. Stay in character as Jerry the mouse.",
-            tools=parlant_tools,
+            action="Stay in character as Jerry the Mouse.",
         )
 
-        # Create adapter with Parlant server and agent
         adapter = ParlantAdapter(
             server=server,
             parlant_agent=parlant_agent,
         )
 
-        # Create and start agent
         agent = Agent.from_config(
             "jerry_agent",
             adapter=adapter,

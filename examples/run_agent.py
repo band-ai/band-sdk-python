@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,parlant,crewai,a2a,codex]",
+#   "band-sdk[langgraph,anthropic,pydantic-ai,claude_sdk,crewai,a2a,codex]",
 #   "python-dotenv>=1.1.1",
 # ]
 #
@@ -28,7 +28,6 @@ Usage:
     uv run python examples/run_agent.py --example claude_sdk
     uv run python examples/run_agent.py --example claude_sdk --streaming  # With tool_call/tool_result events
     uv run python examples/run_agent.py --example claude_sdk --thinking   # Enable extended thinking
-    uv run python examples/run_agent.py --example parlant
     uv run python examples/run_agent.py --example crewai
     uv run python examples/run_agent.py --example crewai --streaming  # Show tool calls
     uv run python examples/run_agent.py --example codex
@@ -46,7 +45,7 @@ Setup:
 1. Copy .env.example to .env and configure:
    - BAND_REST_URL (default: production, change for local dev)
    - BAND_WS_URL (default: production, change for local dev)
-   - OPENAI_API_KEY (required for langgraph/openai/parlant/crewai models)
+   - OPENAI_API_KEY (required for langgraph/openai/crewai models)
    - ANTHROPIC_API_KEY (required for anthropic models)
 
 2. Configure agent in agent_config.yaml
@@ -68,7 +67,7 @@ from dotenv import load_dotenv
 
 from band import Agent
 from band.config import load_agent_config
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import AdapterFeatures, Capability, Emit
 from band.platform.event import ContactRequestReceivedEvent, ContactEvent
 from band.runtime.contact_tools import ContactTools
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -175,7 +174,6 @@ _DEFAULT_MODELS: dict[str, str] = {
     "contacts_hub": "anthropic:claude-sonnet-4-5",
     "contacts_broadcast": "anthropic:claude-sonnet-4-5",
     "anthropic": "claude-sonnet-4-5-20250929",
-    "parlant": "gpt-5.4-mini",
     "crewai": "gpt-5.4-mini",
     # claude_sdk: deliberately omitted — the npm `claude` binary picks its own default.
 }
@@ -406,31 +404,87 @@ async def run_parlant_agent(
     api_key: str,
     rest_url: str,
     ws_url: str,
-    model: str,
+    model: str | None,
     custom_section: str,
     enable_streaming: bool,
+    contact_config: ContactEventConfig | None,
     logger: logging.Logger,
 ) -> None:
     """Run the Parlant agent."""
+    try:
+        import parlant.sdk as p
+    except ImportError as e:
+        raise RuntimeError(
+            "Parlant conflicts with CrewAI in the generic runner metadata; run "
+            "`uv sync --extra dev-parlant` from the repo or use "
+            "examples/parlant/... in a Parlant-enabled environment."
+        ) from e
+
     from band.adapters import ParlantAdapter
+    from band.integrations.parlant.tools import create_parlant_tools
 
-    adapter = ParlantAdapter(
-        model=model,
-        custom_section=custom_section,
-        guidelines=PARLANT_GUIDELINES,
-        features=AdapterFeatures(emit={Emit.EXECUTION}) if enable_streaming else None,
+    if model:
+        logger.warning(
+            "Parlant uses the provider configured by p.NLPServices.openai; ignoring --model=%s",
+            model,
+        )
+    description = custom_section or "A helpful Band collaboration agent using Parlant."
+
+    llm_managed_contacts = bool(
+        contact_config and contact_config.strategy == ContactEventStrategy.HUB_ROOM
+    )
+    parlant_capabilities = (
+        frozenset({Capability.CONTACTS}) if llm_managed_contacts else frozenset()
+    )
+    parlant_emit = frozenset({Emit.EXECUTION}) if enable_streaming else frozenset()
+    parlant_features = (
+        AdapterFeatures(capabilities=parlant_capabilities, emit=parlant_emit)
+        if parlant_capabilities or parlant_emit
+        else None
     )
 
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=ws_url,
-        rest_url=rest_url,
-    )
+    async with p.Server(nlp_service=p.NLPServices.openai) as server:
+        parlant_tools = create_parlant_tools(
+            parlant_features,
+            legacy_defaults=False,
+        )
+        parlant_agent = await server.create_agent(
+            name="Parlant",
+            description=description,
+        )
+        await parlant_agent.create_guideline(
+            condition="User sends a message or asks for help",
+            action="Respond by calling band_send_message with the user's name or handle in mentions. If another specialist is needed, call band_lookup_peers, then band_add_participant, then mention that specialist with context.",
+            tools=parlant_tools,
+        )
+        for guideline in PARLANT_GUIDELINES:
+            await parlant_agent.create_guideline(
+                condition=guideline["condition"],
+                action=guideline["action"],
+                tools=parlant_tools,
+            )
 
-    logger.info("Starting Parlant agent with model: %s", model)
-    await agent.run()
+        adapter = ParlantAdapter(
+            server=server,
+            parlant_agent=parlant_agent,
+            custom_section=custom_section,
+            features=parlant_features,
+        )
+
+        agent = Agent.create(
+            adapter=adapter,
+            agent_id=agent_id,
+            api_key=api_key,
+            ws_url=ws_url,
+            rest_url=rest_url,
+            contact_config=contact_config,
+        )
+
+        contacts_str = (
+            f", contacts={contact_config.strategy.value}" if contact_config else ""
+        )
+        logger.info("Starting Parlant agent with OpenAI NLP service%s", contacts_str)
+        await agent.run()
 
 
 async def run_crewai_agent(
@@ -834,8 +888,6 @@ Examples:
   uv run python examples/run_agent.py --example claude_sdk                # Claude Agent SDK
   uv run python examples/run_agent.py --example claude_sdk --streaming    # With tool_call/tool_result events
   uv run python examples/run_agent.py --example claude_sdk --thinking     # With extended thinking
-  uv run python examples/run_agent.py --example parlant                   # Parlant adapter
-  uv run python examples/run_agent.py --example parlant --streaming       # With tool visibility
   uv run python examples/run_agent.py --example crewai                    # CrewAI adapter
   uv run python examples/run_agent.py --example crewai --streaming        # With tool visibility
   uv run python examples/run_agent.py --example codex                     # Codex app-server adapter
@@ -864,7 +916,6 @@ Examples:
             "contacts_broadcast",
             "anthropic",
             "claude_sdk",
-            "parlant",
             "crewai",
             "codex",
             "a2a",
@@ -919,7 +970,7 @@ Examples:
         "--streaming",
         "-s",
         action="store_true",
-        help="Enable tool call/result visibility for anthropic/claude_sdk/parlant/crewai (default: False)",
+        help="Enable tool call/result visibility for anthropic/claude_sdk/crewai (default: False)",
     )
     parser.add_argument(
         "--codex-transport",
@@ -1024,7 +1075,6 @@ Examples:
         "contacts_broadcast": "simple_agent",
         "anthropic": "anthropic_agent",
         "claude_sdk": "anthropic_agent",
-        "parlant": "parlant_agent",
         "crewai": "crewai_agent",
         "codex": "simple_agent",
         "a2a": "a2a_agent",
@@ -1162,6 +1212,7 @@ Examples:
                 model=model,
                 custom_section=args.custom_section,
                 enable_streaming=args.streaming,
+                contact_config=contact_config,
                 logger=logger,
             )
         elif args.example == "crewai":
