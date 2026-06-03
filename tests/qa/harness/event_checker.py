@@ -35,36 +35,38 @@ class EventChecker:
             })
         return events
 
+    @staticmethod
+    def _event_tool_name(content: object) -> str | None:
+        """Extract the tool name from a tool_call/tool_result event payload.
+
+        Platform events serialise the tool name under the ``tool`` key, e.g.
+        ``{"tool": "band_get_participants", "input": {...}}``. Older payloads
+        used ``name``; accept either for robustness.
+        """
+        if isinstance(content, dict):
+            return content.get("tool") or content.get("name")
+        return None
+
+    def _matches(self, content: object, tool_name: str) -> bool:
+        if self._event_tool_name(content) == tool_name:
+            return True
+        return isinstance(content, str) and tool_name in content
+
     async def assert_tool_called(self, room_id: str, tool_name: str) -> bool:
         for ev in await self.get_tool_events(room_id):
-            if ev["message_type"] != "tool_call":
-                continue
-            c = ev["content"]
-            if isinstance(c, dict) and c.get("name") == tool_name:
-                return True
-            if isinstance(c, str) and tool_name in c:
+            if ev["message_type"] == "tool_call" and self._matches(ev["content"], tool_name):
                 return True
         return False
 
     async def assert_tool_result(self, room_id: str, tool_name: str) -> bool:
         for ev in await self.get_tool_events(room_id):
-            if ev["message_type"] != "tool_result":
-                continue
-            c = ev["content"]
-            if isinstance(c, dict) and c.get("name") == tool_name:
-                return True
-            if isinstance(c, str) and tool_name in c:
+            if ev["message_type"] == "tool_result" and self._matches(ev["content"], tool_name):
                 return True
         return False
 
     async def get_tool_call_count(self, room_id: str, tool_name: str) -> int:
-        count = 0
-        for ev in await self.get_tool_events(room_id):
-            if ev["message_type"] != "tool_call":
-                continue
-            c = ev["content"]
-            if isinstance(c, dict) and c.get("name") == tool_name:
-                count += 1
-            elif isinstance(c, str) and tool_name in c:
-                count += 1
-        return count
+        return sum(
+            1
+            for ev in await self.get_tool_events(room_id)
+            if ev["message_type"] == "tool_call" and self._matches(ev["content"], tool_name)
+        )
