@@ -343,8 +343,8 @@ Adapter emit support:
 | Gemini | Yes | - | - |
 | Google ADK | Yes | - | - |
 | Pydantic AI | Yes | - | - |
-| Parlant | Yes | - | - |
 | LangGraph | Yes | - | - |
+| Parlant | - | - | - |
 | A2A / A2A Gateway | - | - | - |
 | ACP Client | - | - | - |
 
