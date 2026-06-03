@@ -894,6 +894,8 @@ Examples:
   uv run python examples/run_agent.py --example claude_sdk --thinking     # With extended thinking
   uv run python examples/run_agent.py --example crewai                    # CrewAI adapter
   uv run python examples/run_agent.py --example crewai --streaming        # With tool visibility
+  uv run python examples/run_agent.py --example parlant                   # Parlant adapter
+  uv run python examples/run_agent.py --example parlant --streaming       # With tool visibility
   uv run python examples/run_agent.py --example codex                     # Codex app-server adapter
   uv run python examples/run_agent.py --example codex --agent darter      # Run Codex as darter agent
   uv run python examples/run_agent.py --example codex --codex-transport stdio
@@ -921,6 +923,7 @@ Examples:
             "anthropic",
             "claude_sdk",
             "crewai",
+            "parlant",
             "codex",
             "a2a",
             "a2a_gateway",
@@ -1080,6 +1083,7 @@ Examples:
         "anthropic": "anthropic_agent",
         "claude_sdk": "anthropic_agent",
         "crewai": "crewai_agent",
+        "parlant": "parlant_agent",
         "codex": "simple_agent",
         "a2a": "a2a_agent",
         "a2a_gateway": "a2a_gateway_agent",
