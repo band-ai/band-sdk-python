@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[a2a_gateway_demo]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Run A2A Gateway with Demo Orchestrator Agent.

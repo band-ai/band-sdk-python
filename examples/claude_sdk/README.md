@@ -28,7 +28,7 @@ claude --version
 
 ```bash
 # Install with claude_sdk extras
-uv add "git+https://github.com/band-ai/band-sdk-python.git[claude_sdk]"
+uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[claude_sdk]"
 
 # Or from repository
 uv sync --extra claude_sdk

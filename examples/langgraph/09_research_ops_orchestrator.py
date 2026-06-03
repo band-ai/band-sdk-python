@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Custom LangGraph orchestrator with platform tools and subgraph delegation.

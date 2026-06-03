@@ -4,7 +4,7 @@
 # dependencies = ["band-sdk[claude_sdk]", "pyyaml"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 YAML-based agent runner for Band Claude SDK.

@@ -6,7 +6,7 @@ Examples showing how to use the Band SDK with Pydantic AI using the composition-
 
 **Install with Pydantic AI support:**
 ```bash
-uv add "git+https://github.com/band-ai/band-sdk-python.git[pydantic_ai]"
+uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[pydantic_ai]"
 
 # Plus your model provider:
 pip install "pydantic-ai-slim[openai]"  # or [anthropic], [google], etc.

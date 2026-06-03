@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 ACP Server with routing - Target specific peers via slash commands or modes.

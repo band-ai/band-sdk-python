@@ -12,7 +12,7 @@ uv sync --extra langgraph
 
 **If using as external library:**
 ```bash
-uv add "git+https://github.com/band-ai/band-sdk-python.git[langgraph]"
+uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[langgraph]"
 ```
 
 **Configuration:**

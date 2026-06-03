@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[google_adk]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Google ADK agent with custom instructions and model selection.
