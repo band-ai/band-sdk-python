@@ -1,6 +1,6 @@
-# Parlant Examples for Thenvoi
+# Parlant Examples for Band
 
-Examples showing how to use the Thenvoi SDK with [Parlant](https://github.com/emcie-co/parlant) - an AI agent framework designed for controlled, guideline-based agent behavior.
+Examples showing how to use the Thenvoi SDK with [Parlant](https://github.com/emcie-co/parlant) - an AI agent framework designed for controlled, guideline-based agent behavior. Band provides the room, identity, @mention routing, audit, participants, and platform tools; Parlant controls one participant's guideline-driven behavior after Band wakes it.
 
 ## Why Parlant?
 
@@ -21,8 +21,10 @@ uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[parlant]"
 
 **Or from repository:**
 ```bash
-uv sync --extra parlant
+uv sync --extra dev-parlant
 ```
+
+`dev-parlant` is the isolated development extra for this repo. It intentionally avoids CrewAI because Parlant and CrewAI currently require incompatible OpenTelemetry SDK versions.
 
 ---
 
@@ -34,9 +36,8 @@ The adapter uses the Parlant SDK directly - no separate HTTP server needed:
 import parlant.sdk as p
 from thenvoi import Agent
 from thenvoi.adapters import ParlantAdapter
-
-async with p.Server() as server:
-    # Create Parlant agent with guidelines
+async with p.Server(nlp_service=p.NLPServices.openai) as server:
+    # Create Parlant agent with example-specific behavior
     parlant_agent = await server.create_agent(
         name="Assistant",
         description="A helpful assistant.",
@@ -44,10 +45,10 @@ async with p.Server() as server:
 
     await parlant_agent.create_guideline(
         condition="User asks for help",
-        action="Acknowledge their request and provide detailed assistance",
+        action="Acknowledge their request and answer clearly.",
     )
 
-    # Create Thenvoi adapter
+    # Create Thenvoi adapter. It installs the Band platform contract and tools.
     adapter = ParlantAdapter(
         server=server,
         parlant_agent=parlant_agent,
@@ -68,9 +69,11 @@ async with p.Server() as server:
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | **Minimal setup** - Simple agent with Parlant SDK. |
-| `02_with_guidelines.py` | **Behavioral guidelines** - Agent with condition/action rules. |
-| `03_support_agent.py` | **Customer support** - Realistic support agent with specialized guidelines. |
+| `01_basic_agent.py` | **Minimal setup** - OpenAI-backed Parlant SDK agent with a basic assistant persona. |
+| `02_with_guidelines.py` | **Behavioral guidelines** - Condition/action rules for example-specific behavior. |
+| `03_support_agent.py` | **Customer support** - Support flow with refund, troubleshooting, urgency, and escalation behavior. |
+| `04_tom_agent.py` | **Tom character agent** - Character prompt and guideline for staying in character. |
+| `05_jerry_agent.py` | **Jerry character agent** - Character prompt and guideline for staying in character. |
 
 ---
 
@@ -106,7 +109,7 @@ cp agent_config.yaml.example agent_config.yaml
 ### 2. Set up environment variables in `.env`
 
 ```bash
-# Thenvoi platform URLs (required)
+# Band platform URLs (required; env var names are still THENVOI_*)
 THENVOI_WS_URL=wss://app.thenvoi.com/api/v1/socket/websocket
 THENVOI_REST_URL=https://app.thenvoi.com
 
@@ -116,14 +119,27 @@ OPENAI_API_KEY=your-openai-key
 
 ### 3. Add agent credentials to `agent_config.yaml`
 
-1. Create a remote agent on the [Thenvoi Platform](https://app.thenvoi.com)
-2. Generate an API key for the agent
-3. Edit `agent_config.yaml` and fill in the Parlant agent section:
+1. Create external agents on the Band platform.
+2. Generate API keys for those agents.
+3. Edit `agent_config.yaml` and fill in the sections used by the examples:
 
 ```yaml
 parlant_agent:
   agent_id: "your-agent-id-from-platform"
   api_key: "your-api-key-from-platform"
+
+support_agent:
+  agent_id: "your-support-agent-id-from-platform"
+  api_key: "your-support-agent-api-key-from-platform"
+
+# Required for 04_tom_agent.py and 05_jerry_agent.py
+tom_agent:
+  agent_id: "your-tom-agent-id-from-platform"
+  api_key: "your-tom-agent-api-key-from-platform"
+
+jerry_agent:
+  agent_id: "your-jerry-agent-id-from-platform"
+  api_key: "your-jerry-agent-api-key-from-platform"
 ```
 
 > **Note:** Always copy from the example files to ensure correct URLs and formatting. Never hardcode credentials.
@@ -142,6 +158,8 @@ cd /path/to/thenvoi-sdk-python
 uv run python examples/parlant/01_basic_agent.py
 uv run python examples/parlant/02_with_guidelines.py
 uv run python examples/parlant/03_support_agent.py
+uv run python examples/parlant/04_tom_agent.py
+uv run python examples/parlant/05_jerry_agent.py
 ```
 
 > **Note:** The config loader looks for `agent_config.yaml` in the current working directory. Running from a subdirectory will cause a `FileNotFoundError`.
@@ -157,10 +175,12 @@ ParlantAdapter(
     parlant_agent=agent,     # Parlant Agent instance
 
     # Optional: Custom prompts
-    system_prompt=None,      # Full system prompt override
-    custom_section="...",    # Custom instructions (added to default prompt)
+    system_prompt=None,      # Full prompt override
+    custom_section="...",    # Custom instructions
 )
 ```
+
+`ParlantAdapter` installs the Band platform contract as an always-match Parlant guideline, including the platform tools available for the configured capabilities. Example code should keep Parlant descriptions and guidelines focused on the example-specific behavior, not duplicate Band tool-use instructions. The adapter also supports `additional_tools` with the same `CustomToolDef` tuple format used by other adapters. You can define custom tools with Parlant's native `@p.tool` decorator when you are building Parlant-specific guidelines. Contact and memory tools are capability-gated; memory is supported on enterprise accounts only. Execution reporting is available with `features=AdapterFeatures(emit={Emit.EXECUTION})`.
 
 ---
 
@@ -178,11 +198,13 @@ Ideal when you need:
 - Auditable decision-making
 - Predictable behavior
 
-### Multi-Agent Orchestration
+### Peer handoff in Band rooms
 Works well for:
-- Coordinator agents with specific handoff rules
+- Support agents with specific escalation rules
 - Specialist agents with domain-specific guidelines
-- Agents that need to collaborate consistently
+- Agents that identify a useful specialist, add them to the room, and @mention them with context
+
+Band is still the collaboration layer. Parlant does not replace Band's room model or become a central orchestrator; it decides how one participant behaves after that participant is mentioned.
 
 ---
 
@@ -196,7 +218,9 @@ ImportError: parlant package required for ParlantAdapter
 
 Install the Parlant extra:
 ```bash
-uv sync --extra parlant
-# or
+uv sync --extra dev-parlant
+# or, for package consumers
 pip install 'thenvoi-sdk[parlant]'
 ```
+
+If Parlant reports provider errors, verify `OPENAI_API_KEY` is set and unset any stale `OPENAI_BASE_URL` or `OPENAI_API_BASE` proxy values unless you intentionally use a compatible OpenAI proxy.

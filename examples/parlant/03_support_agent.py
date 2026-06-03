@@ -14,6 +14,8 @@ behavioral guidelines using the Parlant SDK directly.
 Run with:
     uv run examples/parlant/03_support_agent.py
 
+Requires `OPENAI_API_KEY` because this example starts Parlant with OpenAI.
+
 See also: https://github.com/emcie-co/parlant/blob/develop/examples/travel_voice_agent.py
 """
 
@@ -62,35 +64,34 @@ async def setup_support_agent(server: p.Server) -> p.Agent:
         description=SUPPORT_DESCRIPTION,
     )
 
-    # Add support-specific guidelines
     await agent.create_guideline(
         condition="Customer asks about refunds or returns",
-        action="Express empathy first, then ask for order details (order number, item) before providing refund information",
+        action="Express empathy first, then ask for order details such as order number and item before providing refund information.",
     )
 
     await agent.create_guideline(
         condition="Customer is frustrated or upset",
-        action="Acknowledge their frustration, apologize for any inconvenience, and focus on finding a solution",
+        action="Acknowledge their frustration, apologize for any inconvenience, and focus on finding a solution.",
     )
 
     await agent.create_guideline(
         condition="Customer asks a technical question",
-        action="Ask about their setup (device, OS, version) before troubleshooting",
+        action="Ask about their setup, including device, operating system, and version, before troubleshooting.",
     )
 
     await agent.create_guideline(
         condition="Issue cannot be resolved by this agent",
-        action="Explain the limitation clearly and offer to escalate to a specialist by adding them to the conversation",
+        action="Summarize the unresolved issue, the customer impact, and the specialist expertise needed.",
     )
 
     await agent.create_guideline(
         condition="Customer provides positive feedback",
-        action="Thank them warmly and ask if there's anything else you can help with",
+        action="Thank them warmly and ask if there's anything else you can help with.",
     )
 
     await agent.create_guideline(
         condition="Customer mentions urgency or deadline",
-        action="Prioritize their request and provide the fastest path to resolution",
+        action="Prioritize their request and provide the fastest path to resolution.",
     )
 
     return agent
@@ -108,17 +109,14 @@ async def main() -> None:
         raise ValueError("THENVOI_REST_URL environment variable is required")
     # Start Parlant server
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
-        # Create support agent with guidelines
         parlant_agent = await setup_support_agent(server)
         logger.info("Support agent created: %s", parlant_agent.id)
 
-        # Create adapter using Parlant SDK directly
         adapter = ParlantAdapter(
             server=server,
             parlant_agent=parlant_agent,
         )
 
-        # Create and start Thenvoi agent
         agent = Agent.from_config(
             "support_agent",
             adapter=adapter,

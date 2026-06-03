@@ -35,6 +35,13 @@ from thenvoi.runtime.tools import (
 if _HAS_CLAUDE_SDK:
     from thenvoi.integrations.claude_sdk.tools import build_thenvoi_sdk_tools
 
+try:
+    import parlant.sdk  # noqa: F401
+
+    _HAS_PARLANT = True
+except ImportError:
+    _HAS_PARLANT = False
+
 _SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "thenvoi"
 if not _SRC_ROOT.is_dir():
     raise FileNotFoundError(f"Source root not found: {_SRC_ROOT}")
@@ -224,18 +231,44 @@ class TestGeminiToolDrift:
 
 
 class TestParlantToolDrift:
-    """Parlant integration (integrations/parlant/tools.py) — chat tools only."""
+    """Parlant integration (integrations/parlant/tools.py) — chat tools only.
+
+    The Parlant integration derives its tool list dynamically from the central
+    registry via ``iter_tool_definitions`` instead of declaring one hand-written
+    ``@p.tool`` function per tool, so individual tool names no longer appear as
+    string literals in the source.  We verify the dynamic wiring statically and,
+    when Parlant is installed, that the built tool set actually covers every
+    chat tool.
+    """
 
     _FILE = _SRC_ROOT / "integrations" / "parlant" / "tools.py"
 
-    def test_all_chat_tools_registered(self):
-        """Every chat tool has a Parlant tool function."""
+    def test_derives_tools_from_central_registry(self):
+        """Verify tools are built from iter_tool_definitions, not hardcoded."""
         source = self._FILE.read_text()
-        found = _extract_tool_names(source)
+        assert "iter_tool_definitions" in source, (
+            "Parlant integration should derive its tool list from "
+            "iter_tool_definitions() in thenvoi.runtime.tools instead of "
+            "hardcoding one tool function per tool name."
+        )
+
+    @pytest.mark.skipif(
+        not _HAS_PARLANT,
+        reason="parlant not installed (uv sync --extra dev-parlant)",
+    )
+    def test_all_chat_tools_registered(self):
+        """Every chat tool is built by create_parlant_tools()."""
+        from thenvoi.integrations.parlant.tools import (
+            _tool_name,
+            create_parlant_tools,
+        )
+
+        entries = create_parlant_tools()
+        found = {_tool_name(entry) for entry in entries}
         missing = CHAT_TOOL_NAMES - found
         assert not missing, (
             f"Parlant integration is missing tool functions for: {sorted(missing)}. "
-            f"Add tool implementations in create_parlant_tools()."
+            f"create_parlant_tools() must build every chat tool from the registry."
         )
 
 
