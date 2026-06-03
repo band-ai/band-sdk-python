@@ -58,8 +58,9 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
 
-    # Create adapter with Claude SDK settings.  Omitting `model` lets the
-    # npm `claude` binary pick its own default (latest installed model).
+    # Create adapter with Claude SDK settings.  Omitting `model` uses the
+    # adapter's pinned default (the npm `claude` binary's auto-selection
+    # fails under API-key auth); pass `model=` to override.
     adapter = ClaudeSDKAdapter(
         custom_section="You are a helpful assistant. Be concise and friendly.",
         features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
