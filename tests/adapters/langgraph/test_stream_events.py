@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 
 import pytest
+from langchain_core.messages import ToolMessage
 
 from band.adapters.langgraph import LangGraphAdapter
 from band.core.types import AdapterFeatures, Emit
 from band.integrations.langgraph.langchain_tools import TOOL_EXECUTION_ERROR_PREFIX
+from band.runtime.tools import TOOL_VALIDATION_ERROR_PREFIX
 
 
 class TestStreamEventHandling:
@@ -137,6 +139,142 @@ class TestStreamEventHandling:
             call_kwargs["content"]
             == "band_send_message failed: Error executing band_send_message: see agent logs."
         )
+
+    @pytest.mark.asyncio
+    async def test_reports_platform_tool_toolmessage_wrapper_errors_as_error_events(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """Runtime tool failures may be returned as ToolMessage content."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+        )
+
+        event = {
+            "event": "on_tool_end",
+            "name": "band_send_message",
+            "run_id": "run-123",
+            "data": {
+                "output": ToolMessage(
+                    content=(
+                        f"{TOOL_EXECUTION_ERROR_PREFIX}band_send_message: "
+                        "see agent logs."
+                    ),
+                    tool_call_id="call-123",
+                )
+            },
+        }
+
+        await adapter._handle_stream_event(event, "room-123", mock_tools)
+
+        mock_tools.send_event.assert_awaited_once()
+        call_kwargs = mock_tools.send_event.call_args.kwargs
+        assert call_kwargs["message_type"] == "error"
+        assert (
+            call_kwargs["content"]
+            == "band_send_message failed: Error executing band_send_message: see agent logs."
+        )
+
+    @pytest.mark.asyncio
+    async def test_reports_platform_tool_validation_outputs_as_error_events(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """Platform tool validation failures arrive as tool_end output strings."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+        )
+
+        event = {
+            "event": "on_tool_end",
+            "name": "band_send_message",
+            "run_id": "run-123",
+            "data": {
+                "output": f"{TOOL_VALIDATION_ERROR_PREFIX}band_send_message: mentions: Field required"
+            },
+        }
+
+        await adapter._handle_stream_event(event, "room-123", mock_tools)
+
+        mock_tools.send_event.assert_awaited_once()
+        call_kwargs = mock_tools.send_event.call_args.kwargs
+        assert call_kwargs["message_type"] == "error"
+        assert (
+            call_kwargs["content"]
+            == "band_send_message failed: Invalid arguments for band_send_message: mentions: Field required"
+        )
+
+    @pytest.mark.asyncio
+    async def test_reports_platform_tool_toolmessage_errors_as_error_events(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """Real LangGraph tool calls wrap failed outputs in ToolMessage objects."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+        )
+
+        event = {
+            "event": "on_tool_end",
+            "name": "band_send_message",
+            "run_id": "run-123",
+            "data": {
+                "output": ToolMessage(
+                    content=(
+                        f"{TOOL_VALIDATION_ERROR_PREFIX}band_send_message: "
+                        "mentions: Field required"
+                    ),
+                    tool_call_id="call-123",
+                    status="error",
+                )
+            },
+        }
+
+        await adapter._handle_stream_event(event, "room-123", mock_tools)
+
+        mock_tools.send_event.assert_awaited_once()
+        call_kwargs = mock_tools.send_event.call_args.kwargs
+        assert call_kwargs["message_type"] == "error"
+        assert (
+            call_kwargs["content"]
+            == "band_send_message failed: Invalid arguments for band_send_message: mentions: Field required"
+        )
+
+    @pytest.mark.asyncio
+    async def test_reports_custom_tool_toolmessage_errors_as_tool_results(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """Non-platform tools still report ToolMessage failures as tool_results."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+        )
+
+        event = {
+            "event": "on_tool_end",
+            "name": "custom_search",
+            "run_id": "run-123",
+            "data": {
+                "output": ToolMessage(
+                    content="search failed",
+                    tool_call_id="call-123",
+                    status="error",
+                )
+            },
+        }
+
+        await adapter._handle_stream_event(event, "room-123", mock_tools)
+
+        mock_tools.send_event.assert_awaited_once()
+        call_kwargs = mock_tools.send_event.call_args.kwargs
+        assert call_kwargs["message_type"] == "tool_result"
+        payload = json.loads(call_kwargs["content"])
+        assert payload["is_error"] is True
+        assert payload["output"] == "search failed"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("tool_name", ["band_send_message", "band_send_event"])

@@ -381,6 +381,70 @@ class TestOnMessage:
         assert "tool_result" in message_types
 
     @pytest.mark.asyncio
+    async def test_real_compiled_graph_reports_platform_tool_validation_errors(
+        self, sample_message, mock_tools
+    ):
+        from langgraph.graph import END, START, MessagesState, StateGraph
+        from langgraph.prebuilt import ToolNode
+
+        from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
+
+        send_message = next(
+            tool
+            for tool in agent_tools_to_langchain(mock_tools)
+            if tool.name == "band_send_message"
+        )
+
+        def request_tool(state: MessagesState) -> dict[str, list[AIMessage]]:
+            return {
+                "messages": [
+                    AIMessage(
+                        content="",
+                        tool_calls=[
+                            {
+                                "id": "call-real-platform-tool",
+                                "name": "band_send_message",
+                                "args": {"content": "hello"},
+                            }
+                        ],
+                    )
+                ]
+            }
+
+        builder = StateGraph(MessagesState)
+        builder.add_node("request_tool", request_tool)
+        builder.add_node("tools", ToolNode([send_message]))
+        builder.add_edge(START, "request_tool")
+        builder.add_edge("request_tool", "tools")
+        builder.add_edge("tools", END)
+        graph = builder.compile()
+
+        adapter = LangGraphAdapter(
+            graph=graph,
+            features=AdapterFeatures(emit=frozenset({Emit.EXECUTION})),
+        )
+        await adapter.on_started("TestBot", "Test bot")
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        mock_tools.execute_tool_call.assert_not_called()
+        mock_tools.send_event.assert_awaited_once()
+        call_kwargs = mock_tools.send_event.call_args.kwargs
+        assert call_kwargs["message_type"] == "error"
+        assert (
+            call_kwargs["content"]
+            == "band_send_message failed: Invalid arguments for band_send_message: mentions: Field required"
+        )
+
+    @pytest.mark.asyncio
     async def test_real_compiled_graph_can_opt_into_bootstrap_system_prompt(
         self, sample_message, mock_tools
     ):

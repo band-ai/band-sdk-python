@@ -18,6 +18,7 @@ from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
 from band.integrations.langgraph.langchain_tools import TOOL_EXECUTION_ERROR_PREFIX
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import TOOL_VALIDATION_ERROR_PREFIX
 
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
@@ -35,6 +36,17 @@ _SILENT_REPORTING_TOOLS: frozenset[str] = frozenset(
 )
 
 _BOOTSTRAP_TRACKING_WARN_THRESHOLD = 1000
+
+
+def _tool_output_text(output: Any) -> str:
+    content = getattr(output, "content", output)
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, default=str)
+
+
+def _tool_output_has_error_status(output: Any) -> bool:
+    return getattr(output, "status", None) == "error"
 
 
 class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
@@ -399,13 +411,17 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             tool_name = event.get("name", "unknown")
             data = event.get("data") if isinstance(event.get("data"), dict) else {}
             output = data.get("output", "")
-            wrapper_reported_error = isinstance(output, str) and output.startswith(
-                TOOL_EXECUTION_ERROR_PREFIX
+            output_text = _tool_output_text(output)
+            wrapper_reported_error = output_text.startswith(TOOL_EXECUTION_ERROR_PREFIX)
+            validation_reported_error = output_text.startswith(
+                f"{TOOL_VALIDATION_ERROR_PREFIX}{tool_name}:"
             )
             is_error = (
                 event_type == "on_tool_error"
                 or bool(data.get("error"))
+                or _tool_output_has_error_status(output)
                 or wrapper_reported_error
+                or validation_reported_error
             )
 
             if tool_name in _SILENT_REPORTING_TOOLS:
@@ -415,7 +431,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 logger.info("[STREAM] platform tool error: %s", tool_name)
                 try:
                     await tools.send_event(
-                        content=f"{tool_name} failed: {data.get('error') or output or 'unknown error'}",
+                        content=f"{tool_name} failed: {data.get('error') or output_text or 'unknown error'}",
                         message_type="error",
                     )
                 except Exception as e:
@@ -424,7 +440,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
             payload = {
                 "name": tool_name,
-                "output": data.get("error") or data.get("output", ""),
+                "output": data.get("error") or output_text,
                 "tool_call_id": event.get("run_id", "unknown"),
                 "is_error": is_error,
             }

@@ -1082,13 +1082,16 @@ def iter_tool_definitions(
     return results
 
 
+TOOL_VALIDATION_ERROR_PREFIX = "Invalid arguments for "
+
+
 def format_tool_validation_error(tool_name: str, error: ValidationError) -> str:
     """Format Pydantic validation errors for LLM-readable tool feedback."""
     errors = [
         f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
         for err in error.errors()
     ]
-    return f"Invalid arguments for {tool_name}: {', '.join(errors)}"
+    return f"{TOOL_VALIDATION_ERROR_PREFIX}{tool_name}: {', '.join(errors)}"
 
 
 def validate_tool_arguments(
@@ -2119,7 +2122,7 @@ class AgentTools(AgentToolsProtocol):
 
         BandToolError is re-raised so framework wrappers can translate it
         into framework-native failure results. Unexpected exceptions are
-        caught and returned as error strings for the LLM.
+        logged and returned as generic error strings for the LLM.
 
         Args:
             tool_name: Name of the tool to execute
@@ -2166,8 +2169,9 @@ class AgentTools(AgentToolsProtocol):
             # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.
             raise
-        except Exception as e:
-            return f"Error executing {tool_name}: {e}"
+        except Exception:
+            logger.exception("Error executing platform tool %s", tool_name)
+            return f"Error executing {tool_name}: see agent logs."
 
 
 class HumanTools:

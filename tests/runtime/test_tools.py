@@ -994,7 +994,8 @@ class TestAgentToolsExecuteToolCall:
             "band_send_message", {"content": "Hello!", "mentions": ["User One"]}
         )
 
-        assert "Error executing" in result
+        assert result == "Error executing band_send_message: see agent logs."
+        assert "Network error" not in result
 
 
 class TestEmptyMentionsValidation:
