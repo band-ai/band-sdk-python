@@ -1,4 +1,4 @@
-"""Production runner for Thenvoi Codex agents.
+"""Production runner for Band Codex agents.
 
 Reads agent configuration from a YAML file and runs the Codex adapter
 with retry logic and graceful shutdown support.  Designed for Docker
@@ -15,8 +15,8 @@ Environment variables:
     CODEX_REASONING_EFFORT     Reasoning effort level
     CODEX_APPROVAL_MODE        Approval mode: manual, auto_accept, auto_decline
     CODEX_TURN_TASK_MARKERS    Emit turn task markers: true/false (default: false)
-    THENVOI_WS_URL             Platform WebSocket URL
-    THENVOI_REST_URL           Platform REST URL
+    BAND_WS_URL                Platform WebSocket URL
+    BAND_REST_URL              Platform REST URL
     OPENAI_API_KEY             OpenAI API key
 """
 
@@ -31,8 +31,8 @@ from typing import Any, Literal
 
 import yaml
 
-from thenvoi.docker.repo_init import initialize_repo
-from thenvoi.config.loader import load_agent_config
+from band.docker.repo_init import initialize_repo
+from band.config.loader import load_agent_config
 
 # Global flag for graceful shutdown
 _shutdown_event: asyncio.Event | None = None
@@ -180,13 +180,16 @@ async def main() -> None:
     agent_key = os.environ.get("AGENT_KEY", os.environ.get("CODEX_AGENT_KEY", "agent"))
 
     ws_url = os.environ.get(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
+        "BAND_WS_URL",
+        os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
     )
-    rest_url = os.environ.get("THENVOI_REST_URL", "https://app.thenvoi.com")
+    rest_url = os.environ.get(
+        "BAND_REST_URL", os.environ.get("BAND_REST_URL", "https://app.band.ai")
+    )
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is empty")
+        raise ValueError("BAND_WS_URL environment variable is empty")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is empty")
+        raise ValueError("BAND_REST_URL environment variable is empty")
 
     validate_mounts()
 
@@ -199,9 +202,9 @@ async def main() -> None:
         lock_timeout_s=lock_timeout_s,
     )
 
-    from thenvoi import Agent
-    from thenvoi.adapters import CodexAdapter
-    from thenvoi.adapters.codex import CodexAdapterConfig
+    from band import Agent
+    from band.adapters import CodexAdapter
+    from band.adapters.codex import CodexAdapterConfig
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]

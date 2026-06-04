@@ -6,12 +6,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.core.types import AdapterFeatures, Capability
-from thenvoi.integrations.langgraph.langchain_tools import (
+from band.core.types import AdapterFeatures, Capability
+from band.integrations.langgraph.langchain_tools import (
     agent_tools_to_langchain,
     get_langgraph_tool_category,
 )
-from thenvoi.runtime.tools import iter_tool_definitions
+from band.runtime.tools import iter_tool_definitions
 
 
 def _mock_agent_tools() -> MagicMock:
@@ -28,20 +28,20 @@ class TestLangGraphToolFilters:
     def test_include_tools_filters_structured_tool_surface(self) -> None:
         tools = agent_tools_to_langchain(
             _mock_agent_tools(),
-            features=AdapterFeatures(include_tools=("thenvoi_send_message",)),
+            features=AdapterFeatures(include_tools=("band_send_message",)),
         )
 
-        assert _tool_names(tools) == {"thenvoi_send_message"}
+        assert _tool_names(tools) == {"band_send_message"}
 
     def test_exclude_tools_filters_structured_tool_surface(self) -> None:
         tools = agent_tools_to_langchain(
             _mock_agent_tools(),
-            features=AdapterFeatures(exclude_tools=("thenvoi_send_event",)),
+            features=AdapterFeatures(exclude_tools=("band_send_event",)),
         )
 
         names = _tool_names(tools)
-        assert "thenvoi_send_message" in names
-        assert "thenvoi_send_event" not in names
+        assert "band_send_message" in names
+        assert "band_send_event" not in names
 
     def test_include_contacts_category_filters_structured_tool_surface(self) -> None:
         tools = agent_tools_to_langchain(
@@ -53,10 +53,10 @@ class TestLangGraphToolFilters:
         )
 
         names = _tool_names(tools)
-        assert "thenvoi_list_contacts" in names
-        assert "thenvoi_add_contact" in names
-        assert "thenvoi_send_message" not in names
-        assert "thenvoi_list_memories" not in names
+        assert "band_list_contacts" in names
+        assert "band_add_contact" in names
+        assert "band_send_message" not in names
+        assert "band_list_memories" not in names
 
     def test_include_memory_category_filters_structured_tool_surface(self) -> None:
         tools = agent_tools_to_langchain(
@@ -68,10 +68,10 @@ class TestLangGraphToolFilters:
         )
 
         names = _tool_names(tools)
-        assert "thenvoi_list_memories" in names
-        assert "thenvoi_store_memory" in names
-        assert "thenvoi_send_message" not in names
-        assert "thenvoi_list_contacts" not in names
+        assert "band_list_memories" in names
+        assert "band_store_memory" in names
+        assert "band_send_message" not in names
+        assert "band_list_contacts" not in names
 
     def test_include_chat_category_filters_structured_tool_surface(self) -> None:
         tools = agent_tools_to_langchain(
@@ -83,10 +83,10 @@ class TestLangGraphToolFilters:
         )
 
         names = _tool_names(tools)
-        assert "thenvoi_send_message" in names
-        assert "thenvoi_send_event" in names
-        assert "thenvoi_list_contacts" not in names
-        assert "thenvoi_list_memories" not in names
+        assert "band_send_message" in names
+        assert "band_send_event" in names
+        assert "band_list_contacts" not in names
+        assert "band_list_memories" not in names
 
     def test_every_agent_tool_has_shared_category(self) -> None:
         missing = [
@@ -104,7 +104,7 @@ class TestLangGraphToolFilters:
 class TestLangGraphSendMessageTool:
     def _send_message_tool(self):
         tools = agent_tools_to_langchain(_mock_agent_tools())
-        return next(tool for tool in tools if tool.name == "thenvoi_send_message")
+        return next(tool for tool in tools if tool.name == "band_send_message")
 
     def test_send_message_schema_requires_mentions(self) -> None:
         send_message = self._send_message_tool()
@@ -118,7 +118,7 @@ class TestLangGraphSendMessageTool:
         send_message = next(
             tool
             for tool in agent_tools_to_langchain(agent_tools)
-            if tool.name == "thenvoi_send_message"
+            if tool.name == "band_send_message"
         )
 
         result = await send_message.ainvoke(
@@ -127,6 +127,6 @@ class TestLangGraphSendMessageTool:
 
         assert result == {"ok": True}
         agent_tools.execute_tool_call.assert_awaited_once_with(
-            "thenvoi_send_message",
+            "band_send_message",
             {"content": "hello", "mentions": ["00000000-0000-0000-0000-000000000001"]},
         )

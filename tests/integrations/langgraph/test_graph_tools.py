@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from thenvoi.integrations.langgraph.graph_tools import graph_as_tool
+from band.integrations.langgraph.graph_tools import graph_as_tool
 
 
 @pytest.mark.asyncio

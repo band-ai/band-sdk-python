@@ -11,7 +11,7 @@ These tests cover the Phase 1 (INT-349) acceptance criteria:
   compose as independent predicates.
 - Every ``ToolDefinition.method_name`` resolves on the class implied by
   its surface.
-- ``build_thenvoi_mcp_tool_registrations()`` with no args registers the
+- ``build_band_mcp_tool_registrations()`` with no args registers the
   pre-Phase-1 agent-only tool-name set (snapshot guard for LocalMCPServer).
 """
 
@@ -22,11 +22,11 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel
 
-from thenvoi.runtime.mcp_server import (
-    build_resolved_thenvoi_mcp_tool_registrations,
-    build_thenvoi_mcp_tool_registrations,
+from band.runtime.mcp_server import (
+    build_resolved_band_mcp_tool_registrations,
+    build_band_mcp_tool_registrations,
 )
-from thenvoi.runtime.tools import (
+from band.runtime.tools import (
     AgentTools,
     HumanTools,
     TOOL_DEFINITIONS,
@@ -40,45 +40,45 @@ from thenvoi.runtime.tools import (
 # the SDK behavior is out of sync with the ticket.
 PRE_PHASE1_AGENT_TOOLS: frozenset[str] = frozenset(
     {
-        "thenvoi_send_message",
-        "thenvoi_send_event",
-        "thenvoi_add_participant",
-        "thenvoi_remove_participant",
-        "thenvoi_lookup_peers",
-        "thenvoi_get_participants",
-        "thenvoi_create_chatroom",
-        "thenvoi_list_contacts",
-        "thenvoi_add_contact",
-        "thenvoi_remove_contact",
-        "thenvoi_list_contact_requests",
-        "thenvoi_respond_contact_request",
+        "band_send_message",
+        "band_send_event",
+        "band_add_participant",
+        "band_remove_participant",
+        "band_lookup_peers",
+        "band_get_participants",
+        "band_create_chatroom",
+        "band_list_contacts",
+        "band_add_contact",
+        "band_remove_contact",
+        "band_list_contact_requests",
+        "band_respond_contact_request",
     }
 )
 
 PHASE1_HUMAN_TOOLS: frozenset[str] = frozenset(
     {
-        "thenvoi_list_my_agents",
-        "thenvoi_register_my_agent",
-        "thenvoi_list_my_chats",
-        "thenvoi_create_my_chat_room",
-        "thenvoi_get_my_chat_room",
-        "thenvoi_list_my_contacts",
-        "thenvoi_create_contact_request",
-        "thenvoi_list_received_contact_requests",
-        "thenvoi_list_sent_contact_requests",
-        "thenvoi_approve_contact_request",
-        "thenvoi_reject_contact_request",
-        "thenvoi_cancel_contact_request",
-        "thenvoi_resolve_handle",
-        "thenvoi_remove_my_contact",
-        "thenvoi_list_my_chat_messages",
-        "thenvoi_send_my_chat_message",
-        "thenvoi_list_my_chat_participants",
-        "thenvoi_add_my_chat_participant",
-        "thenvoi_remove_my_chat_participant",
-        "thenvoi_get_my_profile",
-        "thenvoi_update_my_profile",
-        "thenvoi_list_my_peers",
+        "band_list_my_agents",
+        "band_register_my_agent",
+        "band_list_my_chats",
+        "band_create_my_chat_room",
+        "band_get_my_chat_room",
+        "band_list_my_contacts",
+        "band_create_contact_request",
+        "band_list_received_contact_requests",
+        "band_list_sent_contact_requests",
+        "band_approve_contact_request",
+        "band_reject_contact_request",
+        "band_cancel_contact_request",
+        "band_resolve_handle",
+        "band_remove_my_contact",
+        "band_list_my_chat_messages",
+        "band_send_my_chat_message",
+        "band_list_my_chat_participants",
+        "band_add_my_chat_participant",
+        "band_remove_my_chat_participant",
+        "band_get_my_profile",
+        "band_update_my_profile",
+        "band_list_my_peers",
     }
 )
 
@@ -93,7 +93,7 @@ class TestToolDefinitionSurfaceField:
             pass
 
         definition = ToolDefinition(
-            name="thenvoi_dummy", input_model=_Dummy, method_name="dummy"
+            name="band_dummy", input_model=_Dummy, method_name="dummy"
         )
         assert definition.surface == "agent"
 
@@ -121,7 +121,7 @@ class TestIterToolDefinitionsSurfaceFilter:
 
         Regression guard for C1: existing callers (``claude_sdk``,
         ``opencode``, ``acp`` client adapter) pipe the result straight
-        into ``create_thenvoi_mcp_backend`` without re-filtering, so the
+        into ``create_band_mcp_backend`` without re-filtering, so the
         default must not leak human tools into agent-shaped backends.
         """
         defs = iter_tool_definitions()
@@ -136,12 +136,12 @@ class TestIterToolDefinitionsSurfaceFilter:
         names = {d.name for d in defs}
         assert names == PHASE1_HUMAN_TOOLS - {
             # Default include_memory=False drops human memory tools too.
-            "thenvoi_list_user_memories",
-            "thenvoi_get_user_memory",
-            "thenvoi_supersede_user_memory",
-            "thenvoi_archive_user_memory",
-            "thenvoi_restore_user_memory",
-            "thenvoi_delete_user_memory",
+            "band_list_user_memories",
+            "band_get_user_memory",
+            "band_supersede_user_memory",
+            "band_archive_user_memory",
+            "band_restore_user_memory",
+            "band_delete_user_memory",
         }
         for definition in defs:
             assert definition.surface == "human"
@@ -152,12 +152,12 @@ class TestIterToolDefinitionsSurfaceFilter:
         # Default filters strip memory (agent + human) but keep contacts.
         agent = PRE_PHASE1_AGENT_TOOLS
         human_without_memory = PHASE1_HUMAN_TOOLS - {
-            "thenvoi_list_user_memories",
-            "thenvoi_get_user_memory",
-            "thenvoi_supersede_user_memory",
-            "thenvoi_archive_user_memory",
-            "thenvoi_restore_user_memory",
-            "thenvoi_delete_user_memory",
+            "band_list_user_memories",
+            "band_get_user_memory",
+            "band_supersede_user_memory",
+            "band_archive_user_memory",
+            "band_restore_user_memory",
+            "band_delete_user_memory",
         }
         assert names == agent | human_without_memory
 
@@ -176,12 +176,12 @@ class TestIterToolDefinitionsFilterComposition:
             )
         }
         expected_memory = {
-            "thenvoi_list_user_memories",
-            "thenvoi_get_user_memory",
-            "thenvoi_supersede_user_memory",
-            "thenvoi_archive_user_memory",
-            "thenvoi_restore_user_memory",
-            "thenvoi_delete_user_memory",
+            "band_list_user_memories",
+            "band_get_user_memory",
+            "band_supersede_user_memory",
+            "band_archive_user_memory",
+            "band_restore_user_memory",
+            "band_delete_user_memory",
         }
         # No agent tools at all, no human contact tools.
         assert expected_memory <= names
@@ -191,11 +191,11 @@ class TestIterToolDefinitionsFilterComposition:
         # Specifically: no contact tools of either surface leak through.
         assert names.isdisjoint(
             {
-                "thenvoi_list_my_contacts",
-                "thenvoi_create_contact_request",
-                "thenvoi_resolve_handle",
-                "thenvoi_list_contacts",
-                "thenvoi_add_contact",
+                "band_list_my_contacts",
+                "band_create_contact_request",
+                "band_resolve_handle",
+                "band_list_contacts",
+                "band_add_contact",
             }
         )
         # No agent surface tools at all.
@@ -213,42 +213,42 @@ class TestIterToolDefinitionsFilterComposition:
         # No contact tools of either surface.
         assert names.isdisjoint(
             {
-                "thenvoi_list_contacts",
-                "thenvoi_add_contact",
-                "thenvoi_remove_contact",
-                "thenvoi_list_contact_requests",
-                "thenvoi_respond_contact_request",
-                "thenvoi_list_my_contacts",
-                "thenvoi_create_contact_request",
-                "thenvoi_list_received_contact_requests",
-                "thenvoi_list_sent_contact_requests",
-                "thenvoi_approve_contact_request",
-                "thenvoi_reject_contact_request",
-                "thenvoi_cancel_contact_request",
-                "thenvoi_resolve_handle",
-                "thenvoi_remove_my_contact",
+                "band_list_contacts",
+                "band_add_contact",
+                "band_remove_contact",
+                "band_list_contact_requests",
+                "band_respond_contact_request",
+                "band_list_my_contacts",
+                "band_create_contact_request",
+                "band_list_received_contact_requests",
+                "band_list_sent_contact_requests",
+                "band_approve_contact_request",
+                "band_reject_contact_request",
+                "band_cancel_contact_request",
+                "band_resolve_handle",
+                "band_remove_my_contact",
             }
         )
         # No memory tools of either surface.
         assert names.isdisjoint(
             {
-                "thenvoi_list_memories",
-                "thenvoi_store_memory",
-                "thenvoi_get_memory",
-                "thenvoi_supersede_memory",
-                "thenvoi_archive_memory",
-                "thenvoi_list_user_memories",
-                "thenvoi_get_user_memory",
-                "thenvoi_supersede_user_memory",
-                "thenvoi_archive_user_memory",
-                "thenvoi_restore_user_memory",
-                "thenvoi_delete_user_memory",
+                "band_list_memories",
+                "band_store_memory",
+                "band_get_memory",
+                "band_supersede_memory",
+                "band_archive_memory",
+                "band_list_user_memories",
+                "band_get_user_memory",
+                "band_supersede_user_memory",
+                "band_archive_user_memory",
+                "band_restore_user_memory",
+                "band_delete_user_memory",
             }
         )
         # But baseline agent + human tools remain.
-        assert "thenvoi_send_message" in names
-        assert "thenvoi_get_my_profile" in names
-        assert "thenvoi_send_my_chat_message" in names
+        assert "band_send_message" in names
+        assert "band_get_my_profile" in names
+        assert "band_send_my_chat_message" in names
 
     def test_include_memory_true_agent_only(self) -> None:
         """``surface=agent, include_memory=True`` includes agent memory tools."""
@@ -256,15 +256,15 @@ class TestIterToolDefinitionsFilterComposition:
             d.name for d in iter_tool_definitions(surface="agent", include_memory=True)
         }
         agent_memory = {
-            "thenvoi_list_memories",
-            "thenvoi_store_memory",
-            "thenvoi_get_memory",
-            "thenvoi_supersede_memory",
-            "thenvoi_archive_memory",
+            "band_list_memories",
+            "band_store_memory",
+            "band_get_memory",
+            "band_supersede_memory",
+            "band_archive_memory",
         }
         assert agent_memory <= names
         # No human memory tools.
-        assert "thenvoi_list_user_memories" not in names
+        assert "band_list_user_memories" not in names
 
 
 class TestMethodNameResolution:
@@ -299,16 +299,16 @@ class TestMethodNameResolution:
 class TestLocalMCPServerAgentOnlySnapshot:
     """``LocalMCPServer`` must stay agent-only in Phase 1. The snapshot tests
     guard against a future change silently leaking human tools into either
-    ``build_thenvoi_mcp_tool_registrations()`` or its resolved variant."""
+    ``build_band_mcp_tool_registrations()`` or its resolved variant."""
 
-    def test_build_thenvoi_mcp_tool_registrations_is_agent_only(self) -> None:
+    def test_build_band_mcp_tool_registrations_is_agent_only(self) -> None:
         """No-arg call registers exactly the pre-Phase-1 agent tool-name set."""
         agent_tools = MagicMock(spec=AgentTools)
-        registrations = build_thenvoi_mcp_tool_registrations(agent_tools)
+        registrations = build_band_mcp_tool_registrations(agent_tools)
         names = {registration.name for registration in registrations}
         assert names == PRE_PHASE1_AGENT_TOOLS
 
-    def test_build_resolved_thenvoi_mcp_tool_registrations_is_agent_only(
+    def test_build_resolved_band_mcp_tool_registrations_is_agent_only(
         self,
     ) -> None:
         """Resolved variant also registers only the pre-Phase-1 agent set."""
@@ -316,9 +316,7 @@ class TestLocalMCPServerAgentOnlySnapshot:
         def _resolver(_room_id: str):
             return None
 
-        registrations = build_resolved_thenvoi_mcp_tool_registrations(
-            get_tools=_resolver
-        )
+        registrations = build_resolved_band_mcp_tool_registrations(get_tools=_resolver)
         names = {registration.name for registration in registrations}
         assert names == PRE_PHASE1_AGENT_TOOLS
 
@@ -326,7 +324,7 @@ class TestLocalMCPServerAgentOnlySnapshot:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Defense-in-depth: if a caller passes a mixed ``tool_definitions``
-        list, ``build_thenvoi_mcp_tool_registrations`` drops non-agent
+        list, ``build_band_mcp_tool_registrations`` drops non-agent
         entries (they'd ``AttributeError`` on ``AgentTools`` at call time)
         and logs a warning per dropped entry.
         """
@@ -334,25 +332,25 @@ class TestLocalMCPServerAgentOnlySnapshot:
 
         agent_tools = MagicMock(spec=AgentTools)
         mixed = [
-            TOOL_DEFINITIONS["thenvoi_send_message"],
-            TOOL_DEFINITIONS["thenvoi_send_my_chat_message"],
-            TOOL_DEFINITIONS["thenvoi_get_my_profile"],
+            TOOL_DEFINITIONS["band_send_message"],
+            TOOL_DEFINITIONS["band_send_my_chat_message"],
+            TOOL_DEFINITIONS["band_get_my_profile"],
         ]
 
-        with caplog.at_level(logging.WARNING, logger="thenvoi.runtime.mcp_server"):
-            registrations = build_thenvoi_mcp_tool_registrations(
+        with caplog.at_level(logging.WARNING, logger="band.runtime.mcp_server"):
+            registrations = build_band_mcp_tool_registrations(
                 agent_tools, tool_definitions=mixed
             )
 
         names = {r.name for r in registrations}
-        assert names == {"thenvoi_send_message"}
+        assert names == {"band_send_message"}
         # One warning per dropped human entry.
         warnings = [
             record for record in caplog.records if record.levelno == logging.WARNING
         ]
         dropped_names = {
-            "thenvoi_send_my_chat_message",
-            "thenvoi_get_my_profile",
+            "band_send_my_chat_message",
+            "band_get_my_profile",
         }
         assert len(warnings) == len(dropped_names)
         for record in warnings:
@@ -369,20 +367,20 @@ class TestLocalMCPServerAgentOnlySnapshot:
             return None
 
         mixed = [
-            TOOL_DEFINITIONS["thenvoi_send_message"],
-            TOOL_DEFINITIONS["thenvoi_add_participant"],
-            TOOL_DEFINITIONS["thenvoi_send_my_chat_message"],
+            TOOL_DEFINITIONS["band_send_message"],
+            TOOL_DEFINITIONS["band_add_participant"],
+            TOOL_DEFINITIONS["band_send_my_chat_message"],
         ]
 
-        with caplog.at_level(logging.WARNING, logger="thenvoi.runtime.mcp_server"):
-            registrations = build_resolved_thenvoi_mcp_tool_registrations(
+        with caplog.at_level(logging.WARNING, logger="band.runtime.mcp_server"):
+            registrations = build_resolved_band_mcp_tool_registrations(
                 get_tools=_resolver, tool_definitions=mixed
             )
 
         names = {r.name for r in registrations}
-        assert names == {"thenvoi_send_message", "thenvoi_add_participant"}
+        assert names == {"band_send_message", "band_add_participant"}
         warnings = [
             record for record in caplog.records if record.levelno == logging.WARNING
         ]
         assert len(warnings) == 1
-        assert "thenvoi_send_my_chat_message" in warnings[0].getMessage()
+        assert "band_send_my_chat_message" in warnings[0].getMessage()

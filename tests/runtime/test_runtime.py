@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.runtime.execution import ExecutionContext
-from thenvoi.runtime.runtime import AgentRuntime
+from band.runtime.execution import ExecutionContext
+from band.runtime.runtime import AgentRuntime
 
 # Import test helpers from conftest
 from tests.conftest import make_message_event, make_participant_added_event
@@ -16,7 +16,7 @@ from tests.conftest import make_message_event, make_participant_added_event
 
 @pytest.fixture
 def mock_link():
-    """Mock ThenvoiLink for testing AgentRuntime."""
+    """Mock BandLink for testing AgentRuntime."""
     link = MagicMock()
     link.agent_id = "agent-123"
     link.is_connected = False

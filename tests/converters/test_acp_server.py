@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.converters.acp_server import ACPServerHistoryConverter
-from thenvoi.integrations.acp.types import ACPSessionState
+from band.converters.acp_server import ACPServerHistoryConverter
+from band.integrations.acp.types import ACPSessionState
 
 
 class TestACPServerHistoryConverter:

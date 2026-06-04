@@ -97,7 +97,7 @@ jobs:
       env:
         # dev-crewai venv lacks langgraph/anthropic/parlant/pydantic-ai/etc.;
         # tolerate missing framework configs instead of failing fast.
-        THENVOI_ALLOW_MISSING_FRAMEWORKS: "1"
+        BAND_ALLOW_MISSING_FRAMEWORKS: "1"
       run: |
         uv run pytest \
           tests/adapters/test_crewai_adapter.py \
@@ -116,11 +116,11 @@ jobs:
     - name: Pyrefly check (crewai sources)
       run: |
         uv run pyrefly check \
-          src/thenvoi/adapters/crewai.py \
-          src/thenvoi/adapters/crewai_flow.py \
-          src/thenvoi/converters/crewai.py \
-          src/thenvoi/converters/crewai_flow.py \
-          src/thenvoi/integrations/crewai/
+          src/band/adapters/crewai.py \
+          src/band/adapters/crewai_flow.py \
+          src/band/converters/crewai.py \
+          src/band/converters/crewai_flow.py \
+          src/band/integrations/crewai/
 
 
   packaging:
@@ -151,8 +151,8 @@ jobs:
     - name: Verify core imports (no extras)
       run: |
         /tmp/test-install/bin/python -c "
-        from thenvoi import Agent, ThenvoiLink, AgentRuntime
-        from thenvoi.config import load_agent_config
+        from band import Agent, BandLink, AgentRuntime
+        from band.config import load_agent_config
         print('Core imports successful')
         "
 
@@ -164,9 +164,9 @@ jobs:
     - name: Verify all imports (with extras)
       run: |
         /tmp/test-install/bin/python -c "
-        from thenvoi import Agent, ThenvoiLink, AgentRuntime
-        from thenvoi.adapters import LangGraphAdapter, AnthropicAdapter, PydanticAIAdapter, ClaudeSDKAdapter
-        from thenvoi.converters import LangChainHistoryConverter, AnthropicHistoryConverter, PydanticAIHistoryConverter
-        from thenvoi.config import load_agent_config
+        from band import Agent, BandLink, AgentRuntime
+        from band.adapters import LangGraphAdapter, AnthropicAdapter, PydanticAIAdapter, ClaudeSDKAdapter
+        from band.converters import LangChainHistoryConverter, AnthropicHistoryConverter, PydanticAIHistoryConverter
+        from band.config import load_agent_config
         print('All imports successful')
         "

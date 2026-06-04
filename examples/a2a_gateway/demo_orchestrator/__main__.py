@@ -8,7 +8,7 @@ Usage:
 This starts an A2A-compliant server that:
 1. Exposes itself at /.well-known/agent.json
 2. Accepts messages at /v1/message:stream
-3. Routes requests to Thenvoi peers via the A2A Gateway
+3. Routes requests to Band peers via the A2A Gateway
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
         skill = AgentSkill(
             id="orchestrate_peers",
             name="Peer Orchestration",
-            description="Routes requests to specialized Thenvoi platform peers via A2A Gateway",
+            description="Routes requests to specialized Band platform peers via A2A Gateway",
             tags=["orchestration", "routing", "multi-agent"],
             examples=[
                 "Ask the weather agent about conditions in NYC",
@@ -132,7 +132,7 @@ def main(host: str, port: int, gateway_url: str, peers: str, model: str) -> None
             name="Demo Orchestrator",
             description=(
                 "An orchestrator agent that routes user requests to specialized "
-                "Thenvoi platform peers via the A2A Gateway. It intelligently "
+                "Band platform peers via the A2A Gateway. It intelligently "
                 "determines which peer can best handle each request."
             ),
             url=f"http://{host}:{port}/",

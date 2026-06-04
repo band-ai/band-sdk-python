@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.messages import SystemMessage
 
-from thenvoi.adapters.langgraph import LangGraphAdapter
+from band.adapters.langgraph import LangGraphAdapter
 
 from .helpers import make_capture_graph
 
@@ -42,7 +42,7 @@ class TestSystemPromptCrossTurn:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -119,7 +119,7 @@ class TestSystemPromptCrossTurn:
         await adapter.on_started("TestBot", "Test bot")
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 

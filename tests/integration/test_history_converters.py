@@ -23,8 +23,8 @@ import logging
 import uuid
 
 import pytest
-from thenvoi_rest import ChatEventRequest, ChatMessageRequest
-from thenvoi_rest.types import ChatMessageRequestMentionsItem as Mention
+from band_rest import ChatEventRequest, ChatMessageRequest
+from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from tests.integration.conftest import fetch_all_context, requires_api
 
@@ -83,7 +83,7 @@ class TestAnthropicConverterIntegration:
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
 
-        from thenvoi.converters.anthropic import AnthropicHistoryConverter
+        from band.converters.anthropic import AnthropicHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -178,7 +178,7 @@ class TestAnthropicConverterIntegration:
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
 
-        from thenvoi.converters.anthropic import AnthropicHistoryConverter
+        from band.converters.anthropic import AnthropicHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -293,7 +293,7 @@ class TestPydanticAIConverterIntegration:
         ModelRequest = pydantic_ai_messages.ModelRequest
         ModelResponse = pydantic_ai_messages.ModelResponse
 
-        from thenvoi.converters.pydantic_ai import PydanticAIHistoryConverter
+        from band.converters.pydantic_ai import PydanticAIHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -381,7 +381,7 @@ class TestMixedConversationIntegration:
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
 
-        from thenvoi.converters.anthropic import AnthropicHistoryConverter
+        from band.converters.anthropic import AnthropicHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -504,7 +504,7 @@ class TestEdgeCasesIntegration:
         if shared_room is None:
             pytest.skip("shared_room not available")
 
-        from thenvoi.converters.anthropic import AnthropicHistoryConverter
+        from band.converters.anthropic import AnthropicHistoryConverter
 
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
@@ -560,7 +560,7 @@ class TestEdgeCasesIntegration:
         if shared_room is None:
             pytest.skip("shared_room not available")
 
-        from thenvoi.converters.anthropic import AnthropicHistoryConverter
+        from band.converters.anthropic import AnthropicHistoryConverter
 
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
@@ -601,7 +601,7 @@ class TestMentionReplacementIntegration:
         if shared_room is None or shared_user_peer is None:
             pytest.skip("shared_room or shared_user_peer not available")
 
-        from thenvoi.runtime.formatters import format_history_for_llm
+        from band.runtime.formatters import format_history_for_llm
 
         chat_id = shared_room
         peer_id = shared_user_peer.id

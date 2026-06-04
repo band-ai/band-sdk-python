@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[crewai]"]
+# dependencies = ["band-sdk[crewai]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 CrewAI agent with contact and memory tools enabled.
@@ -32,10 +32,10 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import CrewAIAdapter
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
-from thenvoi.core.types import AdapterFeatures, Capability
+from band import Agent
+from band.adapters import CrewAIAdapter
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.core.types import AdapterFeatures, Capability
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -52,8 +52,8 @@ def get_required_env(name: str) -> str:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = get_required_env("THENVOI_WS_URL")
-    rest_url = get_required_env("THENVOI_REST_URL")
+    ws_url = get_required_env("BAND_WS_URL")
+    rest_url = get_required_env("BAND_REST_URL")
     adapter = CrewAIAdapter(
         model="gpt-5.4-mini",
         role="Contact-aware relationship manager",
@@ -62,7 +62,7 @@ async def main() -> None:
             "and remember durable preferences when that is useful."
         ),
         backstory=(
-            "You support ongoing collaboration inside Thenvoi rooms. "
+            "You support ongoing collaboration inside Band rooms. "
             "You know how to inspect contacts, manage contact requests, "
             "and use memory tools sparingly for durable context."
         ),

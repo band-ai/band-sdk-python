@@ -8,7 +8,7 @@ Behaviour
 
 How to coordinate
 - Two peers exist for this deployment: one for weather data and one for
-  calculation. Use `thenvoi_lookup_peers` to find them by name (search for
+  calculation. Use `band_lookup_peers` to find them by name (search for
   "weather" and "math") — do not assume specific handles.
 - Once a peer is in the room, send one targeted message that @-mentions them
   with the specific question. Keep questions narrow — one ask per turn.

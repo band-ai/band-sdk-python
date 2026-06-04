@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import AdapterFeatures, Capability, Emit
 
 
 class TestCapabilityEnum:
@@ -54,14 +54,12 @@ class TestAdapterFeatures:
         assert len(f.capabilities) == 2
 
     def test_include_tools_normalized_to_tuple(self) -> None:
-        f = AdapterFeatures(
-            include_tools=["thenvoi_send_message", "thenvoi_lookup_peers"]
-        )
+        f = AdapterFeatures(include_tools=["band_send_message", "band_lookup_peers"])
         assert isinstance(f.include_tools, tuple)
-        assert f.include_tools == ("thenvoi_send_message", "thenvoi_lookup_peers")
+        assert f.include_tools == ("band_send_message", "band_lookup_peers")
 
     def test_exclude_tools_normalized_to_tuple(self) -> None:
-        f = AdapterFeatures(exclude_tools=["thenvoi_store_memory"])
+        f = AdapterFeatures(exclude_tools=["band_store_memory"])
         assert isinstance(f.exclude_tools, tuple)
 
     def test_include_categories_normalized_to_tuple(self) -> None:

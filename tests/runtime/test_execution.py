@@ -8,13 +8,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.runtime.execution import (
+from band.runtime.execution import (
     Execution,
     ExecutionContext,
     _BacklogProcessResult,
     _error_label,
 )
-from thenvoi.runtime.types import ConversationContext, SessionConfig
+from band.runtime.types import ConversationContext, SessionConfig
 
 # Import test helpers from conftest
 from tests.conftest import (
@@ -26,7 +26,7 @@ from tests.conftest import (
 
 @pytest.fixture
 def mock_link():
-    """Mock ThenvoiLink for testing ExecutionContext."""
+    """Mock BandLink for testing ExecutionContext."""
     link = MagicMock()
     link.agent_id = "agent-123"
 
@@ -57,7 +57,7 @@ def mock_link():
         return_value=MagicMock(data=[msg1])
     )
 
-    # Mock message lifecycle methods (new in ThenvoiLink)
+    # Mock message lifecycle methods (new in BandLink)
     link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
@@ -405,7 +405,7 @@ class TestCrashRecoverySync:
 
     @pytest.fixture
     def mock_link_with_next(self):
-        """Mock ThenvoiLink with message lifecycle methods."""
+        """Mock BandLink with message lifecycle methods."""
         link = MagicMock()
         link.agent_id = "agent-123"
         link.rest = MagicMock()
@@ -420,7 +420,7 @@ class TestCrashRecoverySync:
             return_value=MagicMock(data=[])
         )
 
-        # Message lifecycle methods (new in ThenvoiLink)
+        # Message lifecycle methods (new in BandLink)
         link.mark_processing = AsyncMock()
         link.mark_processed = AsyncMock()
         link.mark_failed = AsyncMock()
@@ -475,7 +475,7 @@ class TestCrashRecoverySync:
     ):
         """Sync should process backlog messages from /next."""
         from datetime import datetime, timezone
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         # Setup get_next_message to return one backlog message, then None
         backlog_msg = PlatformMessage(
@@ -517,7 +517,7 @@ class TestCrashRecoverySync:
     ):
         """When sync point is reached, marker is cleared and dedupe is preserved."""
         from datetime import datetime, timezone
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         # Setup: WS message arrives, then /next returns same message
         sync_msg = PlatformMessage(
@@ -562,7 +562,7 @@ class TestCrashRecoverySync:
     ):
         """Sync should dedupe when non-message events are ahead of sync-point WS copy."""
         from datetime import datetime, timezone
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         sync_msg = PlatformMessage(
             id="msg-sync-001",
@@ -636,7 +636,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Processed WebSocket replay should not call mark_processing or execute."""
-        from thenvoi.client.streaming import MessageMetadata
+        from band.client.streaming import MessageMetadata
 
         ctx = ExecutionContext(
             "room-123",
@@ -708,7 +708,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """A pending /next message is work even when it appears in room context."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         pending_msg = PlatformMessage(
             id="msg-pending-down",
@@ -766,7 +766,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Only one path should execute when /next and WebSocket race on an id."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         processing_started = asyncio.Event()
         release_processing = asyncio.Event()
@@ -839,7 +839,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Local success without durable processed ack must not enter processed dedupe."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-ack-fails",
@@ -898,7 +898,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Redelivery after local success should retry only the processed ack."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-backlog-ack-retry",
@@ -934,7 +934,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Permanent processed ack failure should not deadlock or replay local side effects."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-ack-budget",
@@ -1025,7 +1025,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """A failed durable claim is not a completed sync point."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         sync_msg = PlatformMessage(
             id="msg-sync-claim-fails",
@@ -1063,7 +1063,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Startup sync should stop after one unclaimable non-sync backlog message."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-startup-claim-fails",
@@ -1100,7 +1100,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Startup sync should not switch to WebSocket after an unclaimable backlog message."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         backlog_msg = PlatformMessage(
             id="msg-older-claim-fails",
@@ -1144,7 +1144,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Resync should stop after one unclaimable /next message."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-resync-claim-fails",
@@ -1180,7 +1180,7 @@ class TestCrashRecoverySync:
         self, mock_link_with_next, mock_handler
     ):
         """Phase 2 resync should block queued WebSocket events behind older /next work."""
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         msg = PlatformMessage(
             id="msg-resync-older-claim-fails",
@@ -1226,7 +1226,7 @@ class TestCrashRecoverySync:
     ):
         """Sync should skip permanently failed messages."""
         from datetime import datetime, timezone
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         failed_msg = PlatformMessage(
             id="msg-failed-001",
@@ -1263,7 +1263,7 @@ class TestCrashRecoverySync:
     async def test_retry_tracker_records_failures(self, mock_link_with_next):
         """Retry tracker should record failed processing attempts."""
         from datetime import datetime, timezone
-        from thenvoi.runtime.types import PlatformMessage
+        from band.runtime.types import PlatformMessage
 
         # Handler that fails
         failing_handler = AsyncMock(side_effect=Exception("Processing failed"))

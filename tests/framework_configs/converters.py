@@ -77,49 +77,49 @@ class ConverterConfig:
 
 
 def _anthropic_factory(**kw: Any) -> Any:
-    from thenvoi.converters.anthropic import AnthropicHistoryConverter
+    from band.converters.anthropic import AnthropicHistoryConverter
 
     return AnthropicHistoryConverter(**kw)
 
 
 def _langchain_factory(**kw: Any) -> Any:
-    from thenvoi.converters.langchain import LangChainHistoryConverter
+    from band.converters.langchain import LangChainHistoryConverter
 
     return LangChainHistoryConverter(**kw)
 
 
 def _crewai_factory(**kw: Any) -> Any:
-    from thenvoi.converters.crewai import CrewAIHistoryConverter
+    from band.converters.crewai import CrewAIHistoryConverter
 
     return CrewAIHistoryConverter(**kw)
 
 
 def _claude_sdk_factory(**kw: Any) -> Any:
-    from thenvoi.converters.claude_sdk import ClaudeSDKHistoryConverter
+    from band.converters.claude_sdk import ClaudeSDKHistoryConverter
 
     return ClaudeSDKHistoryConverter(**kw)
 
 
 def _pydantic_ai_factory(**kw: Any) -> Any:
-    from thenvoi.converters.pydantic_ai import PydanticAIHistoryConverter
+    from band.converters.pydantic_ai import PydanticAIHistoryConverter
 
     return PydanticAIHistoryConverter(**kw)
 
 
 def _parlant_factory(**kw: Any) -> Any:
-    from thenvoi.converters.parlant import ParlantHistoryConverter
+    from band.converters.parlant import ParlantHistoryConverter
 
     return ParlantHistoryConverter(**kw)
 
 
 def _gemini_factory(**kw: Any) -> Any:
-    from thenvoi.converters.gemini import GeminiHistoryConverter
+    from band.converters.gemini import GeminiHistoryConverter
 
     return GeminiHistoryConverter(**kw)
 
 
 def _google_adk_factory(**kw: Any) -> Any:
-    from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+    from band.converters.google_adk import GoogleADKHistoryConverter
 
     return GoogleADKHistoryConverter(**kw)
 
@@ -181,7 +181,7 @@ def _build_crewai_config() -> ConverterConfig:
 
 
 def _build_claude_sdk_config() -> ConverterConfig:
-    from thenvoi.converters.claude_sdk import ClaudeSDKSessionState
+    from band.converters.claude_sdk import ClaudeSDKSessionState
     from tests.framework_configs.output_adapters import ClaudeSDKOutputAdapter
 
     return ConverterConfig(

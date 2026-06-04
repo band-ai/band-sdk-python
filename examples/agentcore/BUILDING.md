@@ -1,6 +1,6 @@
 # Writing your own AgentCore agent
 
-A guide for building Thenvoi agents that run on AWS Bedrock AgentCore
+A guide for building Band agents that run on AWS Bedrock AgentCore
 Runtime. For the conceptual overview see
 [`ARCHITECTURE.md`](ARCHITECTURE.md); for deploying the prebuilt demo see
 [`README.md`](README.md).
@@ -22,7 +22,7 @@ For most agents, step 1 is the only thing you write.
 
 ## The system prompt
 
-The SDK's `render_system_prompt` (`src/thenvoi/runtime/prompts.py`)
+The SDK's `render_system_prompt` (`src/band/runtime/prompts.py`)
 builds the full Anthropic system prompt as:
 
 ```
@@ -35,7 +35,7 @@ You are {agent_name}, {agent_description}.
 {YOUR_SYSTEM_PROMPT_ENV_VAR}         # what you write
 ```
 
-`agent_name` and `agent_description` come from the agent's Thenvoi
+`agent_name` and `agent_description` come from the agent's Band
 profile (you set them when you create the agent on the platform).
 
 So your `SYSTEM_PROMPT` env var should contain **behaviour only** —
@@ -81,13 +81,13 @@ By default the container exposes seven chat tools to Claude:
 
 | Tool | Purpose |
 |---|---|
-| `thenvoi_send_message` | Post a text message to the current room with required @mentions. |
-| `thenvoi_send_event` | Post a non-text event (thought, error, task). |
-| `thenvoi_add_participant` | Add a peer to the current room. |
-| `thenvoi_remove_participant` | Remove a peer from the current room. |
-| `thenvoi_get_participants` | List who's currently in the room. |
-| `thenvoi_lookup_peers` | Global search for agents/users by name or handle. |
-| `thenvoi_create_chatroom` | Create a new room (rarely needed in single-room topologies). |
+| `band_send_message` | Post a text message to the current room with required @mentions. |
+| `band_send_event` | Post a non-text event (thought, error, task). |
+| `band_add_participant` | Add a peer to the current room. |
+| `band_remove_participant` | Remove a peer from the current room. |
+| `band_get_participants` | List who's currently in the room. |
+| `band_lookup_peers` | Global search for agents/users by name or handle. |
+| `band_create_chatroom` | Create a new room (rarely needed in single-room topologies). |
 
 Memory tools and contact-management tools are gated off by default. If
 your agent needs them, set features on the adapter when building the
@@ -110,7 +110,7 @@ event → container invocation → adapter.on_event → LLM tool loop → return
 ```
 
 Each invocation:
-1. **Fetches the room's history fresh** from Thenvoi REST.
+1. **Fetches the room's history fresh** from Band REST.
 2. **Builds a single `AgentInput`** with that history + the triggering
    message.
 3. **Runs Claude with the AgentTools schemas**, executing any tool calls
@@ -164,7 +164,7 @@ Prompt pattern:
 Behaviour
 - Answer directly when you can.
 - When you need info you don't have, recruit a peer with
-  thenvoi_lookup_peers + thenvoi_add_participant, then mention them
+  band_lookup_peers + band_add_participant, then mention them
   with a specific question.
 - Re-read room history each turn — you'll be re-invoked when peers reply.
 
@@ -186,11 +186,11 @@ invocations total.
 ### Pattern 3 — Peer agent
 
 An agent that may be recruited by a coordinator. Same as Pattern 1
-behaviourally, but its description on the Thenvoi profile should make
+behaviourally, but its description on the Band profile should make
 its capability discoverable via `lookup_peers` (the SDK matches by name
 and handle).
 
-Tip: give your agent a short, descriptive Thenvoi name like
+Tip: give your agent a short, descriptive Band name like
 `agentcore-weather-agent` so a coordinator searching for "weather" finds
 it.
 
@@ -213,7 +213,7 @@ If you want LangGraph, CrewAI, pydantic-ai, etc. instead of the
 1. Copy `examples/agentcore/agentcore_llm_server.py` to your own
    container directory.
 2. In `_build_adapter`, swap `AnthropicAdapter` for your chosen one
-   (e.g. `LangGraphAdapter`, see `src/thenvoi/adapters/langgraph.py`).
+   (e.g. `LangGraphAdapter`, see `src/band/adapters/langgraph.py`).
 3. Update the Dockerfile's `uv sync` to include the relevant extra
    (`--extra langgraph`, `--extra crewai`, …).
 4. Rebuild + push.
@@ -226,7 +226,7 @@ same `AgentInput` regardless of which adapter consumes it.
 The SDK supports custom tools via the adapter's `additional_tools` arg:
 
 ```python
-from thenvoi.runtime.custom_tools import CustomToolDef
+from band.runtime.custom_tools import CustomToolDef
 
 custom_tools = [
     CustomToolDef(
@@ -274,8 +274,8 @@ You can run the container as a regular Python process without AgentCore.
 Useful for iterating on the system prompt before pushing to ECR.
 
 ```bash
-THENVOI_AGENT_ID=<your-agent-uuid> \
-THENVOI_API_KEY=<your-agent-key> \
+BAND_AGENT_ID=<your-agent-uuid> \
+BAND_API_KEY=<your-agent-key> \
 ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY \
 SYSTEM_PROMPT="$(cat my_prompt.txt)" \
 uv run python examples/agentcore/agentcore_llm_server.py
@@ -292,7 +292,7 @@ curl -s -X POST http://localhost:8080/invocations \
   -d '{"event_type":"message_created","agent_id":"...","room_id":"r1","payload":{"id":"m1","sender_id":"u1","sender_type":"User","content":"@bot hi","inserted_at":"2026-05-24T12:00:00Z"}}'
 ```
 
-The container will hit the real Thenvoi REST API with the credentials
+The container will hit the real Band REST API with the credentials
 you provided. Use a sandbox/test room — real messages will be posted.
 
 ## Deploying to AgentCore Runtime
@@ -304,7 +304,7 @@ Once your prompt is dialed in:
 2. Push to ECR in the AWS account where AgentCore Runtime is enabled.
 3. Create a Runtime via the AgentCore console with your image URI and
    env vars.
-4. Add the new Runtime's ARN to the bridge's `THENVOI_BRIDGE_AGENTS`
+4. Add the new Runtime's ARN to the bridge's `BAND_BRIDGE_AGENTS`
    config.
 
 See [`README.md`](README.md) for the full step-by-step.
@@ -323,8 +323,8 @@ See [`README.md`](README.md) for the full step-by-step.
    in the container itself, not the bridge.
 4. **Verify IAM**: the bridge's IAM user needs
    `bedrock-agentcore:InvokeAgentRuntime` on the runtime's ARN.
-5. **Verify the agent's Thenvoi profile** has a description set — the
+5. **Verify the agent's Band profile** has a description set — the
    SDK requires one to render the system prompt.
 
-For deeper diagnosis, the [issue tracker](https://linear.app/thenvoi)
+For deeper diagnosis, the [issue tracker](https://linear.app/band-ai)
 and the SDK's [`CLAUDE.md`](../../CLAUDE.md) are the primary references.

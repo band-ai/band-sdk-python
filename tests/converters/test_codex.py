@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from thenvoi.converters.codex import CodexHistoryConverter
+from band.converters.codex import CodexHistoryConverter
 
 
 class TestCodexHistoryConverter:

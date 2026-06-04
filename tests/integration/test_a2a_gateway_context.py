@@ -1,6 +1,6 @@
 """E2E tests for A2A Gateway context_id flow.
 
-Tests the complete flow using real Thenvoi platform (requires API keys in .env.test):
+Tests the complete flow using real Band platform (requires API keys in .env.test):
 1. Gateway receives HTTP request with contextId
 2. Gateway creates/reuses chat room based on contextId
 3. Same contextId -> same room, different contextId -> different room
@@ -13,10 +13,10 @@ import logging
 
 import pytest
 
-from thenvoi.integrations.a2a.gateway import A2AGatewayAdapter
-from thenvoi_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
-from thenvoi_rest.core.api_error import ApiError
-from thenvoi_rest.types import ChatMessageRequestMentionsItem as Mention
+from band.integrations.a2a.gateway import A2AGatewayAdapter
+from band_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
+from band_rest.core.api_error import ApiError
+from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from .conftest import fetch_all_context, requires_api
 
@@ -42,7 +42,7 @@ async def ensure_peer_in_room(
 
 @requires_api
 class TestA2AGatewayContextIdWithPlatform:
-    """E2E tests using real Thenvoi platform (requires API keys in .env.test).
+    """E2E tests using real Band platform (requires API keys in .env.test).
 
     These tests actually:
     1. Create rooms on the real platform
@@ -73,8 +73,8 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with real REST client credentials
         adapter = A2AGatewayAdapter(
-            rest_url=integration_settings.thenvoi_base_url,
-            api_key=integration_settings.thenvoi_api_key,
+            rest_url=integration_settings.band_base_url,
+            api_key=integration_settings.band_api_key,
             gateway_url="http://localhost:10000",
             port=10000,
         )
@@ -159,8 +159,8 @@ class TestA2AGatewayContextIdWithPlatform:
 
         # Create adapter with both peers
         adapter = A2AGatewayAdapter(
-            rest_url=integration_settings.thenvoi_base_url,
-            api_key=integration_settings.thenvoi_api_key,
+            rest_url=integration_settings.band_base_url,
+            api_key=integration_settings.band_api_key,
             gateway_url="http://localhost:10000",
             port=10000,
         )

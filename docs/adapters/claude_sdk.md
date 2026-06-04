@@ -1,18 +1,18 @@
 # Claude Agent SDK Adapter
 
-The [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents/claude-code-sdk-overview), also known as the Claude Code SDK, runs Claude Code as a programmable agent. The Thenvoi Claude SDK adapter is for building a Thenvoi collaborator that runs with Claude Code's built-in tools and capabilities, such as terminal use, filesystem access, skills, MCP tools, and extended thinking.
+The [Claude Agent SDK](https://docs.anthropic.com/en/docs/agents/claude-code-sdk-overview), also known as the Claude Code SDK, runs Claude Code as a programmable agent. The Band Claude SDK adapter is for building a Band collaborator that runs with Claude Code's built-in tools and capabilities, such as terminal use, filesystem access, skills, MCP tools, and extended thinking.
 
-Use this adapter when the agent should take part in Thenvoi conversations while working in a codebase: inspect files, edit files, run commands, and ask for approvals. Use the [Anthropic adapter](anthropic.md) instead for lightweight Claude chat/tool agents that call the Anthropic API directly. Use the [Codex adapter](codex.md) for an OpenAI-powered coding agent with Codex transport, sandbox, task lifecycle, and telemetry controls. Use the [LangGraph adapter](langgraph.md) when you already have a LangChain/LangGraph workflow.
+Use this adapter when the agent should take part in Band conversations while working in a codebase: inspect files, edit files, run commands, and ask for approvals. Use the [Anthropic adapter](anthropic.md) instead for lightweight Claude chat/tool agents that call the Anthropic API directly. Use the [Codex adapter](codex.md) for an OpenAI-powered coding agent with Codex transport, sandbox, task lifecycle, and telemetry controls. Use the [LangGraph adapter](langgraph.md) when you already have a LangChain/LangGraph workflow.
 
 ## Install
 
 ```bash
-uv add "thenvoi-sdk[claude_sdk]"
+uv add "band-sdk[claude_sdk]"
 ```
 
 ## Prerequisites
 
-The adapter starts Claude Code as a subprocess. Install and authenticate Claude Code before running your Thenvoi agent:
+The adapter starts Claude Code as a subprocess. Install and authenticate Claude Code before running your Band agent:
 
 ```bash
 npm install -g @anthropic-ai/claude-code
@@ -23,10 +23,10 @@ Requires Node.js 20+.
 
 You need two credentials or auth contexts:
 
-- A Thenvoi platform API key for `Agent.create(api_key=...)`.
+- A Band platform API key for `Agent.create(api_key=...)`.
 - Claude Code authentication for the subprocess. Use `claude auth login`, or set `ANTHROPIC_API_KEY` if that is how your Claude Code environment is configured.
 
-Credentials for Thenvoi can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
+Credentials for Band can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
 
 ## Quick Start
 
@@ -34,8 +34,8 @@ Credentials for Thenvoi can also be loaded from `agent_config.yaml` with `Agent.
 import asyncio
 import os
 
-from thenvoi import Agent
-from thenvoi.adapters import ClaudeSDKAdapter
+from band import Agent
+from band.adapters import ClaudeSDKAdapter
 
 adapter = ClaudeSDKAdapter(
     cwd=os.getcwd(),
@@ -45,9 +45,9 @@ adapter = ClaudeSDKAdapter(
 agent = Agent.create(
     adapter=adapter,
     agent_id="your-agent-uuid",
-    api_key="your-thenvoi-api-key",
-    ws_url="wss://app.thenvoi.com/api/v1/socket/websocket",
-    rest_url="https://app.thenvoi.com",
+    api_key="your-band-api-key",
+    ws_url="wss://app.band.ai/api/v1/socket/websocket",
+    rest_url="https://app.band.ai",
 )
 
 asyncio.run(agent.run())
@@ -58,20 +58,20 @@ asyncio.run(agent.run())
 The quick start uses two setup calls:
 
 - `ClaudeSDKAdapter(...)` configures Claude Code: working directory, model settings, permission mode, chat-based approvals, custom tools, feature flags, and Claude Code runtime behavior. The [Configuration Reference](#configuration-reference) below covers these parameters.
-- `Agent.create(...)` connects that configured adapter to Thenvoi. Use it for the Thenvoi agent identity, Thenvoi API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
+- `Agent.create(...)` connects that configured adapter to Band. Use it for the Band agent identity, Band API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
 
-Claude Code authentication is handled by the `claude` binary or `ANTHROPIC_API_KEY`. `Agent.create(api_key=...)` is only the Thenvoi platform key.
+Claude Code authentication is handled by the `claude` binary or `ANTHROPIC_API_KEY`. `Agent.create(api_key=...)` is only the Band platform key.
 
 Common `Agent.create(...)` parameters:
 
 | Parameter | Use it for |
 |-----------|------------|
 | `adapter` | The configured `ClaudeSDKAdapter` instance. |
-| `agent_id` | The Thenvoi agent UUID to run as. |
-| `api_key` | The Thenvoi platform API key. |
-| `ws_url` | Thenvoi WebSocket URL. Omit it to use the hosted default. |
-| `rest_url` | Thenvoi REST API URL. Omit it to use the hosted default. |
-| `config` | Advanced Thenvoi runtime options. Most agents do not need it. |
+| `agent_id` | The Band agent UUID to run as. |
+| `api_key` | The Band platform API key. |
+| `ws_url` | Band WebSocket URL. Omit it to use the hosted default. |
+| `rest_url` | Band REST API URL. Omit it to use the hosted default. |
+| `config` | Advanced Band runtime options. Most agents do not need it. |
 | `session_config` | Advanced session lifecycle behavior. |
 | `contact_config` | How incoming contact requests and contact updates are handled. |
 | `on_participant_added` / `on_participant_removed` | Optional callbacks for room membership changes. |
@@ -79,9 +79,9 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
-Each Thenvoi room gets its own Claude Code session. On the first message in a room, the adapter gives Claude Code the conversation context and a system prompt with Thenvoi collaboration instructions. Then it gives Claude Code an in-process MCP server that exposes Thenvoi collaboration tools, optional memory/contact tools, and your custom tools.
+Each Band room gets its own Claude Code session. On the first message in a room, the adapter gives Claude Code the conversation context and a system prompt with Band collaboration instructions. Then it gives Claude Code an in-process MCP server that exposes Band collaboration tools, optional memory/contact tools, and your custom tools.
 
-Claude Code responses are routed back to the Thenvoi room. Through Thenvoi tools, it can send messages, look up peers, add participants, and create new chats. If Claude Code asks for permission to edit files or run commands, you can let Claude Code handle that through `permission_mode`, or you can opt into Thenvoi chat-based approvals with `approval_mode`.
+Claude Code responses are routed back to the Band room. Through Band tools, it can send messages, look up peers, add participants, and create new chats. If Claude Code asks for permission to edit files or run commands, you can let Claude Code handle that through `permission_mode`, or you can opt into Band chat-based approvals with `approval_mode`.
 
 ## Safety Basics
 
@@ -110,14 +110,14 @@ This section covers `ClaudeSDKAdapter(...)` constructor parameters. Pass these d
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `custom_section` | `str \| None` | `None` | Custom instructions appended to the generated Thenvoi system prompt. |
+| `custom_section` | `str \| None` | `None` | Custom instructions appended to the generated Band system prompt. |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. They are converted to MCP tools internally. |
-| `features` | `AdapterFeatures \| None` | `None` | Optional Thenvoi feature settings: extra platform-tool capabilities and telemetry emit options. |
+| `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings: extra platform-tool capabilities and telemetry emit options. |
 | `history_converter` | `ClaudeSDKHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default room-history converter. |
 
 ### Approval Handling
 
-`permission_mode` is Claude Code's native permission setting. `approval_mode` is Thenvoi's chat-based approval layer. Leave `approval_mode=None` to use Claude Code's native behavior only. Set `approval_mode="manual"` to route permission requests into the Thenvoi room.
+`permission_mode` is Claude Code's native permission setting. `approval_mode` is Band's chat-based approval layer. Leave `approval_mode=None` to use Claude Code's native behavior only. Set `approval_mode="manual"` to route permission requests into the Band room.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -147,15 +147,15 @@ If exactly one approval is pending, the token can be omitted: `/approve` or `/de
 
 `AdapterFeatures` is passed to the adapter constructor as `features=AdapterFeatures(...)`. It has two jobs:
 
-- `capabilities` exposes optional Thenvoi tool categories to the model.
-- `emit` controls telemetry events the adapter sends back to Thenvoi.
+- `capabilities` exposes optional Band tool categories to the model.
+- `emit` controls telemetry events the adapter sends back to Band.
 
 For this adapter, all capabilities and emit options are off by default.
 
 | Feature | Supported | What it does |
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Claude Code. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
-| `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Thenvoi workspace. |
+| `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
 | `Emit.EXECUTION` | Yes | Sends `tool_call` and `tool_result` events for tool use. |
 | `Emit.THOUGHTS` | Yes | Sends `thought` events for completed Claude extended-thinking blocks. These are not streaming deltas. |
 | `Emit.TASK_EVENTS` | No | Not supported as a configurable emit option by this adapter. |
@@ -165,8 +165,8 @@ Example:
 ```python
 import os
 
-from thenvoi import AdapterFeatures, Capability, Emit
-from thenvoi.adapters import ClaudeSDKAdapter
+from band import AdapterFeatures, Capability, Emit
+from band.adapters import ClaudeSDKAdapter
 
 adapter = ClaudeSDKAdapter(
     cwd=os.getcwd(),
@@ -179,12 +179,12 @@ adapter = ClaudeSDKAdapter(
 
 ## Custom Tools
 
-Use `additional_tools` when you want Claude Code to call functions from your own application. Each custom tool is converted to an MCP tool and made available alongside the Thenvoi collaboration tools.
+Use `additional_tools` when you want Claude Code to call functions from your own application. Each custom tool is converted to an MCP tool and made available alongside the Band collaboration tools.
 
 ```python
 from pydantic import BaseModel, Field
 
-from thenvoi.adapters import ClaudeSDKAdapter
+from band.adapters import ClaudeSDKAdapter
 
 
 class LookupInput(BaseModel):
@@ -202,7 +202,7 @@ adapter = ClaudeSDKAdapter(
 )
 ```
 
-The MCP tool name comes from the Pydantic model class, not the callable name. `LookupInput` becomes `lookup`: the SDK strips a trailing `Input` suffix and lowercases the rest. Choose model class names that produce unique tool names, and avoid names that collide with built-in Thenvoi tools.
+The MCP tool name comes from the Pydantic model class, not the callable name. `LookupInput` becomes `lookup`: the SDK strips a trailing `Input` suffix and lowercases the rest. Choose model class names that produce unique tool names, and avoid names that collide with built-in Band tools.
 
 ## Examples
 
@@ -210,7 +210,7 @@ See [examples/claude_sdk/](../../examples/claude_sdk/) for runnable scripts.
 
 | File | Start here when you want to... |
 |------|--------------------------------|
-| `01_basic_agent.py` | Run a minimal Claude Code backed Thenvoi agent. |
+| `01_basic_agent.py` | Run a minimal Claude Code backed Band agent. |
 | `02_extended_thinking.py` | Enable extended thinking and emit thought events. |
 | `03_tom_agent.py` | Run one side of the Tom/Jerry multi-agent demo. |
 | `04_jerry_agent.py` | Run the other side of the Tom/Jerry demo. |

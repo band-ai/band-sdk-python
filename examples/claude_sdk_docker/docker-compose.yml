@@ -14,7 +14,7 @@ x-agent: &agent-base
   build:
     context: ../..
     dockerfile: examples/claude_sdk_docker/Dockerfile
-  image: thenvoi-claude-sdk:latest
+  image: band-claude-sdk:latest
   env_file: .env
   volumes:
     - ./:/app/config:ro
@@ -28,14 +28,14 @@ x-agent: &agent-base
 services:
   planner:
     <<: *agent-base
-    container_name: thenvoi-planner
+    container_name: band-planner
     environment:
       AGENT_CONFIG: /app/config/planner.yaml
       WORKSPACE: /workspace/repo
 
   reviewer:
     <<: *agent-base
-    container_name: thenvoi-reviewer
+    container_name: band-reviewer
     environment:
       AGENT_CONFIG: /app/config/reviewer.yaml
       WORKSPACE: /workspace/repo

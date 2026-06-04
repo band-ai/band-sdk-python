@@ -1,47 +1,18 @@
 """Tests for Parlant tools module."""
 
-import json
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import BaseModel
 
-from thenvoi.core.types import AdapterFeatures, Capability
-from thenvoi.integrations.parlant.tools import (
-    _session_contexts,
+from band.integrations.parlant.tools import (
+    _session_message_sent,
+    _session_tools,
     create_parlant_tools,
     get_session_tools,
     mark_message_sent,
     set_session_tools,
     was_message_sent,
 )
-from thenvoi.runtime.tools import iter_tool_definitions
-
-try:
-    import parlant.sdk  # type: ignore[missing-import]  # noqa: F401
-
-    _HAS_PARLANT = True
-except ImportError:
-    _HAS_PARLANT = False
-
-# create_parlant_tools() returns real wrappers only when parlant is importable.
-# Parlant lives in the isolated `dev-parlant` fork, so skip cleanly in the plain
-# `test` job and run for real in `test-parlant`.
-pytestmark = pytest.mark.skipif(
-    not _HAS_PARLANT,
-    reason="parlant not installed (uv sync --extra dev-parlant)",
-)
-
-
-class CalculatorInput(BaseModel):
-    """Add one to the provided value."""
-
-    value: int
-
-
-def calculate(args: CalculatorInput) -> str:
-    return str(args.value + 1)
 
 
 class TestSessionToolsRegistry:
@@ -49,7 +20,8 @@ class TestSessionToolsRegistry:
 
     def setup_method(self):
         """Clear registry before each test."""
-        _session_contexts.clear()
+        _session_tools.clear()
+        _session_message_sent.clear()
 
     def test_set_session_tools_stores_tools(self):
         """Should store tools for a session."""
@@ -57,8 +29,8 @@ class TestSessionToolsRegistry:
 
         set_session_tools("session-123", mock_tools)
 
-        assert "session-123" in _session_contexts
-        assert _session_contexts["session-123"].tools is mock_tools
+        assert "session-123" in _session_tools
+        assert _session_tools["session-123"] is mock_tools
 
     def test_set_session_tools_initializes_message_sent_flag(self):
         """Should initialize message_sent flag to False."""
@@ -66,22 +38,23 @@ class TestSessionToolsRegistry:
 
         set_session_tools("session-123", mock_tools)
 
-        assert _session_contexts["session-123"].message_sent is False
+        assert _session_message_sent["session-123"] is False
 
     def test_set_session_tools_clears_on_none(self):
         """Should clear tools when setting None."""
         mock_tools = MagicMock()
         set_session_tools("session-123", mock_tools)
-        assert "session-123" in _session_contexts
+        assert "session-123" in _session_tools
 
         set_session_tools("session-123", None)
 
-        assert "session-123" not in _session_contexts
+        assert "session-123" not in _session_tools
+        assert "session-123" not in _session_message_sent
 
     def test_get_session_tools_returns_stored_tools(self):
         """Should return stored tools for session."""
         mock_tools = MagicMock()
-        set_session_tools("session-123", mock_tools)
+        _session_tools["session-123"] = mock_tools
 
         result = get_session_tools("session-123")
 
@@ -99,28 +72,28 @@ class TestMessageSentFlag:
 
     def setup_method(self):
         """Clear registry before each test."""
-        _session_contexts.clear()
+        _session_tools.clear()
+        _session_message_sent.clear()
 
     def test_mark_message_sent_sets_flag(self):
         """Should set message_sent flag to True."""
-        set_session_tools("session-123", MagicMock())
+        _session_message_sent["session-123"] = False
 
         mark_message_sent("session-123")
 
-        assert _session_contexts["session-123"].message_sent is True
+        assert _session_message_sent["session-123"] is True
 
     def test_was_message_sent_returns_true_when_sent(self):
-        """Should return True when sent."""
-        set_session_tools("session-123", MagicMock())
-        mark_message_sent("session-123")
+        """Should return True when message was sent."""
+        _session_message_sent["session-123"] = True
 
         result = was_message_sent("session-123")
 
         assert result is True
 
     def test_was_message_sent_returns_false_when_not_sent(self):
-        """Should return False when not sent."""
-        set_session_tools("session-123", MagicMock())
+        """Should return False when message was not sent."""
+        _session_message_sent["session-123"] = False
 
         result = was_message_sent("session-123")
 
@@ -138,21 +111,21 @@ class TestDeprecatedFunctions:
 
     def test_set_current_tools_emits_deprecation_warning(self):
         """Should emit deprecation warning."""
-        from thenvoi.integrations.parlant.tools import set_current_tools
+        from band.integrations.parlant.tools import set_current_tools
 
         with pytest.warns(DeprecationWarning, match="set_current_tools is deprecated"):
             set_current_tools(MagicMock())
 
     def test_get_current_tools_emits_deprecation_warning(self):
         """Should emit deprecation warning."""
-        from thenvoi.integrations.parlant.tools import get_current_tools
+        from band.integrations.parlant.tools import get_current_tools
 
         with pytest.warns(DeprecationWarning, match="get_current_tools is deprecated"):
             get_current_tools()
 
     def test_get_current_tools_returns_none(self):
-        """Should return None because tools are session-keyed now."""
-        from thenvoi.integrations.parlant.tools import get_current_tools
+        """Should return None (tools now accessed via session_id)."""
+        from band.integrations.parlant.tools import get_current_tools
 
         with pytest.warns(DeprecationWarning):
             result = get_current_tools()
@@ -163,442 +136,393 @@ class TestDeprecatedFunctions:
 class TestCreateParlantTools:
     """Tests for create_parlant_tools() function."""
 
-    def test_returns_tool_entries_from_canonical_registry(self):
-        """Generated Parlant tools should come from runtime ToolDefinition entries."""
+    def test_returns_list_of_tools(self):
+        """Should return list of tool entries when Parlant is installed."""
         tools = create_parlant_tools()
 
-        tool_names = [entry.tool.name for entry in tools]
-        expected_names = [
-            definition.name
-            for definition in iter_tool_definitions(
-                surface="agent",
-                include_memory=False,
-                include_contacts=True,
-            )
-        ]
-        assert tool_names == expected_names
+        assert isinstance(tools, list)
+        # Non-empty; specific tool names are verified in the next test.
+        # Avoid hardcoded counts so adding/removing tools doesn't silently
+        # break this assertion — the next test validates the exact contract.
+        assert len(tools) > 0
 
-    def test_generated_tools_have_canonical_descriptions(self):
-        """Every generated Parlant tool should expose the canonical description."""
+    def test_returns_expected_tool_names(self):
+        """Should return tools with expected names."""
+        tools = create_parlant_tools()
+
+        # Tools are ToolEntry objects with a .tool attribute containing the Tool
+        tool_names = [t.tool.name for t in tools]
+        assert "band_send_message" in tool_names
+        assert "band_send_event" in tool_names
+        assert "band_add_participant" in tool_names
+        assert "band_remove_participant" in tool_names
+        assert "band_lookup_peers" in tool_names
+        assert "band_get_participants" in tool_names
+        assert "band_create_chatroom" in tool_names
+        assert "band_list_contacts" in tool_names
+        assert "band_add_contact" in tool_names
+        assert "band_remove_contact" in tool_names
+        assert "band_list_contact_requests" in tool_names
+        assert "band_respond_contact_request" in tool_names
+
+    def test_tools_have_descriptions(self):
+        """Should have descriptions for all tools."""
         tools = create_parlant_tools()
 
         for entry in tools:
             assert entry.tool.description, f"Tool {entry.tool.name} has no description"
 
-    def test_generated_parameters_match_tool_models(self):
-        """Parlant signatures should not drift from canonical Pydantic tool models."""
-        entries = {entry.tool.name: entry for entry in create_parlant_tools()}
+    def test_send_message_tool_has_required_parameters(self):
+        """send_message should have content and mentions parameters."""
+        tools = create_parlant_tools()
 
-        for definition in iter_tool_definitions(
-            surface="agent",
-            include_memory=False,
-            include_contacts=True,
-        ):
-            entry = entries[definition.name]
-            expected_params = list(definition.input_model.model_fields)
-            expected_required = [
-                name
-                for name, field in definition.input_model.model_fields.items()
-                if field.is_required()
-            ]
-
-            assert list(entry.tool.parameters) == expected_params
-            assert entry.tool.required == expected_required
-
-    def test_send_message_mentions_parameter_is_array(self):
-        """The wrapper should expose mentions as the canonical list field."""
-        entry = next(
-            entry
-            for entry in create_parlant_tools()
-            if entry.tool.name == "thenvoi_send_message"
+        send_message_entry = next(
+            t for t in tools if t.tool.name == "band_send_message"
         )
+        # Parameters is a dict with param names as keys
+        param_names = list(send_message_entry.tool.parameters.keys())
 
-        descriptor, _options = entry.tool.parameters["mentions"]
-        assert descriptor["type"] == "array"
-        assert descriptor["item_type"] == "string"
+        assert "content" in param_names
+        assert "mentions" in param_names
+
+    def test_send_event_tool_has_message_type_parameter(self):
+        """send_event should have message_type parameter."""
+        tools = create_parlant_tools()
+
+        send_event_entry = next(t for t in tools if t.tool.name == "band_send_event")
+        param_names = list(send_event_entry.tool.parameters.keys())
+
+        assert "content" in param_names
+        assert "message_type" in param_names
+
+    def test_add_participant_tool_has_identifier_parameter(self):
+        """add_participant should have identifier parameter."""
+        tools = create_parlant_tools()
+
+        add_participant_entry = next(
+            t for t in tools if t.tool.name == "band_add_participant"
+        )
+        param_names = list(add_participant_entry.tool.parameters.keys())
+
+        assert "identifier" in param_names
+
+    def test_lookup_peers_has_no_parameters(self):
+        """lookup_peers should have no user-facing parameters (pagination is hardcoded)."""
+        tools = create_parlant_tools()
+
+        lookup_peers_entry = next(
+            t for t in tools if t.tool.name == "band_lookup_peers"
+        )
+        param_names = list(lookup_peers_entry.tool.parameters.keys())
+
+        # Pagination was intentionally removed to simplify the API
+        # The function uses hardcoded defaults (page=1, page_size=50)
+        assert param_names == []
 
     def test_excludes_contact_tools_without_capability(self):
-        """Explicit empty capabilities should exclude contact and memory tools."""
-        tools = create_parlant_tools(features=AdapterFeatures())
-        tool_names = [entry.tool.name for entry in tools]
+        """Contact tools excluded when CONTACTS capability is absent."""
+        from band.core.types import AdapterFeatures
 
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_list_contacts" not in tool_names
-        assert "thenvoi_store_memory" not in tool_names
+        tools = create_parlant_tools(features=AdapterFeatures())
+        tool_names = [t.tool.name for t in tools]
+
+        assert "band_send_message" in tool_names
+        assert "band_create_chatroom" in tool_names
+        assert "band_list_contacts" not in tool_names
+        assert "band_add_contact" not in tool_names
+        assert "band_remove_contact" not in tool_names
+        assert "band_list_contact_requests" not in tool_names
+        assert "band_respond_contact_request" not in tool_names
 
     def test_includes_contact_tools_with_capability(self):
-        """Contact tools are exposed when CONTACTS capability is enabled."""
+        """Contact tools included when CONTACTS capability is present."""
+        from band.core.types import AdapterFeatures, Capability
+
         tools = create_parlant_tools(
-            features=AdapterFeatures(capabilities=frozenset({Capability.CONTACTS}))
+            features=AdapterFeatures(capabilities={Capability.CONTACTS})
         )
-        tool_names = [entry.tool.name for entry in tools]
+        tool_names = [t.tool.name for t in tools]
 
-        assert "thenvoi_list_contacts" in tool_names
-        assert "thenvoi_add_contact" in tool_names
-        assert "thenvoi_store_memory" not in tool_names
-
-    def test_includes_memory_tools_with_capability(self):
-        """Memory tools are exposed when MEMORY capability is enabled."""
-        tools = create_parlant_tools(
-            features=AdapterFeatures(capabilities=frozenset({Capability.MEMORY}))
-        )
-        tool_names = [entry.tool.name for entry in tools]
-
-        assert "thenvoi_store_memory" in tool_names
-        assert "thenvoi_get_memory" in tool_names
-        assert "thenvoi_list_contacts" not in tool_names
+        assert "band_list_contacts" in tool_names
+        assert "band_add_contact" in tool_names
+        assert "band_remove_contact" in tool_names
+        assert "band_list_contact_requests" in tool_names
+        assert "band_respond_contact_request" in tool_names
 
     def test_includes_contact_tools_when_no_features(self):
-        """Legacy default direct calls should still expose contact tools."""
-        tools = create_parlant_tools()
-        tool_names = [entry.tool.name for entry in tools]
+        """Contact tools included when features is None (backward compat)."""
+        tools = create_parlant_tools(features=None)
+        tool_names = [t.tool.name for t in tools]
 
-        assert "thenvoi_list_contacts" in tool_names
-        assert "thenvoi_store_memory" not in tool_names
-
-    def test_include_tools_filters_by_parlant_tool_name(self):
-        """include_tools should narrow generated Parlant ToolEntry objects."""
-        tools = create_parlant_tools(
-            features=AdapterFeatures(include_tools=frozenset({"thenvoi_send_event"}))
-        )
-
-        assert [entry.tool.name for entry in tools] == ["thenvoi_send_event"]
-
-    def test_exclude_tools_filters_by_parlant_tool_name(self):
-        """exclude_tools should remove generated Parlant ToolEntry objects."""
-        tools = create_parlant_tools(
-            features=AdapterFeatures(exclude_tools=frozenset({"thenvoi_send_event"}))
-        )
-        tool_names = [entry.tool.name for entry in tools]
-
-        assert "thenvoi_send_event" not in tool_names
-        assert "thenvoi_send_message" in tool_names
-
-    def test_include_categories_filters_generated_tools(self):
-        """Category filters should use canonical contact and memory name sets."""
-        tools = create_parlant_tools(
-            features=AdapterFeatures(
-                capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
-                include_categories=frozenset({"memory"}),
-            )
-        )
-        tool_names = [entry.tool.name for entry in tools]
-
-        assert "thenvoi_store_memory" in tool_names
-        assert "thenvoi_send_message" not in tool_names
-        assert "thenvoi_list_contacts" not in tool_names
-
-    def test_includes_additional_custom_tools(self):
-        """CustomToolDef tools should be exposed as generated Parlant tools."""
-        tools = create_parlant_tools(additional_tools=[(CalculatorInput, calculate)])
-        calculator = next(entry for entry in tools if entry.tool.name == "calculator")
-
-        assert calculator.tool.description
-        assert list(calculator.tool.parameters) == ["value"]
-        assert calculator.tool.required == ["value"]
+        assert "band_list_contacts" in tool_names
+        assert "band_respond_contact_request" in tool_names
 
 
 class TestParlantToolFunctions:
-    """Tests for generated Parlant tool wrapper execution."""
+    """Tests for individual Parlant tool functions."""
 
     def setup_method(self):
-        """Clear registry before each test."""
-        _session_contexts.clear()
+        """Clear registry and set up mocks before each test."""
+        _session_tools.clear()
+        _session_message_sent.clear()
 
     @pytest.fixture
     def mock_tools(self):
-        """Create mock AgentToolsProtocol."""
+        """Create mock AgentToolsProtocol (MagicMock base, AsyncMock methods)."""
         tools = MagicMock()
-        tools.execute_tool_call = AsyncMock(return_value={"status": "ok"})
-        tools.send_event = AsyncMock(return_value={"status": "sent"})
+        tools.send_message = AsyncMock()
+        tools.send_event = AsyncMock()
+        tools.add_participant = AsyncMock(return_value={"status": "added"})
+        tools.remove_participant = AsyncMock()
+        tools.lookup_peers = AsyncMock(
+            return_value={
+                "peers": [
+                    {"name": "Agent1", "description": "Test agent", "type": "Agent"}
+                ],
+                "metadata": {"page": 1, "total_pages": 1},
+            }
+        )
+        tools.get_participants = AsyncMock(
+            return_value=[{"name": "User1", "type": "User"}]
+        )
+        tools.create_chatroom = AsyncMock(return_value="new-room-123")
         return tools
 
     @pytest.fixture
     def mock_context(self):
-        """Create minimal Parlant ToolContext-like object."""
+        """Create mock ToolContext.
+
+        Uses ``SimpleNamespace`` so that accessing any attribute not
+        explicitly set raises ``AttributeError`` — this catches tests
+        that accidentally depend on attributes beyond ``session_id``.
+        ``MagicMock(spec=ToolContext)`` is not used because ``ToolContext``
+        lives in ``parlant.core.tools`` which may not be installed.
+        """
+        from types import SimpleNamespace
+
         return SimpleNamespace(session_id="test-session-123")
 
     @pytest.fixture
     def parlant_tools(self):
-        """Create generated Parlant tool functions keyed by tool name."""
-        return {entry.tool.name: entry.function for entry in create_parlant_tools()}
+        """Create Parlant tools from the real create_parlant_tools."""
+        tools = create_parlant_tools()
+        # Build a dict mapping tool name to the tool's function
+        return {entry.tool.name: entry.function for entry in tools}
 
     @pytest.mark.asyncio
-    async def test_generated_wrapper_calls_execute_tool_call(
+    async def test_send_message_calls_tools_send_message(
         self, parlant_tools, mock_tools, mock_context
     ):
-        """Generated wrappers should route through the canonical dispatcher."""
+        """Should call tools.send_message with parsed mentions."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        result = await parlant_tools["thenvoi_send_event"](
-            mock_context,
-            "Investigating",
-            "thought",
-            None,
-        )
+        send_message = parlant_tools["band_send_message"]
+        result = await send_message(mock_context, "Hello world", "Alice, Bob")
 
-        mock_tools.execute_tool_call.assert_awaited_once_with(
-            "thenvoi_send_event",
-            {"content": "Investigating", "message_type": "thought", "metadata": None},
-        )
-        assert result.data == '{"status": "ok"}'
+        mock_tools.send_message.assert_called_once_with("Hello world", ["Alice", "Bob"])
+        assert "Message sent to Alice, Bob" in result.data
 
     @pytest.mark.asyncio
-    async def test_generated_wrapper_coerces_json_dict_parameters(
+    async def test_send_message_marks_message_sent(
         self, parlant_tools, mock_tools, mock_context
     ):
-        """Dict fields exposed as strings should be parsed before validation."""
+        """Should mark message as sent after successful send."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        await parlant_tools["thenvoi_send_event"](
-            mock_context,
-            "Investigating",
-            "thought",
-            '{"step": 1}',
-        )
+        send_message = parlant_tools["band_send_message"]
+        await send_message(mock_context, "Hello", "Alice")
 
-        mock_tools.execute_tool_call.assert_awaited_once_with(
-            "thenvoi_send_event",
-            {
-                "content": "Investigating",
-                "message_type": "thought",
-                "metadata": {"step": 1},
-            },
-        )
-
-    @pytest.mark.asyncio
-    async def test_generated_wrapper_rejects_invalid_json_dict_parameters(
-        self, parlant_tools, mock_tools, mock_context
-    ):
-        """Invalid JSON should be model-visible and not call the platform tool."""
-        set_session_tools(mock_context.session_id, mock_tools)
-
-        result = await parlant_tools["thenvoi_send_event"](
-            mock_context,
-            "Investigating",
-            "thought",
-            "{bad json",
-        )
-
-        mock_tools.execute_tool_call.assert_not_awaited()
-        assert "metadata must be valid JSON" in result.data
-
-    @pytest.mark.asyncio
-    async def test_send_message_marks_sent_after_success(
-        self, parlant_tools, mock_tools, mock_context
-    ):
-        """Delivery marker should be set only after canonical send_message succeeds."""
-        set_session_tools(mock_context.session_id, mock_tools)
-
-        result = await parlant_tools["thenvoi_send_message"](
-            mock_context,
-            "Hello",
-            ["@alice"],
-        )
-
-        mock_tools.execute_tool_call.assert_awaited_once_with(
-            "thenvoi_send_message",
-            {"content": "Hello", "mentions": ["@alice"]},
-        )
-        assert result.data == '{"status": "ok"}'
         assert was_message_sent(mock_context.session_id) is True
 
     @pytest.mark.asyncio
-    async def test_send_message_does_not_mark_sent_after_tool_error(
-        self, parlant_tools, mock_tools, mock_context
-    ):
-        """Failed send_message wrapper calls must not count as delivery."""
-        mock_tools.execute_tool_call.return_value = (
-            "Error executing thenvoi_send_message: boom"
-        )
-        set_session_tools(mock_context.session_id, mock_tools)
-
-        result = await parlant_tools["thenvoi_send_message"](
-            mock_context,
-            "Hello",
-            ["@alice"],
-        )
-
-        assert result.data == "Error executing thenvoi_send_message: boom"
-        assert was_message_sent(mock_context.session_id) is False
-
-    @pytest.mark.asyncio
-    async def test_tool_returns_error_without_session_tools(
+    async def test_send_message_returns_error_without_tools(
         self, parlant_tools, mock_context
     ):
-        """Wrapper should return a model-visible error when no session tools exist."""
-        result = await parlant_tools["thenvoi_send_message"](
-            mock_context,
-            "Hello",
-            ["@alice"],
-        )
+        """Should return error when no tools available."""
+        send_message = parlant_tools["band_send_message"]
+        result = await send_message(mock_context, "Hello", "Alice")
 
-        assert result.data == "Error: No tools available in current context"
-        assert was_message_sent(mock_context.session_id) is False
+        assert "Error: No tools available" in result.data
 
     @pytest.mark.asyncio
-    async def test_tool_translates_dispatcher_exception(
+    async def test_send_message_requires_mentions(
         self, parlant_tools, mock_tools, mock_context
     ):
-        """Unexpected dispatcher exceptions should become model-visible tool errors."""
-        mock_tools.execute_tool_call.side_effect = RuntimeError("Connection failed")
+        """Should return error when no mentions provided."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        result = await parlant_tools["thenvoi_send_event"](
-            mock_context,
-            "Investigating",
-            "thought",
-            None,
+        send_message = parlant_tools["band_send_message"]
+        result = await send_message(mock_context, "Hello", "")
+
+        assert "At least one mention is required" in result.data
+
+    @pytest.mark.asyncio
+    async def test_send_message_translates_band_tool_error(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """BandToolError from underlying tool must surface as ToolResult, not crash.
+
+        Pins the wrapper translation contract: framework wrappers must catch
+        BandToolError raised by AgentTools and return a model-visible
+        failure value so the LLM can recover, instead of letting the exception
+        crash the turn.
+        """
+        from band.core.exceptions import BandToolError
+
+        mock_tools.send_message.side_effect = BandToolError(
+            "Backend rejected message: 503 Service Unavailable"
         )
+        set_session_tools(mock_context.session_id, mock_tools)
 
-        assert "Error executing thenvoi_send_event: Connection failed" in result.data
+        send_message = parlant_tools["band_send_message"]
+        # Must NOT raise — wrapper translates the exception to a tool failure
+        result = await send_message(mock_context, "Hello", "Alice")
 
-    @pytest.mark.asyncio
-    async def test_additional_custom_tool_executes_with_validation(self, mock_context):
-        """Generated custom wrappers should validate through CustomToolDef."""
-        tools = {
-            entry.tool.name: entry.function
-            for entry in create_parlant_tools(
-                additional_tools=[(CalculatorInput, calculate)]
-            )
-        }
-
-        result = await tools["calculator"](mock_context, 41)
-
-        assert result.data == "42"
+        # Result is a ToolResult with the error text visible to the LLM
+        assert "Error sending message" in result.data
+        assert "503" in result.data
 
     @pytest.mark.asyncio
-    async def test_additional_custom_tool_returns_validation_error(self, mock_context):
-        """Invalid custom tool args should be model-visible."""
-        tools = {
-            entry.tool.name: entry.function
-            for entry in create_parlant_tools(
-                additional_tools=[(CalculatorInput, calculate)]
-            )
-        }
-
-        result = await tools["calculator"](mock_context, "not-an-int")
-
-        assert "Invalid arguments for calculator" in result.data
-
-
-class TestRealTimeExecutionReporting:
-    """Tool wrappers emit tool_call/tool_result Band events as the tool runs.
-
-    Reporting happens inside the wrapper (the real execution point) rather than
-    by draining Parlant's session log after the turn, so the events are ordered
-    correctly relative to the actual side effects and emitted exactly once.
-    """
-
-    def setup_method(self):
-        _session_contexts.clear()
-
-    @pytest.fixture
-    def mock_context(self):
-        return SimpleNamespace(session_id="session-rt")
-
-    @pytest.fixture
-    def builtin_tools(self):
-        return {entry.tool.name: entry.function for entry in create_parlant_tools()}
-
-    @pytest.mark.asyncio
-    async def test_builtin_tool_reports_call_and_result_when_emit_enabled(
-        self, builtin_tools, mock_context
+    async def test_send_event_calls_tools_send_event(
+        self, parlant_tools, mock_tools, mock_context
     ):
-        """A non-silent builtin tool emits a paired tool_call/tool_result."""
-        tools = MagicMock()
-        tools.execute_tool_call = AsyncMock(return_value={"participants": ["alice"]})
-        tools.send_event = AsyncMock(return_value={"status": "sent"})
-        set_session_tools(mock_context.session_id, tools, emit_execution=True)
+        """Should call tools.send_event with correct parameters."""
+        set_session_tools(mock_context.session_id, mock_tools)
 
-        await builtin_tools["thenvoi_get_participants"](mock_context)
+        send_event = parlant_tools["band_send_event"]
+        result = await send_event(mock_context, "Thinking...", "thought")
 
-        types = [c.kwargs["message_type"] for c in tools.send_event.await_args_list]
-        assert types == ["tool_call", "tool_result"]
-        call_payload = json.loads(tools.send_event.await_args_list[0].kwargs["content"])
-        result_payload = json.loads(
-            tools.send_event.await_args_list[1].kwargs["content"]
-        )
-        assert call_payload["name"] == "thenvoi_get_participants"
-        assert result_payload["name"] == "thenvoi_get_participants"
-        assert result_payload["output"] == {"participants": ["alice"]}
-        # call and result share one stable id for correlation
-        assert call_payload["tool_call_id"] == result_payload["tool_call_id"]
+        mock_tools.send_event.assert_called_once_with("Thinking...", "thought", None)
+        assert "Event (thought) sent successfully" in result.data
 
     @pytest.mark.asyncio
-    async def test_no_execution_events_when_emit_disabled(
-        self, builtin_tools, mock_context
+    async def test_send_event_validates_message_type(
+        self, parlant_tools, mock_tools, mock_context
     ):
-        """With emit off the tool still runs but produces no execution events."""
-        tools = MagicMock()
-        tools.execute_tool_call = AsyncMock(return_value={"participants": []})
-        tools.send_event = AsyncMock()
-        set_session_tools(mock_context.session_id, tools, emit_execution=False)
+        """Should reject invalid message types."""
+        set_session_tools(mock_context.session_id, mock_tools)
 
-        await builtin_tools["thenvoi_get_participants"](mock_context)
+        send_event = parlant_tools["band_send_event"]
+        result = await send_event(mock_context, "Test", "invalid_type")
 
-        tools.execute_tool_call.assert_awaited_once()
-        tools.send_event.assert_not_called()
+        assert "Invalid message_type" in result.data
 
     @pytest.mark.asyncio
-    async def test_platform_send_tools_are_not_reported(
-        self, builtin_tools, mock_context
+    async def test_add_participant_calls_tools(
+        self, parlant_tools, mock_tools, mock_context
     ):
-        """send_message/send_event already create Band effects, so no echo event."""
-        tools = MagicMock()
-        tools.execute_tool_call = AsyncMock(return_value={"status": "sent"})
-        tools.send_event = AsyncMock()
-        set_session_tools(mock_context.session_id, tools, emit_execution=True)
+        """Should call tools.add_participant."""
+        set_session_tools(mock_context.session_id, mock_tools)
 
-        await builtin_tools["thenvoi_send_message"](mock_context, "Hi", ["@alice"])
-        await builtin_tools["thenvoi_send_event"](mock_context, "thinking", "thought")
+        add_participant = parlant_tools["band_add_participant"]
+        result = await add_participant(mock_context, "Research Agent")
 
-        tools.send_event.assert_not_called()
-        assert tools.execute_tool_call.await_count == 2
+        mock_tools.add_participant.assert_called_once_with("Research Agent", "member")
+        assert "Successfully added 'Research Agent'" in result.data
 
     @pytest.mark.asyncio
-    async def test_tool_call_emitted_before_execution(
-        self, builtin_tools, mock_context
+    async def test_remove_participant_calls_tools(
+        self, parlant_tools, mock_tools, mock_context
     ):
-        """Ordering oracle: tool_call precedes the side effect, tool_result follows."""
-        order: list[str] = []
+        """Should call tools.remove_participant."""
+        set_session_tools(mock_context.session_id, mock_tools)
 
-        async def fake_execute(name, args):
-            order.append("execute")
-            return {"ok": True}
+        remove_participant = parlant_tools["band_remove_participant"]
+        result = await remove_participant(mock_context, "Research Agent")
 
-        async def fake_send_event(*, content, message_type):
-            order.append(message_type)
-            return {"status": "sent"}
-
-        tools = MagicMock()
-        tools.execute_tool_call = AsyncMock(side_effect=fake_execute)
-        tools.send_event = AsyncMock(side_effect=fake_send_event)
-        set_session_tools(mock_context.session_id, tools, emit_execution=True)
-
-        await builtin_tools["thenvoi_get_participants"](mock_context)
-
-        assert order == ["tool_call", "execute", "tool_result"]
+        mock_tools.remove_participant.assert_called_once_with("Research Agent")
+        assert "Successfully removed 'Research Agent'" in result.data
 
     @pytest.mark.asyncio
-    async def test_custom_tool_reports_when_emit_enabled(self, mock_context):
-        """Custom tools route through the same real-time reporting path."""
-        tools = MagicMock()
-        tools.send_event = AsyncMock(return_value={"status": "sent"})
-        wrappers = {
-            entry.tool.name: entry.function
-            for entry in create_parlant_tools(
-                additional_tools=[(CalculatorInput, calculate)]
-            )
-        }
-        set_session_tools(mock_context.session_id, tools, emit_execution=True)
+    async def test_lookup_peers_returns_formatted_list(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should return formatted list of peers."""
+        set_session_tools(mock_context.session_id, mock_tools)
 
-        await wrappers["calculator"](mock_context, 41)
+        lookup_peers = parlant_tools["band_lookup_peers"]
+        result = await lookup_peers(mock_context)
 
-        types = [c.kwargs["message_type"] for c in tools.send_event.await_args_list]
-        assert types == ["tool_call", "tool_result"]
-        result_payload = json.loads(
-            tools.send_event.await_args_list[1].kwargs["content"]
-        )
-        assert result_payload["name"] == "calculator"
-        assert result_payload["output"] == "42"
+        # Pagination is hardcoded in the implementation (page=1, page_size=50)
+        mock_tools.lookup_peers.assert_called_once_with(page=1, page_size=50)
+        assert "Available agents" in result.data
+        assert "Agent1" in result.data
+
+    @pytest.mark.asyncio
+    async def test_lookup_peers_handles_empty_result(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should handle empty peers list."""
+        mock_tools.lookup_peers.return_value = {"peers": [], "metadata": {}}
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        lookup_peers = parlant_tools["band_lookup_peers"]
+        result = await lookup_peers(mock_context)
+
+        assert "No available agents found" in result.data
+
+    @pytest.mark.asyncio
+    async def test_get_participants_returns_formatted_list(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should return formatted list of participants."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        get_participants = parlant_tools["band_get_participants"]
+        result = await get_participants(mock_context)
+
+        mock_tools.get_participants.assert_called_once()
+        assert "Current participants" in result.data
+        assert "User1" in result.data
+
+    @pytest.mark.asyncio
+    async def test_get_participants_handles_empty_room(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should handle empty participants list."""
+        mock_tools.get_participants.return_value = []
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        get_participants = parlant_tools["band_get_participants"]
+        result = await get_participants(mock_context)
+
+        assert "No participants in the room" in result.data
+
+    @pytest.mark.asyncio
+    async def test_create_chatroom_calls_tools(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should call tools.create_chatroom."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        create_chatroom = parlant_tools["band_create_chatroom"]
+        result = await create_chatroom(mock_context, "task-456")
+
+        mock_tools.create_chatroom.assert_called_once_with("task-456")
+        assert "Created new chat room: new-room-123" in result.data
+
+    @pytest.mark.asyncio
+    async def test_create_chatroom_handles_empty_task_id(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should handle empty task_id."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        create_chatroom = parlant_tools["band_create_chatroom"]
+        result = await create_chatroom(mock_context, "")
+
+        mock_tools.create_chatroom.assert_called_once_with(None)
+        assert "Created new chat room" in result.data
+
+    @pytest.mark.asyncio
+    async def test_tool_handles_exception(
+        self, parlant_tools, mock_tools, mock_context
+    ):
+        """Should return error message when tool raises exception."""
+        mock_tools.send_message.side_effect = Exception("Connection failed")
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        send_message = parlant_tools["band_send_message"]
+        result = await send_message(mock_context, "Hello", "Alice")
+
+        assert "Error sending message: Connection failed" in result.data

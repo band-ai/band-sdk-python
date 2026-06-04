@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Tom the cat agent using LangGraph.
@@ -34,8 +34,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from prompts.characters import generate_tom_prompt
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
+from band import Agent
+from band.adapters import LangGraphAdapter
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -43,13 +43,13 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     load_dotenv()
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     # Load Tom's credentials from agent_config.yaml
     # Create adapter with Tom's character prompt

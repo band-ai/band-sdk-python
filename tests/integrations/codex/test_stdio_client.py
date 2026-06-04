@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from thenvoi.integrations.codex import (
+from band.integrations.codex import (
     CodexJsonRpcError,
     CodexStdioClient,
     OverloadRetryPolicy,
@@ -205,18 +205,18 @@ async def _build_client(
 def test_stdio_client_merges_custom_env_with_parent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("THENVOI_PARENT_ENV", "parent-value")
+    monkeypatch.setenv("BAND_PARENT_ENV", "parent-value")
     client = CodexStdioClient(
         command=["codex"],
         env={
-            "THENVOI_CHILD_ONLY": "child-value",
-            "THENVOI_PARENT_ENV": "overridden-value",
+            "BAND_CHILD_ONLY": "child-value",
+            "BAND_PARENT_ENV": "overridden-value",
         },
     )
 
     assert client.env is not None
-    assert client.env["THENVOI_CHILD_ONLY"] == "child-value"
-    assert client.env["THENVOI_PARENT_ENV"] == "overridden-value"
+    assert client.env["BAND_CHILD_ONLY"] == "child-value"
+    assert client.env["BAND_PARENT_ENV"] == "overridden-value"
 
 
 @pytest.mark.asyncio

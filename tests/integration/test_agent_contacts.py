@@ -14,48 +14,46 @@ import os
 
 import pytest
 
-from thenvoi.agent import Agent
-from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
-from thenvoi.platform.event import (
+from band.agent import Agent
+from band.adapters.pydantic_ai import PydanticAIAdapter
+from band.platform.event import (
     ContactEvent,
 )
-from thenvoi.runtime.contact_tools import ContactTools
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contact_tools import ContactTools
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 # Skip all tests if no API key is set
 pytestmark = pytest.mark.skipif(
-    os.getenv("THENVOI_API_KEY") is None,
-    reason="THENVOI_API_KEY not set",
+    os.getenv("BAND_API_KEY") is None,
+    reason="BAND_API_KEY not set",
 )
 
 
 @pytest.fixture
 def api_key():
     """Get API key from environment."""
-    return os.environ["THENVOI_API_KEY"]
+    return os.environ["BAND_API_KEY"]
 
 
 @pytest.fixture
 def agent_id():
     """Get agent ID from environment."""
-    agent_id = os.getenv("THENVOI_AGENT_ID") or os.getenv("TEST_AGENT_ID")
+    agent_id = os.getenv("BAND_AGENT_ID") or os.getenv("TEST_AGENT_ID")
     if not agent_id:
-        pytest.skip("THENVOI_AGENT_ID or TEST_AGENT_ID not set")
+        pytest.skip("BAND_AGENT_ID or TEST_AGENT_ID not set")
     return agent_id
 
 
 @pytest.fixture
 def ws_url():
     """Get WebSocket URL from environment."""
-    return os.getenv("THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket")
+    return os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
 
 
 @pytest.fixture
 def rest_url():
     """Get REST URL from environment."""
-    return os.getenv(
-        "THENVOI_BASE_URL", os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
-    )
+    return os.getenv("BAND_BASE_URL", os.getenv("BAND_REST_URL", "https://app.band.ai"))
 
 
 class TestAgentCallbackFlow:

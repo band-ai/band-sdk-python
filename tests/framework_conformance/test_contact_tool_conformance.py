@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.runtime.tools import TOOL_MODELS, AgentTools
+from band.runtime.tools import TOOL_MODELS, AgentTools
 
 CONTACT_TOOL_NAMES = [
-    "thenvoi_list_contacts",
-    "thenvoi_add_contact",
-    "thenvoi_remove_contact",
-    "thenvoi_list_contact_requests",
-    "thenvoi_respond_contact_request",
+    "band_list_contacts",
+    "band_add_contact",
+    "band_remove_contact",
+    "band_list_contact_requests",
+    "band_respond_contact_request",
 ]
 
 

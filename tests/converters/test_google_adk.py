@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 
-from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+from band.converters.google_adk import GoogleADKHistoryConverter
 
 
 class TestBasicConversion:
@@ -163,7 +163,7 @@ class TestToolEvents:
                     "role": "assistant",
                     "content": json.dumps(
                         {
-                            "name": "thenvoi_send_message",
+                            "name": "band_send_message",
                             "args": {"content": "Hello"},
                             "tool_call_id": "tc-1",
                         }
@@ -179,7 +179,7 @@ class TestToolEvents:
         blocks = result[0]["content"]
         assert len(blocks) == 1
         assert blocks[0]["type"] == "function_call"
-        assert blocks[0]["name"] == "thenvoi_send_message"
+        assert blocks[0]["name"] == "band_send_message"
         assert blocks[0]["args"] == {"content": "Hello"}
         # Synthetic error response
         assert result[1]["role"] == "user"
@@ -193,7 +193,7 @@ class TestToolEvents:
                     "role": "assistant",
                     "content": json.dumps(
                         {
-                            "name": "thenvoi_send_message",
+                            "name": "band_send_message",
                             "output": '{"status": "sent"}',
                             "tool_call_id": "tc-1",
                         }
@@ -208,7 +208,7 @@ class TestToolEvents:
         blocks = result[0]["content"]
         assert len(blocks) == 1
         assert blocks[0]["type"] == "function_response"
-        assert blocks[0]["name"] == "thenvoi_send_message"
+        assert blocks[0]["name"] == "band_send_message"
 
     def test_tool_call_and_result_pair(self):
         """Should batch tool call and result into separate messages."""
@@ -789,14 +789,14 @@ class TestFormatTranscript:
                         {
                             "type": "function_call",
                             "id": "call_1",
-                            "name": "thenvoi_send_message",
+                            "name": "band_send_message",
                             "args": {"content": "Hello"},
                         }
                     ],
                 }
             ]
         )
-        assert "[Tool Call] thenvoi_send_message" in transcript
+        assert "[Tool Call] band_send_message" in transcript
         assert '"content": "Hello"' in transcript
 
     def test_renders_tool_result_block(self):
@@ -810,14 +810,14 @@ class TestFormatTranscript:
                         {
                             "type": "function_response",
                             "tool_call_id": "call_1",
-                            "name": "thenvoi_send_message",
+                            "name": "band_send_message",
                             "output": '{"status": "sent"}',
                         }
                     ],
                 }
             ]
         )
-        assert "[Tool Result] thenvoi_send_message" in transcript
+        assert "[Tool Result] band_send_message" in transcript
         assert '{"status": "sent"}' in transcript
 
     def test_truncates_long_tool_result_output(self):

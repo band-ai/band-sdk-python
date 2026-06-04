@@ -1,18 +1,18 @@
 # Codex Adapter
 
-[OpenAI Codex](https://openai.com/codex) is a coding agent runtime that can inspect files, edit files, run commands, and manage approval workflows. The Thenvoi Codex adapter connects a Codex process to Thenvoi rooms over stdio or WebSocket so it can take part in conversations as a coding collaborator.
+[OpenAI Codex](https://openai.com/codex) is a coding agent runtime that can inspect files, edit files, run commands, and manage approval workflows. The Band Codex adapter connects a Codex process to Band rooms over stdio or WebSocket so it can take part in conversations as a coding collaborator.
 
 Use this adapter when you want an OpenAI-powered coding agent with configurable sandboxing, approval commands, command/file-change telemetry, reasoning visibility, and task lifecycle events. Use the [Claude SDK adapter](claude_sdk.md) for Claude Code based coding agents, the [Anthropic adapter](anthropic.md) for direct Claude API chat/tool agents, or the [LangGraph adapter](langgraph.md) for custom graph workflows.
 
 ## Install
 
 ```bash
-uv add "thenvoi-sdk[codex]"
+uv add "band-sdk[codex]"
 ```
 
 ## Prerequisites
 
-The adapter starts or connects to a Codex process. Install and authenticate the Codex CLI before running your Thenvoi agent:
+The adapter starts or connects to a Codex process. Install and authenticate the Codex CLI before running your Band agent:
 
 ```bash
 npm install -g @openai/codex
@@ -23,7 +23,7 @@ Requires Node.js 18+.
 
 You need two credentials or auth contexts:
 
-- A Thenvoi platform API key for `Agent.create(api_key=...)`.
+- A Band platform API key for `Agent.create(api_key=...)`.
 - Codex authentication for the Codex process. Use `codex login`, or set `OPENAI_API_KEY` if that is how your Codex environment is configured.
 
 For `transport="ws"`, start the Codex app server separately:
@@ -32,7 +32,7 @@ For `transport="ws"`, start the Codex app server separately:
 codex app-server --listen ws://127.0.0.1:8765
 ```
 
-Credentials for Thenvoi can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
+Credentials for Band can also be loaded from `agent_config.yaml` with `Agent.from_config("my_agent", adapter=adapter)`.
 
 ## Quick Start
 
@@ -40,8 +40,8 @@ Credentials for Thenvoi can also be loaded from `agent_config.yaml` with `Agent.
 import asyncio
 import os
 
-from thenvoi import Agent
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band import Agent
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
     config=CodexAdapterConfig(
@@ -53,9 +53,9 @@ adapter = CodexAdapter(
 agent = Agent.create(
     adapter=adapter,
     agent_id="your-agent-uuid",
-    api_key="your-thenvoi-api-key",
-    ws_url="wss://app.thenvoi.com/api/v1/socket/websocket",
-    rest_url="https://app.thenvoi.com",
+    api_key="your-band-api-key",
+    ws_url="wss://app.band.ai/api/v1/socket/websocket",
+    rest_url="https://app.band.ai",
 )
 
 asyncio.run(agent.run())
@@ -66,21 +66,21 @@ asyncio.run(agent.run())
 Codex has three setup layers:
 
 - `CodexAdapterConfig(...)` configures the Codex runtime: transport, model, working directory, sandbox, approval behavior, prompts, context injection, and streaming/telemetry detail.
-- `CodexAdapter(...)` wraps that runtime config for Thenvoi and adds adapter-level settings: feature flags, custom tools, history conversion, and advanced client injection.
-- `Agent.create(...)` connects the configured adapter to Thenvoi. Use it for the Thenvoi agent identity, Thenvoi API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
+- `CodexAdapter(...)` wraps that runtime config for Band and adds adapter-level settings: feature flags, custom tools, history conversion, and advanced client injection.
+- `Agent.create(...)` connects the configured adapter to Band. Use it for the Band agent identity, Band API key, platform URLs, session settings, contact-event handling, callbacks, and preprocessing.
 
-Codex authentication is handled by `codex login`, `OPENAI_API_KEY`, or the Codex process environment. `Agent.create(api_key=...)` is only the Thenvoi platform key.
+Codex authentication is handled by `codex login`, `OPENAI_API_KEY`, or the Codex process environment. `Agent.create(api_key=...)` is only the Band platform key.
 
 Common `Agent.create(...)` parameters:
 
 | Parameter | Use it for |
 |-----------|------------|
 | `adapter` | The configured `CodexAdapter` instance. |
-| `agent_id` | The Thenvoi agent UUID to run as. |
-| `api_key` | The Thenvoi platform API key. |
-| `ws_url` | Thenvoi WebSocket URL. Omit it to use the hosted default. |
-| `rest_url` | Thenvoi REST API URL. Omit it to use the hosted default. |
-| `config` | Advanced Thenvoi runtime options. Most agents do not need it. |
+| `agent_id` | The Band agent UUID to run as. |
+| `api_key` | The Band platform API key. |
+| `ws_url` | Band WebSocket URL. Omit it to use the hosted default. |
+| `rest_url` | Band REST API URL. Omit it to use the hosted default. |
+| `config` | Advanced Band runtime options. Most agents do not need it. |
 | `session_config` | Advanced session lifecycle behavior. |
 | `contact_config` | How incoming contact requests and contact updates are handled. |
 | `on_participant_added` / `on_participant_removed` | Optional callbacks for room membership changes. |
@@ -88,7 +88,7 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
-Each Thenvoi room maps to one Codex thread. Through Thenvoi collaboration tools, Codex can send messages, look up peers, add participants, and create new chats. On startup, the adapter tries to resume the previous Codex thread from task-event metadata. If resume fails and `inject_history_on_resume_failure=True`, the adapter injects recent room history as text context.
+Each Band room maps to one Codex thread. Through Band collaboration tools, Codex can send messages, look up peers, add participants, and create new chats. On startup, the adapter tries to resume the previous Codex thread from task-event metadata. If resume fails and `inject_history_on_resume_failure=True`, the adapter injects recent room history as text context.
 
 The adapter handles Codex approval requests in the room, persists thread metadata through task events, and sends optional telemetry such as tool calls, reasoning, diffs, token usage, and lifecycle events.
 
@@ -100,8 +100,8 @@ This section covers Codex adapter parameters, not `Agent.create(...)` parameters
 - Pass adapter-level settings such as `features=` and `additional_tools=` directly to `CodexAdapter(...)`.
 
 ```python
-from thenvoi import AdapterFeatures, Emit
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band import AdapterFeatures, Emit
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
     config=CodexAdapterConfig(cwd="/repo", sandbox="workspace-write"),
@@ -132,7 +132,7 @@ Pass these to `CodexAdapterConfig(...)`:
 | `sandbox` | `str \| None` | `None` | Sandbox mode. Common values are `read-only`, `workspace-write`, and `danger-full-access`. |
 | `sandbox_policy` | `dict \| None` | `None` | Low-level sandbox policy. When set, room participants cannot override the sandbox with `/sandbox`. |
 | `approval_policy` | `str` | `"never"` | Codex CLI approval policy sent to the Codex runtime. |
-| `approval_mode` | `"manual" \| "auto_accept" \| "auto_decline"` | `"manual"` | How Thenvoi handles Codex approval requests. `"manual"` asks the room to approve or decline. |
+| `approval_mode` | `"manual" \| "auto_accept" \| "auto_decline"` | `"manual"` | How Band handles Codex approval requests. `"manual"` asks the room to approve or decline. |
 | `approval_text_notifications` | `bool` | `True` | Send room messages for approval events. |
 | `approval_wait_timeout_s` | `float` | `300.0` | Seconds to wait for a manual approval. |
 | `approval_timeout_decision` | `"accept" \| "acceptForSession" \| "decline"` | `"decline"` | Decision when manual approval times out. |
@@ -155,9 +155,9 @@ Pass these to `CodexAdapterConfig(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `system_prompt` | `str \| None` | `None` | Replaces the default Thenvoi system prompt entirely. |
-| `custom_section` | `str` | `""` | Appended to Thenvoi's base collaboration prompt. Prefer this over replacing the whole prompt. |
-| `include_base_instructions` | `bool` | `True` | Include Thenvoi's base collaboration instructions. |
+| `system_prompt` | `str \| None` | `None` | Replaces the default Band system prompt entirely. |
+| `custom_section` | `str` | `""` | Appended to Band's base collaboration prompt. Prefer this over replacing the whole prompt. |
+| `include_base_instructions` | `bool` | `True` | Include Band's base collaboration instructions. |
 | `inject_history_on_resume_failure` | `bool` | `True` | Inject recent room history as text context when Codex thread resume fails. |
 | `max_history_messages` | `int` | `50` | Maximum messages to inject after a resume failure. |
 | `fallback_send_agent_text` | `bool` | `True` | Send Codex final text as a room message if Codex did not call the send-message tool. |
@@ -175,15 +175,15 @@ Pass these to `CodexAdapterConfig(...)`:
 | `enable_self_config_tools` | `bool` | `False` | Expose tools that let Codex change its own model and reasoning settings. Use only in trusted rooms. |
 | `additional_dynamic_tools` | `list[dict]` | `[]` | Extra dynamic tool schemas registered with the Codex client. |
 | `client_close_timeout_s` | `float \| None` | `10.0` | Timeout for transport close during cleanup. `None` disables the timeout. |
-| `client_name` | `str` | `"thenvoi_codex_adapter"` | Client name sent to Codex. |
-| `client_title` | `str` | `"Thenvoi Codex Adapter"` | Client title sent to Codex. |
+| `client_name` | `str` | `"band_codex_adapter"` | Client name sent to Codex. |
+| `client_title` | `str` | `"Band Codex Adapter"` | Client title sent to Codex. |
 | `client_version` | `str` | `"0.1.0"` | Client version sent to Codex. |
 
 Pass these directly to `CodexAdapter(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `features` | `AdapterFeatures \| None` | `None` | Optional Thenvoi feature settings: extra platform-tool capabilities and telemetry emit options. |
+| `features` | `AdapterFeatures \| None` | `None` | Optional Band feature settings: extra platform-tool capabilities and telemetry emit options. |
 | `additional_tools` | `list[CustomToolDef] \| None` | `None` | Custom tools as `(PydanticModel, callable)` tuples. |
 | `history_converter` | `CodexHistoryConverter \| None` | auto | Advanced escape hatch for replacing the default history/thread-metadata converter. |
 | `client_factory` | callable | `None` | Test/advanced injection point for a custom Codex client. |
@@ -192,15 +192,15 @@ Pass these directly to `CodexAdapter(...)`:
 
 `AdapterFeatures` is passed to `CodexAdapter(...)`, not to `CodexAdapterConfig(...)`. It has two jobs:
 
-- `capabilities` exposes optional Thenvoi tool categories to the model.
-- `emit` controls telemetry events the adapter sends back to Thenvoi.
+- `capabilities` exposes optional Band tool categories to the model.
+- `emit` controls telemetry events the adapter sends back to Band.
 
 If `features` is omitted, Codex defaults to `Emit.TASK_EVENTS` because task events are used for lifecycle data and thread resume metadata. Optional capabilities are still off by default. If you pass `features=...`, your value is authoritative; include `Emit.TASK_EVENTS` if you want thread resume across reconnects.
 
 | Feature | Supported | What it does |
 |---------|-----------|--------------|
 | `Capability.CONTACTS` | Yes | Exposes contact-management tools to Codex. Incoming contact request handling is configured separately with `ContactEventConfig` on `Agent.create(...)`. |
-| `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Thenvoi workspace. |
+| `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
 | `Emit.EXECUTION` | Yes | Sends events for command execution, file changes, MCP tools, web search, image viewing, and collaboration-agent tool calls. |
 | `Emit.THOUGHTS` | Yes | Sends completed reasoning, plan, and review-mode events as `thought` events. |
 | `Emit.TASK_EVENTS` | Yes | Sends lifecycle, thread-resume, approval, diff-summary, token-usage, and error task events. Required for persisted Codex thread mapping. |
@@ -208,8 +208,8 @@ If `features` is omitted, Codex defaults to `Emit.TASK_EVENTS` because task even
 Example:
 
 ```python
-from thenvoi import AdapterFeatures, Capability, Emit
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band import AdapterFeatures, Capability, Emit
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 adapter = CodexAdapter(
     config=CodexAdapterConfig(model="gpt-5.5"),
@@ -280,7 +280,7 @@ Use `additional_tools` on `CodexAdapter(...)` when you want Codex to call functi
 ```python
 from pydantic import BaseModel, Field
 
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 
 class WeatherInput(BaseModel):
@@ -299,7 +299,7 @@ adapter = CodexAdapter(
 )
 ```
 
-The tool name comes from the Pydantic model class, not the callable name. `WeatherInput` becomes `weather`: the SDK strips a trailing `Input` suffix and lowercases the rest. Choose model class names that produce unique tool names, and avoid names that collide with built-in Thenvoi tools.
+The tool name comes from the Pydantic model class, not the callable name. `WeatherInput` becomes `weather`: the SDK strips a trailing `Input` suffix and lowercases the rest. Choose model class names that produce unique tool names, and avoid names that collide with built-in Band tools.
 
 ## Examples
 
@@ -307,7 +307,7 @@ See [examples/codex/](../../examples/codex/) for runnable scripts.
 
 | File | Start here when you want to... |
 |------|--------------------------------|
-| `01_basic_agent.py` | Run a minimal Codex-backed Thenvoi agent. |
+| `01_basic_agent.py` | Run a minimal Codex-backed Band agent. |
 | `docker-compose.yml` | Run one Codex agent in Docker. |
 | `docker-compose.multi.yml` | Run multiple Codex agents together. |
 | `docker-compose.plan-review.yml` | Run a planning/review workflow. |

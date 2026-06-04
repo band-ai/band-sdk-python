@@ -1,6 +1,6 @@
 """Tests for platform events using tagged union pattern."""
 
-from thenvoi.platform.event import (
+from band.platform.event import (
     MessageEvent,
     RoomAddedEvent,
     RoomDeletedEvent,
@@ -9,7 +9,7 @@ from thenvoi.platform.event import (
     ParticipantRemovedEvent,
     PlatformEvent,
 )
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     MessageCreatedPayload,
     RoomAddedPayload,
     RoomDeletedPayload,

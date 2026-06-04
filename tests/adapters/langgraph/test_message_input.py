@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from thenvoi.adapters.langgraph import LangGraphAdapter
-from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.adapters.langgraph import LangGraphAdapter
+from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 
 from .helpers import make_capture_graph
 
@@ -32,7 +32,7 @@ class TestOnMessage:
 
         # Patch at the module where it's imported
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -65,7 +65,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -185,7 +185,7 @@ class TestOnMessage:
         )
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.side_effect = [[platform_tool_a], [platform_tool_b]]
 
@@ -229,7 +229,7 @@ class TestOnMessage:
             await adapter.on_started("TestBot", "Test bot")
 
             with patch(
-                "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+                "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
             ) as mock_convert:
                 platform_tool = MagicMock(name="platform_tool")
                 mock_convert.return_value = [platform_tool]
@@ -267,7 +267,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -302,7 +302,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -436,7 +436,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -490,7 +490,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -527,7 +527,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -574,7 +574,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -622,7 +622,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -671,7 +671,7 @@ class TestOnMessage:
         adapter.graph_factory = MagicMock(return_value=mock_graph)
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 

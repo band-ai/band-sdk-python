@@ -11,8 +11,8 @@ from google.genai import types
 from google.genai.errors import ServerError
 from pydantic import BaseModel, Field
 
-from thenvoi.adapters.gemini import GeminiAdapter
-from thenvoi.core.types import PlatformMessage
+from band.adapters.gemini import GeminiAdapter
+from band.core.types import PlatformMessage
 
 
 @pytest.fixture
@@ -122,7 +122,7 @@ class TestOnMessage:
             AsyncMock(
                 side_effect=[
                     _response_with_function_call(
-                        "thenvoi_lookup_peers", {"page": "1"}, "call_1"
+                        "band_lookup_peers", {"page": "1"}, "call_1"
                     ),
                     _response_with_text("done"),
                 ]
@@ -139,7 +139,7 @@ class TestOnMessage:
             )
 
         mock_tools.execute_tool_call.assert_called_once_with(
-            "thenvoi_lookup_peers", {"page": "1"}
+            "band_lookup_peers", {"page": "1"}
         )
         # tool_call + tool_result reporting
         assert mock_tools.send_event.call_count == 2
@@ -161,7 +161,7 @@ class TestOnMessage:
             AsyncMock(
                 side_effect=[
                     _response_with_function_call(
-                        "thenvoi_lookup_peers", {"page": "1"}, "call_1"
+                        "band_lookup_peers", {"page": "1"}, "call_1"
                     ),
                     _response_with_text("done"),
                 ]
@@ -184,7 +184,7 @@ class TestOnMessage:
         response = MagicMock()
         response.candidates = [MagicMock(content=None)]
         response.function_calls = [
-            types.FunctionCall(name="thenvoi_lookup_peers", args={"page": "1"}, id="c1")
+            types.FunctionCall(name="band_lookup_peers", args={"page": "1"}, id="c1")
         ]
 
         content = adapter._extract_candidate_content(response)
@@ -195,7 +195,7 @@ class TestOnMessage:
         function_call = content.parts[0].function_call
         assert function_call is not None
         assert function_call.id == "c1"
-        assert function_call.name == "thenvoi_lookup_peers"
+        assert function_call.name == "band_lookup_peers"
         assert function_call.args == {"page": "1"}
 
 
@@ -327,7 +327,7 @@ class TestOnCleanup:
                 role="model",
                 parts=[
                     types.Part.from_function_call(
-                        name="thenvoi_send_message",
+                        name="band_send_message",
                         args={"content": "hello"},
                     )
                 ],
@@ -338,7 +338,7 @@ class TestOnCleanup:
                     types.Part(
                         function_response=types.FunctionResponse(
                             id="tc_1",
-                            name="thenvoi_send_message",
+                            name="band_send_message",
                             response={"output": {"status": "sent"}},
                         )
                     ),
@@ -388,14 +388,14 @@ class TestValidationErrorHandling:
         )
 
         function_calls = [
-            types.FunctionCall(name="thenvoi_send_message", args={}, id="call_1")
+            types.FunctionCall(name="band_send_message", args={}, id="call_1")
         ]
         parts = await adapter._process_function_calls(function_calls, mock_tools)
 
         assert len(parts) == 1
         resp = parts[0].function_response
         assert resp is not None
-        assert "Invalid arguments for thenvoi_send_message" in resp.response["error"]
+        assert "Invalid arguments for band_send_message" in resp.response["error"]
         assert "content" in resp.response["error"]
 
 
@@ -416,7 +416,7 @@ class TestMaxToolRounds:
             "_call_gemini",
             AsyncMock(
                 return_value=_response_with_function_call(
-                    "thenvoi_lookup_peers", {"page": "1"}, "call_1"
+                    "band_lookup_peers", {"page": "1"}, "call_1"
                 )
             ),
         ):

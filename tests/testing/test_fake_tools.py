@@ -1,7 +1,7 @@
 """Tests for FakeAgentTools testing utility."""
 
-from thenvoi.core.protocols import AgentToolsProtocol
-from thenvoi.testing import FakeAgentTools
+from band.core.protocols import AgentToolsProtocol
+from band.testing import FakeAgentTools
 
 
 class TestFakeAgentToolsProtocol:
@@ -208,12 +208,10 @@ class TestUsageInAdapterTests:
         tools = FakeAgentTools()
 
         # Simulate LLM tool calls
-        await tools.execute_tool_call("thenvoi_send_message", {"content": "Hi"})
-        await tools.execute_tool_call(
-            "thenvoi_add_participant", {"identifier": "Alice"}
-        )
+        await tools.execute_tool_call("band_send_message", {"content": "Hi"})
+        await tools.execute_tool_call("band_add_participant", {"identifier": "Alice"})
 
         # Verify tool calls were made
         assert len(tools.tool_calls) == 2
-        assert tools.tool_calls[0]["tool_name"] == "thenvoi_send_message"
-        assert tools.tool_calls[1]["tool_name"] == "thenvoi_add_participant"
+        assert tools.tool_calls[0]["tool_name"] == "band_send_message"
+        assert tools.tool_calls[1]["tool_name"] == "band_add_participant"

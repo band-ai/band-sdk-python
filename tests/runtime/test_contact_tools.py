@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.runtime.contact_tools import ContactTools
+from band.runtime.contact_tools import ContactTools
 
 
 @pytest.fixture

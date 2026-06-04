@@ -8,8 +8,8 @@ Tests cover:
 - No false claims about internet access
 """
 
-from thenvoi.core.types import AdapterFeatures, Capability
-from thenvoi.runtime.prompts import BASE_INSTRUCTIONS, render_system_prompt
+from band.core.types import AdapterFeatures, Capability
+from band.runtime.prompts import BASE_INSTRUCTIONS, render_system_prompt
 
 
 class TestRenderSystemPromptDefaults:
@@ -153,7 +153,7 @@ class TestCapabilityGatedSections:
         )
 
         assert "## Memory Tools" in prompt
-        assert "thenvoi_store_memory" in prompt
+        assert "band_store_memory" in prompt
 
     def test_memory_section_absent_by_default(self):
         """Memory tool instructions absent when no features."""

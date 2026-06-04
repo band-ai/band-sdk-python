@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from thenvoi.converters.letta import LettaHistoryConverter
+from band.converters.letta import LettaHistoryConverter
 
 
 class TestLettaHistoryConverter:

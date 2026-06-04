@@ -6,7 +6,7 @@ tests/framework_conformance/test_converter_conformance.py.
 This file contains Anthropic-specific tool event conversion and integration tests.
 """
 
-from thenvoi.converters.anthropic import AnthropicHistoryConverter
+from band.converters.anthropic import AnthropicHistoryConverter
 
 
 class TestToolEventConversion:

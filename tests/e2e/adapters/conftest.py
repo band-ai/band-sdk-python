@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from thenvoi.core.simple_adapter import SimpleAdapter
+from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.conftest import E2ESettings
 
@@ -50,19 +50,19 @@ def create_langgraph_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import MemorySaver
 
-    from thenvoi.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter
 
     return LangGraphAdapter(
         llm=ChatOpenAI(model=settings.e2e_llm_model),
         checkpointer=MemorySaver(),
-        custom_section="Keep responses short and concise. Always respond using the thenvoi_send_message tool.",
+        custom_section="Keep responses short and concise. Always respond using the band_send_message tool.",
     )
 
 
 def create_anthropic_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create an Anthropic adapter with a cheap Claude model."""
     _require_anthropic_key()
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     return AnthropicAdapter(
         model=settings.e2e_anthropic_model,
@@ -73,7 +73,7 @@ def create_anthropic_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 def create_pydantic_ai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a Pydantic AI adapter with a cheap OpenAI model."""
     _require_openai_key()
-    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter
 
     return PydanticAIAdapter(
         model=f"openai:{settings.e2e_llm_model}",
@@ -84,7 +84,7 @@ def create_pydantic_ai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 def create_claude_sdk_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a Claude SDK adapter with a cheap Claude model."""
     _require_anthropic_key()
-    from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter
+    from band.adapters.claude_sdk import ClaudeSDKAdapter
 
     return ClaudeSDKAdapter(
         model=settings.e2e_anthropic_model,
@@ -95,7 +95,7 @@ def create_claude_sdk_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 def create_crewai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a CrewAI adapter with a cheap OpenAI model."""
     _require_openai_key()
-    from thenvoi.adapters.crewai import CrewAIAdapter
+    from band.adapters.crewai import CrewAIAdapter
 
     return CrewAIAdapter(
         model=settings.e2e_llm_model,

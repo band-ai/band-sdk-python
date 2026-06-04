@@ -14,8 +14,8 @@ from a2a.types import (
 )
 from starlette.testclient import TestClient
 
-from thenvoi.integrations.a2a.gateway.server import GatewayServer
-from thenvoi_rest import Peer
+from band.integrations.a2a.gateway.server import GatewayServer
+from band_rest import Peer
 
 
 def make_peer(peer_id: str, name: str, description: str = "") -> Peer:
@@ -185,7 +185,7 @@ class TestGatewayServerAgentCard:
         data = response.json()
         assert len(data["skills"]) == 1
         assert data["skills"][0]["name"] == "Weather Agent"
-        assert "thenvoi" in data["skills"][0]["tags"]
+        assert "band" in data["skills"][0]["tags"]
 
     def test_agent_card_returns_404_for_unknown_peer(
         self, server_with_peers: GatewayServer

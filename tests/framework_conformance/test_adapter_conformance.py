@@ -161,7 +161,7 @@ class TestAdapterFeaturesContract:
 
     def test_supported_emit_declared(self, adapter_config):
         """Every adapter class must define SUPPORTED_EMIT as a frozenset."""
-        from thenvoi.core.types import Emit
+        from band.core.types import Emit
 
         adapter = adapter_config.adapter_factory()
         cls = type(adapter)
@@ -182,7 +182,7 @@ class TestAdapterFeaturesContract:
 
     def test_supported_capabilities_declared(self, adapter_config):
         """Every adapter class must define SUPPORTED_CAPABILITIES as a frozenset."""
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
         adapter = adapter_config.adapter_factory()
         cls = type(adapter)
@@ -204,7 +204,7 @@ class TestAdapterFeaturesContract:
 
     def test_features_param_accepted(self, adapter_config):
         """Every adapter constructor must accept features=AdapterFeatures(...)."""
-        from thenvoi.core.types import AdapterFeatures
+        from band.core.types import AdapterFeatures
 
         adapter = adapter_config.adapter_factory(features=AdapterFeatures())
         assert adapter.features == AdapterFeatures()

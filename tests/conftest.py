@@ -1,8 +1,8 @@
-"""Pytest fixtures for thenvoi SDK tests.
+"""Pytest fixtures for Band SDK tests.
 
-Most fixtures are provided by thenvoi-testing-python (auto-registered plugin).
+Most fixtures are provided by the local band_testing package.
 
-Available from thenvoi_testing:
+Available from band_testing:
 - factory: MockDataFactory for creating test data
 - mock_agent_api, mock_human_api, mock_api_client: API client mocks
 - mock_websocket: WebSocket client mock
@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
     RoomAddedPayload,
@@ -33,7 +33,7 @@ from thenvoi.client.streaming import (
     ContactAddedPayload,
     ContactRemovedPayload,
 )
-from thenvoi.platform.event import (
+from band.platform.event import (
     MessageEvent,
     RoomAddedEvent,
     RoomDeletedEvent,
@@ -45,12 +45,15 @@ from thenvoi.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
 )
-from thenvoi.runtime.types import PlatformMessage
+from band.runtime.types import PlatformMessage
 
 # E402: module-level import not at top of file. Grouped after first-party SDK
 # imports to keep test-utility imports separate. The original interleaved
 # ordering triggered ruff E402 because a non-import comment sat between imports.
-from thenvoi_testing.markers import pytest_ignore_collect_in_ci as _ignore_collect_in_ci
+from band_testing.markers import pytest_ignore_collect_in_ci as _ignore_collect_in_ci
+
+
+pytest_plugins = ["band_testing.fixtures"]
 
 
 def pytest_ignore_collect(collection_path):
@@ -214,8 +217,8 @@ def dummy_message_handler():
 
 
 @pytest.fixture
-def mock_thenvoi_agent(mock_api_client, mock_websocket):
-    """Mock ThenvoiAgent coordinator for session/adapter tests."""
+def mock_band_agent(mock_api_client, mock_websocket):
+    """Mock BandAgent coordinator for session/adapter tests."""
     agent = AsyncMock()
     agent.agent_id = "agent-123"
     agent.agent_name = "TestBot"
