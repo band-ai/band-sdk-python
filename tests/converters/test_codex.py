@@ -6,7 +6,7 @@ from band.converters.codex import CodexHistoryConverter
 
 
 class TestCodexHistoryConverter:
-    """Converter should extract latest codex thread mapping from task events."""
+    """Converter should extract latest codex thread mapping from event metadata."""
 
     def test_convert_empty_history(self) -> None:
         converter = CodexHistoryConverter()
@@ -43,7 +43,27 @@ class TestCodexHistoryConverter:
         assert state.created_at is not None
         assert state.created_at.year == 2026
 
-    def test_convert_ignores_non_codex_task_metadata(self) -> None:
+    def test_convert_reads_non_task_thread_mapping_metadata(self) -> None:
+        converter = CodexHistoryConverter()
+        raw_history = [
+            {
+                "message_type": "tool_result",
+                "content": "Codex thread mapped",
+                "metadata": {
+                    "codex_event_type": "thread_mapping",
+                    "codex_thread_id": "thr-tool-result",
+                    "codex_room_id": "room-3",
+                    "codex_created_at": "2026-02-19T01:02:03Z",
+                },
+            },
+        ]
+
+        state = converter.convert(raw_history)
+        assert state.thread_id == "thr-tool-result"
+        assert state.room_id == "room-3"
+        assert state.created_at is not None
+
+    def test_convert_ignores_non_codex_metadata(self) -> None:
         converter = CodexHistoryConverter()
         raw_history = [
             {

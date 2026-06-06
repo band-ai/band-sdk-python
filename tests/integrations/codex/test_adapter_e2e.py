@@ -224,7 +224,11 @@ async def test_on_event_uses_converter_history_to_resume_thread() -> None:
     methods = [method for method, _ in fake_client.requests]
     assert "thread/resume" in methods
     assert "thread/start" not in methods
-    assert any("Status: resumed" in event["content"] for event in tools.events_sent)
+    assert any(
+        event["metadata"].get("codex_event_type") == "thread_mapping"
+        and event["metadata"].get("codex_thread_status") == "resumed"
+        for event in tools.events_sent
+    )
 
 
 @pytest.mark.asyncio
@@ -297,7 +301,7 @@ async def test_manual_approval_resolved_by_out_of_band_approve_command() -> None
 
 
 @pytest.mark.asyncio
-async def test_restart_rehydrates_mapping_from_previous_task_events() -> None:
+async def test_restart_rehydrates_mapping_from_previous_metadata_events() -> None:
     tools_first = _ToolSchemaFakeTools()
     fake_client_first = _FakeCodexClient(
         events=[
@@ -401,7 +405,7 @@ async def test_resume_failure_injects_conversation_history() -> None:
         )
     )
 
-    # Simulate persisted history: task events + text messages
+    # Simulate persisted history: thread-mapping events + text messages
     persisted_history = list(tools_first.events_sent)
     persisted_history.append(
         {
@@ -559,7 +563,10 @@ async def test_item_completed_forwards_internal_operations() -> None:
         e for e in tools.events_sent if e["message_type"] == "tool_call"
     ]
     tool_result_events = [
-        e for e in tools.events_sent if e["message_type"] == "tool_result"
+        e
+        for e in tools.events_sent
+        if e["message_type"] == "tool_result"
+        and e["metadata"].get("codex_event_type") != "thread_mapping"
     ]
     # commandExecution + fileChange = 2 tool_call + 2 tool_result
     assert len(tool_call_events) == 2

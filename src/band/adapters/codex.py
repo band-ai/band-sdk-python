@@ -1,4 +1,4 @@
-"""Codex app-server adapter."""
+"""Codex SDK adapter."""
 
 from __future__ import annotations
 
@@ -227,7 +227,6 @@ class CodexAdapterConfig:
     approval_text_notifications: bool = True
     approval_wait_timeout_s: float = 300.0
     approval_timeout_decision: ApprovalDecision = "decline"
-    turn_timeout_s: float = 180.0
     client_name: str = "band_codex_adapter"
     client_title: str = "Band Codex Adapter"
     client_version: str = "0.1.0"
@@ -286,8 +285,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     """
     Codex adapter backed by the OpenAI Codex Python SDK.
 
-    One Band room maps to one Codex thread. Mapping is persisted in task
-    events metadata and restored via CodexHistoryConverter on bootstrap.
+    One Band room maps to one Codex thread. Mapping is persisted in non-task
+    event metadata and restored via CodexHistoryConverter on bootstrap.
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
@@ -437,14 +436,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
     def _log_startup_config(self, agent_name: str) -> None:
         logger.info(
-            "Codex adapter started: agent=%s, transport=%s, model=%s, "
+            "Codex adapter started: agent=%s, model=%s, "
             "sandbox=%s, approval_mode=%s, "
             "execution_reporting=%s, self_config_tools=%s, "
             "task_events=%s, thought_events=%s, "
             "stream_reasoning=%s, stream_plan=%s, stream_commentary=%s, "
             "diffs=%s, token_usage=%s, structured_errors=%s",
             agent_name,
-            self.config.transport,
             self._selected_model or self.config.model or "auto",
             self.config.sandbox or "default",
             self.config.approval_mode,
@@ -555,7 +553,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     room_id=room_id,
                     thread_id=thread_id,
                     turn_id=turn_id or None,
-                    turn_start=_turn_start,
                 )
             except Exception:
                 logger.exception(
@@ -591,63 +588,152 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         room_id: str,
         thread_id: str,
         turn_id: str | None,
-        turn_start: float,
     ) -> _TurnResult:
         """Consume the Codex event stream for a single turn and return the result."""
         if self._client is None:
             raise RuntimeError("CodexAdapter client is None during turn event loop")
 
         result = _TurnResult()
-        try:
-            while True:
-                _remaining = max(
-                    0.0,
-                    self.config.turn_timeout_s - (_time.monotonic() - turn_start),
+        while True:
+            event = await self._client.recv_event(timeout_s=None)
+            if event.kind == "request":
+                used_send_message = await self._handle_server_request(
+                    tools=tools,
+                    msg=msg,
+                    room_id=room_id,
+                    event=event,
                 )
-                event = await self._client.recv_event(timeout_s=_remaining)
-                if event.kind == "request":
-                    used_send_message = await self._handle_server_request(
-                        tools=tools,
-                        msg=msg,
-                        room_id=room_id,
-                        event=event,
-                    )
-                    result.saw_send_message_tool = (
-                        result.saw_send_message_tool or used_send_message
-                    )
-                    continue
+                result.saw_send_message_tool = (
+                    result.saw_send_message_tool or used_send_message
+                )
+                continue
 
-                params = event.params if isinstance(event.params, dict) else {}
+            params = event.params if isinstance(event.params, dict) else {}
 
-                if event.method in _IGNORED_LIFECYCLE_NOTIFICATIONS:
-                    continue
+            if event.method in _IGNORED_LIFECYCLE_NOTIFICATIONS:
+                continue
 
-                if event.method == "error":
-                    await self._handle_error_event(
+            if event.method == "error":
+                await self._handle_error_event(
+                    tools=tools,
+                    params=params,
+                    room_id=room_id,
+                    thread_id=thread_id,
+                    turn_id=turn_id,
+                )
+                continue
+
+            # --- Phase 3: Real-time streaming ---
+            if event.method in {
+                "item/reasoning/summaryTextDelta",
+                "item/reasoning/textDelta",
+            }:
+                if self.config.stream_reasoning_events:
+                    delta = params.get("delta", "")
+                    item_id = str(params.get("itemId") or "")
+                    try:
+                        await tools.send_event(
+                            content=str(delta),
+                            message_type="thought",
+                            metadata={
+                                "streaming": True,
+                                "codex_item_id": item_id,
+                                "codex_event_type": event.method,
+                                "codex_room_id": room_id,
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id,
+                            },
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Failed to stream reasoning delta",
+                            exc_info=True,
+                        )
+                continue
+
+            if event.method == "item/plan/delta":
+                if self.config.stream_plan_events:
+                    delta = params.get("delta", "")
+                    item_id = str(params.get("itemId") or "")
+                    try:
+                        await tools.send_event(
+                            content=str(delta),
+                            message_type="thought",
+                            metadata={
+                                "streaming": True,
+                                "subtype": "plan",
+                                "codex_item_id": item_id,
+                                "codex_room_id": room_id,
+                                "codex_thread_id": thread_id,
+                                "codex_turn_id": turn_id,
+                            },
+                        )
+                    except Exception:
+                        logger.debug("Failed to stream plan delta", exc_info=True)
+                continue
+
+            # --- Phase 2: Plan step tracking ---
+            if event.method == "turn/plan/updated":
+                if (
+                    self.config.stream_plan_events
+                    and Emit.EXECUTION in self.features.emit
+                ):
+                    await self._forward_plan_steps(
                         tools=tools,
                         params=params,
                         room_id=room_id,
                         thread_id=thread_id,
                         turn_id=turn_id,
                     )
-                    continue
+                continue
 
-                # --- Phase 3: Real-time streaming ---
-                if event.method in {
-                    "item/reasoning/summaryTextDelta",
-                    "item/reasoning/textDelta",
-                }:
-                    if self.config.stream_reasoning_events:
-                        delta = params.get("delta", "")
-                        item_id = str(params.get("itemId") or "")
+            # --- Phase 4: Token usage ---
+            if event.method == "thread/tokenUsage/updated":
+                self._update_token_usage(thread_id, params)
+                if (
+                    self.config.emit_token_usage_events
+                    and Emit.EXECUTION in self.features.emit
+                ):
+                    await self._emit_token_usage_event(
+                        tools=tools,
+                        thread_id=thread_id,
+                        room_id=room_id,
+                    )
+                continue
+
+            # --- Phase 2: Context compaction events ---
+            if event.method == "context/compacted":
+                continue
+
+            # --- Phase 4: Aggregated diffs ---
+            if event.method == "turn/diff/updated":
+                if (
+                    self.config.emit_diff_events
+                    and Emit.EXECUTION in self.features.emit
+                ):
+                    await self._forward_diff_event(
+                        tools=tools,
+                        params=params,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        turn_id=turn_id,
+                    )
+                continue
+
+            if event.method == "item/agentMessage/delta":
+                delta = params.get("delta")
+                phase = params.get("phase")
+                if isinstance(delta, str):
+                    if phase == "commentary" and self.config.stream_commentary_events:
+                        # Stream as thought; exclude from final_text.
                         try:
                             await tools.send_event(
-                                content=str(delta),
+                                content=delta,
                                 message_type="thought",
                                 metadata={
                                     "streaming": True,
-                                    "codex_item_id": item_id,
-                                    "codex_event_type": event.method,
+                                    "subtype": "commentary",
+                                    "codex_item_id": str(params.get("itemId") or ""),
                                     "codex_room_id": room_id,
                                     "codex_thread_id": thread_id,
                                     "codex_turn_id": turn_id,
@@ -655,197 +741,75 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                             )
                         except Exception:
                             logger.debug(
-                                "Failed to stream reasoning delta",
+                                "Failed to stream commentary delta",
                                 exc_info=True,
                             )
-                    continue
+                    else:
+                        # When streaming is disabled, commentary accumulates
+                        # into final_text for backward compatibility.
+                        result.final_text += delta
+                continue
 
-                if event.method == "item/plan/delta":
-                    if self.config.stream_plan_events:
-                        delta = params.get("delta", "")
-                        item_id = str(params.get("itemId") or "")
-                        try:
-                            await tools.send_event(
-                                content=str(delta),
-                                message_type="thought",
-                                metadata={
-                                    "streaming": True,
-                                    "subtype": "plan",
-                                    "codex_item_id": item_id,
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": thread_id,
-                                    "codex_turn_id": turn_id,
-                                },
-                            )
-                        except Exception:
-                            logger.debug("Failed to stream plan delta", exc_info=True)
-                    continue
-
-                # --- Phase 2: Plan step tracking ---
-                if event.method == "turn/plan/updated":
-                    if (
-                        self.config.stream_plan_events
-                        and Emit.EXECUTION in self.features.emit
-                    ):
-                        await self._forward_plan_steps(
+            if event.method == "item/completed":
+                item = params.get("item") if isinstance(params, dict) else {}
+                if isinstance(item, dict):
+                    item_type = item.get("type")
+                    if item_type == "agentMessage":
+                        text = item.get("text")
+                        if isinstance(text, str) and text:
+                            result.final_text = text
+                    else:
+                        await self._emit_item_completed_events(
                             tools=tools,
-                            params=params,
+                            item=item,
                             room_id=room_id,
                             thread_id=thread_id,
                             turn_id=turn_id,
                         )
+                continue
+
+            if event.method == "transport/closed":
+                result.turn_status = "failed"
+                result.turn_error = "Codex transport closed unexpectedly"
+                # Reset client state so _ensure_client_ready() rebuilds
+                # on the next message instead of reusing a dead client.
+                self._client = None
+                self._initialized = False
+                # Clear per-room state that references the dead session so
+                # the next turn does a fresh thread/start instead of reusing
+                # a cached thread_id the new subprocess doesn't know about.
+                # Also drop token-usage entries keyed by the dead thread
+                # ids; otherwise they leak until the last-room teardown
+                # because on_cleanup can no longer resolve their keys.
+                stale_rooms = list(self._room_threads.keys())
+                stale_threads = list(self._room_threads.values())
+                self._room_threads.clear()
+                self._raw_history_by_room.clear()
+                for stale_thread in stale_threads:
+                    self._token_usage.pop(stale_thread, None)
+                for stale_room in stale_rooms:
+                    self._clear_pending_approvals_for_room(stale_room)
+                break
+
+            if event.method == "turn/completed":
+                turn_payload = (
+                    params.get("turn") if isinstance(params.get("turn"), dict) else {}
+                )
+                event_turn_id = str(turn_payload.get("id") or "")
+                if turn_id and event_turn_id and event_turn_id != turn_id:
                     continue
-
-                # --- Phase 4: Token usage ---
-                if event.method == "thread/tokenUsage/updated":
-                    self._update_token_usage(thread_id, params)
-                    if (
-                        self.config.emit_token_usage_events
-                        and Emit.EXECUTION in self.features.emit
-                    ):
-                        await self._emit_token_usage_event(
-                            tools=tools,
-                            thread_id=thread_id,
-                            room_id=room_id,
-                        )
-                    continue
-
-                # --- Phase 2: Context compaction events ---
-                if event.method == "context/compacted":
-                    continue
-
-                # --- Phase 4: Aggregated diffs ---
-                if event.method == "turn/diff/updated":
-                    if (
-                        self.config.emit_diff_events
-                        and Emit.EXECUTION in self.features.emit
-                    ):
-                        await self._forward_diff_event(
-                            tools=tools,
-                            params=params,
-                            room_id=room_id,
-                            thread_id=thread_id,
-                            turn_id=turn_id,
-                        )
-                    continue
-
-                if event.method == "item/agentMessage/delta":
-                    delta = params.get("delta")
-                    phase = params.get("phase")
-                    if isinstance(delta, str):
-                        if (
-                            phase == "commentary"
-                            and self.config.stream_commentary_events
-                        ):
-                            # Stream as thought; exclude from final_text.
-                            try:
-                                await tools.send_event(
-                                    content=delta,
-                                    message_type="thought",
-                                    metadata={
-                                        "streaming": True,
-                                        "subtype": "commentary",
-                                        "codex_item_id": str(
-                                            params.get("itemId") or ""
-                                        ),
-                                        "codex_room_id": room_id,
-                                        "codex_thread_id": thread_id,
-                                        "codex_turn_id": turn_id,
-                                    },
-                                )
-                            except Exception:
-                                logger.debug(
-                                    "Failed to stream commentary delta",
-                                    exc_info=True,
-                                )
-                        else:
-                            # When streaming is disabled, commentary accumulates
-                            # into final_text for backward compatibility.
-                            result.final_text += delta
-                    continue
-
-                if event.method == "item/completed":
-                    item = params.get("item") if isinstance(params, dict) else {}
-                    if isinstance(item, dict):
-                        item_type = item.get("type")
-                        if item_type == "agentMessage":
-                            text = item.get("text")
-                            if isinstance(text, str) and text:
-                                result.final_text = text
-                        else:
-                            await self._emit_item_completed_events(
-                                tools=tools,
-                                item=item,
-                                room_id=room_id,
-                                thread_id=thread_id,
-                                turn_id=turn_id,
-                            )
-                    continue
-
-                if event.method == "transport/closed":
-                    result.turn_status = "failed"
-                    result.turn_error = "Codex transport closed unexpectedly"
-                    # Reset client state so _ensure_client_ready() rebuilds
-                    # on the next message instead of reusing a dead client.
-                    self._client = None
-                    self._initialized = False
-                    # Clear per-room state that references the dead session so
-                    # the next turn does a fresh thread/start instead of reusing
-                    # a cached thread_id the new subprocess doesn't know about.
-                    # Also drop token-usage entries keyed by the dead thread
-                    # ids; otherwise they leak until the last-room teardown
-                    # because on_cleanup can no longer resolve their keys.
-                    stale_rooms = list(self._room_threads.keys())
-                    stale_threads = list(self._room_threads.values())
-                    self._room_threads.clear()
-                    self._raw_history_by_room.clear()
-                    for stale_thread in stale_threads:
-                        self._token_usage.pop(stale_thread, None)
-                    for stale_room in stale_rooms:
-                        self._clear_pending_approvals_for_room(stale_room)
-                    break
-
-                if event.method == "turn/completed":
-                    turn_payload = (
-                        params.get("turn")
-                        if isinstance(params.get("turn"), dict)
-                        else {}
+                result.turn_status = str(turn_payload.get("status") or "failed")
+                result.turn_error = self._extract_turn_error(turn_payload)
+                # Phase 1: structured error for failed turns
+                if result.turn_status == "failed" and self.config.structured_errors:
+                    await self._emit_structured_turn_error(
+                        tools=tools,
+                        turn_payload=turn_payload,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        turn_id=turn_id,
                     )
-                    event_turn_id = str(turn_payload.get("id") or "")
-                    if turn_id and event_turn_id and event_turn_id != turn_id:
-                        continue
-                    result.turn_status = str(turn_payload.get("status") or "failed")
-                    result.turn_error = self._extract_turn_error(turn_payload)
-                    # Phase 1: structured error for failed turns
-                    if result.turn_status == "failed" and self.config.structured_errors:
-                        await self._emit_structured_turn_error(
-                            tools=tools,
-                            turn_payload=turn_payload,
-                            room_id=room_id,
-                            thread_id=thread_id,
-                            turn_id=turn_id,
-                        )
-                    break
-        except asyncio.TimeoutError:
-            logger.error(
-                "Codex turn timed out after %ss (thread=%s, turn=%s)",
-                self.config.turn_timeout_s,
-                thread_id,
-                turn_id,
-            )
-            if turn_id:
-                try:
-                    await self._client.request(
-                        "turn/interrupt",
-                        {"threadId": thread_id, "turnId": turn_id},
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to send turn/interrupt after timeout",
-                        exc_info=True,
-                    )
-            result.turn_status = "interrupted"
-            result.turn_error = "Turn timed out"
+                break
         return result
 
     async def on_cleanup(self, room_id: str) -> None:
@@ -982,6 +946,12 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 if thread_id:
                     self._room_threads[room_id] = thread_id
                     self._raw_history_by_room.pop(room_id, None)
+                    await self._emit_thread_mapping_event(
+                        tools=tools,
+                        room_id=room_id,
+                        thread_id=thread_id,
+                        status="resumed",
+                    )
                     return thread_id
             except CodexJsonRpcError as exc:
                 logger.warning(
@@ -1013,8 +983,40 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             raise RuntimeError("Codex thread/start returned no thread id")
 
         self._room_threads[room_id] = thread_id
+        await self._emit_thread_mapping_event(
+            tools=tools,
+            room_id=room_id,
+            thread_id=thread_id,
+            status="mapped",
+        )
 
         return thread_id
+
+    async def _emit_thread_mapping_event(
+        self,
+        *,
+        tools: AgentToolsProtocol,
+        room_id: str,
+        thread_id: str,
+        status: str,
+    ) -> None:
+        """Persist room-to-thread mapping metadata without creating task noise."""
+        if Emit.TASK_EVENTS not in self.features.emit:
+            return
+        try:
+            await tools.send_event(
+                content=f"Codex thread {status}",
+                message_type="tool_result",
+                metadata={
+                    "codex_event_type": "thread_mapping",
+                    "codex_thread_status": status,
+                    "codex_room_id": room_id,
+                    "codex_thread_id": thread_id,
+                    "codex_created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception:
+            logger.debug("Failed to persist Codex thread mapping", exc_info=True)
 
     def _build_dynamic_tools(self, tools: AgentToolsProtocol) -> list[dict[str, Any]]:
         dynamic_tools: list[dict[str, Any]] = []
@@ -2133,7 +2135,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     )
                 else:
                     await tools.send_message(
-                        "No visible models returned by Codex app-server.",
+                        "No visible models returned by Codex.",
                         mentions=mention,
                     )
                 return True

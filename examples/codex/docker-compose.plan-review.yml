@@ -7,7 +7,6 @@ services:
     env_file:
       - ../../.env
     environment:
-      CODEX_TRANSPORT: stdio
       CODEX_CWD: ${CODEX_PLANNER_CWD:-/workspace/repo}
       CODEX_SANDBOX: ${CODEX_PLANNER_SANDBOX:-external-sandbox}
       CODEX_AGENT_KEY: ${CODEX_PLANNER_AGENT_KEY:-codex_planner}
@@ -41,8 +40,6 @@ services:
       - ${CODEX_PLANNER_AGENT_KEY:-codex_planner}
       - --codex-role
       - planner
-      - --codex-transport
-      - ${CODEX_TRANSPORT:-stdio}
       - --codex-cwd
       - ${CODEX_PLANNER_CWD:-/workspace/repo}
       - --codex-sandbox
@@ -62,7 +59,6 @@ services:
     env_file:
       - ../../.env
     environment:
-      CODEX_TRANSPORT: stdio
       CODEX_CWD: ${CODEX_REVIEWER_CWD:-/workspace/repo}
       CODEX_SANDBOX: ${CODEX_REVIEWER_SANDBOX:-external-sandbox}
       CODEX_AGENT_KEY: ${CODEX_REVIEWER_AGENT_KEY:-codex_reviewer}
@@ -96,8 +92,6 @@ services:
       - ${CODEX_REVIEWER_AGENT_KEY:-codex_reviewer}
       - --codex-role
       - reviewer
-      - --codex-transport
-      - ${CODEX_TRANSPORT:-stdio}
       - --codex-cwd
       - ${CODEX_REVIEWER_CWD:-/workspace/repo}
       - --codex-sandbox

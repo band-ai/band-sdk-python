@@ -7,7 +7,6 @@ services:
     env_file:
       - ../../.env
     environment:
-      CODEX_TRANSPORT: stdio
       CODEX_CWD: /workspace/repo
       # Set to read-only/workspace-write/danger-full-access/external-sandbox as needed.
       CODEX_SANDBOX: ${CODEX_SANDBOX:-external-sandbox}
@@ -47,8 +46,6 @@ services:
       - codex
       - --agent
       - ${CODEX_AGENT_KEY:-darter}
-      - --codex-transport
-      - ${CODEX_TRANSPORT:-stdio}
       - --codex-cwd
       - ${CODEX_CWD:-/workspace/repo}
       - --codex-sandbox

@@ -65,7 +65,7 @@ class CodexSdkClient:
         self._turn_tasks: set[asyncio.Task[None]] = set()
 
     async def connect(self) -> None:
-        """Start the bundled Codex app-server runtime."""
+        """Start the bundled Codex runtime."""
         if self._connected:
             return
 
@@ -105,7 +105,7 @@ class CodexSdkClient:
         experimental_api: bool = False,
         opt_out_notification_methods: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Initialize the Codex app-server session."""
+        """Initialize the Codex runtime session."""
         del client_name, client_title, client_version, experimental_api
         if opt_out_notification_methods:
             logger.debug(
@@ -300,16 +300,28 @@ class CodexSdkClient:
             self._pending_requests.clear()
         for item in pending:
             item.response_queue.put(
-                {
-                    "contentItems": [
-                        {
-                            "type": "inputText",
-                            "text": "Codex SDK client closed before the request completed.",
-                        }
-                    ],
-                    "success": False,
-                }
+                self._failed_tool_response(
+                    "Codex SDK client closed before the request completed."
+                )
             )
+
+    def _fail_pending_server_request(self, request_id: str, message: str) -> None:
+        pending = self._pop_pending_request(request_id)
+        if pending is None:
+            return
+        pending.response_queue.put(self._failed_tool_response(message))
+
+    @staticmethod
+    def _failed_tool_response(message: str) -> dict[str, Any]:
+        return {
+            "contentItems": [
+                {
+                    "type": "inputText",
+                    "text": message,
+                }
+            ],
+            "success": False,
+        }
 
     def _start_turn_pump(self, turn_id: str) -> None:
         task = asyncio.create_task(self._pump_turn_notifications(turn_id))
@@ -388,13 +400,40 @@ class CodexSdkClient:
     def _enqueue_event(self, item: RpcEvent | BaseException) -> None:
         try:
             self._events.put_nowait(item)
+            return
         except queue.Full:
             logger.warning("Codex SDK event queue is full; dropping oldest event")
-            try:
-                self._events.get_nowait()
-            except queue.Empty:
-                pass
+
+        try:
+            dropped = self._events.get_nowait()
+        except queue.Empty:
+            dropped = None
+
+        if (
+            isinstance(dropped, RpcEvent)
+            and dropped.kind == "request"
+            and dropped.id is not None
+        ):
+            self._fail_pending_server_request(
+                str(dropped.id),
+                "Codex SDK event queue dropped this server request before Band could handle it.",
+            )
+
+        try:
             self._events.put_nowait(item)
+        except queue.Full:
+            logger.warning(
+                "Codex SDK event queue is still full; dropping incoming event"
+            )
+            if (
+                isinstance(item, RpcEvent)
+                and item.kind == "request"
+                and item.id is not None
+            ):
+                self._fail_pending_server_request(
+                    str(item.id),
+                    "Codex SDK event queue was full before Band could handle this server request.",
+                )
 
     @staticmethod
     def _model_to_dict(value: Any) -> dict[str, Any]:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import queue
 import sys
 import types
 from dataclasses import dataclass
@@ -250,3 +251,51 @@ async def test_server_request_handler_bridges_to_respond(
     }
 
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_dropped_server_request_returns_failure_instead_of_hanging() -> None:
+    client = CodexSdkClient()
+    client._events = queue.Queue(maxsize=1)  # type: ignore[assignment]
+
+    first_task = asyncio.create_task(
+        asyncio.to_thread(
+            client._handle_server_request,
+            "item/tool/call",
+            {"tool": "first"},
+        )
+    )
+    for _ in range(100):
+        if not client._events.empty():
+            break
+        await asyncio.sleep(0)
+    assert client._events.qsize() == 1
+
+    second_task = asyncio.create_task(
+        asyncio.to_thread(
+            client._handle_server_request,
+            "item/tool/call",
+            {"tool": "second"},
+        )
+    )
+
+    first_response = await asyncio.wait_for(first_task, timeout=1)
+    assert first_response["success"] is False
+    assert "dropped" in first_response["contentItems"][0]["text"]
+
+    second_event = await client.recv_event(timeout_s=1)
+    assert second_event.kind == "request"
+    assert second_event.params == {"tool": "second"}
+    assert second_event.id is not None
+
+    await client.respond(
+        second_event.id,
+        {
+            "contentItems": [{"type": "inputText", "text": "ok"}],
+            "success": True,
+        },
+    )
+    assert await asyncio.wait_for(second_task, timeout=1) == {
+        "contentItems": [{"type": "inputText", "text": "ok"}],
+        "success": True,
+    }

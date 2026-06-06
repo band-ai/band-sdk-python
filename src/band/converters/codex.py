@@ -14,10 +14,13 @@ logger = logging.getLogger(__name__)
 
 class CodexHistoryConverter(HistoryConverter["CodexSessionState"]):
     """
-    Extract the latest Codex session metadata from platform task events.
+    Extract the latest Codex session metadata from platform event metadata.
 
     This is intentionally narrow: unlike LLM prompt converters, we only need
     room->thread mapping metadata to resume Codex threads after reconnect/restart.
+    Legacy versions stored this metadata on task events; current versions use
+    non-task telemetry so Codex lifecycle bookkeeping does not look like model
+    task progress.
     """
 
     def set_agent_name(self, name: str) -> None:
@@ -28,9 +31,6 @@ class CodexHistoryConverter(HistoryConverter["CodexSessionState"]):
         logger.debug("CodexHistoryConverter: scanning %d messages", len(raw))
 
         for msg in reversed(raw):
-            if msg.get("message_type") != "task":
-                continue
-
             metadata = msg.get("metadata") or {}
             if not isinstance(metadata, dict):
                 continue

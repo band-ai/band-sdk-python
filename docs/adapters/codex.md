@@ -2,7 +2,7 @@
 
 [OpenAI Codex](https://openai.com/codex) is a coding agent runtime that can inspect files, edit files, run commands, and manage approval workflows. The Band Codex adapter connects the OpenAI Codex Python SDK runtime to Band rooms so it can take part in conversations as a coding collaborator.
 
-Use this adapter when you want an OpenAI-powered coding agent with configurable sandboxing, approval commands, command/file-change telemetry, reasoning visibility, and task lifecycle events. Use the [Claude SDK adapter](claude_sdk.md) for Claude Code based coding agents, the [Anthropic adapter](anthropic.md) for direct Claude API chat/tool agents, or the [LangGraph adapter](langgraph.md) for custom graph workflows.
+Use this adapter when you want an OpenAI-powered coding agent with configurable sandboxing, approval commands, command/file-change telemetry, and reasoning visibility. Use the [Claude SDK adapter](claude_sdk.md) for Claude Code based coding agents, the [Anthropic adapter](anthropic.md) for direct Claude API chat/tool agents, or the [LangGraph adapter](langgraph.md) for custom graph workflows.
 
 ## Install
 
@@ -12,7 +12,7 @@ uv add "band-sdk[codex]"
 
 ## Prerequisites
 
-The adapter uses the `openai-codex` Python package, which bundles the Codex app-server runtime through `openai-codex-cli-bin`. You need two credentials or auth contexts:
+The adapter uses the `openai-codex` Python package, which bundles the Codex runtime through `openai-codex-cli-bin`. You need two credentials or auth contexts:
 
 - A Band platform API key for `Agent.create(api_key=...)`.
 - Codex authentication for the Codex runtime. Reuse an existing Codex login, run `codex login` if the CLI is available, or set `OPENAI_API_KEY` if that is how your Codex environment is configured.
@@ -73,9 +73,9 @@ Common `Agent.create(...)` parameters:
 
 ## How It Works
 
-Each Band room maps to one Codex thread. Through Band collaboration tools, Codex can send messages, look up peers, add participants, and create new chats. On startup, the adapter tries to resume the previous Codex thread from task-event metadata. If resume fails and `inject_history_on_resume_failure=True`, the adapter injects recent room history as text context.
+Each Band room maps to one Codex thread. Through Band collaboration tools, Codex can send messages, look up peers, add participants, and create new chats. On startup, the adapter tries to resume the previous Codex thread from thread-mapping metadata. If resume fails and `inject_history_on_resume_failure=True`, the adapter injects recent room history as text context.
 
-The adapter handles Codex approval requests in the room, persists thread metadata through task events, and sends optional telemetry such as tool calls, reasoning, diffs, token usage, and lifecycle events.
+The adapter handles Codex approval requests in the room, persists thread metadata through non-task telemetry, and sends optional telemetry such as tool calls, reasoning, diffs, and token usage.
 
 ## Configuration Reference
 
@@ -100,13 +100,11 @@ Pass these to `CodexAdapterConfig(...)`:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `transport` | `"stdio" \| "ws"` | `"stdio"` | How the adapter connects to Codex. Use `"stdio"` to spawn a process, or `"ws"` to connect to `codex app-server`. |
 | `model` | `str \| None` | `None` | Model to use. When unset, the adapter asks Codex for visible models and uses the first visible model, or the adapter default if discovery fails or returns no usable model. |
 | `reasoning_effort` | `"none" \| "minimal" \| "low" \| "medium" \| "high" \| "xhigh" \| None` | `None` | Reasoning effort for models that support it. |
 | `reasoning_summary` | `"auto" \| "concise" \| "detailed" \| "none" \| None` | `None` | How Codex summarizes reasoning in responses. |
 | `personality` | `"friendly" \| "pragmatic" \| "none"` | `"pragmatic"` | Codex response style. |
 | `cwd` | `str \| None` | `None` | Working directory for Codex sessions. |
-| `turn_timeout_s` | `float` | `180.0` | Maximum seconds to wait for one Codex turn. |
 
 ### Safety, Sandbox, and Approvals
 
@@ -155,7 +153,6 @@ Pass these to `CodexAdapterConfig(...)`:
 |-----------|------|---------|-------------|
 | `codex_command` | `tuple[str, ...] \| None` | `None` | Custom command used to launch Codex instead of the bundled `openai-codex-cli-bin` runtime. |
 | `codex_env` | `dict[str, str] \| None` | `None` | Extra environment variables for the Codex process. |
-| `transport` / `codex_ws_url` | legacy | `"stdio"` / local URL | Retained for compatibility. The OpenAI Codex SDK backend ignores transport selection and uses its bundled stdio runtime. |
 | `experimental_api` | `bool` | `True` | Use experimental Codex API features. |
 | `enable_self_config_tools` | `bool` | `False` | Expose tools that let Codex change its own model and reasoning settings. Use only in trusted rooms. |
 | `additional_dynamic_tools` | `list[dict]` | `[]` | Extra dynamic tool schemas registered with the Codex client. |
@@ -180,7 +177,7 @@ Pass these directly to `CodexAdapter(...)`:
 - `capabilities` exposes optional Band tool categories to the model.
 - `emit` controls telemetry events the adapter sends back to Band.
 
-If `features` is omitted, Codex defaults to `Emit.TASK_EVENTS` because task events are used for lifecycle data and thread resume metadata. Optional capabilities are still off by default. If you pass `features=...`, your value is authoritative; include `Emit.TASK_EVENTS` if you want thread resume across reconnects.
+If `features` is omitted, Codex defaults to `Emit.TASK_EVENTS` so the adapter can persist thread mapping metadata for reconnects. Optional capabilities are still off by default. If you pass `features=...`, your value is authoritative; include `Emit.TASK_EVENTS` if you want thread resume across reconnects.
 
 | Feature | Supported | What it does |
 |---------|-----------|--------------|
@@ -188,7 +185,7 @@ If `features` is omitted, Codex defaults to `Emit.TASK_EVENTS` because task even
 | `Capability.MEMORY` | Yes | Exposes memory tools, if memory is enabled for your Band workspace. |
 | `Emit.EXECUTION` | Yes | Sends events for command execution, file changes, MCP tools, web search, image viewing, and collaboration-agent tool calls. |
 | `Emit.THOUGHTS` | Yes | Sends completed reasoning, plan, and review-mode events as `thought` events. |
-| `Emit.TASK_EVENTS` | Yes | Sends lifecycle, thread-resume, approval, diff-summary, token-usage, and error task events. Required for persisted Codex thread mapping. |
+| `Emit.TASK_EVENTS` | Yes | Persists Codex thread-mapping metadata for reconnects. Model-authored task updates still come from Band tools. |
 
 Example:
 
@@ -213,7 +210,7 @@ Use `AdapterFeatures.emit` for the broad telemetry categories:
 |------|----------|--------------|
 | `Emit.EXECUTION` | Auditing commands, tools, and file activity. | `tool_call` and `tool_result` pairs. |
 | `Emit.THOUGHTS` | Debugging reasoning and planning UX. | Completed `thought` events. |
-| `Emit.TASK_EVENTS` | Lifecycle, resume, approvals, and usage tracking. | Task events with metadata. |
+| `Emit.TASK_EVENTS` | Reconnect continuity. | Non-task thread-mapping metadata. |
 
 Codex also has streaming flags in `CodexAdapterConfig(...)`. These send incremental updates as Codex produces them and are independent of `Emit.THOUGHTS`, which gates completed items.
 
@@ -240,7 +237,7 @@ Type `/help` in the room to see the command list. Common commands:
 
 | Command | Description |
 |---------|-------------|
-| `/status` | Show transport, model, room/thread mapping, sandbox, approval state, reasoning settings, and token usage. |
+| `/status` | Show model, room/thread mapping, sandbox, approval state, reasoning settings, and token usage. |
 | `/model` or `/models` | Show the current model. |
 | `/model list` or `/models list` | List available Codex models. |
 | `/model <id>` | Use a model for subsequent turns. |

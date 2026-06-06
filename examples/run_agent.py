@@ -32,8 +32,7 @@ Usage:
     uv run python examples/run_agent.py --example crewai
     uv run python examples/run_agent.py --example crewai --streaming  # Show tool calls
     uv run python examples/run_agent.py --example codex
-    uv run python examples/run_agent.py --example codex --agent darter --codex-transport stdio
-    uv run python examples/run_agent.py --example codex --agent darter --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
+    uv run python examples/run_agent.py --example codex --agent darter
     uv run python examples/run_agent.py --example a2a --a2a-url http://localhost:10000  # A2A bridge
     uv run python examples/run_agent.py --example a2a_gateway              # A2A Gateway (exposes peers)
     uv run python examples/run_agent.py --example a2a_gateway --gateway-port 8080  # Custom port
@@ -473,8 +472,6 @@ async def run_codex_agent(
     rest_url: str,
     ws_url: str,
     custom_section: str,
-    codex_transport: str,
-    codex_ws_url: str,
     codex_model: str | None,
     codex_personality: str,
     codex_approval_policy: str,
@@ -484,13 +481,12 @@ async def run_codex_agent(
     codex_reasoning_effort: str | None,
     logger: logging.Logger,
 ) -> None:
-    """Run the Codex app-server adapter."""
+    """Run the Codex SDK adapter."""
     from band.adapters import CodexAdapter
     from band.adapters.codex import CodexAdapterConfig
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            transport=codex_transport,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
             cwd=codex_cwd,
             model=codex_model,
             personality=codex_personality,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
@@ -498,7 +494,6 @@ async def run_codex_agent(
             approval_mode=codex_approval_mode,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
             sandbox=codex_sandbox,
             reasoning_effort=codex_reasoning_effort,  # type: ignore[arg-type]  # str from CLI args, validated at runtime
-            codex_ws_url=codex_ws_url,
             custom_section=custom_section,
             include_base_instructions=True,
             enable_task_events=True,
@@ -518,8 +513,7 @@ async def run_codex_agent(
     )
 
     logger.info(
-        "Starting Codex agent (transport=%s, model=%s, cwd=%s)",
-        codex_transport,
+        "Starting Codex agent (model=%s, cwd=%s)",
         codex_model or "auto",
         codex_cwd,
     )
@@ -836,10 +830,8 @@ Examples:
   uv run python examples/run_agent.py --example parlant --streaming       # With tool visibility
   uv run python examples/run_agent.py --example crewai                    # CrewAI adapter
   uv run python examples/run_agent.py --example crewai --streaming        # With tool visibility
-  uv run python examples/run_agent.py --example codex                     # Codex app-server adapter
+  uv run python examples/run_agent.py --example codex                     # Codex SDK adapter
   uv run python examples/run_agent.py --example codex --agent darter      # Run Codex as darter agent
-  uv run python examples/run_agent.py --example codex --codex-transport stdio
-  uv run python examples/run_agent.py --example codex --codex-transport ws --codex-ws-url ws://127.0.0.1:8765
   uv run python examples/run_agent.py --example a2a                       # A2A bridge (default: localhost:10000)
   uv run python examples/run_agent.py --example a2a --debug               # A2A with debug logging (context_id tracing)
   uv run python examples/run_agent.py --example a2a --a2a-url http://remote:8080  # A2A with custom URL
@@ -920,17 +912,6 @@ Examples:
         help="Enable tool call/result visibility for anthropic/claude_sdk/parlant/crewai (default: False)",
     )
     parser.add_argument(
-        "--codex-transport",
-        choices=["stdio", "ws"],
-        default="stdio",
-        help="Codex transport mode (default: stdio)",
-    )
-    parser.add_argument(
-        "--codex-ws-url",
-        default=os.getenv("CODEX_WS_URL", "ws://127.0.0.1:8765"),
-        help="Codex WebSocket URL when --codex-transport=ws",
-    )
-    parser.add_argument(
         "--codex-role",
         default=None,
         help="Role name; loads prompt from prompts/{role}.md into custom_section",
@@ -949,7 +930,7 @@ Examples:
     parser.add_argument(
         "--codex-cwd",
         default=os.getcwd(),
-        help="Working directory given to Codex app-server (default: current directory)",
+        help="Working directory given to Codex (default: current directory)",
     )
     parser.add_argument(
         "--codex-reasoning-effort",
@@ -1193,8 +1174,6 @@ Examples:
                 rest_url=rest_url,
                 ws_url=ws_url,
                 custom_section=codex_custom,
-                codex_transport=args.codex_transport,
-                codex_ws_url=args.codex_ws_url,
                 codex_model=args.codex_model,
                 codex_personality=args.codex_personality,
                 codex_approval_policy=args.codex_approval_policy,
