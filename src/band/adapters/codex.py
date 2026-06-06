@@ -27,8 +27,7 @@ from band.core.types import (
 )
 from band.integrations.codex import (
     CodexJsonRpcError,
-    CodexStdioClient,
-    CodexWebSocketClient,
+    CodexSdkClient,
     RpcEvent,
 )
 from band.integrations.codex.types import (
@@ -94,10 +93,17 @@ _LOCAL_COMMANDS: frozenset[str] = frozenset(
 # (e.g. "use /tmp as …") remains prose.
 _COMMAND_TOKEN_SEARCH_LIMIT = 20
 
-# Upper bound on cached task titles (room-lifecycle map used to preserve the
-# title between task_started and task_complete events).  500 covers bursty
-# conversations while keeping memory bounded.
-_MAX_TASK_TITLES = 500
+# Codex lifecycle notifications are transport/session bookkeeping, not model task
+# progress. Band task events should only represent work the model intentionally
+# reports with the platform task tool, or explicit opt-in telemetry.
+_IGNORED_LIFECYCLE_NOTIFICATIONS: frozenset[str] = frozenset(
+    {
+        "codex/event/task_started",
+        "codex/event/task_complete",
+        "thread/started",
+        "turn/started",
+    }
+)
 
 # Cap on the raw diff string forwarded in ``turn/diff/updated`` task metadata,
 # expressed in UTF-8 bytes.  Diffs can be megabytes on large refactors;
@@ -197,17 +203,7 @@ class _TurnResult:
 
 @dataclass
 class CodexAdapterConfig:
-    """Runtime configuration for Codex adapter sessions.
-
-    Turn task events:
-        ``emit_turn_task_markers`` and ``emit_turn_lifecycle_events`` are
-        independent channels.  Enabling both will produce **two** task
-        events per completed turn: one "Codex turn" marker and one
-        enriched "Codex turn lifecycle" event (plus a "started" lifecycle
-        event at turn start).  Consumers that render task timelines
-        should pick exactly one channel — typically the lifecycle channel
-        when its extra metadata is desired.
-    """
+    """Runtime configuration for Codex adapter sessions."""
 
     transport: TransportKind = "stdio"
     model: str | None = None
@@ -225,7 +221,6 @@ class CodexAdapterConfig:
     include_base_instructions: bool = True
     experimental_api: bool = True
     enable_task_events: bool = True
-    emit_turn_task_markers: bool = False
     emit_thought_events: bool = False
     fallback_send_agent_text: bool = True
     approval_mode: ApprovalMode = "manual"
@@ -277,9 +272,8 @@ class CodexAdapterConfig:
     session_approval_granularity: Literal["binary", "full_command"] = "full_command"
     # --- Phase 1: Structured errors & enriched approvals ---
     structured_errors: bool = True
-    # --- Phase 2: Plan & task lifecycle ---
+    # --- Phase 2: Plan telemetry ---
     stream_plan_events: bool = False
-    emit_turn_lifecycle_events: bool = False
     # --- Phase 3: Real-time streaming ---
     stream_reasoning_events: bool = False
     stream_commentary_events: bool = False
@@ -290,7 +284,7 @@ class CodexAdapterConfig:
 
 class CodexAdapter(SimpleAdapter[CodexSessionState]):
     """
-    Codex adapter backed by codex app-server (stdio or websocket transport).
+    Codex adapter backed by the OpenAI Codex Python SDK.
 
     One Band room maps to one Codex thread. Mapping is persisted in task
     events metadata and restored via CodexHistoryConverter on bootstrap.
@@ -364,8 +358,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._system_prompt: str = ""
         self._room_threads: dict[str, str] = {}
         self._prompt_injected_rooms: set[str] = set()
-        self._task_titles_by_id: OrderedDict[str, str] = OrderedDict()
-        self._max_task_titles: int = _MAX_TASK_TITLES
         self._pending_approvals: dict[str, dict[str, _PendingApproval]] = {}
         self._raw_history_by_room: dict[str, list[dict[str, Any]]] = {}
         self._needs_history_injection: set[str] = set()
@@ -444,26 +436,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         self._log_startup_config(agent_name)
 
     def _log_startup_config(self, agent_name: str) -> None:
-        # The two turn-task channels are independent by design but rendering
-        # both produces duplicated timeline entries in most UIs.  Warn once
-        # at startup so operators catch the misconfiguration instead of
-        # discovering it as "twice as many events" downstream.
-        if (
-            self.config.emit_turn_task_markers
-            and self.config.emit_turn_lifecycle_events
-            and Emit.TASK_EVENTS in self.features.emit
-        ):
-            logger.warning(
-                "Codex adapter: both emit_turn_task_markers and "
-                "emit_turn_lifecycle_events are enabled — consumers will "
-                "receive two task events per turn.  Pick exactly one channel "
-                "(typically emit_turn_lifecycle_events for the richer metadata)."
-            )
         logger.info(
             "Codex adapter started: agent=%s, transport=%s, model=%s, "
             "sandbox=%s, approval_mode=%s, "
             "execution_reporting=%s, self_config_tools=%s, "
-            "task_events=%s, turn_markers=%s, thought_events=%s, "
+            "task_events=%s, thought_events=%s, "
             "stream_reasoning=%s, stream_plan=%s, stream_commentary=%s, "
             "diffs=%s, token_usage=%s, structured_errors=%s",
             agent_name,
@@ -474,7 +451,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             Emit.EXECUTION in self.features.emit,
             self.config.enable_self_config_tools,
             Emit.TASK_EVENTS in self.features.emit,
-            self.config.emit_turn_task_markers,
             Emit.THOUGHTS in self.features.emit,
             self.config.stream_reasoning_events,
             self.config.stream_plan_events,
@@ -566,55 +542,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             turn = turn_started.get("turn") if isinstance(turn_started, dict) else {}
             turn_id = str((turn or {}).get("id") or "")
 
-            if (
-                Emit.TASK_EVENTS in self.features.emit
-                and self.config.emit_turn_task_markers
-            ):
-                await tools.send_event(
-                    content=self._build_task_event_content(
-                        task_id=turn_id or None,
-                        task="Codex turn",
-                        status="started",
-                        summary=f"Thread: {thread_id}",
-                    ),
-                    message_type="task",
-                    metadata={
-                        "codex_thread_id": thread_id,
-                        "codex_turn_id": turn_id or None,
-                        "codex_room_id": room_id,
-                    },
-                )
-
-            # Phase 2: Turn STARTED lifecycle event with input summary
-            if (
-                self.config.emit_turn_lifecycle_events
-                and Emit.TASK_EVENTS in self.features.emit
-            ):
-                input_summary = (msg.content or "")[:200]
-                try:
-                    await tools.send_event(
-                        content=self._build_task_event_content(
-                            task_id=turn_id or None,
-                            task="Codex turn lifecycle",
-                            status="started",
-                            summary=f"Thread: {thread_id}",
-                        ),
-                        message_type="task",
-                        metadata={
-                            "codex_event_type": "turn_lifecycle",
-                            "codex_room_id": room_id,
-                            "codex_thread_id": thread_id,
-                            "codex_turn_id": turn_id or None,
-                            "codex_turn_status": "started",
-                            "codex_input_summary": input_summary,
-                        },
-                    )
-                except Exception:
-                    logger.debug(
-                        "Failed to emit turn started lifecycle event",
-                        exc_info=True,
-                    )
-
             # Reset per-turn token deltas for the new turn.
             usage_obj = self._token_usage.get(thread_id)
             if usage_obj is not None:
@@ -692,18 +619,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
                 params = event.params if isinstance(event.params, dict) else {}
 
-                if event.method in {
-                    "codex/event/task_started",
-                    "codex/event/task_complete",
-                }:
-                    await self._forward_raw_task_event(
-                        tools=tools,
-                        room_id=room_id,
-                        thread_id=thread_id,
-                        turn_id=turn_id,
-                        method=event.method,
-                        params=params,
-                    )
+                if event.method in _IGNORED_LIFECYCLE_NOTIFICATIONS:
                     continue
 
                 if event.method == "error":
@@ -767,7 +683,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
                 # --- Phase 2: Plan step tracking ---
                 if event.method == "turn/plan/updated":
-                    if self.config.stream_plan_events:
+                    if (
+                        self.config.stream_plan_events
+                        and Emit.EXECUTION in self.features.emit
+                    ):
                         await self._forward_plan_steps(
                             tools=tools,
                             params=params,
@@ -780,7 +699,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 # --- Phase 4: Token usage ---
                 if event.method == "thread/tokenUsage/updated":
                     self._update_token_usage(thread_id, params)
-                    if self.config.emit_token_usage_events:
+                    if (
+                        self.config.emit_token_usage_events
+                        and Emit.EXECUTION in self.features.emit
+                    ):
                         await self._emit_token_usage_event(
                             tools=tools,
                             thread_id=thread_id,
@@ -790,40 +712,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
 
                 # --- Phase 2: Context compaction events ---
                 if event.method == "context/compacted":
-                    if (
-                        self.config.emit_turn_lifecycle_events
-                        and Emit.TASK_EVENTS in self.features.emit
-                    ):
-                        compacted_thread = str(params.get("threadId") or thread_id)
-                        compacted_turn = str(params.get("turnId") or turn_id or "")
-                        try:
-                            await tools.send_event(
-                                content=self._build_task_event_content(
-                                    task_id=compacted_turn or None,
-                                    task="Codex context compaction",
-                                    status="completed",
-                                    summary=f"Thread: {compacted_thread}",
-                                ),
-                                message_type="task",
-                                metadata={
-                                    "codex_event_type": "context_compaction",
-                                    "codex_room_id": room_id,
-                                    "codex_thread_id": compacted_thread,
-                                    "codex_turn_id": compacted_turn or None,
-                                },
-                            )
-                        except Exception:
-                            logger.debug(
-                                "Failed to emit context compaction event",
-                                exc_info=True,
-                            )
                     continue
 
                 # --- Phase 4: Aggregated diffs ---
                 if event.method == "turn/diff/updated":
                     if (
                         self.config.emit_diff_events
-                        and Emit.TASK_EVENTS in self.features.emit
+                        and Emit.EXECUTION in self.features.emit
                     ):
                         await self._forward_diff_event(
                             tools=tools,
@@ -992,7 +887,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 self._client = None
                 self._initialized = False
                 self._selected_model = None
-                self._task_titles_by_id.clear()
                 # Defensive: wipe all pending approvals globally on last-room
                 # teardown.  Per-room cleanup already resolves futures to
                 # "decline" via _clear_pending_approvals_for_room, so this
@@ -1022,13 +916,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if self._client_factory is not None:
             return self._client_factory(config)
 
-        if config.transport == "ws":
-            return CodexWebSocketClient(ws_url=config.codex_ws_url)
+        if config.transport != "stdio":
+            logger.warning(
+                "CodexAdapterConfig.transport=%r is ignored by the OpenAI Codex SDK "
+                "backend; Codex now runs through the SDK's bundled stdio runtime.",
+                config.transport,
+            )
 
-        return CodexStdioClient(
+        return CodexSdkClient(
             command=config.codex_command,
             cwd=config.cwd,
             env=config.codex_env,
+            client_name=config.client_name,
+            client_title=config.client_title,
+            client_version=config.client_version,
+            experimental_api=config.experimental_api,
         )
 
     async def _select_model(self) -> str:
@@ -1080,21 +982,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 if thread_id:
                     self._room_threads[room_id] = thread_id
                     self._raw_history_by_room.pop(room_id, None)
-                    if Emit.TASK_EVENTS in self.features.emit:
-                        await tools.send_event(
-                            content=self._build_task_event_content(
-                                task_id=thread_id,
-                                task="Codex thread",
-                                status="resumed",
-                                summary=f"Room: {room_id}",
-                            ),
-                            message_type="task",
-                            metadata={
-                                "codex_thread_id": thread_id,
-                                "codex_room_id": room_id,
-                                "codex_resumed": True,
-                            },
-                        )
                     return thread_id
             except CodexJsonRpcError as exc:
                 logger.warning(
@@ -1126,23 +1013,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             raise RuntimeError("Codex thread/start returned no thread id")
 
         self._room_threads[room_id] = thread_id
-
-        if Emit.TASK_EVENTS in self.features.emit:
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=thread_id,
-                    task="Codex thread",
-                    status="mapped",
-                    summary=f"Transport: {self.config.transport}",
-                ),
-                message_type="task",
-                metadata={
-                    "codex_thread_id": thread_id,
-                    "codex_room_id": room_id,
-                    "codex_created_at": datetime.now(timezone.utc).isoformat(),
-                    "codex_transport": self.config.transport,
-                },
-            )
 
         return thread_id
 
@@ -1289,8 +1159,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         """Dispatch a server-initiated request (tool call, approval).
 
         Concurrency model: this coroutine mutates adapter state
-        (``_pending_approvals``, ``_session_approved``, ``_approval_audit``,
-        ``_task_titles_by_id``) without an explicit lock.  It is safe
+        (``_pending_approvals``, ``_session_approved``, ``_approval_audit``)
+        without an explicit lock.  It is safe
         because the only call site is the turn-processing loop in
         ``_process_turn_events``, which is already serialized by
         ``_rpc_lock``.
@@ -1551,74 +1421,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         saw_send_message_tool: bool,
         duration_s: float = 0.0,
     ) -> None:
-        # Look up token usage once for both marker and lifecycle events.
-        usage = self._token_usage.get(thread_id)
-        has_usage = usage is not None and usage.total_tokens > 0
-
-        if (
-            Emit.TASK_EVENTS in self.features.emit
-            and self.config.emit_turn_task_markers
-        ):
-            summary = f"Thread: {thread_id}"
-            if turn_error:
-                summary += f" | Error: {turn_error}"
-            metadata: dict[str, Any] = {
-                "codex_room_id": room_id,
-                "codex_thread_id": thread_id,
-                "codex_turn_id": turn_id,
-                "codex_turn_status": turn_status,
-                "codex_error": turn_error or None,
-            }
-            if duration_s > 0:
-                metadata["codex_duration_s"] = round(duration_s, 2)
-            if has_usage:
-                metadata.update(usage.to_metadata())
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=turn_id,
-                    task="Codex turn",
-                    status=turn_status,
-                    summary=summary,
-                ),
-                message_type="task",
-                metadata=metadata,
-            )
-
-        # Phase 2: Enriched turn lifecycle events
-        if (
-            self.config.emit_turn_lifecycle_events
-            and Emit.TASK_EVENTS in self.features.emit
-        ):
-            lifecycle_metadata: dict[str, Any] = {
-                "codex_event_type": "turn_lifecycle",
-                "codex_room_id": room_id,
-                "codex_thread_id": thread_id,
-                "codex_turn_id": turn_id,
-                "codex_turn_status": turn_status,
-            }
-            # Match the marker path: only include duration once it's been
-            # measured.  Avoids a misleading "0.0s" on synthetic paths that
-            # emit lifecycle events without timing (e.g. future code paths
-            # that reuse _emit_turn_outcome without a real turn_start).
-            if duration_s > 0:
-                lifecycle_metadata["codex_duration_s"] = round(duration_s, 2)
-            if turn_error:
-                lifecycle_metadata["codex_error"] = turn_error
-            if has_usage:
-                lifecycle_metadata.update(usage.to_metadata())
-            try:
-                await tools.send_event(
-                    content=self._build_task_event_content(
-                        task_id=turn_id,
-                        task="Codex turn lifecycle",
-                        status=turn_status,
-                        summary=f"Duration: {duration_s:.1f}s | Thread: {thread_id}",
-                    ),
-                    message_type="task",
-                    metadata=lifecycle_metadata,
-                )
-            except Exception:
-                logger.debug("Failed to emit turn lifecycle event", exc_info=True)
+        del room_id, thread_id, turn_id, duration_s
 
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
 
@@ -1956,45 +1759,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 f"or `/approve-session {token}` (approve all similar for this session). "
                 "Use `/approvals` to list pending approvals."
             )
-            # Emit enriched metadata as a task event for UI rendering
-            if Emit.TASK_EVENTS in self.features.emit:
-                approval_metadata: dict[str, Any] = {
-                    "codex_event_type": "approval_request",
-                    "codex_approval_type": self._approval_type(event.method),
-                    "codex_approval_method": event.method,
-                    "codex_room_id": room_id,
-                    "codex_approval_options": [
-                        "accept",
-                        "acceptForSession",
-                        "decline",
-                    ],
-                }
-                if params.get("command"):
-                    approval_metadata["codex_command"] = params["command"]
-                if params.get("cwd"):
-                    approval_metadata["codex_cwd"] = params["cwd"]
-                if params.get("reason"):
-                    approval_metadata["codex_reason"] = params["reason"]
-                # Network context (domains, IPs) when available
-                net_ctx = params.get("networkContext") or params.get("network_context")
-                if net_ctx:
-                    approval_metadata["codex_network_context"] = net_ctx
-                try:
-                    await tools.send_event(
-                        content=self._build_task_event_content(
-                            task_id=token,
-                            task="Codex approval request",
-                            status="pending",
-                            summary=summary,
-                        ),
-                        message_type="task",
-                        metadata=approval_metadata,
-                    )
-                except Exception:
-                    logger.debug(
-                        "Failed to emit approval request task event",
-                        exc_info=True,
-                    )
             await tools.send_message(approval_msg, mentions=mention)
             decision_raw = await asyncio.wait_for(
                 pending.future,
@@ -2015,61 +1779,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             return timeout_decision
         finally:
             self._clear_pending_approval(room_id, token)
-
-    async def _forward_raw_task_event(
-        self,
-        *,
-        tools: AgentToolsProtocol,
-        room_id: str,
-        thread_id: str,
-        turn_id: str | None,
-        method: str,
-        params: dict[str, Any],
-    ) -> None:
-        if Emit.TASK_EVENTS not in self.features.emit:
-            return
-
-        is_started = method == "codex/event/task_started"
-        task_phase = "started" if is_started else "completed"
-        task_id = self._task_event_id(params)
-        title = self._task_event_title(params)
-        if task_id and title and is_started:
-            self._task_titles_by_id[task_id] = title
-            if len(self._task_titles_by_id) > self._max_task_titles:
-                self._task_titles_by_id.popitem(last=False)
-        if task_id and not title:
-            title = self._task_titles_by_id.get(task_id)
-        summary = self._task_event_summary(params)
-        if not title:
-            title = "Codex task lifecycle event"
-            if not summary:
-                summary = f"Method: {method}"
-        content = self._build_task_event_content(
-            task_id=task_id,
-            task=title,
-            status=task_phase,
-            summary=summary,
-        )
-
-        metadata: dict[str, Any] = {
-            "codex_room_id": room_id,
-            "codex_thread_id": thread_id,
-            "codex_turn_id": turn_id,
-            "codex_event_method": method,
-            "codex_task_phase": task_phase,
-        }
-        if task_id:
-            metadata["codex_task_id"] = task_id
-        if params:
-            metadata["codex_event_params"] = params
-
-        await tools.send_event(
-            content=content,
-            message_type="task",
-            metadata=metadata,
-        )
-        if not is_started and task_id:
-            self._task_titles_by_id.pop(task_id, None)
 
     # ------------------------------------------------------------------
     # Phase 1: Structured error handling
@@ -2176,14 +1885,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         step_dicts = [{"step": s.step, "status": s.status} for s in steps]
         try:
             await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=turn_id,
-                    task="Codex plan",
-                    status="updated",
-                    summary=f"{len(steps)} steps",
-                ),
-                message_type="task",
+                content=json.dumps(step_dicts),
+                message_type="tool_result",
                 metadata={
+                    "codex_event_type": "plan_steps",
                     "codex_plan_steps": step_dicts,
                     "codex_room_id": room_id,
                     "codex_thread_id": thread_id,
@@ -2212,7 +1917,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         thread_id: str,
         room_id: str,
     ) -> None:
-        """Emit a task event with current token usage."""
+        """Emit non-task telemetry with current token usage."""
         usage = self._token_usage.get(thread_id)
         # Dataclass instances are always truthy, so check for None and the
         # zero-tokens sentinel explicitly — otherwise we'd emit an empty event
@@ -2220,12 +1925,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         if usage is None or usage.total_tokens == 0:
             return
         metadata = usage.to_metadata()
+        metadata["codex_event_type"] = "token_usage"
         metadata["codex_thread_id"] = thread_id
         metadata["codex_room_id"] = room_id
         try:
             await tools.send_event(
                 content=usage.format_summary(),
-                message_type="task",
+                message_type="tool_result",
                 metadata=metadata,
             )
         except Exception:
@@ -2240,13 +1946,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         thread_id: str,
         turn_id: str | None,
     ) -> None:
-        """Forward turn/diff/updated as a task event.
-
-        Diffs are semantically separate from tool results, so we emit a task
-        event with ``codex_event_type=turn_diff`` and carry the raw diff in
-        metadata.  Consumers filter on ``codex_event_type`` rather than the
-        generic ``tool_result`` channel.
-        """
+        """Forward turn/diff/updated as execution telemetry."""
         diff_content = str(params.get("diff") or params.get("content") or "")
         files_changed: list[str] = []
         files_raw = params.get("files") or params.get("filesChanged") or []
@@ -2287,13 +1987,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             metadata["codex_diff_original_bytes"] = original_byte_length
         try:
             await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=turn_id,
-                    task="Codex diff",
-                    status="updated",
-                    summary=summary,
-                ),
-                message_type="task",
+                content=summary,
+                message_type="tool_result",
                 metadata=metadata,
             )
         except Exception:
@@ -2355,30 +2050,9 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         room_id: str,
         entry: ApprovalAuditEntry,
     ) -> None:
-        """Emit a task event for an approval decision."""
-        if Emit.TASK_EVENTS not in self.features.emit:
-            return
-        try:
-            await tools.send_event(
-                content=self._build_task_event_content(
-                    task_id=str(entry.request_id),
-                    task="Codex approval",
-                    status=entry.decision,
-                    summary=entry.summary,
-                ),
-                message_type="task",
-                metadata={
-                    "codex_event_type": "approval_resolution",
-                    "codex_approval_method": entry.method,
-                    "codex_approval_decision": entry.decision,
-                    "codex_decided_by": entry.decided_by,
-                    "codex_session_level": entry.session_level,
-                    "codex_room_id": room_id,
-                    "codex_timestamp": entry.timestamp,
-                },
-            )
-        except Exception:
-            logger.debug("Failed to emit approval audit event", exc_info=True)
+        """Approval audit state is retained for commands, not mirrored as tasks."""
+        del tools, room_id, entry
+        return
 
     async def _handle_local_command(
         self,
@@ -2427,8 +2101,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 f"- reasoning_summary: {self.config.reasoning_summary or 'default'}\n"
                 f"- pending_approvals: {len(self._pending_approvals.get(room_id, {}))}\n"
                 f"- session_approvals: {session_approvals}\n"
-                f"- token_usage: {usage_line}\n"
-                f"- turn_task_markers: {self.config.emit_turn_task_markers}"
+                f"- token_usage: {usage_line}"
             )
             await tools.send_message(status_text, mentions=mention)
             return True
@@ -3011,70 +2684,6 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     if isinstance(p, str) and p:
                         paths.append(p)
         return paths
-
-    @staticmethod
-    def _task_event_id(params: dict[str, Any]) -> str | None:
-        for key in ("taskId", "task_id"):
-            value = params.get(key)
-            if isinstance(value, str) and value:
-                return value
-
-        task_value = params.get("task")
-        if isinstance(task_value, dict):
-            for key in ("taskId", "task_id", "id"):
-                nested = task_value.get(key)
-                if isinstance(nested, str) and nested:
-                    return nested
-        return None
-
-    @staticmethod
-    def _task_event_title(params: dict[str, Any]) -> str | None:
-        for key in ("title", "name"):
-            value = params.get(key)
-            if isinstance(value, str) and value:
-                return value
-
-        task_value = params.get("task")
-        if isinstance(task_value, str) and task_value:
-            return task_value
-        if isinstance(task_value, dict):
-            for key in ("title", "name", "description"):
-                nested = task_value.get(key)
-                if isinstance(nested, str) and nested:
-                    return nested
-        return None
-
-    @staticmethod
-    def _task_event_summary(params: dict[str, Any]) -> str | None:
-        for key in ("summary", "result", "message", "description"):
-            value = params.get(key)
-            if isinstance(value, str) and value:
-                return value
-
-        task_value = params.get("task")
-        if isinstance(task_value, dict):
-            for key in ("summary", "result", "message", "description"):
-                nested = task_value.get(key)
-                if isinstance(nested, str) and nested:
-                    return nested
-        return None
-
-    @staticmethod
-    def _build_task_event_content(
-        *,
-        task_id: str | None,
-        task: str,
-        status: str,
-        summary: str | None = None,
-    ) -> str:
-        lines: list[str] = []
-        if task_id:
-            lines.append(f"UUID: {task_id}")
-        lines.append(f"Task: {task}")
-        lines.append(f"Status: {status}")
-        if summary and summary != task:
-            lines.append(f"Summary: {summary}")
-        return "\n".join(lines)
 
     @staticmethod
     def _extract_local_command(content: str) -> tuple[str, str] | None:

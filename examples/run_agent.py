@@ -479,7 +479,6 @@ async def run_codex_agent(
     codex_personality: str,
     codex_approval_policy: str,
     codex_approval_mode: str,
-    codex_turn_task_markers: bool,
     codex_cwd: str,
     codex_sandbox: str | None,
     codex_reasoning_effort: str | None,
@@ -503,7 +502,6 @@ async def run_codex_agent(
             custom_section=custom_section,
             include_base_instructions=True,
             enable_task_events=True,
-            emit_turn_task_markers=codex_turn_task_markers,
             enable_execution_reporting=False,
             emit_thought_events=False,
             fallback_send_agent_text=True,
@@ -980,12 +978,6 @@ Examples:
         help="How adapter answers Codex approval requests (default: manual)",
     )
     parser.add_argument(
-        "--codex-turn-task-markers",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help="Emit synthetic Codex turn started/completed task events (default: False)",
-    )
-    parser.add_argument(
         "--a2a-url",
         default=os.getenv("A2A_AGENT_URL", "http://localhost:10000"),
         help="URL of the remote A2A agent (default: http://localhost:10000 or A2A_AGENT_URL env var)",
@@ -1207,7 +1199,6 @@ Examples:
                 codex_personality=args.codex_personality,
                 codex_approval_policy=args.codex_approval_policy,
                 codex_approval_mode=args.codex_approval_mode,
-                codex_turn_task_markers=args.codex_turn_task_markers,
                 codex_cwd=args.codex_cwd,
                 codex_sandbox=args.codex_sandbox,
                 codex_reasoning_effort=args.codex_reasoning_effort,

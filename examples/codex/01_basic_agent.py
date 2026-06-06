@@ -27,7 +27,6 @@ Optional env overrides:
     CODEX_ROLE=coding|planner|reviewer
     CODEX_MODEL=gpt-5.5
     CODEX_APPROVAL_MODE=manual|auto_accept|auto_decline
-    CODEX_TURN_TASK_MARKERS=true|false
 """
 
 from __future__ import annotations
@@ -126,7 +125,6 @@ async def main() -> None:
             custom_section=custom_section,
             include_base_instructions=True,
             enable_task_events=True,
-            emit_turn_task_markers=_env_bool("CODEX_TURN_TASK_MARKERS", False),
             fallback_send_agent_text=True,
         )
     )

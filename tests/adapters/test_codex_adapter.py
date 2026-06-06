@@ -227,7 +227,7 @@ async def _wait_for_pending_approval(
 class TestCodexAdapter:
     def test_config_defaults_are_low_noise_and_manual_approval(self) -> None:
         config = CodexAdapterConfig()
-        assert config.emit_turn_task_markers is False
+        assert config.enable_task_events is True
         assert config.emit_thought_events is False
         assert config.approval_mode == "manual"
 
@@ -810,7 +810,7 @@ class TestCodexAdapter:
         assert fake_client.closed is True
 
     @pytest.mark.asyncio
-    async def test_forwards_raw_codex_task_events(self) -> None:
+    async def test_ignores_raw_codex_task_lifecycle_events(self) -> None:
         events = [
             _event_notification(
                 "codex/event/task_started",
@@ -819,6 +819,14 @@ class TestCodexAdapter:
             _event_notification(
                 "codex/event/task_complete",
                 {"taskId": "task-1", "summary": "Inspection finished"},
+            ),
+            _event_notification(
+                "thread/started",
+                {"thread": {"id": "thr-1"}},
+            ),
+            _event_notification(
+                "turn/started",
+                {"threadId": "thr-1", "turn": {"id": "turn-1"}},
             ),
             _event_notification(
                 "turn/completed",
@@ -850,129 +858,18 @@ class TestCodexAdapter:
             room_id="room-1",
         )
 
-        raw_task_events = [
+        assert [
             event
             for event in tools.events_sent
-            if event["metadata"].get("codex_event_method")
+            if event["message_type"] == "task"
+            or event["metadata"].get("codex_event_method")
             in {
                 "codex/event/task_started",
                 "codex/event/task_complete",
+                "thread/started",
+                "turn/started",
             }
-        ]
-        assert len(raw_task_events) == 2
-        assert raw_task_events[0]["content"] == (
-            "UUID: task-1\nTask: Inspect repository\nStatus: started"
-        )
-        assert raw_task_events[0]["metadata"]["codex_task_id"] == "task-1"
-        assert raw_task_events[1]["content"] == (
-            "UUID: task-1\nTask: Inspect repository\nStatus: completed\n"
-            "Summary: Inspection finished"
-        )
-        assert raw_task_events[1]["metadata"]["codex_task_phase"] == "completed"
-
-    @pytest.mark.asyncio
-    async def test_can_disable_synthetic_turn_task_markers(self) -> None:
-        events = [
-            _event_notification(
-                "codex/event/task_started",
-                {"taskId": "task-1", "task": {"title": "Inspect repository"}},
-            ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=False,
-            ),
-            client_factory=lambda _config: fake_client,
-        )
-        tools = ToolSchemaFakeTools()
-
-        await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-
-        turn_marker_events = [
-            event
-            for event in tools.events_sent
-            if "codex_turn_status" in event["metadata"]
-        ]
-        assert turn_marker_events == []
-        assert any(
-            event["metadata"].get("codex_event_method") == "codex/event/task_started"
-            for event in tools.events_sent
-        )
-
-    @pytest.mark.asyncio
-    async def test_raw_task_event_without_explicit_task_id_does_not_emit_uuid(
-        self,
-    ) -> None:
-        events = [
-            _event_notification(
-                "codex/event/task_started",
-                {"id": "turn-1"},
-            ),
-            _event_notification(
-                "turn/completed",
-                {
-                    "turn": {
-                        "id": "turn-1",
-                        "status": "completed",
-                        "items": [],
-                        "error": None,
-                    }
-                },
-            ),
-        ]
-        fake_client = FakeCodexClient(events=events)
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=False,
-            ),
-            client_factory=lambda _config: fake_client,
-        )
-        tools = ToolSchemaFakeTools()
-
-        await adapter.on_started("Codex Agent", "A coding agent")
-        await adapter.on_message(
-            make_platform_message(),
-            tools,
-            CodexSessionState(),
-            participants_msg=None,
-            contacts_msg=None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-
-        raw_task_event = next(
-            event
-            for event in tools.events_sent
-            if event["metadata"].get("codex_event_method") == "codex/event/task_started"
-        )
-        assert raw_task_event["content"] == (
-            "Task: Codex task lifecycle event\nStatus: started\n"
-            "Summary: Method: codex/event/task_started"
-        )
-        assert "codex_task_id" not in raw_task_event["metadata"]
+        ] == []
 
     @pytest.mark.asyncio
     async def test_status_command_returns_state_without_starting_turn(self) -> None:
@@ -6789,45 +6686,3 @@ class TestSlashCommandTokenBoundary:
         content = f"{mentions} /approve a-1"
         result = CodexAdapter._extract_local_command(content)
         assert result == ("approve", "a-1")
-
-
-class TestDoubleEmitStartupWarning:
-    """Enabling both turn-task channels warns operators once at startup."""
-
-    @pytest.mark.asyncio
-    async def test_warns_when_both_channels_enabled(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=True,
-                emit_turn_lifecycle_events=True,
-            ),
-            client_factory=lambda _config: fake_client,
-        )
-        with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
-            await adapter.on_started("Agent", "A coding agent")
-        assert any(
-            "two task events per turn" in record.message for record in caplog.records
-        )
-
-    @pytest.mark.asyncio
-    async def test_no_warning_when_only_one_channel_enabled(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        fake_client = FakeCodexClient()
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                transport="ws",
-                emit_turn_task_markers=True,
-                emit_turn_lifecycle_events=False,
-            ),
-            client_factory=lambda _config: fake_client,
-        )
-        with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
-            await adapter.on_started("Agent", "A coding agent")
-        assert not any(
-            "two task events per turn" in record.message for record in caplog.records
-        )

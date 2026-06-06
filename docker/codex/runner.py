@@ -14,7 +14,6 @@ Environment variables:
     CODEX_SANDBOX              Sandbox mode (default: external-sandbox)
     CODEX_REASONING_EFFORT     Reasoning effort level
     CODEX_APPROVAL_MODE        Approval mode: manual, auto_accept, auto_decline
-    CODEX_TURN_TASK_MARKERS    Emit turn task markers: true/false (default: false)
     BAND_WS_URL                Platform WebSocket URL
     BAND_REST_URL              Platform REST URL
     OPENAI_API_KEY             OpenAI API key
@@ -254,8 +253,6 @@ async def main() -> None:
         or _optional_str(config.get("approval_mode"))
         or "manual"
     )
-    codex_turn_markers = _env_bool("CODEX_TURN_TASK_MARKERS", default=False)
-
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             transport=codex_transport,
@@ -272,7 +269,6 @@ async def main() -> None:
             ),
             include_base_instructions=True,
             enable_task_events=True,
-            emit_turn_task_markers=codex_turn_markers,
             enable_execution_reporting=False,
             emit_thought_events=False,
             fallback_send_agent_text=True,

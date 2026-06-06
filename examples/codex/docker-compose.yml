@@ -14,7 +14,6 @@ services:
       # Agent key from /app/agent_config.yaml.
       CODEX_AGENT_KEY: ${CODEX_AGENT_KEY:-darter}
       CODEX_APPROVAL_MODE: manual
-      CODEX_TURN_TASK_MARKERS: "false"
       PYTHONPATH: /workspace/repo/src
       # Container must reach host Band services via host.docker.internal (not localhost).
       # Override with BAND_REST_URL_DOCKER / BAND_WS_URL_DOCKER if needed.
