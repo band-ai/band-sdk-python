@@ -15,6 +15,7 @@ Install the extra you need::
     uv add band-sdk[codex]
     uv add band-sdk[google_adk]
     uv add band-sdk[opencode]
+    uv add band-sdk[slack]
 """
 
 from __future__ import annotations
@@ -47,6 +48,9 @@ if TYPE_CHECKING:
     from band.adapters.opencode import OpencodeAdapterConfig as OpencodeAdapterConfig
     from band.adapters.letta import LettaAdapter as LettaAdapter
     from band.adapters.letta import LettaAdapterConfig as LettaAdapterConfig
+    from band.adapters.slack import SlackAdapter as SlackAdapter
+    from band.adapters.slack import SlackApp as SlackApp
+    from band.adapters.slack import SlackSessionState as SlackSessionState
 
 __all__ = [
     "LangGraphAdapter",
@@ -69,6 +73,9 @@ __all__ = [
     "OpencodeAdapterConfig",
     "LettaAdapter",
     "LettaAdapterConfig",
+    "SlackAdapter",
+    "SlackApp",
+    "SlackSessionState",
 ]
 
 
@@ -158,4 +165,12 @@ def __getattr__(name: str) -> type:
         from band.adapters.letta import LettaAdapterConfig
 
         return LettaAdapterConfig
+    elif name in ("SlackAdapter", "SlackApp", "SlackSessionState"):
+        from band.adapters.slack import SlackAdapter, SlackApp, SlackSessionState
+
+        if name == "SlackAdapter":
+            return SlackAdapter
+        elif name == "SlackApp":
+            return SlackApp
+        return SlackSessionState
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,0 +1,104 @@
+# Slack app manifest for the Band SDK Slack bridge.
+#
+# How to use this:
+#   1. Replace the {{PLACEHOLDER}} values below.
+#   2. Go to https://api.slack.com/apps → "Create New App" → "From a manifest".
+#   3. Pick the workspace, paste this YAML, click "Next" → "Create".
+#   4. Install the app to the workspace. Copy the Bot Token (xoxb-…).
+#   5. (Socket Mode only) Under "Basic Information" → "App-Level Tokens"
+#      → "Generate Token and Scopes" → name it `socket`, add scope
+#      `connections:write`. Copy the resulting xapp-… token.
+#   6. /invite @your-bot in every channel you want it to read.
+#   7. (Optional, recommended) Enable Delayed Events in the GUI: app
+#      settings → "Event Subscriptions" → toggle "Delayed Events" On.
+#      This is NOT a manifest field (no schema support as of 2026-02);
+#      it must be set manually. With it on, Slack keeps retrying missed
+#      events hourly for 24h while the bridge is offline (default 2h).
+#      See https://docs.slack.dev/changelog/2026/02/05/retry-events-feature/.
+#
+# This manifest defaults to Socket Mode (no public URL required). To use
+# HTTP webhooks instead, set `socket_mode_enabled: false` and uncomment
+# the `request_url:` line under `event_subscriptions`.
+#
+# Scope rationale:
+#   - assistant:write          → required for the Agents & AI App container
+#   - app_mentions:read        → receive @-mentions in channels
+#   - im:history               → receive DM events
+#   - channels:history         → conversations.replies in PUBLIC channels
+#                                 (thread-history backfill)
+#   - groups:history           → conversations.replies in PRIVATE channels
+#                                 (same; needed when the bot is mentioned
+#                                 in a private channel thread)
+#   - chat:write               → post replies + edit plan/status messages
+#   - users:read               → resolve sender names for attribution
+#   - channels:read            → resolve PUBLIC channel names for the
+#                                 Band audit-timeline context mirror
+#   - groups:read              → resolve PRIVATE channel names (same)
+#   - im:read                  → identify DMs for the context mirror
+#   - users:read.email         → optional, only if your agent does
+#                                 email-keyed memory scoping
+#
+# Event subscriptions:
+#   - app_mention              → channel @-mentions
+#   - message.im               → DMs
+#   - assistant_thread_started → user opens the assistant pane
+
+display_information:
+  name: "{{AGENT_DISPLAY_NAME}}"      # e.g. "Recruit Assistant"
+  description: "{{AGENT_TAGLINE}}"     # one-liner shown in the app catalog
+  background_color: "#1F2937"
+
+features:
+  bot_user:
+    display_name: "{{BOT_HANDLE}}"     # e.g. "recruit-assistant" (lowercase, no @)
+    always_online: true
+
+  # Agents & AI App container — enables the assistant pane in Slack.
+  # This is what powers `assistant.threads.setStatus` ("is thinking…")
+  # and Block Kit plan/task block rendering.
+  assistant_view:
+    assistant_description: "{{AGENT_TAGLINE}}"
+    suggested_prompts: []              # Phase 2 candidate
+
+oauth_config:
+  scopes:
+    bot:
+      - assistant:write
+      - app_mentions:read
+      - im:history
+      - channels:history
+      - groups:history
+      - chat:write
+      - users:read
+      - channels:read
+      - groups:read
+      - im:read
+      # Uncomment if your agent does email-keyed memory:
+      # - users:read.email
+
+settings:
+  event_subscriptions:
+    # HTTP transport: set request_url to your public bridge URL,
+    # something like https://your-bridge.example.com/slack/dev/events.
+    # Leave commented out when running Socket Mode.
+    # request_url: "https://{{YOUR_PUBLIC_HOST}}/slack/dev/events"
+
+    bot_events:
+      - app_mention
+      - message.im
+      - assistant_thread_started
+
+    # NOTE: "Delayed Events" (retry missed events hourly for 24h while the
+    # bridge is offline, vs the 2h default) is recommended for production
+    # but has NO manifest field — enable it manually in the GUI under
+    # "Event Subscriptions" → "Delayed Events". See step 7 in the header.
+
+  interactivity:
+    is_enabled: false                  # Phase 3 candidate (buttons/modals)
+
+  # Socket Mode — bridge opens a websocket to Slack, no public URL needed.
+  # Flip to false to use HTTP webhooks (and uncomment request_url above).
+  socket_mode_enabled: true
+
+  org_deploy_enabled: false
+  token_rotation_enabled: false        # v1 explicitly recommends OFF
