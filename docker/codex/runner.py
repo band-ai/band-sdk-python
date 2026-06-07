@@ -8,13 +8,11 @@ Environment variables:
     AGENT_CONFIG               Path to the YAML config file (required)
     AGENT_KEY                  Key to look up in keyed config (default: "agent")
     CODEX_CWD                  Working directory for Codex (default: /workspace/repo)
-    CODEX_TRANSPORT            Transport mode: stdio or ws (default: stdio)
     CODEX_MODEL                Model ID override
     CODEX_ROLE                 Role name; loads prompt from {config_dir}/prompts/{role}.md
     CODEX_SANDBOX              Sandbox mode (default: external-sandbox)
     CODEX_REASONING_EFFORT     Reasoning effort level
     CODEX_APPROVAL_MODE        Approval mode: manual, auto_accept, auto_decline
-    CODEX_TURN_TASK_MARKERS    Emit turn task markers: true/false (default: false)
     BAND_WS_URL                Platform WebSocket URL
     BAND_REST_URL              Platform REST URL
     OPENAI_API_KEY             OpenAI API key
@@ -53,11 +51,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CodexTransport = Literal["stdio", "ws"]
 CodexApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
 CodexReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
 
-_TRANSPORTS: dict[str, CodexTransport] = {"stdio": "stdio", "ws": "ws"}
 _APPROVAL_MODES: dict[str, CodexApprovalMode] = {
     "manual": "manual",
     "auto_accept": "auto_accept",
@@ -124,15 +120,6 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
-
-
-def _parse_transport(value: str) -> CodexTransport:
-    parsed = _TRANSPORTS.get(value.lower())
-    if parsed is None:
-        raise ValueError(
-            f"CODEX_TRANSPORT must be one of {', '.join(sorted(_TRANSPORTS))}; got: {value}"
-        )
-    return parsed
 
 
 def _parse_approval_mode(value: str) -> CodexApprovalMode:
@@ -216,9 +203,6 @@ async def main() -> None:
         or repo_init.repo_path
         or "/workspace/repo"
     )
-    codex_transport = _parse_transport(
-        _optional_str(os.environ.get("CODEX_TRANSPORT")) or "stdio"
-    )
     codex_model = _optional_str(os.environ.get("CODEX_MODEL")) or _optional_str(
         config.get("model")
     )
@@ -254,11 +238,8 @@ async def main() -> None:
         or _optional_str(config.get("approval_mode"))
         or "manual"
     )
-    codex_turn_markers = _env_bool("CODEX_TURN_TASK_MARKERS", default=False)
-
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            transport=codex_transport,
             cwd=codex_cwd,
             model=codex_model,
             personality="pragmatic",
@@ -266,13 +247,11 @@ async def main() -> None:
             approval_mode=codex_approval,
             sandbox=codex_sandbox,
             reasoning_effort=codex_reasoning,
-            codex_ws_url=os.environ.get("CODEX_WS_URL", "ws://127.0.0.1:8765"),
             custom_section="\n\n".join(
                 part for part in (custom_section, repo_init.context_bundle) if part
             ),
             include_base_instructions=True,
             enable_task_events=True,
-            emit_turn_task_markers=codex_turn_markers,
             enable_execution_reporting=False,
             emit_thought_events=False,
             fallback_send_agent_text=True,
@@ -290,8 +269,7 @@ async def main() -> None:
 
     logger.info("Starting Codex agent: %s", agent_id)
     logger.info(
-        "Codex config: transport=%s, model=%s, cwd=%s, sandbox=%s, role=%s",
-        codex_transport,
+        "Codex config: model=%s, cwd=%s, sandbox=%s, role=%s",
         codex_model or "auto",
         codex_cwd,
         codex_sandbox,

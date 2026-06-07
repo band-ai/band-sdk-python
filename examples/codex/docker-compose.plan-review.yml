@@ -7,12 +7,10 @@ services:
     env_file:
       - ../../.env
     environment:
-      CODEX_TRANSPORT: stdio
       CODEX_CWD: ${CODEX_PLANNER_CWD:-/workspace/repo}
       CODEX_SANDBOX: ${CODEX_PLANNER_SANDBOX:-external-sandbox}
       CODEX_AGENT_KEY: ${CODEX_PLANNER_AGENT_KEY:-codex_planner}
       CODEX_APPROVAL_MODE: ${CODEX_PLANNER_APPROVAL_MODE:-manual}
-      CODEX_TURN_TASK_MARKERS: "false"
       PYTHONPATH: /workspace/repo/src
       BAND_REST_URL: ${BAND_REST_URL_DOCKER:-http://host.docker.internal:4000}
       BAND_WS_URL: ${BAND_WS_URL_DOCKER:-ws://host.docker.internal:4000/api/v1/socket/websocket}
@@ -42,8 +40,6 @@ services:
       - ${CODEX_PLANNER_AGENT_KEY:-codex_planner}
       - --codex-role
       - planner
-      - --codex-transport
-      - ${CODEX_TRANSPORT:-stdio}
       - --codex-cwd
       - ${CODEX_PLANNER_CWD:-/workspace/repo}
       - --codex-sandbox
@@ -52,7 +48,6 @@ services:
       - ${CODEX_PLANNER_APPROVAL_MODE:-manual}
       - --custom-section
       - ${CODEX_PLANNER_CUSTOM_SECTION:-You are the planning agent. Create and maintain docs/plan.md. Keep it phased and testable. When complete ask @codex-reviewer to review docs/plan.md. If any requirement is ambiguous or blocked, ask a concise question to a human participant in this room before proceeding.}
-      - --no-codex-turn-task-markers
     stdin_open: true
     tty: true
 
@@ -64,12 +59,10 @@ services:
     env_file:
       - ../../.env
     environment:
-      CODEX_TRANSPORT: stdio
       CODEX_CWD: ${CODEX_REVIEWER_CWD:-/workspace/repo}
       CODEX_SANDBOX: ${CODEX_REVIEWER_SANDBOX:-external-sandbox}
       CODEX_AGENT_KEY: ${CODEX_REVIEWER_AGENT_KEY:-codex_reviewer}
       CODEX_APPROVAL_MODE: ${CODEX_REVIEWER_APPROVAL_MODE:-manual}
-      CODEX_TURN_TASK_MARKERS: "false"
       PYTHONPATH: /workspace/repo/src
       BAND_REST_URL: ${BAND_REST_URL_DOCKER:-http://host.docker.internal:4000}
       BAND_WS_URL: ${BAND_WS_URL_DOCKER:-ws://host.docker.internal:4000/api/v1/socket/websocket}
@@ -99,8 +92,6 @@ services:
       - ${CODEX_REVIEWER_AGENT_KEY:-codex_reviewer}
       - --codex-role
       - reviewer
-      - --codex-transport
-      - ${CODEX_TRANSPORT:-stdio}
       - --codex-cwd
       - ${CODEX_REVIEWER_CWD:-/workspace/repo}
       - --codex-sandbox
@@ -109,7 +100,6 @@ services:
       - ${CODEX_REVIEWER_APPROVAL_MODE:-manual}
       - --custom-section
       - ${CODEX_REVIEWER_CUSTOM_SECTION:-You are the review agent. Review docs/plan.md for gaps, risks, contradictions, and missing tests. Reply with prioritized findings. If requirements are ambiguous or you need a decision, ask a concise question to a human participant in this room before proceeding.}
-      - --no-codex-turn-task-markers
     stdin_open: true
     tty: true
 

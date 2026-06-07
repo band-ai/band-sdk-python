@@ -7,12 +7,10 @@ services:
     env_file:
       - ../../.env
     environment:
-      CODEX_TRANSPORT: stdio
       CODEX_CWD: ${CODEX_DARTER_CWD:-/workspace/repo}
       CODEX_SANDBOX: ${CODEX_DARTER_SANDBOX:-external-sandbox}
       CODEX_AGENT_KEY: ${CODEX_DARTER_AGENT_KEY:-darter}
       CODEX_APPROVAL_MODE: manual
-      CODEX_TURN_TASK_MARKERS: "false"
       PYTHONPATH: /workspace/repo/src
       BAND_REST_URL: ${BAND_REST_URL_DOCKER:-http://host.docker.internal:4000}
       BAND_WS_URL: ${BAND_WS_URL_DOCKER:-ws://host.docker.internal:4000/api/v1/socket/websocket}
@@ -42,13 +40,10 @@ services:
       - ${CODEX_DARTER_AGENT_KEY:-darter}
       - --codex-role
       - coding
-      - --codex-transport
-      - ${CODEX_TRANSPORT:-stdio}
       - --codex-cwd
       - ${CODEX_DARTER_CWD:-/workspace/repo}
       - --codex-sandbox
       - ${CODEX_DARTER_SANDBOX:-external-sandbox}
-      - --no-codex-turn-task-markers
     stdin_open: true
     tty: true
 
@@ -60,12 +55,10 @@ services:
     env_file:
       - ../../.env
     environment:
-      CODEX_TRANSPORT: stdio
       CODEX_CWD: ${CODEX_REVIEWER_CWD:-/workspace/repo}
       CODEX_SANDBOX: ${CODEX_REVIEWER_SANDBOX:-external-sandbox}
       CODEX_AGENT_KEY: ${CODEX_REVIEWER_AGENT_KEY:-reviewer}
       CODEX_APPROVAL_MODE: manual
-      CODEX_TURN_TASK_MARKERS: "false"
       PYTHONPATH: /workspace/repo/src
       BAND_REST_URL: ${BAND_REST_URL_DOCKER:-http://host.docker.internal:4000}
       BAND_WS_URL: ${BAND_WS_URL_DOCKER:-ws://host.docker.internal:4000/api/v1/socket/websocket}
@@ -95,13 +88,10 @@ services:
       - ${CODEX_REVIEWER_AGENT_KEY:-reviewer}
       - --codex-role
       - reviewer
-      - --codex-transport
-      - ${CODEX_TRANSPORT:-stdio}
       - --codex-cwd
       - ${CODEX_REVIEWER_CWD:-/workspace/repo}
       - --codex-sandbox
       - ${CODEX_REVIEWER_SANDBOX:-external-sandbox}
-      - --no-codex-turn-task-markers
     stdin_open: true
     tty: true
 

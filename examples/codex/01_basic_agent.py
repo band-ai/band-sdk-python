@@ -8,26 +8,20 @@
 """
 Basic Codex adapter agent example.
 
-Runs a Band agent backed by Codex app-server.
+Runs a Band agent backed by the OpenAI Codex Python SDK runtime.
 
 Prerequisites:
-1. OAuth login:
-   codex login
-2. For stdio mode (default), no extra process is needed.
-3. For ws mode, start app-server separately:
-   codex app-server --listen ws://127.0.0.1:8765
+1. Band agent credentials in `agent_config.yaml`.
+2. Codex authentication through `codex login`, `OPENAI_API_KEY`, or the Codex process environment.
 
 Run:
     uv run examples/codex/01_basic_agent.py
 
 Optional env overrides:
     AGENT_KEY=darter
-    CODEX_TRANSPORT=stdio|ws
-    CODEX_WS_URL=ws://127.0.0.1:8765
     CODEX_ROLE=coding|planner|reviewer
     CODEX_MODEL=gpt-5.5
     CODEX_APPROVAL_MODE=manual|auto_accept|auto_decline
-    CODEX_TURN_TASK_MARKERS=true|false
 """
 
 from __future__ import annotations
@@ -35,9 +29,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -68,38 +59,7 @@ async def main() -> None:
     if not rest_url:
         raise ValueError("BAND_REST_URL environment variable is required")
 
-    codex_bin = shutil.which("codex")
-    if codex_bin is None:
-        logger.error(
-            "Codex CLI not found on PATH. Install it: npm install -g @openai/codex"
-        )
-        sys.exit(1)
-
-    login_check = subprocess.run(
-        [codex_bin, "login", "status"],
-        capture_output=True,
-        text=True,
-    )
-    if login_check.returncode != 0:
-        print("Codex is not logged in.")
-        try:
-            answer = input("Run 'codex login' now? [Y/n] ").strip().lower()
-        except EOFError:
-            print("Non-interactive shell. Run 'codex login' manually, then retry.")
-            sys.exit(1)
-        if answer in ("", "y", "yes"):
-            result = subprocess.run([codex_bin, "login"], check=False)
-            if result.returncode != 0:
-                print("Login failed. Check the output above and retry.")
-                sys.exit(1)
-        else:
-            print("Exiting. Run 'codex login' manually, then retry.")
-            sys.exit(1)
-
     agent_key = os.getenv("AGENT_KEY", "darter")
-    codex_transport = os.getenv("CODEX_TRANSPORT", "stdio")
-    if codex_transport not in {"stdio", "ws"}:
-        raise ValueError("CODEX_TRANSPORT must be 'stdio' or 'ws'")
 
     # Load role prompt from file if CODEX_ROLE is set
     codex_role = os.getenv("CODEX_ROLE")
@@ -116,8 +76,6 @@ async def main() -> None:
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
-            transport=codex_transport,  # type: ignore[arg-type]  # str from env, validated at runtime
-            codex_ws_url=os.getenv("CODEX_WS_URL", "ws://127.0.0.1:8765"),
             model=os.getenv("CODEX_MODEL") or None,
             cwd=os.getenv("CODEX_CWD", os.getcwd()),
             approval_policy=os.getenv("CODEX_APPROVAL_POLICY", "never"),
@@ -126,7 +84,6 @@ async def main() -> None:
             custom_section=custom_section,
             include_base_instructions=True,
             enable_task_events=True,
-            emit_turn_task_markers=_env_bool("CODEX_TURN_TASK_MARKERS", False),
             fallback_send_agent_text=True,
         )
     )
@@ -139,9 +96,8 @@ async def main() -> None:
     )
 
     logger.info(
-        "Starting Codex agent: agent_key=%s transport=%s role=%s",
+        "Starting Codex agent: agent_key=%s role=%s",
         agent_key,
-        codex_transport,
         codex_role or "none",
     )
     await agent.run()

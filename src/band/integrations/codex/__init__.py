@@ -7,6 +7,7 @@ from .rpc_base import (
     OverloadRetryPolicy,
     RpcEvent,
 )
+from .sdk_client import CodexSdkClient
 from .stdio_client import CodexStdioClient
 from .types import (
     CODEX_APPROVAL_METHODS,
@@ -27,6 +28,7 @@ __all__ = [
     "CodexJsonRpcError",
     "CodexPlanStep",
     "CodexSessionState",
+    "CodexSdkClient",
     "CodexStdioClient",
     "CodexTokenUsage",
     "CodexWebSocketClient",
