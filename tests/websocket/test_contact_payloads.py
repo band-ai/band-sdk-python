@@ -103,6 +103,7 @@ class TestContactAddedPayload:
         assert payload.id == "contact-123"
         assert payload.type == "User"
         assert payload.description is None
+        assert payload.is_remote is None
         assert payload.is_external is None
 
     def test_agent_contact(self):
@@ -113,12 +114,40 @@ class TestContactAddedPayload:
             name="Weather Bot",
             type="Agent",
             description="Provides weather forecasts",
+            is_remote=True,
             is_external=True,
             inserted_at="2026-02-09T10:35:00Z",
         )
         assert payload.type == "Agent"
         assert payload.description == "Provides weather forecasts"
+        assert payload.is_remote is True
         assert payload.is_external is True
+
+    def test_legacy_is_external_populates_is_remote(self):
+        """Legacy payloads should still expose the new primary field."""
+        payload = ContactAddedPayload(
+            id="contact-legacy",
+            handle="legacy-agent",
+            name="Legacy Agent",
+            type="Agent",
+            is_external=True,
+            inserted_at="2026-02-09T10:35:00Z",
+        )
+        assert payload.is_remote is True
+        assert payload.is_external is True
+
+    def test_is_remote_populates_legacy_alias(self):
+        """New payloads should keep the legacy alias populated too."""
+        payload = ContactAddedPayload(
+            id="contact-new",
+            handle="new-agent",
+            name="New Agent",
+            type="Agent",
+            is_remote=False,
+            inserted_at="2026-02-09T10:35:00Z",
+        )
+        assert payload.is_remote is False
+        assert payload.is_external is False
 
     def test_internal_agent_contact(self):
         """Should accept internal agent contact."""
@@ -127,9 +156,11 @@ class TestContactAddedPayload:
             handle="my-agent",
             name="My Agent",
             type="Agent",
+            is_remote=False,
             is_external=False,
             inserted_at="2026-02-09T10:35:00Z",
         )
+        assert payload.is_remote is False
         assert payload.is_external is False
 
     def test_missing_required_field(self):

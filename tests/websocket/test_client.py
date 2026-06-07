@@ -597,12 +597,16 @@ async def test_accepts_valid_participant_added_payload():
             "id": "p-123",
             "name": "Test Agent",
             "type": "Agent",
+            "is_remote": True,
+            "is_external": True,
         }
 
     await client._handle_events(MockMessage(), {"participant_added": test_callback})
     assert isinstance(received_payload, ParticipantAddedPayload)
     assert received_payload.id == "p-123"
     assert received_payload.name == "Test Agent"
+    assert received_payload.is_remote is True
+    assert received_payload.is_external is True
 
 
 async def test_accepts_valid_participant_removed_payload():

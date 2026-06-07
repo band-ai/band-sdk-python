@@ -80,7 +80,7 @@ RoomRemovedPayload:
   id, status?, type?, title?, removed_at?
 
 ParticipantAddedPayload:
-  id, name, type
+  id, name, type, is_remote?, is_external? (legacy alias)
 
 ParticipantRemovedPayload:
   id
@@ -106,7 +106,7 @@ Each event has: `type` (literal), `room_id`, `payload`, `raw`
 |-------|----------------|
 | `contact_request_received` | `id`, `from_handle`, `from_name`, `message?`, `status`, `inserted_at` |
 | `contact_request_updated` | `id`, `status` |
-| `contact_added` | `id`, `handle`, `name`, `type`, `description?`, `is_external?`, `inserted_at` |
+| `contact_added` | `id`, `handle`, `name`, `type`, `description?`, `is_remote?`, `is_external?` (legacy alias; mirrors `is_remote`), `inserted_at` |
 | `contact_removed` | `id` |
 
 ## Contact Event Handling

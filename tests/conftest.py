@@ -128,9 +128,16 @@ def make_participant_added_event(
     participant_id: str = "user-456",
     name: str = "Test User",
     type: str = "User",
+    **kwargs,
 ) -> ParticipantAddedEvent:
     """Create a ParticipantAddedEvent using SDK-native types."""
-    payload = ParticipantAddedPayload(id=participant_id, name=name, type=type)
+    payload = ParticipantAddedPayload(
+        id=participant_id,
+        name=name,
+        type=type,
+        is_remote=kwargs.get("is_remote"),
+        is_external=kwargs.get("is_external"),
+    )
     return ParticipantAddedEvent(room_id=room_id, payload=payload)
 
 
@@ -187,6 +194,7 @@ def make_contact_added_event(
         name=name,
         type=contact_type,
         description=kwargs.get("description"),
+        is_remote=kwargs.get("is_remote"),
         is_external=kwargs.get("is_external"),
         inserted_at=kwargs.get("inserted_at", "2026-01-01T00:00:00Z"),
     )

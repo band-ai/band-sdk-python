@@ -13,7 +13,7 @@ from phoenix_channels_python_client.client import (
 from phoenix_channels_python_client.client_types import ReconnectPolicy
 from phoenix_channels_python_client.exceptions import PHXConnectionError
 from phoenix_channels_python_client.phx_messages import PHXMessage
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from band.client.streaming.errors import classify_initial_upgrade_error
 
@@ -129,6 +129,16 @@ class ParticipantAddedPayload(BaseModel):
     id: str
     name: str
     type: str
+    is_remote: bool | None = None
+    is_external: bool | None = None  # Legacy alias for is_remote
+
+    @model_validator(mode="after")
+    def _sync_remote_aliases(self) -> "ParticipantAddedPayload":
+        if self.is_remote is None and self.is_external is not None:
+            self.is_remote = self.is_external
+        if self.is_external is None and self.is_remote is not None:
+            self.is_external = self.is_remote
+        return self
 
 
 class ParticipantRemovedPayload(BaseModel):
@@ -174,8 +184,17 @@ class ContactAddedPayload(BaseModel):
     name: str
     type: str
     description: str | None = None
-    is_external: bool | None = None
+    is_remote: bool | None = None
+    is_external: bool | None = None  # Legacy alias for is_remote
     inserted_at: str
+
+    @model_validator(mode="after")
+    def _sync_remote_aliases(self) -> "ContactAddedPayload":
+        if self.is_remote is None and self.is_external is not None:
+            self.is_remote = self.is_external
+        if self.is_external is None and self.is_remote is not None:
+            self.is_external = self.is_remote
+        return self
 
 
 class ContactRemovedPayload(BaseModel):
