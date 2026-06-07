@@ -13,6 +13,7 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
@@ -113,9 +114,15 @@ def agent_tools_to_langchain(
         ) -> Any:
             try:
                 return await tools.execute_tool_call(_tool_name, kwargs)
+            except BandToolError as error:
+                # Deliberate, LLM-facing tool errors (e.g. the unified
+                # missing-mention guidance) must reach the transcript so the
+                # model can correct itself. These messages are authored for
+                # the LLM and contain no sensitive detail.
+                return f"Error executing {_tool_name}: {error}"
             except Exception:
-                # Tool errors feed back into the LLM transcript and may be
-                # relayed to chat. Keep the message generic; the full
+                # Unexpected failures feed back into the LLM transcript and may
+                # be relayed to chat. Keep the message generic; the full
                 # traceback (with paths, DB strings, tokens, etc.) only
                 # lives in the agent log.
                 logger.exception("Error executing platform tool %s", _tool_name)

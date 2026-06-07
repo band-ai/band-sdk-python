@@ -150,3 +150,27 @@ async def test_wrapper_errors_are_returned_to_model() -> None:
 
     assert result == "Error executing band_send_message: see agent logs."
     assert "platform unavailable" not in result
+
+
+@pytest.mark.asyncio
+async def test_band_tool_error_message_reaches_model() -> None:
+    """Deliberate BandToolError text (e.g. the unified missing-mention
+    guidance) must reach the LLM transcript instead of being collapsed into
+    the generic "see agent logs" message."""
+    from band.core.exceptions import BandToolError
+    from band.runtime.tools import SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
+
+    tools = make_tools()
+    tools.execute_tool_call.side_effect = BandToolError(
+        SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
+    )
+    wrapped = by_name(agent_tools_to_langchain(tools))
+
+    result = await wrapped["band_send_message"].ainvoke(
+        {"content": "hello", "mentions": []}
+    )
+
+    assert result == (
+        f"Error executing band_send_message: {SEND_MESSAGE_REQUIRES_MENTION_MESSAGE}"
+    )
+    assert "see agent logs" not in result
