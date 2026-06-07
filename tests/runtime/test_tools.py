@@ -1065,18 +1065,18 @@ class TestEmptyMentionsValidation:
         assert result.model_dump()["id"] == "msg-123"
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_called_once()
 
-    async def test_execute_tool_call_raises_band_tool_error(
+    async def test_execute_tool_call_rejects_empty_mentions(
         self, mock_rest_client, participants
     ):
-        """execute_tool_call lets BandToolError propagate for wrapper translation."""
-        from band.core.exceptions import BandToolError
-
+        """execute_tool_call rejects empty mentions at the schema validation layer."""
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(BandToolError, match="At least one mention is required"):
-            await tools.execute_tool_call(
-                "band_send_message", {"content": "Hello!", "mentions": []}
-            )
+        result = await tools.execute_tool_call(
+            "band_send_message", {"content": "Hello!", "mentions": []}
+        )
+
+        assert "mentions" in result
+        mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_called()
 
 
 class TestMentionResolution:
@@ -1188,10 +1188,10 @@ class TestToolInputModels:
         assert model.content == "Hello"
         assert model.mentions == ["User"]
 
-    def test_send_message_input_accepts_empty_mentions(self):
-        """SendMessageInput allows empty mentions (runtime validates instead)."""
-        model = SendMessageInput(content="Hello", mentions=[])
-        assert model.mentions == []
+    def test_send_message_input_rejects_empty_mentions(self):
+        """SendMessageInput rejects empty mentions — schema requires ≥1."""
+        with pytest.raises(Exception):
+            SendMessageInput(content="Hello", mentions=[])
 
     def test_send_event_input_validation(self):
         """SendEventInput should validate fields."""

@@ -42,10 +42,11 @@ class TestSendMessageInput:
             SendMessageInput(content="Hello")
         assert "mentions" in str(exc_info.value)
 
-    def test_mentions_accepts_empty_list(self):
-        """Empty mentions pass Pydantic validation (runtime validates instead)."""
-        model = SendMessageInput(content="Hello", mentions=[])
-        assert model.mentions == []
+    def test_mentions_rejects_empty_list(self):
+        """Empty mentions fail validation — the schema requires at least one."""
+        with pytest.raises(ValidationError) as exc_info:
+            SendMessageInput(content="Hello", mentions=[])
+        assert "mentions" in str(exc_info.value)
 
 
 class TestSendEventInput:

@@ -88,6 +88,7 @@ class SendMessageInput(BaseModel):
     content: str = Field(..., description="The message content to send")
     mentions: list[str] = Field(
         ...,
+        min_length=1,
         description=(
             "List of participant handles to @mention. At least one required. "
             "For users: @<username> (e.g., '@john'). "
