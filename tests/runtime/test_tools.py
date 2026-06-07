@@ -998,23 +998,23 @@ class TestAgentToolsExecuteToolCall:
 
 
 class TestEmptyMentionsValidation:
-    """Test that empty mentions return a helpful error with participant names."""
+    """Empty mentions raise the shared mention-required error from send_message."""
 
-    async def test_raises_error_with_participant_names(
+    async def test_raises_shared_message_when_mentions_empty(
         self, mock_rest_client, participants
     ):
-        """Should raise BandToolError listing available participants when mentions empty."""
+        """Should raise BandToolError with the shared mention-required message."""
         from band.core.exceptions import BandToolError
+        from band.runtime.tools import SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
 
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(
-            BandToolError, match="At least one mention is required"
-        ) as exc_info:
+        with pytest.raises(BandToolError) as exc_info:
             await tools.send_message("Hello!", mentions=[])
 
-        assert "@user-one" in str(exc_info.value)
-        assert "@user-two" in str(exc_info.value)
+        assert str(exc_info.value) == SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
+        # The message must point the LLM at the send_event fallback.
+        assert "band_send_event" in str(exc_info.value)
         # Should NOT have called the API
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_called()
 
@@ -1023,35 +1023,14 @@ class TestEmptyMentionsValidation:
     ):
         """Should raise BandToolError when mentions is None."""
         from band.core.exceptions import BandToolError
+        from band.runtime.tools import SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
 
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(BandToolError, match="At least one mention is required"):
+        with pytest.raises(BandToolError) as exc_info:
             await tools.send_message("Hello!", mentions=None)
 
-    async def test_uses_handle_when_available(self, mock_rest_client):
-        """Should prefer handle over name in error message."""
-        from band.core.exceptions import BandToolError
-
-        participants = [
-            {"id": "user-1", "name": "User One", "type": "User", "handle": "@user-one"},
-        ]
-        tools = AgentTools("room-123", mock_rest_client, participants)
-
-        with pytest.raises(BandToolError, match="@user-one"):
-            await tools.send_message("Hello!", mentions=[])
-
-    async def test_uses_name_when_no_handle(self, mock_rest_client):
-        """Should fall back to participant name when handle is missing."""
-        from band.core.exceptions import BandToolError
-
-        participants = [
-            {"id": "user-1", "name": "User One", "type": "User"},
-        ]
-        tools = AgentTools("room-123", mock_rest_client, participants)
-
-        with pytest.raises(BandToolError, match="User One"):
-            await tools.send_message("Hello!", mentions=[])
+        assert str(exc_info.value) == SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
 
     async def test_no_error_when_mentions_provided(
         self, mock_rest_client, participants
@@ -1068,14 +1047,18 @@ class TestEmptyMentionsValidation:
     async def test_execute_tool_call_rejects_empty_mentions(
         self, mock_rest_client, participants
     ):
-        """execute_tool_call rejects empty mentions at the schema validation layer."""
+        """execute_tool_call propagates the centralized mention-required error."""
+        from band.core.exceptions import BandToolError
+        from band.runtime.tools import SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
+
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        result = await tools.execute_tool_call(
-            "band_send_message", {"content": "Hello!", "mentions": []}
-        )
+        with pytest.raises(BandToolError) as exc_info:
+            await tools.execute_tool_call(
+                "band_send_message", {"content": "Hello!", "mentions": []}
+            )
 
-        assert "mentions" in result
+        assert str(exc_info.value) == SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_not_called()
 
 
@@ -1188,10 +1171,11 @@ class TestToolInputModels:
         assert model.content == "Hello"
         assert model.mentions == ["User"]
 
-    def test_send_message_input_rejects_empty_mentions(self):
-        """SendMessageInput rejects empty mentions — schema requires ≥1."""
-        with pytest.raises(Exception):
-            SendMessageInput(content="Hello", mentions=[])
+    def test_send_message_input_accepts_empty_mentions(self):
+        """Schema accepts empty mentions; the ≥1 rule is enforced centrally
+        in AgentTools.send_message so the LLM-facing message stays consistent."""
+        model = SendMessageInput(content="Hello", mentions=[])
+        assert model.mentions == []
 
     def test_send_event_input_validation(self):
         """SendEventInput should validate fields."""

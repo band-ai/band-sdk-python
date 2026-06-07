@@ -149,12 +149,11 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             return ToolResult(data="Error: No tools available in current context")
 
         try:
-            # Parse mentions from comma-separated string
+            # Parse mentions from comma-separated string. Empty-mention
+            # enforcement is centralized in AgentTools.send_message so the
+            # LLM gets the same message (including the send_event fallback)
+            # on every surface.
             mention_list = [m.strip() for m in mentions.split(",") if m.strip()]
-            if not mention_list:
-                logger.warning("[Parlant Tool] send_message: No mentions provided")
-                return ToolResult(data="Error: At least one mention is required")
-
             logger.info("[Parlant Tool] Sending message to: %s", mention_list)
             await tools.send_message(content, mention_list)
             # Mark that we sent a message via the tool (so adapter doesn't duplicate)

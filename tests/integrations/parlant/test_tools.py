@@ -348,13 +348,28 @@ class TestParlantToolFunctions:
     async def test_send_message_requires_mentions(
         self, parlant_tools, mock_tools, mock_context
     ):
-        """Should return error when no mentions provided."""
+        """Empty mentions fall through to the centralized send_message check.
+
+        The wrapper no longer pre-checks mentions; it forwards an empty list
+        to AgentTools.send_message, which raises the shared mention-required
+        BandToolError. The wrapper must surface that message (including the
+        band_send_event fallback) to the LLM.
+        """
+        from band.core.exceptions import BandToolError
+        from band.runtime.tools import SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
+
         set_session_tools(mock_context.session_id, mock_tools)
+        mock_tools.send_message.side_effect = BandToolError(
+            SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
+        )
 
         send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello", "")
 
-        assert "At least one mention is required" in result.data
+        # Wrapper forwarded the empty list rather than short-circuiting.
+        mock_tools.send_message.assert_awaited_once_with("Hello", [])
+        assert "requires at least one mention" in result.data
+        assert "band_send_event" in result.data
 
     @pytest.mark.asyncio
     async def test_send_message_translates_band_tool_error(

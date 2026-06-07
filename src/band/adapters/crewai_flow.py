@@ -995,6 +995,11 @@ class SideEffectExecutor:
                 content=content,
                 mentions=mentions or None,
             )
+        except BandToolError:
+            # send_message rejected the call itself (e.g. missing mentions).
+            # Propagate the original message so the LLM learns the real cause.
+            await self._record_indeterminate(side_effect_key=side_effect_key)
+            raise
         except Exception:  # noqa: BLE001
             logger.warning(
                 "send_message failed for final side effect %s",
@@ -1380,14 +1385,22 @@ class CrewAIFlowSubCrewReporter:
                 content=content,
                 mentions=mentions or None,
             )
-        except Exception:  # noqa: BLE001
+        except BandToolError:
+            # send_message rejected the call itself (e.g. missing mentions).
+            # Record the indeterminate side effect but propagate the original
+            # message so the LLM learns the real cause and can retry.
+            await self._executor._record_indeterminate(side_effect_key=key)
+            raise
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "send_message failed for sub-Crew side effect %s",
                 key,
                 exc_info=True,
             )
             await self._executor._record_indeterminate(side_effect_key=key)
-            raise BandToolError(f"send_message failed for sub-Crew side effect {key}")
+            raise BandToolError(
+                f"send_message failed for sub-Crew side effect {key}"
+            ) from exc
         message_id = (
             getattr(message_response, "id", None)
             if message_response is not None

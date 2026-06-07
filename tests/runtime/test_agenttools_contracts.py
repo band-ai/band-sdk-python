@@ -85,12 +85,10 @@ class TestBandToolErrorImport:
     """Verify BandToolError is usable for the send_message contract."""
 
     def test_can_raise_and_catch(self) -> None:
-        with pytest.raises(BandToolError, match="At least one mention"):
-            raise BandToolError(
-                "At least one mention is required. "
-                "Available participants: ['@alice']. "
-                "Please retry with mentions specifying who this message is for."
-            )
+        from band.runtime.tools import SEND_MESSAGE_REQUIRES_MENTION_MESSAGE
+
+        with pytest.raises(BandToolError, match="at least one mention"):
+            raise BandToolError(SEND_MESSAGE_REQUIRES_MENTION_MESSAGE)
 
 
 class TestFakeAgentToolsIsHubRoom:

@@ -77,6 +77,16 @@ class ToolDefinition:
 # --- Tool input models (single source of truth for schemas) ---
 
 
+#: Single source of truth for the "no mentions" rejection message. Every surface
+#: that enforces the ≥1-mention rule (runtime send_message, CrewAI, Parlant) must
+#: surface this exact text so the LLM always learns it can fall back to
+#: band_send_event for non-addressed status or observability.
+SEND_MESSAGE_REQUIRES_MENTION_MESSAGE = (
+    "band_send_message requires at least one mention. "
+    "Use band_send_event for non-addressed status or observability."
+)
+
+
 class SendMessageInput(BaseModel):
     """Send a message to the chat room.
 
@@ -88,7 +98,6 @@ class SendMessageInput(BaseModel):
     content: str = Field(..., description="The message content to send")
     mentions: list[str] = Field(
         ...,
-        min_length=1,
         description=(
             "List of participant handles to @mention. At least one required. "
             "For users: @<username> (e.g., '@john'). "
@@ -1228,16 +1237,10 @@ class AgentTools(AgentToolsProtocol):
         resolved_mentions = self._resolve_mentions(mentions or [])
 
         # Validate mentions are not empty — API requires ≥1 mention.
-        # Return a helpful error so the LLM can retry with proper mentions.
+        # Return a helpful error so the LLM can retry with proper mentions
+        # or fall back to band_send_event for non-addressed status.
         if not resolved_mentions:
-            participant_names = [
-                p.get("handle") or p["name"] for p in self._participants
-            ]
-            raise BandToolError(
-                "At least one mention is required. "
-                f"Available participants: {participant_names}. "
-                "Please retry with mentions specifying who this message is for."
-            )
+            raise BandToolError(SEND_MESSAGE_REQUIRES_MENTION_MESSAGE)
 
         logger.debug("Sending message to room %s", self.room_id)
 
