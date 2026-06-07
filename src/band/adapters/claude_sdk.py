@@ -18,7 +18,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -61,6 +61,10 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
+from band.integrations.claude_sdk.dedup_tools import (
+    DEFAULT_DEDUP_TTL_SECONDS,
+    DedupingAgentTools,
+)
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -199,6 +203,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         max_pending_approvals_per_room: int = 50,
         approval_authorized_senders: set[str] | None = None,
         features: AdapterFeatures | None = None,
+        send_message_dedup_ttl_seconds: float = DEFAULT_DEDUP_TTL_SECONDS,
     ):
         """
         Initialize the Claude SDK adapter.
@@ -249,6 +254,12 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features: Unified adapter feature settings. When provided alongside
                 deprecated ``enable_execution_reporting`` or ``enable_memory_tools``,
                 raises ``BandConfigError``.
+            send_message_dedup_ttl_seconds: Window (seconds) inside which two
+                ``band_send_message`` MCP tool calls with identical
+                ``(content, mentions)`` are collapsed into one platform POST.
+                Mitigates duplicate-message events caused by Claude CLI / MCP
+                transport retries when the event loop is stalled.
+                Defaults to 30 s; set to ``0`` to disable dedup entirely.
         """
         if not _CLAUDE_SDK_AVAILABLE:
             raise ImportError(
@@ -315,6 +326,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self.approval_timeout_decision: ApprovalDecision = approval_timeout_decision
         self.max_pending_approvals_per_room = max_pending_approvals_per_room
         self.approval_authorized_senders: set[str] | None = approval_authorized_senders
+
+        # send_message dedup window.  0 disables the wrapper.
+        if send_message_dedup_ttl_seconds < 0:
+            raise ValueError("send_message_dedup_ttl_seconds must be >= 0")
+        self.send_message_dedup_ttl_seconds = send_message_dedup_ttl_seconds
 
         # Session manager and MCP server (created after start)
         self._session_manager: ClaudeSessionManager | None = None
@@ -461,8 +477,40 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        # Store tools for MCP server access
-        self._room_tools[room_id] = tools
+        # Store tools for MCP server access.  Wrap with the send_message
+        # dedup shim so MCP-driven retries (event-loop saturation
+        # under Claude CLI load causes the same band_send_message tool
+        # call to fire more than once for a single LLM-intended send) do
+        # not turn into duplicate chat messages.  Bypass the wrapper when
+        # the operator has explicitly opted out via ttl=0.
+        #
+        # The wrapper MUST persist for the room so a lingering MCP retry can
+        # still see the cache through self._room_tools.get. MCP tool calls
+        # only resolve by room id, not by the original inbound message id, so
+        # the cache is intentionally keyed by the outgoing payload within the
+        # per-room wrapper. Swap the inner reference instead of rebuilding the
+        # wrapper.
+        #
+        # DedupingAgentTools is structurally a superset of AgentToolsProtocol
+        # (the dedup shim only intercepts send_message and __getattr__-forwards
+        # everything else), but pyrefly cannot reason about __getattr__ for
+        # protocol conformance, so we cast through Any.
+        if self.send_message_dedup_ttl_seconds > 0:
+            existing = self._room_tools.get(room_id)
+            if isinstance(existing, DedupingAgentTools):
+                if existing._inner is not tools:
+                    await existing.update_inner(tools)
+                tools = cast(AgentToolsProtocol, existing)
+            else:
+                wrapper = DedupingAgentTools(
+                    tools,
+                    ttl_seconds=self.send_message_dedup_ttl_seconds,
+                    label=room_id,
+                )
+                tools = cast(AgentToolsProtocol, wrapper)
+                self._room_tools[room_id] = tools
+        else:
+            self._room_tools[room_id] = tools
 
         # Approval flow: track notify target and intercept local commands
         if self.approval_mode is not None:
