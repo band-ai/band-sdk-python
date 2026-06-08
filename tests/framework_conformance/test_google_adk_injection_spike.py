@@ -24,7 +24,7 @@ is ADK's real machinery:
 
 ``model_seam_kind=INTERNAL_MODEL_SUBCLASS`` / ``drift_risk=HIGH``: the scripted
 ``BaseLlm``/``LlmResponse`` shape is ADK-internal, so this spike is pinned to
-``google-adk >=1.0,<2``. If a future ADK release reshapes that contract, the spike
+``google-adk >=1.10,<1.11``. If a future ADK release reshapes that contract, the spike
 fails loudly and the binding's version_pin must be bumped.
 """
 

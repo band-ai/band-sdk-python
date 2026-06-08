@@ -4,8 +4,9 @@ Verifies that each adapter can:
 - Start, process a message, and stop against a real platform
 - Execute platform tools (send_message)
 
-Adapters tested: langgraph, anthropic, pydantic_ai, claude_sdk, crewai.
-Parlant is excluded (requires separate server setup, see test_parlant.py).
+Adapters tested: langgraph, anthropic, pydantic_ai, claude_sdk, crewai,
+opencode, letta. CrewAI Flow and Parlant have dedicated E2E files because they
+exercise narrower adapter-specific contracts.
 
 Run with:
     E2E_TESTS_ENABLED=true uv run pytest tests/e2e/adapters/ -v -s --no-cov

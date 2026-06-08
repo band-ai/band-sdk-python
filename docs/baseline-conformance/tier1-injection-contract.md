@@ -161,9 +161,9 @@ undifferentiated "N-A" bucket organised by runtime topology (subprocess vs remot
 vs framework-internal). That axis is wrong. The honest dividing line is **who owns
 the code where the model's decision becomes a tool call** — and it cuts across
 topology. The mechanical test is a one-line grep: which adapters call
-`tools.execute_tool_call(...)` **in-process**? Exactly three — `codex.py`,
-`gemini.py`, `google_adk.py` — plus the two model-object adapters whose framework
-dispatches for them (LangGraph, PydanticAI).
+`tools.execute_tool_call(...)` **in-process**? Exactly four — `anthropic.py`,
+`codex.py`, `gemini.py`, `google_adk.py` — plus the two model-object adapters
+whose framework dispatches for them (LangGraph, PydanticAI).
 
 So the taxonomy axis is **seam-kind** — where the faked decision installs and
 whether real dispatch is reachable in-process — and **Tier-1 status** and
@@ -225,7 +225,7 @@ member is N-A by exploration, with a recorded `na_subreason` and a **required**
 
 | Adapter | `na_subreason` | Why injection would fake dispatch |
 |---|---|---|
-| CrewAI | `IN_PROCESS_PRIVATE_PARSER` | builds `LLM(model=str)` internally (`crewai.py:223`); a fake LLM must emit CrewAI's ReAct/response structure, which its parser re-parses — reconstructing the dispatch contract |
+| CrewAI | `IN_PROCESS_PRIVATE_PARSER` | builds `LLM(model=str)` internally (`crewai.py:223`) and the CrewAI executor owns the function-calling/tool-routing path; reaching it in isolation would require replacing the framework-owned routing surface, not just supplying a model decision |
 | CrewAI-Flow | `NO_MODEL_DECISION_AT_ROUTING_BOUNDARY` | platform effects come from the Flow's terminal return via `SideEffectExecutor`; there is no single model decision to inject |
 | Parlant | `IN_PROCESS_FRAMEWORK_RUNTIME` | the Parlant Application owns routing after `trigger_processing=True`; no provider tool-call to inject |
 | Claude SDK | `OUT_OF_PROCESS_SUBPROCESS_DECISION` | the `claude` subprocess decides; `_process_response` is emission-only; real dispatch is an MCP callback the subprocess makes |
@@ -233,10 +233,11 @@ member is N-A by exploration, with a recorded `na_subreason` and a **required**
 | Letta | `OUT_OF_PROCESS_REMOTE_DECISION` | the remote Letta server executes tools server-side; the adapter only observes and auto-relays final text |
 
 **The mechanical CrewAI-vs-ADK distinction** is the load-bearing one: ADK runs its
-*real* dispatch on a scripted native `FunctionCall` (honest), whereas CrewAI would
-require synthesising the text its ReAct parser expects and hoping it routes
-(faking dispatch). Same "framework owns the loop" topology, opposite verdict —
-because the test is who owns the decision→tool code, not where the loop runs.
+*real* dispatch on a scripted native `FunctionCall` (honest), whereas CrewAI owns
+the executor path that consumes native function calls and routes tools; replacing
+that path in isolation would fake the dispatch rather than observe it. Same
+"framework owns the loop" topology, opposite verdict — because the test is who
+owns the decision→tool code, not where the loop runs.
 
 ### 5.5 Why no MCP "mini-tier"
 
@@ -250,8 +251,10 @@ the model loop and the dispatch trigger live outside the SDK's process, which is
 exactly what only E2E exercises. Not a default; a conclusion.
 
 Every N-A is a deliberate, visible status in the scorecard — never a silent gap —
-and carries the obligation that the adapter actually appears in the Tier-2 matrix
-via its `tier2_coverage` pointer.
+and carries the obligation that the adapter actually appears in the E2E matrix via
+its `tier2_coverage` pointer. For the shared adapter E2E file, the drift gate also
+checks that the adapter is present in `adapter_entry`'s parametrized list; a mocked
+unit test or an unparametrized shared E2E pointer is not enough.
 
 ### 5.6 The `InjectionBinding` registry + fail-closed drift gate
 
@@ -295,8 +298,9 @@ source** (checked by AST against the on-disk module, so a rename fails even in a
 CI lane where the adapter's optional framework dep is absent — it never skips a
 real rename); a `HIGH`-drift binding's `version_pin` does not contain the
 *installed* framework version (`packaging` spec check); a `RUNTIME_OWNED_ROUTING`
-binding lacks an `na_subreason` or a resolvable `tier2_coverage`; or an N-A binding
-carries honest-only fields. The companion positive-routing canary
+binding lacks an `na_subreason`, points `tier2_coverage` outside E2E, or points at
+the shared adapter E2E file without being in `adapter_entry`'s parametrized matrix;
+or an N-A binding carries honest-only fields. The companion positive-routing canary
 (`test_injection_canary.py`) fails closed when an honest binding has no canary
 builder, or when driving the fixed canary decision through the real adapter yields
 zero dispatches **carrying the exact canary args** on the binding's declared
@@ -405,7 +409,9 @@ Two findings from building these confirm the contract's design choices:
   through ADK's real `InMemoryRunner` → `_ThenvoiToolBridge.run_async` →
   `execute_tool_call` with no production-code change. The spike pins
   `drift_risk=HIGH`: the scripted `BaseLlm`/`LlmResponse` shape is ADK-internal,
-  so it carries a `google-adk >=1.0,<2` version expectation.
+  so the conformance binding carries a tested-minor `google-adk >=1.10,<1.11`
+  version expectation. This is the internal seam guard, not the package extra's
+  full runtime compatibility range.
 
 ---
 
@@ -433,9 +439,10 @@ Remaining implementation work (mechanics, not contract):
 - **Land the `InjectionBinding` registry + drift gate** (§5.6) — **done**:
   `tests/framework_conformance/injection_registry.py` holds one binding per adapter
   (every Python adapter except A2A / A2A-Gateway / ACP), and
-  `test_injection_binding_drift.py` fails closed — proven against four violation
+  `test_injection_binding_drift.py` fails closed — proven against five violation
   classes: a forgotten/new adapter, a renamed honest seam, a missing
-  `tier2_coverage` file, and a HIGH-drift binding without a `version_pin`.
+  `tier2_coverage` file, a shared E2E pointer that does not parametrize the N-A
+  adapter, and a HIGH-drift binding without a `version_pin`.
 - **Positive-routing canary** — **done**:
   `tests/framework_conformance/test_injection_canary.py` drives one fixed canary
   decision (`thenvoi_send_message(content="CANARY", ...)`) through every honest

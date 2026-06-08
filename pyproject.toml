@@ -164,6 +164,8 @@ dev = [
     "google-genai>=1.43.0",
     # Include google-adk for testing
     "google-adk>=1.0.0,<2",
+    # Include Letta SDK for testing
+    "letta-client>=0.1.0",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",
