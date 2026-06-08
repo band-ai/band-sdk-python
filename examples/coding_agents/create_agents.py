@@ -20,7 +20,7 @@ import yaml
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
-# Add repo root to path for band_rest import
+# Add repo root to path for thenvoi_rest import
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 AGENTS = [
@@ -36,8 +36,8 @@ async def main() -> None:
 
     base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
 
-    from band_rest import AsyncRestClient
-    from band_rest.types import AgentRegisterRequest
+    from thenvoi_rest import AsyncRestClient
+    from thenvoi_rest.types import AgentRegisterRequest
 
     client = AsyncRestClient(api_key=api_key, base_url=base_url)
 

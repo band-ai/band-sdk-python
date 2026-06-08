@@ -19,11 +19,11 @@ import os
 import sys
 
 from dotenv import load_dotenv
-from band_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
-from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
+from thenvoi_rest import AsyncRestClient, ChatMessageRequest, ParticipantRequest
+from thenvoi_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
-from band_rest.types import ChatMessageRequestMentionsItem as Mention
+from thenvoi_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from setup_logging import setup_logging
 from band.config import load_agent_config

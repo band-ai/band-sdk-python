@@ -22,8 +22,8 @@ from band.integrations.a2a.gateway import (
     GatewaySessionState,
 )
 from band.testing import FakeAgentTools
-from band_rest import Peer
-from band_rest.core.api_error import ApiError
+from thenvoi_rest import Peer
+from thenvoi_rest.core.api_error import ApiError
 
 
 def make_platform_message(

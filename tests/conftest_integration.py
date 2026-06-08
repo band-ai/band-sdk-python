@@ -29,11 +29,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
-from band_rest import AsyncRestClient, ChatRoomRequest
-from band_rest.core.api_error import ApiError
-from band_rest.types import ParticipantRequest
-from band_testing.markers import skip_without_env, skip_without_envs
-from band_testing.settings import BandTestSettings as BandTestSettings
+from thenvoi_rest import AsyncRestClient, ChatRoomRequest
+from thenvoi_rest.core.api_error import ApiError
+from thenvoi_rest.types import ParticipantRequest
+from thenvoi_testing.markers import skip_without_env, skip_without_envs
+from thenvoi_testing.settings import BaseTestSettings
 
 if TYPE_CHECKING:
     from _pytest.config.argparsing import Parser
@@ -95,10 +95,18 @@ def is_no_clean_mode(request: pytest.FixtureRequest | None = None) -> bool:
 # =============================================================================
 
 
-class TestSettings(BandTestSettings):
+class TestSettings(BaseTestSettings):
     """Settings for integration tests, loaded from .env.test."""
 
     _env_file_path = Path(__file__).parent.parent / ".env.test"
+
+    band_api_key: str = ""
+    band_api_key_2: str = ""
+    band_api_key_user: str = ""
+    band_base_url: str = "http://localhost:4000"
+    band_ws_url: str = "ws://localhost:4000/api/v1/socket/websocket"
+    test_agent_id: str = ""
+    test_agent_id_2: str = ""
 
 
 # Load .env.test into os.environ so skip_without_env() markers (which check
@@ -139,7 +147,7 @@ def get_test_agent_id_2() -> str | None:
     return test_settings.test_agent_id_2 or None
 
 
-# Skip markers using band_testing shared markers
+# Skip markers using thenvoi_testing shared markers
 requires_api = skip_without_env("BAND_API_KEY")
 
 requires_multi_agent = skip_without_envs(

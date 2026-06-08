@@ -690,7 +690,7 @@ class TestGetNextMessage:
     async def test_returns_none_on_204(self) -> None:
         """204 No Content is the platform's "no actionable message" signal —
         the only ``ApiError`` that should resolve to ``None``."""
-        from band_rest.core.api_error import ApiError
+        from thenvoi_rest.core.api_error import ApiError
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
@@ -706,7 +706,7 @@ class TestGetNextMessage:
         can distinguish "no pending" from "lookup failed." The old behavior
         swallowed both as ``None``, which silently dropped messages at the
         OneShot claim step."""
-        from band_rest.core.api_error import ApiError
+        from thenvoi_rest.core.api_error import ApiError
 
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()

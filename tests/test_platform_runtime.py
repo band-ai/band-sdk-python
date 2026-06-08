@@ -1,6 +1,6 @@
 """Tests for PlatformRuntime."""
 
-from band_rest.core.api_error import ApiError
+from thenvoi_rest.core.api_error import ApiError
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
