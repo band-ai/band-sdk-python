@@ -102,6 +102,45 @@ class CustomToolProbe:
     name: str  # the tool name the model must emit for this framework
 
 
+class _SchemaTools(FakeAgentTools):
+    """Recorder that exposes canonical platform schemas to Anthropic."""
+
+    def get_tool_schemas(
+        self,
+        format: str,
+        *,
+        include_memory: bool = False,
+        include_contacts: bool = True,
+    ) -> list[dict[str, Any]]:
+        if format != "anthropic":
+            return super().get_tool_schemas(
+                format,
+                include_memory=include_memory,
+                include_contacts=include_contacts,
+            )
+
+        from thenvoi.runtime.tools import iter_tool_definitions
+
+        schemas: list[dict[str, Any]] = []
+        for definition in iter_tool_definitions(
+            include_memory=include_memory,
+            include_contacts=include_contacts,
+        ):
+            input_schema = definition.input_model.model_json_schema()
+            input_schema.pop("title", None)
+            schemas.append(
+                {
+                    "name": definition.name,
+                    "description": definition.input_model.__doc__ or "",
+                    "input_schema": input_schema,
+                }
+            )
+        return schemas
+
+    def get_anthropic_tool_schemas(self, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.get_tool_schemas("anthropic", **kwargs)
+
+
 # ---------------------------------------------------------------------------
 # Per-family translators + injection bindings.
 #
@@ -231,6 +270,14 @@ def _make_anthropic_adapter(
 
     async def _scripted_call_anthropic(messages: Any, tools: Any) -> Any:
         decision = cursor.pop(0)
+        exposed_names = {t.get("name") for t in tools}
+        missing = [
+            tc.name for tc in decision.tool_calls if tc.name not in exposed_names
+        ]
+        assert not missing, (
+            "Anthropic spike must exercise the adapter's tool-exposure leg; "
+            f"missing scripted tools from schema: {missing!r}"
+        )
         if decision.tool_calls:
             content = [
                 ToolUseBlock(
@@ -340,7 +387,7 @@ async def test_platform_tool_dispatch_right_tool_right_args(
 ) -> None:
     """L0/L5: one neutral script -> real routing -> right tool, right args."""
     room_id = "room-injection-proof"
-    tools = FakeAgentTools(room_id=room_id)  # the shared recorder
+    tools = _SchemaTools(room_id=room_id)  # the shared recorder
     await _run(binding.make_adapter(SCRIPT), tools, room_id)
 
     dispatched = [
@@ -375,7 +422,7 @@ async def test_custom_tool_dispatch_observed_via_handler_not_recorder(
         ),
         ModelDecision(text="done"),
     ]
-    tools = FakeAgentTools(room_id=room_id)
+    tools = _SchemaTools(room_id=room_id)
     await _run(
         binding.make_adapter(script, additional_tools=[probe.tool]), tools, room_id
     )
@@ -417,7 +464,7 @@ async def test_execution_events_emitted_in_order_and_correlated(
     its originating call, with canonical type strings and non-empty payloads.
     """
     room_id = "room-emission"
-    tools = FakeAgentTools(room_id=room_id)
+    tools = _SchemaTools(room_id=room_id)
     adapter = binding.make_adapter(
         ORDER_SCRIPT, features=AdapterFeatures(emit={Emit.EXECUTION})
     )
@@ -461,7 +508,7 @@ async def test_negative_control_text_only_does_not_dispatch(
     rather than a constant — so the positive tests are not vacuous.
     """
     room_id = "room-injection-negative"
-    tools = FakeAgentTools(room_id=room_id)
+    tools = _SchemaTools(room_id=room_id)
     await _run(
         binding.make_adapter([ModelDecision(text="just a reply, no tools")]),
         tools,

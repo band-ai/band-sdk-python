@@ -153,8 +153,8 @@ def _get_tool_bridge_class() -> type:
             "google-adk BaseTool has no known declaration method "
             f"(tried: {', '.join(_DECLARATION_CANDIDATES)}). "
             "This adapter relies on overriding the declaration method "
-            "(pinned to google-adk >=1.0,<2). Your installed version "
-            "may be incompatible."
+            "(conformance seam pinned to google-adk >=1.10,<1.11). "
+            "Your installed version may be incompatible."
         )
 
     logger.debug(
@@ -200,7 +200,7 @@ def _get_tool_bridge_class() -> type:
                     f"Failed to build FunctionDeclaration for tool '{tool_name}'. "
                     "This may indicate an incompatible google-adk version — "
                     "the adapter relies on BaseTool's declaration mechanism "
-                    "pinned to google-adk >=1.0,<2."
+                    "(conformance seam pinned to google-adk >=1.10,<1.11)."
                 ) from exc
 
         def _build_declaration(self) -> types.FunctionDeclaration:
@@ -271,8 +271,8 @@ def _get_tool_bridge_class() -> type:
         raise RuntimeError(
             "google-adk BaseTool declaration smoke-test failed. "
             f"Method '{active_methods[0]}' exists but did not return a valid "
-            "FunctionDeclaration. The adapter is pinned to google-adk "
-            ">=1.0,<2 — your installed version may be incompatible."
+            "FunctionDeclaration. The conformance seam is pinned to google-adk "
+            ">=1.10,<1.11 — your installed version may be incompatible."
         ) from exc
 
     return _BandToolBridge

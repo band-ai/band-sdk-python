@@ -43,26 +43,37 @@ _CANARY_ARGS: dict[str, Any] = {"content": "CANARY", "mentions": ["@canary"]}
 
 # Every honest adapter is told the same send_message schema, so each framework's
 # real tool-exposure path has a valid declaration to bind.
-_SEND_MESSAGE_SCHEMA: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": _CANARY_TOOL,
-        "description": "Send a message to the chat room.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "content": {"type": "string"},
-                "mentions": {"type": "array", "items": {"type": "string"}},
+def _send_message_schema(format: str) -> dict[str, Any]:
+    from thenvoi.runtime.tools import TOOL_DEFINITIONS
+
+    definition = TOOL_DEFINITIONS[_CANARY_TOOL]
+    input_schema = definition.input_model.model_json_schema()
+    input_schema.pop("title", None)
+
+    if format == "openai":
+        return {
+            "type": "function",
+            "function": {
+                "name": definition.name,
+                "description": definition.input_model.__doc__ or "",
+                "parameters": input_schema,
             },
-            "required": ["content", "mentions"],
-        },
-    },
-}
+        }
+    if format == "anthropic":
+        return {
+            "name": definition.name,
+            "description": definition.input_model.__doc__ or "",
+            "input_schema": input_schema,
+        }
+    raise ValueError(f"Unsupported schema format: {format}")
 
 
 class _SchemaTools(FakeAgentTools):
     def get_openai_tool_schemas(self, **_kwargs: Any) -> list[dict[str, Any]]:
-        return [_SEND_MESSAGE_SCHEMA]
+        return [_send_message_schema("openai")]
+
+    def get_anthropic_tool_schemas(self, **_kwargs: Any) -> list[dict[str, Any]]:
+        return [_send_message_schema("anthropic")]
 
 
 def _canary_msg(room_id: str) -> PlatformMessage:

@@ -254,8 +254,9 @@ async def e2e_room_allocator(
 
     The platform limits agents to 10 active rooms, and rooms persist (no delete
     API). Each adapter gets its own room to avoid cross-adapter contamination
-    in room history. Expected allocation: 5 standard adapters + 1 Parlant +
-    1 isolation Room B = 7 rooms max (well within the 10-room limit).
+    in room history. Full allocation is exactly 10 rooms: 7 shared-matrix
+    adapters, CrewAI Flow's dedicated room, Parlant's dedicated room, and the
+    shared isolation Room B.
     """
     client = e2e_session_client
     cache: dict[str, tuple[str, str, str]] = {}
@@ -425,6 +426,8 @@ async def ws_client(
         "pydantic_ai",
         "claude_sdk",
         "crewai",
+        "opencode",
+        "letta",
     ]
 )
 def adapter_entry(

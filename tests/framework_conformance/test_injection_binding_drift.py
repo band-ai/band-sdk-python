@@ -42,6 +42,45 @@ def _discover_adapter_modules() -> set[str]:
     }
 
 
+def _e2e_parametrized_adapters() -> set[str]:
+    """Read the shared E2E adapter matrix without importing optional deps."""
+    conftest = _REPO_ROOT / "tests" / "e2e" / "conftest.py"
+    tree = ast.parse(conftest.read_text(encoding="utf-8"), filename=str(conftest))
+
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or node.name != "adapter_entry":
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call):
+                continue
+            func = decorator.func
+            if not (
+                isinstance(func, ast.Attribute)
+                and func.attr == "fixture"
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "pytest"
+            ):
+                continue
+            for keyword in decorator.keywords:
+                if keyword.arg == "params" and isinstance(
+                    keyword.value, (ast.List, ast.Tuple)
+                ):
+                    adapters: set[str] = set()
+                    for elt in keyword.value.elts:
+                        if not isinstance(elt, ast.Constant) or not isinstance(
+                            elt.value, str
+                        ):
+                            raise AssertionError(
+                                "tests/e2e/conftest.py adapter_entry params must be "
+                                "literal adapter-name strings"
+                            )
+                        adapters.add(elt.value)
+                    return adapters
+    raise AssertionError(
+        "Could not find pytest.fixture(params=[...]) for adapter_entry"
+    )
+
+
 class SeamNotFound(Exception):
     """The seam's attribute path does not exist in the module source."""
 
@@ -260,6 +299,32 @@ class TestBindingInvariants:
         cov = _REPO_ROOT / binding.tier2_coverage
         assert cov.is_file(), (
             f"{binding.adapter}: tier2_coverage {binding.tier2_coverage!r} does not exist"
+        )
+        assert cov.is_relative_to(_REPO_ROOT / "tests" / "e2e"), (
+            f"{binding.adapter}: N-A tier2_coverage must point at an E2E test, "
+            f"not {binding.tier2_coverage!r}"
+        )
+        if binding.tier2_coverage != "tests/e2e/adapters/test_all_adapters.py":
+            content = cov.read_text(encoding="utf-8")
+            assert binding.adapter in cov.stem or binding.adapter in content, (
+                f"{binding.adapter}: dedicated tier2_coverage "
+                f"{binding.tier2_coverage!r} does not mention the adapter; "
+                f"use a real adapter-specific E2E file or the shared matrix."
+            )
+
+    @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
+    def test_na_binding_is_reached_by_e2e_matrix(self, binding) -> None:
+        if binding.tier1_status is not Tier1Status.N_A_TIER2:
+            return
+        assert binding.tier2_coverage
+        if binding.tier2_coverage != "tests/e2e/adapters/test_all_adapters.py":
+            return
+
+        parametrized = _e2e_parametrized_adapters()
+        assert binding.adapter in parametrized, (
+            f"{binding.adapter}: tier2_coverage points at the shared adapter E2E "
+            f"test, but adapter_entry does not parametrize it. Add {binding.adapter!r} "
+            f"to tests/e2e/conftest.py or point tier2_coverage at a dedicated E2E test."
         )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)

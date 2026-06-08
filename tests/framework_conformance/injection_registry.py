@@ -157,7 +157,7 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         seam="thenvoi.adapters.google_adk:GoogleADKAdapter._create_runner",
         model_seam_kind=ModelSeamKind.INTERNAL_MODEL_SUBCLASS,
         spike_test=f"{_SPIKE_DIR}/test_google_adk_injection_spike.py",
-        version_pin="google-adk>=1.0,<2",
+        version_pin="google-adk>=1.10,<1.11",
     ),
     # ---- INTERNAL_CLIENT_CALL ---------------------------------------------
     InjectionBinding(
@@ -203,7 +203,7 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.N_A_TIER2,
         drift_risk=DriftRisk.LOW,
         na_subreason=NASubreason.NO_MODEL_DECISION_AT_ROUTING_BOUNDARY,
-        tier2_coverage="tests/adapters/test_crewai_flow_adapter.py",
+        tier2_coverage="tests/e2e/adapters/test_crewai_flow.py",
     ),
     InjectionBinding(
         adapter="parlant",
@@ -227,7 +227,7 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.N_A_TIER2,
         drift_risk=DriftRisk.LOW,
         na_subreason=NASubreason.OUT_OF_PROCESS_SERVER_DECISION,
-        tier2_coverage="tests/adapters/test_opencode_adapter.py",
+        tier2_coverage="tests/e2e/adapters/test_all_adapters.py",
     ),
     InjectionBinding(
         adapter="letta",
@@ -235,7 +235,7 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.N_A_TIER2,
         drift_risk=DriftRisk.LOW,
         na_subreason=NASubreason.OUT_OF_PROCESS_REMOTE_DECISION,
-        tier2_coverage="tests/adapters/test_letta_adapter.py",
+        tier2_coverage="tests/e2e/adapters/test_all_adapters.py",
     ),
 )
 
