@@ -13,15 +13,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 
 import yaml
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
-
-# Add repo root to path for thenvoi_rest import
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 AGENTS = [
     {"name": "Planner", "role": "planner", "file": "planner.yaml"},
