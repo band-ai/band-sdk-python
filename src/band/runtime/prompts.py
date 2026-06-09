@@ -95,7 +95,11 @@ Common patterns:
 - Facts learned about other agents/entities: `system="long_term"`, `type="semantic"`, `segment="agent"`
 - Events that occurred: `system="long_term"`, `type="episodic"`, `segment="agent"`
 - User preferences or profile info: `system="long_term"`, `type="semantic"`, `segment="user"`
-- How to perform a task: `system="long_term"`, `type="procedural"`, `segment="tool"`"""
+- How to perform a task: `system="long_term"`, `type="procedural"`, `segment="tool"`
+
+When storing with `scope="subject"`, you must pass a real `subject_id` UUID
+(e.g. from `thenvoi_lookup_peers` or the participant list). If you don't have
+one, use `scope="organization"` — never invent a UUID."""
 
 
 MEMORY_SECTION = _memory_section()

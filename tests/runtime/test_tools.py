@@ -151,6 +151,7 @@ class TestMemoryTools:
             type="semantic",
             segment="user",
             thought="useful later",
+            scope="organization",
         )
 
         call_kwargs = (
@@ -160,6 +161,32 @@ class TestMemoryTools:
         assert "subject_id" not in memory_payload
         assert "metadata" not in memory_payload
         assert call_kwargs["request_options"] is DEFAULT_REQUEST_OPTIONS
+
+    @pytest.mark.asyncio
+    async def test_store_memory_rejects_subject_scope_without_subject_id(
+        self, mock_rest_client
+    ) -> None:
+        """scope="subject" with no subject_id is unretrievable, so it is rejected.
+
+        A subject-scoped memory with a null subject can't be matched by a subject
+        query and is excluded from organization-wide results, so the backend would
+        silently orphan it. The tool raises ValueError instead; execute_tool_call
+        surfaces that to the LLM so it can retry with scope="organization".
+        """
+        mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock()
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="requires a subject_id"):
+            await tools.store_memory(
+                content="remember this",
+                system="working",
+                type="semantic",
+                segment="user",
+                thought="useful later",
+                scope="subject",
+            )
+
+        mock_rest_client.agent_api_memories.create_agent_memory.assert_not_called()
 
     @pytest.mark.parametrize(
         ("tool_method", "rest_method"),

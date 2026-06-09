@@ -1849,12 +1849,26 @@ class AgentTools(AgentToolsProtocol):
         """
         from band.client.rest import MemoryCreateRequest
 
+        # A subject-scoped memory with no subject_id is silently unretrievable:
+        # the list endpoint can't match a null subject, and a subject-scoped
+        # memory is excluded from the organization-wide results. Reject it so the
+        # LLM gets a tool error and can retry with scope="organization" (or a real
+        # subject_id). execute_tool_call() surfaces ValueError to the model.
+        if scope == "subject" and subject_id is None:
+            raise ValueError(
+                'scope="subject" requires a subject_id (the UUID of the person or '
+                "agent the memory is about). You did not provide one. If you do not "
+                'have a concrete subject UUID, retry with scope="organization" and '
+                "omit subject_id. Do not invent a UUID."
+            )
+
         logger.debug(
-            "Storing memory: system=%s, type=%s, segment=%s, scope=%s",
+            "Storing memory: system=%s, type=%s, segment=%s, scope=%s, subject_id=%s",
             system,
             type,
             segment,
             scope,
+            subject_id,
         )
         memory_kwargs: dict[str, Any] = {
             "content": content,
