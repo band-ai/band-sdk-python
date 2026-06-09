@@ -97,6 +97,12 @@ acp = [
     "starlette>=0.40.0",
     "uvicorn>=0.32.0",
 ]
+slack = [
+    "slack-sdk>=3.27.0",     # AsyncWebClient, signature verifier, Socket Mode
+    "starlette>=0.40.0",     # HTTP server framework
+    "uvicorn>=0.32.0",       # ASGI server
+    "aiohttp>=3.9,<4",       # Socket Mode transport (slack_sdk.socket_mode.aiohttp)
+]
 bridge = [
     "aiohttp>=3.9,<4",      # Health check HTTP server
     "python-dotenv>=1.2.2",    # Environment variable loading
@@ -161,6 +167,8 @@ dev = [
     # Include ACP deps for testing
     "agent-client-protocol>=0.9.0",
     "mcp>=1.25.0",
+    # Include Slack deps for testing
+    "slack-sdk>=3.27.0",
     # Include Gemini SDK for testing
     "google-genai>=1.43.0",
     # Include google-adk for testing

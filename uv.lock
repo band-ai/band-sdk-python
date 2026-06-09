@@ -555,6 +555,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "slack-sdk" },
     { name = "starlette" },
     { name = "thenvoi-testing-python" },
     { name = "uvicorn" },
@@ -609,6 +610,12 @@ pydantic-ai = [
     { name = "openai" },
     { name = "pydantic-ai-slim", extra = ["anthropic"], marker = "extra == 'extra-8-band-sdk-pydantic-ai' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant')" },
 ]
+slack = [
+    { name = "aiohttp" },
+    { name = "slack-sdk" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -621,6 +628,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'bridge'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'bridge-agentcore'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
+    { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9,<4" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
     { name = "beautifulsoup4", marker = "extra == 'dev'", specifier = ">=4.12.0" },
@@ -703,10 +711,13 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "ruff", marker = "extra == 'dev-crewai'", specifier = ">=0.8.0" },
+    { name = "slack-sdk", marker = "extra == 'dev'", specifier = ">=3.27.0" },
+    { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3.27.0" },
     { name = "starlette", marker = "extra == 'a2a-gateway'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'a2a-gateway-demo'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
+    { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
     { name = "thenvoi-client-rest", specifier = "==0.0.7" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
@@ -715,11 +726,12 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'acp'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'agentcore-runtime'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.32.0" },
+    { name = "uvicorn", marker = "extra == 'slack'", specifier = ">=0.32.0" },
     { name = "websockets", marker = "extra == 'codex'", specifier = ">=13.0" },
     { name = "werkzeug", marker = "extra == 'dev'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "dev", "dev-crewai"]
+provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "dev", "dev-crewai"]
 
 [[package]]
 name = "bcrypt"
@@ -8036,6 +8048,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "slack-sdk"
+version = "3.42.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/00/16258bfa547559b2c936b50c882b4f0a36ebf6b69639eb763d8fa5e8d6cb/slack_sdk-3.42.0.tar.gz", hash = "sha256:873db9e1f632ac650ffdbf9d8ba825f3e9e7e576a1e4f9604ccb2a15b3727e3d", size = 252136, upload-time = "2026-05-18T17:50:44.727Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/ef/8a1556bd4843443993fc116783790a7cc553601a37f7d965ec26eef95e76/slack_sdk-3.42.0-py2.py3-none-any.whl", hash = "sha256:eb39aff97e476e10cc5a8ac29bd2e79a9959e880d9fe0c03b4e8f05b2ac996ff", size = 315469, upload-time = "2026-05-18T17:50:41.972Z" },
 ]
 
 [[package]]

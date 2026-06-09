@@ -257,6 +257,8 @@ def _build_gemini_config() -> ConverterConfig:
 # the standard convert() -> framework-format contract that conformance tests validate.
 # crewai_flow is a metadata-only converter for orchestration state reconstructed from
 # task events; same exception as codex/letta/opencode.
+# slack is a metadata-only converter too: it recovers the Slack thread binding from the
+# room's bootstrap task event (SlackSessionState), not a message-history conversion.
 CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
     {
         "_tool_parsing",
@@ -269,6 +271,7 @@ CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
         "crewai_flow",
         "letta",
         "opencode",
+        "slack",
     }
 )
 
