@@ -7,7 +7,7 @@ semantics or field set requires bumping ``schema_version`` and adding a
 loader for the older version.
 
 The adapter that produces these events lives in
-``src/band/adapters/crewai_flow.py``.
+``src/adapters/crewai_flow.py``.
 """
 
 from __future__ import annotations

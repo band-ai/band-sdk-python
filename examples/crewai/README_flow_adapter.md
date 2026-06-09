@@ -305,7 +305,7 @@ uv run pytest tests/adapters/test_crewai_flow_adapter.py \
   tests/converters/test_crewai_flow.py \
   tests/integrations/test_crewai_tools.py -q
 
-uv run ruff check src/band/adapters/crewai_flow.py \
-  src/band/converters/crewai_flow.py \
-  src/band/integrations/crewai/tools.py
+uv run ruff check src/adapters/crewai_flow.py \
+  src/converters/crewai_flow.py \
+  src/integrations/crewai/tools.py
 ```

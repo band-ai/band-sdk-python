@@ -6,7 +6,7 @@ methods. The nest_asyncio.apply() call is IRREVERSIBLE and affects the entire
 Python process — all event loops will allow nesting after this is applied.
 The patch is applied lazily on first tool execution, not at import time.
 
-Extracted from src/band/adapters/crewai.py so CrewAIAdapter and
+Extracted from src/adapters/crewai.py so CrewAIAdapter and
 CrewAIFlowAdapter share one bridge implementation.
 """
 

@@ -11,7 +11,7 @@ The builder takes three injectables:
   EmitExecutionReporter (gates by Emit.EXECUTION) and NoopReporter.
 - capabilities: frozenset[Capability] — controls which tool subset is exposed.
 
-Extracted from src/band/adapters/crewai.py so both CrewAI adapters share
+Extracted from src/adapters/crewai.py so both CrewAI adapters share
 one platform tool surface.
 """
 

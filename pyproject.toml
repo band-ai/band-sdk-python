@@ -211,14 +211,42 @@ dev-crewai = [
 band-acp = "band.integrations.acp.cli:entry_point"
 band-trigger = "band.cli.trigger:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["band", "band.*"]
-namespaces = false
-
 [tool.setuptools]
-package-dir = {"" = "src"}
+packages = [
+    "band",
+    "band.adapters",
+    "band.cli",
+    "band.client",
+    "band.client.streaming",
+    "band.config",
+    "band.converters",
+    "band.core",
+    "band.docker",
+    "band.integrations",
+    "band.integrations.a2a",
+    "band.integrations.a2a.gateway",
+    "band.integrations.acp",
+    "band.integrations.anthropic",
+    "band.integrations.claude_sdk",
+    "band.integrations.codex",
+    "band.integrations.crewai",
+    "band.integrations.langgraph",
+    "band.integrations.mcp",
+    "band.integrations.opencode",
+    "band.integrations.parlant",
+    "band.integrations.pydantic_ai",
+    "band.integrations.slack",
+    "band.platform",
+    "band.preprocessing",
+    "band.prompts",
+    "band.runtime",
+    "band.testing",
+]
+package-dir = {"band" = "src"}
 include-package-data = true
+
+[tool.setuptools.package-data]
+"band.integrations.slack" = ["templates/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -285,6 +313,12 @@ project_excludes = [
 # the default venv. Rather than excluding the files (which loses type coverage
 # in a dev-crewai venv), tell pyrefly to treat missing crewai modules as Any.
 ignore-missing-imports = [
+    # Setuptools maps package `band` directly to src/. Pyrefly does not model
+    # that package_dir mapping, so source files otherwise resolve as top-level
+    # modules during type checking even though the installed package imports work.
+    "band",
+    "band.*",
+    "__unknown__.*",
     "crewai.*",
     "nest_asyncio",
 ]
@@ -297,7 +331,7 @@ name = "cz_conventional_commits"
 version = "0.1.2"
 version_files = [
     "pyproject.toml:version",
-    "src/band/__init__.py:__version__",
+    "src/__init__.py:__version__",
 ]
 # Tag format aligned with release-please (package-name-v$version)
 tag_format = "band-sdk-python-v$version"
