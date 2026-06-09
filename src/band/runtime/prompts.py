@@ -19,6 +19,8 @@ Example:
 
 from __future__ import annotations
 
+from typing import get_args
+
 from band.core.types import AdapterFeatures, Capability
 
 
@@ -57,15 +59,46 @@ When relaying information between participants, always deliver the answer
 to the original requester. Do not stop at thanking the helper.
 """
 
-MEMORY_SECTION = """
-## Memory Tools
+
+def _memory_section() -> str:
+    from band.runtime.tools import MEMORY_SYSTEM_TYPE_MAP, StoreMemoryInput
+
+    def literal_values(field_name: str) -> tuple[str, ...]:
+        annotation = StoreMemoryInput.model_fields[field_name].annotation
+        return get_args(annotation)
+
+    def format_values(values: tuple[str, ...]) -> str:
+        return " | ".join(f'`"{value}"`' for value in values)
+
+    type_lines = "\n".join(
+        f"  - {system}: {format_values(types)}"
+        for system, types in MEMORY_SYSTEM_TYPE_MAP.items()
+    )
+
+    return f"""## Memory Tools
 
 You have access to memory tools for storing and retrieving information
 across conversations. Use `band_store_memory` to persist important
 information and `band_list_memories` / `band_get_memory` to recall it.
-Use `band_supersede_memory` to mark outdated memories.
-"""
+Use `band_supersede_memory` to mark outdated memories and
+`band_archive_memory` to hide memories that should be preserved.
 
+When calling `band_store_memory`, the `system`, `type`, and `segment` fields
+must use these exact values (case-sensitive):
+
+- **system**: {format_values(literal_values("system"))}
+- **type** (must match the chosen system):
+{type_lines}
+- **segment**: {format_values(literal_values("segment"))}
+
+Common patterns:
+- Facts learned about other agents/entities: `system="long_term"`, `type="semantic"`, `segment="agent"`
+- Events that occurred: `system="long_term"`, `type="episodic"`, `segment="agent"`
+- User preferences or profile info: `system="long_term"`, `type="semantic"`, `segment="user"`
+- How to perform a task: `system="long_term"`, `type="procedural"`, `segment="tool"`"""
+
+
+MEMORY_SECTION = _memory_section()
 CONTACT_SECTION = """
 ## Contact Management Tools
 

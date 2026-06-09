@@ -281,7 +281,14 @@ class StoreMemoryInput(BaseModel):
     )
     type: Literal[
         "iconic", "echoic", "haptic", "episodic", "semantic", "procedural"
-    ] = Field(..., description="Memory type (must be valid for selected system)")
+    ] = Field(
+        ...,
+        description=(
+            "Memory type - must match the chosen system: "
+            "sensory=iconic/echoic/haptic, "
+            "working|long_term=episodic/semantic/procedural"
+        ),
+    )
     segment: Literal["user", "agent", "tool", "guideline"] = Field(
         ..., description="Logical segment"
     )
@@ -296,6 +303,17 @@ class StoreMemoryInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Additional metadata (tags, references)"
     )
+
+
+# Maps each memory system to the type values valid for that system.
+# This is the single source for the system->type partition rendered into the
+# memory prompt section. It must stay in sync with StoreMemoryInput's Literal
+# values; tests/runtime/test_tools.py enforces that invariant.
+MEMORY_SYSTEM_TYPE_MAP: dict[str, tuple[str, ...]] = {
+    "sensory": ("iconic", "echoic", "haptic"),
+    "working": ("episodic", "semantic", "procedural"),
+    "long_term": ("episodic", "semantic", "procedural"),
+}
 
 
 class GetMemoryInput(BaseModel):

@@ -8,10 +8,12 @@ import pytest
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.runtime.tools import (
+    MEMORY_SYSTEM_TYPE_MAP,
     TOOL_MODELS,
     AgentTools,
     SendMessageInput,
     SendEventInput,
+    StoreMemoryInput,
     AddParticipantInput,
     LookupPeersInput,
     GetParticipantsInput,
@@ -1065,7 +1067,7 @@ class TestEmptyMentionsValidation:
         assert result.model_dump()["id"] == "msg-123"
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_called_once()
 
-    async def test_execute_tool_call_raises_band_tool_error(
+    async def test_execute_tool_call_raises_thenvoi_tool_error(
         self, mock_rest_client, participants
     ):
         """execute_tool_call lets BandToolError propagate for wrapper translation."""
@@ -1240,3 +1242,33 @@ class TestToolInputModels:
         """CreateChatroomInput should work without task_id."""
         model = CreateChatroomInput()
         assert model.task_id is None
+
+
+class TestMemorySystemTypeMap:
+    """Guard against drift between MEMORY_SYSTEM_TYPE_MAP and StoreMemoryInput."""
+
+    def test_memory_system_type_map_matches_literals(self):
+        """The rendered memory prompt depends on this map for valid values."""
+        from typing import get_args
+
+        literal_systems = set(
+            get_args(StoreMemoryInput.model_fields["system"].annotation)
+        )
+        literal_types = set(get_args(StoreMemoryInput.model_fields["type"].annotation))
+        mapped_systems = set(MEMORY_SYSTEM_TYPE_MAP)
+        mapped_types = {t for types in MEMORY_SYSTEM_TYPE_MAP.values() for t in types}
+
+        missing_systems = literal_systems - mapped_systems
+        extra_systems = mapped_systems - literal_systems
+        missing_types = literal_types - mapped_types
+        extra_types = mapped_types - literal_types
+        assert mapped_systems == literal_systems, (
+            "MEMORY_SYSTEM_TYPE_MAP is out of sync with StoreMemoryInput.system "
+            f"(unmapped Literal values: {sorted(missing_systems)}; "
+            f"mapped values not in Literal: {sorted(extra_systems)})"
+        )
+        assert mapped_types == literal_types, (
+            "MEMORY_SYSTEM_TYPE_MAP is out of sync with StoreMemoryInput.type "
+            f"(unmapped Literal values: {sorted(missing_types)}; "
+            f"mapped values not in Literal: {sorted(extra_types)})"
+        )
