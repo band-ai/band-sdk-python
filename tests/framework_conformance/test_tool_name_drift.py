@@ -35,7 +35,7 @@ from band.runtime.tools import (
 if _HAS_CLAUDE_SDK:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
 
-_SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "band"
+_SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
 if not _SRC_ROOT.is_dir():
     raise FileNotFoundError(f"Source root not found: {_SRC_ROOT}")
 
