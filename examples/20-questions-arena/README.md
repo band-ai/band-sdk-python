@@ -64,7 +64,7 @@ You can run as many guessers as you like, each in its own terminal. Use differen
 
 For a more convenient experience with a visual game interface, see the standalone web UI repository:
 
-**https://github.com/band/20-questions-arena**
+**https://github.com/thenvoi/20-questions-arena**
 
 ## File Overview
 

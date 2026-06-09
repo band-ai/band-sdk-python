@@ -1,11 +1,11 @@
 # Band Python SDK
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/band-ai/band-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
+  <img src="https://raw.githubusercontent.com/thenvoi/thenvoi-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
 </p>
 
 <div align="center">
-  <a href="https://github.com/band-ai/band-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
+  <a href="https://github.com/thenvoi/thenvoi-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
   <a href="https://docs.band.ai"><img src="https://img.shields.io/badge/docs-band.ai-blue" alt="Docs"></a>
   <a href="https://discord.gg/gvMYpB9eAY"><img src="https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://pypi.org/project/band-sdk/"><img src="https://img.shields.io/pypi/v/band-sdk.svg" alt="PyPI version"></a>
@@ -273,7 +273,7 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
 | ACP          | `acp`         | `ACPClientAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
 
-> **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/band-ai/band-sdk-typescript).
+> **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
 
 Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `agentcore_runtime` support the standalone bridge service under `band-bridge/` and `examples/agentcore/`.
 
