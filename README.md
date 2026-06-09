@@ -1,11 +1,11 @@
 # Band Python SDK
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/band-ai/band-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
+  <img src="https://raw.githubusercontent.com/thenvoi/thenvoi-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
 </p>
 
 <div align="center">
-  <a href="https://github.com/band-ai/band-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
+  <a href="https://github.com/thenvoi/thenvoi-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
   <a href="https://docs.band.ai"><img src="https://img.shields.io/badge/docs-band.ai-blue" alt="Docs"></a>
   <a href="https://discord.gg/gvMYpB9eAY"><img src="https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://pypi.org/project/band-sdk/"><img src="https://img.shields.io/pypi/v/band-sdk.svg" alt="PyPI version"></a>
@@ -173,6 +173,25 @@ adapter = GeminiAdapter(model="gemini-2.5-flash")
 
 Use [examples/run_agent.py](examples/run_agent.py) when you want one command that can switch between LangGraph, Pydantic AI, Anthropic, Claude SDK, Parlant, CrewAI, Codex, A2A bridge, and A2A gateway. Use the per-framework directories under [examples/](examples/) when you want the adapter-specific setup.
 
+### Slack (`examples/slack/`)
+
+| File | Description |
+|------|-------------|
+| `01_basic_bot.py` | Wraps an Anthropic brain with `SlackAdapter`. Defaults to Socket Mode; flip `SLACK_TRANSPORT=http` to mount under your own ASGI app. |
+
+The Slack bridge expects an installed Slack app with the right scopes. A maintained manifest lives at `src/band/integrations/slack/templates/manifest.yaml` — paste it into Slack's "Create from manifest" flow when registering the app. The manifest declares:
+
+- **AI App** (`assistant_view` + `assistant:write`) so the assistant pane, status indicators, and Block Kit plan/task blocks render.
+- All scopes needed for thread context: `app_mentions:read`, `im:history`, `channels:history`, `groups:history`, `chat:write`, `users:read`, plus `channels:read`/`groups:read`/`im:read` so the context mirror can resolve channel names.
+- Events `app_mention`, `message.im`, `assistant_thread_started`.
+- Socket Mode enabled — no public URL, no signing secret needed for the example.
+
+Three operational gotchas worth surfacing:
+
+- **Bot must be a channel member.** `/invite @your-bot` in any channel you want it to read. `channels:history` alone doesn't grant access to channels it isn't in.
+- **Delayed Events is a GUI toggle, not a manifest field.** For production, enable "Delayed Events" under the app's Event Subscriptions settings so Slack keeps retrying missed events hourly for 24h while the bridge is offline (default is 2h). There is no manifest schema field for it — it must be set manually after the app is created. See the [retry events changelog](https://docs.slack.dev/changelog/2026/02/05/retry-events-feature/).
+- **HTTP vs Socket Mode.** Socket Mode (default) opens a websocket to Slack and works behind any NAT/firewall. HTTP transport needs a public URL that Slack can POST to and requires `SLACK_SIGNING_SECRET`. Both share the same downstream pipeline, so behavior (status indicators, plan blocks, thread backfill, rehydration) is identical.
+
 ---
 
 ## How Band Works
@@ -254,7 +273,7 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
 | ACP          | `acp`         | `ACPClientAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
 
-> **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/band-ai/band-sdk-typescript).
+> **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
 
 Additional bridge extras exist for specialized deployments: `a2a_gateway_demo` supports the A2A gateway demo orchestrator, and `bridge`, `bridge_agentcore`, and `agentcore_runtime` support the standalone bridge service under `band-bridge/` and `examples/agentcore/`.
 
