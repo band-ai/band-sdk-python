@@ -294,7 +294,7 @@ class StoreMemoryInput(BaseModel):
     )
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
     scope: Literal["subject", "organization"] = Field(
-        "subject", description="Visibility scope"
+        "organization", description="Visibility scope"
     )
     subject_id: str | None = Field(
         None,
@@ -1826,7 +1826,7 @@ class AgentTools(AgentToolsProtocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = "subject",
+        scope: str = "organization",
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
