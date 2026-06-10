@@ -13,7 +13,6 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 ## Platform Tools
 
 ### Chat Tools
-
 - `band_send_message`: Send message to chat room (requires mentions)
 - `band_send_event`: Send non-message event (thought, error, task)
 - `band_add_participant`: Add agent/user to room
@@ -23,7 +22,6 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 - `band_create_chatroom`: Create new chat room
 
 ### Contact Tools
-
 - `band_list_contacts`: List agent's contacts with pagination
 - `band_add_contact`: Send contact request to add someone
 - `band_remove_contact`: Remove existing contact
@@ -31,7 +29,6 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 - `band_respond_contact_request`: Approve, reject, or cancel requests
 
 ### Memory Tools
-
 - `band_list_memories`: List memories with filters (scope, system, type)
 - `band_store_memory`: Store new memory with content, system, type, segment
 - `band_get_memory`: Retrieve a specific memory by ID
@@ -63,14 +60,13 @@ await link.rest.agent_api_participants.list_agent_chat_participants(
 
 ### Channels (Phoenix Channels Protocol V2)
 
-
-| Channel           | Topic Format                       | Events                                     |
-| ----------------- | ---------------------------------- | ------------------------------------------ |
-| Agent Rooms       | `agent_rooms:{agent_id}`           | `room_added`, `room_removed`               |
-| Chat Room         | `chat_room:{chat_room_id}`         | `message_created`                          |
-| User Rooms        | `user_rooms:{user_id}`             | `room_added`, `room_removed`               |
+| Channel | Topic Format | Events |
+|---------|--------------|--------|
+| Agent Rooms | `agent_rooms:{agent_id}` | `room_added`, `room_removed` |
+| Chat Room | `chat_room:{chat_room_id}` | `message_created` |
+| User Rooms | `user_rooms:{user_id}` | `room_added`, `room_removed` |
 | Room Participants | `room_participants:{chat_room_id}` | `participant_added`, `participant_removed` |
-| Tasks             | `tasks:{user_id}`                  | `task_created`, `task_updated`             |
+| Tasks | `tasks:{user_id}` | `task_created`, `task_updated` |
 
 
 ### Payload Models (Pydantic)
@@ -222,12 +218,11 @@ adapter = A2AGatewayAdapter(port=10000)
 
 ### Key files
 
-
-| Purpose     | Path                                                                           |
-| ----------- | ------------------------------------------------------------------------------ |
-| A2A Adapter | `src/band/adapters/a2a.py`, `src/band/integrations/a2a/adapter.py`       |
+| Purpose | Path |
+|---|---|
+| A2A Adapter | `src/band/adapters/a2a.py`, `src/band/integrations/a2a/adapter.py` |
 | A2A Gateway | `src/band/adapters/a2a_gateway.py`, `src/band/integrations/a2a/gateway/` |
-| A2A Types   | `src/band/integrations/a2a/types.py`                                        |
+| A2A Types | `src/band/integrations/a2a/types.py` |                                      |
 
 
 ## ACP (Agent Client Protocol) Integration
@@ -239,10 +234,10 @@ ACP enables editors (Zed, Cursor, JetBrains, Neovim) to communicate with AI agen
 Two-layer pattern (mirrors A2A Gateway):
 
 
-| Layer           | Server Side                    | Client Side                     |
-| --------------- | ------------------------------ | ------------------------------- |
-| Protocol        | `ACPServer` (JSON-RPC handler) | ACP SDK's `spawn_agent_process` |
-| Platform Bridge | `BandACPServerAdapter`      | `ACPClientAdapter`              |
+| Layer | Server Side | Client Side |
+|-------|-------------|-------------|
+| Protocol | `ACPServer` (JSON-RPC handler) | ACP SDK's `spawn_agent_process` |
+| Platform Bridge | `BandACPServerAdapter` | `ACPClientAdapter` |
 
 
 **Server**: Editor -> ACP -> `ACPServer` -> `BandACPServerAdapter` -> Band REST/WS -> Peers
@@ -250,19 +245,18 @@ Two-layer pattern (mirrors A2A Gateway):
 
 ### Key Files
 
-
-| File                                              | Purpose                                                         |
-| ------------------------------------------------- | --------------------------------------------------------------- |
-| `src/band/integrations/acp/server.py`          | `ACPServer` — ACP Agent subclass handling JSON-RPC              |
-| `src/band/integrations/acp/server_adapter.py`  | `BandACPServerAdapter` — REST client, room/session mapping   |
-| `src/band/integrations/acp/client_adapter.py`  | `ACPClientAdapter` — spawns remote ACP agent subprocess         |
-| `src/band/integrations/acp/client_types.py`    | `BandACPClient` — per-session chunk buffering                |
-| `src/band/integrations/acp/router.py`          | `AgentRouter` — slash commands and mode-based routing           |
-| `src/band/integrations/acp/push_handler.py`    | `ACPPushHandler` — unsolicited session_update notifications     |
+| File | Purpose |
+|------|---------|
+| `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
+| `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
+| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
+| `src/band/integrations/acp/client_types.py` | `BandACPClient` — per-session chunk buffering |
+| `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
+| `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
 | `src/band/integrations/acp/event_converter.py` | `EventConverter` — PlatformMessage -> ACP session_update chunks |
-| `src/band/integrations/acp/cli.py`             | `band-acp` CLI entry point                                   |
-| `src/band/converters/acp_server.py`            | History converter for server adapter                            |
-| `src/band/converters/acp_client.py`            | History converter for client adapter                            |
+| `src/band/integrations/acp/cli.py` | `band-acp` CLI entry point |
+| `src/band/converters/acp_server.py` | History converter for server adapter |
+| `src/band/converters/acp_client.py` | History converter for client adapter |
 
 
 ### CLI
