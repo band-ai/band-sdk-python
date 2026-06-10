@@ -660,8 +660,8 @@ cp agent_config.yaml.example agent_config.yaml
 
 Examples load credentials from `agent_config.yaml` instead of reading environment variables directly. Add your agent's UUID and API key under a named key, then load it inside a runnable script after constructing `adapter`:
 
-```python
-agent = Agent.from_config("planner", adapter=adapter)
+```python fixture:agent_config_path
+agent = Agent.from_config("planner", adapter=adapter, config_path=agent_config_path)
 ```
 
 All `Agent.create()` parameters (`contact_config`, `ws_url`, etc.) can be passed as keyword arguments to `from_config()` as well.

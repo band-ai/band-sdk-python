@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
@@ -103,6 +104,24 @@ def _assert_omit_vs_null_calls(client: AsyncRestClient) -> None:
     assert calls[1]["handle"] is Ellipsis  # Fern OMIT sentinel, not sent as null
 
 
+class _MarkdownAgentFactory:
+    """Doc-test proxy that supplies placeholder credentials for Agent.create."""
+
+    @staticmethod
+    def create(**kwargs: object) -> object:
+        from thenvoi import Agent
+
+        kwargs.setdefault("agent_id", "markdown-docs-agent")
+        kwargs.setdefault("api_key", "markdown-docs-test")
+        return Agent.create(**kwargs)
+
+    @staticmethod
+    def from_config(*args: object, **kwargs: object) -> object:
+        from thenvoi import Agent
+
+        return Agent.from_config(*args, **kwargs)
+
+
 @pytest.fixture
 def link() -> ThenvoiLink:
     """Real ThenvoiLink with offline REST transport for markdown snippets."""
@@ -146,16 +165,33 @@ def client() -> AsyncRestClient:
     return rest_client
 
 
+@pytest.fixture
+def agent_config_path(tmp_path: Path) -> Path:
+    """Temporary agent_config.yaml for markdown Agent.from_config snippets."""
+    path = tmp_path / "agent_config.yaml"
+    path.write_text(
+        "planner:\n"
+        "  agent_id: markdown-docs-agent\n"
+        "  api_key: markdown-docs-test\n"
+    )
+    return path
+
+
 def pytest_markdown_docs_globals() -> dict[str, object]:
     """Inject shared names and dummy API keys for pytest-markdown-docs snippets."""
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.graph import END, START, StateGraph
+    from thenvoi.adapters import AnthropicAdapter
     from thenvoi.client.rest import ChatMessageRequest, ChatRoomRequest
+    from thenvoi.platform.event import ContactRequestReceivedEvent
+    from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
     from typing_extensions import TypedDict
 
     os.environ.setdefault("OPENAI_API_KEY", "markdown-docs-test")
     os.environ.setdefault("ANTHROPIC_API_KEY", "markdown-docs-test")
+    os.environ.setdefault("QUICKSTART_AGENT_ID", "markdown-docs-agent")
+    os.environ.setdefault("QUICKSTART_API_KEY", "markdown-docs-test")
 
     class _CalcState(TypedDict):
         result: int
@@ -170,11 +206,22 @@ def pytest_markdown_docs_globals() -> dict[str, object]:
         graph.add_edge("add", END)
         return graph.compile()
 
+    adapter = AnthropicAdapter(
+        model="claude-sonnet-4-5",
+        api_key="markdown-docs-test",
+    )
+
     return {
+        "Agent": _MarkdownAgentFactory,
+        "adapter": adapter,
         "llm": ChatOpenAI(model="gpt-4o-mini", api_key="markdown-docs-test"),
         "checkpointer": InMemorySaver(),
         "my_tools": [],
         "create_calculator_graph": create_calculator_graph,
         "ChatMessageRequest": ChatMessageRequest,
         "ChatRoomRequest": ChatRoomRequest,
+        "ContactEventConfig": ContactEventConfig,
+        "ContactEventStrategy": ContactEventStrategy,
+        "ContactRequestReceivedEvent": ContactRequestReceivedEvent,
+        "os": os,
     }
