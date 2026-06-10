@@ -93,7 +93,7 @@ RoomRemovedPayload:
   id, status?, type?, title?, removed_at?
 
 ParticipantAddedPayload:
-  id, name, type
+  id, name, type, is_remote?, is_external? (legacy alias)
 
 ParticipantRemovedPayload:
   id
