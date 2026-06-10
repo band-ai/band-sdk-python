@@ -16,6 +16,13 @@ if TYPE_CHECKING:
     from thenvoi.platform.link import ThenvoiLink
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Suppress expected DeprecationWarnings in markdown doc snippet tests."""
+    for item in items:
+        if item.get_closest_marker("markdown-docs"):
+            item.add_marker(pytest.mark.filterwarnings("ignore::DeprecationWarning"))
+
+
 def _stub_offline_rest(client: AsyncRestClient) -> list[dict]:
     """Attach an offline HTTP stub to a real AsyncRestClient.
 
