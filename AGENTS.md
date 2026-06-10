@@ -116,12 +116,13 @@ Each event has: `type` (literal), `room_id`, `payload`, `raw`
 ### Contact Events (via `agent_contacts:{agent_id}` channel)
 
 
-| Event                      | Payload Fields                                                                |
-| -------------------------- | ----------------------------------------------------------------------------- |
-| `contact_request_received` | `id`, `from_handle`, `from_name`, `message?`, `status`, `inserted_at`         |
-| `contact_request_updated`  | `id`, `status`                                                                |
-| `contact_added`            | `id`, `handle`, `name`, `type`, `description?`, `is_external?`, `inserted_at` |
-| `contact_removed`          | `id`                                                                          |
+| Channel | Topic Format | Events |
+|---------|--------------|--------|
+| Agent Rooms | `agent_rooms:{agent_id}` | `room_added`, `room_removed` |
+| Chat Room | `chat_room:{chat_room_id}` | `message_created` |
+| User Rooms | `user_rooms:{user_id}` | `room_added`, `room_removed` |
+| Room Participants | `room_participants:{chat_room_id}` | `participant_added`, `participant_removed` |
+| Tasks | `tasks:{user_id}` | `task_created`, `task_updated` |
 
 
 ## Contact Event Handling
