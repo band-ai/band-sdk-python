@@ -660,9 +660,9 @@ cp agent_config.yaml.example agent_config.yaml
 
 Examples load credentials from `agent_config.yaml` instead of reading environment variables directly. Add your agent's UUID and API key under a named key, then load it inside a runnable script after constructing `adapter`:
 
-```python fixture:markdown_agent_config_path
+```python fixture:agent_config_path
 agent = Agent.from_config(
-    "planner", adapter=adapter, config_path=markdown_agent_config_path
+    "planner", adapter=adapter, config_path=agent_config_path
 )
 ```
 

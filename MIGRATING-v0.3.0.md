@@ -216,13 +216,13 @@ raise BandConfigError.with_suggestion(
 
 A new convenience factory loads credentials from a YAML config file:
 
-```python fixture:markdown_agent_config_path
+```python fixture:agent_config_path
 from band import Agent
 
 agent = Agent.from_config(
     "researcher",
     adapter=AnthropicAdapter(...),
-    config_path=markdown_agent_config_path,
+    config_path=agent_config_path,
 )
 await agent.run()
 ```

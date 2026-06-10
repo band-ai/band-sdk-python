@@ -78,7 +78,7 @@ def _noop_asyncio_run_for_markdown_docs(
 
 
 @pytest.fixture
-def markdown_agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Temporary agent_config.yaml for markdown Agent.from_config snippets."""
     from band import Agent
 
