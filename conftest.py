@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -170,6 +171,24 @@ def client() -> AsyncRestClient:
         lambda: _assert_omit_vs_null_calls(rest_client),
     )
     return rest_client
+
+
+@pytest.fixture(autouse=True)
+def _noop_asyncio_run_for_markdown_docs(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Skip asyncio.run() in markdown quick-starts that would hit the live platform."""
+    if request.node.get_closest_marker("markdown-docs") is None:
+        return
+
+    def noop_run(coro: object) -> None:
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        return None
+
+    monkeypatch.setattr(asyncio, "run", noop_run)
 
 
 @pytest.fixture
