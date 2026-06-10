@@ -208,7 +208,7 @@ adapter = A2AGatewayAdapter(port=10000)
 |---|---|
 | A2A Adapter | `src/band/adapters/a2a.py`, `src/band/integrations/a2a/adapter.py` |
 | A2A Gateway | `src/band/adapters/a2a_gateway.py`, `src/band/integrations/a2a/gateway/` |
-| A2A Types | `src/band/integrations/a2a/types.py` |                                      |
+| A2A Types | `src/band/integrations/a2a/types.py` |
 
 ## ACP (Agent Client Protocol) Integration
 
