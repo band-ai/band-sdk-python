@@ -38,6 +38,20 @@ class AnyAdapter:
         self.kwargs = kwargs
 
 
+class MarkdownCalculatorGraph:
+    """Minimal graph double for `graph_as_tool()` documentation snippets."""
+
+    async def ainvoke(
+        self, inputs: dict[str, object], config: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        return {**inputs, "result": 0}
+
+
+def create_calculator_graph() -> MarkdownCalculatorGraph:
+    """Return a graph-like object for markdown code-fence execution."""
+    return MarkdownCalculatorGraph()
+
+
 def _sdk_symbols() -> dict[str, object]:
     """SDK names used by partial snippets without local imports."""
     return {
@@ -57,8 +71,12 @@ def _sdk_symbols() -> dict[str, object]:
 
 
 def _langgraph_symbols() -> dict[str, object]:
-    """Minimal objects needed by README LangGraph snippets."""
-    return {"llm": object()}
+    """Minimal objects needed by LangGraph snippets."""
+    return {
+        "checkpointer": object(),
+        "create_calculator_graph": create_calculator_graph,
+        "llm": object(),
+    }
 
 
 def _fixture_doubles() -> dict[str, object]:

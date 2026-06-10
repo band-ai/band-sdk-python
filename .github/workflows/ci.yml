@@ -67,9 +67,7 @@ jobs:
     - name: Run markdown doc tests
       if: matrix.python-version == '3.12'
       # examples/ READMEs have illustrative fragments not yet snippet-testable
-      run: |
-        mapfile -t markdown_files < <(git ls-files '*.md' | grep -v '^examples/')
-        uv run pytest --markdown-docs "${markdown_files[@]}" --no-cov
+      run: uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 
 
   test-crewai:
