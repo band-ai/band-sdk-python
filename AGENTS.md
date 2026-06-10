@@ -218,7 +218,6 @@ adapter = A2AGatewayAdapter(port=10000)
 | A2A Gateway | `src/band/adapters/a2a_gateway.py`, `src/band/integrations/a2a/gateway/` |
 | A2A Types | `src/band/integrations/a2a/types.py` |                                      |
 
-
 ## ACP (Agent Client Protocol) Integration
 
 ACP enables editors (Zed, Cursor, JetBrains, Neovim) to communicate with AI agents via JSON-RPC over stdio. The SDK provides both server and client sides.
@@ -227,12 +226,10 @@ ACP enables editors (Zed, Cursor, JetBrains, Neovim) to communicate with AI agen
 
 Two-layer pattern (mirrors A2A Gateway):
 
-
 | Layer | Server Side | Client Side |
 |-------|-------------|-------------|
 | Protocol | `ACPServer` (JSON-RPC handler) | ACP SDK's `spawn_agent_process` |
 | Platform Bridge | `BandACPServerAdapter` | `ACPClientAdapter` |
-
 
 **Server**: Editor -> ACP -> `ACPServer` -> `BandACPServerAdapter` -> Band REST/WS -> Peers
 **Client**: Band room message -> `ACPClientAdapter` -> spawned subprocess (Codex, Claude Code, etc.)
