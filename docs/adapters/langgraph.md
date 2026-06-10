@@ -211,6 +211,7 @@ For `graph_factory`, merge your custom tools inside the factory. For `graph=`, t
 Use `graph_as_tool()` to wrap a standalone LangGraph as a tool for the main agent:
 
 ```python
+from band.adapters import LangGraphAdapter
 from band.integrations.langgraph import graph_as_tool
 
 calculator_tool = graph_as_tool(

@@ -39,11 +39,19 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 The SDK uses Fern-generated REST client with property-based namespace API:
 
-```python
+```python fixture:link
+# Real Fern namespace clients on link.rest (offline HTTP stub in conftest).
+link.assert_rest_pattern_methods_exist()
+
 # Pattern: agent_api_<resource>.method()
-await link.rest.agent_api_chats.create_agent_chat(...)
-await link.rest.agent_api_messages.create_agent_chat_message(...)
-await link.rest.agent_api_participants.list_agent_chat_participants(...)
+await link.rest.agent_api_chats.create_agent_chat(chat=ChatRoomRequest())
+await link.rest.agent_api_messages.create_agent_chat_message(
+    chat_id="room-1",
+    message=ChatMessageRequest(content="hello", mentions=[]),
+)
+await link.rest.agent_api_participants.list_agent_chat_participants(
+    chat_id="room-1",
+)
 ```
 
 **Sub-clients**: `identity`, `peers`, `contacts`, `chats`, `messages`, `events`, `participants`, `context`, `memories`, `profile`, `agents`
@@ -64,7 +72,7 @@ await link.rest.agent_api_participants.list_agent_chat_participants(...)
 
 All models use `ConfigDict(extra="allow")` to accept additional fields from the backend.
 
-```python
+```python notest
 MessageCreatedPayload:
   id, content, message_type, sender_id, sender_type,
   sender_name?, metadata? (MessageMetadata), chat_room_id?,
@@ -91,7 +99,7 @@ Mention:
 
 ### PlatformEvent Union (Tagged Union Pattern)
 
-```python
+```python notest
 PlatformEvent = (
     MessageEvent | RoomAddedEvent | RoomRemovedEvent
     | ParticipantAddedEvent | ParticipantRemovedEvent
@@ -276,13 +284,22 @@ Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
 
 When calling REST endpoints with optional parameters, **never pass `None`** - the Fern client sends `null` which fails backend validation. Instead, use kwargs:
 
-```python
+```python fixture:client
+# Real AsyncRestClient from thenvoi.client.rest (offline HTTP stub in conftest).
+client.assert_contact_respond_method_exists()
+
 # WRONG - sends {"action": "approve", "handle": null, "request_id": "..."}
-await client.respond_to_agent_contact_request(action="approve", handle=None, request_id="...")
+await client.agent_api_contacts.respond_to_agent_contact_request(
+    action="approve",
+    handle=None,
+    request_id="req-1",
+)
 
 # CORRECT - sends {"action": "approve", "request_id": "..."}
-kwargs = {"action": "approve", "request_id": "..."}
-await client.respond_to_agent_contact_request(**kwargs)
+kwargs = {"action": "approve", "request_id": "req-1"}
+await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
+
+client.assert_omit_vs_null_calls()
 ```
 
 ## Code Structure

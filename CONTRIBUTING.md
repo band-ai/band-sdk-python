@@ -142,6 +142,9 @@ logger.error("Failed to connect", exc_info=True)
 Use Google-style docstrings for public functions and classes:
 
 ```python
+from thenvoi import Agent
+
+
 def connect_agent(agent_id: str, api_key: str) -> Agent:
     """Connect an agent to the Band platform.
 
