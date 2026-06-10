@@ -110,10 +110,11 @@ Passing both old booleans and the new `features=` raises
 
 ```python
 # Raises BandConfigError
-adapter = AnthropicAdapter(
-    enable_memory_tools=True,
-    features=AdapterFeatures(capabilities={Capability.MEMORY}),
-)
+with pytest.raises(BandConfigError):
+    adapter = AnthropicAdapter(
+        enable_memory_tools=True,
+        features=AdapterFeatures(capabilities={Capability.MEMORY}),
+    )
 ```
 
 ## Selective renames (`AnthropicAdapter` and `GeminiAdapter` only)
@@ -204,11 +205,12 @@ need no changes.
 attaches "Did you mean 'X'?" hints based on Levenshtein distance:
 
 ```python
-raise BandConfigError.with_suggestion(
-    "Unknown capability 'memry'.",
-    "memry",
-    [c.value for c in Capability],
-)
+with pytest.raises(BandConfigError, match="Did you mean 'memory'"):
+    raise BandConfigError.with_suggestion(
+        "Unknown capability 'memry'.",
+        "memry",
+        [c.value for c in Capability],
+    )
 # BandConfigError: Unknown capability 'memry'. Did you mean 'memory'?
 ```
 
@@ -216,12 +218,13 @@ raise BandConfigError.with_suggestion(
 
 A new convenience factory loads credentials from a YAML config file:
 
-```python
+```python fixture:agent_config_path
 from band import Agent
 
 agent = Agent.from_config(
     "researcher",
     adapter=AnthropicAdapter(...),
+    config_path=agent_config_path,
 )
 await agent.run()
 ```

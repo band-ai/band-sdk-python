@@ -207,7 +207,10 @@ adapter = A2AAdapter(
 ```python
 from band.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
 
-adapter = A2AGatewayAdapter(gateway_port=10000)
+adapter = A2AGatewayAdapter(
+    gateway_url="http://localhost:10000",
+    port=10000,
+)
 ```
 
 ### Key files

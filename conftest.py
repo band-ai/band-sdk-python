@@ -122,6 +122,13 @@ class _MarkdownAgentFactory:
         return Agent.from_config(*args, **kwargs)
 
 
+class _AnyAdapter:
+    """Generic adapter placeholder for universal migration snippets."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
+
+
 @pytest.fixture
 def link() -> ThenvoiLink:
     """Real ThenvoiLink with offline REST transport for markdown snippets."""
@@ -166,12 +173,22 @@ def client() -> AsyncRestClient:
 
 
 @pytest.fixture
-def agent_config_path(tmp_path: Path) -> Path:
+def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Temporary agent_config.yaml for markdown Agent.from_config snippets."""
+    from thenvoi import Agent
+
+    async def run_noop(self: Agent) -> None:
+        return None
+
+    monkeypatch.setattr(Agent, "run", run_noop)
+
     path = tmp_path / "agent_config.yaml"
     path.write_text(
         "planner:\n"
         "  agent_id: markdown-docs-agent\n"
+        "  api_key: markdown-docs-test\n"
+        "researcher:\n"
+        "  agent_id: markdown-docs-researcher\n"
         "  api_key: markdown-docs-test\n"
     )
     return path
@@ -182,7 +199,9 @@ def pytest_markdown_docs_globals() -> dict[str, object]:
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import InMemorySaver
     from langgraph.graph import END, START, StateGraph
-    from thenvoi.adapters import AnthropicAdapter
+    from thenvoi import AdapterFeatures, Capability, Emit, ThenvoiConfigError
+    from thenvoi.adapters import AnthropicAdapter, ClaudeSDKAdapter, GeminiAdapter
+    from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
     from thenvoi.client.rest import ChatMessageRequest, ChatRoomRequest
     from thenvoi.platform.event import ContactRequestReceivedEvent
     from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
@@ -213,6 +232,16 @@ def pytest_markdown_docs_globals() -> dict[str, object]:
 
     return {
         "Agent": _MarkdownAgentFactory,
+        "AdapterFeatures": AdapterFeatures,
+        "AnthropicAdapter": AnthropicAdapter,
+        "AnyAdapter": _AnyAdapter,
+        "Capability": Capability,
+        "ClaudeSDKAdapter": ClaudeSDKAdapter,
+        "CodexAdapter": CodexAdapter,
+        "CodexAdapterConfig": CodexAdapterConfig,
+        "Emit": Emit,
+        "GeminiAdapter": GeminiAdapter,
+        "ThenvoiConfigError": ThenvoiConfigError,
         "adapter": adapter,
         "llm": ChatOpenAI(model="gpt-4o-mini", api_key="markdown-docs-test"),
         "checkpointer": InMemorySaver(),
@@ -224,4 +253,5 @@ def pytest_markdown_docs_globals() -> dict[str, object]:
         "ContactEventStrategy": ContactEventStrategy,
         "ContactRequestReceivedEvent": ContactRequestReceivedEvent,
         "os": os,
+        "pytest": pytest,
     }
