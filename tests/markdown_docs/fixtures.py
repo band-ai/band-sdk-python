@@ -36,7 +36,9 @@ def _payload_for_path(path: str, now: str) -> dict[str, object]:
     return {"data": {"id": "room-1", "inserted_at": now, "updated_at": now}}
 
 
-def _stub_offline_rest(client: object) -> list[dict[str, object]]:
+def _stub_offline_rest(
+    client: object, monkeypatch: pytest.MonkeyPatch
+) -> list[dict[str, object]]:
     """Patch only HTTP I/O so snippets still exercise generated REST methods."""
     captured_json: list[dict[str, object]] = []
 
@@ -56,8 +58,12 @@ def _stub_offline_rest(client: object) -> list[dict[str, object]]:
 
         return _Response()
 
-    client._client_wrapper.httpx_client.request = AsyncMock(side_effect=fake_request)
-    client._markdown_captured_json = captured_json
+    monkeypatch.setattr(
+        client._client_wrapper.httpx_client,
+        "request",
+        AsyncMock(side_effect=fake_request),
+    )
+    monkeypatch.setattr(client, "_markdown_captured_json", captured_json, raising=False)
     return captured_json
 
 
@@ -70,7 +76,7 @@ def _seed_markdown_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def client():
+def client(monkeypatch: pytest.MonkeyPatch):
     """Back `fixture:client` snippets with a generated client and fake HTTP."""
     from band.client.rest import AsyncRestClient
 
@@ -78,7 +84,7 @@ def client():
         api_key=MARKDOWN_API_KEY,
         base_url=MARKDOWN_REST_URL,
     )
-    _stub_offline_rest(rest_client)
+    _stub_offline_rest(rest_client, monkeypatch)
     assert inspect.iscoroutinefunction(
         rest_client.agent_api_contacts.respond_to_agent_contact_request
     )
