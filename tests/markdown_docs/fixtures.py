@@ -1,44 +1,60 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
+import inspect
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
-from tests.markdown_docs.assertions import (
-    assert_contact_respond_method_exists,
-    assert_omit_vs_null_calls,
-    assert_rest_pattern_methods_exist,
-)
-from tests.markdown_docs.constants import (
+from tests.markdown_docs.globals import (
     MARKDOWN_AGENT_ID,
     MARKDOWN_API_KEY,
     MARKDOWN_RESEARCHER_AGENT_ID,
     MARKDOWN_REST_URL,
-    MARKDOWN_WS_URL,
 )
-from tests.markdown_docs.hooks import markdown_docs_enabled
-from tests.markdown_docs.offline_rest import stub_offline_rest
 
 
-@pytest.fixture
-def markdown_link():
-    """Real BandLink with offline REST transport for markdown snippets."""
-    from band.platform.link import BandLink
+def _markdown_docs_enabled(config: pytest.Config) -> bool:
+    return bool(config.getoption("markdowndocs", default=False))
 
-    platform_link = BandLink(
-        agent_id=MARKDOWN_AGENT_ID,
-        api_key=MARKDOWN_API_KEY,
-        rest_url=MARKDOWN_REST_URL,
-        ws_url=MARKDOWN_WS_URL,
-    )
-    stub_offline_rest(platform_link.rest)
-    setattr(
-        platform_link,
-        "assert_rest_pattern_methods_exist",
-        lambda: assert_rest_pattern_methods_exist(platform_link),
-    )
-    return platform_link
+
+def _payload_for_path(path: str, now: str) -> dict[str, object]:
+    if "respond" in path:
+        return {
+            "data": {
+                "id": "req-1",
+                "status": "approved",
+                "inserted_at": now,
+                "updated_at": now,
+            }
+        }
+    return {"data": {"id": "room-1", "inserted_at": now, "updated_at": now}}
+
+
+def _stub_offline_rest(client: object) -> list[dict[str, object]]:
+    captured_json: list[dict[str, object]] = []
+
+    async def fake_request(*args: object, **kwargs: object) -> object:
+        path = str(args[0]) if args else ""
+        body = kwargs.get("json")
+        if isinstance(body, dict):
+            captured_json.append(body)
+
+        payload = _payload_for_path(path, datetime.now(timezone.utc).isoformat())
+
+        class _Response:
+            status_code = 200
+
+            def json(self) -> dict[str, object]:
+                return payload
+
+        return _Response()
+
+    client._client_wrapper.httpx_client.request = AsyncMock(side_effect=fake_request)
+    client._markdown_captured_json = captured_json
+    return captured_json
 
 
 @pytest.fixture
@@ -50,11 +66,15 @@ def client():
         api_key=MARKDOWN_API_KEY,
         base_url=MARKDOWN_REST_URL,
     )
-    stub_offline_rest(rest_client)
-    assert_contact_respond_method_exists(rest_client)
+    _stub_offline_rest(rest_client)
+    assert inspect.iscoroutinefunction(
+        rest_client.agent_api_contacts.respond_to_agent_contact_request
+    )
     yield rest_client
     if len(rest_client._markdown_captured_json) == 2:
-        assert_omit_vs_null_calls(rest_client)
+        calls = rest_client._markdown_captured_json
+        assert calls[0]["handle"] is None
+        assert calls[1]["handle"] is Ellipsis  # Fern OMIT sentinel, not sent as null
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +83,7 @@ def _noop_asyncio_run_for_markdown_docs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Skip asyncio.run() in markdown quick-starts that would hit the live platform."""
-    if not markdown_docs_enabled(request.config):
+    if not _markdown_docs_enabled(request.config):
         return
     if request.node.get_closest_marker("markdown-docs") is None:
         return

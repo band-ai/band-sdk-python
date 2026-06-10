@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from tests.markdown_docs.globals import build_globals
-from tests.markdown_docs.hooks import suppress_deprecation_warnings
 
 pytest_plugins = ["tests.markdown_docs.fixtures"]
 
@@ -17,4 +16,9 @@ def pytest_markdown_docs_globals() -> dict[str, object]:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    suppress_deprecation_warnings(config, items)
+    if not config.getoption("markdowndocs", default=False):
+        return
+
+    for item in items:
+        if item.get_closest_marker("markdown-docs"):
+            item.add_marker(pytest.mark.filterwarnings("ignore::DeprecationWarning"))

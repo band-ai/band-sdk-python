@@ -2,22 +2,38 @@ from __future__ import annotations
 
 import os
 
-import pytest
-from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import InMemorySaver
+from band import Agent as BandAgent
 from band import AdapterFeatures, BandConfigError, Capability, Emit
 from band.adapters import AnthropicAdapter, ClaudeSDKAdapter, GeminiAdapter
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-from band.client.rest import ChatMessageRequest, ChatRoomRequest
 from band.platform.event import ContactRequestReceivedEvent
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
-from tests.markdown_docs.constants import (
-    MARKDOWN_AGENT_ID,
-    MARKDOWN_API_KEY,
-)
-from tests.markdown_docs.doubles import AnyAdapter, MarkdownAgentFactory
-from tests.markdown_docs.langgraph_stub import create_calculator_graph
+MARKDOWN_AGENT_ID = "markdown-docs-agent"
+MARKDOWN_RESEARCHER_AGENT_ID = "markdown-docs-researcher"
+MARKDOWN_API_KEY = "markdown-docs-test"
+MARKDOWN_REST_URL = "https://example.test"
+
+
+class MarkdownAgentFactory:
+    """Doc-test proxy that supplies placeholder credentials for Agent.create."""
+
+    @staticmethod
+    def create(**kwargs: object) -> object:
+        kwargs.setdefault("agent_id", MARKDOWN_AGENT_ID)
+        kwargs.setdefault("api_key", MARKDOWN_API_KEY)
+        return BandAgent.create(**kwargs)
+
+    @staticmethod
+    def from_config(*args: object, **kwargs: object) -> object:
+        return BandAgent.from_config(*args, **kwargs)
+
+
+class AnyAdapter:
+    """Generic adapter placeholder for migration snippets."""
+
+    def __init__(self, **kwargs: object) -> None:
+        self.kwargs = kwargs
 
 
 def _seed_env() -> None:
@@ -38,8 +54,6 @@ def _sdk_symbols() -> dict[str, object]:
         "Emit": Emit,
         "GeminiAdapter": GeminiAdapter,
         "BandConfigError": BandConfigError,
-        "ChatMessageRequest": ChatMessageRequest,
-        "ChatRoomRequest": ChatRoomRequest,
         "ContactEventConfig": ContactEventConfig,
         "ContactEventStrategy": ContactEventStrategy,
         "ContactRequestReceivedEvent": ContactRequestReceivedEvent,
@@ -47,12 +61,7 @@ def _sdk_symbols() -> dict[str, object]:
 
 
 def _langgraph_symbols() -> dict[str, object]:
-    return {
-        "llm": ChatOpenAI(model="gpt-4o-mini", api_key=MARKDOWN_API_KEY),
-        "checkpointer": InMemorySaver(),
-        "my_tools": [],
-        "create_calculator_graph": create_calculator_graph,
-    }
+    return {"llm": object()}
 
 
 def _fixture_doubles() -> dict[str, object]:
@@ -65,7 +74,6 @@ def _fixture_doubles() -> dict[str, object]:
         "AnyAdapter": AnyAdapter,
         "adapter": adapter,
         "os": os,
-        "pytest": pytest,
     }
 
 
