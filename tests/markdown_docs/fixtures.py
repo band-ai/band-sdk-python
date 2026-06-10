@@ -79,6 +79,7 @@ def client(monkeypatch: pytest.MonkeyPatch):
     """Back `fixture:client` snippets with a generated client and fake HTTP."""
     from band.client.rest import AsyncRestClient
 
+    # Use the generated client so docs fail if Fern namespaces drift.
     rest_client = AsyncRestClient(
         api_key=MARKDOWN_API_KEY,
         base_url=MARKDOWN_REST_URL,
@@ -89,7 +90,7 @@ def client(monkeypatch: pytest.MonkeyPatch):
     )
     yield rest_client
     if len(captured_json) == 2:
-        # The REST docs compare explicit null with Fern's OMIT sentinel.
+        # The OMIT-vs-null snippet should send null first, then Fern's OMIT sentinel.
         assert captured_json[0]["handle"] is None
         assert captured_json[1]["handle"] is Ellipsis
 
