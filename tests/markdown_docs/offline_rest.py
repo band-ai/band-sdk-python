@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 if TYPE_CHECKING:
-    from thenvoi.client.rest import AsyncRestClient
+    from band.client.rest import AsyncRestClient
 
 
 def _payload_for_path(path: str, now: str) -> dict:

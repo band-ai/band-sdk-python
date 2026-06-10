@@ -8,7 +8,7 @@ class MarkdownAgentFactory:
 
     @staticmethod
     def create(**kwargs: object) -> object:
-        from thenvoi import Agent
+        from band import Agent
 
         kwargs.setdefault("agent_id", MARKDOWN_AGENT_ID)
         kwargs.setdefault("api_key", MARKDOWN_API_KEY)
@@ -16,7 +16,7 @@ class MarkdownAgentFactory:
 
     @staticmethod
     def from_config(*args: object, **kwargs: object) -> object:
-        from thenvoi import Agent
+        from band import Agent
 
         return Agent.from_config(*args, **kwargs)
 

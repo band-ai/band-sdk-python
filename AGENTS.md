@@ -288,7 +288,7 @@ Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
 When calling REST endpoints with optional parameters, **never pass `None`** - the Fern client sends `null` which fails backend validation. Instead, use kwargs:
 
 ```python fixture:markdown_client
-# Real AsyncRestClient from thenvoi.client.rest (offline HTTP stub in conftest).
+# Real AsyncRestClient from band.client.rest (offline HTTP stub in conftest).
 markdown_client.assert_contact_respond_method_exists()
 
 # WRONG - sends {"action": "approve", "handle": null, "request_id": "..."}

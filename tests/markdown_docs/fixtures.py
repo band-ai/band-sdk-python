@@ -23,10 +23,10 @@ from tests.markdown_docs.offline_rest import stub_offline_rest
 
 @pytest.fixture
 def markdown_link():
-    """Real ThenvoiLink with offline REST transport for markdown snippets."""
-    from thenvoi.platform.link import ThenvoiLink
+    """Real BandLink with offline REST transport for markdown snippets."""
+    from band.platform.link import BandLink
 
-    platform_link = ThenvoiLink(
+    platform_link = BandLink(
         agent_id=MARKDOWN_AGENT_ID,
         api_key=MARKDOWN_API_KEY,
         rest_url=MARKDOWN_REST_URL,
@@ -44,7 +44,7 @@ def markdown_link():
 @pytest.fixture
 def markdown_client():
     """Real AsyncRestClient with offline transport for markdown snippets."""
-    from thenvoi.client.rest import AsyncRestClient
+    from band.client.rest import AsyncRestClient
 
     rest_client = AsyncRestClient(
         api_key=MARKDOWN_API_KEY,
@@ -87,7 +87,7 @@ def _noop_asyncio_run_for_markdown_docs(
 @pytest.fixture
 def markdown_agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Temporary agent_config.yaml for markdown Agent.from_config snippets."""
-    from thenvoi import Agent
+    from band import Agent
 
     async def run_noop(self: Agent) -> None:
         return None

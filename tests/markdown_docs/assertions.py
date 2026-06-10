@@ -4,11 +4,11 @@ import inspect
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from thenvoi.client.rest import AsyncRestClient
-    from thenvoi.platform.link import ThenvoiLink
+    from band.client.rest import AsyncRestClient
+    from band.platform.link import BandLink
 
 
-def assert_rest_pattern_methods_exist(link: ThenvoiLink) -> None:
+def assert_rest_pattern_methods_exist(link: BandLink) -> None:
     """Assert the documented Fern namespace methods exist on a real link."""
     assert inspect.iscoroutinefunction(link.rest.agent_api_chats.create_agent_chat)
     assert inspect.iscoroutinefunction(

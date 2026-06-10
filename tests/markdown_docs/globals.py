@@ -5,12 +5,12 @@ import os
 import pytest
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
-from thenvoi import AdapterFeatures, Capability, Emit, ThenvoiConfigError
-from thenvoi.adapters import AnthropicAdapter, ClaudeSDKAdapter, GeminiAdapter
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
-from thenvoi.client.rest import ChatMessageRequest, ChatRoomRequest
-from thenvoi.platform.event import ContactRequestReceivedEvent
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band import AdapterFeatures, BandConfigError, Capability, Emit
+from band.adapters import AnthropicAdapter, ClaudeSDKAdapter, GeminiAdapter
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.client.rest import ChatMessageRequest, ChatRoomRequest
+from band.platform.event import ContactRequestReceivedEvent
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 from tests.markdown_docs.constants import (
     MARKDOWN_AGENT_ID,
@@ -37,7 +37,7 @@ def _sdk_symbols() -> dict[str, object]:
         "CodexAdapterConfig": CodexAdapterConfig,
         "Emit": Emit,
         "GeminiAdapter": GeminiAdapter,
-        "ThenvoiConfigError": ThenvoiConfigError,
+        "BandConfigError": BandConfigError,
         "ChatMessageRequest": ChatMessageRequest,
         "ChatRoomRequest": ChatRoomRequest,
         "ContactEventConfig": ContactEventConfig,
