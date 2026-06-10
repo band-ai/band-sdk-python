@@ -63,7 +63,6 @@ def _stub_offline_rest(
         "request",
         AsyncMock(side_effect=fake_request),
     )
-    monkeypatch.setattr(client, "_markdown_captured_json", captured_json, raising=False)
     return captured_json
 
 
@@ -84,16 +83,15 @@ def client(monkeypatch: pytest.MonkeyPatch):
         api_key=MARKDOWN_API_KEY,
         base_url=MARKDOWN_REST_URL,
     )
-    _stub_offline_rest(rest_client, monkeypatch)
+    captured_json = _stub_offline_rest(rest_client, monkeypatch)
     assert inspect.iscoroutinefunction(
         rest_client.agent_api_contacts.respond_to_agent_contact_request
     )
     yield rest_client
-    if len(rest_client._markdown_captured_json) == 2:
+    if len(captured_json) == 2:
         # The REST docs compare explicit null with Fern's OMIT sentinel.
-        calls = rest_client._markdown_captured_json
-        assert calls[0]["handle"] is None
-        assert calls[1]["handle"] is Ellipsis  # Fern OMIT sentinel, not sent as null
+        assert captured_json[0]["handle"] is None
+        assert captured_json[1]["handle"] is Ellipsis
 
 
 @pytest.fixture(autouse=True)
