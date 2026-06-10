@@ -341,10 +341,10 @@ tests/
 ## Commands
 
 ```bash
-# Install dependencies (all extras except parcrewailant — see Dependency Conflicts below)
+# Install dependencies (all extras except crewai — see Dependency Conflicts below)
 uv sync --extra dev
 
-# Install crewai adapter deps (isolated from dev/crewai)
+# Install crewai adapter deps (isolated from dev/parlant/pydantic-ai)
 uv sync --extra dev-crewai
 
 # Run unit tests
@@ -394,7 +394,7 @@ resolves each in a separate fork.
 
 ## Environment Variables
 
-- `BAND_REST_URL`: REST API URL (default: [https://app.band.ai](https://app.band.ai))
+- `BAND_REST_URL`: REST API URL (default: https://app.band.ai)
 - `BAND_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
 - `BAND_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages
 - `OPENAI_API_KEY`: OpenAI API key (for LangGraph examples)
