@@ -39,19 +39,10 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 The SDK uses Fern-generated REST client with property-based namespace API:
 
-```python fixture:markdown_link
-# Real Fern namespace clients on markdown_link.rest (offline HTTP stub in conftest).
-markdown_link.assert_rest_pattern_methods_exist()
-
-# Pattern: agent_api_<resource>.method()
-await markdown_link.rest.agent_api_chats.create_agent_chat(chat=ChatRoomRequest())
-await markdown_link.rest.agent_api_messages.create_agent_chat_message(
-    chat_id="room-1",
-    message=ChatMessageRequest(content="hello", mentions=[]),
-)
-await markdown_link.rest.agent_api_participants.list_agent_chat_participants(
-    chat_id="room-1",
-)
+```python notest
+await link.rest.agent_api_chats.create_agent_chat(...)
+await link.rest.agent_api_messages.create_agent_chat_message(...)
+await link.rest.agent_api_participants list_agent_chat_participants(...)
 ```
 
 **Sub-clients**: `identity`, `peers`, `contacts`, `chats`, `messages`, `events`, `participants`, `context`, `memories`, `profile`, `agents`
@@ -207,10 +198,7 @@ adapter = A2AAdapter(
 ```python
 from band.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
 
-adapter = A2AGatewayAdapter(
-    gateway_url="http://localhost:10000",
-    port=10000,
-)
+adapter = A2AGatewayAdapter(port=10000)
 ```
 
 ### Key files
