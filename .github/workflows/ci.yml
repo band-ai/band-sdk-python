@@ -116,11 +116,11 @@ jobs:
     - name: Pyrefly check (crewai sources)
       run: |
         uv run pyrefly check \
-          src/adapters/crewai.py \
-          src/adapters/crewai_flow.py \
-          src/converters/crewai.py \
-          src/converters/crewai_flow.py \
-          src/integrations/crewai/
+          src/band/adapters/crewai.py \
+          src/band/adapters/crewai_flow.py \
+          src/band/converters/crewai.py \
+          src/band/converters/crewai_flow.py \
+          src/band/integrations/crewai/
 
 
   packaging:

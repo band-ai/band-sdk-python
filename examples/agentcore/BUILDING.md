@@ -22,7 +22,7 @@ For most agents, step 1 is the only thing you write.
 
 ## The system prompt
 
-The SDK's `render_system_prompt` (`src/runtime/prompts.py`)
+The SDK's `render_system_prompt` (`src/band/runtime/prompts.py`)
 builds the full Anthropic system prompt as:
 
 ```
@@ -213,7 +213,7 @@ If you want LangGraph, CrewAI, pydantic-ai, etc. instead of the
 1. Copy `examples/agentcore/agentcore_llm_server.py` to your own
    container directory.
 2. In `_build_adapter`, swap `AnthropicAdapter` for your chosen one
-   (e.g. `LangGraphAdapter`, see `src/adapters/langgraph.py`).
+   (e.g. `LangGraphAdapter`, see `src/band/adapters/langgraph.py`).
 3. Update the Dockerfile's `uv sync` to include the relevant extra
    (`--extra langgraph`, `--extra crewai`, …).
 4. Rebuild + push.

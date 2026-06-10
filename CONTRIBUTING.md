@@ -76,7 +76,7 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
    uv run pytest tests/ --ignore=tests/integration/ -v
 
    # Run with coverage
-   uv run pytest tests/ --ignore=tests/integration/ --cov=src
+   uv run pytest tests/ --ignore=tests/integration/ --cov=src/band
 
    # Run a specific test
    uv run pytest tests/ -k "test_name"

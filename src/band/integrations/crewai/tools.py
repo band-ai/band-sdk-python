@@ -11,7 +11,7 @@ The builder takes three injectables:
   EmitExecutionReporter (gates by Emit.EXECUTION) and NoopReporter.
 - capabilities: frozenset[Capability] — controls which tool subset is exposed.
 
-Extracted from src/adapters/crewai.py so both CrewAI adapters share
+Extracted from src/band/adapters/crewai.py so both CrewAI adapters share
 one platform tool surface.
 """
 
@@ -28,6 +28,7 @@ from typing import (
     Callable,
     Literal,
     Protocol,
+    Type,
     cast,
     runtime_checkable,
 )
@@ -470,7 +471,7 @@ def _make_platform_tools(
     class SendMessageTool(BaseTool):
         name: str = "band_send_message"
         description: str = get_tool_description("band_send_message")
-        args_schema: Any = _SendMessageInput
+        args_schema: Type[BaseModel] = _SendMessageInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -505,7 +506,7 @@ def _make_platform_tools(
     class SendEventTool(BaseTool):
         name: str = "band_send_event"
         description: str = get_tool_description("band_send_event")
-        args_schema: Any = _SendEventInput
+        args_schema: Type[BaseModel] = _SendEventInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -523,7 +524,7 @@ def _make_platform_tools(
     class AddParticipantTool(BaseTool):
         name: str = "band_add_participant"
         description: str = get_tool_description("band_add_participant")
-        args_schema: Any = _AddParticipantInput
+        args_schema: Type[BaseModel] = _AddParticipantInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -545,7 +546,7 @@ def _make_platform_tools(
     class RemoveParticipantTool(BaseTool):
         name: str = "band_remove_participant"
         description: str = get_tool_description("band_remove_participant")
-        args_schema: Any = _RemoveParticipantInput
+        args_schema: Type[BaseModel] = _RemoveParticipantInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -564,7 +565,7 @@ def _make_platform_tools(
     class GetParticipantsTool(BaseTool):
         name: str = "band_get_participants"
         description: str = get_tool_description("band_get_participants")
-        args_schema: Any = _GetParticipantsInput
+        args_schema: Type[BaseModel] = _GetParticipantsInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **_kwargs: Any) -> Any:
@@ -592,7 +593,7 @@ def _make_platform_tools(
     class LookupPeersTool(BaseTool):
         name: str = "band_lookup_peers"
         description: str = get_tool_description("band_lookup_peers")
-        args_schema: Any = _LookupPeersInput
+        args_schema: Type[BaseModel] = _LookupPeersInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -614,7 +615,7 @@ def _make_platform_tools(
     class CreateChatroomTool(BaseTool):
         name: str = "band_create_chatroom"
         description: str = get_tool_description("band_create_chatroom")
-        args_schema: Any = _CreateChatroomInput
+        args_schema: Type[BaseModel] = _CreateChatroomInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -638,7 +639,7 @@ def _make_platform_tools(
     class ListContactsTool(BaseTool):
         name: str = "band_list_contacts"
         description: str = get_tool_description("band_list_contacts")
-        args_schema: Any = _ListContactsInput
+        args_schema: Type[BaseModel] = _ListContactsInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -660,7 +661,7 @@ def _make_platform_tools(
     class AddContactTool(BaseTool):
         name: str = "band_add_contact"
         description: str = get_tool_description("band_add_contact")
-        args_schema: Any = _AddContactInput
+        args_schema: Type[BaseModel] = _AddContactInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -682,7 +683,7 @@ def _make_platform_tools(
     class RemoveContactTool(BaseTool):
         name: str = "band_remove_contact"
         description: str = get_tool_description("band_remove_contact")
-        args_schema: Any = _RemoveContactInput
+        args_schema: Type[BaseModel] = _RemoveContactInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -704,7 +705,7 @@ def _make_platform_tools(
     class ListContactRequestsTool(BaseTool):
         name: str = "band_list_contact_requests"
         description: str = get_tool_description("band_list_contact_requests")
-        args_schema: Any = _ListContactRequestsInput
+        args_schema: Type[BaseModel] = _ListContactRequestsInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -733,7 +734,7 @@ def _make_platform_tools(
     class RespondContactRequestTool(BaseTool):
         name: str = "band_respond_contact_request"
         description: str = get_tool_description("band_respond_contact_request")
-        args_schema: Any = _RespondContactRequestInput
+        args_schema: Type[BaseModel] = _RespondContactRequestInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -758,7 +759,7 @@ def _make_platform_tools(
     class ListMemoriesTool(BaseTool):
         name: str = "band_list_memories"
         description: str = get_tool_description("band_list_memories")
-        args_schema: Any = _ListMemoriesInput
+        args_schema: Type[BaseModel] = _ListMemoriesInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -812,7 +813,7 @@ def _make_platform_tools(
     class StoreMemoryTool(BaseTool):
         name: str = "band_store_memory"
         description: str = get_tool_description("band_store_memory")
-        args_schema: Any = _StoreMemoryInput
+        args_schema: Type[BaseModel] = _StoreMemoryInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -861,7 +862,7 @@ def _make_platform_tools(
     class GetMemoryTool(BaseTool):
         name: str = "band_get_memory"
         description: str = get_tool_description("band_get_memory")
-        args_schema: Any = _GetMemoryInput
+        args_schema: Type[BaseModel] = _GetMemoryInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -880,7 +881,7 @@ def _make_platform_tools(
     class SupersedeMemoryTool(BaseTool):
         name: str = "band_supersede_memory"
         description: str = get_tool_description("band_supersede_memory")
-        args_schema: Any = _SupersedeMemoryInput
+        args_schema: Type[BaseModel] = _SupersedeMemoryInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -899,7 +900,7 @@ def _make_platform_tools(
     class ArchiveMemoryTool(BaseTool):
         name: str = "band_archive_memory"
         description: str = get_tool_description("band_archive_memory")
-        args_schema: Any = _ArchiveMemoryInput
+        args_schema: Type[BaseModel] = _ArchiveMemoryInput
         cache_function: Any = _no_cache
 
         def _run(self, *_args: Any, **kwargs: Any) -> Any:
@@ -915,40 +916,29 @@ def _make_platform_tools(
 
             return _exec("band_archive_memory", execute)
 
-    base_tool_classes = [
-        SendMessageTool,
-        SendEventTool,
-        AddParticipantTool,
-        RemoveParticipantTool,
-        GetParticipantsTool,
-        LookupPeersTool,
-        CreateChatroomTool,
+    base_tools: list[BaseTool] = [
+        SendMessageTool(),
+        SendEventTool(),
+        AddParticipantTool(),
+        RemoveParticipantTool(),
+        GetParticipantsTool(),
+        LookupPeersTool(),
+        CreateChatroomTool(),
     ]
-    contact_tool_classes = [
-        ListContactsTool,
-        AddContactTool,
-        RemoveContactTool,
-        ListContactRequestsTool,
-        RespondContactRequestTool,
-    ]
-    memory_tool_classes = [
-        ListMemoriesTool,
-        StoreMemoryTool,
-        GetMemoryTool,
-        SupersedeMemoryTool,
-        ArchiveMemoryTool,
-    ]
-
-    for tool_class in base_tool_classes + contact_tool_classes + memory_tool_classes:
-        model_rebuild = getattr(tool_class, "model_rebuild", None)
-        if callable(model_rebuild):
-            model_rebuild(_types_namespace={"Any": Any})
-
-    base_tools: list[BaseTool] = [tool_class() for tool_class in base_tool_classes]
     contact_tools: list[BaseTool] = [
-        tool_class() for tool_class in contact_tool_classes
+        ListContactsTool(),
+        AddContactTool(),
+        RemoveContactTool(),
+        ListContactRequestsTool(),
+        RespondContactRequestTool(),
     ]
-    memory_tools: list[BaseTool] = [tool_class() for tool_class in memory_tool_classes]
+    memory_tools: list[BaseTool] = [
+        ListMemoriesTool(),
+        StoreMemoryTool(),
+        GetMemoryTool(),
+        SupersedeMemoryTool(),
+        ArchiveMemoryTool(),
+    ]
 
     return base_tools, contact_tools, memory_tools
 
@@ -990,7 +980,7 @@ def _make_custom_tools(
             class CustomCrewAITool(BaseTool):
                 name: str = _tool_name  # type: ignore[misc]
                 description: str = _tool_desc  # type: ignore[misc]
-                args_schema: Any = model
+                args_schema: Type[BaseModel] = model
                 cache_function: Any = staticmethod(lambda *_a, **_kw: False)
 
                 def _run(self, *_args: Any, **kwargs: Any) -> Any:

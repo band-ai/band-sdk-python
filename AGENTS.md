@@ -206,9 +206,9 @@ adapter = A2AGatewayAdapter(gateway_port=10000)
 
 | Purpose | Path |
 |---|---|
-| A2A Adapter | `src/adapters/a2a.py`, `src/integrations/a2a/adapter.py` |
-| A2A Gateway | `src/adapters/a2a_gateway.py`, `src/integrations/a2a/gateway/` |
-| A2A Types | `src/integrations/a2a/types.py` |
+| A2A Adapter | `src/band/adapters/a2a.py`, `src/band/integrations/a2a/adapter.py` |
+| A2A Gateway | `src/band/adapters/a2a_gateway.py`, `src/band/integrations/a2a/gateway/` |
+| A2A Types | `src/band/integrations/a2a/types.py` |
 
 ## ACP (Agent Client Protocol) Integration
 
@@ -230,16 +230,16 @@ Two-layer pattern (mirrors A2A Gateway):
 
 | File | Purpose |
 |------|---------|
-| `src/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
-| `src/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
-| `src/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
-| `src/integrations/acp/client_types.py` | `BandACPClient` — per-session chunk buffering |
-| `src/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
-| `src/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
-| `src/integrations/acp/event_converter.py` | `EventConverter` — PlatformMessage -> ACP session_update chunks |
-| `src/integrations/acp/cli.py` | `band-acp` CLI entry point |
-| `src/converters/acp_server.py` | History converter for server adapter |
-| `src/converters/acp_client.py` | History converter for client adapter |
+| `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
+| `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
+| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
+| `src/band/integrations/acp/client_types.py` | `BandACPClient` — per-session chunk buffering |
+| `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
+| `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
+| `src/band/integrations/acp/event_converter.py` | `EventConverter` — PlatformMessage -> ACP session_update chunks |
+| `src/band/integrations/acp/cli.py` | `band-acp` CLI entry point |
+| `src/band/converters/acp_server.py` | History converter for server adapter |
+| `src/band/converters/acp_client.py` | History converter for client adapter |
 
 ### CLI
 
@@ -288,7 +288,7 @@ await client.respond_to_agent_contact_request(**kwargs)
 ## Code Structure
 
 ```
-src/
+src/band/
 ├── adapters/       # Framework adapters (langgraph, anthropic, crewai, a2a, etc.)
 ├── converters/     # History converters per framework
 ├── core/           # Protocols, types, base classes
@@ -333,7 +333,7 @@ uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 uv run pytest tests/ -k "test_name"
 
 # Run with coverage
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src
+uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/band
 
 # Run integration tests (requires API key)
 uv run pytest tests/integration/ -v -s --no-cov
@@ -392,8 +392,8 @@ When adding a new framework adapter and converter, follow this TDD workflow. Use
 
 ### Phase 1: Scaffold Source Files
 
-1. Create converter at `src/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters._tool_parsing import parse_tool_call, parse_tool_result`.
-2. Create adapter at `src/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `enable_execution_reporting`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`.
+1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters._tool_parsing import parse_tool_call, parse_tool_result`.
+2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `enable_execution_reporting`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`.
 3. If the framework needs an external SDK, add an optional dependency group in `pyproject.toml`.
 
 ### Phase 2: Register with Conformance Infrastructure
@@ -412,11 +412,11 @@ uv run pytest tests/framework_conformance/test_converter_conformance.py -v -k "<
 
 ### Phase 4: Implement the Converter
 
-In `src/converters/<framework>.py`, implement `convert()`: text messages as `[sender_name]: content`, own agent filtering, other agent remapping, tool events via `parse_tool_call`/`parse_tool_result`, skip thought messages, default role to `"user"`.
+In `src/band/converters/<framework>.py`, implement `convert()`: text messages as `[sender_name]: content`, own agent filtering, other agent remapping, tool events via `parse_tool_call`/`parse_tool_result`, skip thought messages, default role to `"user"`.
 
 ### Phase 5: Implement the Adapter
 
-In `src/adapters/<framework>.py`: `on_started` sets agent name/description and creates client, `on_message` converts history and invokes LLM, `on_cleanup` cleans per-room state safely.
+In `src/band/adapters/<framework>.py`: `on_started` sets agent name/description and creates client, `on_message` converts history and invokes LLM, `on_cleanup` cleans per-room state safely.
 
 ### Phase 6: Write Framework-Specific Tests
 
@@ -436,8 +436,8 @@ uv run ruff check . && uv run ruff format .
 
 | Purpose | Path |
 |---|---|
-| Adapter source | `src/adapters/<framework>.py` |
-| Converter source | `src/converters/<framework>.py` |
+| Adapter source | `src/band/adapters/<framework>.py` |
+| Converter source | `src/band/converters/<framework>.py` |
 | Adapter config registry | `tests/framework_configs/adapters.py` |
 | Converter config registry | `tests/framework_configs/converters.py` |
 | Output adapters | `tests/framework_configs/output_adapters.py` |

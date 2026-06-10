@@ -13,7 +13,7 @@ don't need a public URL or ngrok to get started.
 Setup
 -----
 1. Register your Slack app from the bundled manifest:
-   ``src/integrations/slack/templates/manifest.yaml``.
+   ``src/band/integrations/slack/templates/manifest.yaml``.
    That manifest declares every scope and event subscription this
    example expects. (The recommended "Delayed Events" toggle has no
    manifest field — enable it manually under Event Subscriptions; see

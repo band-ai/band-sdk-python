@@ -179,7 +179,7 @@ Use [examples/run_agent.py](examples/run_agent.py) when you want one command tha
 |------|-------------|
 | `01_basic_bot.py` | Wraps an Anthropic brain with `SlackAdapter`. Defaults to Socket Mode; flip `SLACK_TRANSPORT=http` to mount under your own ASGI app. |
 
-The Slack bridge expects an installed Slack app with the right scopes. A maintained manifest lives at `src/integrations/slack/templates/manifest.yaml` — paste it into Slack's "Create from manifest" flow when registering the app. The manifest declares:
+The Slack bridge expects an installed Slack app with the right scopes. A maintained manifest lives at `src/band/integrations/slack/templates/manifest.yaml` — paste it into Slack's "Create from manifest" flow when registering the app. The manifest declares:
 
 - **AI App** (`assistant_view` + `assistant:write`) so the assistant pane, status indicators, and Block Kit plan/task blocks render.
 - All scopes needed for thread context: `app_mentions:read`, `im:history`, `channels:history`, `groups:history`, `chat:write`, `users:read`, plus `channels:read`/`groups:read`/`im:read` so the context mirror can resolve channel names.

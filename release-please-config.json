@@ -6,7 +6,7 @@
       "package-name": "band-sdk",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
-        "src/__init__.py",
+        "src/band/__init__.py",
         {
           "type": "generic",
           "path": "pyproject.toml",
