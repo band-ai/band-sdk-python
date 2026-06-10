@@ -24,10 +24,10 @@ examples:
       config_key: simple_agent
     02_custom_tools:
       file: 02_custom_tools.py
-      config_key: simple_agent
+      config_key: custom_tools_agent
     03_custom_personality:
       file: 03_custom_personality.py
-      config_key: simple_agent
+      config_key: custom_personality_agent
 
 # Expanded scenarios (E-I) run purpose-built agent scripts
 expanded:

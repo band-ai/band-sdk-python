@@ -459,13 +459,10 @@ version = "0.2.9"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
-    { name = "httpx" },
     { name = "phoenix-channels-python-client" },
-    { name = "pydantic" },
-    { name = "pydantic-core" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
-    { name = "typing-extensions" },
+    { name = "thenvoi-client-rest" },
 ]
 
 [package.optional-dependencies]
@@ -558,7 +555,9 @@ dev = [
     { name = "pytest-timeout" },
     { name = "python-dotenv" },
     { name = "ruff" },
+    { name = "slack-sdk" },
     { name = "starlette" },
+    { name = "thenvoi-testing-python" },
     { name = "uvicorn" },
     { name = "werkzeug" },
 ]
@@ -577,6 +576,7 @@ dev-crewai = [
     { name = "pytest-rerunfailures" },
     { name = "pytest-timeout" },
     { name = "ruff" },
+    { name = "thenvoi-testing-python" },
 ]
 gemini = [
     { name = "google-genai" },
@@ -610,6 +610,12 @@ pydantic-ai = [
     { name = "openai" },
     { name = "pydantic-ai-slim", extra = ["anthropic"], marker = "extra == 'extra-8-band-sdk-pydantic-ai' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant')" },
 ]
+slack = [
+    { name = "aiohttp" },
+    { name = "slack-sdk" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -622,6 +628,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'bridge'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'bridge-agentcore'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
+    { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9,<4" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
     { name = "beautifulsoup4", marker = "extra == 'dev'", specifier = ">=4.12.0" },
@@ -640,7 +647,6 @@ requires-dist = [
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=1.0.0,<2" },
     { name = "google-genai", marker = "extra == 'dev'", specifier = ">=1.43.0" },
     { name = "google-genai", marker = "extra == 'gemini'", specifier = ">=1.43.0" },
-    { name = "httpx", specifier = ">=0.21.2" },
     { name = "httpx", marker = "extra == 'bridge'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'bridge-agentcore'", specifier = ">=0.24.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.24.0" },
@@ -679,10 +685,8 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'crewai'", specifier = ">=12.1.1" },
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
-    { name = "pydantic", specifier = ">=1.9.2" },
     { name = "pydantic-ai-slim", marker = "extra == 'dev'", specifier = ">=1.56.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'pydantic-ai'", specifier = ">=1.56.0" },
-    { name = "pydantic-core", specifier = ">=2.18.2" },
     { name = "pydantic-settings", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "pydantic-settings", marker = "extra == 'dev-crewai'", specifier = ">=2.0.0" },
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.18.0" },
@@ -707,21 +711,27 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "ruff", marker = "extra == 'dev-crewai'", specifier = ">=0.8.0" },
+    { name = "slack-sdk", marker = "extra == 'dev'", specifier = ">=3.27.0" },
+    { name = "slack-sdk", marker = "extra == 'slack'", specifier = ">=3.27.0" },
     { name = "starlette", marker = "extra == 'a2a-gateway'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'a2a-gateway-demo'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
-    { name = "typing-extensions", specifier = ">=4.0.0" },
+    { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
+    { name = "thenvoi-client-rest", specifier = "==0.0.7" },
+    { name = "thenvoi-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
+    { name = "thenvoi-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway-demo'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'acp'", specifier = ">=0.32.0" },
     { name = "uvicorn", marker = "extra == 'agentcore-runtime'", specifier = ">=0.29" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.32.0" },
+    { name = "uvicorn", marker = "extra == 'slack'", specifier = ">=0.32.0" },
     { name = "websockets", marker = "extra == 'codex'", specifier = ">=13.0" },
     { name = "werkzeug", marker = "extra == 'dev'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "dev", "dev-crewai"]
+provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "dev", "dev-crewai"]
 
 [[package]]
 name = "bcrypt"
@@ -8041,6 +8051,15 @@ wheels = [
 ]
 
 [[package]]
+name = "slack-sdk"
+version = "3.42.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/00/16258bfa547559b2c936b50c882b4f0a36ebf6b69639eb763d8fa5e8d6cb/slack_sdk-3.42.0.tar.gz", hash = "sha256:873db9e1f632ac650ffdbf9d8ba825f3e9e7e576a1e4f9604ccb2a15b3727e3d", size = 252136, upload-time = "2026-05-18T17:50:44.727Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/ef/8a1556bd4843443993fc116783790a7cc553601a37f7d965ec26eef95e76/slack_sdk-3.42.0-py2.py3-none-any.whl", hash = "sha256:eb39aff97e476e10cc5a8ac29bd2e79a9959e880d9fe0c03b4e8f05b2ac996ff", size = 315469, upload-time = "2026-05-18T17:50:41.972Z" },
+]
+
+[[package]]
 name = "sniffio"
 version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -8200,6 +8219,37 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/19/89/bec5709fb759f9c784bbcb30b2e3497df3f901691d13c2b864dbf6694a17/textual-8.2.4.tar.gz", hash = "sha256:d4e2b2ddd7157191d00b228592b7c739ea080b7d792fd410f23ca75f05ea76c4", size = 1848933, upload-time = "2026-04-19T04:20:45.845Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5c/32/02932f0d597cdbb34e34bf24266ff0f2cf292ccb3aafc37dd9efcb0cc416/textual-8.2.4-py3-none-any.whl", hash = "sha256:a83bd3f0cc7125ca203845af753f9d6b6be030025ecd1b05cc75ebe645b9c4ba", size = 724390, upload-time = "2026-04-19T04:20:49.968Z" },
+]
+
+[[package]]
+name = "thenvoi-client-rest"
+version = "0.0.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/54/b8/077727592881e2bce52d9cd4198ddff4d2109eb30a456fe29bdd84eacba0/thenvoi_client_rest-0.0.7.tar.gz", hash = "sha256:1f793a96449556c304bbecce79db0ae2d8044e32b6c137e50c608d09cd97ddb3", size = 95101, upload-time = "2026-04-12T13:22:44.949Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/f4/61b5a86a1f3bbaeb09f46a01d019a2c0df0f6bf57494745ee670eee9e68b/thenvoi_client_rest-0.0.7-py3-none-any.whl", hash = "sha256:60b572ed3b64d2acaf447e50f36ea064506c14ca6c7d6ca9b3b197ccbc68c70f", size = 233953, upload-time = "2026-04-12T13:22:43.351Z" },
+]
+
+[[package]]
+name = "thenvoi-testing-python"
+version = "0.1.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "pydantic-settings", version = "2.10.1", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev') or (extra != 'extra-8-band-sdk-dev' and extra == 'extra-8-band-sdk-dev-crewai') or (extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev-crewai') or (extra == 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "pydantic-settings", version = "2.13.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai')" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/3c/0207eb3ca7aad4158efcc34cdfc633fa7b2ad8c50b1fa845bff506d5d83c/thenvoi_testing_python-0.1.4.tar.gz", hash = "sha256:ddfb153cccbd95d7b59e39b66ccd1d7a43772247efd7e48b439a535de425ca33", size = 61466, upload-time = "2026-04-28T13:24:36.622Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/36/03/fd651402215fe4986d7579ef79ba3a02d571d8ac5863acd6603dee070e20/thenvoi_testing_python-0.1.4-py3-none-any.whl", hash = "sha256:404c88dfea890aa69b547d6543521e2f4aafeb2c2762cea26c49a47f3e577f61", size = 25719, upload-time = "2026-04-28T13:24:34.941Z" },
 ]
 
 [[package]]

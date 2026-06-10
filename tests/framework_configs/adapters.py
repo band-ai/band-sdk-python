@@ -694,9 +694,12 @@ def _build_gemini_config() -> AdapterConfig:
 # on_cleanup contract), so they cannot share the same conformance tests.
 # acp uses the ACP protocol (Agent Client Protocol) with a similar non-standard
 # lifecycle (ACP JSON-RPC over stdio), so it is also excluded.
+# slack is a transport bridge that *wraps* an inner framework adapter (the brain)
+# and adds Slack ingress/egress; it has no model/LLM contract of its own, so it
+# cannot share the framework-adapter conformance tests (same rationale as a2a/acp).
 # claude_sdk is excluded when claude-agent-sdk optional dep is not installed.
 
-_excluded = {"a2a", "a2a_gateway", "acp"}
+_excluded = {"a2a", "a2a_gateway", "acp", "slack"}
 if not _HAS_CLAUDE_SDK:
     _excluded = _excluded | {"claude_sdk"}
 ADAPTER_EXCLUDED_MODULES: frozenset[str] = frozenset(_excluded)

@@ -236,6 +236,17 @@ darter:
   api_key: ""
 
 # =============================================================================
+# Slack Examples
+# =============================================================================
+
+# 01_basic_bot.py — bridges a Band agent into a Slack app via Socket
+# Mode (or HTTP). Register the Slack app from the bundled manifest at
+# src/band/integrations/slack/templates/manifest.yaml.
+slack_basic_bot:
+  agent_id: ""
+  api_key: ""
+
+# =============================================================================
 # 20 Questions Arena Examples
 # =============================================================================
 

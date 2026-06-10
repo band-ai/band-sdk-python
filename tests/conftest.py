@@ -1,8 +1,8 @@
 """Pytest fixtures for Band SDK tests.
 
-Most fixtures are provided by the local band_testing package.
+Most fixtures are provided by the thenvoi_testing package.
 
-Available from band_testing:
+Available from thenvoi_testing:
 - factory: MockDataFactory for creating test data
 - mock_agent_api, mock_human_api, mock_api_client: API client mocks
 - mock_websocket: WebSocket client mock
@@ -50,10 +50,7 @@ from band.runtime.types import PlatformMessage
 # E402: module-level import not at top of file. Grouped after first-party SDK
 # imports to keep test-utility imports separate. The original interleaved
 # ordering triggered ruff E402 because a non-import comment sat between imports.
-from band_testing.markers import pytest_ignore_collect_in_ci as _ignore_collect_in_ci
-
-
-pytest_plugins = ["band_testing.fixtures"]
+from thenvoi_testing.markers import pytest_ignore_collect_in_ci as _ignore_collect_in_ci
 
 
 def pytest_ignore_collect(collection_path):
@@ -128,9 +125,16 @@ def make_participant_added_event(
     participant_id: str = "user-456",
     name: str = "Test User",
     type: str = "User",
+    **kwargs,
 ) -> ParticipantAddedEvent:
     """Create a ParticipantAddedEvent using SDK-native types."""
-    payload = ParticipantAddedPayload(id=participant_id, name=name, type=type)
+    payload = ParticipantAddedPayload(
+        id=participant_id,
+        name=name,
+        type=type,
+        is_remote=kwargs.get("is_remote"),
+        is_external=kwargs.get("is_external"),
+    )
     return ParticipantAddedEvent(room_id=room_id, payload=payload)
 
 
@@ -187,6 +191,7 @@ def make_contact_added_event(
         name=name,
         type=contact_type,
         description=kwargs.get("description"),
+        is_remote=kwargs.get("is_remote"),
         is_external=kwargs.get("is_external"),
         inserted_at=kwargs.get("inserted_at", "2026-01-01T00:00:00Z"),
     )

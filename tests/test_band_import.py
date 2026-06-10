@@ -10,16 +10,14 @@ def test_band_import_surface_exposes_agent_and_link() -> None:
     assert BandLink.__name__ == "BandLink"
 
 
-def test_legacy_packages_are_not_available() -> None:
+def test_legacy_root_package_is_not_available() -> None:
+    # The SDK package is `band`; the bare legacy root must not ship in-tree.
+    # `thenvoi_rest` / `thenvoi_testing` are legitimate external pip
+    # dependencies (the Fern-generated REST client and test tooling), so they
+    # are intentionally importable.
     legacy_root = "then" + "voi"
-    legacy_packages = [
-        legacy_root,
-        f"{legacy_root}_rest",
-        f"{legacy_root}_testing",
-    ]
 
-    for package in legacy_packages:
-        assert importlib.util.find_spec(package) is None
+    assert importlib.util.find_spec(legacy_root) is None
 
 
 def test_band_submodule_imports_use_band_modules() -> None:

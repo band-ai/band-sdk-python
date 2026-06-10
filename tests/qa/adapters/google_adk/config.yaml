@@ -1,5 +1,6 @@
 adapter: google_adk
 llm_model: gemini-2.5-flash
+venv: .venv-google-adk
 env_file: examples/google_adk/.env
 
 # Core scenarios (A-C) run per example file

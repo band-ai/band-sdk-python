@@ -22,10 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "httpx>=0.21.2",
-    "pydantic>=1.9.2",
-    "pydantic-core>=2.18.2",
-    "typing-extensions>=4.0.0",
+    "thenvoi-client-rest==0.0.7",
     "phoenix-channels-python-client>=0.2.1",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0",
@@ -100,6 +97,12 @@ acp = [
     "starlette>=0.40.0",
     "uvicorn>=0.32.0",
 ]
+slack = [
+    "slack-sdk>=3.27.0",     # AsyncWebClient, signature verifier, Socket Mode
+    "starlette>=0.40.0",     # HTTP server framework
+    "uvicorn>=0.32.0",       # ASGI server
+    "aiohttp>=3.9,<4",       # Socket Mode transport (slack_sdk.socket_mode.aiohttp)
+]
 bridge = [
     "aiohttp>=3.9,<4",      # Health check HTTP server
     "python-dotenv>=1.2.2",    # Environment variable loading
@@ -135,6 +138,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
     "pytest-timeout>=2.4.0",
+    "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
     # Include pydantic-ai for testing
     "pydantic-ai-slim>=1.56.0",
@@ -163,6 +167,8 @@ dev = [
     # Include ACP deps for testing
     "agent-client-protocol>=0.9.0",
     "mcp>=1.25.0",
+    # Include Slack deps for testing
+    "slack-sdk>=3.27.0",
     # Include Gemini SDK for testing
     "google-genai>=1.43.0",
     # Include google-adk for testing
@@ -189,6 +195,7 @@ dev-crewai = [
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
     "pytest-timeout>=2.4.0",
+    "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
     "crewai==1.14.3",
@@ -206,12 +213,15 @@ band-trigger = "band.cli.trigger:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["band", "band.*", "band_rest", "band_rest.*", "band_testing", "band_testing.*"]
+include = ["band", "band.*"]
 namespaces = false
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 include-package-data = true
+
+[tool.setuptools.package-data]
+"band.integrations.slack" = ["templates/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -272,7 +282,6 @@ project_includes = [
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing
     "examples/**",              # Examples use local imports
-    "src/band_rest/**",         # Fern-generated REST client code
     "band-bridge/**",        # Standalone bridge app, not in src/ import root
 ]
 # CrewAI is in a conflict group with parlant/pydantic-ai and not installed in

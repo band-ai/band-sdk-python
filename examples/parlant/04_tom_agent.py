@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[parlant]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://-ai/band-sdk-python.git" }
 # ///
 """
 Tom the cat agent using Parlant.

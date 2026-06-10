@@ -5,6 +5,14 @@ simple_agent:
   agent_id: ""
   api_key: ""
 
+custom_tools_agent:
+  agent_id: ""
+  api_key: ""
+
+custom_personality_agent:
+  agent_id: ""
+  api_key: ""
+
 lg_memory_test:
   agent_id: ""
   api_key: ""

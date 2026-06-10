@@ -1105,6 +1105,24 @@ def validate_tool_arguments(
     return validated.model_dump(exclude_none=True)
 
 
+@dataclass(frozen=True)
+class ToolCallOutcome:
+    """Structured result of :meth:`AgentTools.execute_tool_call_structured`.
+
+    ``value`` is the JSON-serializable payload handed to the LLM (the
+    success result, or an error string on failure so the model can still
+    react). ``ok`` is the machine-readable success flag and
+    ``error_message`` the human-readable failure detail. Together they let
+    callers branch on success/failure without parsing ``value`` — e.g. the
+    Slack plan-progress UI marks a task ✅/❌ from ``ok`` rather than
+    sniffing the error string's prefix.
+    """
+
+    value: Any
+    ok: bool
+    error_message: str | None = None
+
+
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -2132,6 +2150,22 @@ class AgentTools(AgentToolsProtocol):
         Raises:
             BandToolError: When a tool method raises a typed tool failure
         """
+        outcome = await self.execute_tool_call_structured(tool_name, arguments)
+        return outcome.value
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        """Execute a tool call and report success/failure structurally.
+
+        Identical dispatch, validation, and serialization to
+        :meth:`execute_tool_call`, but returns a :class:`ToolCallOutcome`
+        whose ``ok`` flag is the authoritative success signal. Callers
+        that need to react to failure (e.g. progress UIs) should branch on
+        ``ok`` instead of inspecting the returned string, which has no
+        stable error prefix. ``BandToolError`` still propagates so
+        framework wrappers can translate it into native failures.
+        """
         # Validate arguments against Pydantic model
         try:
             definition = TOOL_DEFINITIONS.get(tool_name)
@@ -2142,32 +2176,35 @@ class AgentTools(AgentToolsProtocol):
                     arguments,
                 )
         except ValueError as error:
-            return str(error)
+            return ToolCallOutcome(value=str(error), ok=False, error_message=str(error))
         except Exception as e:
-            return f"Error validating {tool_name} arguments: {e}"
+            msg = f"Error validating {tool_name} arguments: {e}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
         definition = TOOL_DEFINITIONS.get(tool_name)
         if definition is None:
-            return f"Unknown tool: {tool_name}"
+            msg = f"Unknown tool: {tool_name}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
         try:
             method = getattr(self, definition.method_name)
             result = await method(**arguments)
             # Serialize Pydantic models to dicts at the adapter boundary
             if hasattr(result, "model_dump"):
-                return result.model_dump()
-            if isinstance(result, list):
-                return [
+                result = result.model_dump()
+            elif isinstance(result, list):
+                result = [
                     item.model_dump() if hasattr(item, "model_dump") else item
                     for item in result
                 ]
-            return result
+            return ToolCallOutcome(value=result, ok=True)
         except BandToolError:
             # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.
             raise
         except Exception as e:
-            return f"Error executing {tool_name}: {e}"
+            msg = f"Error executing {tool_name}: {e}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
 
 class HumanTools:
@@ -2203,7 +2240,7 @@ class HumanTools:
 
     async def register_my_agent(self, name: str, description: str) -> Any:
         """Register a new remote agent owned by the user."""
-        from band_rest import AgentRegisterRequest
+        from thenvoi_rest import AgentRegisterRequest
 
         logger.debug("Registering my agent: name=%s", name)
         agent_request = AgentRegisterRequest(name=name, description=description)
@@ -2227,7 +2264,7 @@ class HumanTools:
 
     async def create_my_chat_room(self, task_id: str | None = None) -> Any:
         """Create a new chat room with the user as owner."""
-        from band_rest import CreateMyChatRoomRequestChat
+        from thenvoi_rest import CreateMyChatRoomRequestChat
 
         logger.debug("Creating my chat room: task_id=%s", task_id)
         chat_request = (
@@ -2262,7 +2299,7 @@ class HumanTools:
         self, recipient_handle: str, message: str | None = None
     ) -> Any:
         """Send a contact request to another user."""
-        from band_rest import CreateContactRequestRequestContactRequest
+        from thenvoi_rest import CreateContactRequestRequestContactRequest
 
         logger.debug("Creating contact request to: %s", recipient_handle)
         kwargs: dict[str, Any] = {"recipient_handle": recipient_handle}
@@ -2407,7 +2444,7 @@ class HumanTools:
         MCP handler output verbatim (no exception raised) so the
         observable tool-surface error shape is preserved.
         """
-        from band_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
+        from thenvoi_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
 
         recipient_names = [
             name.strip().lower() for name in recipients.split(",") if name.strip()
@@ -2491,7 +2528,7 @@ class HumanTools:
         Returns ``f"Added participant: {participant_id}"`` (discards the
         Fern response body) to match today's MCP handler output verbatim.
         """
-        from band_rest import ParticipantRequest
+        from thenvoi_rest import ParticipantRequest
 
         logger.debug(
             "Adding my chat participant: chat_id=%s, participant_id=%s, role=%s",
