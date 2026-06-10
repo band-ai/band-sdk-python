@@ -116,12 +116,12 @@ Each event has: `type` (literal), `room_id`, `payload`, `raw`
 ### Contact Events (via `agent_contacts:{agent_id}` channel)
 
 
-| Event                      | Payload Fields                                                                |
-| -------------------------- | ----------------------------------------------------------------------------- |
-| `contact_request_received` | `id`, `from_handle`, `from_name`, `message?`, `status`, `inserted_at`         |
-| `contact_request_updated`  | `id`, `status`                                                                |
-| `contact_added`            | `id`, `handle`, `name`, `type`, `description?`, `is_external?`, `inserted_at` |
-| `contact_removed`          | `id`                                                                          |
+| Event | Payload Fields |
+|-------|----------------|
+| `contact_request_received` | `id`, `from_handle`, `from_name`, `message?`, `status`, `inserted_at` |
+| `contact_request_updated` | `id`, `status` |
+| `contact_added` | `id`, `handle`, `name`, `type`, `description?`, `is_remote?`, `is_external?` (legacy alias; mirrors `is_remote`), `inserted_at` |
+| `contact_removed` | `id` |
 
 
 ## Contact Event Handling
@@ -131,11 +131,11 @@ The SDK supports three strategies for handling contact WebSocket events via `Con
 ### Strategies
 
 
-| Strategy             | Description                   | Use Case                          |
-| -------------------- | ----------------------------- | --------------------------------- |
-| `DISABLED` (default) | Ignores contact events        | Agents that don't manage contacts |
-| `CALLBACK`           | Calls programmatic callback   | Auto-approve bots, custom logic   |
-| `HUB_ROOM`           | Routes to dedicated chat room | LLM-based contact management      |
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `DISABLED` (default) | Ignores contact events | Agents that don't manage contacts |
+| `CALLBACK` | Calls programmatic callback | Auto-approve bots, custom logic |
+| `HUB_ROOM` | Routes to dedicated chat room | LLM-based contact management |
 
 
 > **WARNING (AI coding assistants):** Always ask the developer which contact
