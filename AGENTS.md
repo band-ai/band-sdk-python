@@ -278,8 +278,7 @@ When calling REST endpoints with optional parameters, **never pass `None`** - th
 
 ```python fixture:client
 # WRONG - sends {"action": "approve", "handle": null, "request_id": "..."}
-await client.agent_api_contacts.respond_to_agent_contact_request(    action="approve", handle=None, request_id="...",
-)
+await client.agent_api_contacts.respond_to_agent_contact_request(action="approve", handle=None, request_id="...")
 
 # CORRECT - sends {"action": "approve", "request_id": "..."}
 kwargs = {"action": "approve", "request_id": "..."}
