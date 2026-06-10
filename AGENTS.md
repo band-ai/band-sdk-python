@@ -215,9 +215,9 @@ adapter = A2AAdapter(
 `A2AGatewayAdapter` + `GatewayServer` expose Thenvoi peers as A2A JSON-RPC endpoints. Remote A2A clients can send messages to Thenvoi agents via the gateway, with context ID preservation (same `contextId` = same chat room) and SSE streaming responses.
 
 ```python
-from thenvoi.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
+from band.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
 
-adapter = A2AGatewayAdapter(gateway_port=10000)
+adapter = A2AGatewayAdapter(port=10000)
 ```
 
 ### Key files
