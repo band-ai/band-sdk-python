@@ -13,7 +13,7 @@ Usage:
     )
 """
 
-from band_rest import (
+from thenvoi_rest import (
     RestClient,
     AsyncRestClient,
     AgentMe,
@@ -25,11 +25,11 @@ from band_rest import (
     NotFoundError,
     UnauthorizedError,
 )
-from band_rest.core.request_options import RequestOptions
-from band_rest.types import ChatMessageRequestMentionsItem
+from thenvoi_rest.core.request_options import RequestOptions
+from thenvoi_rest.types import ChatMessageRequestMentionsItem
 
 # Default request options with retry enabled for rate limiting (HTTP 429)
-# The band_rest client defaults to max_retries=0, which disables retries.
+# The thenvoi_rest client defaults to max_retries=0, which disables retries.
 # We set max_retries=3 to handle transient rate limit errors gracefully.
 DEFAULT_REQUEST_OPTIONS: RequestOptions = {"max_retries": 3}
 

@@ -22,10 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "httpx>=0.21.2",
-    "pydantic>=1.9.2",
-    "pydantic-core>=2.18.2",
-    "typing-extensions>=4.0.0",
+    "thenvoi-client-rest==0.0.7",
     "phoenix-channels-python-client>=0.2.1",
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0",
@@ -141,6 +138,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
     "pytest-timeout>=2.4.0",
+    "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
     # Include pydantic-ai for testing
     "pydantic-ai-slim>=1.56.0",
@@ -197,6 +195,7 @@ dev-crewai = [
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
     "pytest-timeout>=2.4.0",
+    "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
     "crewai==1.14.3",
@@ -214,12 +213,15 @@ band-trigger = "band.cli.trigger:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["band", "band.*", "band_rest", "band_rest.*", "band_testing", "band_testing.*"]
+include = ["band", "band.*"]
 namespaces = false
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 include-package-data = true
+
+[tool.setuptools.package-data]
+"band.integrations.slack" = ["templates/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -280,7 +282,6 @@ project_includes = [
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing
     "examples/**",              # Examples use local imports
-    "src/band_rest/**",         # Fern-generated REST client code
     "band-bridge/**",        # Standalone bridge app, not in src/ import root
 ]
 # CrewAI is in a conflict group with parlant/pydantic-ai and not installed in

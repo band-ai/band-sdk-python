@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.integrations.a2a.gateway import A2AGatewayAdapter
-from band_rest import Peer
+from thenvoi_rest import Peer
 
 
 class TestA2AGatewayContextIdFlow:

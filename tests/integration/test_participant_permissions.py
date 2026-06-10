@@ -23,9 +23,9 @@ from __future__ import annotations
 import logging
 
 import pytest
-from band_rest import AsyncRestClient
-from band_rest.core.api_error import ApiError
-from band_rest.types import ParticipantRequest
+from thenvoi_rest import AsyncRestClient
+from thenvoi_rest.core.api_error import ApiError
+from thenvoi_rest.types import ParticipantRequest
 
 from tests.integration.conftest import (
     AgentInfo,

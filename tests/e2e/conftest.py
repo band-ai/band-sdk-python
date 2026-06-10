@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 import pytest
 from dotenv import load_dotenv
 from pydantic import ValidationError
-from band_rest import AsyncRestClient, ChatRoomRequest
-from band_rest.types import (
+from thenvoi_rest import AsyncRestClient, ChatRoomRequest
+from thenvoi_rest.types import (
     ParticipantRequest,
 )
-from band_testing.settings import BandTestSettings as BandTestSettings
+from thenvoi_testing.settings import BaseTestSettings
 
 from band.client.streaming import WebSocketClient
 
@@ -76,16 +76,23 @@ _MAX_ROOMS_TO_SEARCH = 10
 # =============================================================================
 
 
-class E2ESettings(BandTestSettings):
-    """Settings for E2E tests, extending the standard test settings.
+class E2ESettings(BaseTestSettings):
+    """Settings for E2E tests, loaded from .env.test.
 
     Loads from .env.test and allows E2E-specific overrides via env vars.
     Pydantic BaseSettings automatically maps environment variables to fields
     (e.g. E2E_LLM_MODEL -> e2e_llm_model) with case-insensitive matching.
     """
 
-    # Standard BandTestSettings convention for locating the env file.
     _env_file_path = Path(__file__).parent.parent.parent / ".env.test"
+
+    band_api_key: str = ""
+    band_api_key_2: str = ""
+    band_api_key_user: str = ""
+    band_base_url: str = "http://localhost:4000"
+    band_ws_url: str = "ws://localhost:4000/api/v1/socket/websocket"
+    test_agent_id: str = ""
+    test_agent_id_2: str = ""
 
     # E2E-specific settings (override via environment variables)
     e2e_llm_model: str = "gpt-5.4-mini"

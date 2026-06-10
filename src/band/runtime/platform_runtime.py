@@ -20,7 +20,7 @@ from band.runtime.types import (
     ParticipantRemovedCallback,
     SessionConfig,
 )
-from band_rest.core.api_error import ApiError
+from thenvoi_rest.core.api_error import ApiError
 
 logger = logging.getLogger(__name__)
 

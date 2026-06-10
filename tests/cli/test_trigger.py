@@ -13,7 +13,7 @@ from band.cli.trigger import (
     main,
     run,
 )
-from band_rest.core.api_error import ApiError
+from thenvoi_rest.core.api_error import ApiError
 
 
 # --- Helpers ---

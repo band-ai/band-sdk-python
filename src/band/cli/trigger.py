@@ -39,16 +39,16 @@ import sys
 from typing import Final
 
 from band.runtime.types import normalize_handle
-from band_rest import (
+from thenvoi_rest import (
     AsyncRestClient,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
     ChatRoomRequest,
     ParticipantRequest,
 )
-from band_rest.core.api_error import ApiError
-from band_rest.core.request_options import RequestOptions
-from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
+from thenvoi_rest.core.api_error import ApiError
+from thenvoi_rest.core.request_options import RequestOptions
+from thenvoi_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
 

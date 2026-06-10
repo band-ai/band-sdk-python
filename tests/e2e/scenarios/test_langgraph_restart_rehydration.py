@@ -19,13 +19,13 @@ from dataclasses import dataclass
 import pytest
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
-from band_rest import (
+from thenvoi_rest import (
     AgentRegisterRequest,
     AsyncRestClient,
     ChatMessageRequest,
     ChatRoomRequest,
 )
-from band_rest.types import (
+from thenvoi_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
     ParticipantRequest,
 )

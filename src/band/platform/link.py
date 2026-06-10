@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from band.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
 from band.runtime.types import PlatformMessage
-from band_rest.core.api_error import ApiError
+from thenvoi_rest.core.api_error import ApiError
 
 from .event import (
     MessageEvent,
