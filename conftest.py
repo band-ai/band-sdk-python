@@ -16,8 +16,17 @@ if TYPE_CHECKING:
     from thenvoi.platform.link import ThenvoiLink
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def _markdown_docs_enabled(config: pytest.Config) -> bool:
+    return bool(config.getoption("markdowndocs", default=False))
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
     """Suppress expected DeprecationWarnings in markdown doc snippet tests."""
+    if not _markdown_docs_enabled(config):
+        return
+
     for item in items:
         if item.get_closest_marker("markdown-docs"):
             item.add_marker(pytest.mark.filterwarnings("ignore::DeprecationWarning"))
@@ -138,7 +147,7 @@ class _AnyAdapter:
 
 
 @pytest.fixture
-def link() -> ThenvoiLink:
+def markdown_link() -> ThenvoiLink:
     """Real ThenvoiLink with offline REST transport for markdown snippets."""
     from thenvoi.platform.link import ThenvoiLink
 
@@ -158,7 +167,7 @@ def link() -> ThenvoiLink:
 
 
 @pytest.fixture
-def client() -> AsyncRestClient:
+def markdown_client() -> AsyncRestClient:
     """Real AsyncRestClient with offline transport for markdown snippets."""
     from thenvoi.client.rest import AsyncRestClient
 
@@ -186,6 +195,8 @@ def _noop_asyncio_run_for_markdown_docs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Skip asyncio.run() in markdown quick-starts that would hit the live platform."""
+    if not _markdown_docs_enabled(request.config):
+        return
     if request.node.get_closest_marker("markdown-docs") is None:
         return
 
@@ -199,7 +210,9 @@ def _noop_asyncio_run_for_markdown_docs(
 
 
 @pytest.fixture
-def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def markdown_agent_config_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
     """Temporary agent_config.yaml for markdown Agent.from_config snippets."""
     from thenvoi import Agent
 
