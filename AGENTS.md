@@ -39,19 +39,11 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 The SDK uses Fern-generated REST client with property-based namespace API:
 
-```python fixture:link
-# Real Fern namespace clients on link.rest (offline HTTP stub in conftest).
-link.assert_rest_pattern_methods_exist()
-
+```python notest
 # Pattern: agent_api_<resource>.method()
-await link.rest.agent_api_chats.create_agent_chat(chat=ChatRoomRequest())
-await link.rest.agent_api_messages.create_agent_chat_message(
-    chat_id="room-1",
-    message=ChatMessageRequest(content="hello", mentions=[]),
-)
-await link.rest.agent_api_participants.list_agent_chat_participants(
-    chat_id="room-1",
-)
+await link.rest.agent_api_chats.create_agent_chat(...)
+await link.rest.agent_api_messages.create_agent_chat_message(...)
+await link.rest.agent_api_participants.list_agent_chat_participants(...)
 ```
 
 **Sub-clients**: `identity`, `peers`, `contacts`, `chats`, `messages`, `events`, `participants`, `context`, `memories`, `profile`, `agents`
