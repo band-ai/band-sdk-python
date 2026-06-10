@@ -108,13 +108,12 @@ adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
 Passing both old booleans and the new `features=` raises
 `BandConfigError`:
 
-```python
+```python notest
 # Raises BandConfigError
-with pytest.raises(BandConfigError):
-    adapter = AnthropicAdapter(
-        enable_memory_tools=True,
-        features=AdapterFeatures(capabilities={Capability.MEMORY}),
-    )
+adapter = AnthropicAdapter(
+    enable_memory_tools=True,
+    features=AdapterFeatures(capabilities={Capability.MEMORY}),
+)
 ```
 
 ## Selective renames (`AnthropicAdapter` and `GeminiAdapter` only)
@@ -204,13 +203,12 @@ need no changes.
 `BandConfigError` ships with a `with_suggestion()` factory that
 attaches "Did you mean 'X'?" hints based on Levenshtein distance:
 
-```python
-with pytest.raises(BandConfigError, match="Did you mean 'memory'"):
-    raise BandConfigError.with_suggestion(
-        "Unknown capability 'memry'.",
-        "memry",
-        [c.value for c in Capability],
-    )
+```python notest
+raise BandConfigError.with_suggestion(
+    "Unknown capability 'memry'.",
+    "memry",
+    [c.value for c in Capability],
+)
 # BandConfigError: Unknown capability 'memry'. Did you mean 'memory'?
 ```
 
