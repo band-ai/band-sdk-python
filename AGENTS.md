@@ -283,7 +283,7 @@ await client.agent_api_contacts.respond_to_agent_contact_request(    action="app
 
 # CORRECT - sends {"action": "approve", "request_id": "..."}
 kwargs = {"action": "approve", "request_id": "..."}
-await client.respond_to_agent_contact_request(**kwargs)
+await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 ```
 
 ## Code Structure
