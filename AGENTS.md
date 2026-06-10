@@ -458,18 +458,16 @@ uv run ruff check . && uv run ruff format .
 
 ### Key Files Reference
 
-
-| Purpose                     | Path                                                        |
-| --------------------------- | ----------------------------------------------------------- |
-| Adapter source              | `src/band/adapters/<framework>.py`                       |
-| Converter source            | `src/band/converters/<framework>.py`                     |
-| Adapter config registry     | `tests/framework_configs/adapters.py`                       |
-| Converter config registry   | `tests/framework_configs/converters.py`                     |
-| Output adapters             | `tests/framework_configs/output_adapters.py`                |
-| Adapter conformance tests   | `tests/framework_conformance/test_adapter_conformance.py`   |
+| Purpose | Path |
+|---|---|
+| Adapter source | `src/band/adapters/<framework>.py` |
+| Converter source | `src/band/converters/<framework>.py` |
+| Adapter config registry | `tests/framework_configs/adapters.py` |
+| Converter config registry | `tests/framework_configs/converters.py` |
+| Output adapters | `tests/framework_configs/output_adapters.py` |
+| Adapter conformance tests | `tests/framework_conformance/test_adapter_conformance.py` |
 | Converter conformance tests | `tests/framework_conformance/test_converter_conformance.py` |
-| Config drift detection      | `tests/framework_conformance/test_config_drift.py`          |
-
+| Config drift detection | `tests/framework_conformance/test_config_drift.py` |
 
 ## Example Files (examples/ directory)
 
@@ -525,4 +523,3 @@ uv run ruff format .
 uv run pyrefly check
 uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 ```
-
