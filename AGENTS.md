@@ -347,11 +347,11 @@ tests/
 ## Commands
 
 ```bash
-# Install dependencies (all extras except parlant — see Dependency Conflicts below)
+# Install dependencies (all extras except parcrewailant — see Dependency Conflicts below)
 uv sync --extra dev
 
-# Install parlant adapter deps (isolated from dev/crewai)
-uv sync --extra dev-parlant
+# Install crewai adapter deps (isolated from dev/crewai)
+uv sync --extra dev-crewai
 
 # Run unit tests
 uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
