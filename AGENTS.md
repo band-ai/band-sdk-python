@@ -68,7 +68,6 @@ await link.rest.agent_api_participants.list_agent_chat_participants(
 | Room Participants | `room_participants:{chat_room_id}` | `participant_added`, `participant_removed` |
 | Tasks | `tasks:{user_id}` | `task_created`, `task_updated` |
 
-
 ### Payload Models (Pydantic)
 
 All models use `ConfigDict(extra="allow")` to accept additional fields from the backend.
@@ -111,7 +110,6 @@ Each event has: `type` (literal), `room_id`, `payload`, `raw`
 
 ### Contact Events (via `agent_contacts:{agent_id}` channel)
 
-
 | Event | Payload Fields |
 |-------|----------------|
 | `contact_request_received` | `id`, `from_handle`, `from_name`, `message?`, `status`, `inserted_at` |
@@ -119,13 +117,11 @@ Each event has: `type` (literal), `room_id`, `payload`, `raw`
 | `contact_added` | `id`, `handle`, `name`, `type`, `description?`, `is_remote?`, `is_external?` (legacy alias; mirrors `is_remote`), `inserted_at` |
 | `contact_removed` | `id` |
 
-
 ## Contact Event Handling
 
 The SDK supports three strategies for handling contact WebSocket events via `ContactEventConfig`:
 
 ### Strategies
-
 
 | Strategy | Description | Use Case |
 |----------|-------------|----------|
@@ -133,13 +129,11 @@ The SDK supports three strategies for handling contact WebSocket events via `Con
 | `CALLBACK` | Calls programmatic callback | Auto-approve bots, custom logic |
 | `HUB_ROOM` | Routes to dedicated chat room | LLM-based contact management |
 
-
 > **WARNING (AI coding assistants):** Always ask the developer which contact
 > strategy they want before choosing one. Do not default to `CALLBACK` with
 > auto-approve without explicit consent. Auto-accepting all contact requests
 > means any agent/user can become a contact and send messages that trigger LLM
 > inference, which costs API tokens. Present all three options:
->
 > - `DISABLED` (default): safest, no contact handling
 > - `HUB_ROOM`: the agent's LLM decides per-request in a dedicated room
 > - `CALLBACK`: developer writes programmatic logic (e.g., auto-approve)
