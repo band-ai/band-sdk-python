@@ -1,3 +1,5 @@
+"""Globals injected into pytest-markdown-docs code-fence execution."""
+
 from __future__ import annotations
 
 import os
@@ -36,14 +38,8 @@ class AnyAdapter:
         self.kwargs = kwargs
 
 
-def _seed_env() -> None:
-    os.environ.setdefault("OPENAI_API_KEY", MARKDOWN_API_KEY)
-    os.environ.setdefault("ANTHROPIC_API_KEY", MARKDOWN_API_KEY)
-    os.environ.setdefault("QUICKSTART_AGENT_ID", MARKDOWN_AGENT_ID)
-    os.environ.setdefault("QUICKSTART_API_KEY", MARKDOWN_API_KEY)
-
-
 def _sdk_symbols() -> dict[str, object]:
+    """SDK names used by partial snippets without local imports."""
     return {
         "AdapterFeatures": AdapterFeatures,
         "AnthropicAdapter": AnthropicAdapter,
@@ -61,10 +57,12 @@ def _sdk_symbols() -> dict[str, object]:
 
 
 def _langgraph_symbols() -> dict[str, object]:
+    """Minimal objects needed by README LangGraph snippets."""
     return {"llm": object()}
 
 
 def _fixture_doubles() -> dict[str, object]:
+    """Shared stand-ins for snippets that assume surrounding setup."""
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5",
         api_key=MARKDOWN_API_KEY,
@@ -78,8 +76,7 @@ def _fixture_doubles() -> dict[str, object]:
 
 
 def build_globals() -> dict[str, object]:
-    """Inject shared names and dummy API keys for pytest-markdown-docs snippets."""
-    _seed_env()
+    """Return the namespace consumed by pytest_markdown_docs_globals()."""
     return {
         **_sdk_symbols(),
         **_langgraph_symbols(),
