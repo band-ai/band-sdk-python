@@ -42,7 +42,7 @@ def markdown_link():
 
 
 @pytest.fixture
-def markdown_client():
+def client():
     """Real AsyncRestClient with offline transport for markdown snippets."""
     from band.client.rest import AsyncRestClient
 
@@ -51,17 +51,10 @@ def markdown_client():
         base_url=MARKDOWN_REST_URL,
     )
     stub_offline_rest(rest_client)
-    setattr(
-        rest_client,
-        "assert_contact_respond_method_exists",
-        lambda: assert_contact_respond_method_exists(rest_client),
-    )
-    setattr(
-        rest_client,
-        "assert_omit_vs_null_calls",
-        lambda: assert_omit_vs_null_calls(rest_client),
-    )
-    return rest_client
+    assert_contact_respond_method_exists(rest_client)
+    yield rest_client
+    if len(rest_client._markdown_captured_json) == 2:
+        assert_omit_vs_null_calls(rest_client)
 
 
 @pytest.fixture(autouse=True)

@@ -241,7 +241,6 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/converters/acp_server.py` | History converter for server adapter |
 | `src/band/converters/acp_client.py` | History converter for client adapter |
 
-
 ### CLI
 
 ```bash
@@ -278,21 +277,16 @@ Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
 When calling REST endpoints with optional parameters, **never pass `None`** - the Fern client sends `null` which fails backend validation. Instead, use kwargs:
 
 ```python fixture:client
-# Real AsyncRestClient from band.client.rest (offline HTTP stub in conftest).
-client.assert_contact_respond_method_exists()
-
 # WRONG - sends {"action": "approve", "handle": null, "request_id": "..."}
 await client.agent_api_contacts.respond_to_agent_contact_request(
     action="approve",
     handle=None,
-    request_id="req-1",
+    request_id="...",
 )
 
 # CORRECT - sends {"action": "approve", "request_id": "..."}
 kwargs = {"action": "approve", "request_id": "req-1"}
 await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
-
-client.assert_omit_vs_null_calls()
 ```
 
 ## Code Structure
