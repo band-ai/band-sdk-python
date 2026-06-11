@@ -18,8 +18,6 @@ import os
 
 from band import Agent as BandAgent
 from band import AdapterFeatures, BandConfigError, Capability, Emit
-from band.adapters import AnthropicAdapter, ClaudeSDKAdapter, GeminiAdapter
-from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 from band.platform.event import ContactRequestReceivedEvent
 from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
@@ -64,22 +62,42 @@ def create_calculator_graph() -> MarkdownCalculatorGraph:
     return MarkdownCalculatorGraph()
 
 
+def _try_lazy_adapter(name: str) -> type | None:
+    """Import an adapter via ``band.adapters`` lazy loader when extras are installed."""
+    try:
+        import band.adapters as adapters_mod
+
+        return getattr(adapters_mod, name)
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        return None
+
+
 def _sdk_symbols() -> dict[str, object]:
     """Real SDK types for fences that skip imports."""
-    return {
+    symbols: dict[str, object] = {
         "AdapterFeatures": AdapterFeatures,
-        "AnthropicAdapter": AnthropicAdapter,
         "Capability": Capability,
-        "ClaudeSDKAdapter": ClaudeSDKAdapter,
-        "CodexAdapter": CodexAdapter,
-        "CodexAdapterConfig": CodexAdapterConfig,
         "Emit": Emit,
-        "GeminiAdapter": GeminiAdapter,
         "BandConfigError": BandConfigError,
         "ContactEventConfig": ContactEventConfig,
         "ContactEventStrategy": ContactEventStrategy,
         "ContactRequestReceivedEvent": ContactRequestReceivedEvent,
     }
+
+    for adapter_name in ("AnthropicAdapter", "ClaudeSDKAdapter", "GeminiAdapter"):
+        adapter_cls = _try_lazy_adapter(adapter_name)
+        if adapter_cls is not None:
+            symbols[adapter_name] = adapter_cls
+
+    try:
+        from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+        symbols["CodexAdapter"] = CodexAdapter
+        symbols["CodexAdapterConfig"] = CodexAdapterConfig
+    except (ImportError, ModuleNotFoundError):
+        pass
+
+    return symbols
 
 
 def _langgraph_symbols() -> dict[str, object]:
@@ -93,10 +111,17 @@ def _langgraph_symbols() -> dict[str, object]:
 
 def _fixture_doubles() -> dict[str, object]:
     """Doubles and pre-built values snippets assume already exist."""
-    adapter = AnthropicAdapter(
-        model="claude-sonnet-4-5",
-        api_key=MARKDOWN_API_KEY,
-    )
+    anthropic_cls = _try_lazy_adapter("AnthropicAdapter")
+    if anthropic_cls is not None:
+        adapter: object = anthropic_cls(
+            model="claude-sonnet-4-5",
+            api_key=MARKDOWN_API_KEY,
+        )
+    else:
+        adapter = AnyAdapter(
+            model="claude-sonnet-4-5",
+            api_key=MARKDOWN_API_KEY,
+        )
     return {
         "Agent": MarkdownAgentFactory,
         "AnyAdapter": AnyAdapter,
