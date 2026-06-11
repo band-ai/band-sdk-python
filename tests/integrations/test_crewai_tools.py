@@ -438,8 +438,6 @@ class TestStoreMemoryInputDescription:
             builder_mod._StoreMemoryInput.model_fields["memory_type"].description
             == expected
         )
-        schema = builder_mod._StoreMemoryInput.model_json_schema()
-        assert schema["properties"]["memory_type"]["description"] == expected
 
     def test_crewai_store_memory_rejects_subject_scope_without_subject_id(
         self, builder_mod

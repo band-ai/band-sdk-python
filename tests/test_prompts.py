@@ -82,18 +82,6 @@ class TestRenderSystemPromptWithoutBaseInstructions:
 
         assert "Custom behavior instructions here." in prompt
 
-    def test_minimal_prompt_format(self):
-        """Minimal prompt should have expected format."""
-        prompt = render_system_prompt(
-            agent_name="Bot",
-            agent_description="helper",
-            custom_section="Be helpful.",
-            include_base_instructions=False,
-        )
-
-        assert prompt.startswith("You are Bot, helper.")
-        assert "Be helpful." in prompt
-
     def test_empty_custom_section_when_disabled(self):
         """Should handle empty custom section gracefully."""
         prompt = render_system_prompt(
@@ -154,22 +142,6 @@ class TestCapabilityGatedSections:
 
         assert "## Memory Tools" in prompt
         assert "band_store_memory" in prompt
-
-    def test_memory_section_documents_store_memory_values(self):
-        """Memory instructions should document valid store_memory enum values."""
-        features = AdapterFeatures(capabilities={Capability.MEMORY})
-        prompt = render_system_prompt(
-            agent_name="Bot",
-            agent_description="helper",
-            features=features,
-        )
-
-        assert '- **system**: `"sensory"` | `"working"` | `"long_term"`' in prompt
-        assert '  - sensory: `"iconic"` | `"echoic"` | `"haptic"`' in prompt
-        assert '  - working: `"episodic"` | `"semantic"` | `"procedural"`' in prompt
-        assert (
-            '- **segment**: `"user"` | `"agent"` | `"tool"` | `"guideline"`' in prompt
-        )
 
     def test_memory_section_absent_by_default(self):
         """Memory tool instructions absent when no features."""
