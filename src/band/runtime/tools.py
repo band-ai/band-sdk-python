@@ -1111,9 +1111,9 @@ class ToolCallOutcome:
     success result, or an error string on failure so the model can still
     react). ``ok`` is the machine-readable success flag and
     ``error_message`` the human-readable failure detail. Together they let
-    callers branch on success/failure without parsing ``value``; for example,
-    the Slack plan-progress UI marks a task from ``ok`` rather than sniffing
-    the error string's prefix.
+    callers branch on success/failure without parsing ``value`` — e.g. the
+    Slack plan-progress UI marks a task ✅/❌ from ``ok`` rather than
+    sniffing the error string's prefix.
     """
 
     value: Any
@@ -2162,10 +2162,10 @@ class AgentTools(AgentToolsProtocol):
         Identical dispatch, validation, and serialization to
         :meth:`execute_tool_call`, but returns a :class:`ToolCallOutcome`
         whose ``ok`` flag is the authoritative success signal. Callers
-        that need to react to failure should branch on ``ok`` instead of
-        inspecting the returned string, which has no stable error prefix.
-        ``BandToolError`` still propagates so framework wrappers can translate
-        it into native failures.
+        that need to react to failure (e.g. progress UIs) should branch on
+        ``ok`` instead of inspecting the returned string, which has no
+        stable error prefix. ``BandToolError`` still propagates so
+        framework wrappers can translate it into native failures.
         """
         # Validate arguments against Pydantic model
         try:
