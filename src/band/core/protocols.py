@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
+from thenvoi.core.memory_types import MemoryStoreScope
+
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
@@ -188,7 +190,7 @@ class AgentToolsProtocol(Protocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = "subject",
+        scope: str = MemoryStoreScope.ORGANIZATION,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:

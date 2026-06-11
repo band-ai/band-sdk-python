@@ -5,6 +5,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from thenvoi.core.memory_types import MemoryStoreScope
+
 
 class FakeAgentTools:
     """
@@ -234,7 +236,7 @@ class FakeAgentTools:
         type: str,
         segment: str,
         thought: str,
-        scope: str = "subject",
+        scope: str = MemoryStoreScope.ORGANIZATION,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
