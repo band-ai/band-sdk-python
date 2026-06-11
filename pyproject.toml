@@ -41,7 +41,7 @@ letta = [
 ]
 pydantic-ai = [
     "pydantic-ai-slim[anthropic]>=1.56.0",
-    "openai>=1.0.0",
+    "openai>=2.41.1",
 ]
 anthropic = [
     "anthropic>=0.75.0",
@@ -54,7 +54,7 @@ langgraph = [
     "langchain-anthropic>=0.3.0",
     "langchain-community>=0.4.0",  # 0.4.0+ required for langchain 1.0 compatibility
     "langchain-text-splitters>=0.3.0",
-    "openai>=1.0.0",
+    "openai>=2.41.1",
     "beautifulsoup4>=4.12.0",
 ]
 claude_sdk = [
@@ -62,12 +62,12 @@ claude_sdk = [
 ]
 parlant = [
     "parlant>=3.0.0",
-    "openai>=1.0.0",
+    "openai>=2.41.1",
     "werkzeug>=3.1.6",
 ]
 crewai = [
     "crewai==1.14.3",
-    "openai>=2.0.0",  # crewai 1.14.3 requires openai>=2.0.0
+    "openai>=2.41.1",  # crewai 1.14.3 requires openai>=2.0.0
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
 ]
@@ -154,7 +154,7 @@ dev = [
     "langchain-anthropic>=0.3.0",
     "langchain-community>=0.4.0",
     "langchain-text-splitters>=0.3.0",
-    "openai>=1.0.0",
+    "openai>=2.41.1",
     "beautifulsoup4>=4.12.0",
     # Include a2a-sdk for testing
     "a2a-sdk>=0.3.22",
@@ -202,7 +202,7 @@ dev-crewai = [
     "httpx>=0.24.0",
     # CrewAI and its deps
     "crewai==1.14.3",
-    "openai>=2.0.0",
+    "openai>=2.41.1",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
     # Development tools
