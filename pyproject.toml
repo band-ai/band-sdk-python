@@ -40,7 +40,7 @@ letta = [
     "letta-client>=0.1.0",
 ]
 pydantic-ai = [
-    "pydantic-ai-slim[anthropic]>=1.56.0",
+    "pydantic-ai-slim[anthropic]>=1.107.0",
     "openai>=1.0.0",
 ]
 anthropic = [
