@@ -23,6 +23,7 @@ from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
     MemorySegment,
     MemorySystem,
+    WorkingLongTermMemoryType,
     enum_values,
 )
 from band.core.types import AdapterFeatures, Capability
@@ -84,11 +85,11 @@ Use `band_supersede_memory` to mark outdated memories and
 `band_archive_memory` to hide memories that should be preserved."""
 
 
-_MEMORY_COMMON_PATTERNS = """Common patterns:
-- Facts learned about other agents/entities: `system="long_term"`, `type="semantic"`, `segment="agent"`
-- Events that occurred: `system="long_term"`, `type="episodic"`, `segment="agent"`
-- User preferences or profile info: `system="long_term"`, `type="semantic"`, `segment="user"`
-- How to perform a task: `system="long_term"`, `type="procedural"`, `segment="tool"`"""
+_MEMORY_COMMON_PATTERNS = f"""Common patterns:
+- Facts learned about other agents/entities: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
+- Events that occurred: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.EPISODIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
+- User preferences or profile info: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.USER.value}"`
+- How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
 
 
 _MEMORY_SCOPE_GUIDANCE = """When storing with `scope="subject"`, you must pass a real `subject_id` UUID
