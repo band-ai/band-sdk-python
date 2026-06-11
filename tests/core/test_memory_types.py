@@ -2,35 +2,36 @@
 
 from __future__ import annotations
 
-from typing import get_args
-
 from thenvoi.core.memory_types import (
+    MEMORY_SYSTEM_TYPE_MAP,
     MemorySystem,
-    MemoryType,
     SensoryMemoryType,
     WorkingLongTermMemoryType,
-    literal_values,
-    memory_system_type_map,
+    enum_values,
 )
 
 
 class TestMemorySystemTypeMap:
     def test_keys_match_memory_system(self):
-        assert set(memory_system_type_map()) == set(get_args(MemorySystem))
+        assert set(MEMORY_SYSTEM_TYPE_MAP) == set(enum_values(MemorySystem))
 
     def test_mapped_types_cover_memory_type_union(self):
         mapped_types = {
             memory_type
-            for types in memory_system_type_map().values()
+            for types in MEMORY_SYSTEM_TYPE_MAP.values()
             for memory_type in types
         }
-        assert mapped_types == set(get_args(MemoryType))
+        sensory = set(enum_values(SensoryMemoryType))
+        working_long_term = set(enum_values(WorkingLongTermMemoryType))
+        assert mapped_types == sensory | working_long_term
 
     def test_sensory_and_working_long_term_types_are_disjoint(self):
-        sensory = set(literal_values(SensoryMemoryType))
-        working_long_term = set(literal_values(WorkingLongTermMemoryType))
+        sensory = set(enum_values(SensoryMemoryType))
+        working_long_term = set(enum_values(WorkingLongTermMemoryType))
         assert sensory.isdisjoint(working_long_term)
 
     def test_working_and_long_term_share_types(self):
-        system_map = memory_system_type_map()
-        assert system_map["working"] == system_map["long_term"]
+        assert (
+            MEMORY_SYSTEM_TYPE_MAP[MemorySystem.WORKING.value]
+            == MEMORY_SYSTEM_TYPE_MAP[MemorySystem.LONG_TERM.value]
+        )

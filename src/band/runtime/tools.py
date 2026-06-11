@@ -284,7 +284,9 @@ class StoreMemoryInput(BaseModel):
     )
     segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: MemoryStoreScope = Field("organization", description="Visibility scope")
+    scope: MemoryStoreScope = Field(
+        MemoryStoreScope.ORGANIZATION, description="Visibility scope"
+    )
     subject_id: str | None = Field(
         None,
         description="UUID of the subject this memory is about (required for subject scope)",

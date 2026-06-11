@@ -19,7 +19,12 @@ Example:
 
 from __future__ import annotations
 
-from band.core.memory_types import literal_values, memory_system_type_map
+from band.core.memory_types import (
+    MEMORY_SYSTEM_TYPE_MAP,
+    MemorySegment,
+    MemorySystem,
+    enum_values,
+)
 from band.core.types import AdapterFeatures, Capability
 
 
@@ -60,17 +65,12 @@ to the original requester. Do not stop at thanking the helper.
 
 
 def _memory_section() -> str:
-    from band.runtime.tools import StoreMemoryInput
-
-    def field_literal_values(field_name: str) -> tuple[str, ...]:
-        return literal_values(StoreMemoryInput.model_fields[field_name].annotation)
-
     def format_values(values: tuple[str, ...]) -> str:
         return " | ".join(f'`"{value}"`' for value in values)
 
     type_lines = "\n".join(
         f"  - {system}: {format_values(types)}"
-        for system, types in memory_system_type_map().items()
+        for system, types in MEMORY_SYSTEM_TYPE_MAP.items()
     )
 
     return f"""## Memory Tools
@@ -84,10 +84,10 @@ Use `band_supersede_memory` to mark outdated memories and
 When calling `band_store_memory`, the `system`, `type`, and `segment` fields
 must use these exact values (case-sensitive):
 
-- **system**: {format_values(field_literal_values("system"))}
+- **system**: {format_values(enum_values(MemorySystem))}
 - **type** (must match the chosen system):
 {type_lines}
-- **segment**: {format_values(field_literal_values("segment"))}
+- **segment**: {format_values(enum_values(MemorySegment))}
 
 Common patterns:
 - Facts learned about other agents/entities: `system="long_term"`, `type="semantic"`, `segment="agent"`
