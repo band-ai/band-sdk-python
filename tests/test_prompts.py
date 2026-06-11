@@ -82,6 +82,18 @@ class TestRenderSystemPromptWithoutBaseInstructions:
 
         assert "Custom behavior instructions here." in prompt
 
+    def test_minimal_prompt_format(self):
+        """Minimal prompt should have expected format."""
+        prompt = render_system_prompt(
+            agent_name="Bot",
+            agent_description="helper",
+            custom_section="Be helpful.",
+            include_base_instructions=False,
+        )
+
+        assert prompt.startswith("You are Bot, helper.")
+        assert "Be helpful." in prompt
+
     def test_empty_custom_section_when_disabled(self):
         """Should handle empty custom section gracefully."""
         prompt = render_system_prompt(
