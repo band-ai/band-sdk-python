@@ -1103,6 +1103,24 @@ def validate_tool_arguments(
     return validated.model_dump(exclude_none=True)
 
 
+@dataclass(frozen=True)
+class ToolCallOutcome:
+    """Structured result of :meth:`AgentTools.execute_tool_call_structured`.
+
+    ``value`` is the JSON-serializable payload handed to the LLM (the
+    success result, or an error string on failure so the model can still
+    react). ``ok`` is the machine-readable success flag and
+    ``error_message`` the human-readable failure detail. Together they let
+    callers branch on success/failure without parsing ``value``; for example,
+    the Slack plan-progress UI marks a task from ``ok`` rather than sniffing
+    the error string's prefix.
+    """
+
+    value: Any
+    ok: bool
+    error_message: str | None = None
+
+
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -2133,6 +2151,22 @@ class AgentTools(AgentToolsProtocol):
         Raises:
             BandToolError: When a tool method raises a typed tool failure
         """
+        outcome = await self.execute_tool_call_structured(tool_name, arguments)
+        return outcome.value
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        """Execute a tool call and report success/failure structurally.
+
+        Identical dispatch, validation, and serialization to
+        :meth:`execute_tool_call`, but returns a :class:`ToolCallOutcome`
+        whose ``ok`` flag is the authoritative success signal. Callers
+        that need to react to failure should branch on ``ok`` instead of
+        inspecting the returned string, which has no stable error prefix.
+        ``BandToolError`` still propagates so framework wrappers can translate
+        it into native failures.
+        """
         # Validate arguments against Pydantic model
         try:
             definition = TOOL_DEFINITIONS.get(tool_name)
@@ -2143,32 +2177,35 @@ class AgentTools(AgentToolsProtocol):
                     arguments,
                 )
         except ValueError as error:
-            return str(error)
+            return ToolCallOutcome(value=str(error), ok=False, error_message=str(error))
         except Exception as e:
-            return f"Error validating {tool_name} arguments: {e}"
+            msg = f"Error validating {tool_name} arguments: {e}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
         definition = TOOL_DEFINITIONS.get(tool_name)
         if definition is None:
-            return f"Unknown tool: {tool_name}"
+            msg = f"Unknown tool: {tool_name}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
         try:
             method = getattr(self, definition.method_name)
             result = await method(**arguments)
             # Serialize Pydantic models to dicts at the adapter boundary
             if hasattr(result, "model_dump"):
-                return result.model_dump()
-            if isinstance(result, list):
-                return [
+                result = result.model_dump()
+            elif isinstance(result, list):
+                result = [
                     item.model_dump() if hasattr(item, "model_dump") else item
                     for item in result
                 ]
-            return result
+            return ToolCallOutcome(value=result, ok=True)
         except BandToolError:
             # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.
             raise
         except Exception as e:
-            return f"Error executing {tool_name}: {e}"
+            msg = f"Error executing {tool_name}: {e}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
 
 class HumanTools:

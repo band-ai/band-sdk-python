@@ -1149,7 +1149,7 @@ class TestEmptyMentionsValidation:
         assert result.model_dump()["id"] == "msg-123"
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_called_once()
 
-    async def test_execute_tool_call_raises_thenvoi_tool_error(
+    async def test_execute_tool_call_raises_band_tool_error(
         self, mock_rest_client, participants
     ):
         """execute_tool_call lets BandToolError propagate for wrapper translation."""
