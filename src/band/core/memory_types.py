@@ -6,49 +6,64 @@ from enum import StrEnum
 
 
 class MemorySystem(StrEnum):
-    SENSORY = "sensory"
-    WORKING = "working"
-    LONG_TERM = "long_term"
+    """Memory tier; constrains valid ``type`` values via MEMORY_SYSTEM_TYPE_MAP."""
+
+    SENSORY = "sensory"  # Brief sensory inputs (iconic/echoic/haptic)
+    WORKING = "working"  # Short-term session context (episodic/semantic/procedural)
+    LONG_TERM = "long_term"  # Persistent cross-conversation memory (same types as working)
 
 
 class SensoryMemoryType(StrEnum):
-    ICONIC = "iconic"
-    ECHOIC = "echoic"
-    HAPTIC = "haptic"
+    """Types allowed when ``system`` is sensory."""
+
+    ICONIC = "iconic"  # Visual input
+    ECHOIC = "echoic"  # Auditory input
+    HAPTIC = "haptic"  # Tactile input
 
 
 class WorkingLongTermMemoryType(StrEnum):
-    EPISODIC = "episodic"
-    SEMANTIC = "semantic"
-    PROCEDURAL = "procedural"
+    """Types allowed when ``system`` is working or long_term."""
+
+    EPISODIC = "episodic"  # Events that occurred
+    SEMANTIC = "semantic"  # Facts, preferences, learned knowledge
+    PROCEDURAL = "procedural"  # How to perform tasks
 
 
+# Union passed as ``type`` on store/list; must match the chosen system.
 MemoryType = SensoryMemoryType | WorkingLongTermMemoryType
 
 
 class MemorySegment(StrEnum):
-    USER = "user"
-    AGENT = "agent"
-    TOOL = "tool"
-    GUIDELINE = "guideline"
+    """Logical subject category for a stored memory."""
+
+    USER = "user"  # User preferences or profile info
+    AGENT = "agent"  # Facts or events about agents/entities
+    TOOL = "tool"  # Tool usage or task procedures
+    GUIDELINE = "guideline"  # Behavioral rules or policies
 
 
 class MemoryStoreScope(StrEnum):
-    SUBJECT = "subject"
-    ORGANIZATION = "organization"
+    """Visibility scope for ``band_store_memory``."""
+
+    SUBJECT = "subject"  # About one person/agent; requires subject_id
+    ORGANIZATION = "organization"  # Shared org-wide; default when storing
 
 
 class MemoryListScope(StrEnum):
-    SUBJECT = "subject"
-    ORGANIZATION = "organization"
-    ALL = "all"
+    """Scope filter for ``band_list_memories``."""
+
+    SUBJECT = "subject"  # Subject-scoped memories only
+    ORGANIZATION = "organization"  # Organization-scoped memories only
+    ALL = "all"  # Both scopes (no scope filter)
 
 
 class MemoryStatus(StrEnum):
-    ACTIVE = "active"
-    SUPERSEDED = "superseded"
-    ARCHIVED = "archived"
-    ALL = "all"
+    """Lifecycle state; list filter and set by supersede/archive tools."""
+
+    ACTIVE = "active"  # Normal, visible memories
+    SUPERSEDED = "superseded"  # Outdated; soft-deleted via band_supersede_memory
+    ARCHIVED = "archived"  # Hidden but preserved via band_archive_memory
+    ALL = "all"  # Any status (no filter)
 
 
 def enum_values(enum_cls: type[StrEnum]) -> tuple[str, ...]:
