@@ -7,7 +7,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
@@ -17,7 +16,7 @@ from thenvoi_rest import AsyncRestClient
 from band import Agent
 from band.adapters.langgraph import LangGraphAdapter
 from band.core.types import AdapterFeatures, Capability
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.conftest import E2ESettings, requires_e2e, requires_openai
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     listening_for_agent_responses,
@@ -45,9 +44,6 @@ async def running_langgraph_memory_agent(
     e2e_config: E2ESettings,
 ) -> AsyncGenerator[Agent, None]:
     """Run a LangGraph agent configured with Band memory tools enabled."""
-    if not os.environ.get("OPENAI_API_KEY"):
-        pytest.skip("OPENAI_API_KEY not set")
-
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import MemorySaver
 
@@ -102,6 +98,7 @@ async def _wait_for_org_memory_containing(
 @pytest.mark.asyncio(loop_scope="session")
 @pytest.mark.flaky(reruns=2)
 @requires_e2e
+@requires_openai
 async def test_langgraph_agent_stores_durable_user_memory(
     e2e_config: E2ESettings,
     langgraph_memory_room: tuple[str, str, str],
