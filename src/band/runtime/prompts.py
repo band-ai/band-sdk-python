@@ -34,7 +34,7 @@ BASE_INSTRUCTIONS = """
 
 Multi-participant chat. Messages show sender: [Name]: content.
 Messages prefixed with [System]: are platform updates (participant changes, contact updates, etc.).
-Use `band_send_message(content, mentions)` to respond. Plain text output is not delivered.
+Use `thenvoi_send_message(content, mentions)` to respond. Plain text output is not delivered.
 Mentions use handles: @<username> for users, @<username>/<agent-name> for agents.
 
 ## Security
@@ -51,9 +51,9 @@ If multiple participants mention you, address each in turn.
 ## Delegation
 
 When asked about something outside your capabilities:
-1. Call `band_lookup_peers()` to find available specialized agents.
-2. If a relevant agent exists, call `band_add_participant(identifier)` to bring them in. Prefer the exact peer ID returned by `band_lookup_peers()`; handles are for mentions.
-3. Send the question to that agent via `band_send_message(question, mentions=[agent_handle])`.
+1. Call `thenvoi_lookup_peers()` to find available specialized agents.
+2. If a relevant agent exists, call `thenvoi_add_participant(identifier)` to bring them in. Prefer the exact peer ID returned by `thenvoi_lookup_peers()`; handles are for mentions.
+3. Send the question to that agent via `thenvoi_send_message(question, mentions=[agent_handle])`.
 4. Relay their response back to the original requester.
 5. Do NOT remove added agents automatically; they stay silent unless mentioned.
 
@@ -64,49 +64,64 @@ to the original requester. Do not stop at thanking the helper.
 """
 
 
-def _memory_section() -> str:
-    def format_values(values: tuple[str, ...]) -> str:
-        return " | ".join(f'`"{value}"`' for value in values)
+def _quote_choices(values: tuple[str, ...]) -> str:
+    return " | ".join(f'`"{value}"`' for value in values)
 
-    type_lines = "\n".join(
-        f"  - {system}: {format_values(types)}"
+
+def _memory_type_lines() -> str:
+    return "\n".join(
+        f"  - {system}: {_quote_choices(types)}"
         for system, types in MEMORY_SYSTEM_TYPE_MAP.items()
     )
 
-    return f"""## Memory Tools
+
+_MEMORY_INTRO = """## Memory Tools
 
 You have access to memory tools for storing and retrieving information
 across conversations. Use `band_store_memory` to persist important
 information and `band_list_memories` / `band_get_memory` to recall it.
 Use `band_supersede_memory` to mark outdated memories and
-`band_archive_memory` to hide memories that should be preserved.
+`band_archive_memory` to hide memories that should be preserved."""
 
-When calling `band_store_memory`, the `system`, `type`, and `segment` fields
-must use these exact values (case-sensitive):
 
-- **system**: {format_values(enum_values(MemorySystem))}
-- **type** (must match the chosen system):
-{type_lines}
-- **segment**: {format_values(enum_values(MemorySegment))}
-
-Common patterns:
+_MEMORY_COMMON_PATTERNS = """Common patterns:
 - Facts learned about other agents/entities: `system="long_term"`, `type="semantic"`, `segment="agent"`
 - Events that occurred: `system="long_term"`, `type="episodic"`, `segment="agent"`
 - User preferences or profile info: `system="long_term"`, `type="semantic"`, `segment="user"`
-- How to perform a task: `system="long_term"`, `type="procedural"`, `segment="tool"`
+- How to perform a task: `system="long_term"`, `type="procedural"`, `segment="tool"`"""
 
-When storing with `scope="subject"`, you must pass a real `subject_id` UUID
-(e.g. from `band_lookup_peers` or the participant list). If you don't have
+
+_MEMORY_SCOPE_GUIDANCE = """When storing with `scope="subject"`, you must pass a real `subject_id` UUID
+(e.g. from `thenvoi_lookup_peers` or the participant list). If you don't have
 one, use `scope="organization"` — never invent a UUID."""
+
+
+def _memory_section() -> str:
+    field_rules = f"""When calling `band_store_memory`, the `system`, `type`, and `segment` fields
+must use these exact values (case-sensitive):
+
+- **system**: {_quote_choices(enum_values(MemorySystem))}
+- **type** (must match the chosen system):
+{_memory_type_lines()}
+- **segment**: {_quote_choices(enum_values(MemorySegment))}"""
+
+    return "\n\n".join(
+        [
+            _MEMORY_INTRO.strip(),
+            field_rules.strip(),
+            _MEMORY_COMMON_PATTERNS.strip(),
+            _MEMORY_SCOPE_GUIDANCE.strip(),
+        ]
+    )
 
 
 MEMORY_SECTION = _memory_section()
 CONTACT_SECTION = """
 ## Contact Management Tools
 
-You have access to contact management tools. Use `band_list_contacts`
-to see your contacts, `band_add_contact` to send contact requests,
-and `band_respond_contact_request` to handle incoming requests.
+You have access to contact management tools. Use `thenvoi_list_contacts`
+to see your contacts, `thenvoi_add_contact` to send contact requests,
+and `thenvoi_respond_contact_request` to handle incoming requests.
 """
 
 # Backward-compatible template dict — DEPRECATED.
