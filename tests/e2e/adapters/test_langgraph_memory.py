@@ -1,4 +1,4 @@
-"""E2E skeleton for LangGraph memory tool usage.
+"""E2E test for LangGraph memory tool usage.
 
 Run with:
     E2E_TESTS_ENABLED=true uv run pytest tests/e2e/adapters/test_langgraph_memory.py -v -s --no-cov
@@ -6,14 +6,13 @@ Run with:
 
 from __future__ import annotations
 
-import os
 import asyncio
-from collections.abc import AsyncGenerator
+import os
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
 import pytest
-from thenvoi_rest import AsyncRestClient, ChatRoomRequest
-from thenvoi_rest.types import ParticipantRequest
+from thenvoi_rest import AsyncRestClient
 
 from band import Agent
 from band.adapters.langgraph import LangGraphAdapter
@@ -25,54 +24,20 @@ from tests.e2e.helpers import (
     send_trigger_message,
 )
 
+RoomAllocator = Callable[[str], Awaitable[tuple[str, str, str]]]
+
 MEMORY_CUSTOM_SECTION = (
-    "Actively look for durable information worth remembering. "
-    "When a user states a preference, profile detail, standing instruction, "
-    "important project fact, or reusable workflow, call `band_store_memory` "
-    "before replying. Use memory sparingly: do not store one-off requests, "
-    "temporary chat context, or sensitive information unless the user clearly "
-    "asks you to remember it. After storing a memory, briefly acknowledge what "
-    "you saved and continue helping the user."
+    "When asked to remember durable information, call `band_store_memory` "
+    'before replying. If you do not have a real subject_id, use scope="organization" '
+    "and omit subject_id."
 )
 
 
 @pytest.fixture
 async def langgraph_memory_room(
-    running_langgraph_memory_agent: Agent,
-    e2e_config: E2ESettings,
-    e2e_created_room_ids: list[str],
+    e2e_room_allocator: RoomAllocator,
 ) -> tuple[str, str, str]:
-    """Create a fresh room after the agent is running.
-
-    Creating the room after startup forces the live agent to receive a
-    ``room_added`` event and avoids stale reused room subscriptions.
-    """
-    client = AsyncRestClient(
-        api_key=e2e_config.band_api_key,
-        base_url=e2e_config.band_base_url,
-    )
-
-    peers_response = await client.agent_api_peers.list_agent_peers()
-    user_peer = next((p for p in peers_response.data if p.type == "User"), None)
-    if user_peer is None:
-        pytest.skip("No User peer available for E2E tests")
-
-    response = await client.agent_api_chats.create_agent_chat(chat=ChatRoomRequest())
-    if response.data is None:
-        pytest.fail("create_agent_chat returned no data")
-
-    room_id = response.data.id
-    e2e_created_room_ids.append(room_id)
-
-    await client.agent_api_participants.add_agent_chat_participant(
-        room_id,
-        participant=ParticipantRequest(participant_id=user_peer.id, role="member"),
-    )
-
-    # Give the running agent a short window to receive room_added and subscribe
-    # before the trigger message is sent.
-    await asyncio.sleep(1)
-    return room_id, user_peer.id, user_peer.name
+    return await e2e_room_allocator("langgraph-memory")
 
 
 @pytest.fixture
@@ -105,61 +70,29 @@ async def running_langgraph_memory_agent(
         yield agent
 
 
-async def _list_memories_containing(
-    agent_client: AsyncRestClient,
+async def _wait_for_org_memory_containing(
+    client: AsyncRestClient,
     marker: str,
-    subject_ids: list[str],
-) -> list[object]:
-    """Return active memories whose content contains ``marker``.
-
-    A ``subject_id`` query returns only memories about that subject, not
-    organization-wide ones, so we query organization scope (where the agent
-    stores memories it can't attribute to a subject UUID) plus each candidate
-    subject and union the results. We match by substring client-side because the
-    underscore marker isn't reliably tokenized by the server-side full-text
-    ``content_query`` filter.
-    """
-    queries: list[dict[str, object]] = [
-        {"page_size": 50, "status": "active", "scope": "organization"},
-        *(
-            {"page_size": 50, "status": "active", "subject_id": subject_id}
-            for subject_id in subject_ids
-        ),
-    ]
-
-    matches: list[object] = []
-    seen: set[str] = set()
-    for query in queries:
-        response = await agent_client.agent_api_memories.list_agent_memories(**query)
-        for memory in response.data or []:
-            mem_id = getattr(memory, "id", None)
-            if mem_id not in seen and marker in (
-                getattr(memory, "content", None) or ""
-            ):
-                seen.add(mem_id)
-                matches.append(memory)
-    return matches
-
-
-async def _wait_for_memories_containing(
-    agent_client: AsyncRestClient,
-    marker: str,
-    subject_ids: list[str],
     *,
-    timeout: float = 7.0,
-    interval: float = 5.0,
-) -> list[object]:
-    """Poll memories until one containing ``marker`` appears or timeout expires."""
+    timeout: float,
+) -> None:
     deadline = asyncio.get_running_loop().time() + timeout
-    last_result: list[object] = []
 
     while asyncio.get_running_loop().time() < deadline:
-        last_result = await _list_memories_containing(agent_client, marker, subject_ids)
-        if last_result:
-            return last_result
-        await asyncio.sleep(interval)
+        response = await client.agent_api_memories.list_agent_memories(
+            page_size=50,
+            status="active",
+            scope="organization",
+        )
+        if any(
+            marker in (getattr(memory, "content", None) or "")
+            for memory in response.data or []
+        ):
+            return
 
-    return last_result
+        await asyncio.sleep(1)
+
+    pytest.fail(f"Expected organization memory containing {marker}")
 
 
 # loop_scope="session" pins the test to the same event loop as the agent's
@@ -173,40 +106,35 @@ async def test_langgraph_agent_stores_durable_user_memory(
     e2e_config: E2ESettings,
     langgraph_memory_room: tuple[str, str, str],
     e2e_agent_info: tuple[str, str],
+    e2e_session_client: AsyncRestClient,
+    e2e_user_client: AsyncRestClient,
     running_langgraph_memory_agent: Agent,
     ws_client: TrackingWebSocketClient,
 ) -> None:
     """Ask LangGraph to remember a durable preference and verify it is stored."""
-    chat_id, user_id, _user_name = langgraph_memory_room
+    chat_id, _user_id, _user_name = langgraph_memory_room
     agent_id, agent_name = e2e_agent_info
     marker = f"LANGGRAPH_MEMORY_E2E_{uuid4().hex}"
-    user_client = AsyncRestClient(
-        api_key=e2e_config.band_api_key_user, base_url=e2e_config.band_base_url
-    )
-    agent_client = AsyncRestClient(
-        api_key=e2e_config.band_api_key, base_url=e2e_config.band_base_url
-    )
-
     prompt = (
         "Remember this durable preference exactly: "
         f"{marker} means I prefer concise memory test responses. "
         "Store it as a long-term semantic user memory, then acknowledge it briefly."
     )
 
-    # Wait for the agent's reply, which proves it processed the message (and had
-    # the chance to call band_store_memory) before we poll for the memory.
     async with listening_for_agent_responses(
         ws_client, chat_id, timeout=e2e_config.e2e_timeout, raise_on_timeout=True
     ) as wait_for_reply:
-        await send_trigger_message(user_client, chat_id, prompt, agent_name, agent_id)
+        await send_trigger_message(
+            e2e_user_client,
+            chat_id,
+            prompt,
+            agent_name,
+            agent_id,
+        )
         await wait_for_reply()
 
-    # The agent has no subject UUID for the user, so it stores the preference as an
-    # organization-scoped memory; the known subjects are passed as a fallback.
-    memories = await _wait_for_memories_containing(
-        agent_client,
+    await _wait_for_org_memory_containing(
+        e2e_session_client,
         marker,
-        [user_id, agent_id],
         timeout=e2e_config.e2e_timeout,
     )
-    assert memories, f"Expected LangGraph to store a memory containing {marker}"
