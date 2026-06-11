@@ -84,19 +84,33 @@ def validate_subject_scope(
     scope: MemoryStoreScope,
     subject_id: str | None,
 ) -> None:
-    """Require subject_id when storing a subject-scoped memory.
-
-    A subject-scoped memory without subject_id is silently unretrievable: list
-    queries cannot match a null subject, and organization-wide results exclude
-    subject-scoped rows. Callers should surface this as a tool validation error
-    so the model can retry with scope="organization" or a real UUID.
-    """
+    """Require subject_id when storing a subject-scoped memory."""
     if scope == MemoryStoreScope.SUBJECT and subject_id is None:
         raise ValueError(
             'scope="subject" requires a subject_id (the UUID of the person or '
             "agent the memory is about). You did not provide one. If you do not "
             'have a concrete subject UUID, retry with scope="organization" and '
             "omit subject_id. Do not invent a UUID."
+        )
+
+
+def validate_memory_type_for_system(
+    system: MemorySystem | str,
+    memory_type: MemoryType | str,
+) -> None:
+    """Require memory ``type`` to match the selected memory ``system``."""
+    system_value = system.value if isinstance(system, MemorySystem) else str(system)
+    type_value = (
+        memory_type.value
+        if isinstance(memory_type, SensoryMemoryType | WorkingLongTermMemoryType)
+        else str(memory_type)
+    )
+
+    valid_types = MEMORY_SYSTEM_TYPE_MAP.get(system_value)
+    if valid_types is None or type_value not in valid_types:
+        raise ValueError(
+            f'type="{type_value}" is not valid for system="{system_value}". '
+            f"Valid types: {', '.join(valid_types or ())}"
         )
 
 

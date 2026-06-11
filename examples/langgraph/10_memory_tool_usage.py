@@ -65,11 +65,10 @@ async def main() -> None:
             "Actively look for durable information worth remembering. "
             "When a user states a preference, profile detail, standing instruction, "
             "important project fact, or reusable workflow, call `band_store_memory` "
-            "before replying. If you do not have a real subject_id, use "
-            'scope="organization" and omit subject_id. Use memory sparingly: do not '
-            "store one-off requests, temporary chat context, or sensitive information "
-            "unless the user clearly asks you to remember it. After storing a memory, "
-            "briefly acknowledge what you saved and continue helping the user."
+            "before replying. Use memory sparingly: do not store one-off requests, "
+            "temporary chat context, or sensitive information unless the user clearly "
+            "asks you to remember it. After storing a memory, briefly acknowledge "
+            "what you saved and continue helping the user."
         ),
         features=features,
     )

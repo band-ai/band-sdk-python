@@ -27,8 +27,7 @@ RoomAllocator = Callable[[str], Awaitable[tuple[str, str, str]]]
 
 MEMORY_CUSTOM_SECTION = (
     "When asked to remember durable information, call `band_store_memory` "
-    'before replying. If you do not have a real subject_id, use scope="organization" '
-    "and omit subject_id."
+    "before replying."
 )
 
 

@@ -456,3 +456,20 @@ class TestStoreMemoryInputDescription:
                     "scope": "subject",
                 }
             )
+
+    def test_crewai_store_memory_rejects_type_for_wrong_system(
+        self, builder_mod
+    ) -> None:
+        """CrewAI input validation rejects system/type mismatches."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
+            builder_mod._StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "sensory",
+                    "memory_type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                }
+            )

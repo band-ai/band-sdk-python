@@ -196,6 +196,19 @@ class TestMemoryTools:
                 }
             )
 
+    def test_store_memory_input_rejects_type_for_wrong_system(self) -> None:
+        """Validate memory type matches the chosen system."""
+        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
+            StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "sensory",
+                    "type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                }
+            )
+
     @pytest.mark.parametrize(
         ("tool_method", "rest_method"),
         [

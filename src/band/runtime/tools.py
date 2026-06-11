@@ -24,6 +24,7 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
     memory_type_field_description,
+    validate_memory_type_for_system,
     validate_subject_scope,
 )
 from band.core.protocols import AgentToolsProtocol
@@ -291,7 +292,8 @@ class StoreMemoryInput(BaseModel):
     )
 
     @model_validator(mode="after")
-    def require_subject_id_for_subject_scope(self) -> "StoreMemoryInput":
+    def validate_memory_fields(self) -> "StoreMemoryInput":
+        validate_memory_type_for_system(self.system, self.type)
         validate_subject_scope(self.scope, self.subject_id)
         return self
 
@@ -1829,6 +1831,7 @@ class AgentTools(AgentToolsProtocol):
         """
         from band.client.rest import MemoryCreateRequest
 
+        validate_memory_type_for_system(system, type)
         validate_subject_scope(MemoryStoreScope(scope), subject_id)
 
         logger.debug(
