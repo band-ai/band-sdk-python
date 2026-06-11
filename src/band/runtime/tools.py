@@ -76,7 +76,7 @@ def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
 
 @dataclass(frozen=True)
 class ToolDefinition:
-    """Metadata for a built-in Thenvoi tool."""
+    """Metadata for a built-in Band tool."""
 
     name: str
     input_model: type[BaseModel]
@@ -324,9 +324,9 @@ class ArchiveMemoryInput(BaseModel):
     memory_id: str = Field(..., description="Memory ID (UUID)")
 
 
-# --- Human-tool input models (copied from thenvoi-mcp/src/thenvoi_mcp/tools/human/*.py) ---
+# --- Human-tool input models (copied from band-mcp/src/band_mcp/tools/human/*.py) ---
 #
-# These models mirror the current thenvoi-mcp human tool handler signatures
+# These models mirror the current band-mcp human tool handler signatures
 # field-for-field. They are the canonical contract preserved by Phase 1 of
 # INT-338: the observable tool surface stays identical to today's MCP
 # behavior. Widening to full Fern parity is out of scope for this ticket.
@@ -725,170 +725,170 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     # One entry per method in the Phase 1 human-tool mapping table.
     # Method names match HumanTools attributes; hasattr(HumanTools, method_name)
     # must resolve for every surface="human" definition.
-    "thenvoi_list_my_agents": ToolDefinition(
-        name="thenvoi_list_my_agents",
+    "band_list_my_agents": ToolDefinition(
+        name="band_list_my_agents",
         input_model=ListMyAgentsInput,
         method_name="list_my_agents",
         surface="human",
     ),
-    "thenvoi_register_my_agent": ToolDefinition(
-        name="thenvoi_register_my_agent",
+    "band_register_my_agent": ToolDefinition(
+        name="band_register_my_agent",
         input_model=RegisterMyAgentInput,
         method_name="register_my_agent",
         surface="human",
     ),
-    "thenvoi_list_my_chats": ToolDefinition(
-        name="thenvoi_list_my_chats",
+    "band_list_my_chats": ToolDefinition(
+        name="band_list_my_chats",
         input_model=ListMyChatsInput,
         method_name="list_my_chats",
         surface="human",
     ),
-    "thenvoi_create_my_chat_room": ToolDefinition(
-        name="thenvoi_create_my_chat_room",
+    "band_create_my_chat_room": ToolDefinition(
+        name="band_create_my_chat_room",
         input_model=CreateMyChatRoomInput,
         method_name="create_my_chat_room",
         surface="human",
     ),
-    "thenvoi_get_my_chat_room": ToolDefinition(
-        name="thenvoi_get_my_chat_room",
+    "band_get_my_chat_room": ToolDefinition(
+        name="band_get_my_chat_room",
         input_model=GetMyChatRoomInput,
         method_name="get_my_chat_room",
         surface="human",
     ),
-    "thenvoi_list_my_contacts": ToolDefinition(
-        name="thenvoi_list_my_contacts",
+    "band_list_my_contacts": ToolDefinition(
+        name="band_list_my_contacts",
         input_model=ListMyContactsInput,
         method_name="list_my_contacts",
         surface="human",
     ),
-    "thenvoi_create_contact_request": ToolDefinition(
-        name="thenvoi_create_contact_request",
+    "band_create_contact_request": ToolDefinition(
+        name="band_create_contact_request",
         input_model=CreateContactRequestInput,
         method_name="create_contact_request",
         surface="human",
     ),
-    "thenvoi_list_received_contact_requests": ToolDefinition(
-        name="thenvoi_list_received_contact_requests",
+    "band_list_received_contact_requests": ToolDefinition(
+        name="band_list_received_contact_requests",
         input_model=ListReceivedContactRequestsInput,
         method_name="list_received_contact_requests",
         surface="human",
     ),
-    "thenvoi_list_sent_contact_requests": ToolDefinition(
-        name="thenvoi_list_sent_contact_requests",
+    "band_list_sent_contact_requests": ToolDefinition(
+        name="band_list_sent_contact_requests",
         input_model=ListSentContactRequestsInput,
         method_name="list_sent_contact_requests",
         surface="human",
     ),
-    "thenvoi_approve_contact_request": ToolDefinition(
-        name="thenvoi_approve_contact_request",
+    "band_approve_contact_request": ToolDefinition(
+        name="band_approve_contact_request",
         input_model=ApproveContactRequestInput,
         method_name="approve_contact_request",
         surface="human",
     ),
-    "thenvoi_reject_contact_request": ToolDefinition(
-        name="thenvoi_reject_contact_request",
+    "band_reject_contact_request": ToolDefinition(
+        name="band_reject_contact_request",
         input_model=RejectContactRequestInput,
         method_name="reject_contact_request",
         surface="human",
     ),
-    "thenvoi_cancel_contact_request": ToolDefinition(
-        name="thenvoi_cancel_contact_request",
+    "band_cancel_contact_request": ToolDefinition(
+        name="band_cancel_contact_request",
         input_model=CancelContactRequestInput,
         method_name="cancel_contact_request",
         surface="human",
     ),
-    "thenvoi_resolve_handle": ToolDefinition(
-        name="thenvoi_resolve_handle",
+    "band_resolve_handle": ToolDefinition(
+        name="band_resolve_handle",
         input_model=ResolveHandleInput,
         method_name="resolve_handle",
         surface="human",
     ),
-    "thenvoi_remove_my_contact": ToolDefinition(
-        name="thenvoi_remove_my_contact",
+    "band_remove_my_contact": ToolDefinition(
+        name="band_remove_my_contact",
         input_model=RemoveMyContactInput,
         method_name="remove_my_contact",
         surface="human",
     ),
-    "thenvoi_list_my_chat_messages": ToolDefinition(
-        name="thenvoi_list_my_chat_messages",
+    "band_list_my_chat_messages": ToolDefinition(
+        name="band_list_my_chat_messages",
         input_model=ListMyChatMessagesInput,
         method_name="list_my_chat_messages",
         surface="human",
     ),
-    "thenvoi_send_my_chat_message": ToolDefinition(
-        name="thenvoi_send_my_chat_message",
+    "band_send_my_chat_message": ToolDefinition(
+        name="band_send_my_chat_message",
         input_model=SendMyChatMessageInput,
         method_name="send_my_chat_message",
         surface="human",
     ),
-    "thenvoi_list_my_chat_participants": ToolDefinition(
-        name="thenvoi_list_my_chat_participants",
+    "band_list_my_chat_participants": ToolDefinition(
+        name="band_list_my_chat_participants",
         input_model=ListMyChatParticipantsInput,
         method_name="list_my_chat_participants",
         surface="human",
     ),
-    "thenvoi_add_my_chat_participant": ToolDefinition(
-        name="thenvoi_add_my_chat_participant",
+    "band_add_my_chat_participant": ToolDefinition(
+        name="band_add_my_chat_participant",
         input_model=AddMyChatParticipantInput,
         method_name="add_my_chat_participant",
         surface="human",
     ),
-    "thenvoi_remove_my_chat_participant": ToolDefinition(
-        name="thenvoi_remove_my_chat_participant",
+    "band_remove_my_chat_participant": ToolDefinition(
+        name="band_remove_my_chat_participant",
         input_model=RemoveMyChatParticipantInput,
         method_name="remove_my_chat_participant",
         surface="human",
     ),
-    "thenvoi_list_user_memories": ToolDefinition(
-        name="thenvoi_list_user_memories",
+    "band_list_user_memories": ToolDefinition(
+        name="band_list_user_memories",
         input_model=ListUserMemoriesInput,
         method_name="list_user_memories",
         surface="human",
     ),
-    "thenvoi_get_user_memory": ToolDefinition(
-        name="thenvoi_get_user_memory",
+    "band_get_user_memory": ToolDefinition(
+        name="band_get_user_memory",
         input_model=GetUserMemoryInput,
         method_name="get_user_memory",
         surface="human",
     ),
-    "thenvoi_supersede_user_memory": ToolDefinition(
-        name="thenvoi_supersede_user_memory",
+    "band_supersede_user_memory": ToolDefinition(
+        name="band_supersede_user_memory",
         input_model=SupersedeUserMemoryInput,
         method_name="supersede_user_memory",
         surface="human",
     ),
-    "thenvoi_archive_user_memory": ToolDefinition(
-        name="thenvoi_archive_user_memory",
+    "band_archive_user_memory": ToolDefinition(
+        name="band_archive_user_memory",
         input_model=ArchiveUserMemoryInput,
         method_name="archive_user_memory",
         surface="human",
     ),
-    "thenvoi_restore_user_memory": ToolDefinition(
-        name="thenvoi_restore_user_memory",
+    "band_restore_user_memory": ToolDefinition(
+        name="band_restore_user_memory",
         input_model=RestoreUserMemoryInput,
         method_name="restore_user_memory",
         surface="human",
     ),
-    "thenvoi_delete_user_memory": ToolDefinition(
-        name="thenvoi_delete_user_memory",
+    "band_delete_user_memory": ToolDefinition(
+        name="band_delete_user_memory",
         input_model=DeleteUserMemoryInput,
         method_name="delete_user_memory",
         surface="human",
     ),
-    "thenvoi_get_my_profile": ToolDefinition(
-        name="thenvoi_get_my_profile",
+    "band_get_my_profile": ToolDefinition(
+        name="band_get_my_profile",
         input_model=GetMyProfileInput,
         method_name="get_my_profile",
         surface="human",
     ),
-    "thenvoi_update_my_profile": ToolDefinition(
-        name="thenvoi_update_my_profile",
+    "band_update_my_profile": ToolDefinition(
+        name="band_update_my_profile",
         input_model=UpdateMyProfileInput,
         method_name="update_my_profile",
         surface="human",
     ),
-    "thenvoi_list_my_peers": ToolDefinition(
-        name="thenvoi_list_my_peers",
+    "band_list_my_peers": ToolDefinition(
+        name="band_list_my_peers",
         input_model=ListMyPeersInput,
         method_name="list_my_peers",
         surface="human",
@@ -917,7 +917,7 @@ MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
 
 # Contact tools - explicitly listed (not derived by heuristic) because a
 # future tool whose name happens to contain "contact" (e.g.
-# thenvoi_get_contact_context) would be silently misclassified.
+# band_get_contact_context) would be silently misclassified.
 CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "band_list_contacts",
@@ -933,27 +933,27 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 # to apply the ``include_memory`` filter uniformly across both surfaces.
 HUMAN_MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "thenvoi_list_user_memories",
-        "thenvoi_get_user_memory",
-        "thenvoi_supersede_user_memory",
-        "thenvoi_archive_user_memory",
-        "thenvoi_restore_user_memory",
-        "thenvoi_delete_user_memory",
+        "band_list_user_memories",
+        "band_get_user_memory",
+        "band_supersede_user_memory",
+        "band_archive_user_memory",
+        "band_restore_user_memory",
+        "band_delete_user_memory",
     }
 )
 
 # Human-surface contact tools - parallel to CONTACT_TOOL_NAMES.
 HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "thenvoi_list_my_contacts",
-        "thenvoi_create_contact_request",
-        "thenvoi_list_received_contact_requests",
-        "thenvoi_list_sent_contact_requests",
-        "thenvoi_approve_contact_request",
-        "thenvoi_reject_contact_request",
-        "thenvoi_cancel_contact_request",
-        "thenvoi_resolve_handle",
-        "thenvoi_remove_my_contact",
+        "band_list_my_contacts",
+        "band_create_contact_request",
+        "band_list_received_contact_requests",
+        "band_list_sent_contact_requests",
+        "band_approve_contact_request",
+        "band_reject_contact_request",
+        "band_cancel_contact_request",
+        "band_resolve_handle",
+        "band_remove_my_contact",
     }
 )
 
@@ -982,7 +982,7 @@ if HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES:
 
 BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES
 CHAT_TOOL_NAMES: frozenset[str] = BASE_TOOL_NAMES - CONTACT_TOOL_NAMES
-MCP_TOOL_PREFIX: str = "mcp__thenvoi__"
+MCP_TOOL_PREFIX: str = "mcp__band__"
 
 
 def mcp_tool_names(names: frozenset[str]) -> list[str]:
@@ -1013,8 +1013,8 @@ def get_tool_description(name: str) -> str:
         return model.__doc__
 
     # Try with prefix for backwards compatibility (deprecated)
-    if not name.startswith("thenvoi_"):
-        prefixed_name = f"thenvoi_{name}"
+    if not name.startswith("band_"):
+        prefixed_name = f"band_{name}"
         model = TOOL_MODELS.get(prefixed_name)
         if model and model.__doc__:
             warnings.warn(
@@ -1046,10 +1046,10 @@ def iter_tool_definitions(
       backends don't silently gain ``HumanTools``-bound entries.
     - ``include_memory``: if ``False`` (default), drop memory tools. This
       applies to both the agent ``MEMORY_TOOL_NAMES`` set and the human
-      memory tools (``thenvoi_list_user_memories``, etc.).
+      memory tools (``band_list_user_memories``, etc.).
     - ``include_contacts``: if ``False``, drop contact tools. This applies
       to both the agent ``CONTACT_TOOL_NAMES`` set and the human contact
-      tools (``thenvoi_list_my_contacts``, etc.).
+      tools (``band_list_my_contacts``, etc.).
 
     Args:
         surface: Optional surface filter (``"agent"`` or ``"human"``).
@@ -2172,7 +2172,7 @@ class AgentTools(AgentToolsProtocol):
 
 
 class HumanTools:
-    """User-scoped tools for Thenvoi platform interaction.
+    """User-scoped tools for Band platform interaction.
 
     ``HumanTools`` is stateless per credential: one instance per user-scoped
     ``AsyncRestClient``. Unlike ``AgentTools`` it is not bound to a room —
@@ -2180,7 +2180,7 @@ class HumanTools:
     ``chat_id`` argument.
 
     Each method is a thin wrapper around a Fern ``human_api_*`` call. The
-    observable tool surface mirrors today's ``thenvoi-mcp`` human tool
+    observable tool surface mirrors today's ``band-mcp`` human tool
     handlers (Phase 1 of INT-338 copies those signatures verbatim); widening
     to full Fern parity is explicitly out of scope.
     """
