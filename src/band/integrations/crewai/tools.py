@@ -32,7 +32,7 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 try:
     from crewai.tools import BaseTool
@@ -51,6 +51,7 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
     memory_type_field_description,
+    validate_subject_scope,
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
@@ -405,6 +406,11 @@ class _StoreMemoryInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         default=None, description="Additional metadata"
     )
+
+    @model_validator(mode="after")
+    def require_subject_id_for_subject_scope(self) -> "_StoreMemoryInput":
+        validate_subject_scope(self.scope, self.subject_id)
+        return self
 
 
 class _GetMemoryInput(BaseModel):

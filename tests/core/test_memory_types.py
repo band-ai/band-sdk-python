@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import pytest
+
 from thenvoi.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
+    MemoryStoreScope,
     MemorySystem,
     SensoryMemoryType,
     WorkingLongTermMemoryType,
     enum_values,
     memory_type_field_description,
+    validate_subject_scope,
 )
 
 
@@ -50,3 +54,18 @@ class TestMemorySystemTypeMap:
         expected = "Memory type - must match the chosen system: " + expected_pairings
 
         assert memory_type_field_description() == expected
+
+
+class TestValidateSubjectScope:
+    def test_allows_organization_scope_without_subject_id(self) -> None:
+        validate_subject_scope(MemoryStoreScope.ORGANIZATION, None)
+
+    def test_allows_subject_scope_with_subject_id(self) -> None:
+        validate_subject_scope(
+            MemoryStoreScope.SUBJECT,
+            "550e8400-e29b-41d4-a716-446655440000",
+        )
+
+    def test_rejects_subject_scope_without_subject_id(self) -> None:
+        with pytest.raises(ValueError, match="requires a subject_id"):
+            validate_subject_scope(MemoryStoreScope.SUBJECT, None)

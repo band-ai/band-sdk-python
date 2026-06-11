@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 from band.core.exceptions import BandToolError
@@ -24,6 +24,7 @@ from band.core.memory_types import (
     MemorySystem,
     MemoryType,
     memory_type_field_description,
+    validate_subject_scope,
 )
 from band.core.protocols import AgentToolsProtocol
 
@@ -288,6 +289,11 @@ class StoreMemoryInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Additional metadata (tags, references)"
     )
+
+    @model_validator(mode="after")
+    def require_subject_id_for_subject_scope(self) -> "StoreMemoryInput":
+        validate_subject_scope(self.scope, self.subject_id)
+        return self
 
 
 class GetMemoryInput(BaseModel):
@@ -1805,18 +1811,7 @@ class AgentTools(AgentToolsProtocol):
         """
         from band.client.rest import MemoryCreateRequest
 
-        # A subject-scoped memory with no subject_id is silently unretrievable:
-        # the list endpoint can't match a null subject, and a subject-scoped
-        # memory is excluded from the organization-wide results. Reject it so the
-        # LLM gets a tool error and can retry with scope="organization" (or a real
-        # subject_id). execute_tool_call() surfaces ValueError to the model.
-        if scope == "subject" and subject_id is None:
-            raise ValueError(
-                'scope="subject" requires a subject_id (the UUID of the person or '
-                "agent the memory is about). You did not provide one. If you do not "
-                'have a concrete subject UUID, retry with scope="organization" and '
-                "omit subject_id. Do not invent a UUID."
-            )
+        validate_subject_scope(MemoryStoreScope(scope), subject_id)
 
         logger.debug(
             "Storing memory: system=%s, type=%s, segment=%s, scope=%s, subject_id=%s",

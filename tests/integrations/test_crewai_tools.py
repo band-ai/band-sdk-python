@@ -440,3 +440,20 @@ class TestStoreMemoryInputDescription:
         )
         schema = builder_mod._StoreMemoryInput.model_json_schema()
         assert schema["properties"]["memory_type"]["description"] == expected
+
+    def test_crewai_store_memory_rejects_subject_scope_without_subject_id(
+        self, builder_mod
+    ) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="requires a subject_id"):
+            builder_mod._StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "working",
+                    "memory_type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "subject",
+                }
+            )

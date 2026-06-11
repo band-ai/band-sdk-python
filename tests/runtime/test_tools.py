@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from pydantic import ValidationError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.core.memory_types import memory_type_field_description
@@ -187,6 +188,19 @@ class TestMemoryTools:
             )
 
         mock_rest_client.agent_api_memories.create_agent_memory.assert_not_called()
+
+    def test_store_memory_input_rejects_subject_scope_without_subject_id(self) -> None:
+        with pytest.raises(ValidationError, match="requires a subject_id"):
+            StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "working",
+                    "type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "subject",
+                }
+            )
 
     @pytest.mark.parametrize(
         ("tool_method", "rest_method"),
