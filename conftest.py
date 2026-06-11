@@ -10,6 +10,7 @@ from tests.markdown_docs.globals import build_globals
 pytest_plugins = ["tests.markdown_docs.fixtures"]
 
 
+@pytest.hookimpl(optionalhook=True)
 def pytest_markdown_docs_globals() -> dict[str, object]:
     """Namespace for markdown code fences; see ``tests/markdown_docs/globals.py``."""
     return build_globals()
