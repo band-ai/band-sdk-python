@@ -442,6 +442,7 @@ class TestStoreMemoryInputDescription:
     def test_crewai_store_memory_rejects_subject_scope_without_subject_id(
         self, builder_mod
     ) -> None:
+        """CrewAI input validation rejects missing subject IDs."""
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError, match="requires a subject_id"):
