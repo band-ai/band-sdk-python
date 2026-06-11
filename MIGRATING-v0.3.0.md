@@ -222,7 +222,6 @@ from band import Agent
 agent = Agent.from_config(
     "researcher",
     adapter=AnthropicAdapter(...),
-    config_path=agent_config_path,
 )
 await agent.run()
 ```
