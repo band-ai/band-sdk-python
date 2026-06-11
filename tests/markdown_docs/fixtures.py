@@ -121,6 +121,7 @@ def _prepare_markdown_docs_runtime(
 def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Back `fixture:agent_config_path` snippets with temporary credentials."""
     from band import Agent
+    from band.config import loader
 
     async def run_noop(self: Agent) -> None:
         return None
@@ -136,4 +137,5 @@ def agent_config_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         f"  agent_id: {MARKDOWN_RESEARCHER_AGENT_ID}\n"
         f"  api_key: {MARKDOWN_API_KEY}\n"
     )
+    monkeypatch.setattr(loader, "get_config_path", lambda: path)
     return path
