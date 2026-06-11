@@ -94,7 +94,7 @@ _MEMORY_COMMON_PATTERNS = f"""Common patterns:
 
 
 _MEMORY_SCOPE_GUIDANCE = f"""When storing with `scope="{MemoryStoreScope.SUBJECT.value}"`, you must pass a real `subject_id` UUID
-(e.g. from `band_lookup_peers` or the participant list). If you don't have
+(e.g. from `band_lookup_peers` or the participant list). 
 one, use `scope="{MemoryStoreScope.ORGANIZATION.value}"` — never invent a UUID."""
 
 
