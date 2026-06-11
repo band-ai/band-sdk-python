@@ -1788,7 +1788,7 @@ class AgentTools(AgentToolsProtocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = "organization",
+        scope: str = MemoryStoreScope.ORGANIZATION,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
