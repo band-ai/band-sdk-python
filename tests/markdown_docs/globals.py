@@ -1,4 +1,16 @@
-"""Globals injected into pytest-markdown-docs code-fence execution."""
+"""Namespace merged into every pytest-markdown-docs `` ```python `` fence.
+
+``pytest_markdown_docs_globals()`` in root ``conftest.py`` returns ``build_globals()`` —
+names pre-bound so partial doc snippets can omit imports and setup.
+
+Layers:
+- ``_sdk_symbols()``: real SDK types (``AnthropicAdapter``, ``Emit``, …)
+- ``_langgraph_symbols()``: LangGraph placeholders (``llm``, ``checkpointer``, …)
+- ``_fixture_doubles()``: test doubles (``Agent``, ``AnyAdapter``, ``adapter``, ``os``)
+
+Env/HTTP/asyncio mocking and ``fixture:*`` hooks live in ``fixtures.py``.
+On ``NameError``, add the missing name to the matching layer.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +30,7 @@ MARKDOWN_REST_URL = "https://example.test"
 
 
 class MarkdownAgentFactory:
-    """Doc-test proxy that supplies placeholder credentials for Agent.create."""
+    """``Agent`` double; ``create`` fills placeholder ``agent_id`` / ``api_key``."""
 
     @staticmethod
     def create(**kwargs: object) -> object:
@@ -32,7 +44,7 @@ class MarkdownAgentFactory:
 
 
 class AnyAdapter:
-    """Generic adapter placeholder for migration snippets."""
+    """Generic adapter stub that only records ``kwargs`` (migration doc examples)."""
 
     def __init__(self, **kwargs: object) -> None:
         self.kwargs = kwargs
@@ -53,7 +65,7 @@ def create_calculator_graph() -> MarkdownCalculatorGraph:
 
 
 def _sdk_symbols() -> dict[str, object]:
-    """SDK names used by partial snippets without local imports."""
+    """Real SDK types for fences that skip imports."""
     return {
         "AdapterFeatures": AdapterFeatures,
         "AnthropicAdapter": AnthropicAdapter,
@@ -71,7 +83,7 @@ def _sdk_symbols() -> dict[str, object]:
 
 
 def _langgraph_symbols() -> dict[str, object]:
-    """Minimal objects needed by LangGraph snippets."""
+    """LangGraph placeholders for adapter doc fences."""
     return {
         "checkpointer": object(),
         "create_calculator_graph": create_calculator_graph,
@@ -80,7 +92,7 @@ def _langgraph_symbols() -> dict[str, object]:
 
 
 def _fixture_doubles() -> dict[str, object]:
-    """Shared stand-ins for snippets that assume surrounding setup."""
+    """Doubles and pre-built values snippets assume already exist."""
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5",
         api_key=MARKDOWN_API_KEY,
@@ -94,7 +106,7 @@ def _fixture_doubles() -> dict[str, object]:
 
 
 def build_globals() -> dict[str, object]:
-    """Return the namespace consumed by pytest_markdown_docs_globals()."""
+    """Merge the three layers for ``pytest_markdown_docs_globals()``."""
     return {
         **_sdk_symbols(),
         **_langgraph_symbols(),

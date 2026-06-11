@@ -11,7 +11,7 @@ pytest_plugins = ["tests.markdown_docs.fixtures"]
 
 
 def pytest_markdown_docs_globals() -> dict[str, object]:
-    """Provide the shared namespace for pytest-markdown-docs snippets."""
+    """Namespace for markdown code fences; see ``tests/markdown_docs/globals.py``."""
     return build_globals()
 
 
