@@ -50,6 +50,7 @@ from band.core.memory_types import (
     MemoryStoreScope,
     MemorySystem,
     MemoryType,
+    memory_type_field_description,
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
@@ -392,7 +393,7 @@ class _ListMemoriesInput(BaseModel):
 class _StoreMemoryInput(BaseModel):
     content: str = Field(..., description="The memory content")
     system: MemorySystem = Field(..., description="Memory system tier")
-    memory_type: MemoryType = Field(..., description="Memory type")
+    memory_type: MemoryType = Field(..., description=memory_type_field_description())
     segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
     scope: MemoryStoreScope = Field(

@@ -426,3 +426,17 @@ class TestRunAsyncLazyPatch:
         # nest_asyncio.apply should have been called exactly once across
         # multiple run_async invocations (the lazy patch).
         assert crewai_mocks.apply.call_count == 1
+
+
+class TestStoreMemoryInputDescription:
+    def test_crewai_store_memory_type_description_is_generated(self, builder_mod):
+        """CrewAI store_memory args schema should use memory_type_field_description()."""
+        from thenvoi.core.memory_types import memory_type_field_description
+
+        expected = memory_type_field_description()
+        assert (
+            builder_mod._StoreMemoryInput.model_fields["memory_type"].description
+            == expected
+        )
+        schema = builder_mod._StoreMemoryInput.model_json_schema()
+        assert schema["properties"]["memory_type"]["description"] == expected

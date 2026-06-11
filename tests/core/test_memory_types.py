@@ -8,6 +8,7 @@ from thenvoi.core.memory_types import (
     SensoryMemoryType,
     WorkingLongTermMemoryType,
     enum_values,
+    memory_type_field_description,
 )
 
 
@@ -35,3 +36,17 @@ class TestMemorySystemTypeMap:
             MEMORY_SYSTEM_TYPE_MAP[MemorySystem.WORKING.value]
             == MEMORY_SYSTEM_TYPE_MAP[MemorySystem.LONG_TERM.value]
         )
+
+    def test_memory_type_field_description_derived_from_map(self):
+        grouped: dict[tuple[str, ...], list[str]] = {}
+        for system in MemorySystem:
+            types = MEMORY_SYSTEM_TYPE_MAP[system.value]
+            grouped.setdefault(types, []).append(system.value)
+
+        expected_pairings = ", ".join(
+            f"{'|'.join(systems)}={'/'.join(types)}"
+            for types, systems in grouped.items()
+        )
+        expected = "Memory type - must match the chosen system: " + expected_pairings
+
+        assert memory_type_field_description() == expected

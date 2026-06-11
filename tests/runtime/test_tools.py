@@ -7,11 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.core.memory_types import memory_type_field_description
 from band.runtime.tools import (
     TOOL_MODELS,
     AgentTools,
     SendMessageInput,
     SendEventInput,
+    StoreMemoryInput,
     AddParticipantInput,
     LookupPeersInput,
     GetParticipantsInput,
@@ -920,6 +922,47 @@ class TestAgentToolsSchemas:
         assert "band_send_message" in tool_names
         assert "band_list_contacts" in tool_names
 
+    def test_store_memory_input_type_description_is_generated(self):
+        """StoreMemoryInput.type should use memory_type_field_description()."""
+        expected = memory_type_field_description()
+        assert StoreMemoryInput.model_fields["type"].description == expected
+
+    def test_store_memory_json_schema_exposes_generated_type_description(self):
+        """model_json_schema() should surface the generated type description."""
+        expected = memory_type_field_description()
+        schema = StoreMemoryInput.model_json_schema()
+        assert schema["properties"]["type"]["description"] == expected
+
+    def test_openai_store_memory_schema_includes_generated_type_description(
+        self, mock_rest_client
+    ):
+        """OpenAI tool schema should expose the generated type field description."""
+        tools = AgentTools("room-123", mock_rest_client)
+        schemas = tools.get_tool_schemas("openai", include_memory=True)
+        store_memory = next(
+            schema
+            for schema in schemas
+            if schema["function"]["name"] == "band_store_memory"
+        )
+        type_description = store_memory["function"]["parameters"]["properties"]["type"][
+            "description"
+        ]
+        assert type_description == memory_type_field_description()
+
+    def test_anthropic_store_memory_schema_includes_generated_type_description(
+        self, mock_rest_client
+    ):
+        """Anthropic tool schema should expose the generated type field description."""
+        tools = AgentTools("room-123", mock_rest_client)
+        schemas = tools.get_tool_schemas("anthropic", include_memory=True)
+        store_memory = next(
+            schema for schema in schemas if schema["name"] == "band_store_memory"
+        )
+        type_description = store_memory["input_schema"]["properties"]["type"][
+            "description"
+        ]
+        assert type_description == memory_type_field_description()
+
     def test_get_tool_schemas_anthropic(self, mock_rest_client):
         """get_tool_schemas('anthropic') should return Anthropic format (memory tools excluded by default)."""
         tools = AgentTools("room-123", mock_rest_client)
@@ -1267,4 +1310,3 @@ class TestToolInputModels:
         """CreateChatroomInput should work without task_id."""
         model = CreateChatroomInput()
         assert model.task_id is None
-

@@ -23,6 +23,7 @@ from band.core.memory_types import (
     MemoryStoreScope,
     MemorySystem,
     MemoryType,
+    memory_type_field_description,
 )
 from band.core.protocols import AgentToolsProtocol
 
@@ -274,14 +275,7 @@ class StoreMemoryInput(BaseModel):
 
     content: str = Field(..., description="The memory content")
     system: MemorySystem = Field(..., description="Memory system tier")
-    type: MemoryType = Field(
-        ...,
-        description=(
-            "Memory type - must match the chosen system: "
-            "sensory=iconic/echoic/haptic, "
-            "working|long_term=episodic/semantic/procedural"
-        ),
-    )
+    type: MemoryType = Field(..., description=memory_type_field_description())
     segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
     scope: MemoryStoreScope = Field(
