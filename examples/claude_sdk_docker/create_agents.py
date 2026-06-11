@@ -5,7 +5,7 @@ Registers planner and reviewer agents via User API
 and writes their credentials to YAML config files.
 
 Usage:
-    THENVOI_API_KEY=thnv_u_... python create_agents.py
+    BAND_API_KEY=band_u_... python create_agents.py
 """
 
 from __future__ import annotations
@@ -13,15 +13,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 
 import yaml
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
-
-# Add repo root to path for thenvoi_rest import
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 AGENTS = [
     {"name": "INT-169 Planner", "role": "planner", "file": "planner.yaml"},
@@ -30,11 +26,11 @@ AGENTS = [
 
 
 async def main() -> None:
-    api_key = os.environ.get("THENVOI_API_KEY")
+    api_key = os.environ.get("BAND_API_KEY")
     if not api_key:
-        raise ValueError("THENVOI_API_KEY environment variable is required")
+        raise ValueError("BAND_API_KEY environment variable is required")
 
-    base_url = os.environ.get("THENVOI_REST_URL", "https://app.thenvoi.com")
+    base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
 
     from thenvoi_rest import AsyncRestClient
     from thenvoi_rest.types import AgentRegisterRequest

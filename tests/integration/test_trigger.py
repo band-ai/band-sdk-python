@@ -1,4 +1,4 @@
-"""Integration tests for thenvoi-trigger CLI against a real API.
+"""Integration tests for band-trigger CLI against a real API.
 
 Tests the trigger flow end-to-end: peer lookup, room creation,
 participant addition, and message delivery using real REST endpoints.
@@ -6,7 +6,7 @@ participant addition, and message delivery using real REST endpoints.
 Run with:
     uv run pytest tests/integration/test_trigger.py -v -s
 
-Requires .env.test credentials (THENVOI_API_KEY at minimum).
+Requires .env.test credentials (BAND_API_KEY at minimum).
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import logging
 
 import pytest
 
-from thenvoi.cli.trigger import (
+from band.cli.trigger import (
     _format_api_error,
     find_peer_by_handle,
     run,

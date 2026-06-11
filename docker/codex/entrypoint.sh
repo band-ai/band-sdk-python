@@ -42,7 +42,6 @@ install_wheel() {
   fi
 }
 
-install_wheel "THENVOI_CLIENT_REST_WHEEL" "${THENVOI_CLIENT_REST_WHEEL:-}" "thenvoi-client-rest"
 install_wheel "PHOENIX_CHANNELS_CLIENT_WHEEL" "${PHOENIX_CHANNELS_CLIENT_WHEEL:-}" "phoenix client"
 
 # Validate required workspace mount
@@ -70,10 +69,60 @@ else
   done
 fi
 
+# Codex defaults to the WebSocket transport for the OpenAI Responses API
+# (wss://api.openai.com/v1/responses). With API-key auth (sk-proj / sk-svcacct)
+# that endpoint returns 401 Unauthorized even though REST POST /v1/responses
+# succeeds (HTTP 200) with the same key, and Codex's WS->HTTPS fallback drops
+# the auth header (openai/codex#15492) so it 401s too. Route Codex through a
+# custom provider pinned to the HTTP/REST Responses transport instead
+# (verified against a live sk-svcacct key).
+#
+# Gated on OPENAI_API_KEY because the REST provider authenticates via env_key;
+# OAuth/ChatGPT logins (auth.json) use a different transport and are left alone.
+# Set CODEX_DISABLE_WEBSOCKET=false to keep Codex's default WebSocket path.
+CODEX_REST_PROVIDER_ID="openai_rest"
+
+force_rest_responses_api() {
+  local config_file="$1"
+
+  [[ "${CODEX_DISABLE_WEBSOCKET:-true}" == "true" ]] || return 0
+  [[ -n "${OPENAI_API_KEY:-}" ]] || return 0
+  [[ -f "${config_file}" ]] || return 0
+
+  # Idempotent: skip if the provider definition is already present.
+  if grep -q "\[model_providers\.${CODEX_REST_PROVIDER_ID}\]" "${config_file}" 2>/dev/null; then
+    return 0
+  fi
+
+  # A top-level key must precede any [table] header, so prepend model_provider.
+  # Respect an operator-supplied model_provider; only add the provider block then.
+  if grep -Eq '^[[:space:]]*model_provider[[:space:]]*=' "${config_file}" 2>/dev/null; then
+    echo "[codex-entrypoint] Existing model_provider in config.toml; adding REST provider definition only" >&2
+  else
+    printf 'model_provider = "%s"\n' "${CODEX_REST_PROVIDER_ID}" \
+      | cat - "${config_file}" > "${config_file}.tmp" \
+      && mv "${config_file}.tmp" "${config_file}"
+  fi
+
+  cat >> "${config_file}" <<EOF
+
+# Forces the HTTP/REST Responses API instead of the WebSocket transport.
+[model_providers.${CODEX_REST_PROVIDER_ID}]
+name = "OpenAI (REST)"
+base_url = "https://api.openai.com/v1"
+env_key = "OPENAI_API_KEY"
+wire_api = "responses"
+supports_websockets = false
+EOF
+  echo "[codex-entrypoint] Forced REST Responses API via provider '${CODEX_REST_PROVIDER_ID}' (WebSocket disabled)"
+}
+
 bootstrap_codex_home() {
   # Build a container-safe runtime CODEX_HOME while preserving core auth/config.
   if [[ "${CODEX_USE_SOURCE_HOME:-false}" == "true" ]]; then
     echo "[codex-entrypoint] Using source CODEX_HOME as requested: ${CODEX_HOME:-${HOME}/.codex}"
+    # Leave a mounted (possibly read-only) source config untouched; operators
+    # opting into source-home own its provider/transport settings.
     return 0
   fi
 
@@ -102,11 +151,15 @@ bootstrap_codex_home() {
     ' "${source_config}" > "${runtime_config}"
   else
     cat > "${runtime_config}" <<EOF
-model = "${CODEX_MODEL:-gpt-5.3-codex}"
+model = "${CODEX_MODEL:-gpt-5.5}"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 EOF
   fi
+
+  # Pin Codex to the REST Responses transport to avoid the WebSocket 401.
+  force_rest_responses_api "${runtime_config}"
+
   chmod 600 "${runtime_config}" || true
 
   export CODEX_HOME="${runtime_home}"

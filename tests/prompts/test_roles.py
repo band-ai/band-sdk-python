@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from thenvoi.prompts import get_available_roles, get_role_prompt, load_role_prompt
-from thenvoi.prompts.roles import CONVERSATION_DISCIPLINE
+from band.prompts import get_available_roles, get_role_prompt, load_role_prompt
+from band.prompts.roles import CONVERSATION_DISCIPLINE
 
 
 class TestConversationDiscipline:
@@ -43,7 +43,7 @@ class TestConversationDiscipline:
 
     def test_has_event_vs_message_guidance(self) -> None:
         """Test guidance on using events vs messages."""
-        assert "thenvoi_send_event" in CONVERSATION_DISCIPLINE
+        assert "band_send_event" in CONVERSATION_DISCIPLINE
 
     def test_injected_into_all_roles(self) -> None:
         """Test that the shared block appears in every role prompt."""

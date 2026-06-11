@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
-from thenvoi.testing import FakeAgentTools
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.testing import FakeAgentTools
 
 
 class TestPlatformMessage:

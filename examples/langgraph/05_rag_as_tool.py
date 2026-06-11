@@ -1,17 +1,17 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
-Example: Using the standalone Agentic RAG graph with Thenvoi platform.
+Example: Using the standalone Agentic RAG graph with Band platform.
 
 This example demonstrates:
 1. Importing a standalone Agentic RAG graph (following LangGraph tutorial pattern)
 2. Wrapping it as a tool using graph_as_tool
-3. Adding it to a Thenvoi agent alongside platform tools
+3. Adding it to a Band agent alongside platform tools
 4. The agent can delegate research questions to the RAG system
 
 The RAG graph:
@@ -21,7 +21,7 @@ The RAG graph:
 - Generates grounded answers based on retrieved context
 
 Pattern:
-- Main agent handles chat interactions (thenvoi_send_message, thenvoi_add_participant, etc.)
+- Main agent handles chat interactions (band_send_message, band_add_participant, etc.)
 - RAG subgraph handles intelligent document retrieval and question answering
 - User asks questions → Agent delegates to RAG → Agent sends response
 
@@ -44,9 +44,9 @@ from langgraph.checkpoint.memory import InMemorySaver
 from standalone_rag import create_rag_graph
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
-from thenvoi.integrations.langgraph import graph_as_tool
+from band import Agent
+from band.adapters import LangGraphAdapter
+from band.integrations.langgraph import graph_as_tool
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -54,13 +54,13 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     load_dotenv()
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     logger.info("Step 1: Creating standalone Agentic RAG graph...")
     logger.info("(This may take a moment to load and index blog posts)")
@@ -90,7 +90,7 @@ async def main() -> None:
     )
     logger.info("RAG graph wrapped as a tool with memory enabled")
 
-    logger.info("\nStep 3: Creating main Thenvoi agent with RAG tool...")
+    logger.info("\nStep 3: Creating main Band agent with RAG tool...")
 
     # Custom instructions for using the RAG tool
     rag_instructions = """
@@ -109,24 +109,24 @@ by retrieving information from Lilian Weng's blog posts.
 When someone asks a question about AI topics:
 1. Use `research_ai_topics` with the question
 2. Get the researched answer from the tool
-3. Use `thenvoi_send_message` to send the answer back to the chat
+3. Use `band_send_message` to send the answer back to the chat
 
 ### "Tell X about Y" Pattern:
 When a user says "tell [Person/Agent] about [Topic]":
-1. Get their info: `thenvoi_get_participants()` to find their ID and username
+1. Get their info: `band_get_participants()` to find their participant ID and display name
 2. Research topic: `research_ai_topics` to get information about the topic
-3. Send with mention: `thenvoi_send_message` with "@Username, [information]" and mentions parameter
+3. Send with mention: `band_send_message` with "@DisplayName, [information]" and `mentions=[participant_id]`
 
 **Example:**
 User: "tell nvidia about reward hacking"
-1. thenvoi_get_participants() → find Nvidia_Agent
+1. band_get_participants() → find Nvidia_Agent's participant ID
 2. research_ai_topics(messages=[{'role': 'user', 'content': 'What is reward hacking?'}]) → get answer
-3. thenvoi_send_message(content="@Nvidia_Agent, [answer from research]", mentions='[{"id":"xxx","username":"Nvidia_Agent"}]')
+3. band_send_message(content="@Nvidia_Agent, [answer from research]", mentions=["participant-id-from-get-participants"])
 """
 
     # Create adapter with RAG tool
     adapter = LangGraphAdapter(
-        llm=ChatOpenAI(model="gpt-5.4"),
+        llm=ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-5.4")),
         checkpointer=InMemorySaver(),
         additional_tools=[rag_tool],
         custom_section=rag_instructions,

@@ -14,12 +14,12 @@ import pytest
 
 from pydantic import BaseModel
 
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
-from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
-from thenvoi.integrations.codex import CodexJsonRpcError, RpcEvent
-from thenvoi.integrations.codex.types import CodexSessionState
-from thenvoi.runtime.custom_tools import CustomToolDef
-from thenvoi.testing import FakeAgentTools
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.integrations.codex import CodexJsonRpcError, RpcEvent
+from band.integrations.codex.types import CodexSessionState
+from band.runtime.custom_tools import CustomToolDef
+from band.testing import FakeAgentTools
 
 
 def make_platform_message(
@@ -44,7 +44,7 @@ class ToolSchemaFakeTools(FakeAgentTools):
             {
                 "type": "function",
                 "function": {
-                    "name": "thenvoi_send_message",
+                    "name": "band_send_message",
                     "description": "Send a message",
                     "parameters": {
                         "type": "object",
@@ -62,7 +62,7 @@ class ToolSchemaFakeTools(FakeAgentTools):
             {
                 "type": "function",
                 "function": {
-                    "name": "thenvoi_send_event",
+                    "name": "band_send_event",
                     "description": "Send an event",
                     "parameters": {
                         "type": "object",
@@ -131,7 +131,7 @@ class FakeCodexClient:
         if method == "model/list":
             if self._model_list_result is not None:
                 return self._model_list_result
-            return {"data": [{"id": "gpt-5.3-codex", "hidden": False}]}
+            return {"data": [{"id": "gpt-5.5", "hidden": False}]}
 
         if method == "thread/resume":
             if self._resume_error is not None:
@@ -276,8 +276,8 @@ class TestCodexAdapter:
         )
         assert "dynamicTools" in thread_start
         dynamic_names = [t["name"] for t in thread_start["dynamicTools"]]
-        assert "thenvoi_send_message" in dynamic_names
-        assert "thenvoi_send_event" in dynamic_names
+        assert "band_send_message" in dynamic_names
+        assert "band_send_event" in dynamic_names
 
         assert len(tools.messages_sent) == 1
         assert tools.messages_sent[0]["content"] == "harness-ok"
@@ -308,7 +308,7 @@ class TestCodexAdapter:
             turn_start_error_once=True,
         )
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(transport="ws", model="gpt-5.3-codex"),
+            config=CodexAdapterConfig(transport="ws", model="gpt-5.5"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -357,7 +357,7 @@ class TestCodexAdapter:
                 42,
                 "item/tool/call",
                 {
-                    "tool": "thenvoi_lookup_peers",
+                    "tool": "band_lookup_peers",
                     "arguments": {"page": 1, "page_size": 10},
                 },
             ),
@@ -392,7 +392,7 @@ class TestCodexAdapter:
         )
 
         assert len(tools.tool_calls) == 1
-        assert tools.tool_calls[0]["tool_name"] == "thenvoi_lookup_peers"
+        assert tools.tool_calls[0]["tool_name"] == "band_lookup_peers"
         assert fake_client.responses
         response_id, response_payload = fake_client.responses[0]
         assert response_id == 42
@@ -410,7 +410,7 @@ class TestCodexAdapter:
             ) -> Any:
                 call = {"tool_name": tool_name, "arguments": arguments}
                 self.tool_calls.append(call)
-                if tool_name == "thenvoi_send_message":
+                if tool_name == "band_send_message":
                     raise RuntimeError("send failed")
                 return {"status": "ok"}
 
@@ -419,7 +419,7 @@ class TestCodexAdapter:
                 77,
                 "item/tool/call",
                 {
-                    "tool": "thenvoi_send_message",
+                    "tool": "band_send_message",
                     "arguments": {"content": "hi"},
                     "callId": "call-77",
                 },
@@ -1617,7 +1617,7 @@ class TestCodexAdapter:
         transport/closed; otherwise they leak past on_cleanup because the
         thread id is no longer reachable through ``_room_threads``.
         """
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         events = [
             _event_notification(
@@ -1848,7 +1848,7 @@ class TestCodexAdapter:
                 50,
                 "item/tool/call",
                 {
-                    "tool": "thenvoi_lookup_peers",
+                    "tool": "band_lookup_peers",
                     "arguments": {"page": 1},
                     "callId": "call-50",
                 },
@@ -1893,11 +1893,11 @@ class TestCodexAdapter:
         assert len(tool_result_events) == 1
 
         call_data = json.loads(tool_call_events[0]["content"])
-        assert call_data["name"] == "thenvoi_lookup_peers"
+        assert call_data["name"] == "band_lookup_peers"
         assert call_data["tool_call_id"] == "call-50"
 
         result_data = json.loads(tool_result_events[0]["content"])
-        assert result_data["name"] == "thenvoi_lookup_peers"
+        assert result_data["name"] == "band_lookup_peers"
         assert result_data["tool_call_id"] == "call-50"
 
     @pytest.mark.asyncio
@@ -1908,7 +1908,7 @@ class TestCodexAdapter:
                 50,
                 "item/tool/call",
                 {
-                    "tool": "thenvoi_lookup_peers",
+                    "tool": "band_lookup_peers",
                     "arguments": {"page": 1},
                     "callId": "call-50",
                 },
@@ -2020,7 +2020,7 @@ class TestCodexAdapter:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "tool_name",
-        ["thenvoi_send_event", "thenvoi_send_message"],
+        ["band_send_event", "band_send_message"],
     )
     async def test_execution_reporting_suppressed_for_platform_output_tools(
         self, tool_name: str
@@ -3213,29 +3213,21 @@ class TestHistoryInjection:
         assert "room-1" not in adapter._needs_history_injection
 
     @pytest.mark.asyncio
-    async def test_model_fallback_on_auto_selected_model(self) -> None:
-        """When auto-selected model fails, adapter falls back to another model."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {"turn": {"id": "turn-1", "status": "completed"}},
-            ),
-        ]
+    async def test_auto_selected_model_error_propagates_without_retry(self) -> None:
+        """Auto-selected model errors propagate instead of trying another model."""
         fake_client = FakeCodexClient(
-            events=events,
             turn_start_error=CodexJsonRpcError(
                 code=-32000,
-                message="Model gpt-5.3-codex is not available for this account",
+                message="Model gpt-5.5 is not available for this account",
             ),
-            turn_start_error_once=True,
+            turn_start_error_once=False,
             model_list_result={
                 "data": [
-                    {"id": "gpt-5.3-codex", "hidden": False},
-                    {"id": "gpt-5.2", "hidden": False},
+                    {"id": "gpt-5.5", "hidden": False},
+                    {"id": "gpt-5.4-mini", "hidden": False},
                 ]
             },
         )
-        # model=None means auto-select — fallback should trigger
         adapter = CodexAdapter(
             config=CodexAdapterConfig(model=None),
             client_factory=lambda _config: fake_client,
@@ -3244,49 +3236,29 @@ class TestHistoryInjection:
         await adapter.on_started("Agent", "An agent")
 
         msg = make_platform_message(room_id="room-1", content="hello")
-        await adapter.on_message(
-            msg,
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with pytest.raises(CodexJsonRpcError, match="not available"):
+            await adapter.on_message(
+                msg,
+                tools,
+                CodexSessionState(),
+                None,
+                None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
 
-        # Should have retried with fallback model
-        turn_start_calls = [
-            (m, p) for m, p in fake_client.requests if m == "turn/start"
-        ]
-        assert len(turn_start_calls) == 2
-        # First attempt used auto-selected model
-        assert turn_start_calls[0][1]["model"] == "gpt-5.3-codex"
-        # Retry used fallback (gpt-5.2 since gpt-5.3-codex is excluded)
-        assert turn_start_calls[1][1]["model"] == "gpt-5.2"
-        assert adapter._selected_model == "gpt-5.2"
+        turn_start_calls = [m for m, _ in fake_client.requests if m == "turn/start"]
+        assert len(turn_start_calls) == 1
+        assert adapter._selected_model == "gpt-5.5"
 
     @pytest.mark.asyncio
-    async def test_model_fallback_prefers_gpt_5_2(self) -> None:
-        """Fallback prefers gpt-5.2 over other models."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {"turn": {"id": "turn-1", "status": "completed"}},
-            ),
-        ]
-        # Auto-select picks gpt-5.3-codex (first codex model).
-        # After turn/start fails, fallback should pick gpt-5.2 (preferred fallback).
+    async def test_model_selection_uses_first_visible_model(self) -> None:
+        """Auto-selection uses Codex's first visible model without fallback ordering."""
         fake_client = FakeCodexClient(
-            events=events,
-            turn_start_error=CodexJsonRpcError(
-                code=-32000, message="Model unavailable"
-            ),
-            turn_start_error_once=True,
             model_list_result={
                 "data": [
-                    {"id": "gpt-5.3-codex", "hidden": False},
-                    {"id": "gpt-5.1", "hidden": False},
-                    {"id": "gpt-5.2", "hidden": False},
+                    {"id": "gpt-5.4-mini", "hidden": False},
+                    {"id": "gpt-5.5", "hidden": False},
                 ]
             },
         )
@@ -3294,22 +3266,9 @@ class TestHistoryInjection:
             config=CodexAdapterConfig(model=None),
             client_factory=lambda _config: fake_client,
         )
-        tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        msg = make_platform_message(room_id="room-1", content="hello")
-        await adapter.on_message(
-            msg,
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
-
-        # Should prefer gpt-5.2 over gpt-5.1
-        assert adapter._selected_model == "gpt-5.2"
+        assert adapter._selected_model == "gpt-5.4-mini"
 
     @pytest.mark.asyncio
     async def test_explicit_model_error_propagates_without_fallback(self) -> None:
@@ -3317,19 +3276,18 @@ class TestHistoryInjection:
         fake_client = FakeCodexClient(
             turn_start_error=CodexJsonRpcError(
                 code=-32000,
-                message="Model gpt-5.3-codex-spark is not available",
+                message="Model unavailable-test-model is not available",
             ),
             turn_start_error_once=False,
             model_list_result={
                 "data": [
-                    {"id": "gpt-5.3-codex", "hidden": False},
-                    {"id": "gpt-5.2", "hidden": False},
+                    {"id": "gpt-5.5", "hidden": False},
+                    {"id": "gpt-5.4-mini", "hidden": False},
                 ]
             },
         )
-        # Explicitly configured model — user chose this, don't override
         adapter = CodexAdapter(
-            config=CodexAdapterConfig(model="gpt-5.3-codex-spark"),
+            config=CodexAdapterConfig(model="unavailable-test-model"),
             client_factory=lambda _config: fake_client,
         )
         tools = ToolSchemaFakeTools()
@@ -3347,50 +3305,24 @@ class TestHistoryInjection:
                 room_id="room-1",
             )
 
-        # No model/list query for fallback should have been attempted
         model_list_calls = [m for m, _ in fake_client.requests if m == "model/list"]
         assert len(model_list_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_model_fallback_raises_when_no_alternative(self) -> None:
-        """When no fallback model is available, the original error propagates."""
-        fake_client = FakeCodexClient(
-            turn_start_error=CodexJsonRpcError(
-                code=-32000, message="Model not available"
-            ),
-            turn_start_error_once=False,
-            model_list_result={"data": []},
-        )
+    async def test_model_selection_uses_default_when_model_list_empty(self) -> None:
+        """Auto-selection uses the adapter default when Codex returns no visible models."""
+        fake_client = FakeCodexClient(model_list_result={"data": []})
         adapter = CodexAdapter(
             config=CodexAdapterConfig(model=None),
             client_factory=lambda _config: fake_client,
         )
-        tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        msg = make_platform_message(room_id="room-1", content="hello")
-        with pytest.raises(CodexJsonRpcError, match="not available"):
-            await adapter.on_message(
-                msg,
-                tools,
-                CodexSessionState(),
-                None,
-                None,
-                is_session_bootstrap=False,
-                room_id="room-1",
-            )
+        assert adapter._selected_model == "gpt-5.5"
 
     @pytest.mark.asyncio
-    async def test_model_fallback_uses_configured_defaults_when_model_list_fails(
-        self,
-    ) -> None:
-        """When model/list fails during fallback, ``config.fallback_models`` is used."""
-        events = [
-            _event_notification(
-                "turn/completed",
-                {"turn": {"id": "turn-1", "status": "completed"}},
-            ),
-        ]
+    async def test_model_selection_uses_default_when_model_list_fails(self) -> None:
+        """Auto-selection uses the adapter default if model discovery fails."""
 
         class ModelListFailsClient(FakeCodexClient):
             async def request(
@@ -3400,73 +3332,24 @@ class TestHistoryInjection:
                 *,
                 retry_on_overload: bool = True,
             ) -> dict[str, Any]:
-                if method == "model/list" and self.initialized:
-                    # First call during init succeeds, subsequent calls fail
+                if method == "model/list":
                     raise RuntimeError("model/list unavailable")
                 return await super().request(
                     method, params, retry_on_overload=retry_on_overload
                 )
 
-        fake_client = ModelListFailsClient(
-            events=events,
-            turn_start_error=CodexJsonRpcError(
-                code=-32000, message="Model not available"
-            ),
-            turn_start_error_once=True,
-        )
+        fake_client = ModelListFailsClient()
         adapter = CodexAdapter(
             config=CodexAdapterConfig(model=None),
             client_factory=lambda _config: fake_client,
         )
-        tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "An agent")
 
-        # Auto-selection without model/list picks fallback_models[0] = gpt-5.2
-        assert adapter._selected_model == "gpt-5.2"
-
-        msg = make_platform_message(room_id="room-1", content="hello")
-        await adapter.on_message(
-            msg,
-            tools,
-            CodexSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
-
-        # turn/start with gpt-5.2 fails; fallback excludes it and picks the
-        # next configured default (gpt-5.3-codex).
-        assert adapter._selected_model == "gpt-5.3-codex"
+        assert adapter._selected_model == "gpt-5.5"
 
     @pytest.mark.asyncio
-    async def test_select_model_honours_custom_fallback_when_model_list_empty(
-        self,
-    ) -> None:
-        """Operator-configured ``fallback_models[0]`` wins when model/list returns no data."""
-        fake_client = FakeCodexClient(
-            events=[
-                _event_notification(
-                    "turn/completed",
-                    {"turn": {"id": "turn-1", "status": "completed"}},
-                ),
-            ],
-            model_list_result={"data": []},
-        )
-        adapter = CodexAdapter(
-            config=CodexAdapterConfig(
-                model=None,
-                fallback_models=("custom-model-x", "custom-model-y"),
-            ),
-            client_factory=lambda _config: fake_client,
-        )
-        await adapter.on_started("Agent", "An agent")
-
-        assert adapter._selected_model == "custom-model-x"
-
-    @pytest.mark.asyncio
-    async def test_non_model_error_not_caught_by_fallback(self) -> None:
-        """Non-model-related errors propagate without fallback attempt."""
+    async def test_non_model_error_propagates(self) -> None:
+        """Non-model-related errors propagate from turn startup."""
         fake_client = FakeCodexClient(
             turn_start_error=CodexJsonRpcError(
                 code=-32001, message="Server overloaded"
@@ -3501,14 +3384,14 @@ class TestHistoryInjection:
         adapter = CodexAdapter(
             config=CodexAdapterConfig(
                 transport="stdio",
-                model="gpt-5.3-codex",
+                model="gpt-5.5",
                 sandbox="workspace-write",
                 approval_mode="manual",
             ),
             client_factory=lambda _config: fake_client,
         )
 
-        with caplog.at_level("INFO", logger="thenvoi.adapters.codex"):
+        with caplog.at_level("INFO", logger="band.adapters.codex"):
             await adapter.on_started("TestBot", "A test agent")
 
         startup_logs = [
@@ -3518,7 +3401,7 @@ class TestHistoryInjection:
         log_msg = startup_logs[0].message
         assert "agent=TestBot" in log_msg
         assert "transport=stdio" in log_msg
-        assert "model=gpt-5.3-codex" in log_msg
+        assert "model=gpt-5.5" in log_msg
         assert "sandbox=workspace-write" in log_msg
         assert "approval_mode=manual" in log_msg
 
@@ -3620,7 +3503,7 @@ class TestHistoryInjection:
                 self.tool_calls.append(call)
                 # Trigger a real Pydantic ValidationError
                 raise PydanticValidationError.from_exception_data(
-                    "thenvoi_send_message",
+                    "band_send_message",
                     [
                         {
                             "type": "missing",
@@ -3636,7 +3519,7 @@ class TestHistoryInjection:
                 99,
                 "item/tool/call",
                 {
-                    "tool": "thenvoi_send_message",
+                    "tool": "band_send_message",
                     "arguments": {},
                 },
             ),
@@ -3678,7 +3561,7 @@ class TestHistoryInjection:
         ]
         assert len(error_responses) == 1
         error_text = error_responses[0][1]["contentItems"][0]["text"]
-        assert "Invalid arguments for thenvoi_send_message" in error_text
+        assert "Invalid arguments for band_send_message" in error_text
 
 
 # ===========================================================================
@@ -4039,7 +3922,7 @@ class TestEnrichedApprovals:
         )
         tools = ToolSchemaFakeTools()
         await adapter.on_started("Agent", "A coding agent")
-        with caplog.at_level(logging.WARNING, logger="thenvoi.adapters.codex"):
+        with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
             await adapter.on_message(
                 make_platform_message(content="/sandbox danger-full-access --confirm"),
                 tools,
@@ -4749,7 +4632,7 @@ class TestDiffsAndTokenUsage:
     @pytest.mark.asyncio
     async def test_diff_event_requires_task_events_emit(self) -> None:
         """Diffs are not forwarded when TASK_EVENTS is not in features.emit."""
-        from thenvoi.core.types import AdapterFeatures
+        from band.core.types import AdapterFeatures
 
         events = [
             _event_notification(
@@ -4980,7 +4863,7 @@ class TestDiffsAndTokenUsage:
 
 class TestCodexTypes:
     def test_build_structured_error_metadata_known_type(self) -> None:
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         error_obj = {
             "message": "Context overflow",
@@ -5000,7 +4883,7 @@ class TestCodexTypes:
         assert meta["codex_turn_id"] == "turn-1"
 
     def test_build_structured_error_metadata_unknown_type(self) -> None:
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         error_obj = {
             "message": "Something weird happened",
@@ -5012,7 +4895,7 @@ class TestCodexTypes:
         assert meta["codex_suggested_action"] is None
 
     def test_parse_plan_steps(self) -> None:
-        from thenvoi.integrations.codex.types import parse_plan_steps
+        from band.integrations.codex.types import parse_plan_steps
 
         params = {
             "plan": {
@@ -5030,7 +4913,7 @@ class TestCodexTypes:
         assert steps[2].status == "pending"
 
     def test_parse_plan_steps_string_entries(self) -> None:
-        from thenvoi.integrations.codex.types import parse_plan_steps
+        from band.integrations.codex.types import parse_plan_steps
 
         params = {"plan": {"steps": ["Read code", "Fix bug"]}}
         steps = parse_plan_steps(params)
@@ -5039,7 +4922,7 @@ class TestCodexTypes:
         assert steps[0].status == "pending"
 
     def test_codex_token_usage_update(self) -> None:
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5470,7 +5353,7 @@ class TestReviewFixes:
 
     def test_token_usage_update_handles_zero_values(self) -> None:
         """CodexTokenUsage.update() correctly handles explicit zero values."""
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5866,7 +5749,7 @@ class TestContextCompaction:
 class TestPerTurnTokenUsage:
     def test_token_usage_computes_per_turn_deltas(self) -> None:
         """Per-turn deltas are computed from consecutive cumulative updates."""
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
 
@@ -5904,7 +5787,7 @@ class TestPerTurnTokenUsage:
 
     def test_token_usage_metadata_includes_turn_deltas(self) -> None:
         """to_metadata() includes per-turn deltas when available."""
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5922,7 +5805,7 @@ class TestPerTurnTokenUsage:
 
     def test_token_usage_format_summary_includes_turn(self) -> None:
         """format_summary() shows per-turn breakdown when deltas > 0."""
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5940,7 +5823,7 @@ class TestPerTurnTokenUsage:
 
     def test_reset_turn_deltas(self) -> None:
         """reset_turn_deltas() zeroes out per-turn counters."""
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update(
@@ -5963,7 +5846,7 @@ class TestPerTurnTokenUsage:
         turn reporting ``turn_input_tokens=30``.  With the anchor, the
         final value is ``180 - 100 = 80`` — the whole-turn rise.
         """
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         # End of previous turn: cumulative = 100.
@@ -5994,7 +5877,7 @@ class TestPlanStepsRobustness:
 
     def test_parse_plan_steps_handles_non_dict_plan(self) -> None:
         """parse_plan_steps must not crash when `plan` is not a dict."""
-        from thenvoi.integrations.codex.types import parse_plan_steps
+        from band.integrations.codex.types import parse_plan_steps
 
         assert parse_plan_steps({"plan": "not-a-dict"}) == []
         assert parse_plan_steps({"plan": ["also", "not", "a", "dict"]}) == []
@@ -6002,7 +5885,7 @@ class TestPlanStepsRobustness:
 
     def test_parse_plan_steps_reads_top_level_when_plan_absent(self) -> None:
         """When there's no 'plan' key, parse_plan_steps looks at top-level steps."""
-        from thenvoi.integrations.codex.types import parse_plan_steps
+        from band.integrations.codex.types import parse_plan_steps
 
         steps = parse_plan_steps({"steps": [{"text": "A", "status": "pending"}]})
         assert len(steps) == 1
@@ -6110,7 +5993,7 @@ class TestTokenUsageEmission:
         instances are truthy) so an empty token_usage event could be emitted
         even before Codex sent any thread/tokenUsage/updated notification.
         """
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         fake_client = FakeCodexClient()
         adapter = CodexAdapter(
@@ -6145,7 +6028,7 @@ class TestStructuredErrorNormalization:
         was dead code; this test asserts the normalization still works when
         the original error_obj is a string rather than a dict.
         """
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         # Simulate the normalization the adapter performs: convert string to
         # {"message": <str>} before passing to build_structured_error_metadata.
@@ -6247,40 +6130,6 @@ class TestSessionApprovalKeying:
         assert "room-1" not in adapter._session_approved
 
 
-class TestModelUnavailableDetection:
-    """_is_model_unavailable_error across structured and unstructured errors."""
-
-    def test_model_unavailable_matches_structured_error_type(self) -> None:
-        """_is_model_unavailable_error trusts codexErrorInfo.type when present."""
-        err = CodexJsonRpcError(
-            code=-32000,
-            message="some opaque server message",
-            data={"codexErrorInfo": {"type": "ModelNotFound"}},
-        )
-        assert CodexAdapter._is_model_unavailable_error(err) is True
-
-    def test_model_unavailable_matches_http_404(self) -> None:
-        """HTTP 404 signals model-not-found regardless of message wording."""
-        err = CodexJsonRpcError(
-            code=-32000,
-            message="",
-            data={"codexErrorInfo": {"httpStatus": 404}},
-        )
-        assert CodexAdapter._is_model_unavailable_error(err) is True
-
-    def test_model_unavailable_falls_back_to_substring(self) -> None:
-        """When no structured info is present, substring matching still works."""
-        err = CodexJsonRpcError(
-            code=-32000,
-            message="Requested model not available on this account",
-        )
-        assert CodexAdapter._is_model_unavailable_error(err) is True
-
-    def test_model_unavailable_returns_false_for_unrelated_error(self) -> None:
-        err = CodexJsonRpcError(code=-32000, message="network blip")
-        assert CodexAdapter._is_model_unavailable_error(err) is False
-
-
 class TestTokenUsageCounterMonotonicity:
     """CodexTokenUsage protection against non-monotonic cumulative updates."""
 
@@ -6293,15 +6142,13 @@ class TestTokenUsageCounterMonotonicity:
         late event from the previous turn with a smaller cumulative must
         leave the turn deltas clamped to 0 rather than going negative.
         """
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         usage.update({"usage": {"inputTokens": 100, "outputTokens": 100}})
         # Adapter anchors the new turn at cumulative=100/100.
         usage.reset_turn_deltas()
-        with caplog.at_level(
-            logging.WARNING, logger="thenvoi.integrations.codex.types"
-        ):
+        with caplog.at_level(logging.WARNING, logger="band.integrations.codex.types"):
             usage.update({"usage": {"inputTokens": 50, "outputTokens": 50}})
         assert any(
             "token usage counter decreased" in record.message.lower()
@@ -6358,7 +6205,7 @@ class TestStructuredErrorMappings:
     def test_known_error_type_maps_to_remediation(
         self, error_type: str, expected_action: str, expected_phrase: str
     ) -> None:
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         content, meta = build_structured_error_metadata(
             {"codexErrorInfo": {"type": error_type, "retryable": True}}
@@ -6369,7 +6216,7 @@ class TestStructuredErrorMappings:
         assert expected_phrase in content.lower()
 
     def test_non_dict_codex_error_info_is_tolerated(self) -> None:
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         content, meta = build_structured_error_metadata(
             {"message": "boom", "codexErrorInfo": "not-a-dict"}
@@ -6378,7 +6225,7 @@ class TestStructuredErrorMappings:
         assert content == "boom"
 
     def test_missing_codex_error_info_falls_back_to_message(self) -> None:
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         content, meta = build_structured_error_metadata({"message": "network down"})
         assert meta["codex_error_type"] is None
@@ -6386,7 +6233,7 @@ class TestStructuredErrorMappings:
         assert content == "network down"
 
     def test_additional_details_preserved_in_metadata(self) -> None:
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         _, meta = build_structured_error_metadata(
             {
@@ -6647,7 +6494,7 @@ class TestCleanupOnCancel:
         # Simulate an active room with a pending approval.
         loop = asyncio.get_running_loop()
         approval_future: asyncio.Future[str] = loop.create_future()
-        from thenvoi.adapters.codex import _PendingApproval
+        from band.adapters.codex import _PendingApproval
 
         adapter._room_threads["room-1"] = "thr-1"
         adapter._pending_approvals["room-1"] = {
@@ -6727,7 +6574,7 @@ class TestTokenUsageCumulativeMonotonicity:
     """
 
     def test_late_smaller_event_does_not_corrupt_next_delta(self) -> None:
-        from thenvoi.integrations.codex.types import CodexTokenUsage
+        from band.integrations.codex.types import CodexTokenUsage
 
         usage = CodexTokenUsage()
         # End of previous turn: cumulative = 100.
@@ -6754,7 +6601,7 @@ class TestStructuredErrorDetailCap:
     """``additionalDetails`` is attacker-influenceable and must be capped."""
 
     def test_long_additional_details_string_is_truncated(self) -> None:
-        from thenvoi.integrations.codex.types import (
+        from band.integrations.codex.types import (
             _MAX_ERROR_DETAIL_CHARS,
             build_structured_error_metadata,
         )
@@ -6773,7 +6620,7 @@ class TestStructuredErrorDetailCap:
 
     def test_structured_dict_additional_details_are_preserved(self) -> None:
         """Only string details are capped; dict/list payloads pass through."""
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         payload = {"hint": "refresh token", "code": 401}
         _, meta = build_structured_error_metadata(
@@ -6786,7 +6633,7 @@ class TestStructuredErrorDetailCap:
 
     def test_empty_additional_details_is_dropped(self) -> None:
         """Empty strings are not echoed into metadata."""
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         _, meta = build_structured_error_metadata(
             {
@@ -6806,7 +6653,7 @@ class TestStructuredErrorDetailCap:
         WebSocket frame.  When the serialized form exceeds the cap we
         replace the whole payload with a truncated marker string.
         """
-        from thenvoi.integrations.codex.types import (
+        from band.integrations.codex.types import (
             _MAX_ERROR_DETAIL_CHARS,
             build_structured_error_metadata,
         )
@@ -6831,7 +6678,7 @@ class TestStructuredErrorDetailCap:
         round-trip through ``default=str``; pathological unserializable
         objects (e.g. a circular reference) must be dropped rather than
         raising into the event-emission path."""
-        from thenvoi.integrations.codex.types import build_structured_error_metadata
+        from band.integrations.codex.types import build_structured_error_metadata
 
         circular: dict[str, Any] = {}
         circular["self"] = circular
@@ -6852,7 +6699,7 @@ class TestDiffByteCap:
     async def test_multibyte_diff_respects_byte_budget(self) -> None:
         """A diff built from 4-byte codepoints is capped to the byte budget,
         not the character budget (which would be ~4× larger on the wire)."""
-        from thenvoi.adapters.codex import _MAX_DIFF_METADATA_BYTES
+        from band.adapters.codex import _MAX_DIFF_METADATA_BYTES
 
         # Each emoji is 4 UTF-8 bytes; use ~1.5× the byte budget worth.
         emoji = "\U0001f600"
@@ -6915,7 +6762,7 @@ class TestSlashCommandTokenBoundary:
 
     def test_command_past_search_limit_is_ignored(self) -> None:
         """A slash command buried after the token limit must not fire."""
-        from thenvoi.adapters.codex import _COMMAND_TOKEN_SEARCH_LIMIT
+        from band.adapters.codex import _COMMAND_TOKEN_SEARCH_LIMIT
 
         prefix = " ".join(f"word{i}" for i in range(_COMMAND_TOKEN_SEARCH_LIMIT + 1))
         content = f"{prefix} /approve a-1"
@@ -6923,7 +6770,7 @@ class TestSlashCommandTokenBoundary:
 
     def test_command_at_last_scanned_token_is_recognised(self) -> None:
         """The boundary itself is inclusive of the search limit."""
-        from thenvoi.adapters.codex import _COMMAND_TOKEN_SEARCH_LIMIT
+        from band.adapters.codex import _COMMAND_TOKEN_SEARCH_LIMIT
 
         prefix = " ".join(f"word{i}" for i in range(_COMMAND_TOKEN_SEARCH_LIMIT - 1))
         content = f"{prefix} /approve a-1"
@@ -6960,7 +6807,7 @@ class TestDoubleEmitStartupWarning:
             ),
             client_factory=lambda _config: fake_client,
         )
-        with caplog.at_level(logging.WARNING, logger="thenvoi.adapters.codex"):
+        with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
             await adapter.on_started("Agent", "A coding agent")
         assert any(
             "two task events per turn" in record.message for record in caplog.records
@@ -6979,7 +6826,7 @@ class TestDoubleEmitStartupWarning:
             ),
             client_factory=lambda _config: fake_client,
         )
-        with caplog.at_level(logging.WARNING, logger="thenvoi.adapters.codex"):
+        with caplog.at_level(logging.WARNING, logger="band.adapters.codex"):
             await adapter.on_started("Agent", "A coding agent")
         assert not any(
             "two task events per turn" in record.message for record in caplog.records

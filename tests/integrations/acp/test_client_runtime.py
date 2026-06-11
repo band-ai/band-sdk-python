@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.integrations.acp.client_profiles import (
+from band.integrations.acp.client_profiles import (
     CursorACPClientProfile,
     NoopACPClientProfile,
 )
-from thenvoi.integrations.acp.client_runtime import ACPCollectingClient, ACPRuntime
+from band.integrations.acp.client_runtime import ACPCollectingClient, ACPRuntime
 
 
 class TestACPCollectingClientProfiles:

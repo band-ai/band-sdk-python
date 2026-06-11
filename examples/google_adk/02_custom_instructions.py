@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[google_adk]"]
+# dependencies = ["band-sdk[google_adk]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Google ADK agent with custom instructions and model selection.
@@ -11,7 +11,7 @@ Google ADK agent with custom instructions and model selection.
 Demonstrates how to configure the Google ADK adapter with a custom system
 prompt, model selection, and execution reporting.
 
-Requires Thenvoi credentials plus one of:
+Requires Band credentials plus one of:
     - GOOGLE_API_KEY or GOOGLE_GENAI_API_KEY environment variable (Gemini Developer API)
     - gcloud CLI with Application Default Credentials (Vertex AI):
         gcloud auth application-default login
@@ -34,9 +34,9 @@ from dotenv import load_dotenv
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import GoogleADKAdapter
-from thenvoi.core.types import AdapterFeatures, Emit
+from band import Agent
+from band.adapters import GoogleADKAdapter
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -45,16 +45,16 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
     # Create adapter with custom configuration
     adapter = GoogleADKAdapter(
-        model="gemini-2.5-pro",
+        model="gemini-2.5-flash",
         custom_section=(
             "You are a research assistant specializing in summarizing information. "
             "Always provide sources when possible and be thorough but concise."

@@ -146,7 +146,7 @@ class TestBridgeConfigFromEnv:
                 }
             ]
         )
-        with patch.dict(os.environ, {"THENVOI_BRIDGE_AGENTS": payload}, clear=False):
+        with patch.dict(os.environ, {"BAND_BRIDGE_AGENTS": payload}, clear=False):
             c = BridgeConfig.from_env()
         assert len(c.agents) == 1
         assert c.agents[0].agent_id == "a1"
@@ -171,26 +171,26 @@ class TestBridgeConfigFromEnv:
                 },
             ]
         )
-        with patch.dict(os.environ, {"THENVOI_BRIDGE_AGENTS": payload}, clear=False):
+        with patch.dict(os.environ, {"BAND_BRIDGE_AGENTS": payload}, clear=False):
             c = BridgeConfig.from_env()
         assert {a.agent_id for a in c.agents} == {"weather", "math"}
         assert isinstance(c.agents[0].target, HTTPTarget)
         assert isinstance(c.agents[1].target, AgentCoreTarget)
 
     def test_missing_env_var_raises(self) -> None:
-        env = {k: v for k, v in os.environ.items() if k != "THENVOI_BRIDGE_AGENTS"}
+        env = {k: v for k, v in os.environ.items() if k != "BAND_BRIDGE_AGENTS"}
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValueError, match="THENVOI_BRIDGE_AGENTS"):
+            with pytest.raises(ValueError, match="BAND_BRIDGE_AGENTS"):
                 BridgeConfig.from_env()
 
     def test_invalid_json_raises(self) -> None:
-        with patch.dict(os.environ, {"THENVOI_BRIDGE_AGENTS": "not json"}, clear=False):
+        with patch.dict(os.environ, {"BAND_BRIDGE_AGENTS": "not json"}, clear=False):
             with pytest.raises(ValueError, match="not valid JSON"):
                 BridgeConfig.from_env()
 
     def test_non_list_json_raises(self) -> None:
         with patch.dict(
-            os.environ, {"THENVOI_BRIDGE_AGENTS": '{"agent_id":"a"}'}, clear=False
+            os.environ, {"BAND_BRIDGE_AGENTS": '{"agent_id":"a"}'}, clear=False
         ):
             with pytest.raises(ValueError, match="JSON array"):
                 BridgeConfig.from_env()
@@ -206,9 +206,9 @@ class TestBridgeConfigFromEnv:
             ]
         )
         env = {
-            "THENVOI_BRIDGE_AGENTS": payload,
-            "THENVOI_WS_URL": "wss://staging/socket",
-            "THENVOI_REST_URL": "https://staging.app",
+            "BAND_BRIDGE_AGENTS": payload,
+            "BAND_WS_URL": "wss://staging/socket",
+            "BAND_REST_URL": "https://staging.app",
             "HEALTH_PORT": "9000",
             "HEALTH_HOST": "127.0.0.1",
         }
@@ -231,7 +231,7 @@ class TestBridgeConfigFromEnv:
         )
         with patch.dict(
             os.environ,
-            {"THENVOI_BRIDGE_AGENTS": payload, "HEALTH_PORT": "abc"},
+            {"BAND_BRIDGE_AGENTS": payload, "HEALTH_PORT": "abc"},
             clear=False,
         ):
             with pytest.raises(ValueError, match="HEALTH_PORT"):

@@ -19,7 +19,7 @@ from thenvoi_rest.types import (
     ParticipantRequest,
 )
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     MessageCreatedPayload,
     RoomAddedPayload,
     WebSocketClient,
@@ -74,8 +74,8 @@ class TestWebSocketNotifications:
 
         # Agent 1 connects WebSocket and subscribes to chat room
         ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key,
             agent_id=agent1_id,
         )
 
@@ -157,8 +157,8 @@ class TestWebSocketNotifications:
 
         # Connect WebSocket and subscribe to agent rooms channel
         ws = WebSocketClient(
-            ws_url=integration_settings.thenvoi_ws_url,
-            api_key=integration_settings.thenvoi_api_key,
+            ws_url=integration_settings.band_ws_url,
+            api_key=integration_settings.band_api_key,
             agent_id=agent_id,
         )
 

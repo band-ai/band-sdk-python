@@ -4,25 +4,25 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.platform.event import (
+from band.platform.event import (
     ContactRequestReceivedEvent,
     ContactRequestUpdatedEvent,
     ContactAddedEvent,
     ContactRemovedEvent,
 )
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     ContactRequestReceivedPayload,
     ContactRequestUpdatedPayload,
     ContactAddedPayload,
     ContactRemovedPayload,
 )
-from thenvoi.runtime.contact_handler import ContactEventHandler
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contact_handler import ContactEventHandler
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 
 @pytest.fixture
 def mock_link():
-    """Mock ThenvoiLink for testing."""
+    """Mock BandLink for testing."""
     link = MagicMock()
     link.rest = MagicMock()
     # Mock for HUB_ROOM tests

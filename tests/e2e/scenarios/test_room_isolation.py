@@ -20,7 +20,7 @@ import uuid
 import pytest
 from thenvoi_rest import AsyncRestClient
 
-from thenvoi.agent import Agent
+from band.agent import Agent
 
 from tests.e2e.adapters.conftest import AdapterFactory
 from tests.e2e.conftest import E2ESettings, requires_e2e
@@ -90,9 +90,9 @@ class TestRoomIsolation:
         agent = Agent.create(
             adapter=adapter,
             agent_id=e2e_config.test_agent_id,
-            api_key=e2e_config.thenvoi_api_key,
-            ws_url=e2e_config.thenvoi_ws_url,
-            rest_url=e2e_config.thenvoi_base_url,
+            api_key=e2e_config.band_api_key,
+            ws_url=e2e_config.band_ws_url,
+            rest_url=e2e_config.band_base_url,
         )
 
         async with agent:

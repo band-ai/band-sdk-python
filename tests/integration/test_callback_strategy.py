@@ -14,17 +14,17 @@ import logging
 from typing import Any
 from unittest.mock import MagicMock
 
-from thenvoi.platform.event import (
+from band.platform.event import (
     ContactRequestReceivedEvent,
     ContactAddedEvent,
 )
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     ContactRequestReceivedPayload,
     ContactAddedPayload,
 )
-from thenvoi.runtime.contact_handler import ContactEventHandler
-from thenvoi.runtime.contact_tools import ContactTools
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.contact_handler import ContactEventHandler
+from band.runtime.contact_tools import ContactTools
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 from tests.integration.conftest import requires_api, requires_multi_agent
 
 logger = logging.getLogger(__name__)

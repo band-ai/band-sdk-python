@@ -4,7 +4,7 @@ These tests are **shape-equal**, not byte-equal. Per the product decision
 for Phase 1 of INT-338 (INT-349), we verify three invariants per method:
 
 1. The correct ``rest.human_api_*`` method is called.
-2. It is called with the arguments today's ``thenvoi-mcp`` human handler
+2. It is called with the arguments today's ``band-mcp`` human handler
    would have produced for the same inputs (so the observable REST
    traffic is preserved).
 3. The return value has the same **shape** (keys + Python types) as what
@@ -28,8 +28,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.client.rest import DEFAULT_REQUEST_OPTIONS
-from thenvoi.runtime.tools import HumanTools
+from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.runtime.tools import HumanTools
 
 
 def _make_rest_fake() -> MagicMock:
@@ -264,7 +264,7 @@ async def test_resolve_handle_passes_handle() -> None:
 @pytest.mark.asyncio
 async def test_remove_my_contact_requires_one_identifier() -> None:
     """Matches today's MCP handler: returns the error string verbatim
-    instead of raising. See ``thenvoi-mcp`` human_contacts.remove_my_contact.
+    instead of raising. See ``band-mcp`` human_contacts.remove_my_contact.
     """
     rest = _make_rest_fake()
     rest.human_api_contacts.remove_my_contact = AsyncMock(return_value=MagicMock())

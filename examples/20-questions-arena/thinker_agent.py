@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Thinker agent for the 20 Questions Arena game.
@@ -21,7 +21,7 @@ Run with (from repo root):
 
     # Explicit model
     uv run examples/20-questions-arena/thinker_agent.py --model claude-sonnet-4-6
-    uv run examples/20-questions-arena/thinker_agent.py -m gpt-5.2
+    uv run examples/20-questions-arena/thinker_agent.py -m gpt-5.5
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from prompts import create_llm, create_llm_by_name, generate_thinker_prompt
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
+from band import Agent
+from band.adapters import LangGraphAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def _parse_args() -> argparse.Namespace:
         "--model",
         "-m",
         default=None,
-        help="LLM model name (e.g. gpt-5.2, claude-sonnet-4-6). "
+        help="LLM model name (e.g. gpt-5.5, claude-sonnet-4-6). "
         "If omitted, auto-detects from env vars.",
     )
     return parser.parse_args()
@@ -68,13 +68,13 @@ async def main() -> None:
     logger.info("  model flag : %s", args.model or "(auto-detect)")
     logger.info("=" * 60)
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     logger.info("  ws_url     : %s", ws_url)
     logger.info("  rest_url   : %s", rest_url)

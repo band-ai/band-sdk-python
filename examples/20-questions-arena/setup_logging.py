@@ -15,20 +15,20 @@ def setup_logging(level=logging.INFO, agent_tag: str | None = None):
 
     Logs are written to ``examples/20-questions-arena/logs/<agent_tag>.log`` (or
     ``20-questions-arena.log`` when *agent_tag* is not provided).  Console output
-    stays the same as before — only ``thenvoi.*`` loggers at *level*,
+    stays the same as before — only ``band.*`` loggers at *level*,
     everything else at WARNING.
 
     Args:
-        level: Log level for thenvoi loggers (default INFO).
+        level: Log level for band loggers (default INFO).
         agent_tag: Short label used for the log filename
             (e.g. ``"guesser_nano"``, ``"thinker"``).
     """
     fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
 
-    # Console handler (WARNING for noisy deps, *level* for thenvoi)
+    # Console handler (WARNING for noisy deps, *level* for band)
     logging.basicConfig(level=logging.WARNING, format=fmt, datefmt=datefmt)
-    logging.getLogger("thenvoi").setLevel(level)
+    logging.getLogger("band").setLevel(level)
 
     # File handler — captures everything at DEBUG for post-mortem analysis
     _LOG_DIR.mkdir(exist_ok=True)

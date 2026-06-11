@@ -1,6 +1,6 @@
-# CrewAI Examples for Thenvoi
+# CrewAI Examples for Band
 
-Examples showing how to use the Thenvoi SDK with [CrewAI](https://docs.crewai.com/).
+Examples showing how to use the Band SDK with [CrewAI](https://docs.crewai.com/).
 
 ## Why use CrewAI here
 
@@ -9,17 +9,17 @@ CrewAI is a good fit when you want:
 - role-based agents with explicit goals and backstories
 - multi-agent coordination patterns
 - richer prompt shaping than a single flat system prompt
-- crew-style room workflows inside Thenvoi
+- crew-style room workflows inside Band
 
-In this repo, the CrewAI adapter lets those agents use Thenvoi rooms and Thenvoi tools.
+In this repo, the CrewAI adapter lets those agents use Band rooms and Band tools.
 
 ## What these examples cover
 
 | File | Description |
 |------|-------------|
-| `01_basic_agent.py` | **Minimal setup** - Smallest working CrewAI + Thenvoi example. |
+| `01_basic_agent.py` | **Minimal setup** - Smallest working CrewAI + Band example. |
 | `02_role_based_agent.py` | **Role definition** - Shows how role, goal, and backstory shape behavior. |
-| `03_coordinator_agent.py` | **Coordinator** - Uses Thenvoi tools to discover peers and manage participation in a room. |
+| `03_coordinator_agent.py` | **Coordinator** - Uses Band tools to discover peers and manage participation in a room. |
 | `04_research_crew.py` | **Research crew** - Three agents collaborate in the same room. Requires a `<role>` argument: `researcher`, `writer`, or `editor`. |
 | `05_tom_agent.py` | **Character agent** - Tom the cat with a custom character prompt. |
 | `06_jerry_agent.py` | **Character agent** - Jerry the mouse with a custom character prompt. |
@@ -36,7 +36,7 @@ Two CrewAI adapters ship in the SDK:
 - **`CrewAIFlowAdapter`** — experimental in v1. Use it when you need a
   room router that delegates to multiple peers in parallel, joins their
   replies, composes peer outputs sequentially, or enforces tagged-peer
-  routing. The adapter stores all orchestration state in Thenvoi task
+  routing. The adapter stores all orchestration state in Band task
   events and reconstructs it from the platform on every turn — peer
   replies arrive as normal room messages and re-enter `on_message` with
   the run's state intact.
@@ -75,7 +75,7 @@ You need:
 
 1. CrewAI dependencies installed
 2. model provider credentials in `.env`
-3. Thenvoi agent credentials in `agent_config.yaml`
+3. Band agent credentials in `agent_config.yaml`
 4. commands run from the repo root
 
 ## Install
@@ -92,7 +92,7 @@ If you are using an OpenAI-compatible model, your `.env` usually needs:
 OPENAI_API_KEY=sk-your-key
 ```
 
-These examples instantiate the provider during startup. If `OPENAI_API_KEY` is missing, `uv run examples/crewai/01_basic_agent.py` fails before the agent connects to Thenvoi.
+These examples instantiate the provider during startup. If `OPENAI_API_KEY` is missing, `uv run examples/crewai/01_basic_agent.py` fails before the agent connects to Band.
 
 ## Configuration
 
@@ -107,7 +107,7 @@ cp agent_config.yaml.example agent_config.yaml
 
 The examples use OpenAI-compatible model configuration by default.
 
-### 3. Add Thenvoi agent credentials to `agent_config.yaml`
+### 3. Add Band agent credentials to `agent_config.yaml`
 
 Examples load credentials with `load_agent_config()`, so each script expects a specific config name.
 
@@ -175,12 +175,12 @@ That matters because:
 
 - `load_agent_config()` expects `agent_config.yaml` in the working directory
 - some examples import shared helper modules from the `examples/` tree
-- `uv run` uses the local checkout of `thenvoi-sdk`, so branch-local fixes are included
+- `uv run` uses the local checkout of `band-sdk`, so branch-local fixes are included
 
 Typical pattern:
 
 ```bash
-cd /path/to/thenvoi-sdk-python
+cd /path/to/band-sdk-python
 uv run examples/crewai/01_basic_agent.py
 ```
 
@@ -195,7 +195,7 @@ uv run examples/crewai/01_basic_agent.py
 What success looks like:
 
 1. the process starts cleanly
-2. the agent connects to Thenvoi
+2. the agent connects to Band
 3. you add that agent to a room
 4. it replies when you send a message in that room
 
@@ -209,7 +209,7 @@ Use this example if:
 
 - you are setting up CrewAI for the first time
 - you want the smallest working integration shape
-- you want to verify your Thenvoi and model credentials before debugging anything larger
+- you want to verify your Band and model credentials before debugging anything larger
 
 Run:
 
@@ -244,7 +244,7 @@ Run:
 uv run examples/crewai/03_coordinator_agent.py
 ```
 
-In practice, this example is the most useful one for validating that CrewAI and Thenvoi tools are cooperating correctly.
+In practice, this example is the most useful one for validating that CrewAI and Band tools are cooperating correctly.
 
 ### `04_research_crew.py`
 
@@ -260,7 +260,7 @@ uv run examples/crewai/04_research_crew.py editor
 
 Then:
 
-1. create a Thenvoi room
+1. create a Band room
 2. add all three agents
 3. send one research request
 4. watch the room conversation evolve across the three roles
@@ -284,7 +284,7 @@ uv run examples/crewai/06_jerry_agent.py
 
 Then:
 
-1. create a Thenvoi room
+1. create a Band room
 2. add Tom and Jerry
 3. send a prompt to start the interaction
 4. watch the responses reflect the two different character prompts
@@ -390,7 +390,7 @@ Check:
 
 - your model credentials are present
 - the provider key is valid
-- the agent was added to a Thenvoi room
+- the agent was added to a Band room
 
 ### Coordinator example does not add anyone
 
@@ -404,7 +404,7 @@ Those examples depend heavily on model quality and prompt interpretation. They a
 
 - Use `01` for first-run validation
 - Use `02` for role/goal/backstory behavior
-- Use `03` for orchestration and Thenvoi tool usage
+- Use `03` for orchestration and Band tool usage
 - Use `04` for full multi-agent room collaboration
 - Use `05` and `06` for personality-driven agent behavior
 
@@ -412,4 +412,4 @@ Those examples depend heavily on model quality and prompt interpretation. They a
 
 - [CrewAI Documentation](https://docs.crewai.com/)
 - [CrewAI GitHub](https://github.com/crewAIInc/crewAI)
-- [Thenvoi SDK Documentation](https://github.com/thenvoi/thenvoi-sdk-python)
+- [Band SDK Documentation](https://github.com/thenvoi/thenvoi-sdk-python)

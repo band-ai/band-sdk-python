@@ -22,14 +22,14 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel
 
-from thenvoi.integrations.acp.client_profiles import NoopACPClientProfile
-from thenvoi.integrations.acp.client_types import ThenvoiACPClient
-from thenvoi.runtime.mcp_server import (
+from band.integrations.acp.client_profiles import NoopACPClientProfile
+from band.integrations.acp.client_types import BandACPClient
+from band.runtime.mcp_server import (
     LocalMCPServer,
     MCPToolRegistration,
-    build_thenvoi_mcp_tool_registrations,
+    build_band_mcp_tool_registrations,
 )
-from thenvoi.runtime.tools import AgentTools
+from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +53,13 @@ class EchoInput(BaseModel):
 
 
 @pytest.fixture
-def acp_client() -> ThenvoiACPClient:
-    """Create a fresh ThenvoiACPClient."""
-    return ThenvoiACPClient(profile=NoopACPClientProfile())
+def acp_client() -> BandACPClient:
+    """Create a fresh BandACPClient."""
+    return BandACPClient(profile=NoopACPClientProfile())
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_initialize(acp_client: ThenvoiACPClient) -> None:
+async def test_codex_acp_initialize(acp_client: BandACPClient) -> None:
     """Should successfully initialize the ACP protocol with codex-acp."""
     from acp import spawn_agent_process
 
@@ -80,7 +80,7 @@ async def test_codex_acp_initialize(acp_client: ThenvoiACPClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_new_session(acp_client: ThenvoiACPClient) -> None:
+async def test_codex_acp_new_session(acp_client: BandACPClient) -> None:
     """Should create a new ACP session with cwd and mcp_servers."""
     from acp import spawn_agent_process
 
@@ -104,7 +104,7 @@ async def test_codex_acp_new_session(acp_client: ThenvoiACPClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_prompt_and_collect(acp_client: ThenvoiACPClient) -> None:
+async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
     """Should send a prompt and collect response chunks from codex-acp."""
     from acp import spawn_agent_process, text_block
 
@@ -154,7 +154,7 @@ async def test_codex_acp_prompt_and_collect(acp_client: ThenvoiACPClient) -> Non
 
 @pytest.mark.asyncio
 async def test_codex_acp_http_mcp_server_tool_call(
-    acp_client: ThenvoiACPClient,
+    acp_client: BandACPClient,
 ) -> None:
     """Should connect to a local HTTP MCP server and execute a tool."""
     from acp import spawn_agent_process, text_block
@@ -240,10 +240,10 @@ async def test_codex_acp_http_mcp_server_tool_call(
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_thenvoi_mcp_tool_call(
-    acp_client: ThenvoiACPClient,
+async def test_codex_acp_band_mcp_tool_call(
+    acp_client: BandACPClient,
 ) -> None:
-    """Should discover and call a real Thenvoi MCP tool."""
+    """Should discover and call a real Band MCP tool."""
     from acp import spawn_agent_process, text_block
     from acp.schema import HttpMcpServer
 
@@ -271,8 +271,8 @@ async def test_codex_acp_thenvoi_mcp_tool_call(
     )
     agent_tools = AgentTools("room-123", rest)
     local_server = LocalMCPServer(
-        name="test-thenvoi-http-mcp",
-        tool_registrations=build_thenvoi_mcp_tool_registrations(agent_tools),
+        name="test-band-http-mcp",
+        tool_registrations=build_band_mcp_tool_registrations(agent_tools),
         port_min=55120,
         port_max=55129,
     )
@@ -303,7 +303,7 @@ async def test_codex_acp_thenvoi_mcp_tool_call(
                     mcp_servers=[
                         HttpMcpServer(
                             type="http",
-                            name="thenvoi",
+                            name="band",
                             url=local_server.http_url,
                             headers=[],
                         )
@@ -319,7 +319,7 @@ async def test_codex_acp_thenvoi_mcp_tool_call(
                     session_id=session.session_id,
                     prompt=[
                         text_block(
-                            "You must call the Thenvoi get participants tool "
+                            "You must call the Band get participants tool "
                             "exactly once. Do not answer from prior context. "
                             "After the tool call, reply with only the "
                             "participant names."
@@ -334,15 +334,14 @@ async def test_codex_acp_thenvoi_mcp_tool_call(
 
             tool_calls = [chunk for chunk in chunks if chunk.chunk_type == "tool_call"]
             if not tool_calls:
-                pytest.skip("codex-acp did not invoke the Thenvoi MCP tool in this run")
+                pytest.skip("codex-acp did not invoke the Band MCP tool in this run")
             if not any(
                 chunk.metadata.get("raw_input", {}).get("tool")
-                == "thenvoi_get_participants"
+                == "band_get_participants"
                 for chunk in tool_calls
             ):
                 pytest.skip(
-                    "codex-acp invoked MCP in this run, but not the expected "
-                    "Thenvoi tool"
+                    "codex-acp invoked MCP in this run, but not the expected Band tool"
                 )
             assert "Pat" in text
             assert "ACP Bridge" in text
@@ -353,7 +352,7 @@ async def test_codex_acp_thenvoi_mcp_tool_call(
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_multiple_sessions(acp_client: ThenvoiACPClient) -> None:
+async def test_codex_acp_multiple_sessions(acp_client: BandACPClient) -> None:
     """Should handle multiple concurrent sessions with separate buffers."""
     from acp import spawn_agent_process, text_block
 
@@ -406,7 +405,7 @@ async def test_codex_acp_multiple_sessions(acp_client: ThenvoiACPClient) -> None
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_list_sessions(acp_client: ThenvoiACPClient) -> None:
+async def test_codex_acp_list_sessions(acp_client: BandACPClient) -> None:
     """Should list created sessions (if supported by the agent)."""
     from acp import spawn_agent_process
     from acp.exceptions import RequestError
@@ -449,7 +448,7 @@ async def test_codex_acp_list_sessions(acp_client: ThenvoiACPClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_spawn_process_safety(acp_client: ThenvoiACPClient) -> None:
+async def test_spawn_process_safety(acp_client: BandACPClient) -> None:
     """Should handle __aenter__ failure gracefully for bad command."""
     from acp import spawn_agent_process
 

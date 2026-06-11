@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.integrations.a2a.gateway import A2AGatewayAdapter
+from band.integrations.a2a.gateway import A2AGatewayAdapter
 from thenvoi_rest import Peer
 
 

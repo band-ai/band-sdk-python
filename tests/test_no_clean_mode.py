@@ -12,42 +12,42 @@ class TestIsNoCleanMode:
 
     def test_returns_false_by_default(self, monkeypatch):
         """Should return False when no env var or option is set."""
-        monkeypatch.delenv("THENVOI_TEST_NO_CLEAN", raising=False)
+        monkeypatch.delenv("BAND_TEST_NO_CLEAN", raising=False)
         assert is_no_clean_mode() is False
 
     def test_returns_true_with_env_var_1(self, monkeypatch):
-        """Should return True when THENVOI_TEST_NO_CLEAN=1."""
-        monkeypatch.setenv("THENVOI_TEST_NO_CLEAN", "1")
+        """Should return True when BAND_TEST_NO_CLEAN=1."""
+        monkeypatch.setenv("BAND_TEST_NO_CLEAN", "1")
         assert is_no_clean_mode() is True
 
     def test_returns_true_with_env_var_true(self, monkeypatch):
-        """Should return True when THENVOI_TEST_NO_CLEAN=true."""
-        monkeypatch.setenv("THENVOI_TEST_NO_CLEAN", "true")
+        """Should return True when BAND_TEST_NO_CLEAN=true."""
+        monkeypatch.setenv("BAND_TEST_NO_CLEAN", "true")
         assert is_no_clean_mode() is True
 
     def test_returns_true_with_env_var_yes(self, monkeypatch):
-        """Should return True when THENVOI_TEST_NO_CLEAN=yes."""
-        monkeypatch.setenv("THENVOI_TEST_NO_CLEAN", "yes")
+        """Should return True when BAND_TEST_NO_CLEAN=yes."""
+        monkeypatch.setenv("BAND_TEST_NO_CLEAN", "yes")
         assert is_no_clean_mode() is True
 
     def test_returns_true_with_env_var_TRUE_uppercase(self, monkeypatch):
-        """Should return True when THENVOI_TEST_NO_CLEAN=TRUE (case insensitive)."""
-        monkeypatch.setenv("THENVOI_TEST_NO_CLEAN", "TRUE")
+        """Should return True when BAND_TEST_NO_CLEAN=TRUE (case insensitive)."""
+        monkeypatch.setenv("BAND_TEST_NO_CLEAN", "TRUE")
         assert is_no_clean_mode() is True
 
     def test_returns_false_with_invalid_env_var(self, monkeypatch):
         """Should return False with invalid env var value."""
-        monkeypatch.setenv("THENVOI_TEST_NO_CLEAN", "false")
+        monkeypatch.setenv("BAND_TEST_NO_CLEAN", "false")
         assert is_no_clean_mode() is False
 
     def test_returns_false_with_empty_env_var(self, monkeypatch):
-        """Should return False when THENVOI_TEST_NO_CLEAN is empty string."""
-        monkeypatch.setenv("THENVOI_TEST_NO_CLEAN", "")
+        """Should return False when BAND_TEST_NO_CLEAN is empty string."""
+        monkeypatch.setenv("BAND_TEST_NO_CLEAN", "")
         assert is_no_clean_mode() is False
 
     def test_returns_true_with_pytest_option(self, monkeypatch):
         """Should return True when --no-clean pytest option is set."""
-        monkeypatch.delenv("THENVOI_TEST_NO_CLEAN", raising=False)
+        monkeypatch.delenv("BAND_TEST_NO_CLEAN", raising=False)
 
         mock_config = MagicMock()
         mock_config.getoption.return_value = True
@@ -60,7 +60,7 @@ class TestIsNoCleanMode:
 
     def test_returns_false_with_pytest_option_false(self, monkeypatch):
         """Should return False when --no-clean pytest option is not set."""
-        monkeypatch.delenv("THENVOI_TEST_NO_CLEAN", raising=False)
+        monkeypatch.delenv("BAND_TEST_NO_CLEAN", raising=False)
 
         mock_config = MagicMock()
         mock_config.getoption.return_value = False
@@ -72,7 +72,7 @@ class TestIsNoCleanMode:
 
     def test_env_var_takes_precedence_over_pytest_option(self, monkeypatch):
         """Env var should take precedence - True from env even if option is False."""
-        monkeypatch.setenv("THENVOI_TEST_NO_CLEAN", "1")
+        monkeypatch.setenv("BAND_TEST_NO_CLEAN", "1")
 
         mock_config = MagicMock()
         mock_config.getoption.return_value = False
@@ -87,7 +87,7 @@ class TestIsNoCleanMode:
 
     def test_handles_getoption_value_error(self, monkeypatch):
         """Should handle ValueError when --no-clean option not registered."""
-        monkeypatch.delenv("THENVOI_TEST_NO_CLEAN", raising=False)
+        monkeypatch.delenv("BAND_TEST_NO_CLEAN", raising=False)
 
         mock_config = MagicMock()
         mock_config.getoption.side_effect = ValueError("Option not registered")

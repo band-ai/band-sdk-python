@@ -1,6 +1,6 @@
 # Multi-Agent Docker Compose: Claude SDK (planner) + Codex (reviewer)
 #
-# Both agents share /workspace/repo and connect to the Thenvoi platform.
+# Both agents share /workspace/repo and connect to the Band platform.
 # All agents read credentials from a single agent_config.yaml (keyed format).
 #
 # Named volumes (shared_repo, shared_notes, shared_state, shared_context) persist
@@ -30,9 +30,8 @@ x-codex: &codex-base
     GIT_SSH_STRICT_HOST_KEY_CHECKING: ${GIT_SSH_STRICT_HOST_KEY_CHECKING:-true}
     REPO_INIT_LOCK_TIMEOUT_S: ${REPO_INIT_LOCK_TIMEOUT_S:-120}
     PYTHONPATH: /workspace/repo/src
-    THENVOI_REST_URL: ${THENVOI_REST_URL:-https://app.thenvoi.com}
-    THENVOI_WS_URL: ${THENVOI_WS_URL:-wss://app.thenvoi.com/api/v1/socket/websocket}
-    THENVOI_CLIENT_REST_WHEEL: ${THENVOI_CLIENT_REST_WHEEL:-}
+    BAND_REST_URL: ${BAND_REST_URL:-https://app.band.ai}
+    BAND_WS_URL: ${BAND_WS_URL:-wss://app.band.ai/api/v1/socket/websocket}
     PHOENIX_CHANNELS_CLIENT_WHEEL: ${PHOENIX_CHANNELS_CLIENT_WHEEL:-}
   volumes: &codex-volumes
     - ./agent_config.yaml:/app/agent_config.yaml:ro
@@ -45,7 +44,6 @@ x-codex: &codex-base
     - ${HOME}/.config/gh:/home/codex/.config/gh:ro
     - ${HOME}/.ssh:/home/codex/.ssh:ro
     - ${HOME}/.gitconfig:/home/codex/.gitconfig:ro
-    - ${THENVOI_CLIENT_REST_WHEEL_DIR:-/tmp/thenvoi-client-rest}:/opt/thenvoi-client-rest:ro
     - ${PHOENIX_CHANNELS_CLIENT_WHEEL_DIR:-/tmp/phoenix-client}:/opt/phoenix-client:ro
   extra_hosts:
     - "host.docker.internal:host-gateway"
@@ -70,8 +68,8 @@ services:
       WORKSPACE: /workspace
       GIT_SSH_STRICT_HOST_KEY_CHECKING: ${GIT_SSH_STRICT_HOST_KEY_CHECKING:-true}
       REPO_INIT_LOCK_TIMEOUT_S: ${REPO_INIT_LOCK_TIMEOUT_S:-120}
-      THENVOI_REST_URL: ${THENVOI_REST_URL:-https://app.thenvoi.com}
-      THENVOI_WS_URL: ${THENVOI_WS_URL:-wss://app.thenvoi.com/api/v1/socket/websocket}
+      BAND_REST_URL: ${BAND_REST_URL:-https://app.band.ai}
+      BAND_WS_URL: ${BAND_WS_URL:-wss://app.band.ai/api/v1/socket/websocket}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     volumes:
       - ./agent_config.yaml:/app/config/agent_config.yaml:ro
@@ -93,7 +91,7 @@ services:
       <<: *codex-env-base
       AGENT_KEY: ${REVIEWER_AGENT_KEY:-reviewer}
       CODEX_ROLE: reviewer
-      CODEX_MODEL: ${REVIEWER_MODEL:-gpt-5.3-codex}
+      CODEX_MODEL: ${REVIEWER_MODEL:-gpt-5.5}
       CODEX_REASONING_EFFORT: ${REVIEWER_REASONING_EFFORT:-xhigh}
       CODEX_SANDBOX: ${REVIEWER_SANDBOX:-external-sandbox}
       CODEX_APPROVAL_MODE: ${REVIEWER_APPROVAL_MODE:-manual}

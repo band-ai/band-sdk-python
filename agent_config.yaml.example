@@ -4,7 +4,7 @@
 # Add agent_config.yaml to .gitignore to avoid committing secrets
 #
 # SETUP INSTRUCTIONS:
-# 1. Create remote agents in the Thenvoi platform
+# 1. Create remote agents in the Band platform
 # 2. Generate an API key for each agent in the platform
 # 3. Copy the agent_id and api_key here
 # 4. The agent name and description are stored on the platform (not here)
@@ -44,6 +44,11 @@ rag_agent:
 
 # 06_delegate_to_sql_agent.py
 sql_agent:
+  agent_id: ""
+  api_key: ""
+
+# 09_research_ops_orchestrator.py
+research_ops_agent:
   agent_id: ""
   api_key: ""
 
@@ -227,6 +232,17 @@ jetbrains_acp_agent:
 
 # 01_basic_agent.py (default AGENT_KEY for both codex and opencode)
 darter:
+  agent_id: ""
+  api_key: ""
+
+# =============================================================================
+# Slack Examples
+# =============================================================================
+
+# 01_basic_bot.py — bridges a Band agent into a Slack app via Socket
+# Mode (or HTTP). Register the Slack app from the bundled manifest at
+# src/band/integrations/slack/templates/manifest.yaml.
+slack_basic_bot:
   agent_id: ""
   api_key: ""
 

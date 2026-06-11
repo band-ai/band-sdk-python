@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[parlant]"]
+# dependencies = ["band-sdk[parlant]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Customer support agent using Parlant SDK with guidelines.
@@ -27,8 +27,8 @@ import parlant.sdk as p
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import ParlantAdapter
+from band import Agent
+from band.adapters import ParlantAdapter
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -99,13 +99,13 @@ async def setup_support_agent(server: p.Server) -> p.Agent:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
     # Start Parlant server
     async with p.Server(nlp_service=p.NLPServices.openai) as server:
         # Create support agent with guidelines
@@ -118,7 +118,7 @@ async def main() -> None:
             parlant_agent=parlant_agent,
         )
 
-        # Create and start Thenvoi agent
+        # Create and start Band agent
         agent = Agent.from_config(
             "support_agent",
             adapter=adapter,

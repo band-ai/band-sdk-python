@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[codex]"]
+# dependencies = ["band-sdk[codex]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Basic Codex adapter agent example.
 
-Runs a Thenvoi agent backed by Codex app-server.
+Runs a Band agent backed by Codex app-server.
 
 Prerequisites:
 1. OAuth login:
@@ -25,7 +25,7 @@ Optional env overrides:
     CODEX_TRANSPORT=stdio|ws
     CODEX_WS_URL=ws://127.0.0.1:8765
     CODEX_ROLE=coding|planner|reviewer
-    CODEX_MODEL=gpt-5.3-codex
+    CODEX_MODEL=gpt-5.5
     CODEX_APPROVAL_MODE=manual|auto_accept|auto_decline
     CODEX_TURN_TASK_MARKERS=true|false
 """
@@ -43,8 +43,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band import Agent
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -60,13 +60,13 @@ def _env_bool(name: str, default: bool) -> bool:
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("THENVOI_WS_URL")
-    rest_url = os.getenv("THENVOI_REST_URL")
+    ws_url = os.getenv("BAND_WS_URL")
+    rest_url = os.getenv("BAND_REST_URL")
 
     if not ws_url:
-        raise ValueError("THENVOI_WS_URL environment variable is required")
+        raise ValueError("BAND_WS_URL environment variable is required")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     codex_bin = shutil.which("codex")
     if codex_bin is None:

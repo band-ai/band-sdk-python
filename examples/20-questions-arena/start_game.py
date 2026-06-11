@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[langgraph]"]
+# dependencies = ["band-sdk[langgraph]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """Start a 20 Questions Arena game as a user by creating a room, adding all agents, and sending a message.
 
@@ -26,7 +26,7 @@ from thenvoi_rest.human_api_chats.types.create_my_chat_room_request_chat import 
 from thenvoi_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from setup_logging import setup_logging
-from thenvoi.config import load_agent_config
+from band.config import load_agent_config
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +41,9 @@ def _load_agent_id(config_key: str) -> str | None:
 
 
 async def start_game(user_api_key: str) -> str:
-    rest_url = os.getenv("THENVOI_REST_URL")
+    rest_url = os.getenv("BAND_REST_URL")
     if not rest_url:
-        raise ValueError("THENVOI_REST_URL environment variable is required")
+        raise ValueError("BAND_REST_URL environment variable is required")
 
     thinker_agent_id = _load_agent_id("arena_thinker")
     if not thinker_agent_id:

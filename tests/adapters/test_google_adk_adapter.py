@@ -16,15 +16,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
-from thenvoi.core.types import PlatformMessage
+from band.core.types import PlatformMessage
 
 pytest.importorskip("google.adk", reason="google-adk not installed")
 
 # Imports below require google-adk; guarded by importorskip above.
-_google_adk_mod = importlib.import_module("thenvoi.adapters.google_adk")
+_google_adk_mod = importlib.import_module("band.adapters.google_adk")
 GoogleADKAdapter = _google_adk_mod.GoogleADKAdapter
 _get_tool_bridge_class = _google_adk_mod._get_tool_bridge_class
-_ThenvoiToolBridge = _get_tool_bridge_class()
+_BandToolBridge = _get_tool_bridge_class()
+_sanitize_adk_agent_name = _google_adk_mod._sanitize_adk_agent_name
 _strip_additional_properties = _google_adk_mod._strip_additional_properties
 
 
@@ -54,7 +55,7 @@ def mock_tools():
             {
                 "type": "function",
                 "function": {
-                    "name": "thenvoi_send_message",
+                    "name": "band_send_message",
                     "description": "Send a message",
                     "parameters": {
                         "type": "object",
@@ -102,14 +103,14 @@ class TestInitialization:
 
     def test_execution_reporting_default(self):
         """Should default execution reporting to False."""
-        from thenvoi.core.types import Emit
+        from band.core.types import Emit
 
         adapter = GoogleADKAdapter()
         assert Emit.EXECUTION not in adapter.features.emit
 
     def test_memory_tools_default(self):
         """Should default memory tools to False."""
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
         adapter = GoogleADKAdapter()
         assert Capability.MEMORY not in adapter.features.capabilities
@@ -133,6 +134,29 @@ class TestInitialization:
         """Should accept custom max_history_messages."""
         adapter = GoogleADKAdapter(max_history_messages=100)
         assert adapter.max_history_messages == 100
+
+
+class TestADKAgentNameSanitization:
+    """Tests for ADK-safe internal agent names."""
+
+    def test_replaces_spaces_and_punctuation(self):
+        """Display names with punctuation should become valid ADK identifiers."""
+        assert _sanitize_adk_agent_name("Band Agent!") == "Band_Agent_"
+
+    def test_prefixes_digit_leading_names(self):
+        """ADK rejects identifiers that start with digits, even after punctuation replacement."""
+        safe_name = _sanitize_adk_agent_name("24/7 Support")
+
+        assert safe_name == "band_24_7_Support"
+        assert safe_name.isidentifier()
+
+    def test_avoids_reserved_user_name(self):
+        """ADK reserves the exact agent name 'user' for end-user input."""
+        assert _sanitize_adk_agent_name("user") == "band_user"
+
+    def test_uses_default_for_empty_name(self):
+        """Empty names should still produce the default ADK-safe identifier."""
+        assert _sanitize_adk_agent_name("") == "band_agent"
 
 
 class TestOnStarted:
@@ -357,22 +381,22 @@ class TestOnCleanup:
 
 
 class TestToolBridge:
-    """Tests for _ThenvoiToolBridge."""
+    """Tests for _BandToolBridge."""
 
     def test_tool_name(self):
         """Should return the tool name."""
-        bridge = _ThenvoiToolBridge(
-            tool_name="thenvoi_send_message",
+        bridge = _BandToolBridge(
+            tool_name="band_send_message",
             tool_description="Send a message",
             parameters_schema={},
             tools=MagicMock(),
             custom_tools=[],
         )
-        assert bridge.name == "thenvoi_send_message"
+        assert bridge.name == "band_send_message"
 
     def test_tool_description(self):
         """Should return the tool description."""
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="test_tool",
             tool_description="A test tool",
             parameters_schema={},
@@ -383,7 +407,7 @@ class TestToolBridge:
 
     def test_get_declaration(self):
         """Should build a FunctionDeclaration with stripped additionalProperties."""
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="my_tool",
             tool_description="Does things",
             parameters_schema={
@@ -404,7 +428,7 @@ class TestToolBridge:
 
     def test_declaration_eagerly_cached(self):
         """Declaration should be built eagerly in __init__ and cached."""
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="cached_tool",
             tool_description="Cached",
             parameters_schema={"type": "object", "properties": {}},
@@ -428,8 +452,8 @@ class TestToolBridge:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock(return_value={"status": "sent"})
 
-        bridge = _ThenvoiToolBridge(
-            tool_name="thenvoi_send_message",
+        bridge = _BandToolBridge(
+            tool_name="band_send_message",
             tool_description="Send a message",
             parameters_schema={},
             tools=mock_tools,
@@ -442,7 +466,7 @@ class TestToolBridge:
         )
 
         mock_tools.execute_tool_call.assert_called_once_with(
-            "thenvoi_send_message", {"content": "Hello", "mentions": ["@alice"]}
+            "band_send_message", {"content": "Hello", "mentions": ["@alice"]}
         )
         assert result == '{"status": "sent"}'
 
@@ -452,7 +476,7 @@ class TestToolBridge:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock(side_effect=Exception("Tool failed!"))
 
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="failing_tool",
             tool_description="Fails",
             parameters_schema={},
@@ -490,7 +514,7 @@ class TestDeclarationCandidateDetection:
         # The fact that _get_tool_bridge_class() returned successfully at
         # module level (line 26) proves the smoke-test passed.  Verify the
         # returned class has the expected declaration method.
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="smoke",
             tool_description="smoke test",
             parameters_schema={},
@@ -563,7 +587,7 @@ class TestBuildADKTools:
         bridges = adapter._build_adk_tools(mock_tools)
 
         assert len(bridges) == 1
-        assert bridges[0].name == "thenvoi_send_message"
+        assert bridges[0].name == "band_send_message"
 
     def test_includes_custom_tools(self, mock_tools):
         """Should include custom tools in the bridge list."""
@@ -581,7 +605,7 @@ class TestBuildADKTools:
 
         assert len(bridges) == 2
         tool_names = [b.name for b in bridges]
-        assert "thenvoi_send_message" in tool_names
+        assert "band_send_message" in tool_names
         assert "echo" in tool_names
 
 
@@ -617,7 +641,7 @@ class TestCustomTools:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock()
 
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="echo",
             tool_description="Echo back the message",
             parameters_schema={},
@@ -651,7 +675,7 @@ class TestCustomTools:
         mock_tools.execute_tool_call = AsyncMock()
 
         # Tool name derived from model: CalcInput -> "calc"
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="calc",
             tool_description="Calculate sum",
             parameters_schema={},
@@ -682,7 +706,7 @@ class TestCustomTools:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock()
 
-        bridge = _ThenvoiToolBridge(
+        bridge = _BandToolBridge(
             tool_name="strict",
             tool_description="Requires name",
             parameters_schema={},
@@ -724,7 +748,7 @@ class TestCustomTools:
         mock_tools = MagicMock()
         mock_tools.execute_tool_call = AsyncMock()
 
-        echo_bridge = _ThenvoiToolBridge(
+        echo_bridge = _BandToolBridge(
             tool_name="echo",
             tool_description="Echo",
             parameters_schema={},
@@ -732,7 +756,7 @@ class TestCustomTools:
             custom_tools=custom_tools,
         )
         # Tool name derived from model: CalcInput -> "calc"
-        calc_bridge = _ThenvoiToolBridge(
+        calc_bridge = _BandToolBridge(
             tool_name="calc",
             tool_description="Calc",
             parameters_schema={},
@@ -798,7 +822,7 @@ class TestExecutionReporting:
         adapter = GoogleADKAdapter(enable_execution_reporting=True)
 
         mock_fc = MagicMock()
-        mock_fc.name = "thenvoi_send_message"
+        mock_fc.name = "band_send_message"
         mock_fc.args = {"content": "Hello"}
         mock_fc.id = "fc-1"
 
@@ -811,7 +835,7 @@ class TestExecutionReporting:
         mock_tools.send_event.assert_called_once()
         call_args = mock_tools.send_event.call_args
         assert call_args.kwargs["message_type"] == "tool_call"
-        assert "thenvoi_send_message" in call_args.kwargs["content"]
+        assert "band_send_message" in call_args.kwargs["content"]
 
     @pytest.mark.asyncio
     async def test_reports_function_responses(self, mock_tools):
@@ -819,7 +843,7 @@ class TestExecutionReporting:
         adapter = GoogleADKAdapter(enable_execution_reporting=True)
 
         mock_fr = MagicMock()
-        mock_fr.name = "thenvoi_send_message"
+        mock_fr.name = "band_send_message"
         mock_fr.response = {"status": "sent"}
         mock_fr.id = "fc-1"
 
@@ -832,7 +856,7 @@ class TestExecutionReporting:
         mock_tools.send_event.assert_called_once()
         call_args = mock_tools.send_event.call_args
         assert call_args.kwargs["message_type"] == "tool_result"
-        assert "thenvoi_send_message" in call_args.kwargs["content"]
+        assert "band_send_message" in call_args.kwargs["content"]
 
     @pytest.mark.asyncio
     async def test_skips_event_without_function_methods(self, mock_tools):
@@ -925,7 +949,7 @@ class TestHistoryTranscript:
                 "content": [
                     {
                         "type": "function_call",
-                        "name": "thenvoi_send_message",
+                        "name": "band_send_message",
                         "args": {"content": "Hello"},
                     }
                 ],
@@ -935,7 +959,7 @@ class TestHistoryTranscript:
         transcript = adapter._format_history_transcript(history)
 
         assert "[Tool Call]" in transcript
-        assert "thenvoi_send_message" in transcript
+        assert "band_send_message" in transcript
 
     def test_formats_tool_results(self):
         """Should format tool result blocks."""
@@ -946,7 +970,7 @@ class TestHistoryTranscript:
                 "content": [
                     {
                         "type": "function_response",
-                        "name": "thenvoi_send_message",
+                        "name": "band_send_message",
                         "output": '{"status": "sent"}',
                     }
                 ],
@@ -956,12 +980,41 @@ class TestHistoryTranscript:
         transcript = adapter._format_history_transcript(history)
 
         assert "[Tool Result]" in transcript
-        assert "thenvoi_send_message" in transcript
+        assert "band_send_message" in transcript
 
     def test_empty_history(self):
         """Should return empty string for empty history."""
         adapter = GoogleADKAdapter()
         assert adapter._format_history_transcript([]) == ""
+
+    @pytest.mark.asyncio
+    async def test_labels_own_agent_replies_with_agent_name(self):
+        """Own-agent text (role='model', bare content) should be labeled with the agent's name.
+
+        INT-509 regression: without a speaker label, rehydrated transcripts
+        showed the agent's prior replies as anonymous lines and the LLM
+        could not tell them apart from peer turns, leading it to re-answer
+        questions it had already handled after a restart.
+
+        ``SimpleAdapter.on_started`` propagates the agent name into the
+        converter, which is the single source of truth for own-vs-peer
+        attribution.  This test exercises that wiring end-to-end so a
+        future refactor that drops the propagation step would fail here.
+        """
+        adapter = GoogleADKAdapter()
+        await adapter.on_started("ResearchBot", "Test bot")
+        history = [
+            {"role": "user", "content": "[Alice]: What's the capital of France?"},
+            {"role": "model", "content": "Paris."},
+            {"role": "user", "content": "[Alice]: Remember pineapple"},
+            {"role": "model", "content": "I'll remember 'pineapple'."},
+        ]
+
+        transcript = adapter._format_history_transcript(history)
+
+        assert "[Alice]: What's the capital of France?" in transcript
+        assert "[ResearchBot]: Paris." in transcript
+        assert "[ResearchBot]: I'll remember 'pineapple'." in transcript
 
 
 class TestHistoryAccumulation:

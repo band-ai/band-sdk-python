@@ -2,24 +2,24 @@
 Smoke tests - verify basic imports and setup work.
 """
 
-from thenvoi import (
+from band import (
     AdapterFeatures,
     AgentRuntime,
     AgentTools,
     Capability,
     Emit,
     ExecutionContext,
-    ThenvoiConfigError,
-    ThenvoiConnectionError,
-    ThenvoiError,
-    ThenvoiLink,
-    ThenvoiToolError,
+    BandConfigError,
+    BandConnectionError,
+    BandError,
+    BandLink,
+    BandToolError,
 )
 
 
 def test_can_import_runtime():
     """Verify we can import runtime modules."""
-    assert ThenvoiLink is not None
+    assert BandLink is not None
     assert AgentRuntime is not None
     assert ExecutionContext is not None
     assert AgentTools is not None
@@ -47,10 +47,10 @@ def test_emit_enum_values():
 
 def test_can_import_exception_hierarchy():
     """The four-class exception hierarchy is exposed at the package root."""
-    assert ThenvoiError is not None
-    assert issubclass(ThenvoiConfigError, ThenvoiError)
-    assert issubclass(ThenvoiConnectionError, ThenvoiError)
-    assert issubclass(ThenvoiToolError, ThenvoiError)
+    assert BandError is not None
+    assert issubclass(BandConfigError, BandError)
+    assert issubclass(BandConnectionError, BandError)
+    assert issubclass(BandToolError, BandError)
 
 
 def test_adapter_features_constructible():
@@ -65,7 +65,7 @@ def test_adapter_features_constructible():
 
 def test_can_import_letta_adapter_via_lazy_loader():
     """LettaAdapter resolves through the adapters lazy loader."""
-    from thenvoi.adapters import LettaAdapter, LettaAdapterConfig
+    from band.adapters import LettaAdapter, LettaAdapterConfig
 
     assert LettaAdapter is not None
     assert LettaAdapterConfig is not None
@@ -73,7 +73,7 @@ def test_can_import_letta_adapter_via_lazy_loader():
 
 def test_can_import_langgraph_integrations():
     """Verify we can import LangGraph integration utilities."""
-    from thenvoi.integrations.langgraph import (
+    from band.integrations.langgraph import (
         agent_tools_to_langchain,
         graph_as_tool,
     )

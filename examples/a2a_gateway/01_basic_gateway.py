@@ -1,29 +1,29 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[a2a_gateway]"]
+# dependencies = ["band-sdk[a2a_gateway]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Basic A2A Gateway adapter example.
 
-This example creates a gateway that exposes Thenvoi platform peers as A2A
+This example creates a gateway that exposes Band platform peers as A2A
 endpoints. Remote A2A-compliant agents can connect to this gateway and
-interact with Thenvoi peers via standard A2A protocol.
+interact with Band peers via standard A2A protocol.
 
 Use Case:
     - You have a remote agent (e.g., SAP Agent) that uses A2A protocol
-    - You want that agent to interact with Thenvoi platform peers
+    - You want that agent to interact with Band platform peers
     - This gateway runs as a sidecar, exposing peers as A2A endpoints
 
 Architecture:
-    Remote Agent → A2A HTTP → Gateway → Thenvoi REST API → Platform Peers
+    Remote Agent → A2A HTTP → Gateway → Band REST API → Platform Peers
                   ↑                                              ↓
                   ←←←←←←← SSE Response Stream ←←←←←←←←←←←←←←←←←←←
 
 Features:
-    - Automatic peer discovery from Thenvoi platform
+    - Automatic peer discovery from Band platform
     - Per-peer A2A endpoints with AgentCard discovery
     - SSE streaming for real-time responses
     - Context management (room-per-context)
@@ -32,11 +32,11 @@ Features:
 Prerequisites:
     1. Configure gateway credentials:
        - preferred: gateway_agent in agent_config.yaml
-       - fallback: THENVOI_API_KEY and optional THENVOI_AGENT_ID
-       - THENVOI_WS_URL: WebSocket URL (default: wss://app.thenvoi.com/api/v1/socket/websocket)
-       - THENVOI_REST_URL: REST API URL (default: https://app.thenvoi.com)
+       - fallback: BAND_API_KEY and optional BAND_AGENT_ID
+       - BAND_WS_URL: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
+       - BAND_REST_URL: REST API URL (default: https://app.band.ai)
 
-    2. Have peers configured on the Thenvoi platform
+    2. Have peers configured on the Band platform
 
 Run with:
     uv run examples/a2a_gateway/01_basic_gateway.py
@@ -56,9 +56,9 @@ import os
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import A2AGatewayAdapter
-from thenvoi.config import load_agent_config
+from band import Agent
+from band.adapters import A2AGatewayAdapter
+from band.config import load_agent_config
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -67,21 +67,19 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
     try:
         agent_id, api_key = load_agent_config("gateway_agent")
         logger.info("Loaded gateway credentials from agent_config.yaml")
     except Exception:
-        api_key = os.getenv("THENVOI_API_KEY")
+        api_key = os.getenv("BAND_API_KEY")
         if not api_key:
             raise ValueError(
                 "Configure 'gateway_agent' in agent_config.yaml, or set "
-                "THENVOI_API_KEY and THENVOI_AGENT_ID environment variables"
+                "BAND_API_KEY and BAND_AGENT_ID environment variables"
             )
-        agent_id = os.getenv("THENVOI_AGENT_ID", "a2a-gateway")
+        agent_id = os.getenv("BAND_AGENT_ID", "a2a-gateway")
         logger.info("Loaded gateway credentials from environment variables")
 
     # Gateway configuration
@@ -98,7 +96,7 @@ async def main() -> None:
     )
 
     # Create and start agent
-    # The gateway connects to Thenvoi and starts its HTTP server
+    # The gateway connects to Band and starts its HTTP server
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,

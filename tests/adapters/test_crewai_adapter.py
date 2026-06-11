@@ -18,10 +18,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
-from thenvoi.core.types import AdapterFeatures, Capability, PlatformMessage
+from band.core.types import AdapterFeatures, Capability, PlatformMessage
 
 if TYPE_CHECKING:
-    from thenvoi.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
+    from band.adapters.crewai import CrewAIAdapter as CrewAIAdapterType
 
 
 class MockBaseTool:
@@ -47,10 +47,10 @@ def crewai_mocks(monkeypatch):
     # Evict any cached integration modules so they pick up the freshly-mocked
     # `nest_asyncio`/`crewai.tools` from sys.modules on next import.
     for mod in (
-        "thenvoi.adapters.crewai",
-        "thenvoi.integrations.crewai",
-        "thenvoi.integrations.crewai.runtime",
-        "thenvoi.integrations.crewai.tools",
+        "band.adapters.crewai",
+        "band.integrations.crewai",
+        "band.integrations.crewai.runtime",
+        "band.integrations.crewai.tools",
     ):
         sys.modules.pop(mod, None)
 
@@ -63,10 +63,10 @@ def crewai_mocks(monkeypatch):
     finally:
         # Clean up adapter + integration modules to force reimport on next test
         for mod in (
-            "thenvoi.adapters.crewai",
-            "thenvoi.integrations.crewai",
-            "thenvoi.integrations.crewai.runtime",
-            "thenvoi.integrations.crewai.tools",
+            "band.adapters.crewai",
+            "band.integrations.crewai",
+            "band.integrations.crewai.runtime",
+            "band.integrations.crewai.tools",
         ):
             sys.modules.pop(mod, None)
 
@@ -75,7 +75,7 @@ def crewai_mocks(monkeypatch):
 def CrewAIAdapter(crewai_mocks) -> type["CrewAIAdapterType"]:
     import importlib
 
-    module = importlib.import_module("thenvoi.adapters.crewai")
+    module = importlib.import_module("band.adapters.crewai")
     return module.CrewAIAdapter
 
 
@@ -186,7 +186,7 @@ def room_context(crewai_mocks, mock_tools):
     import contextlib
     import importlib
 
-    module = importlib.import_module("thenvoi.adapters.crewai")
+    module = importlib.import_module("band.adapters.crewai")
 
     @contextlib.contextmanager
     def _room_context(room_id: str = "room-123"):
@@ -281,13 +281,13 @@ class TestOnStarted:
         # Check for required platform tools (don't check exact count to avoid brittleness)
         tool_names = [t.name for t in tools]
         required_tools = [
-            "thenvoi_send_message",
-            "thenvoi_send_event",
-            "thenvoi_add_participant",
-            "thenvoi_remove_participant",
-            "thenvoi_get_participants",
-            "thenvoi_lookup_peers",
-            "thenvoi_create_chatroom",
+            "band_send_message",
+            "band_send_event",
+            "band_add_participant",
+            "band_remove_participant",
+            "band_get_participants",
+            "band_lookup_peers",
+            "band_create_chatroom",
         ]
         for tool_name in required_tools:
             assert tool_name in tool_names, f"Missing required tool: {tool_name}"
@@ -305,8 +305,8 @@ class TestOnStarted:
         backstory = call_kwargs["backstory"]
 
         assert "Multi-participant chat" in backstory
-        assert "thenvoi_send_message" in backstory
-        assert "thenvoi_lookup_peers" in backstory
+        assert "band_send_message" in backstory
+        assert "band_lookup_peers" in backstory
 
 
 class TestOnMessage:
@@ -412,6 +412,100 @@ class TestErrorHandling:
                 room_id="room-123",
             )
 
+        mock_tools.send_event.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_suppresses_empty_final_answer_after_reply(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """CrewAI raising an empty final answer AFTER the agent already replied
+        via band_send_message is non-fatal: no error event, no re-raise.
+
+        Regression: CrewAI 1.14.3 raises ValueError("Invalid response from LLM
+        call - None or empty.") on its forced final-answer step. Because this
+        adapter replies through the tool, that fired on essentially every turn,
+        posting a spurious error event alongside each (successful) reply.
+        """
+        import importlib
+
+        module = importlib.import_module("band.adapters.crewai")
+
+        async def _kickoff(_messages):
+            # Simulate band_send_message having succeeded earlier this turn.
+            tracker = module._reply_tracker_var.get()
+            if tracker is not None:
+                tracker.replied = True
+            raise ValueError("Invalid response from LLM call - None or empty.")
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        # Must NOT raise — the reply already went out.
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        # No error event posted to the room.
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [
+            RuntimeError("downstream failure after reply"),
+            ValueError("a different, genuine LLM problem"),
+        ],
+        ids=["non-value-error", "unrelated-value-error"],
+    )
+    async def test_genuine_error_after_reply_still_reports_and_raises(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent, error
+    ):
+        """A genuine failure AFTER a reply went out must NOT be swallowed.
+
+        The empty-final-answer suppression only matches CrewAI's specific
+        ValueError("Invalid response from LLM call ..."). Any other exception —
+        even one raised after band_send_message already replied — must still
+        post an error event and propagate, so real bugs stay visible.
+        """
+        import importlib
+
+        module = importlib.import_module("band.adapters.crewai")
+
+        async def _kickoff(_messages):
+            # Simulate band_send_message having succeeded earlier this turn.
+            tracker = module._reply_tracker_var.get()
+            if tracker is not None:
+                tracker.replied = True
+            raise error
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        # The genuine error must propagate despite the prior reply.
+        with pytest.raises(type(error), match=str(error)):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        # And it must surface as an error event in the room.
         mock_tools.send_event.assert_called()
 
     @pytest.mark.asyncio
@@ -573,11 +667,11 @@ class TestContactAndMemoryToolRegistration:
         tools = crewai_mocks.Agent.call_args[1]["tools"]
         tool_names = {tool.name for tool in tools}
 
-        assert "thenvoi_list_contacts" not in tool_names
-        assert "thenvoi_add_contact" not in tool_names
-        assert "thenvoi_remove_contact" not in tool_names
-        assert "thenvoi_list_contact_requests" not in tool_names
-        assert "thenvoi_respond_contact_request" not in tool_names
+        assert "band_list_contacts" not in tool_names
+        assert "band_add_contact" not in tool_names
+        assert "band_remove_contact" not in tool_names
+        assert "band_list_contact_requests" not in tool_names
+        assert "band_respond_contact_request" not in tool_names
 
     @pytest.mark.asyncio
     async def test_contact_tools_are_included_when_enabled(
@@ -593,11 +687,11 @@ class TestContactAndMemoryToolRegistration:
         tools = crewai_mocks.Agent.call_args[1]["tools"]
         tool_names = {tool.name for tool in tools}
 
-        assert "thenvoi_list_contacts" in tool_names
-        assert "thenvoi_add_contact" in tool_names
-        assert "thenvoi_remove_contact" in tool_names
-        assert "thenvoi_list_contact_requests" in tool_names
-        assert "thenvoi_respond_contact_request" in tool_names
+        assert "band_list_contacts" in tool_names
+        assert "band_add_contact" in tool_names
+        assert "band_remove_contact" in tool_names
+        assert "band_list_contact_requests" in tool_names
+        assert "band_respond_contact_request" in tool_names
 
     @pytest.mark.asyncio
     async def test_memory_tools_are_excluded_by_default(
@@ -611,11 +705,11 @@ class TestContactAndMemoryToolRegistration:
         tools = crewai_mocks.Agent.call_args[1]["tools"]
         tool_names = {tool.name for tool in tools}
 
-        assert "thenvoi_list_memories" not in tool_names
-        assert "thenvoi_store_memory" not in tool_names
-        assert "thenvoi_get_memory" not in tool_names
-        assert "thenvoi_supersede_memory" not in tool_names
-        assert "thenvoi_archive_memory" not in tool_names
+        assert "band_list_memories" not in tool_names
+        assert "band_store_memory" not in tool_names
+        assert "band_get_memory" not in tool_names
+        assert "band_supersede_memory" not in tool_names
+        assert "band_archive_memory" not in tool_names
 
     @pytest.mark.asyncio
     async def test_memory_tools_are_included_when_enabled(
@@ -629,11 +723,11 @@ class TestContactAndMemoryToolRegistration:
         tools = crewai_mocks.Agent.call_args[1]["tools"]
         tool_names = {tool.name for tool in tools}
 
-        assert "thenvoi_list_memories" in tool_names
-        assert "thenvoi_store_memory" in tool_names
-        assert "thenvoi_get_memory" in tool_names
-        assert "thenvoi_supersede_memory" in tool_names
-        assert "thenvoi_archive_memory" in tool_names
+        assert "band_list_memories" in tool_names
+        assert "band_store_memory" in tool_names
+        assert "band_get_memory" in tool_names
+        assert "band_supersede_memory" in tool_names
+        assert "band_archive_memory" in tool_names
 
 
 class TestCacheDisabling:
@@ -650,7 +744,7 @@ class TestCacheDisabling:
     async def test_all_crewai_platform_tools_disable_cache(
         self, CrewAIAdapter, crewai_mocks
     ):
-        """Every thenvoi_* platform tool must have cache_function returning False."""
+        """Every band_* platform tool must have cache_function returning False."""
         crewai_mocks.Agent.reset_mock()
 
         adapter = CrewAIAdapter(
@@ -661,9 +755,9 @@ class TestCacheDisabling:
         await adapter.on_started("TestBot", "Test bot")
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
-        platform_tools = [t for t in tools if t.name.startswith("thenvoi_")]
+        platform_tools = [t for t in tools if t.name.startswith("band_")]
 
-        assert len(platform_tools) > 0, "Expected at least one thenvoi_* tool"
+        assert len(platform_tools) > 0, "Expected at least one band_* tool"
 
         for tool in platform_tools:
             assert callable(tool.cache_function), (
@@ -710,7 +804,7 @@ class TestContactToolExecution:
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
-        list_contacts_tool = next(t for t in tools if t.name == "thenvoi_list_contacts")
+        list_contacts_tool = next(t for t in tools if t.name == "band_list_contacts")
 
         with room_context("room-123"):
             result = list_contacts_tool._run(page=2, page_size=25)
@@ -729,7 +823,7 @@ class TestContactToolExecution:
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
-        add_contact_tool = next(t for t in tools if t.name == "thenvoi_add_contact")
+        add_contact_tool = next(t for t in tools if t.name == "band_add_contact")
 
         with room_context("room-123"):
             result = add_contact_tool._run(handle="@alice", message="Hi Alice")
@@ -749,9 +843,7 @@ class TestContactToolExecution:
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
-        remove_contact_tool = next(
-            t for t in tools if t.name == "thenvoi_remove_contact"
-        )
+        remove_contact_tool = next(t for t in tools if t.name == "band_remove_contact")
 
         with room_context("room-123"):
             result = remove_contact_tool._run(handle="@alice", contact_id="contact-1")
@@ -771,7 +863,7 @@ class TestContactToolExecution:
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
         list_requests_tool = next(
-            t for t in tools if t.name == "thenvoi_list_contact_requests"
+            t for t in tools if t.name == "band_list_contact_requests"
         )
 
         with room_context("room-123"):
@@ -794,7 +886,7 @@ class TestContactToolExecution:
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
         respond_request_tool = next(
-            t for t in tools if t.name == "thenvoi_respond_contact_request"
+            t for t in tools if t.name == "band_respond_contact_request"
         )
 
         with room_context("room-123"):
@@ -825,7 +917,7 @@ class TestMemoryToolExecution:
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
-        list_memories_tool = next(t for t in tools if t.name == "thenvoi_list_memories")
+        list_memories_tool = next(t for t in tools if t.name == "band_list_memories")
 
         with room_context("room-123"):
             result = list_memories_tool._run(
@@ -862,7 +954,7 @@ class TestMemoryToolExecution:
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
-        store_memory_tool = next(t for t in tools if t.name == "thenvoi_store_memory")
+        store_memory_tool = next(t for t in tools if t.name == "band_store_memory")
 
         with room_context("room-123"):
             result = store_memory_tool._run(
@@ -898,7 +990,7 @@ class TestMemoryToolExecution:
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
-        get_memory_tool = next(t for t in tools if t.name == "thenvoi_get_memory")
+        get_memory_tool = next(t for t in tools if t.name == "band_get_memory")
 
         with room_context("room-123"):
             result = get_memory_tool._run(memory_id="memory-1")
@@ -918,7 +1010,7 @@ class TestMemoryToolExecution:
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
         supersede_memory_tool = next(
-            t for t in tools if t.name == "thenvoi_supersede_memory"
+            t for t in tools if t.name == "band_supersede_memory"
         )
 
         with room_context("room-123"):
@@ -939,9 +1031,7 @@ class TestMemoryToolExecution:
         asyncio.run(adapter.on_started("TestBot", "Test bot"))
 
         tools = crewai_mocks.Agent.call_args[1]["tools"]
-        archive_memory_tool = next(
-            t for t in tools if t.name == "thenvoi_archive_memory"
-        )
+        archive_memory_tool = next(t for t in tools if t.name == "band_archive_memory")
 
         with room_context("room-123"):
             result = archive_memory_tool._run(memory_id="memory-1")
@@ -965,7 +1055,7 @@ class TestToolExecution:
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
-        send_message_tool = next(t for t in tools if t.name == "thenvoi_send_message")
+        send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         # Call tool without setting context variable (simulates call outside message handling)
         result = send_message_tool._run(content="Hello!", mentions="[]")
@@ -985,23 +1075,23 @@ class TestToolExecution:
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
 
-        # thenvoi_send_message should have content and mentions, but NOT room_id
-        send_message = next(t for t in tools if t.name == "thenvoi_send_message")
+        # band_send_message should have content and mentions, but NOT room_id
+        send_message = next(t for t in tools if t.name == "band_send_message")
         assert send_message.args_schema is not None
         schema_fields = send_message.args_schema.model_fields
         assert "room_id" not in schema_fields
         assert "content" in schema_fields
         assert "mentions" in schema_fields
 
-        # thenvoi_add_participant should have identifier and role, but NOT room_id
-        add_participant = next(t for t in tools if t.name == "thenvoi_add_participant")
+        # band_add_participant should have identifier and role, but NOT room_id
+        add_participant = next(t for t in tools if t.name == "band_add_participant")
         schema_fields = add_participant.args_schema.model_fields
         assert "room_id" not in schema_fields
         assert "identifier" in schema_fields
         assert "role" in schema_fields
 
-        # thenvoi_lookup_peers should expose pagination, but NOT room_id
-        lookup_peers = next(t for t in tools if t.name == "thenvoi_lookup_peers")
+        # band_lookup_peers should expose pagination, but NOT room_id
+        lookup_peers = next(t for t in tools if t.name == "band_lookup_peers")
         schema_fields = lookup_peers.args_schema.model_fields
         assert "room_id" not in schema_fields
         assert "page" in schema_fields
@@ -1019,7 +1109,7 @@ class TestToolExecution:
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
 
-        send_event = next(t for t in tools if t.name == "thenvoi_send_event")
+        send_event = next(t for t in tools if t.name == "band_send_event")
         schema_fields = send_event.args_schema.model_fields
 
         assert "message_type" in schema_fields
@@ -1040,7 +1130,7 @@ class TestToolExecution:
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
         get_participants_tool = next(
-            t for t in tools if t.name == "thenvoi_get_participants"
+            t for t in tools if t.name == "band_get_participants"
         )
 
         with room_context("room-123"):
@@ -1064,7 +1154,7 @@ class TestToolExecution:
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
         get_participants_tool = next(
-            t for t in tools if t.name == "thenvoi_get_participants"
+            t for t in tools if t.name == "band_get_participants"
         )
 
         with room_context("room-123"):
@@ -1101,7 +1191,7 @@ class TestToolExecution:
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
-        lookup_peers_tool = next(t for t in tools if t.name == "thenvoi_lookup_peers")
+        lookup_peers_tool = next(t for t in tools if t.name == "band_lookup_peers")
 
         with room_context("room-123"):
             result = await asyncio.to_thread(lookup_peers_tool._run)
@@ -1117,7 +1207,7 @@ class TestExecutionReporting:
         adapter_enabled = CrewAIAdapter(enable_execution_reporting=True)
         adapter_disabled = CrewAIAdapter(enable_execution_reporting=False)
 
-        from thenvoi.core.types import Emit
+        from band.core.types import Emit
 
         assert Emit.EXECUTION in adapter_enabled.features.emit
         assert Emit.EXECUTION not in adapter_disabled.features.emit
@@ -1134,7 +1224,7 @@ class TestExecutionReporting:
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
-        send_message_tool = next(t for t in tools if t.name == "thenvoi_send_message")
+        send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         with room_context("room-123"):
             send_message_tool._run(content="Hello!", mentions="[]")
@@ -1146,7 +1236,7 @@ class TestExecutionReporting:
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
         """send_event 403 in EmitExecutionReporter.report_call should not propagate."""
-        from thenvoi.integrations.crewai import EmitExecutionReporter
+        from band.integrations.crewai import EmitExecutionReporter
 
         adapter = CrewAIAdapter(enable_execution_reporting=True)
         reporter = EmitExecutionReporter(adapter.features)
@@ -1160,7 +1250,7 @@ class TestExecutionReporting:
         self, CrewAIAdapter, crewai_mocks, mock_tools
     ):
         """send_event 403 in EmitExecutionReporter.report_result should not propagate."""
-        from thenvoi.integrations.crewai import EmitExecutionReporter
+        from band.integrations.crewai import EmitExecutionReporter
 
         adapter = CrewAIAdapter(enable_execution_reporting=True)
         reporter = EmitExecutionReporter(adapter.features)
@@ -1176,14 +1266,14 @@ class TestLazyNestAsyncio:
         import importlib
         import sys
 
-        sys.modules.pop("thenvoi.adapters.crewai", None)
-        sys.modules.pop("thenvoi.integrations.crewai", None)
-        sys.modules.pop("thenvoi.integrations.crewai.runtime", None)
+        sys.modules.pop("band.adapters.crewai", None)
+        sys.modules.pop("band.integrations.crewai", None)
+        sys.modules.pop("band.integrations.crewai.runtime", None)
 
         crewai_mocks_nest = sys.modules["nest_asyncio"]
         crewai_mocks_nest.reset_mock()
 
-        importlib.import_module("thenvoi.adapters.crewai")
+        importlib.import_module("band.adapters.crewai")
 
         crewai_mocks_nest.apply.assert_not_called()
 
@@ -1191,7 +1281,7 @@ class TestLazyNestAsyncio:
         import importlib
         import sys
 
-        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
+        module = importlib.import_module("band.integrations.crewai.runtime")
 
         module._nest_asyncio_applied = False
         nest_mock = sys.modules["nest_asyncio"]
@@ -1207,7 +1297,7 @@ class TestLazyNestAsyncio:
         import importlib
         import threading
 
-        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
+        module = importlib.import_module("band.integrations.crewai.runtime")
 
         assert hasattr(module, "_nest_asyncio_lock")
         assert isinstance(module._nest_asyncio_lock, type(threading.Lock()))
@@ -1218,7 +1308,7 @@ class TestLazyNestAsyncio:
         import importlib
         import sys
 
-        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
+        module = importlib.import_module("band.integrations.crewai.runtime")
 
         module._nest_asyncio_applied = False
         nest_mock = sys.modules["nest_asyncio"]
@@ -1238,7 +1328,7 @@ class TestRunAsync:
         import importlib
         import sys
 
-        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
+        module = importlib.import_module("band.integrations.crewai.runtime")
         module._nest_asyncio_applied = False
 
         nest_mock = sys.modules["nest_asyncio"]
@@ -1256,7 +1346,7 @@ class TestRunAsync:
         import importlib
         import sys
 
-        module = importlib.import_module("thenvoi.integrations.crewai.runtime")
+        module = importlib.import_module("band.integrations.crewai.runtime")
         module._nest_asyncio_applied = True
 
         nest_mock = sys.modules["nest_asyncio"]
@@ -1280,7 +1370,7 @@ class TestMentionsValidator:
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
-        send_message_tool = next(t for t in tools if t.name == "thenvoi_send_message")
+        send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         input_model = send_message_tool.args_schema
 
@@ -1300,7 +1390,7 @@ class TestMentionsValidator:
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
-        send_message_tool = next(t for t in tools if t.name == "thenvoi_send_message")
+        send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         input_model = send_message_tool.args_schema
 
@@ -1323,7 +1413,7 @@ class TestMentionsValidator:
 
         call_kwargs = crewai_mocks.Agent.call_args[1]
         tools = call_kwargs["tools"]
-        send_message_tool = next(t for t in tools if t.name == "thenvoi_send_message")
+        send_message_tool = next(t for t in tools if t.name == "band_send_message")
 
         input_model = send_message_tool.args_schema
 
@@ -1338,7 +1428,7 @@ class TestMentionsValidator:
 class TestPromptRendering:
     def test_backstory_uses_render_system_prompt(self, CrewAIAdapter):
         """CrewAI backstory is now built via render_system_prompt."""
-        from thenvoi.runtime.prompts import render_system_prompt
+        from band.runtime.prompts import render_system_prompt
 
         prompt = render_system_prompt(
             agent_name="TestAgent",
@@ -1346,8 +1436,8 @@ class TestPromptRendering:
         )
         # Verify the rendered prompt contains key sections
         assert "Environment" in prompt
-        assert "thenvoi_send_message" in prompt
-        assert "thenvoi_lookup_peers" in prompt
+        assert "band_send_message" in prompt
+        assert "band_lookup_peers" in prompt
 
 
 # Custom tool input models for testing
@@ -1426,7 +1516,7 @@ class TestCustomTools:
 
         # Check that custom tool is included alongside platform tools
         tool_names = [t.name for t in tools]
-        assert "thenvoi_send_message" in tool_names  # Platform tool should exist
+        assert "band_send_message" in tool_names  # Platform tool should exist
         assert "echo" in tool_names  # Custom tool should exist
 
         # Find the echo tool
@@ -1453,7 +1543,7 @@ class TestCustomTools:
 
         # Check that both custom tools are included alongside platform tools
         tool_names = [t.name for t in tools]
-        assert "thenvoi_send_message" in tool_names  # Platform tool should exist
+        assert "band_send_message" in tool_names  # Platform tool should exist
         assert "echo" in tool_names  # Custom tool should exist
         assert "calculator" in tool_names  # Custom tool should exist
 

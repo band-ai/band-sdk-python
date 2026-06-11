@@ -13,7 +13,7 @@ updates:
       - "dependencies"
       - "python"
     reviewers:
-      - "thenvoi/integrations-team"
+      - "band/integrations-team"
 
   # GitHub Actions
   - package-ecosystem: "github-actions"

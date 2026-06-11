@@ -1,6 +1,6 @@
 """Tests for shared tool parsing utilities."""
 
-from thenvoi.converters._tool_parsing import (
+from band.converters._tool_parsing import (
     ParsedToolCall,
     ParsedToolResult,
     parse_tool_call,
@@ -69,6 +69,23 @@ class TestParseToolCall:
 
         assert result is not None
         assert result.args == {"nested": {"key": "value"}, "list": [1, 2, 3]}
+
+    def test_returns_none_for_non_object_json(self, caplog):
+        """Non-dict JSON payloads are malformed tool events."""
+        result = parse_tool_call('["not", "an", "object"]')
+
+        assert result is None
+        assert "non-object payload" in caplog.text
+
+    def test_uses_empty_args_for_non_object_args(self, caplog):
+        """Malformed args should not crash history conversion."""
+        content = '{"name": "search", "args": ["bad"], "tool_call_id": "call_123"}'
+
+        result = parse_tool_call(content)
+
+        assert result is not None
+        assert result.args == {}
+        assert "args were not an object" in caplog.text
 
 
 class TestParseToolResult:
@@ -160,3 +177,10 @@ class TestParseToolResult:
 
         assert result is None
         assert "missing name" in caplog.text
+
+    def test_returns_none_for_non_object_json(self, caplog):
+        """Non-dict JSON payloads are malformed tool result events."""
+        result = parse_tool_result('["not", "an", "object"]')
+
+        assert result is None
+        assert "non-object payload" in caplog.text

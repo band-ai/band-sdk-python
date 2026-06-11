@@ -55,6 +55,7 @@ class ConverterConfig:
 
     # Behavioral flags
     filters_own_messages: bool = True
+    includes_own_text_without_tool_events: bool = False
     skips_tool_events: bool = False
 
     # How empty/missing sender_name is handled
@@ -76,49 +77,49 @@ class ConverterConfig:
 
 
 def _anthropic_factory(**kw: Any) -> Any:
-    from thenvoi.converters.anthropic import AnthropicHistoryConverter
+    from band.converters.anthropic import AnthropicHistoryConverter
 
     return AnthropicHistoryConverter(**kw)
 
 
 def _langchain_factory(**kw: Any) -> Any:
-    from thenvoi.converters.langchain import LangChainHistoryConverter
+    from band.converters.langchain import LangChainHistoryConverter
 
     return LangChainHistoryConverter(**kw)
 
 
 def _crewai_factory(**kw: Any) -> Any:
-    from thenvoi.converters.crewai import CrewAIHistoryConverter
+    from band.converters.crewai import CrewAIHistoryConverter
 
     return CrewAIHistoryConverter(**kw)
 
 
 def _claude_sdk_factory(**kw: Any) -> Any:
-    from thenvoi.converters.claude_sdk import ClaudeSDKHistoryConverter
+    from band.converters.claude_sdk import ClaudeSDKHistoryConverter
 
     return ClaudeSDKHistoryConverter(**kw)
 
 
 def _pydantic_ai_factory(**kw: Any) -> Any:
-    from thenvoi.converters.pydantic_ai import PydanticAIHistoryConverter
+    from band.converters.pydantic_ai import PydanticAIHistoryConverter
 
     return PydanticAIHistoryConverter(**kw)
 
 
 def _parlant_factory(**kw: Any) -> Any:
-    from thenvoi.converters.parlant import ParlantHistoryConverter
+    from band.converters.parlant import ParlantHistoryConverter
 
     return ParlantHistoryConverter(**kw)
 
 
 def _gemini_factory(**kw: Any) -> Any:
-    from thenvoi.converters.gemini import GeminiHistoryConverter
+    from band.converters.gemini import GeminiHistoryConverter
 
     return GeminiHistoryConverter(**kw)
 
 
 def _google_adk_factory(**kw: Any) -> Any:
-    from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+    from band.converters.google_adk import GoogleADKHistoryConverter
 
     return GoogleADKHistoryConverter(**kw)
 
@@ -155,6 +156,7 @@ def _build_langchain_config() -> ConverterConfig:
         # produces the same "[]: content" as an empty string (brackets_empty).
         missing_sender_behavior=SenderBehavior.BRACKETS_EMPTY,
         output_adapter=LangChainOutputAdapter(),
+        includes_own_text_without_tool_events=True,
     )
 
 
@@ -179,7 +181,7 @@ def _build_crewai_config() -> ConverterConfig:
 
 
 def _build_claude_sdk_config() -> ConverterConfig:
-    from thenvoi.converters.claude_sdk import ClaudeSDKSessionState
+    from band.converters.claude_sdk import ClaudeSDKSessionState
     from tests.framework_configs.output_adapters import ClaudeSDKOutputAdapter
 
     return ConverterConfig(
@@ -255,6 +257,8 @@ def _build_gemini_config() -> ConverterConfig:
 # the standard convert() -> framework-format contract that conformance tests validate.
 # crewai_flow is a metadata-only converter for orchestration state reconstructed from
 # task events; same exception as codex/letta/opencode.
+# slack is a metadata-only converter too: it recovers the Slack thread binding from the
+# room's bootstrap task event (SlackSessionState), not a message-history conversion.
 CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
     {
         "_tool_parsing",
@@ -267,6 +271,7 @@ CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
         "crewai_flow",
         "letta",
         "opencode",
+        "slack",
     }
 )
 
@@ -279,6 +284,10 @@ def _build_google_adk_config() -> ConverterConfig:
         display_name="GoogleADK",
         converter_factory=_google_adk_factory,
         empty_result=[],
+        # ADK keeps own-agent text as ``role="model"`` so rehydrated history
+        # shows the agent's prior replies (INT-509).  The adapter renders this
+        # into the transcript with the agent's own name as the speaker label.
+        filters_own_messages=False,
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         output_adapter=GoogleADKOutputAdapter(),

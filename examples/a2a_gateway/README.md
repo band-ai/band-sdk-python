@@ -1,15 +1,15 @@
 # A2A Gateway Examples
 
-Examples showing how to expose Thenvoi peers as inbound A2A endpoints.
+Examples showing how to expose Band peers as inbound A2A endpoints.
 
 ## Why the gateway exists
 
-The gateway is the inbound side of the Thenvoi A2A story.
+The gateway is the inbound side of the Band A2A story.
 
-- the **bridge** connects a remote A2A agent into Thenvoi
-- the **gateway** exposes Thenvoi peers out to remote A2A clients
+- the **bridge** connects a remote A2A agent into Band
+- the **gateway** exposes Band peers out to remote A2A clients
 
-A remote A2A client can call the gateway, discover Thenvoi peers through AgentCard routes, and send requests that the gateway turns into Thenvoi room activity.
+A remote A2A client can call the gateway, discover Band peers through AgentCard routes, and send requests that the gateway turns into Band room activity.
 
 ## Architecture
 
@@ -20,19 +20,19 @@ Remote A2A Client
    A2A Gateway
         |
         v
- Thenvoi Platform
+ Band Platform
         |
         v
-   Thenvoi Peer
+   Band Peer
 ```
 
-Context is preserved by mapping the incoming A2A `contextId` to a Thenvoi room.
+Context is preserved by mapping the incoming A2A `contextId` to a Band room.
 
 ## What these examples cover
 
 | File | Description |
 |------|-------------|
-| `01_basic_gateway.py` | **Basic gateway** - Start the gateway and expose Thenvoi peers as A2A endpoints. |
+| `01_basic_gateway.py` | **Basic gateway** - Start the gateway and expose Band peers as A2A endpoints. |
 | `02_with_demo_agent.py` | **Gateway plus orchestrator** - Run the gateway and a local demo A2A agent that calls gateway peers. |
 | `demo_orchestrator/` | Implementation details for the local demo orchestrator agent. |
 
@@ -40,7 +40,7 @@ Context is preserved by mapping the incoming A2A `contextId` to a Thenvoi room.
 
 - `01_basic_gateway.py` worked live for startup and `/peers`
 - per-peer agent card discovery worked live
-- a deterministic Thenvoi peer completed a real gateway round-trip
+- a deterministic Band peer completed a real gateway round-trip
 - the gateway reused the same room when the same `context_id` was used
 - the README startup flow was re-run after fixing credential selection and local source execution
 - `02_with_demo_agent.py` was exercised as the higher-level gateway demo path
@@ -50,8 +50,8 @@ Context is preserved by mapping the incoming A2A `contextId` to a Thenvoi room.
 
 You need:
 
-- `.env` or `agent_config.yaml` with Thenvoi credentials
-- at least one Thenvoi peer available in the workspace
+- `.env` or `agent_config.yaml` with Band credentials
+- at least one Band peer available in the workspace
 - `OPENAI_API_KEY` if you want to run the demo orchestrator
 
 Recommended: use `gateway_agent` in `agent_config.yaml`.
@@ -66,8 +66,8 @@ gateway_agent:
 Fallback: you can also use environment variables:
 
 ```bash
-export THENVOI_API_KEY=your-thenvoi-api-key
-export THENVOI_AGENT_ID=a2a-gateway
+export BAND_API_KEY=your-band-api-key
+export BAND_AGENT_ID=a2a-gateway
 ```
 
 ## Install
@@ -84,7 +84,7 @@ If you want the orchestrator demo too:
 uv sync --extra a2a_gateway_demo
 ```
 
-When you run these examples from this repository, `uv run` uses the local checkout of `thenvoi-sdk`.
+When you run these examples from this repository, `uv run` uses the local checkout of `band-sdk`.
 
 ## Running the basic gateway
 
@@ -161,12 +161,12 @@ curl -N -X POST http://localhost:10000/agents/<peer-id>/v1/message:stream \
 What success looks like:
 
 - the gateway accepts the request
-- the mapped Thenvoi peer replies
+- the mapped Band peer replies
 - reusing `contextId: "ctx-1"` continues the same conversation
 
 ## Context reuse test
 
-To verify the same `contextId` maps back to the same Thenvoi room:
+To verify the same `contextId` maps back to the same Band room:
 
 1. send a first request with `contextId: "ctx-1"`
 2. send a second request with the same `contextId`
@@ -200,7 +200,7 @@ The orchestrator's job is to accept an incoming A2A request and route it to one 
 
 ### Basic gateway
 
-- `/peers` returns real Thenvoi peers
+- `/peers` returns real Band peers
 - `/.well-known/agent.json` returns a valid card for a peer
 - a message call returns a peer response
 - the same `contextId` reuses the same room
@@ -217,7 +217,7 @@ The orchestrator's job is to accept an incoming A2A request and route it to one 
 
 Check that:
 
-- your Thenvoi credentials are valid
+- your Band credentials are valid
 - the workspace actually has peers to expose
 
 ### The gateway fails with a permissions error
@@ -234,8 +234,8 @@ Use `gateway_agent` from `agent_config.yaml`, which is the safest path for onboa
 
 Use:
 
-- the **bridge** when you want a remote A2A agent to join Thenvoi rooms
-- the **gateway** when you want a remote A2A client to talk to Thenvoi peers
+- the **bridge** when you want a remote A2A agent to join Band rooms
+- the **gateway** when you want a remote A2A client to talk to Band peers
 
 ### Requests work but context does not persist
 

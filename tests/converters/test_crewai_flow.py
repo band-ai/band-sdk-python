@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from thenvoi.converters.crewai_flow import (
+from band.converters.crewai_flow import (
     CrewAIFlowAmbiguousIdentityError,
     CrewAIFlowBufferedSynthesis,
     CrewAIFlowDelegationState,
@@ -21,6 +21,7 @@ from thenvoi.converters.crewai_flow import (
     CrewAIFlowStateConverter,
     normalize_participant_key,
 )
+
 
 NS = "crewai_flow"
 

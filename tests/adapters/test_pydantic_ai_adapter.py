@@ -19,8 +19,8 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 
-from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
-from thenvoi.core.types import AdapterFeatures, Capability, PlatformMessage
+from band.adapters.pydantic_ai import PydanticAIAdapter
+from band.core.types import AdapterFeatures, Capability, PlatformMessage
 
 
 def make_stream_events(
@@ -104,13 +104,13 @@ def mock_pydantic_agent():
     """Create a mock Pydantic AI Agent."""
     agent = MagicMock()
     agent._function_tools = {
-        "thenvoi_send_message": MagicMock(name="thenvoi_send_message"),
-        "thenvoi_send_event": MagicMock(name="thenvoi_send_event"),
-        "thenvoi_add_participant": MagicMock(name="thenvoi_add_participant"),
-        "thenvoi_remove_participant": MagicMock(name="thenvoi_remove_participant"),
-        "thenvoi_lookup_peers": MagicMock(name="thenvoi_lookup_peers"),
-        "thenvoi_get_participants": MagicMock(name="thenvoi_get_participants"),
-        "thenvoi_create_chatroom": MagicMock(name="thenvoi_create_chatroom"),
+        "band_send_message": MagicMock(name="band_send_message"),
+        "band_send_event": MagicMock(name="band_send_event"),
+        "band_add_participant": MagicMock(name="band_add_participant"),
+        "band_remove_participant": MagicMock(name="band_remove_participant"),
+        "band_lookup_peers": MagicMock(name="band_lookup_peers"),
+        "band_get_participants": MagicMock(name="band_get_participants"),
+        "band_create_chatroom": MagicMock(name="band_create_chatroom"),
     }
     return agent
 
@@ -123,6 +123,19 @@ class TestInitialization:
         # model is required - no default
         adapter = PydanticAIAdapter(model="openai:gpt-5.4")
         assert adapter.model == "openai:gpt-5.4"
+
+    def test_create_agent_uses_str_output_type(self):
+        """INT-488: Agent must be constructed with output_type=str, never None.
+
+        pydantic-ai-slim 1.87+ raises UserError("At least one output type must
+        be provided other than `None`") when output_type is None or omitted.
+        """
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        adapter.agent_name = "TestBot"
+
+        with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
+            adapter._create_agent()
+            assert MockAgent.call_args.kwargs["output_type"] is str
 
 
 class TestOnStarted:
@@ -158,7 +171,7 @@ class TestOnStarted:
     @pytest.mark.asyncio
     async def test_persists_rendered_system_prompt(self):
         """Should persist rendered prompt for capability-gating visibility."""
-        with patch("thenvoi.adapters.pydantic_ai.Agent"):
+        with patch("band.adapters.pydantic_ai.Agent"):
             adapter = PydanticAIAdapter(
                 model="openai:gpt-5.4",
                 features=AdapterFeatures(capabilities={Capability.MEMORY}),
@@ -184,13 +197,13 @@ class TestOnStarted:
         tool_names = list(adapter._agent._function_tools.keys())
 
         expected_tools = [
-            "thenvoi_send_message",
-            "thenvoi_send_event",
-            "thenvoi_add_participant",
-            "thenvoi_remove_participant",
-            "thenvoi_lookup_peers",
-            "thenvoi_get_participants",
-            "thenvoi_create_chatroom",
+            "band_send_message",
+            "band_send_event",
+            "band_add_participant",
+            "band_remove_participant",
+            "band_lookup_peers",
+            "band_get_participants",
+            "band_create_chatroom",
         ]
 
         for tool in expected_tools:
@@ -429,7 +442,7 @@ class TestExecutionReporting:
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_stream_events(
                 result_messages=[],
-                tool_calls=[("thenvoi_send_message", {"content": "Hello"}, "call-123")],
+                tool_calls=[("band_send_message", {"content": "Hello"}, "call-123")],
             )
         )
 
@@ -445,7 +458,7 @@ class TestExecutionReporting:
 
         # Verify send_event was called with tool_call
         mock_tools.send_event.assert_any_call(
-            content='{"name": "thenvoi_send_message", "args": {"content": "Hello"}, "tool_call_id": "call-123"}',
+            content='{"name": "band_send_message", "args": {"content": "Hello"}, "tool_call_id": "call-123"}',
             message_type="tool_call",
         )
 
@@ -466,7 +479,7 @@ class TestExecutionReporting:
             return_value=make_stream_events(
                 result_messages=[],
                 tool_results=[
-                    ("thenvoi_send_message", "Message sent successfully", "call-123")
+                    ("band_send_message", "Message sent successfully", "call-123")
                 ],
             )
         )
@@ -483,7 +496,7 @@ class TestExecutionReporting:
 
         # Verify send_event was called with tool_result
         mock_tools.send_event.assert_any_call(
-            content='{"name": "thenvoi_send_message", "output": "Message sent successfully", "tool_call_id": "call-123"}',
+            content='{"name": "band_send_message", "output": "Message sent successfully", "tool_call_id": "call-123"}',
             message_type="tool_result",
         )
 
@@ -500,8 +513,8 @@ class TestExecutionReporting:
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_stream_events(
                 result_messages=[],
-                tool_calls=[("thenvoi_send_message", {"content": "Hello"}, "call-123")],
-                tool_results=[("thenvoi_send_message", "Message sent", "call-123")],
+                tool_calls=[("band_send_message", {"content": "Hello"}, "call-123")],
+                tool_results=[("band_send_message", "Message sent", "call-123")],
             )
         )
 
@@ -537,14 +550,14 @@ class TestExecutionReporting:
             return_value=make_stream_events(
                 result_messages=[],
                 tool_calls=[
-                    ("thenvoi_lookup_peers", {}, "call-1"),
-                    ("thenvoi_add_participant", {"identifier": "Helper"}, "call-2"),
-                    ("thenvoi_send_message", {"content": "Done"}, "call-3"),
+                    ("band_lookup_peers", {}, "call-1"),
+                    ("band_add_participant", {"identifier": "Helper"}, "call-2"),
+                    ("band_send_message", {"content": "Done"}, "call-3"),
                 ],
                 tool_results=[
-                    ("thenvoi_lookup_peers", "[{...}]", "call-1"),
-                    ("thenvoi_add_participant", "Added", "call-2"),
-                    ("thenvoi_send_message", "Sent", "call-3"),
+                    ("band_lookup_peers", "[{...}]", "call-1"),
+                    ("band_add_participant", "Added", "call-2"),
+                    ("band_send_message", "Sent", "call-3"),
                 ],
             )
         )
@@ -594,7 +607,7 @@ class TestExecutionReporting:
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_stream_events(
                 result_messages=[ModelRequest(parts=[UserPromptPart(content="test")])],
-                tool_calls=[("thenvoi_send_message", {"content": "Hello"}, "call-123")],
+                tool_calls=[("band_send_message", {"content": "Hello"}, "call-123")],
             )
         )
 
@@ -669,7 +682,7 @@ class TestCustomTools:
         # Mock the Agent class to track tool registrations
         registered_tools = []
 
-        with patch("thenvoi.adapters.pydantic_ai.Agent") as MockAgent:
+        with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
             mock_agent = MagicMock()
             mock_agent.tool = MagicMock(
                 side_effect=lambda f: registered_tools.append(f)

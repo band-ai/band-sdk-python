@@ -12,6 +12,21 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import BaseModel, Field
 
+try:
+    import nest_asyncio  # noqa: F401
+
+    _HAS_NEST_ASYNCIO = True
+except ImportError:
+    _HAS_NEST_ASYNCIO = False
+
+# Tests that drive the real sync-to-async bridge (send_tool._run -> run_async ->
+# nest_asyncio.apply()) need nest_asyncio, which ships with the crewai extra and
+# cannot be mocked (run_until_complete on a running loop requires the real patch).
+requires_nest_asyncio = pytest.mark.skipif(
+    not _HAS_NEST_ASYNCIO,
+    reason="nest_asyncio not installed (ships with band-sdk[crewai])",
+)
+
 
 @pytest.fixture(autouse=True)
 def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
@@ -35,15 +50,15 @@ def _mock_crewai(monkeypatch: pytest.MonkeyPatch):
     yield
 
 
-from thenvoi.adapters.crewai_flow import (  # noqa: E402
+from band.adapters.crewai_flow import (  # noqa: E402
     CrewAIFlowAdapter,
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
     get_current_flow_runtime,
 )
-from thenvoi.converters.crewai_flow import CrewAIFlowStateConverter  # noqa: E402
-from thenvoi.core.types import AdapterFeatures, Capability, Emit, PlatformMessage  # noqa: E402
-from thenvoi.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.converters.crewai_flow import CrewAIFlowStateConverter  # noqa: E402
+from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage  # noqa: E402
+from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 
 
 def _msg(idx: int = 1, content: str = "hi") -> PlatformMessage:
@@ -370,7 +385,6 @@ class TestNestAsyncioNotInvoked:
 class TestIdempotentFinalization:
     @pytest.mark.asyncio
     async def test_finalized_state_does_not_double_send(self) -> None:
-
         # Pre-populate the state source with a finalized record for msg-1.
         finalized_payload = {
             "schema_version": 1,
@@ -677,9 +691,9 @@ class TestRuntimeTools:
         mock_tools_module.BaseTool = type("BaseTool", (), {})
         monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
         for mod in (
-            "thenvoi.integrations.crewai",
-            "thenvoi.integrations.crewai.runtime",
-            "thenvoi.integrations.crewai.tools",
+            "band.integrations.crewai",
+            "band.integrations.crewai.runtime",
+            "band.integrations.crewai.tools",
         ):
             sys.modules.pop(mod, None)
 
@@ -709,7 +723,7 @@ class TestRuntimeTools:
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
 
-        assert "thenvoi_send_message" in captured["tool_names"]
+        assert "band_send_message" in captured["tool_names"]
         assert "emails" in captured["tool_names"]
 
     @pytest.mark.asyncio
@@ -720,9 +734,9 @@ class TestRuntimeTools:
         mock_tools_module.BaseTool = type("BaseTool", (), {})
         monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
         for mod in (
-            "thenvoi.integrations.crewai",
-            "thenvoi.integrations.crewai.runtime",
-            "thenvoi.integrations.crewai.tools",
+            "band.integrations.crewai",
+            "band.integrations.crewai.runtime",
+            "band.integrations.crewai.tools",
         ):
             sys.modules.pop(mod, None)
 
@@ -748,16 +762,17 @@ class TestRuntimeTools:
             state_source=HistoryCrewAIFlowStateSource(acknowledge_test_only=True),
             features=AdapterFeatures(
                 include_categories=("contacts",),
-                exclude_tools=("thenvoi_remove_contact",),
+                exclude_tools=("band_remove_contact",),
             ),
         )
         tools = FakeAgentTools()
         await _run_one_turn(adapter, tools, _msg())
 
-        assert "thenvoi_list_contacts" in captured["tool_names"]
-        assert "thenvoi_send_message" not in captured["tool_names"]
-        assert "thenvoi_remove_contact" not in captured["tool_names"]
+        assert "band_list_contacts" in captured["tool_names"]
+        assert "band_send_message" not in captured["tool_names"]
+        assert "band_remove_contact" not in captured["tool_names"]
 
+    @requires_nest_asyncio
     @pytest.mark.asyncio
     async def test_subcrew_send_failure_aborts_parent_finalization(
         self, monkeypatch: pytest.MonkeyPatch
@@ -766,9 +781,9 @@ class TestRuntimeTools:
         mock_tools_module.BaseTool = type("BaseTool", (), {})
         monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
         for mod in (
-            "thenvoi.integrations.crewai",
-            "thenvoi.integrations.crewai.runtime",
-            "thenvoi.integrations.crewai.tools",
+            "band.integrations.crewai",
+            "band.integrations.crewai.runtime",
+            "band.integrations.crewai.tools",
         ):
             sys.modules.pop(mod, None)
 
@@ -788,7 +803,7 @@ class TestRuntimeTools:
                     send_tool = next(
                         t
                         for t in rt.create_crewai_tools()
-                        if t.name == "thenvoi_send_message"
+                        if t.name == "band_send_message"
                     )
                     send_tool._run(content="subcrew visible", mentions="[]")
                     return {
@@ -822,9 +837,9 @@ class TestRuntimeTools:
         mock_tools_module.BaseTool = type("BaseTool", (), {})
         monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
         for mod in (
-            "thenvoi.integrations.crewai",
-            "thenvoi.integrations.crewai.runtime",
-            "thenvoi.integrations.crewai.tools",
+            "band.integrations.crewai",
+            "band.integrations.crewai.runtime",
+            "band.integrations.crewai.tools",
         ):
             sys.modules.pop(mod, None)
 
@@ -854,7 +869,7 @@ class TestRuntimeTools:
                     send_tool = next(
                         t
                         for t in rt.create_crewai_tools()
-                        if t.name == "thenvoi_send_message"
+                        if t.name == "band_send_message"
                     )
                     result = send_tool._run(content="subcrew visible", mentions="[]")
                     assert '"status": "success"' in result
@@ -890,6 +905,7 @@ class TestRuntimeTools:
 
         assert tools.messages_sent == []
 
+    @requires_nest_asyncio
     @pytest.mark.asyncio
     async def test_subcrew_tools_run_on_adapter_loop_from_worker_thread(self) -> None:
         expected_loop = asyncio.get_running_loop()
@@ -911,7 +927,7 @@ class TestRuntimeTools:
                     send_tool = next(
                         t
                         for t in rt.create_crewai_tools()
-                        if t.name == "thenvoi_send_message"
+                        if t.name == "band_send_message"
                     )
                     result = await asyncio.to_thread(
                         send_tool._run,

@@ -2,7 +2,7 @@
 
 import pytest
 
-from thenvoi.runtime.types import ContactEventConfig, ContactEventStrategy
+from band.runtime.types import ContactEventConfig, ContactEventStrategy
 
 
 class TestContactEventStrategy:

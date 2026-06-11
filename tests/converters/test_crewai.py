@@ -7,7 +7,7 @@ This file contains CrewAI-specific assistant message formatting and crew
 workflow tests.
 """
 
-from thenvoi.converters.crewai import CrewAIHistoryConverter
+from band.converters.crewai import CrewAIHistoryConverter
 
 
 class TestAssistantMessages:

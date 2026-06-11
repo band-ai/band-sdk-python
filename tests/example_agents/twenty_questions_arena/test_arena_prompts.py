@@ -56,15 +56,15 @@ class TestThinkerPrompt:
 
     def test_includes_lookup_peers_instruction(self):
         prompt = generate_thinker_prompt("Thinker")
-        assert "thenvoi_lookup_peers" in prompt
+        assert "band_lookup_peers" in prompt
 
     def test_includes_add_participant_instruction(self):
         prompt = generate_thinker_prompt("Thinker")
-        assert "thenvoi_add_participant" in prompt
+        assert "band_add_participant" in prompt
 
     def test_includes_thought_event_instruction(self):
         prompt = generate_thinker_prompt("Thinker")
-        assert "thenvoi_send_event" in prompt
+        assert "band_send_event" in prompt
 
     def test_must_not_reveal_word(self):
         prompt = generate_thinker_prompt("Thinker")
@@ -105,7 +105,7 @@ class TestGuesserPrompt:
 
     def test_includes_thought_event_instruction(self):
         prompt = generate_guesser_prompt("Guesser")
-        assert "thenvoi_send_event" in prompt
+        assert "band_send_event" in prompt
 
 
 class TestCreateLlmByName:
@@ -113,7 +113,7 @@ class TestCreateLlmByName:
 
     def test_openai_model(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "sk-test"}, clear=False):
-            llm = create_llm_by_name("gpt-5.2")
+            llm = create_llm_by_name("gpt-5.5")
             assert "ChatOpenAI" in type(llm).__name__
 
     def test_anthropic_model(self):
@@ -139,7 +139,7 @@ class TestCreateLlmByName:
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("OPENAI_API_KEY", None)
             with pytest.raises(ValueError, match="OPENAI_API_KEY"):
-                create_llm_by_name("gpt-5.2")
+                create_llm_by_name("gpt-5.5")
 
     def test_missing_anthropic_key_raises(self):
         with patch.dict(os.environ, {}, clear=False):

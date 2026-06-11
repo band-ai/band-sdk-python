@@ -7,8 +7,8 @@ agents defined in .env.test.  No Enterprise plan required.
 Run with: uv run pytest tests/integration/test_dynamic_agent.py -v -s
 
 Prerequisites:
-- THENVOI_API_KEY / TEST_AGENT_ID  (agent 1)
-- THENVOI_API_KEY_2 / TEST_AGENT_ID_2  (agent 2)
+- BAND_API_KEY / TEST_AGENT_ID  (agent 1)
+- BAND_API_KEY_2 / TEST_AGENT_ID_2  (agent 2)
 
 History:
 - TestDynamicAgentWorkflow replaced the old dynamic-agent flow that required

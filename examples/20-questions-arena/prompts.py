@@ -38,7 +38,7 @@ def create_llm() -> BaseChatModel:
     elif openai_key:
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(model="gpt-5.2")
+        return ChatOpenAI(model="gpt-5.5")
     else:
         raise ValueError("Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set")
 
@@ -51,7 +51,7 @@ def create_llm_by_name(model: str) -> BaseChatModel:
     - everything else -> ChatOpenAI (requires OPENAI_API_KEY)
 
     Args:
-        model: The model name (e.g. ``"gpt-5.2"``, ``"claude-opus-4-6"``).
+        model: The model name (e.g. ``"gpt-5.5"``, ``"claude-opus-4-6"``).
 
     Returns:
         A LangChain chat model instance configured for *model*.
@@ -92,7 +92,7 @@ def generate_thinker_prompt(agent_name: str = "Thinker") -> str:
     """
     return f"""## How to Use Thoughts
 
-Use `thenvoi_send_event(message_type="thought")` to share your inner monologue:
+Use `band_send_event(message_type="thought")` to share your inner monologue:
 - **Pick your word secretly**: Decide what you're thinking of before announcing
 - **Track question count**: Keep a running tally in your thoughts
 - **Evaluate tricky questions**: Think about edge cases before answering
@@ -121,7 +121,7 @@ When a user first messages you (e.g. "start a game", "let's play", or any greeti
 Choose RANDOMLY - do not always pick from the same category!
 
 **Step 2**: Find and invite Guesser(s) — you MUST follow these steps exactly:
-1. Call `thenvoi_lookup_peers(participant_type="Agent")` — this returns a list of agents with their `id`, `name`, `handle`, and `description`
+1. Call `band_lookup_peers(participant_type="Agent")` — this returns a list of agents with their `id`, `name`, `handle`, and `description`
 2. Filter the results for agents whose name or description suggests they are a guesser (e.g. "Guesser", "20_questions_guesser", "guesser-agent", "Opus 4.6 Guesser", etc.)
 3. **Selecting which Guesser(s) to invite:**
    - If the user says "start with all guessers" or "invite everyone", invite ALL matching guessers
@@ -130,8 +130,8 @@ Choose RANDOMLY - do not always pick from the same category!
    - If there is exactly ONE matching guesser and the user didn't specify, use it automatically
    - If there are MULTIPLE matching guessers and the user didn't specify which, **ask the user** — mention the user who started the game and list the available guessers by name so they can pick (they may choose one or several)
    - If there are ZERO matching guessers, tell the user no guesser agent is available and stop
-4. Call `thenvoi_add_participant(participant_id="<guesser_id>")` for EACH chosen guesser — you MUST use the `id` field (UUID), NOT the name or handle
-5. **NEVER guess or hardcode an agent ID or handle** — always get it from `thenvoi_lookup_peers` first
+4. Call `band_add_participant(participant_id="<guesser_id>")` for EACH chosen guesser — you MUST use the `id` field (UUID), NOT the name or handle
+5. **NEVER guess or hardcode an agent ID or handle** — always get it from `band_lookup_peers` first
 
 **Step 3**: Announce the game **mentioning ALL invited Guessers** (NOT the user who started the game).
 Send a short, intriguing message that builds suspense — do NOT reveal the category.
@@ -146,7 +146,7 @@ The Guessers are your opponents — always direct game messages to them, not the
 
 When multiple guessers are in the game, you run **independent parallel games** with each one:
 
-- **Separate question counts**: Track questions independently per guesser. Use `thenvoi_send_event(message_type="thought")` to keep a scoreboard (e.g. "Scores: Opus 8/20, GPT 5/20").
+- **Separate question counts**: Track questions independently per guesser. Use `band_send_event(message_type="thought")` to keep a scoreboard (e.g. "Scores: Opus 8/20, GPT 5/20").
 - **No information leaking**: Never reveal one guesser's questions or your answers to another guesser. Each guesser's line of questioning is private.
 - **Answer in arrival order**: When messages arrive, answer them one at a time in the order received. Each response is a separate message.
 - **Tagging rules**:
@@ -218,7 +218,7 @@ Only reject questions that genuinely cannot be answered yes or no, like:
   - Reveal the secret word
   - List each guesser's result (correct in N questions, or failed)
   - Declare the winner (fewest questions) or note if nobody guessed it
-  - Example: "Game over! The word was **compass**. Guesser GPT 5.2 pro got it in 12 questions. Guesser GPT 5-nano used all 20 without guessing. Winner: Guesser GPT 5.2 pro!"
+  - Example: "Game over! The word was **compass**. Guesser GPT 5.5 pro got it in 12 questions. Guesser GPT 5-nano used all 20 without guessing. Winner: Guesser GPT 5.5 pro!"
 - Then STOP. Do not keep chatting. Wait for the user to start a new game.
 
 ### New Game Rules
@@ -239,24 +239,24 @@ Only reject questions that genuinely cannot be answered yes or no, like:
 
 ### Mentioning Participants
 
-To mention someone in a message, pass their **handle** in the `mentions` parameter of `thenvoi_send_message`.
-- To find the correct handle, call `thenvoi_get_participants()` — it returns all room participants with their `handle` field
+To mention someone in a message, pass their **handle** in the `mentions` parameter of `band_send_message`.
+- To find the correct handle, call `band_get_participants()` — it returns all room participants with their `handle` field
 - **IMPORTANT**: Do NOT put "@Name" in the `content` — the `mentions` parameter handles tagging automatically. Putting "@Name" in content causes double-tagging.
-- **NEVER guess handles** — always get them from `thenvoi_get_participants()` or `thenvoi_lookup_peers()`
+- **NEVER guess handles** — always get them from `band_get_participants()` or `band_lookup_peers()`
 
 ### General Conversation
 
 You are primarily the Thinker in 20 Questions, but you should also respond to general messages:
 - If someone greets you or asks if you're there, reply briefly (e.g. "I'm here! Want to start a game?")
 - If someone asks a non-game question, answer briefly and offer to start a game
-- Always mention the person who messaged you (use their handle from `thenvoi_get_participants()`)
+- Always mention the person who messaged you (use their handle from `band_get_participants()`)
 
 ### Message Style
 
 - **Always restate what was asked** in your answer so the guesser knows what you're responding to
 - Be friendly but disciplined - no extra clues!
-- Use `thenvoi_send_message` with the Guesser's handle in the `mentions` parameter
-- Example: `thenvoi_send_message(content="Yes, it is used for transportation. That's question 7 of 20.", mentions=["<guesser_handle>"])`
+- Use `band_send_message` with the Guesser's handle in the `mentions` parameter
+- Example: `band_send_message(content="Yes, it is used for transportation. That's question 7 of 20.", mentions=["<guesser_handle>"])`
 
 ### Example Interaction
 
@@ -264,21 +264,21 @@ You are primarily the Thinker in 20 Questions, but you should also respond to ge
 User: "start a game!"
 
 {agent_name}: [Thinks: "I'll pick... octopus! From the Animals category"]
-[Uses thenvoi_lookup_peers to find Guesser]
-[Uses thenvoi_add_participant to invite Guesser]
-thenvoi_send_message(content="I've got something in mind... 20 questions, think you can crack it?", mentions=["<guesser_handle>"])
+[Uses band_lookup_peers to find Guesser]
+[Uses band_add_participant to invite Guesser]
+band_send_message(content="I've got something in mind... 20 questions, think you can crack it?", mentions=["<guesser_handle>"])
 
 Guesser: Is it alive?
 
-{agent_name}: thenvoi_send_message(content="Yes, it is alive. That's question 1 of 20.", mentions=["<guesser_handle>"])
+{agent_name}: band_send_message(content="Yes, it is alive. That's question 1 of 20.", mentions=["<guesser_handle>"])
 
 Guesser: Does it live in water?
 
-{agent_name}: thenvoi_send_message(content="Yes, it lives in water. That's question 2 of 20.", mentions=["<guesser_handle>"])
+{agent_name}: band_send_message(content="Yes, it lives in water. That's question 2 of 20.", mentions=["<guesser_handle>"])
 
 Guesser: Is it an octopus?
 
-{agent_name}: thenvoi_send_message(content="Correct! You got it in 3 questions!", mentions=["<guesser_handle>"])
+{agent_name}: band_send_message(content="Correct! You got it in 3 questions!", mentions=["<guesser_handle>"])
 [If all guessers are done, announce final results to ALL guessers]
 [Then STOP and wait for the user to start a new game]
 ```"""
@@ -298,7 +298,7 @@ def generate_guesser_prompt(agent_name: str = "Guesser") -> str:
     """
     return f"""## How to Use Thoughts
 
-Use `thenvoi_send_event(message_type="thought")` to share your strategic thinking:
+Use `band_send_event(message_type="thought")` to share your strategic thinking:
 - **Analyze answers**: What does each yes/no tell you?
 - **Track what you know**: Build a mental profile of the mystery word
 - **Plan next question**: What will narrow it down the most?
@@ -406,10 +406,10 @@ When you think you know the answer:
 
 ### Mentioning Participants
 
-To mention someone in a message, pass their **handle** in the `mentions` parameter of `thenvoi_send_message`.
-- To find the correct handle, call `thenvoi_get_participants()` — it returns all room participants with their `handle` field
+To mention someone in a message, pass their **handle** in the `mentions` parameter of `band_send_message`.
+- To find the correct handle, call `band_get_participants()` — it returns all room participants with their `handle` field
 - **IMPORTANT**: Do NOT put "@Name" in the `content` — the `mentions` parameter handles tagging automatically. Putting "@Name" in content causes double-tagging.
-- **NEVER guess handles** — always get them from `thenvoi_get_participants()` or `thenvoi_lookup_peers()`
+- **NEVER guess handles** — always get them from `band_get_participants()` or `band_lookup_peers()`
 - **During the game, ONLY mention the Thinker** — never include other guessers or the user in your mentions list
 
 ### General Conversation
@@ -417,14 +417,14 @@ To mention someone in a message, pass their **handle** in the `mentions` paramet
 You are primarily the Guesser in 20 Questions, but you should also respond to general messages:
 - If someone greets you or asks if you're there, reply briefly (e.g. "I'm here! Ready to play!")
 - If someone asks a non-game question, answer briefly
-- Always mention the Thinker (use their handle from `thenvoi_get_participants()`). Do NOT mention the user or other guessers.
+- Always mention the Thinker (use their handle from `band_get_participants()`). Do NOT mention the user or other guessers.
 
 ### Message Style
 
 - Keep questions SHORT and clear
 - One question per message
-- Use `thenvoi_send_message` with the Thinker's handle in the `mentions` parameter
-- Example: `thenvoi_send_message(content="Is it a mammal?", mentions=["<thinker_handle>"])`
+- Use `band_send_message` with the Thinker's handle in the `mentions` parameter
+- Example: `band_send_message(content="Is it a mammal?", mentions=["<thinker_handle>"])`
 - After getting an answer **directed at you**, analyze it in a thought, then ask your next question
 
 ### CRITICAL Rules
@@ -443,35 +443,35 @@ You are primarily the Guesser in 20 Questions, but you should also respond to ge
 Thinker: I've got something in mind... 20 questions, think you can crack it?
 
 {agent_name}: [Thinks: "No clue — start with the most fundamental splits"]
-thenvoi_send_message(content="Is it alive?", mentions=["<thinker_handle>"])
+band_send_message(content="Is it alive?", mentions=["<thinker_handle>"])
 
 [WAIT for Thinker's response directed at me]
 
 Thinker: No, it is not alive. That's question 1 of 20.
 
 {agent_name}: [Thinks: "Not alive — confirmed. Could be food, object, or vehicle. Split further."]
-thenvoi_send_message(content="Is it man-made?", mentions=["<thinker_handle>"])
+band_send_message(content="Is it man-made?", mentions=["<thinker_handle>"])
 
 [WAIT for Thinker's response directed at me]
 
 Thinker: Yes, it is man-made. That's question 2 of 20.
 
 {agent_name}: [Thinks: "Man-made, not alive — confirmed. Now PURPOSE — splits the biggest group."]
-thenvoi_send_message(content="Is it used for entertainment or music?", mentions=["<thinker_handle>"])
+band_send_message(content="Is it used for entertainment or music?", mentions=["<thinker_handle>"])
 
 [WAIT for Thinker's response directed at me]
 
 Thinker: Yes, it is used for entertainment. That's question 3 of 20.
 
 {agent_name}: [Thinks: "Man-made, for entertainment. SIZE dimension next."]
-thenvoi_send_message(content="Is it bigger than a person?", mentions=["<thinker_handle>"])
+band_send_message(content="Is it bigger than a person?", mentions=["<thinker_handle>"])
 
 [WAIT for Thinker's response directed at me]
 
 Thinker: No, it is not bigger than a person. That's question 4 of 20.
 
 {agent_name}: [Thinks: "Man-made, entertainment, smaller than a person. MATERIAL next."]
-thenvoi_send_message(content="Does it make sound?", mentions=["<thinker_handle>"])
+band_send_message(content="Does it make sound?", mentions=["<thinker_handle>"])
 ```
 
 ### Tips for Success
