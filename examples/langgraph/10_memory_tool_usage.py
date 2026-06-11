@@ -42,16 +42,19 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+def get_required_env(name: str) -> str:
+    """Return a required environment variable or raise a clear error."""
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"{name} environment variable is required")
+    return value
+
+
 async def main() -> None:
     load_dotenv()
 
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
+    ws_url = get_required_env("BAND_WS_URL")
+    rest_url = get_required_env("BAND_REST_URL")
 
     features = AdapterFeatures(capabilities={Capability.MEMORY})
 
