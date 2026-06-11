@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
-from thenvoi.core.memory_types import MemoryStoreScope
+from band.core.memory_types import MemoryStoreScope
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam

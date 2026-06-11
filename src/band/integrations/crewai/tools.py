@@ -1,4 +1,4 @@
-"""Shared CrewAI BaseTool wrappers for Thenvoi platform tools.
+"""Shared CrewAI BaseTool wrappers for Band platform tools.
 
 Both CrewAIAdapter and CrewAIFlowAdapter consume the same tool builder so that
 the platform tool surface stays consistent across adapters and Flow authors who
@@ -11,7 +11,7 @@ The builder takes three injectables:
   EmitExecutionReporter (gates by Emit.EXECUTION) and NoopReporter.
 - capabilities: frozenset[Capability] — controls which tool subset is exposed.
 
-Extracted from src/thenvoi/adapters/crewai.py so both CrewAI adapters share
+Extracted from src/band/adapters/crewai.py so both CrewAI adapters share
 one platform tool surface.
 """
 
@@ -22,6 +22,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
@@ -34,14 +35,8 @@ from typing import (
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-try:
+if TYPE_CHECKING:
     from crewai.tools import BaseTool
-except ImportError as e:  # pragma: no cover - same import guard as the adapter
-    raise ImportError(
-        "crewai is required for CrewAI adapter.\n"
-        "Install with: pip install 'band-sdk[crewai]'\n"
-        "Or: uv add crewai nest-asyncio"
-    ) from e
 
 from band.core.memory_types import (
     MemoryListScope,
@@ -89,6 +84,21 @@ _CREWAI_TOOL_CATEGORIES = {
 
 # --- Shared context + reporter contracts ---
 
+# Tool whose successful execution counts as a user-facing reply.
+_SEND_MESSAGE_TOOL = "band_send_message"
+
+
+@dataclass
+class ReplyTracker:
+    """Mutable per-turn marker shared (by reference) with the tool wrappers.
+
+    Set to ``True`` once ``band_send_message`` succeeds so an adapter can tell
+    a benign "empty final answer" from CrewAI (the reply already went out via the
+    tool) apart from a genuine no-response failure.
+    """
+
+    replied: bool = False
+
 
 @dataclass(frozen=True)
 class CrewAIToolContext:
@@ -100,6 +110,7 @@ class CrewAIToolContext:
 
     room_id: str
     tools: AgentToolsProtocol
+    reply_tracker: ReplyTracker | None = None
 
 
 @runtime_checkable
@@ -248,7 +259,19 @@ def _execute_tool(
             await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
 
-    return run_async(_execute(), fallback_loop=fallback_loop)
+    result = run_async(_execute(), fallback_loop=fallback_loop)
+
+    # Record that the agent delivered a user-facing reply this turn so the
+    # adapter can treat CrewAI's "empty final answer" ValueError as benign
+    # (the reply already went out) instead of a genuine no-response failure.
+    if tool_name == _SEND_MESSAGE_TOOL and context.reply_tracker is not None:
+        try:
+            if json.loads(result).get("status") == "success":
+                context.reply_tracker.replied = True
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            pass
+
+    return result
 
 
 # --- Input models ---
@@ -438,10 +461,11 @@ def _make_platform_tools(
 ) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool]]:
     """Build the 7 base + 5 contact + 5 memory platform tools.
 
-    Returns a (base, contacts, memory) triple. ``build_thenvoi_crewai_tools``
+    Returns a (base, contacts, memory) triple. ``build_band_crewai_tools``
     is responsible for stitching them together based on the requested
     capabilities.
     """
+    from crewai.tools import BaseTool
 
     def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
         return _execute_tool(
@@ -541,9 +565,7 @@ def _make_platform_tools(
                     tools, "band_remove_participant", {"identifier": identifier}
                 )
                 result = await tools.remove_participant(identifier)
-                await reporter.report_result(
-                    tools, "band_remove_participant", result
-                )
+                await reporter.report_result(tools, "band_remove_participant", result)
                 return serialize_success_result(result)
 
             return _exec("band_remove_participant", execute)
@@ -937,6 +959,8 @@ def _make_custom_tools(
     fallback_loop: asyncio.AbstractEventLoop | None,
 ) -> list[BaseTool]:
     """Convert CustomToolDef tuples to CrewAI BaseTool instances."""
+    from crewai.tools import BaseTool
+
     crewai_tools: list[BaseTool] = []
 
     def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
@@ -999,7 +1023,7 @@ def _make_custom_tools(
     return crewai_tools
 
 
-def build_thenvoi_crewai_tools(
+def build_band_crewai_tools(
     *,
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
@@ -1058,6 +1082,6 @@ __all__ = [
     "CrewAIToolReporter",
     "EmitExecutionReporter",
     "NoopReporter",
-    "build_thenvoi_crewai_tools",
+    "build_band_crewai_tools",
     "serialize_success_result",
 ]

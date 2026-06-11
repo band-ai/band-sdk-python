@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.core.memory_types import (
+from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
     MemoryStoreScope,
     MemorySystem,

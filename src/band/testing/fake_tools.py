@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from thenvoi.core.memory_types import MemoryStoreScope
+from band.core.memory_types import MemoryStoreScope
 
 
 class FakeAgentTools:

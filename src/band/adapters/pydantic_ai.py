@@ -1,7 +1,7 @@
 """
 Pydantic AI adapter using SimpleAdapter pattern.
 
-Extracted from band.integrations.pydantic_ai.agent.ThenvoiPydanticAgent.
+Extracted from band.integrations.pydantic_ai.agent.BandPydanticAgent.
 """
 
 from __future__ import annotations
@@ -122,21 +122,21 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self.custom_section = custom_section
         self._system_prompt: str | None = None
 
-        self._agent: Agent[AgentToolsProtocol, None] | None = None
+        self._agent: Agent[AgentToolsProtocol, str] | None = None
         # Conversation history per room (Pydantic AI is stateless, we maintain state)
         self._message_history: dict[str, list] = {}
         # Custom tools (PydanticAI-compatible functions)
         self._custom_tools: list[Callable[..., Any]] = additional_tools or []
 
-    # --- Adapted from ThenvoiPydanticAgent._on_started ---
+    # --- Adapted from BandPydanticAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Create the Pydantic AI agent after metadata is fetched."""
         await super().on_started(agent_name, agent_description)
         self._agent = self._create_agent()
         logger.info("Pydantic AI adapter started for agent: %s", agent_name)
 
-    # --- Copied from ThenvoiPydanticAgent._create_agent ---
-    def _create_agent(self) -> Agent[AgentToolsProtocol, None]:
+    # --- Copied from BandPydanticAgent._create_agent ---
+    def _create_agent(self) -> Agent[AgentToolsProtocol, str]:
         """Create Pydantic AI Agent with platform tools."""
         system = self.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
@@ -146,18 +146,21 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
         self._system_prompt = system
 
-        # output_type=None disables output validation - we respond via tools only
-        agent: Agent[AgentToolsProtocol, None] = Agent(  # type: ignore[call-overload]
+        # We respond via tools only, so the model output is unused. Using `str`
+        # (instead of `None`) keeps newer pydantic-ai-slim versions happy —
+        # 1.87+ rejects `output_type=None` with `UserError("At least one output
+        # type must be provided other than `None`")`.
+        agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
             system_prompt=system,
             deps_type=AgentToolsProtocol,
-            output_type=None,
+            output_type=str,
         )
 
         # Register platform tools dynamically from centralized definitions
         # All tools catch exceptions and return error strings so LLM can see failures
 
-        async def thenvoi_send_message(
+        async def band_send_message(
             ctx: RunContext[AgentToolsProtocol],
             content: str,
             mentions: list[str],
@@ -167,10 +170,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error sending message: {e}"
 
-        thenvoi_send_message.__doc__ = get_tool_description("thenvoi_send_message")
-        agent.tool(thenvoi_send_message)
+        band_send_message.__doc__ = get_tool_description("band_send_message")
+        agent.tool(band_send_message)
 
-        async def thenvoi_send_event(
+        async def band_send_event(
             ctx: RunContext[AgentToolsProtocol],
             content: str,
             message_type: str,
@@ -181,10 +184,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error sending event: {e}"
 
-        thenvoi_send_event.__doc__ = get_tool_description("thenvoi_send_event")
-        agent.tool(thenvoi_send_event)
+        band_send_event.__doc__ = get_tool_description("band_send_event")
+        agent.tool(band_send_event)
 
-        async def thenvoi_add_participant(
+        async def band_add_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
             role: str = "member",
@@ -194,12 +197,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error adding participant '{identifier}': {e}"
 
-        thenvoi_add_participant.__doc__ = get_tool_description(
-            "thenvoi_add_participant"
-        )
-        agent.tool(thenvoi_add_participant)
+        band_add_participant.__doc__ = get_tool_description("band_add_participant")
+        agent.tool(band_add_participant)
 
-        async def thenvoi_remove_participant(
+        async def band_remove_participant(
             ctx: RunContext[AgentToolsProtocol],
             identifier: str,
         ) -> dict[str, Any] | str:
@@ -208,12 +209,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error removing participant '{identifier}': {e}"
 
-        thenvoi_remove_participant.__doc__ = get_tool_description(
-            "thenvoi_remove_participant"
+        band_remove_participant.__doc__ = get_tool_description(
+            "band_remove_participant"
         )
-        agent.tool(thenvoi_remove_participant)
+        agent.tool(band_remove_participant)
 
-        async def thenvoi_lookup_peers(
+        async def band_lookup_peers(
             ctx: RunContext[AgentToolsProtocol],
             page: int = 1,
             page_size: int = 50,
@@ -223,10 +224,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error looking up peers: {e}"
 
-        thenvoi_lookup_peers.__doc__ = get_tool_description("thenvoi_lookup_peers")
-        agent.tool(thenvoi_lookup_peers)
+        band_lookup_peers.__doc__ = get_tool_description("band_lookup_peers")
+        agent.tool(band_lookup_peers)
 
-        async def thenvoi_get_participants(
+        async def band_get_participants(
             ctx: RunContext[AgentToolsProtocol],
         ) -> list[dict[str, Any]] | str:
             try:
@@ -234,12 +235,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error getting participants: {e}"
 
-        thenvoi_get_participants.__doc__ = get_tool_description(
-            "thenvoi_get_participants"
-        )
-        agent.tool(thenvoi_get_participants)
+        band_get_participants.__doc__ = get_tool_description("band_get_participants")
+        agent.tool(band_get_participants)
 
-        async def thenvoi_create_chatroom(
+        async def band_create_chatroom(
             ctx: RunContext[AgentToolsProtocol],
             task_id: str | None = None,
         ) -> str:
@@ -248,15 +247,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error creating chatroom (task_id={task_id}): {e}"
 
-        thenvoi_create_chatroom.__doc__ = get_tool_description(
-            "thenvoi_create_chatroom"
-        )
-        agent.tool(thenvoi_create_chatroom)
+        band_create_chatroom.__doc__ = get_tool_description("band_create_chatroom")
+        agent.tool(band_create_chatroom)
 
         # Contact management tools (opt-in via Capability.CONTACTS)
         if Capability.CONTACTS in self.features.capabilities:
 
-            async def thenvoi_list_contacts(
+            async def band_list_contacts(
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
                 page_size: int = 50,
@@ -266,12 +263,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing contacts: {e}"
 
-            thenvoi_list_contacts.__doc__ = get_tool_description(
-                "thenvoi_list_contacts"
-            )
-            agent.tool(thenvoi_list_contacts)
+            band_list_contacts.__doc__ = get_tool_description("band_list_contacts")
+            agent.tool(band_list_contacts)
 
-            async def thenvoi_add_contact(
+            async def band_add_contact(
                 ctx: RunContext[AgentToolsProtocol],
                 handle: str,
                 message: str | None = None,
@@ -281,10 +276,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error adding contact '{handle}': {e}"
 
-            thenvoi_add_contact.__doc__ = get_tool_description("thenvoi_add_contact")
-            agent.tool(thenvoi_add_contact)
+            band_add_contact.__doc__ = get_tool_description("band_add_contact")
+            agent.tool(band_add_contact)
 
-            async def thenvoi_remove_contact(
+            async def band_remove_contact(
                 ctx: RunContext[AgentToolsProtocol],
                 handle: str | None = None,
                 contact_id: str | None = None,
@@ -294,12 +289,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error removing contact: {e}"
 
-            thenvoi_remove_contact.__doc__ = get_tool_description(
-                "thenvoi_remove_contact"
-            )
-            agent.tool(thenvoi_remove_contact)
+            band_remove_contact.__doc__ = get_tool_description("band_remove_contact")
+            agent.tool(band_remove_contact)
 
-            async def thenvoi_list_contact_requests(
+            async def band_list_contact_requests(
                 ctx: RunContext[AgentToolsProtocol],
                 page: int = 1,
                 page_size: int = 50,
@@ -312,19 +305,19 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing contact requests: {e}"
 
-            thenvoi_list_contact_requests.__doc__ = get_tool_description(
-                "thenvoi_list_contact_requests"
+            band_list_contact_requests.__doc__ = get_tool_description(
+                "band_list_contact_requests"
             )
-            agent.tool(thenvoi_list_contact_requests)
+            agent.tool(band_list_contact_requests)
 
-            async def thenvoi_respond_contact_request(
+            async def band_respond_contact_request(
                 ctx: RunContext[AgentToolsProtocol],
                 action: str,
                 handle: str | None = None,
                 request_id: str | None = None,
             ) -> dict[str, Any] | str:
                 logger.info(
-                    "thenvoi_respond_contact_request called: action=%s, handle=%s, request_id=%s",
+                    "band_respond_contact_request called: action=%s, handle=%s, request_id=%s",
                     action,
                     handle,
                     request_id,
@@ -333,10 +326,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     result = await ctx.deps.respond_contact_request(
                         action, handle, request_id
                     )
-                    logger.info("thenvoi_respond_contact_request result: %s", result)
+                    logger.info("band_respond_contact_request result: %s", result)
                     return result
                 except Exception as e:
-                    logger.error("thenvoi_respond_contact_request error: %s", e)
+                    logger.error("band_respond_contact_request error: %s", e)
                     error_msg = f"Error responding to contact request: {e}"
                     # Auto-send error event so it's visible in the room
                     try:
@@ -345,15 +338,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         pass  # Don't fail if error reporting fails
                     return error_msg
 
-            thenvoi_respond_contact_request.__doc__ = get_tool_description(
-                "thenvoi_respond_contact_request"
+            band_respond_contact_request.__doc__ = get_tool_description(
+                "band_respond_contact_request"
             )
-            agent.tool(thenvoi_respond_contact_request)
+            agent.tool(band_respond_contact_request)
 
         # Memory management tools (enterprise only - opt-in)
         if Capability.MEMORY in self.features.capabilities:
 
-            async def thenvoi_list_memories(
+            async def band_list_memories(
                 ctx: RunContext[AgentToolsProtocol],
                 subject_id: str | None = None,
                 scope: str | None = None,
@@ -378,12 +371,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing memories: {e}"
 
-            thenvoi_list_memories.__doc__ = get_tool_description(
-                "thenvoi_list_memories"
-            )
-            agent.tool(thenvoi_list_memories)
+            band_list_memories.__doc__ = get_tool_description("band_list_memories")
+            agent.tool(band_list_memories)
 
-            async def thenvoi_store_memory(
+            async def band_store_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 content: str,
                 system: str,
@@ -408,10 +399,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error storing memory: {e}"
 
-            thenvoi_store_memory.__doc__ = get_tool_description("thenvoi_store_memory")
-            agent.tool(thenvoi_store_memory)
+            band_store_memory.__doc__ = get_tool_description("band_store_memory")
+            agent.tool(band_store_memory)
 
-            async def thenvoi_get_memory(
+            async def band_get_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
             ) -> dict[str, Any] | str:
@@ -420,10 +411,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error getting memory: {e}"
 
-            thenvoi_get_memory.__doc__ = get_tool_description("thenvoi_get_memory")
-            agent.tool(thenvoi_get_memory)
+            band_get_memory.__doc__ = get_tool_description("band_get_memory")
+            agent.tool(band_get_memory)
 
-            async def thenvoi_supersede_memory(
+            async def band_supersede_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
             ) -> dict[str, Any] | str:
@@ -432,12 +423,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error superseding memory: {e}"
 
-            thenvoi_supersede_memory.__doc__ = get_tool_description(
-                "thenvoi_supersede_memory"
+            band_supersede_memory.__doc__ = get_tool_description(
+                "band_supersede_memory"
             )
-            agent.tool(thenvoi_supersede_memory)
+            agent.tool(band_supersede_memory)
 
-            async def thenvoi_archive_memory(
+            async def band_archive_memory(
                 ctx: RunContext[AgentToolsProtocol],
                 memory_id: str,
             ) -> dict[str, Any] | str:
@@ -446,10 +437,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error archiving memory: {e}"
 
-            thenvoi_archive_memory.__doc__ = get_tool_description(
-                "thenvoi_archive_memory"
-            )
-            agent.tool(thenvoi_archive_memory)
+            band_archive_memory.__doc__ = get_tool_description("band_archive_memory")
+            agent.tool(band_archive_memory)
 
         # Register custom tools (user-provided PydanticAI-compatible functions)
         for custom_tool in self._custom_tools:
@@ -458,7 +447,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         return agent
 
-    # --- Adapted from ThenvoiPydanticAgent._handle_message ---
+    # --- Adapted from BandPydanticAgent._handle_message ---
     async def on_message(
         self,
         msg: PlatformMessage,
@@ -563,7 +552,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             len(self._message_history[room_id]),
         )
 
-    # --- Copied from ThenvoiPydanticAgent._cleanup_session ---
+    # --- Copied from BandPydanticAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up message history when agent leaves a room."""
         if room_id in self._message_history:

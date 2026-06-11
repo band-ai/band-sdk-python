@@ -15,8 +15,9 @@ import pytest
 from thenvoi_rest import AsyncRestClient, ChatRoomRequest
 from thenvoi_rest.types import ParticipantRequest
 
-from thenvoi.agent import Agent
-from thenvoi.core.types import AdapterFeatures, Capability
+from band import Agent
+from band.adapters.langgraph import LangGraphAdapter
+from band.core.types import AdapterFeatures, Capability
 from tests.e2e.conftest import E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
@@ -27,7 +28,7 @@ from tests.e2e.helpers import (
 MEMORY_CUSTOM_SECTION = (
     "Actively look for durable information worth remembering. "
     "When a user states a preference, profile detail, standing instruction, "
-    "important project fact, or reusable workflow, call `thenvoi_store_memory` "
+    "important project fact, or reusable workflow, call `band_store_memory` "
     "before replying. Use memory sparingly: do not store one-off requests, "
     "temporary chat context, or sensitive information unless the user clearly "
     "asks you to remember it. After storing a memory, briefly acknowledge what "
@@ -47,8 +48,8 @@ async def langgraph_memory_room(
     ``room_added`` event and avoids stale reused room subscriptions.
     """
     client = AsyncRestClient(
-        api_key=e2e_config.thenvoi_api_key,
-        base_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key,
+        base_url=e2e_config.band_base_url,
     )
 
     peers_response = await client.agent_api_peers.list_agent_peers()
@@ -78,14 +79,12 @@ async def langgraph_memory_room(
 async def running_langgraph_memory_agent(
     e2e_config: E2ESettings,
 ) -> AsyncGenerator[Agent, None]:
-    """Run a LangGraph agent configured with Thenvoi memory tools enabled."""
+    """Run a LangGraph agent configured with Band memory tools enabled."""
     if not os.environ.get("OPENAI_API_KEY"):
         pytest.skip("OPENAI_API_KEY not set")
 
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import MemorySaver
-
-    from thenvoi.adapters.langgraph import LangGraphAdapter
 
     adapter = LangGraphAdapter(
         llm=ChatOpenAI(model=e2e_config.e2e_llm_model),
@@ -97,9 +96,9 @@ async def running_langgraph_memory_agent(
     agent = Agent.create(
         adapter=adapter,
         agent_id=e2e_config.test_agent_id,
-        api_key=e2e_config.thenvoi_api_key,
-        ws_url=e2e_config.thenvoi_ws_url,
-        rest_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key,
+        ws_url=e2e_config.band_ws_url,
+        rest_url=e2e_config.band_base_url,
     )
 
     async with agent:
@@ -182,10 +181,10 @@ async def test_langgraph_agent_stores_durable_user_memory(
     agent_id, agent_name = e2e_agent_info
     marker = f"LANGGRAPH_MEMORY_E2E_{uuid4().hex}"
     user_client = AsyncRestClient(
-        api_key=e2e_config.thenvoi_api_key_user, base_url=e2e_config.thenvoi_base_url
+        api_key=e2e_config.band_api_key_user, base_url=e2e_config.band_base_url
     )
     agent_client = AsyncRestClient(
-        api_key=e2e_config.thenvoi_api_key, base_url=e2e_config.thenvoi_base_url
+        api_key=e2e_config.band_api_key, base_url=e2e_config.band_base_url
     )
 
     prompt = (
@@ -195,7 +194,7 @@ async def test_langgraph_agent_stores_durable_user_memory(
     )
 
     # Wait for the agent's reply, which proves it processed the message (and had
-    # the chance to call thenvoi_store_memory) before we poll for the memory.
+    # the chance to call band_store_memory) before we poll for the memory.
     async with listening_for_agent_responses(
         ws_client, chat_id, timeout=e2e_config.e2e_timeout, raise_on_timeout=True
     ) as wait_for_reply:

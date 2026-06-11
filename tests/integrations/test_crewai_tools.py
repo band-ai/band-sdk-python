@@ -431,7 +431,7 @@ class TestRunAsyncLazyPatch:
 class TestStoreMemoryInputDescription:
     def test_crewai_store_memory_type_description_is_generated(self, builder_mod):
         """CrewAI store_memory args schema should use memory_type_field_description()."""
-        from thenvoi.core.memory_types import memory_type_field_description
+        from band.core.memory_types import memory_type_field_description
 
         expected = memory_type_field_description()
         assert (
