@@ -19,8 +19,7 @@ Example:
 
 from __future__ import annotations
 
-from typing import get_args
-
+from band.core.memory_types import literal_values, memory_system_type_map
 from band.core.types import AdapterFeatures, Capability
 
 
@@ -61,18 +60,17 @@ to the original requester. Do not stop at thanking the helper.
 
 
 def _memory_section() -> str:
-    from band.runtime.tools import MEMORY_SYSTEM_TYPE_MAP, StoreMemoryInput
+    from band.runtime.tools import StoreMemoryInput
 
-    def literal_values(field_name: str) -> tuple[str, ...]:
-        annotation = StoreMemoryInput.model_fields[field_name].annotation
-        return get_args(annotation)
+    def field_literal_values(field_name: str) -> tuple[str, ...]:
+        return literal_values(StoreMemoryInput.model_fields[field_name].annotation)
 
     def format_values(values: tuple[str, ...]) -> str:
         return " | ".join(f'`"{value}"`' for value in values)
 
     type_lines = "\n".join(
         f"  - {system}: {format_values(types)}"
-        for system, types in MEMORY_SYSTEM_TYPE_MAP.items()
+        for system, types in memory_system_type_map().items()
     )
 
     return f"""## Memory Tools
@@ -86,10 +84,10 @@ Use `band_supersede_memory` to mark outdated memories and
 When calling `band_store_memory`, the `system`, `type`, and `segment` fields
 must use these exact values (case-sensitive):
 
-- **system**: {format_values(literal_values("system"))}
+- **system**: {format_values(field_literal_values("system"))}
 - **type** (must match the chosen system):
 {type_lines}
-- **segment**: {format_values(literal_values("segment"))}
+- **segment**: {format_values(field_literal_values("segment"))}
 
 Common patterns:
 - Facts learned about other agents/entities: `system="long_term"`, `type="semantic"`, `segment="agent"`
@@ -98,7 +96,7 @@ Common patterns:
 - How to perform a task: `system="long_term"`, `type="procedural"`, `segment="tool"`
 
 When storing with `scope="subject"`, you must pass a real `subject_id` UUID
-(e.g. from `thenvoi_lookup_peers` or the participant list). If you don't have
+(e.g. from `band_lookup_peers` or the participant list). If you don't have
 one, use `scope="organization"` — never invent a UUID."""
 
 

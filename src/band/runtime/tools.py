@@ -16,6 +16,14 @@ from pydantic import AliasChoices, BaseModel, Field, ValidationError
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 from band.core.exceptions import BandToolError
+from band.core.memory_types import (
+    MemoryListScope,
+    MemorySegment,
+    MemoryStatus,
+    MemoryStoreScope,
+    MemorySystem,
+    MemoryType,
+)
 from band.core.protocols import AgentToolsProtocol
 
 if TYPE_CHECKING:
@@ -66,7 +74,7 @@ def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
 
 @dataclass(frozen=True)
 class ToolDefinition:
-    """Metadata for a built-in Band tool."""
+    """Metadata for a built-in Thenvoi tool."""
 
     name: str
     input_model: type[BaseModel]
@@ -247,24 +255,13 @@ class ListMemoriesInput(BaseModel):
     subject_id: str | None = Field(
         None, description="Filter by subject UUID (required for subject-scoped queries)"
     )
-    scope: Literal["subject", "organization", "all"] | None = Field(
-        None, description="Filter by scope"
-    )
-    system: Literal["sensory", "working", "long_term"] | None = Field(
-        None, description="Filter by memory system"
-    )
-    type: (
-        Literal["iconic", "echoic", "haptic", "episodic", "semantic", "procedural"]
-        | None
-    ) = Field(None, description="Filter by memory type")
-    segment: Literal["user", "agent", "tool", "guideline"] | None = Field(
-        None, description="Filter by segment"
-    )
+    scope: MemoryListScope | None = Field(None, description="Filter by scope")
+    system: MemorySystem | None = Field(None, description="Filter by memory system")
+    type: MemoryType | None = Field(None, description="Filter by memory type")
+    segment: MemorySegment | None = Field(None, description="Filter by segment")
     content_query: str | None = Field(None, description="Full-text search query")
     page_size: int = Field(50, description="Number of results per page", ge=1, le=50)
-    status: Literal["active", "superseded", "archived", "all"] | None = Field(
-        None, description="Filter by status"
-    )
+    status: MemoryStatus | None = Field(None, description="Filter by status")
 
 
 class StoreMemoryInput(BaseModel):
@@ -276,12 +273,8 @@ class StoreMemoryInput(BaseModel):
     """
 
     content: str = Field(..., description="The memory content")
-    system: Literal["sensory", "working", "long_term"] = Field(
-        ..., description="Memory system tier"
-    )
-    type: Literal[
-        "iconic", "echoic", "haptic", "episodic", "semantic", "procedural"
-    ] = Field(
+    system: MemorySystem = Field(..., description="Memory system tier")
+    type: MemoryType = Field(
         ...,
         description=(
             "Memory type - must match the chosen system: "
@@ -289,13 +282,9 @@ class StoreMemoryInput(BaseModel):
             "working|long_term=episodic/semantic/procedural"
         ),
     )
-    segment: Literal["user", "agent", "tool", "guideline"] = Field(
-        ..., description="Logical segment"
-    )
+    segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: Literal["subject", "organization"] = Field(
-        "organization", description="Visibility scope"
-    )
+    scope: MemoryStoreScope = Field("organization", description="Visibility scope")
     subject_id: str | None = Field(
         None,
         description="UUID of the subject this memory is about (required for subject scope)",
@@ -303,17 +292,6 @@ class StoreMemoryInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Additional metadata (tags, references)"
     )
-
-
-# Maps each memory system to the type values valid for that system.
-# This is the single source for the system->type partition rendered into the
-# memory prompt section. It must stay in sync with StoreMemoryInput's Literal
-# values; tests/runtime/test_tools.py enforces that invariant.
-MEMORY_SYSTEM_TYPE_MAP: dict[str, tuple[str, ...]] = {
-    "sensory": ("iconic", "echoic", "haptic"),
-    "working": ("episodic", "semantic", "procedural"),
-    "long_term": ("episodic", "semantic", "procedural"),
-}
 
 
 class GetMemoryInput(BaseModel):
@@ -344,9 +322,9 @@ class ArchiveMemoryInput(BaseModel):
     memory_id: str = Field(..., description="Memory ID (UUID)")
 
 
-# --- Human-tool input models (copied from band-mcp/src/band_mcp/tools/human/*.py) ---
+# --- Human-tool input models (copied from thenvoi-mcp/src/thenvoi_mcp/tools/human/*.py) ---
 #
-# These models mirror the current band-mcp human tool handler signatures
+# These models mirror the current thenvoi-mcp human tool handler signatures
 # field-for-field. They are the canonical contract preserved by Phase 1 of
 # INT-338: the observable tool surface stays identical to today's MCP
 # behavior. Widening to full Fern parity is out of scope for this ticket.
@@ -745,170 +723,170 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     # One entry per method in the Phase 1 human-tool mapping table.
     # Method names match HumanTools attributes; hasattr(HumanTools, method_name)
     # must resolve for every surface="human" definition.
-    "band_list_my_agents": ToolDefinition(
-        name="band_list_my_agents",
+    "thenvoi_list_my_agents": ToolDefinition(
+        name="thenvoi_list_my_agents",
         input_model=ListMyAgentsInput,
         method_name="list_my_agents",
         surface="human",
     ),
-    "band_register_my_agent": ToolDefinition(
-        name="band_register_my_agent",
+    "thenvoi_register_my_agent": ToolDefinition(
+        name="thenvoi_register_my_agent",
         input_model=RegisterMyAgentInput,
         method_name="register_my_agent",
         surface="human",
     ),
-    "band_list_my_chats": ToolDefinition(
-        name="band_list_my_chats",
+    "thenvoi_list_my_chats": ToolDefinition(
+        name="thenvoi_list_my_chats",
         input_model=ListMyChatsInput,
         method_name="list_my_chats",
         surface="human",
     ),
-    "band_create_my_chat_room": ToolDefinition(
-        name="band_create_my_chat_room",
+    "thenvoi_create_my_chat_room": ToolDefinition(
+        name="thenvoi_create_my_chat_room",
         input_model=CreateMyChatRoomInput,
         method_name="create_my_chat_room",
         surface="human",
     ),
-    "band_get_my_chat_room": ToolDefinition(
-        name="band_get_my_chat_room",
+    "thenvoi_get_my_chat_room": ToolDefinition(
+        name="thenvoi_get_my_chat_room",
         input_model=GetMyChatRoomInput,
         method_name="get_my_chat_room",
         surface="human",
     ),
-    "band_list_my_contacts": ToolDefinition(
-        name="band_list_my_contacts",
+    "thenvoi_list_my_contacts": ToolDefinition(
+        name="thenvoi_list_my_contacts",
         input_model=ListMyContactsInput,
         method_name="list_my_contacts",
         surface="human",
     ),
-    "band_create_contact_request": ToolDefinition(
-        name="band_create_contact_request",
+    "thenvoi_create_contact_request": ToolDefinition(
+        name="thenvoi_create_contact_request",
         input_model=CreateContactRequestInput,
         method_name="create_contact_request",
         surface="human",
     ),
-    "band_list_received_contact_requests": ToolDefinition(
-        name="band_list_received_contact_requests",
+    "thenvoi_list_received_contact_requests": ToolDefinition(
+        name="thenvoi_list_received_contact_requests",
         input_model=ListReceivedContactRequestsInput,
         method_name="list_received_contact_requests",
         surface="human",
     ),
-    "band_list_sent_contact_requests": ToolDefinition(
-        name="band_list_sent_contact_requests",
+    "thenvoi_list_sent_contact_requests": ToolDefinition(
+        name="thenvoi_list_sent_contact_requests",
         input_model=ListSentContactRequestsInput,
         method_name="list_sent_contact_requests",
         surface="human",
     ),
-    "band_approve_contact_request": ToolDefinition(
-        name="band_approve_contact_request",
+    "thenvoi_approve_contact_request": ToolDefinition(
+        name="thenvoi_approve_contact_request",
         input_model=ApproveContactRequestInput,
         method_name="approve_contact_request",
         surface="human",
     ),
-    "band_reject_contact_request": ToolDefinition(
-        name="band_reject_contact_request",
+    "thenvoi_reject_contact_request": ToolDefinition(
+        name="thenvoi_reject_contact_request",
         input_model=RejectContactRequestInput,
         method_name="reject_contact_request",
         surface="human",
     ),
-    "band_cancel_contact_request": ToolDefinition(
-        name="band_cancel_contact_request",
+    "thenvoi_cancel_contact_request": ToolDefinition(
+        name="thenvoi_cancel_contact_request",
         input_model=CancelContactRequestInput,
         method_name="cancel_contact_request",
         surface="human",
     ),
-    "band_resolve_handle": ToolDefinition(
-        name="band_resolve_handle",
+    "thenvoi_resolve_handle": ToolDefinition(
+        name="thenvoi_resolve_handle",
         input_model=ResolveHandleInput,
         method_name="resolve_handle",
         surface="human",
     ),
-    "band_remove_my_contact": ToolDefinition(
-        name="band_remove_my_contact",
+    "thenvoi_remove_my_contact": ToolDefinition(
+        name="thenvoi_remove_my_contact",
         input_model=RemoveMyContactInput,
         method_name="remove_my_contact",
         surface="human",
     ),
-    "band_list_my_chat_messages": ToolDefinition(
-        name="band_list_my_chat_messages",
+    "thenvoi_list_my_chat_messages": ToolDefinition(
+        name="thenvoi_list_my_chat_messages",
         input_model=ListMyChatMessagesInput,
         method_name="list_my_chat_messages",
         surface="human",
     ),
-    "band_send_my_chat_message": ToolDefinition(
-        name="band_send_my_chat_message",
+    "thenvoi_send_my_chat_message": ToolDefinition(
+        name="thenvoi_send_my_chat_message",
         input_model=SendMyChatMessageInput,
         method_name="send_my_chat_message",
         surface="human",
     ),
-    "band_list_my_chat_participants": ToolDefinition(
-        name="band_list_my_chat_participants",
+    "thenvoi_list_my_chat_participants": ToolDefinition(
+        name="thenvoi_list_my_chat_participants",
         input_model=ListMyChatParticipantsInput,
         method_name="list_my_chat_participants",
         surface="human",
     ),
-    "band_add_my_chat_participant": ToolDefinition(
-        name="band_add_my_chat_participant",
+    "thenvoi_add_my_chat_participant": ToolDefinition(
+        name="thenvoi_add_my_chat_participant",
         input_model=AddMyChatParticipantInput,
         method_name="add_my_chat_participant",
         surface="human",
     ),
-    "band_remove_my_chat_participant": ToolDefinition(
-        name="band_remove_my_chat_participant",
+    "thenvoi_remove_my_chat_participant": ToolDefinition(
+        name="thenvoi_remove_my_chat_participant",
         input_model=RemoveMyChatParticipantInput,
         method_name="remove_my_chat_participant",
         surface="human",
     ),
-    "band_list_user_memories": ToolDefinition(
-        name="band_list_user_memories",
+    "thenvoi_list_user_memories": ToolDefinition(
+        name="thenvoi_list_user_memories",
         input_model=ListUserMemoriesInput,
         method_name="list_user_memories",
         surface="human",
     ),
-    "band_get_user_memory": ToolDefinition(
-        name="band_get_user_memory",
+    "thenvoi_get_user_memory": ToolDefinition(
+        name="thenvoi_get_user_memory",
         input_model=GetUserMemoryInput,
         method_name="get_user_memory",
         surface="human",
     ),
-    "band_supersede_user_memory": ToolDefinition(
-        name="band_supersede_user_memory",
+    "thenvoi_supersede_user_memory": ToolDefinition(
+        name="thenvoi_supersede_user_memory",
         input_model=SupersedeUserMemoryInput,
         method_name="supersede_user_memory",
         surface="human",
     ),
-    "band_archive_user_memory": ToolDefinition(
-        name="band_archive_user_memory",
+    "thenvoi_archive_user_memory": ToolDefinition(
+        name="thenvoi_archive_user_memory",
         input_model=ArchiveUserMemoryInput,
         method_name="archive_user_memory",
         surface="human",
     ),
-    "band_restore_user_memory": ToolDefinition(
-        name="band_restore_user_memory",
+    "thenvoi_restore_user_memory": ToolDefinition(
+        name="thenvoi_restore_user_memory",
         input_model=RestoreUserMemoryInput,
         method_name="restore_user_memory",
         surface="human",
     ),
-    "band_delete_user_memory": ToolDefinition(
-        name="band_delete_user_memory",
+    "thenvoi_delete_user_memory": ToolDefinition(
+        name="thenvoi_delete_user_memory",
         input_model=DeleteUserMemoryInput,
         method_name="delete_user_memory",
         surface="human",
     ),
-    "band_get_my_profile": ToolDefinition(
-        name="band_get_my_profile",
+    "thenvoi_get_my_profile": ToolDefinition(
+        name="thenvoi_get_my_profile",
         input_model=GetMyProfileInput,
         method_name="get_my_profile",
         surface="human",
     ),
-    "band_update_my_profile": ToolDefinition(
-        name="band_update_my_profile",
+    "thenvoi_update_my_profile": ToolDefinition(
+        name="thenvoi_update_my_profile",
         input_model=UpdateMyProfileInput,
         method_name="update_my_profile",
         surface="human",
     ),
-    "band_list_my_peers": ToolDefinition(
-        name="band_list_my_peers",
+    "thenvoi_list_my_peers": ToolDefinition(
+        name="thenvoi_list_my_peers",
         input_model=ListMyPeersInput,
         method_name="list_my_peers",
         surface="human",
@@ -937,7 +915,7 @@ MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
 
 # Contact tools - explicitly listed (not derived by heuristic) because a
 # future tool whose name happens to contain "contact" (e.g.
-# band_get_contact_context) would be silently misclassified.
+# thenvoi_get_contact_context) would be silently misclassified.
 CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "band_list_contacts",
@@ -953,27 +931,27 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 # to apply the ``include_memory`` filter uniformly across both surfaces.
 HUMAN_MEMORY_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "band_list_user_memories",
-        "band_get_user_memory",
-        "band_supersede_user_memory",
-        "band_archive_user_memory",
-        "band_restore_user_memory",
-        "band_delete_user_memory",
+        "thenvoi_list_user_memories",
+        "thenvoi_get_user_memory",
+        "thenvoi_supersede_user_memory",
+        "thenvoi_archive_user_memory",
+        "thenvoi_restore_user_memory",
+        "thenvoi_delete_user_memory",
     }
 )
 
 # Human-surface contact tools - parallel to CONTACT_TOOL_NAMES.
 HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     {
-        "band_list_my_contacts",
-        "band_create_contact_request",
-        "band_list_received_contact_requests",
-        "band_list_sent_contact_requests",
-        "band_approve_contact_request",
-        "band_reject_contact_request",
-        "band_cancel_contact_request",
-        "band_resolve_handle",
-        "band_remove_my_contact",
+        "thenvoi_list_my_contacts",
+        "thenvoi_create_contact_request",
+        "thenvoi_list_received_contact_requests",
+        "thenvoi_list_sent_contact_requests",
+        "thenvoi_approve_contact_request",
+        "thenvoi_reject_contact_request",
+        "thenvoi_cancel_contact_request",
+        "thenvoi_resolve_handle",
+        "thenvoi_remove_my_contact",
     }
 )
 
@@ -1002,7 +980,7 @@ if HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES:
 
 BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES
 CHAT_TOOL_NAMES: frozenset[str] = BASE_TOOL_NAMES - CONTACT_TOOL_NAMES
-MCP_TOOL_PREFIX: str = "mcp__band__"
+MCP_TOOL_PREFIX: str = "mcp__thenvoi__"
 
 
 def mcp_tool_names(names: frozenset[str]) -> list[str]:
@@ -1033,8 +1011,8 @@ def get_tool_description(name: str) -> str:
         return model.__doc__
 
     # Try with prefix for backwards compatibility (deprecated)
-    if not name.startswith("band_"):
-        prefixed_name = f"band_{name}"
+    if not name.startswith("thenvoi_"):
+        prefixed_name = f"thenvoi_{name}"
         model = TOOL_MODELS.get(prefixed_name)
         if model and model.__doc__:
             warnings.warn(
@@ -1066,10 +1044,10 @@ def iter_tool_definitions(
       backends don't silently gain ``HumanTools``-bound entries.
     - ``include_memory``: if ``False`` (default), drop memory tools. This
       applies to both the agent ``MEMORY_TOOL_NAMES`` set and the human
-      memory tools (``band_list_user_memories``, etc.).
+      memory tools (``thenvoi_list_user_memories``, etc.).
     - ``include_contacts``: if ``False``, drop contact tools. This applies
       to both the agent ``CONTACT_TOOL_NAMES`` set and the human contact
-      tools (``band_list_my_contacts``, etc.).
+      tools (``thenvoi_list_my_contacts``, etc.).
 
     Args:
         surface: Optional surface filter (``"agent"`` or ``"human"``).
@@ -1121,24 +1099,6 @@ def validate_tool_arguments(
         raise ValueError(format_tool_validation_error(tool_name, error)) from error
 
     return validated.model_dump(exclude_none=True)
-
-
-@dataclass(frozen=True)
-class ToolCallOutcome:
-    """Structured result of :meth:`AgentTools.execute_tool_call_structured`.
-
-    ``value`` is the JSON-serializable payload handed to the LLM (the
-    success result, or an error string on failure so the model can still
-    react). ``ok`` is the machine-readable success flag and
-    ``error_message`` the human-readable failure detail. Together they let
-    callers branch on success/failure without parsing ``value`` — e.g. the
-    Slack plan-progress UI marks a task ✅/❌ from ``ok`` rather than
-    sniffing the error string's prefix.
-    """
-
-    value: Any
-    ok: bool
-    error_message: str | None = None
 
 
 class AgentTools(AgentToolsProtocol):
@@ -2182,22 +2142,6 @@ class AgentTools(AgentToolsProtocol):
         Raises:
             BandToolError: When a tool method raises a typed tool failure
         """
-        outcome = await self.execute_tool_call_structured(tool_name, arguments)
-        return outcome.value
-
-    async def execute_tool_call_structured(
-        self, tool_name: str, arguments: dict[str, Any]
-    ) -> ToolCallOutcome:
-        """Execute a tool call and report success/failure structurally.
-
-        Identical dispatch, validation, and serialization to
-        :meth:`execute_tool_call`, but returns a :class:`ToolCallOutcome`
-        whose ``ok`` flag is the authoritative success signal. Callers
-        that need to react to failure (e.g. progress UIs) should branch on
-        ``ok`` instead of inspecting the returned string, which has no
-        stable error prefix. ``BandToolError`` still propagates so
-        framework wrappers can translate it into native failures.
-        """
         # Validate arguments against Pydantic model
         try:
             definition = TOOL_DEFINITIONS.get(tool_name)
@@ -2208,39 +2152,36 @@ class AgentTools(AgentToolsProtocol):
                     arguments,
                 )
         except ValueError as error:
-            return ToolCallOutcome(value=str(error), ok=False, error_message=str(error))
+            return str(error)
         except Exception as e:
-            msg = f"Error validating {tool_name} arguments: {e}"
-            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
+            return f"Error validating {tool_name} arguments: {e}"
 
         definition = TOOL_DEFINITIONS.get(tool_name)
         if definition is None:
-            msg = f"Unknown tool: {tool_name}"
-            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
+            return f"Unknown tool: {tool_name}"
 
         try:
             method = getattr(self, definition.method_name)
             result = await method(**arguments)
             # Serialize Pydantic models to dicts at the adapter boundary
             if hasattr(result, "model_dump"):
-                result = result.model_dump()
-            elif isinstance(result, list):
-                result = [
+                return result.model_dump()
+            if isinstance(result, list):
+                return [
                     item.model_dump() if hasattr(item, "model_dump") else item
                     for item in result
                 ]
-            return ToolCallOutcome(value=result, ok=True)
+            return result
         except BandToolError:
             # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.
             raise
         except Exception as e:
-            msg = f"Error executing {tool_name}: {e}"
-            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
+            return f"Error executing {tool_name}: {e}"
 
 
 class HumanTools:
-    """User-scoped tools for Band platform interaction.
+    """User-scoped tools for Thenvoi platform interaction.
 
     ``HumanTools`` is stateless per credential: one instance per user-scoped
     ``AsyncRestClient``. Unlike ``AgentTools`` it is not bound to a room —
@@ -2248,7 +2189,7 @@ class HumanTools:
     ``chat_id`` argument.
 
     Each method is a thin wrapper around a Fern ``human_api_*`` call. The
-    observable tool surface mirrors today's ``band-mcp`` human tool
+    observable tool surface mirrors today's ``thenvoi-mcp`` human tool
     handlers (Phase 1 of INT-338 copies those signatures verbatim); widening
     to full Fern parity is explicitly out of scope.
     """

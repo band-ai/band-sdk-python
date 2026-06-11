@@ -1,4 +1,4 @@
-"""Shared CrewAI BaseTool wrappers for Band platform tools.
+"""Shared CrewAI BaseTool wrappers for Thenvoi platform tools.
 
 Both CrewAIAdapter and CrewAIFlowAdapter consume the same tool builder so that
 the platform tool surface stays consistent across adapters and Flow authors who
@@ -11,7 +11,7 @@ The builder takes three injectables:
   EmitExecutionReporter (gates by Emit.EXECUTION) and NoopReporter.
 - capabilities: frozenset[Capability] — controls which tool subset is exposed.
 
-Extracted from src/band/adapters/crewai.py so both CrewAI adapters share
+Extracted from src/thenvoi/adapters/crewai.py so both CrewAI adapters share
 one platform tool surface.
 """
 
@@ -22,7 +22,6 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import (
-    TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
@@ -35,9 +34,23 @@ from typing import (
 
 from pydantic import BaseModel, Field, field_validator
 
-if TYPE_CHECKING:
+try:
     from crewai.tools import BaseTool
+except ImportError as e:  # pragma: no cover - same import guard as the adapter
+    raise ImportError(
+        "crewai is required for CrewAI adapter.\n"
+        "Install with: pip install 'band-sdk[crewai]'\n"
+        "Or: uv add crewai nest-asyncio"
+    ) from e
 
+from band.core.memory_types import (
+    MemoryListScope,
+    MemorySegment,
+    MemoryStatus,
+    MemoryStoreScope,
+    MemorySystem,
+    MemoryType,
+)
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability, Emit
@@ -74,21 +87,6 @@ _CREWAI_TOOL_CATEGORIES = {
 
 # --- Shared context + reporter contracts ---
 
-# Tool whose successful execution counts as a user-facing reply.
-_SEND_MESSAGE_TOOL = "band_send_message"
-
-
-@dataclass
-class ReplyTracker:
-    """Mutable per-turn marker shared (by reference) with the tool wrappers.
-
-    Set to ``True`` once ``band_send_message`` succeeds so an adapter can tell
-    a benign "empty final answer" from CrewAI (the reply already went out via the
-    tool) apart from a genuine no-response failure.
-    """
-
-    replied: bool = False
-
 
 @dataclass(frozen=True)
 class CrewAIToolContext:
@@ -100,7 +98,6 @@ class CrewAIToolContext:
 
     room_id: str
     tools: AgentToolsProtocol
-    reply_tracker: ReplyTracker | None = None
 
 
 @runtime_checkable
@@ -249,19 +246,7 @@ def _execute_tool(
             await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
 
-    result = run_async(_execute(), fallback_loop=fallback_loop)
-
-    # Record that the agent delivered a user-facing reply this turn so the
-    # adapter can treat CrewAI's "empty final answer" ValueError as benign
-    # (the reply already went out) instead of a genuine no-response failure.
-    if tool_name == _SEND_MESSAGE_TOOL and context.reply_tracker is not None:
-        try:
-            if json.loads(result).get("status") == "success":
-                context.reply_tracker.replied = True
-        except (json.JSONDecodeError, AttributeError, TypeError):
-            pass
-
-    return result
+    return run_async(_execute(), fallback_loop=fallback_loop)
 
 
 # --- Input models ---
@@ -379,18 +364,17 @@ class _RespondContactRequestInput(BaseModel):
 
 class _ListMemoriesInput(BaseModel):
     subject_id: str | None = Field(default=None, description="Filter by subject UUID")
-    scope: Literal["subject", "organization", "all"] | None = Field(
+    scope: MemoryListScope | None = Field(
         default=None, description="Filter by scope (subject, organization, all)"
     )
-    system: Literal["sensory", "working", "long_term"] | None = Field(
+    system: MemorySystem | None = Field(
         default=None,
         description="Filter by memory system (sensory, working, long_term)",
     )
-    memory_type: (
-        Literal["iconic", "echoic", "haptic", "episodic", "semantic", "procedural"]
-        | None
-    ) = Field(default=None, description="Filter by memory type")
-    segment: Literal["user", "agent", "tool", "guideline"] | None = Field(
+    memory_type: MemoryType | None = Field(
+        default=None, description="Filter by memory type"
+    )
+    segment: MemorySegment | None = Field(
         default=None, description="Filter by segment (user, agent, tool, guideline)"
     )
     content_query: str | None = Field(
@@ -399,7 +383,7 @@ class _ListMemoriesInput(BaseModel):
     page_size: int = Field(
         default=50, description="Number of results per page", ge=1, le=50
     )
-    status: Literal["active", "superseded", "archived", "all"] | None = Field(
+    status: MemoryStatus | None = Field(
         default=None,
         description="Filter by status (active, superseded, archived, all)",
     )
@@ -407,18 +391,12 @@ class _ListMemoriesInput(BaseModel):
 
 class _StoreMemoryInput(BaseModel):
     content: str = Field(..., description="The memory content")
-    system: Literal["sensory", "working", "long_term"] = Field(
-        ..., description="Memory system tier"
-    )
-    memory_type: Literal[
-        "iconic", "echoic", "haptic", "episodic", "semantic", "procedural"
-    ] = Field(..., description="Memory type")
-    segment: Literal["user", "agent", "tool", "guideline"] = Field(
-        ..., description="Logical segment"
-    )
+    system: MemorySystem = Field(..., description="Memory system tier")
+    memory_type: MemoryType = Field(..., description="Memory type")
+    segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: Literal["subject", "organization"] = Field(
-        default="subject", description="Visibility scope"
+    scope: MemoryStoreScope = Field(
+        default="organization", description="Visibility scope"
     )
     subject_id: str | None = Field(
         default=None, description="UUID of the subject (required for subject scope)"
@@ -453,11 +431,10 @@ def _make_platform_tools(
 ) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool]]:
     """Build the 7 base + 5 contact + 5 memory platform tools.
 
-    Returns a (base, contacts, memory) triple. ``build_band_crewai_tools``
+    Returns a (base, contacts, memory) triple. ``build_thenvoi_crewai_tools``
     is responsible for stitching them together based on the requested
     capabilities.
     """
-    from crewai.tools import BaseTool
 
     def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
         return _execute_tool(
@@ -557,7 +534,9 @@ def _make_platform_tools(
                     tools, "band_remove_participant", {"identifier": identifier}
                 )
                 result = await tools.remove_participant(identifier)
-                await reporter.report_result(tools, "band_remove_participant", result)
+                await reporter.report_result(
+                    tools, "band_remove_participant", result
+                )
                 return serialize_success_result(result)
 
             return _exec("band_remove_participant", execute)
@@ -822,7 +801,7 @@ def _make_platform_tools(
             memory_type = kwargs.get("memory_type", "")
             segment = kwargs.get("segment", "")
             thought = kwargs.get("thought", "")
-            scope = kwargs.get("scope", "subject")
+            scope = kwargs.get("scope", "organization")
             subject_id = kwargs.get("subject_id")
             metadata = kwargs.get("metadata")
 
@@ -951,8 +930,6 @@ def _make_custom_tools(
     fallback_loop: asyncio.AbstractEventLoop | None,
 ) -> list[BaseTool]:
     """Convert CustomToolDef tuples to CrewAI BaseTool instances."""
-    from crewai.tools import BaseTool
-
     crewai_tools: list[BaseTool] = []
 
     def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
@@ -1015,7 +992,7 @@ def _make_custom_tools(
     return crewai_tools
 
 
-def build_band_crewai_tools(
+def build_thenvoi_crewai_tools(
     *,
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
@@ -1074,6 +1051,6 @@ __all__ = [
     "CrewAIToolReporter",
     "EmitExecutionReporter",
     "NoopReporter",
-    "build_band_crewai_tools",
+    "build_thenvoi_crewai_tools",
     "serialize_success_result",
 ]
