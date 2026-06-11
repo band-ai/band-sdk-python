@@ -10,7 +10,9 @@ class MemorySystem(StrEnum):
 
     SENSORY = "sensory"  # Brief sensory inputs (iconic/echoic/haptic)
     WORKING = "working"  # Short-term session context (episodic/semantic/procedural)
-    LONG_TERM = "long_term"  # Persistent cross-conversation memory (same types as working)
+    LONG_TERM = (
+        "long_term"  # Persistent cross-conversation memory (same types as working)
+    )
 
 
 class SensoryMemoryType(StrEnum):
