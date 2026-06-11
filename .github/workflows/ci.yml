@@ -64,6 +64,11 @@ jobs:
     - name: Run tests
       run: uv run pytest
 
+    - name: Run markdown doc tests
+      if: matrix.python-version == '3.12'
+      # examples/ READMEs have illustrative fragments not yet snippet-testable
+      run: uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+
 
   test-crewai:
     runs-on: ubuntu-latest

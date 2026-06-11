@@ -108,7 +108,7 @@ adapter = ClaudeSDKAdapter(features=AdapterFeatures(emit={Emit.EXECUTION}))
 Passing both old booleans and the new `features=` raises
 `BandConfigError`:
 
-```python
+```python notest
 # Raises BandConfigError
 adapter = AnthropicAdapter(
     enable_memory_tools=True,
@@ -203,7 +203,7 @@ need no changes.
 `BandConfigError` ships with a `with_suggestion()` factory that
 attaches "Did you mean 'X'?" hints based on Levenshtein distance:
 
-```python
+```python notest
 raise BandConfigError.with_suggestion(
     "Unknown capability 'memry'.",
     "memry",
@@ -216,7 +216,7 @@ raise BandConfigError.with_suggestion(
 
 A new convenience factory loads credentials from a YAML config file:
 
-```python
+```python fixture:agent_config_path
 from band import Agent
 
 agent = Agent.from_config(

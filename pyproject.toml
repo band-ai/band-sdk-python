@@ -144,6 +144,8 @@ dev = [
     "pydantic-ai-slim>=1.56.0",
     # Include anthropic for testing
     "anthropic>=0.75.0",
+    # Include claude_sdk for testing
+    "claude-agent-sdk>=0.1.16",
     # Include langgraph for testing
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",
@@ -183,6 +185,7 @@ dev = [
     "ruff>=0.8.0",
     "pyrefly>=0.18.0",
     "commitizen>=3.13.0",
+    "pytest-markdown-docs>=0.9.2",
 ]
 
 # CrewAI-only dev extra for testing crewai adapter in isolation.
