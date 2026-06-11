@@ -22,6 +22,7 @@ from __future__ import annotations
 from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
     MemorySegment,
+    MemoryStoreScope,
     MemorySystem,
     WorkingLongTermMemoryType,
     enum_values,
@@ -92,9 +93,9 @@ _MEMORY_COMMON_PATTERNS = f"""Common patterns:
 - How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
 
 
-_MEMORY_SCOPE_GUIDANCE = """When storing with `scope="subject"`, you must pass a real `subject_id` UUID
+_MEMORY_SCOPE_GUIDANCE = f"""When storing with `scope="{MemoryStoreScope.SUBJECT.value}"`, you must pass a real `subject_id` UUID
 (e.g. from `band_lookup_peers` or the participant list). If you don't have
-one, use `scope="organization"` — never invent a UUID."""
+one, use `scope="{MemoryStoreScope.ORGANIZATION.value}"` — never invent a UUID."""
 
 
 def _memory_section() -> str:
