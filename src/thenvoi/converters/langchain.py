@@ -18,6 +18,7 @@ except ImportError as e:
 
 from thenvoi.converters._tool_parsing import parse_tool_call, parse_tool_result
 from thenvoi.core.protocols import HistoryConverter
+from thenvoi.core.types import is_text_message_type
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +153,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
                     )
                 )
 
-            elif message_type == "text":
+            elif is_text_message_type(message_type):
                 if role == "assistant" and sender_name == self._agent_name:
                     if pending_tool_calls:
                         # Text while a tool call is open would interrupt the

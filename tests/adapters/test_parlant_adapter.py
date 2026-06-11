@@ -759,15 +759,15 @@ class TestHistoryInjection:
         return adapter
 
     @pytest.mark.asyncio
-    async def test_injects_complete_exchanges_only(self, adapter_with_app):
-        """Should only inject complete user-assistant exchanges."""
+    async def test_injects_all_converted_history_turns(self, adapter_with_app):
+        """Should inject every converted historical text turn."""
         history = [
             {"role": "user", "content": "Hello", "sender": "Alice"},
             {"role": "assistant", "content": "Hi there!", "sender": "TestBot"},
             {
                 "role": "user",
                 "content": "Pending question",
-            },  # No response - should skip
+            },
         ]
 
         mock_moderation = MagicMock()
@@ -794,8 +794,8 @@ class TestHistoryInjection:
         ):
             count = await adapter_with_app._inject_history("session-123", history)
 
-        # Should inject 2 messages (complete exchange), skip the pending question
-        assert count == 2
+        # Should inject every converted historical text turn in chronological order.
+        assert count == 3
 
     @pytest.mark.asyncio
     async def test_handles_empty_history(self, adapter_with_app):

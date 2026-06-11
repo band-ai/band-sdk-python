@@ -795,6 +795,75 @@ class TestSessionPersistence:
         assert adapter._session_ids["room-123"] == "sess-xyz-789"
 
     @pytest.mark.asyncio
+    async def test_records_provider_usage_from_result_message(self, mock_tools):
+        adapter = ClaudeSDKAdapter()
+        mock_result_msg = MagicMock()
+        mock_result_msg.session_id = ""
+        mock_result_msg.duration_ms = 120
+        mock_result_msg.total_cost_usd = 0.0025
+        mock_result_msg.usage = {
+            "input_tokens": 100,
+            "cache_creation_input_tokens": 4,
+            "cache_read_input_tokens": 6,
+            "output_tokens": 25,
+        }
+        mock_result_msg.model_usage = None
+
+        mock_client = MagicMock()
+
+        async def mock_receive():
+            yield mock_result_msg
+
+        mock_client.receive_response = mock_receive
+
+        with patch("thenvoi.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        [snapshot] = adapter.provider_usage_snapshots()
+        assert snapshot.source == "claude_agent_sdk.result.usage"
+        assert snapshot.input_tokens == 110
+        assert snapshot.output_tokens == 25
+        assert snapshot.total_tokens == 135
+        assert snapshot.cost_usd == 0.0025
+        assert snapshot.raw["usage"] == mock_result_msg.usage
+
+    @pytest.mark.asyncio
+    async def test_records_provider_usage_from_model_usage_fallback(self, mock_tools):
+        adapter = ClaudeSDKAdapter()
+        mock_result_msg = MagicMock()
+        mock_result_msg.session_id = ""
+        mock_result_msg.duration_ms = 120
+        mock_result_msg.total_cost_usd = 0.003
+        mock_result_msg.usage = None
+        mock_result_msg.model_usage = {
+            "claude-opus-4-8": {
+                "input_tokens": 30,
+                "output_tokens": 10,
+            },
+            "claude-sonnet-4-6": {
+                "input_tokens": 20,
+                "output_tokens": 5,
+            },
+        }
+
+        mock_client = MagicMock()
+
+        async def mock_receive():
+            yield mock_result_msg
+
+        mock_client.receive_response = mock_receive
+
+        with patch("thenvoi.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
+            await adapter._process_response(mock_client, "room-123", mock_tools)
+
+        [snapshot] = adapter.provider_usage_snapshots()
+        assert snapshot.input_tokens == 50
+        assert snapshot.output_tokens == 15
+        assert snapshot.total_tokens == 65
+        assert snapshot.cost_usd == 0.003
+        assert snapshot.raw["model_usage"] == mock_result_msg.model_usage
+
+    @pytest.mark.asyncio
     async def test_uses_history_session_id_for_resume(self, sample_message, mock_tools):
         """Should use history.session_id for resume on bootstrap."""
         adapter = ClaudeSDKAdapter()

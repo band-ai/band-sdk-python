@@ -13,6 +13,13 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+TEXT_MESSAGE_TYPES = frozenset({"text", "message"})
+
+
+def is_text_message_type(message_type: Any) -> bool:
+    """Return whether a platform message type should be treated as text."""
+    return str(message_type or "text") in TEXT_MESSAGE_TYPES
+
 
 class Capability(str, Enum):
     """Platform tool categories an adapter can expose to the LLM.

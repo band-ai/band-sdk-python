@@ -354,28 +354,17 @@ async def _canary_codex() -> _CanaryResult:
     # Reuse the real-wire replay machinery from the Codex spike, but script the
     # canary args into the captured item/tool/call frame so the canary asserts
     # the same content as every other adapter.
-    import json
-
-    from tests.framework_conformance.test_codex_injection_spike import (
-        _ReplayCodexClient,
-        _load_frames,
+    from tests.framework_conformance.codex_replay import (
+        ReplayCodexClient,
+        frames_with_tool_call,
     )
     from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
 
-    frames = _load_frames()
-    canary_frames: list[dict[str, Any]] = []
-    for entry in frames:
-        frame = entry["frame"]
-        if isinstance(frame, dict) and frame.get("method") == "item/tool/call":
-            frame = json.loads(json.dumps(frame))  # deep copy
-            frame["params"]["tool"] = _CANARY_TOOL
-            frame["params"]["arguments"] = dict(_CANARY_ARGS)
-            entry = {**entry, "frame": frame}
-        canary_frames.append(entry)
+    canary_frames = frames_with_tool_call(_CANARY_TOOL, _CANARY_ARGS)
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(transport="stdio", model="gpt-5.4"),
-        client_factory=lambda _config: _ReplayCodexClient(canary_frames),
+        client_factory=lambda _config: ReplayCodexClient(canary_frames),
     )
     tools = _SchemaTools(room_id="canary-codex")
     await _drive(adapter, tools, "canary-codex")

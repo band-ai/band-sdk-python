@@ -2,6 +2,45 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from typing import Any
+
+
+def _normalize_timestamp(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _chronological_messages(messages: list[dict]) -> list[dict]:
+    """Sort messages by timestamp, stably, without displacing untimestamped ones.
+
+    Messages lacking a parseable ``inserted_at``/``created_at`` inherit the
+    sort key of the nearest preceding timestamped message, so they keep their
+    original position relative to their neighbors instead of migrating to one
+    end of the list.
+    """
+    keyed: list[tuple[datetime, int, dict[str, Any]]] = []
+    last_timestamp = datetime.min.replace(tzinfo=timezone.utc)
+    for index, message in enumerate(messages):
+        raw_timestamp = message.get("inserted_at") or message.get("created_at")
+        parsed = _normalize_timestamp(raw_timestamp)
+        if parsed is not None:
+            last_timestamp = parsed
+        keyed.append((last_timestamp, index, message))
+    keyed.sort(key=lambda item: (item[0], item[1]))
+    return [message for _timestamp, _index, message in keyed]
+
 
 def replace_uuid_mentions(content: str, participants: list[dict]) -> str:
     """
@@ -72,7 +111,7 @@ def format_history_for_llm(
     """
     return [
         format_message_for_llm(m, participants=participants)
-        for m in messages
+        for m in _chronological_messages(messages)
         if m.get("id") != exclude_id
     ]
 
@@ -97,7 +136,11 @@ def build_participants_message(participants: list[dict]) -> str:
         p_type = p.get("type", "Unknown")
         p_name = p.get("name", "Unknown")
         p_handle = p.get("handle", "Unknown")
-        lines.append(f"- @{p_handle} — {p_name} ({p_type})")
+        description = str(p.get("description") or "").strip()
+        line = f"- @{p_handle} — {p_name} ({p_type})"
+        if description:
+            line = f"{line}: {description}"
+        lines.append(line)
 
     lines.append("")
     lines.append(

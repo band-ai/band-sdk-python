@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from typing import Any
 from contextlib import asynccontextmanager
 
 from thenvoi_rest import AsyncRestClient, ChatMessageRequest
@@ -44,6 +45,8 @@ class TrackingWebSocketClient:
         chat_room_id: str,
         on_message_created: Callable[[MessageCreatedPayload], Awaitable[None]],
     ):
+        if chat_room_id in self._joined_rooms:
+            await self.leave_chat_room_channel(chat_room_id)
         result = await self._ws.join_chat_room_channel(chat_room_id, on_message_created)
         self._joined_rooms.add(chat_room_id)
         return result
@@ -108,6 +111,8 @@ async def listening_for_agent_responses(
     timeout: float = 30.0,
     min_messages: int = 1,
     raise_on_timeout: bool = False,
+    expected_agent_id: str | None = None,
+    quiet_after_first: float = 0,
 ) -> AsyncGenerator[Callable[[], Awaitable[list[MessageCreatedPayload]]], None]:
     """Context manager that subscribes to a room before any messages are sent.
 
@@ -128,24 +133,30 @@ async def listening_for_agent_responses(
         min_messages: Minimum agent messages to collect before returning.
         raise_on_timeout: If True, ``wait()`` raises ``TimeoutError`` instead
             of returning partial results.
+        expected_agent_id: Optional sender ID that responses must match. Use this
+            when rooms may contain other active agents.
 
     Yields:
-        An async callable that blocks until *min_messages* agent messages
+        An async callable that blocks until *min_messages* matching agent messages
         arrive (or *timeout* elapses) and returns the collected messages.
     """
     received: list[MessageCreatedPayload] = []
     event = asyncio.Event()
 
     async def handler(payload: MessageCreatedPayload) -> None:
-        if payload.sender_type == "Agent" and payload.message_type == "text":
-            received.append(payload)
-            logger.info(
-                "Received agent response in room %s: %s",
-                room_id,
-                payload.content[:80],
-            )
-            if len(received) >= min_messages:
-                event.set()
+        if payload.sender_type != "Agent" or payload.message_type != "text":
+            return
+        if expected_agent_id is not None and payload.sender_id != expected_agent_id:
+            return
+
+        received.append(payload)
+        logger.info(
+            "Received agent response in room %s: %s",
+            room_id,
+            payload.content[:80],
+        )
+        if len(received) >= min_messages:
+            event.set()
 
     await ws_client.join_chat_room_channel(room_id, handler)
     try:
@@ -164,15 +175,193 @@ async def listening_for_agent_responses(
                 )
                 if raise_on_timeout:
                     raise
+            if quiet_after_first:
+                event.clear()
+                try:
+                    await asyncio.wait_for(event.wait(), timeout=quiet_after_first)
+                except TimeoutError:
+                    pass
             return received
 
         yield wait
     finally:
-        await ws_client.leave_chat_room_channel(room_id)
+        try:
+            await ws_client.leave_chat_room_channel(room_id)
+        except Exception:
+            logger.debug("Failed to leave room %s after listener exit", room_id)
+
+
+def message_value(message: Any, key: str) -> Any:
+    """Read a message field from REST or WebSocket message objects."""
+    if isinstance(message, dict):
+        return message.get(key)
+    return getattr(message, key, None)
+
+
+def message_ids(messages: list[Any]) -> set[str]:
+    """Collect message IDs, for snapshotting a turn boundary in a room."""
+    return {str(message_value(message, "id")) for message in messages}
+
+
+def agent_text_messages(
+    messages: list[Any],
+    agent_id: str,
+    exclude_ids: set[str] | frozenset[str] = frozenset(),
+) -> list[Any]:
+    """Filter to text messages sent by *agent_id*, excluding prior-turn IDs."""
+    return [
+        message
+        for message in messages
+        if message_value(message, "sender_id") == agent_id
+        and message_value(message, "message_type") == "text"
+        and str(message_value(message, "id")) not in exclude_ids
+    ]
+
+
+def mention_ids(message: Any) -> set[str]:
+    """Extract the participant IDs carried in a message's mention metadata."""
+    metadata = message_value(message, "metadata")
+    mentions = message_value(metadata, "mentions") or []
+    return {str(message_value(mention, "id")) for mention in mentions}
+
+
+async def fetch_chat_messages(
+    client: AsyncRestClient,
+    room_id: str,
+    page_size: int = 100,
+) -> list[Any]:
+    """Fetch the current durable message log for a room (newest first)."""
+    response = await client.human_api_messages.list_my_chat_messages(
+        room_id,
+        page_size=page_size,
+    )
+    return list(response.data or [])
+
+
+async def participant_ids(client: AsyncRestClient, chat_id: str) -> set[str]:
+    """Fetch participant IDs currently present in a room."""
+    participants = await client.human_api_participants.list_my_chat_participants(
+        chat_id
+    )
+    return {participant.id for participant in (participants.data or [])}
+
+
+async def wait_until_participant_present(
+    client: AsyncRestClient,
+    chat_id: str,
+    participant_id: str,
+    timeout: float,
+) -> None:
+    """Poll until a participant has joined a room."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    last_ids: set[str] = set()
+    while asyncio.get_running_loop().time() < deadline:
+        last_ids = await participant_ids(client, chat_id)
+        if participant_id in last_ids:
+            return
+        await asyncio.sleep(0.5)
+    raise AssertionError(f"Participant {participant_id} never joined: {last_ids}")
+
+
+async def wait_until_participant_absent(
+    client: AsyncRestClient,
+    chat_id: str,
+    participant_id: str,
+    timeout: float,
+) -> None:
+    """Poll until a participant has left a room."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    last_ids: set[str] = set()
+    while asyncio.get_running_loop().time() < deadline:
+        last_ids = await participant_ids(client, chat_id)
+        if participant_id not in last_ids:
+            return
+        await asyncio.sleep(0.5)
+    raise AssertionError(f"Participant {participant_id} remained present: {last_ids}")
+
+
+async def wait_for_new_agent_text_messages(
+    client: AsyncRestClient,
+    room_id: str,
+    agent_id: str,
+    exclude_ids: set[str] | frozenset[str],
+    *,
+    min_count: int = 1,
+    timeout: float,
+    quiet_after: float = 0,
+    page_size: int = 100,
+) -> list[Any]:
+    """Wait for new text messages from an agent after a room snapshot.
+
+    When ``quiet_after`` is set, the helper keeps polling after ``min_count`` is
+    reached and returns only after no additional matching messages appear during
+    that quiet window. This lets live tests assert exact per-turn reply counts
+    without relying on substring matching or WebSocket timing.
+    """
+    deadline = asyncio.get_running_loop().time() + timeout
+    quiet_deadline: float | None = None
+    last_count = 0
+    last_agent_messages: list[Any] = []
+
+    while asyncio.get_running_loop().time() < deadline:
+        messages = await fetch_chat_messages(client, room_id, page_size=page_size)
+        current = agent_text_messages(messages, agent_id, exclude_ids)
+        if len(current) >= min_count:
+            if quiet_after <= 0:
+                return current
+            now = asyncio.get_running_loop().time()
+            if len(current) != last_count:
+                last_count = len(current)
+                quiet_deadline = now + quiet_after
+                last_agent_messages = current
+            elif quiet_deadline is not None and now >= quiet_deadline:
+                return current
+        else:
+            last_agent_messages = current
+        await asyncio.sleep(0.5)
+
+    summary = [
+        {
+            "id": message_value(message, "id"),
+            "content": str(message_value(message, "content") or "")[:160],
+        }
+        for message in last_agent_messages[:12]
+    ]
+    raise TimeoutError(
+        f"Timed out waiting for {min_count} new text message(s) from {agent_id}: "
+        f"{summary}"
+    )
+
+
+async def wait_for_chat_messages(
+    client: AsyncRestClient,
+    room_id: str,
+    predicate: Callable[[list[Any]], bool],
+    timeout: float,
+) -> list[Any]:
+    """Poll durable room history until the expected live E2E state appears."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    last_messages: list[Any] = []
+    while asyncio.get_running_loop().time() < deadline:
+        last_messages = await fetch_chat_messages(client, room_id, page_size=50)
+        if predicate(last_messages):
+            return last_messages
+        await asyncio.sleep(0.5)
+
+    summary = [
+        {
+            "type": message_value(message, "message_type"),
+            "sender_id": message_value(message, "sender_id"),
+            "sender": message_value(message, "sender_name"),
+            "content": str(message_value(message, "content") or "")[:160],
+        }
+        for message in last_messages[:12]
+    ]
+    raise TimeoutError(f"Timed out waiting for expected chat messages: {summary}")
 
 
 def assert_content_contains(
-    messages: list[MessageCreatedPayload],
+    messages: list[Any],
     expected_substring: str,
 ) -> None:
     """Assert at least one message contains the expected substring.
@@ -184,7 +373,7 @@ def assert_content_contains(
     Raises:
         AssertionError: If no message contains the expected substring.
     """
-    contents = [m.content for m in messages]
+    contents = [str(message_value(m, "content") or "") for m in messages]
     found = any(expected_substring.lower() in c.lower() for c in contents)
     assert found, (
         f"Expected at least one message to contain '{expected_substring}', "
@@ -205,7 +394,7 @@ def assert_no_content_contains(
     Raises:
         AssertionError: If any message contains the unexpected substring.
     """
-    contents = [m.content for m in messages]
+    contents = [str(message_value(m, "content") or "") for m in messages]
     found = any(unexpected_substring.lower() in c.lower() for c in contents)
     assert not found, (
         f"Expected no message to contain '{unexpected_substring}', "
@@ -237,7 +426,10 @@ async def run_smoke_test(
     Returns the list of received agent messages for further inspection.
     """
     async with listening_for_agent_responses(
-        ws_client, chat_id, timeout=timeout
+        ws_client,
+        chat_id,
+        timeout=timeout,
+        expected_agent_id=agent_id,
     ) as wait:
         await send_trigger_message(
             api_client, chat_id, "Say hello", agent_name, agent_id
@@ -275,7 +467,10 @@ async def run_tool_execution_test(
     it appears in the response. Returns the received messages.
     """
     async with listening_for_agent_responses(
-        ws_client, chat_id, timeout=timeout
+        ws_client,
+        chat_id,
+        timeout=timeout,
+        expected_agent_id=agent_id,
     ) as wait:
         await send_trigger_message(
             api_client,

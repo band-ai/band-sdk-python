@@ -11,14 +11,19 @@ Configuration is loaded from .env.test with E2E-specific overrides from env vars
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import logging
+import os
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from dotenv import load_dotenv
-from pydantic import ValidationError
+from pydantic import ValidationError, field_validator
 from thenvoi_rest import AsyncRestClient, ChatRoomRequest
 from thenvoi_rest.types import (
     ParticipantRequest,
@@ -26,6 +31,7 @@ from thenvoi_rest.types import (
 from thenvoi_testing.settings import ThenvoiTestSettings
 
 from thenvoi.client.streaming import WebSocketClient
+from thenvoi.client.streaming.errors import WebSocketUpgradeError
 
 from tests.conftest_integration import is_room_alive
 from tests.e2e.helpers import TrackingWebSocketClient
@@ -35,6 +41,48 @@ from tests.e2e.helpers import TrackingWebSocketClient
 _ENV_TEST_PATH = Path(__file__).parent.parent.parent / ".env.test"
 load_dotenv(_ENV_TEST_PATH, override=False)
 
+_PROVIDER_BASE_URL_ENV_VARS = (
+    "OPENAI_BASE_URL",
+    "OPENAI_API_BASE",
+    "OPENAI_API_HOST",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_API_URL",
+)
+
+
+@contextmanager
+def _cleared_provider_base_url_env_vars() -> Generator[None, None, None]:
+    original_values = {
+        name: os.environ.get(name) for name in _PROVIDER_BASE_URL_ENV_VARS
+    }
+    for env_var in _PROVIDER_BASE_URL_ENV_VARS:
+        os.environ.pop(env_var, None)
+    try:
+        yield
+    finally:
+        for env_var, value in original_values.items():
+            if value is None:
+                os.environ.pop(env_var, None)
+            else:
+                os.environ[env_var] = value
+
+
+@pytest.fixture(autouse=True)
+def _clear_provider_base_url_env_vars_for_live_e2e() -> Generator[None, None, None]:
+    """Prevent local provider proxies from affecting live E2E calls.
+
+    The cleanup is scoped to enabled E2E tests and restores the environment after
+    each test so collecting this conftest cannot mutate unrelated test lanes.
+    """
+
+    if os.environ.get("E2E_TESTS_ENABLED") != "true":
+        yield
+        return
+
+    with _cleared_provider_base_url_env_vars():
+        yield
+
+
 if TYPE_CHECKING:
     from tests.e2e.adapters.conftest import AdapterFactory
 
@@ -42,6 +90,56 @@ if TYPE_CHECKING:
 # The 120s timeout is applied via pytest_collection_modifyitems below.
 
 logger = logging.getLogger(__name__)
+
+
+class _E2ERestRateLimiter:
+    def __init__(self, *, requests_per_second: float = 3.0) -> None:
+        self._min_interval = 1.0 / requests_per_second
+        self._lock = asyncio.Lock()
+        self._next_request_at = 0.0
+
+    async def wait(self) -> None:
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            delay = self._next_request_at - now
+            if delay > 0:
+                await asyncio.sleep(delay)
+                now = loop.time()
+            self._next_request_at = now + self._min_interval
+
+
+class _RateLimitedObjectProxy:
+    def __init__(self, target: Any, limiter: _E2ERestRateLimiter) -> None:
+        self._target = target
+        self._limiter = limiter
+        self._cache: dict[str, Any] = {}
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._target, name)
+        if not callable(attr):
+            if attr is None or isinstance(
+                attr,
+                (str, int, float, bool, tuple, list, dict, set),
+            ):
+                return attr
+            if name not in self._cache:
+                self._cache[name] = _RateLimitedObjectProxy(attr, self._limiter)
+            return self._cache[name]
+
+        async def _call(*args: Any, **kwargs: Any) -> Any:
+            await self._limiter.wait()
+            result = attr(*args, **kwargs)
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        return _call
+
+
+@pytest.fixture(scope="session")
+def e2e_rest_rate_limiter() -> _E2ERestRateLimiter:
+    return _E2ERestRateLimiter(requests_per_second=1.0)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -63,8 +161,10 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     timeout_marker = pytest.mark.timeout(120)
     for item in items:
         if Path(item.path).is_relative_to(e2e_dir):
-            item.add_marker(session_marker)
-            item.add_marker(timeout_marker)
+            if inspect.iscoroutinefunction(getattr(item, "obj", None)):
+                item.add_marker(session_marker, append=False)
+            if not list(item.iter_markers(name="timeout")):
+                item.add_marker(timeout_marker)
 
 
 # Platform limits agents to 10 active chat rooms; cap room searches accordingly.
@@ -89,9 +189,35 @@ class E2ESettings(ThenvoiTestSettings):
 
     # E2E-specific settings (override via environment variables)
     e2e_llm_model: str = "gpt-5.4-mini"
-    e2e_anthropic_model: str = "claude-3-haiku-20240307"
+    e2e_anthropic_model: str = "claude-sonnet-4-6"
     e2e_timeout: int = 30
     e2e_tests_enabled: bool = False
+
+    @field_validator("e2e_llm_model")
+    @classmethod
+    def validate_openai_model(cls, value: str) -> str:
+        """Reject placeholder model names before live rooms or agents are created."""
+        if not value or value.strip() != value:
+            raise ValueError("E2E_LLM_MODEL must be a non-empty trimmed model name")
+        if "x.x" in value.lower() or "placeholder" in value.lower():
+            raise ValueError(
+                "E2E_LLM_MODEL must be a concrete model name, not a placeholder"
+            )
+        return value
+
+    @field_validator("e2e_anthropic_model")
+    @classmethod
+    def validate_anthropic_model(cls, value: str) -> str:
+        """Reject placeholder Anthropic model names before live setup begins."""
+        if not value or value.strip() != value:
+            raise ValueError(
+                "E2E_ANTHROPIC_MODEL must be a non-empty trimmed model name"
+            )
+        if "x.x" in value.lower() or "placeholder" in value.lower():
+            raise ValueError(
+                "E2E_ANTHROPIC_MODEL must be a concrete model name, not a placeholder"
+            )
+        return value
 
 
 # =============================================================================
@@ -171,6 +297,7 @@ def e2e_room_summary(e2e_created_room_ids: list[str]) -> Generator[None, None, N
 @pytest.fixture(scope="session")
 def e2e_session_client(
     e2e_config: E2ESettings,
+    e2e_rest_rate_limiter: _E2ERestRateLimiter,
 ) -> AsyncRestClient:
     """Session-scoped REST client shared across all E2E fixtures.
 
@@ -181,15 +308,20 @@ def e2e_session_client(
     if not e2e_config.thenvoi_api_key:
         pytest.skip("THENVOI_API_KEY not set")
 
-    return AsyncRestClient(
+    client = AsyncRestClient(
         api_key=e2e_config.thenvoi_api_key,
         base_url=e2e_config.thenvoi_base_url,
+    )
+    return cast(
+        AsyncRestClient,
+        _RateLimitedObjectProxy(client, e2e_rest_rate_limiter),
     )
 
 
 @pytest.fixture(scope="session")
 def e2e_user_client(
     e2e_config: E2ESettings,
+    e2e_rest_rate_limiter: _E2ERestRateLimiter,
 ) -> AsyncRestClient:
     """Session-scoped REST client authenticated as the User.
 
@@ -200,9 +332,13 @@ def e2e_user_client(
     if not e2e_config.thenvoi_api_key_user:
         pytest.skip("THENVOI_API_KEY_USER not set (needed for user REST client)")
 
-    return AsyncRestClient(
+    client = AsyncRestClient(
         api_key=e2e_config.thenvoi_api_key_user,
         base_url=e2e_config.thenvoi_base_url,
+    )
+    return cast(
+        AsyncRestClient,
+        _RateLimitedObjectProxy(client, e2e_rest_rate_limiter),
     )
 
 
@@ -228,10 +364,89 @@ def api_client(
 RoomAllocator = Callable[[str], Awaitable[tuple[str, str, str]]]
 
 
+@dataclass(frozen=True)
+class E2EAgentCredentials:
+    agent_id: str
+    api_key: str
+    name: str
+
+
+def _adapter_env_prefix(adapter_name: str) -> str:
+    return "E2E_" + adapter_name.upper().replace("-", "_")
+
+
+def _adapter_credentials_from_env(
+    adapter_name: str,
+) -> E2EAgentCredentials | None:
+    prefix = _adapter_env_prefix(adapter_name)
+    agent_id = os.environ.get(f"{prefix}_AGENT_ID")
+    api_key = os.environ.get(f"{prefix}_AGENT_API_KEY")
+    name = os.environ.get(f"{prefix}_AGENT_NAME")
+    if not any((agent_id, api_key, name)):
+        return None
+    missing = [
+        env_name
+        for env_name, value in (
+            (f"{prefix}_AGENT_ID", agent_id),
+            (f"{prefix}_AGENT_API_KEY", api_key),
+            (f"{prefix}_AGENT_NAME", name),
+        )
+        if not value
+    ]
+    if missing:
+        pytest.skip(
+            f"Incomplete {adapter_name} live agent credentials: missing {', '.join(missing)}"
+        )
+    return E2EAgentCredentials(
+        agent_id=cast(str, agent_id),
+        api_key=cast(str, api_key),
+        name=cast(str, name),
+    )
+
+
+@pytest.fixture
+async def e2e_adapter_agent_credentials(
+    adapter_entry: tuple[str, AdapterFactory],
+    e2e_config: E2ESettings,
+    e2e_session_client: AsyncRestClient,
+) -> E2EAgentCredentials:
+    """Agent credentials for the current adapter lane.
+
+    Live matrix runs can set ``E2E_<ADAPTER>_AGENT_ID``,
+    ``E2E_<ADAPTER>_AGENT_API_KEY``, and ``E2E_<ADAPTER>_AGENT_NAME`` to
+    isolate each adapter on its own stable Band identity. If unset, the shared
+    legacy ``TEST_AGENT_ID``/``THENVOI_API_KEY`` identity is used.
+    """
+    adapter_name, _factory = adapter_entry
+    adapter_credentials = _adapter_credentials_from_env(adapter_name)
+    if adapter_credentials is not None:
+        return adapter_credentials
+
+    agent_me = await e2e_session_client.agent_api_identity.get_agent_me()
+    return E2EAgentCredentials(
+        agent_id=agent_me.data.id,
+        api_key=e2e_config.thenvoi_api_key,
+        name=agent_me.data.name,
+    )
+
+
+@pytest.fixture(scope="session")
+async def e2e_user_peer(e2e_session_client: AsyncRestClient) -> Any:
+    """Owner User peer cached once for live E2E room setup."""
+    peers_response = await e2e_session_client.agent_api_peers.list_agent_peers(
+        page_size=100,
+    )
+    user_peer = next((p for p in peers_response.data if p.type == "User"), None)
+    if user_peer is None:
+        pytest.skip("No User peer available for E2E tests")
+    return user_peer
+
+
 @pytest.fixture(scope="session")
 async def e2e_room_allocator(
     e2e_session_client: AsyncRestClient,
     e2e_created_room_ids: list[str],
+    e2e_user_peer: Any,
 ) -> RoomAllocator:
     """Lazy per-adapter room allocator (session-scoped).
 
@@ -248,11 +463,7 @@ async def e2e_room_allocator(
     client = e2e_session_client
     cache: dict[str, tuple[str, str, str]] = {}
 
-    # Find User peer once
-    peers_response = await client.agent_api_peers.list_agent_peers()
-    user_peer = next((p for p in peers_response.data if p.type == "User"), None)
-    if user_peer is None:
-        pytest.skip("No User peer available for E2E tests")
+    user_peer = e2e_user_peer
 
     # Collect existing rooms that are alive and already have this User peer.
     # Rooms can be auto-deleted by the platform's 10-room limit, so we
@@ -317,17 +528,81 @@ async def e2e_room_allocator(
 
 
 @pytest.fixture
+async def e2e_fresh_room(
+    e2e_session_client: AsyncRestClient,
+    e2e_created_room_ids: list[str],
+    e2e_user_peer: Any,
+) -> tuple[str, str, str]:
+    """Create a fresh room for live scenarios whose assertions depend on clean history."""
+    user_peer = e2e_user_peer
+
+    response = await e2e_session_client.agent_api_chats.create_agent_chat(
+        chat=ChatRoomRequest()
+    )
+    if response.data is None:
+        pytest.fail("create_agent_chat returned no data")
+    room_id = response.data.id
+    await e2e_session_client.agent_api_participants.add_agent_chat_participant(
+        room_id,
+        participant=ParticipantRequest(participant_id=user_peer.id, role="member"),
+    )
+    e2e_created_room_ids.append(room_id)
+    logger.info("E2E: Created fresh room %s", room_id)
+    return room_id, user_peer.id, user_peer.name
+
+
+@pytest.fixture(scope="session")
+def e2e_adapter_room_cache() -> dict[tuple[str, str], tuple[str, str, str]]:
+    """Rooms created for adapter-matrix lanes during this E2E session."""
+
+    return {}
+
+
+@pytest.fixture
 async def e2e_adapter_room(
     adapter_entry: tuple[str, AdapterFactory],
-    e2e_room_allocator: RoomAllocator,
+    e2e_config: E2ESettings,
+    e2e_rest_rate_limiter: _E2ERestRateLimiter,
+    e2e_created_room_ids: list[str],
+    e2e_user_peer: Any,
+    e2e_adapter_agent_credentials: E2EAgentCredentials,
+    e2e_adapter_room_cache: dict[tuple[str, str], tuple[str, str, str]],
 ) -> tuple[str, str, str]:
-    """Dedicated room for the current parametrized adapter.
+    """Session-reused room owned by the current parametrized adapter identity.
 
-    Returns (room_id, user_id, user_name). Each adapter gets its own room
-    to avoid cross-adapter contamination in room history.
+    The shared adapter matrix can run each framework under a distinct Band agent.
+    A room created by one agent does not wake a different agent, so each lane
+    gets a room keyed by adapter name and agent id. Reusing that room avoids
+    creating more persistent platform rooms than the live matrix can afford.
     """
     name, _ = adapter_entry
-    return await e2e_room_allocator(name)
+    cache_key = (name, e2e_adapter_agent_credentials.agent_id)
+    if cache_key in e2e_adapter_room_cache:
+        return e2e_adapter_room_cache[cache_key]
+
+    client = cast(
+        AsyncRestClient,
+        _RateLimitedObjectProxy(
+            AsyncRestClient(
+                api_key=e2e_adapter_agent_credentials.api_key,
+                base_url=e2e_config.thenvoi_base_url,
+            ),
+            e2e_rest_rate_limiter,
+        ),
+    )
+    response = await client.agent_api_chats.create_agent_chat(chat=ChatRoomRequest())
+    if response.data is None:
+        pytest.fail(f"create_agent_chat returned no data for {name}")
+    room_id = response.data.id
+    await client.agent_api_participants.add_agent_chat_participant(
+        room_id,
+        participant=ParticipantRequest(participant_id=e2e_user_peer.id, role="member"),
+    )
+    e2e_created_room_ids.append(room_id)
+    result = (room_id, e2e_user_peer.id, e2e_user_peer.name)
+    e2e_adapter_room_cache[cache_key] = result
+    logger.info("E2E: Created adapter room %s for '%s'", room_id, name)
+    return result
 
 
 @pytest.fixture
@@ -394,39 +669,53 @@ async def ws_client(
     if not e2e_config.thenvoi_api_key_user:
         pytest.skip("THENVOI_API_KEY_USER not set (needed for WS observer)")
 
-    ws = WebSocketClient(
-        ws_url=e2e_config.thenvoi_ws_url,
-        api_key=e2e_config.thenvoi_api_key_user,
-        agent_id=None,  # User connection, not agent
-    )
+    for attempt in range(4):
+        ws = WebSocketClient(
+            ws_url=e2e_config.thenvoi_ws_url,
+            api_key=e2e_config.thenvoi_api_key_user,
+            agent_id=None,  # User connection, not agent
+        )
+        try:
+            async with ws:
+                tracking_ws = TrackingWebSocketClient(ws)
+                yield tracking_ws
+                await tracking_ws.cleanup_channels()
+                return
+        except WebSocketUpgradeError as exc:
+            if exc.status_code != 429 or attempt == 3:
+                raise
+            retry_after = exc.retry_after or 5 * (attempt + 1)
+            logger.warning(
+                "E2E observer WebSocket hit HTTP 429; retrying in %ss",
+                retry_after,
+            )
+            await asyncio.sleep(retry_after)
 
-    async with ws:
-        tracking_ws = TrackingWebSocketClient(ws)
-        yield tracking_ws
-        await tracking_ws.cleanup_channels()
 
-
-@pytest.fixture(
-    params=[
-        "langgraph",
-        "anthropic",
-        "pydantic_ai",
-        "claude_sdk",
-        "crewai",
-        "opencode",
-        "letta",
-    ]
+DEFAULT_E2E_ADAPTERS = (
+    "langgraph",
+    "anthropic",
+    "pydantic_ai",
+    "claude_sdk",
+    "opencode",
+    "codex",
+    "letta",
 )
+
+
+@pytest.fixture(params=DEFAULT_E2E_ADAPTERS)
 def adapter_entry(
     request: pytest.FixtureRequest,
 ) -> tuple[str, AdapterFactory]:
     """Parametrized fixture yielding (name, factory) for each adapter.
 
     Defined here (e2e/conftest.py) so both adapters/ and scenarios/ tests
-    share a single definition. The ADAPTER_FACTORIES import is deferred to
-    avoid a circular dependency (adapters/conftest.py imports E2ESettings
-    from this module). The ``AdapterFactory`` type is imported under
-    ``TYPE_CHECKING`` for the same reason.
+    share a single definition. CrewAI is intentionally excluded from this default
+    parametrized lane because its dependencies conflict with the dev environment;
+    run CrewAI coverage in the separate dev-crewai lane. The ADAPTER_FACTORIES
+    import is deferred to avoid a circular dependency (adapters/conftest.py
+    imports E2ESettings from this module). The ``AdapterFactory`` type is
+    imported under ``TYPE_CHECKING`` for the same reason.
     """
     from tests.e2e.adapters.conftest import ADAPTER_FACTORIES
 

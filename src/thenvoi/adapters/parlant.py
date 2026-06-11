@@ -351,10 +351,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
     ) -> int:
         """Inject historical messages into a Parlant session.
 
-        Only injects COMPLETE exchanges (user message + assistant response).
-        User messages without a following assistant response are NOT injected,
-        as they represent pending/unanswered questions that should be handled
-        by the current message flow.
+        Injects every converted historical text turn in chronological order.
+        The current trigger is excluded before conversion, so replaying all history
+        does not reopen the current work item.
         """
         if not self._app:
             return 0
@@ -366,38 +365,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         from parlant.core.app_modules.sessions import Moderation  # type: ignore[missing-import]
         from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]
 
-        # First, filter to only complete exchanges
-        # A user message is only injected if it has a following assistant response
-        complete_history: ParlantMessages = []
-        i = 0
-        while i < len(history):
-            msg = history[i]
-            role = msg.get("role", "user")
-            content = msg.get("content", "")
-
-            if role == "user" and content:
-                # Check if there's a following assistant response
-                if i + 1 < len(history) and history[i + 1].get("role") == "assistant":
-                    # Complete exchange - include both
-                    complete_history.append(msg)
-                    complete_history.append(history[i + 1])
-                    i += 2
-                else:
-                    # User message without response - skip (it's pending)
-                    logger.debug(
-                        "Skipping unanswered user message: %s...", content[:50]
-                    )
-                    i += 1
-            elif role == "assistant" and content:
-                # Standalone assistant message (rare) - include it
-                complete_history.append(msg)
-                i += 1
-            else:
-                i += 1
-
-        # Now inject the filtered history
         count = 0
-        for hist in complete_history:
+        for hist in history:
             role = hist.get("role", "user")
             content = hist.get("content", "")
 

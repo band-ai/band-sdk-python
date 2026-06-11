@@ -10,10 +10,13 @@ Run with:
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import os
+import shlex
+import shutil
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
 import pytest
@@ -21,6 +24,7 @@ import pytest
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Emit
 
+from tests.e2e.baseline_artifacts import provider_usage_blocked_reason
 from tests.e2e.conftest import E2ESettings
 
 logger = logging.getLogger(__name__)
@@ -46,6 +50,14 @@ def _require_anthropic_key() -> None:
         pytest.skip("ANTHROPIC_API_KEY not set")
 
 
+def _is_conflicting_crewai_lane() -> bool:
+    """Detect the default dev lane that cannot safely run CrewAI E2E tests."""
+    return any(
+        importlib.util.find_spec(module_name) is not None
+        for module_name in ("parlant", "pydantic_ai")
+    )
+
+
 def create_langgraph_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a LangGraph adapter with a cheap OpenAI model."""
     _require_openai_key()
@@ -57,7 +69,7 @@ def create_langgraph_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     return LangGraphAdapter(
         llm=ChatOpenAI(model=settings.e2e_llm_model),
         checkpointer=MemorySaver(),
-        custom_section="Keep responses short and concise. Always respond using the thenvoi_send_message tool.",
+        custom_section="Keep responses short and direct.",
     )
 
 
@@ -68,7 +80,7 @@ def create_anthropic_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 
     return AnthropicAdapter(
         model=settings.e2e_anthropic_model,
-        custom_section="Keep responses short and concise.",
+        prompt="Keep responses short and direct.",
     )
 
 
@@ -79,7 +91,7 @@ def create_pydantic_ai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 
     return PydanticAIAdapter(
         model=f"openai:{settings.e2e_llm_model}",
-        custom_section="Keep responses short and concise.",
+        custom_section="Keep responses short and direct.",
     )
 
 
@@ -90,13 +102,16 @@ def create_claude_sdk_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 
     return ClaudeSDKAdapter(
         model=settings.e2e_anthropic_model,
-        custom_section="Keep responses short and concise.",
+        custom_section="Keep responses short and direct.",
     )
 
 
 def create_crewai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a CrewAI adapter with a cheap OpenAI model."""
     _require_openai_key()
+    if _is_conflicting_crewai_lane():
+        pytest.skip("crewai E2E requires the dev-crewai lane")
+    pytest.importorskip("crewai", reason="crewai E2E requires the dev-crewai lane")
     from thenvoi.adapters.crewai import CrewAIAdapter
 
     return CrewAIAdapter(
@@ -150,6 +165,40 @@ def create_opencode_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
+def create_codex_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
+    """Create a Codex adapter backed by the local Codex CLI/app-server."""
+    from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+
+    transport = os.environ.get("CODEX_TRANSPORT", "stdio")
+    if transport not in {"stdio", "ws"}:
+        pytest.skip("CODEX_TRANSPORT must be 'stdio' or 'ws' for Codex E2E")
+
+    command_text = os.environ.get("CODEX_COMMAND")
+    command = tuple(shlex.split(command_text)) if command_text else None
+    binary = command[0] if command else "codex"
+    if transport == "stdio" and not shutil.which(binary):
+        pytest.skip("Codex E2E requires the codex CLI on PATH")
+
+    return CodexAdapter(
+        config=CodexAdapterConfig(
+            transport=cast(Any, transport),
+            codex_command=command,
+            codex_ws_url=os.environ.get("CODEX_WS_URL", "ws://127.0.0.1:8765"),
+            model=os.environ.get("CODEX_MODEL", settings.e2e_llm_model),
+            cwd=os.environ.get("CODEX_CWD", os.getcwd()),
+            approval_policy=os.environ.get("CODEX_APPROVAL_POLICY", "never"),
+            approval_mode=cast(
+                Any,
+                os.environ.get("CODEX_APPROVAL_MODE", "auto_accept"),
+            ),
+            custom_section="Keep responses short and direct.",
+            enable_task_events=False,
+            enable_execution_reporting=False,
+        ),
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
+    )
+
+
 def create_letta_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a Letta adapter backed by Letta Cloud or a self-hosted server."""
     pytest.importorskip("letta_client", reason="letta-client not installed")
@@ -196,8 +245,20 @@ ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
     "crewai": create_crewai_adapter,
     "crewai_flow": create_crewai_flow_adapter,
     "opencode": create_opencode_adapter,
+    "codex": create_codex_adapter,
     "letta": create_letta_adapter,
 }
+
+PROVIDER_USAGE_ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
+    name: factory
+    for name, factory in ADAPTER_FACTORIES.items()
+    if provider_usage_blocked_reason(name) is None
+}
+PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES: tuple[str, ...] = tuple(
+    name
+    for name in ADAPTER_FACTORIES
+    if provider_usage_blocked_reason(name) is not None
+)
 
 # Note: CrewAI Flow and Parlant are excluded from the default parametrized set.
 # CrewAI Flow proves terminal-return side effects in a dedicated file, and

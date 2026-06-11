@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from thenvoi.core.protocols import HistoryConverter
+from thenvoi.core.types import is_text_message_type
 
 from ._tool_parsing import parse_tool_call, parse_tool_result
 
@@ -159,17 +160,15 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
     - tool_result: {"name": "...", "output": "...", "tool_call_id": "...", "is_error": bool}
 
     Note: The adapter creates a fresh InMemoryRunner per message and injects
-    history as a text transcript (via ``_format_history_transcript``), so the
-    structured function_call/function_response blocks produced here are
-    consumed only for transcript formatting and conformance validation, not
-    passed directly to ADK as ``Content`` objects.
+    history as a text transcript via ``_format_history_transcript``. The
+    structured function_call/function_response blocks produced here are an
+    intermediate representation for transcript rendering; they are not passed
+    directly to ADK as ``Content`` objects.
 
-    Why own-agent text is kept (and not dropped as "redundant with tool
-    results"): the agent's text replies are NOT recorded as tool results,
-    they are recorded as ``message_type="text"`` rows.  Dropping them on
-    rehydration leaves the LLM looking at a series of unanswered user
-    messages and re-answering questions it already handled — the bug
-    documented in INT-509 (ADK duplicate response after crash recovery).
+    Why own-agent text is kept: the agent's replies are recorded as
+    ``message_type="text"`` rows, not as tool results. Dropping them on
+    rehydration leaves the model with prior user turns that appear unanswered,
+    which can make a restarted agent answer already-handled messages again.
 
     Own-agent attribution requires a non-empty ``agent_name`` to be set
     via the constructor or ``set_agent_name()``.  Without it, every
@@ -241,7 +240,7 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
                 # Thought and error events are not included in LLM history
                 continue
 
-            elif message_type == "text":
+            elif is_text_message_type(message_type):
                 _flush_pending_tool_calls(messages, pending_tool_calls)
                 _flush_pending_tool_results(messages, pending_tool_results)
 
@@ -294,9 +293,9 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
         prior replies from peer turns.  Peer turns are already prefixed
         with ``[sender_name]:`` by ``convert()``; passing them through
         unchanged keeps the prefix shape uniform across the transcript.
-        Without the own-turn label the bootstrap transcript looks like a
-        series of speakerless lines between peer messages, which is what
-        produced the duplicate-reply behavior in INT-509.
+        Without the own-turn label, a restarted transcript can contain
+        speakerless own replies between peer messages, making prior answered
+        turns look unresolved and inviting duplicate answers.
 
         Tool events render as compact ``[Tool Call]`` / ``[Tool Result]``
         previews so the rehydrated context shows what work was already
@@ -318,6 +317,7 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
                     if block_type == "function_call":
                         lines.append(
                             f"[Tool Call] {block.get('name', 'unknown')}"
+                            f" id={block.get('id', '')}"
                             f" ({json.dumps(block.get('args', {}), default=str)})"
                         )
                     elif block_type == "function_response":
@@ -328,6 +328,7 @@ class GoogleADKHistoryConverter(HistoryConverter[GoogleADKMessages]):
                             else output
                         )
                         lines.append(
-                            f"[Tool Result] {block.get('name', 'unknown')}: {truncated}"
+                            f"[Tool Result] {block.get('name', 'unknown')} "
+                            f"id={block.get('tool_call_id', '')}: {truncated}"
                         )
         return "\n".join(lines)

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from thenvoi.converters._utils import format_replay_message
 from thenvoi.core.protocols import HistoryConverter
+from thenvoi.core.types import is_text_message_type
 
 # Type alias for CrewAI messages (simple dict format)
 CrewAIMessages = list[dict[str, Any]]
@@ -19,8 +21,7 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
     Note:
     - Only converts text messages (tool_call/tool_result events are skipped)
     - User messages include sender name for context
-    - Other agents' messages are included with role "assistant"
-    - This agent's messages are skipped (redundant with CrewAI's internal state)
+    - Agent messages are included with role "assistant" and sender attribution
     """
 
     def __init__(self, agent_name: str = ""):
@@ -50,24 +51,34 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
         for hist in raw:
             message_type = hist.get("message_type", "text")
 
-            # Only convert text messages
-            if message_type != "text":
-                continue
-
             role = hist.get("role", "user")
             content = hist.get("content", "")
             sender_name = hist.get("sender_name", "")
             sender_type = hist.get("sender_type", "User")
 
-            if role == "assistant" and sender_name == self._agent_name:
-                # Skip THIS agent's text (redundant with CrewAI state)
+            if not is_text_message_type(message_type):
+                replay = format_replay_message(hist)
+                if not replay:
+                    continue
+                # Replay lines are already labeled ([Tool Call]: / [Tool
+                # Result]:) — no sender prefix on top.
+                messages.append(
+                    {
+                        "role": "assistant" if message_type == "tool_call" else "user",
+                        "content": replay,
+                        "sender": "System",
+                        "sender_type": "System",
+                    }
+                )
                 continue
-            elif role == "assistant":
-                # Other agents' messages
+
+            if role == "assistant":
                 messages.append(
                     {
                         "role": "assistant",
-                        "content": content,
+                        "content": f"[{sender_name}]: {content}"
+                        if sender_name
+                        else content,
                         "sender": sender_name,
                         "sender_type": sender_type,
                     }

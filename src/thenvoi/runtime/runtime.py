@@ -93,6 +93,7 @@ class AgentRuntime:
         execution_factory: ExecutionFactory | None = None,
         room_filter: Callable[[dict], bool] | None = None,
         session_config: SessionConfig | None = None,
+        auto_subscribe_existing_rooms: bool = True,
         on_session_cleanup: Callable[[str], Awaitable[None]] | None = None,
         on_participant_added: ParticipantAddedCallback | None = None,
         on_participant_removed: ParticipantRemovedCallback | None = None,
@@ -107,6 +108,7 @@ class AgentRuntime:
             execution_factory: Optional factory for custom Execution implementations
             room_filter: Optional filter to decide which rooms to join
             session_config: Configuration for ExecutionContext
+            auto_subscribe_existing_rooms: Subscribe to rooms already present on startup
             on_session_cleanup: Optional callback for session cleanup (receives room_id)
             on_participant_added: Optional callback for participant_added events
             on_participant_removed: Optional callback for participant_removed events
@@ -126,7 +128,11 @@ class AgentRuntime:
         self._hub_room_id: str | None = None
 
         # RoomPresence for cross-room management
-        self.presence = RoomPresence(link, room_filter)
+        self.presence = RoomPresence(
+            link,
+            room_filter,
+            auto_subscribe_existing=auto_subscribe_existing_rooms,
+        )
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}

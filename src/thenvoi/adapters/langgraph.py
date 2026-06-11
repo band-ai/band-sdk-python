@@ -380,6 +380,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             except Exception as e:
                 logger.warning("Failed to send tool_call event: %s", e)
 
+        elif event_type == "on_chat_model_end":
+            self._record_langchain_usage(event)
+
         elif event_type in {"on_tool_end", "on_tool_error"}:
             if Emit.EXECUTION not in self.features.emit:
                 return
@@ -401,6 +404,41 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 )
             except Exception as e:
                 logger.warning("Failed to send tool_result event: %s", e)
+
+    def _record_langchain_usage(self, event: dict[str, Any]) -> None:
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        output = data.get("output")
+        usage_metadata = getattr(output, "usage_metadata", None)
+        response_metadata = getattr(output, "response_metadata", None)
+        token_usage = (
+            response_metadata.get("token_usage")
+            if isinstance(response_metadata, dict)
+            else None
+        )
+        if usage_metadata:
+            input_tokens = usage_metadata.get("input_tokens")
+            output_tokens = usage_metadata.get("output_tokens")
+            total_tokens = usage_metadata.get("total_tokens")
+        elif isinstance(token_usage, dict):
+            input_tokens = token_usage.get("prompt_tokens")
+            output_tokens = token_usage.get("completion_tokens")
+            total_tokens = token_usage.get("total_tokens")
+        else:
+            return
+        self._record_provider_usage(
+            source="langchain.chat_model_end.usage_metadata",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            raw={
+                "usage_metadata": dict(usage_metadata)
+                if isinstance(usage_metadata, dict)
+                else None,
+                "token_usage": dict(token_usage)
+                if isinstance(token_usage, dict)
+                else None,
+            },
+        )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up process-local LangGraph bookkeeping for a room."""

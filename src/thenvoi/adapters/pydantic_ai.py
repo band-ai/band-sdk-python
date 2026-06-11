@@ -6,6 +6,7 @@ Extracted from thenvoi.integrations.pydantic_ai.agent.ThenvoiPydanticAgent.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import warnings
@@ -20,6 +21,8 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     ModelRequest,
+    SystemPromptPart,
+    TextPart,
     UserPromptPart,
 )
 
@@ -149,9 +152,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # (instead of `None`) keeps newer pydantic-ai-slim versions happy —
         # 1.87+ rejects `output_type=None` with `UserError("At least one output
         # type must be provided other than `None`")`.
+        #
+        # `instructions` (not `system_prompt`) because pydantic-ai only
+        # injects `system_prompt` when message_history is empty; rooms that
+        # bootstrap with prior history would otherwise never show the model
+        # its identity or platform instructions. Instructions are re-attached
+        # to every request regardless of history.
         agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
-            system_prompt=system,
+            instructions=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
         )
@@ -460,6 +469,32 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         return agent
 
+    def _replayable_history(self, messages: list[Any]) -> PydanticAIMessages:
+        """Strip provider-native tool parts from history kept across turns.
+
+        Filters at the part level rather than dropping whole messages: the
+        first ModelRequest of a run bundles SystemPromptPart with the user
+        prompt, and pydantic-ai only re-injects system prompts when
+        message_history is empty, so dropping that message would silently
+        remove the system prompt (and the first user turn) from every
+        subsequent run.
+        """
+        replayable: PydanticAIMessages = []
+        for message in messages:
+            parts = getattr(message, "parts", [])
+            safe_parts = [
+                part
+                for part in parts
+                if isinstance(part, (SystemPromptPart, TextPart, UserPromptPart))
+            ]
+            if not safe_parts:
+                continue
+            if len(safe_parts) == len(parts):
+                replayable.append(message)
+            else:
+                replayable.append(dataclasses.replace(message, parts=safe_parts))
+        return replayable
+
     # --- Adapted from ThenvoiPydanticAgent._handle_message ---
     async def on_message(
         self,
@@ -556,8 +591,24 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     except Exception as e:
                         logger.warning("Failed to send tool_result event: %s", e)
             elif isinstance(event, AgentRunResultEvent):
-                # Update stored history with all messages from this run
-                self._message_history[room_id] = list(event.result.all_messages())
+                usage = event.result.usage()
+                self._record_provider_usage(
+                    source="pydantic_ai.agent_run_result.usage",
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    total_tokens=usage.total_tokens,
+                    api_call_count=usage.requests,
+                    raw={
+                        "requests": usage.requests,
+                        "input_tokens": usage.input_tokens,
+                        "output_tokens": usage.output_tokens,
+                        "total_tokens": usage.total_tokens,
+                    },
+                )
+                # Update stored history with replay-safe text/user messages only.
+                self._message_history[room_id] = self._replayable_history(
+                    list(event.result.all_messages())
+                )
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",

@@ -23,7 +23,7 @@ from thenvoi_rest import (
     AgentRegisterRequest,
     AsyncRestClient,
     ChatMessageRequest,
-    ChatRoomRequest,
+    CreateMyChatRoomRequestChat,
 )
 from thenvoi_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
@@ -86,11 +86,11 @@ def _require_env(name: str) -> str:
 
 def _make_adapter() -> LangGraphAdapter:
     return LangGraphAdapter(
-        llm=ChatOpenAI(model=os.environ.get("E2E_LLM_MODEL", "gpt-4o-mini")),
+        llm=ChatOpenAI(model=os.environ.get("E2E_LLM_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
         custom_section=(
-            "Keep responses short. Always reply by calling thenvoi_send_message. "
-            "If asked what nonce to remember, answer with exactly that nonce."
+            "Keep responses short. If asked what nonce to remember, answer with "
+            "exactly that nonce."
         ),
     )
 
@@ -111,21 +111,19 @@ async def _register_temporary_agent(user_client: AsyncRestClient) -> TemporaryAg
     )
 
 
-async def _create_room_with_owner(agent_client: AsyncRestClient) -> tuple[str, str]:
-    peers_response = await agent_client.agent_api_peers.list_agent_peers()
-    user_peer = next((p for p in peers_response.data or [] if p.type == "User"), None)
-    if user_peer is None:
-        pytest.fail("No owner User peer available for temporary agent")
-
-    chat_response = await agent_client.agent_api_chats.create_agent_chat(
-        chat=ChatRoomRequest()
+async def _create_room_with_agent(
+    user_client: AsyncRestClient,
+    agent: TemporaryAgent,
+) -> str:
+    chat_response = await user_client.human_api_chats.create_my_chat_room(
+        chat=CreateMyChatRoomRequestChat()
     )
     room_id = chat_response.data.id
-    await agent_client.agent_api_participants.add_agent_chat_participant(
-        room_id,
-        participant=ParticipantRequest(participant_id=user_peer.id, role="member"),
+    await user_client.human_api_participants.add_my_chat_participant(
+        chat_id=room_id,
+        participant=ParticipantRequest(participant_id=agent.agent_id, role="member"),
     )
-    return room_id, user_peer.id
+    return room_id
 
 
 async def _send_user_message(
@@ -158,17 +156,23 @@ async def _wait_for_agent_messages(
         await asyncio.wait_for(observer.ready.wait(), timeout=timeout)
 
     if quiet_after_first:
-        await asyncio.sleep(quiet_after_first)
+        observer.ready.clear()
+        try:
+            await asyncio.wait_for(observer.ready.wait(), timeout=quiet_after_first)
+        except TimeoutError:
+            pass
     return list(observer.received)
 
 
-@pytest.mark.asyncio
-@requires_e2e
-@pytest.mark.skipif(
-    os.environ.get("LANGGRAPH_RESTART_SMOKE", "").lower() != "true",
-    reason="LANGGRAPH_RESTART_SMOKE=true is required for the live restart smoke",
-)
-async def test_langgraph_answers_down_message_once_after_restart() -> None:
+async def _wait_for_quiet_agent(observer: AgentMessageObserver, timeout: float) -> None:
+    observer.ready.clear()
+    try:
+        await asyncio.wait_for(observer.ready.wait(), timeout=timeout)
+    except TimeoutError:
+        return
+
+
+async def run_langgraph_answers_down_message_once_after_restart() -> None:
     base_url = os.environ.get("THENVOI_BASE_URL") or os.environ.get("THENVOI_REST_URL")
     if not base_url:
         pytest.skip("THENVOI_BASE_URL or THENVOI_REST_URL is required")
@@ -186,8 +190,7 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
 
     try:
         agent = await _register_temporary_agent(user_client)
-        agent_client = AsyncRestClient(api_key=agent.api_key, base_url=base_url)
-        room_id, _owner_user_id = await _create_room_with_owner(agent_client)
+        room_id = await _create_room_with_agent(user_client, agent)
 
         ws = WebSocketClient(ws_url=ws_url, api_key=user_key, agent_id=None)
         async with ws:
@@ -206,7 +209,7 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
                         user_client,
                         room_id,
                         agent,
-                        f"Remember this nonce: {nonce}. Reply that you will remember it.",
+                        f"Remember this nonce: {nonce}. Reply with exactly this nonce.",
                     )
                     first_responses = await _wait_for_agent_messages(
                         observer,
@@ -220,7 +223,7 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
                 user_client,
                 room_id,
                 agent,
-                "What nonce did I ask you to remember? Reply with just the nonce.",
+                "What nonce did I ask you to remember? Reply with 'RECALL:' followed by the nonce.",
             )
 
             async with _agent_message_observer(ws, room_id, agent.agent_id) as observer:
@@ -241,7 +244,9 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
 
             restart_contents = [r.content for r in restart_responses]
             assert len(restart_responses) == 1, restart_contents
-            assert nonce.lower() in restart_responses[0].content.lower()
+            restart_content = restart_responses[0].content.lower()
+            assert "recall:" in restart_content
+            assert nonce.lower() in restart_content
 
             async with _agent_message_observer(ws, room_id, agent.agent_id) as observer:
                 second_restart_agent = Agent.create(
@@ -252,7 +257,7 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
                     rest_url=base_url,
                 )
                 async with second_restart_agent:
-                    await asyncio.sleep(10)
+                    await _wait_for_quiet_agent(observer, timeout=10)
                     quiet_responses = list(observer.received)
 
             assert quiet_responses == []
@@ -277,3 +282,13 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
                 )
             except Exception:
                 logger.exception("Failed to delete temporary LangGraph smoke agent")
+
+
+@pytest.mark.asyncio
+@requires_e2e
+@pytest.mark.skipif(
+    os.environ.get("LANGGRAPH_RESTART_SMOKE", "").lower() != "true",
+    reason="LANGGRAPH_RESTART_SMOKE=true is required for the live restart smoke",
+)
+async def test_langgraph_answers_down_message_once_after_restart() -> None:
+    await run_langgraph_answers_down_message_once_after_restart()

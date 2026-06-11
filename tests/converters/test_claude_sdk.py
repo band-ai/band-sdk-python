@@ -141,8 +141,7 @@ class TestToolEventHandling:
 
         result = converter.convert(raw)
 
-        # Raw JSON is included as-is
-        assert result.text == tool_result_json
+        assert result.text == f"[Tool Result]: {tool_result_json}"
 
     def test_tool_events_included_regardless_of_agent_name(self):
         """Tool events are included as raw JSON regardless of agent_name."""
@@ -157,7 +156,7 @@ class TestToolEventHandling:
 
         result = converter.convert(raw)
 
-        assert result.text == tool_call_json
+        assert result.text == f"[Tool Call]: {tool_call_json}"
 
     def test_skips_empty_tool_call_content(self):
         """Should skip tool_call with empty content."""
@@ -338,7 +337,7 @@ class TestMixedHistory:
                 "content": tool_result_json,
                 "message_type": "tool_result",
             },
-            # Agent responds with text (skipped - redundant)
+            # Agent responds with text (preserved for transcript rehydration)
             {
                 "role": "assistant",
                 "content": "It's sunny today!",
@@ -362,8 +361,8 @@ class TestMixedHistory:
         # Should include raw tool event JSON
         assert tool_call_json in result.text
         assert tool_result_json in result.text
-        # Should NOT include own text message
-        assert "It's sunny today!" not in result.text
+        # Should include own text message as chronological transcript history.
+        assert "[WeatherAgent]: It's sunny today!" in result.text
 
     def test_multi_agent_conversation(self):
         """Handles multiple agents in conversation."""
@@ -393,8 +392,8 @@ class TestMixedHistory:
 
         assert "[Alice]: Hi team!" in result.text
         assert "[OtherAgent]: Hello!" in result.text
-        # Own message skipped
-        assert "Hi Alice!" not in result.text
+        # Own message is preserved as chronological transcript history.
+        assert "[MyAgent]: Hi Alice!" in result.text
 
     def test_preserves_message_order(self):
         """Messages appear in the same order as input."""

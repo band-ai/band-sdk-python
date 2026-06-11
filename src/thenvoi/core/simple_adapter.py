@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from thenvoi.core.protocols import AgentToolsProtocol, HistoryConverter
@@ -19,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 # Type variable for history type - bound by converter
 H = TypeVar("H")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProviderUsageSnapshot:
+    """Provider-owned usage for one model/API response."""
+
+    source: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    api_call_count: int = 1
+    cost_usd: float | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 class SimpleAdapter(Generic[H], ABC):
@@ -76,6 +90,49 @@ class SimpleAdapter(Generic[H], ABC):
         self.features = features or AdapterFeatures()
         self.agent_name: str = ""
         self.agent_description: str = ""
+        self._provider_usage_snapshots: list[ProviderUsageSnapshot] = []
+
+    def clear_provider_usage(self) -> None:
+        """Clear provider usage snapshots recorded by previous model calls."""
+
+        self._provider_usage_snapshots.clear()
+
+    def provider_usage_snapshots(self) -> list[ProviderUsageSnapshot]:
+        """Return provider-owned usage snapshots recorded by this adapter."""
+
+        return list(self._provider_usage_snapshots)
+
+    def _record_provider_usage(
+        self,
+        *,
+        source: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        total_tokens: int | None = None,
+        api_call_count: int = 1,
+        cost_usd: float | None = None,
+        raw: dict[str, Any] | None = None,
+    ) -> None:
+        """Record provider-owned model/API usage when a framework exposes it."""
+
+        if input_tokens is None or output_tokens is None:
+            return
+        if input_tokens < 0 or output_tokens < 0 or api_call_count <= 0:
+            return
+        resolved_total = total_tokens
+        if resolved_total is None or resolved_total < input_tokens + output_tokens:
+            resolved_total = input_tokens + output_tokens
+        self._provider_usage_snapshots.append(
+            ProviderUsageSnapshot(
+                source=source,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=resolved_total,
+                api_call_count=api_call_count,
+                cost_usd=cost_usd,
+                raw=raw or {},
+            )
+        )
 
     @abstractmethod
     async def on_message(

@@ -4,9 +4,9 @@ Verifies that each adapter can:
 - Start, process a message, and stop against a real platform
 - Execute platform tools (send_message)
 
-Adapters tested: langgraph, anthropic, pydantic_ai, claude_sdk, crewai,
-opencode, letta. CrewAI Flow and Parlant have dedicated E2E files because they
-exercise narrower adapter-specific contracts.
+Adapters tested: langgraph, anthropic, pydantic_ai, claude_sdk, opencode,
+codex, letta. CrewAI, CrewAI Flow, and Parlant have dedicated E2E files because they
+need separate dependency or adapter-specific lanes.
 
 Run with:
     E2E_TESTS_ENABLED=true uv run pytest tests/e2e/adapters/ -v -s --no-cov
@@ -25,7 +25,7 @@ from thenvoi_rest import AsyncRestClient
 from thenvoi.agent import Agent
 
 from tests.e2e.adapters.conftest import AdapterFactory
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.conftest import E2EAgentCredentials, E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     run_smoke_test,
@@ -43,6 +43,7 @@ class TestAdapterE2E:
         self,
         e2e_config: E2ESettings,
         adapter_entry: tuple[str, AdapterFactory],
+        e2e_adapter_agent_credentials: E2EAgentCredentials,
     ) -> AsyncGenerator[tuple[str, Agent], None]:
         """Create and start an agent from the parametrized adapter factory.
 
@@ -54,8 +55,8 @@ class TestAdapterE2E:
 
         agent = Agent.create(
             adapter=adapter,
-            agent_id=e2e_config.test_agent_id,
-            api_key=e2e_config.thenvoi_api_key,
+            agent_id=e2e_adapter_agent_credentials.agent_id,
+            api_key=e2e_adapter_agent_credentials.api_key,
             ws_url=e2e_config.thenvoi_ws_url,
             rest_url=e2e_config.thenvoi_base_url,
         )
@@ -68,15 +69,16 @@ class TestAdapterE2E:
         self,
         e2e_config: E2ESettings,
         e2e_adapter_room: tuple[str, str, str],
-        e2e_agent_info: tuple[str, str],
+        e2e_adapter_agent_credentials: E2EAgentCredentials,
         ws_client: TrackingWebSocketClient,
         running_agent: tuple[str, Agent],
         api_client: AsyncRestClient,
     ):
         """Smoke test: agent starts, receives a message, and responds."""
-        adapter_name, agent = running_agent
+        adapter_name, _agent = running_agent
         chat_id, _user_id, _user_name = e2e_adapter_room
-        agent_id, agent_name = e2e_agent_info
+        agent_id = e2e_adapter_agent_credentials.agent_id
+        agent_name = e2e_adapter_agent_credentials.name
 
         await run_smoke_test(
             ws_client,
@@ -93,15 +95,16 @@ class TestAdapterE2E:
         self,
         e2e_config: E2ESettings,
         e2e_adapter_room: tuple[str, str, str],
-        e2e_agent_info: tuple[str, str],
+        e2e_adapter_agent_credentials: E2EAgentCredentials,
         ws_client: TrackingWebSocketClient,
         running_agent: tuple[str, Agent],
         api_client: AsyncRestClient,
     ):
-        """Verify the agent uses thenvoi_send_message tool to respond."""
-        adapter_name, agent = running_agent
+        """Verify the agent sends a visible chat response."""
+        adapter_name, _agent = running_agent
         chat_id, _user_id, _user_name = e2e_adapter_room
-        agent_id, agent_name = e2e_agent_info
+        agent_id = e2e_adapter_agent_credentials.agent_id
+        agent_name = e2e_adapter_agent_credentials.name
 
         await run_tool_execution_test(
             ws_client,

@@ -23,7 +23,7 @@ from thenvoi_rest import AsyncRestClient
 from thenvoi.agent import Agent
 
 from tests.e2e.adapters.conftest import AdapterFactory
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.conftest import E2EAgentCredentials, E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     assert_content_contains,
@@ -49,7 +49,7 @@ class TestRoomIsolation:
         api_client: AsyncRestClient,
         e2e_adapter_room: tuple[str, str, str],
         e2e_isolation_room_b: tuple[str, str, str],
-        e2e_agent_info: tuple[str, str],
+        e2e_adapter_agent_credentials: E2EAgentCredentials,
     ):
         """Agents in different rooms don't see each other's context.
 
@@ -66,7 +66,8 @@ class TestRoomIsolation:
         """
         adapter_name, factory = adapter_entry
         timeout = e2e_config.e2e_timeout
-        agent_id, agent_name = e2e_agent_info
+        agent_id = e2e_adapter_agent_credentials.agent_id
+        agent_name = e2e_adapter_agent_credentials.name
 
         # Unique keywords per adapter AND per run to prevent stale history
         # from confusing the LLM in rooms that persist across test sessions.
@@ -89,8 +90,8 @@ class TestRoomIsolation:
         adapter = factory(e2e_config)
         agent = Agent.create(
             adapter=adapter,
-            agent_id=e2e_config.test_agent_id,
-            api_key=e2e_config.thenvoi_api_key,
+            agent_id=agent_id,
+            api_key=e2e_adapter_agent_credentials.api_key,
             ws_url=e2e_config.thenvoi_ws_url,
             rest_url=e2e_config.thenvoi_base_url,
         )
@@ -100,7 +101,11 @@ class TestRoomIsolation:
             # Sequential to avoid flakiness: a single agent processes one
             # room at a time, so concurrent sends can cause timeouts.
             async with listening_for_agent_responses(
-                ws_client, room_a_id, timeout=timeout, raise_on_timeout=True
+                ws_client,
+                room_a_id,
+                timeout=timeout,
+                raise_on_timeout=True,
+                expected_agent_id=agent_id,
             ) as wait:
                 await send_trigger_message(
                     api_client,
@@ -112,7 +117,11 @@ class TestRoomIsolation:
                 room_a_phase1 = await wait()
 
             async with listening_for_agent_responses(
-                ws_client, room_b_id, timeout=timeout, raise_on_timeout=True
+                ws_client,
+                room_b_id,
+                timeout=timeout,
+                raise_on_timeout=True,
+                expected_agent_id=agent_id,
             ) as wait:
                 await send_trigger_message(
                     api_client,
@@ -132,7 +141,11 @@ class TestRoomIsolation:
 
             # --- Phase 2: Query each room and verify isolation ---
             async with listening_for_agent_responses(
-                ws_client, room_a_id, timeout=timeout, raise_on_timeout=True
+                ws_client,
+                room_a_id,
+                timeout=timeout,
+                raise_on_timeout=True,
+                expected_agent_id=agent_id,
             ) as wait:
                 await send_trigger_message(
                     api_client,
@@ -144,7 +157,11 @@ class TestRoomIsolation:
                 room_a_received = await wait()
 
             async with listening_for_agent_responses(
-                ws_client, room_b_id, timeout=timeout, raise_on_timeout=True
+                ws_client,
+                room_b_id,
+                timeout=timeout,
+                raise_on_timeout=True,
+                expected_agent_id=agent_id,
             ) as wait:
                 await send_trigger_message(
                     api_client,

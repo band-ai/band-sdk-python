@@ -93,7 +93,7 @@ class OpencodeAdapterConfig:
     agent: str | None = None
     variant: str | None = None
     custom_section: str = ""
-    include_base_instructions: bool = False
+    include_base_instructions: bool = True
     enable_task_events: bool = True
     enable_execution_reporting: bool = False
     enable_memory_tools: bool = False
@@ -286,6 +286,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         replay_messages=(
                             history.replay_messages
                             if restored_missing_session
+                            or (is_session_bootstrap and created)
                             else None
                         ),
                     ),
@@ -679,8 +680,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             await room_state.tools.send_message(
                 (
                     f"OpenCode approval requested for `{pending.permission}` "
-                    f"({pattern_text}). Reply with `approve {request_id}`, "
-                    f"`always {request_id}`, or `reject {request_id}`."
+                    f"({pattern_text}). Reply with `/approve {request_id}`, "
+                    f"`/always {request_id}`, or `/reject {request_id}`."
                 )
             )
         self._release_turn_wait(room_state)
@@ -734,7 +735,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         if room_state.pending_question:
             pending_request_id = room_state.pending_question.request_id
-            if lowered in {"reject", "/reject"}:
+            if lowered == "/reject":
                 await self._reject_question(room_state)
                 if room_state.tools:
                     await room_state.tools.send_message(
@@ -742,13 +743,17 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     )
                 return True
 
-            answers = self._parse_question_answers(content, room_state.pending_question)
+            answers = self._parse_question_answers(
+                content,
+                room_state.pending_question,
+            )
             if answers is None:
                 if room_state.tools:
                     await room_state.tools.send_message(
                         (
-                            "OpenCode is waiting for answers. Reply with one line per "
-                            "question, or `reject` to reject the question."
+                            "OpenCode is waiting for answers. Reply with `/answer` "
+                            "followed by one line per question, or `/reject` to "
+                            "reject the question."
                         )
                     )
                 return True
@@ -1132,13 +1137,21 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def _parse_question_answers(
         self, content: str, pending: _PendingQuestion
     ) -> list[list[str]] | None:
-        if len(pending.questions) == 1:
-            return [[content.strip()]]
-
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        if len(lines) < len(pending.questions):
+        stripped = content.strip()
+        if not stripped:
             return None
-        return [[line] for line in lines[: len(pending.questions)]]
+
+        first_line, *remaining_lines = stripped.splitlines()
+        first_tokens = first_line.split(maxsplit=1)
+        if not first_tokens or first_tokens[0].lower() != "/answer":
+            return None
+
+        first_answer = first_tokens[1].strip() if len(first_tokens) > 1 else ""
+        answer_lines = [first_answer, *(line.strip() for line in remaining_lines)]
+        answer_lines = [line for line in answer_lines if line]
+        if len(answer_lines) < len(pending.questions):
+            return None
+        return [[line] for line in answer_lines[: len(pending.questions)]]
 
     def _format_question_prompt(
         self, questions: list[dict[str, Any]], request_id: str
@@ -1147,7 +1160,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         for index, question in enumerate(questions, start=1):
             question_text = str(question.get("question") or "Question")
             prompt_lines.append(f"{index}. {question_text}")
-        prompt_lines.append("Reply with one line per question, or `reject`.")
+        prompt_lines.append(
+            "Reply with `/answer` followed by one line per question, or `/reject`."
+        )
         return "\n".join(prompt_lines)
 
     def _format_http_error(self, exc: httpx.HTTPStatusError) -> str:

@@ -7,11 +7,17 @@ from datetime import datetime
 from typing import Any
 
 from thenvoi.core.protocols import Preprocessor
-from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
+from thenvoi.core.types import (
+    AgentInput,
+    HistoryProvider,
+    PlatformMessage,
+    is_text_message_type,
+)
 from thenvoi.platform.event import MessageEvent, PlatformEvent
 from thenvoi.runtime.execution import ExecutionContext
 from thenvoi.runtime.tools import AgentTools
 from thenvoi.runtime.formatters import format_history_for_llm
+from thenvoi.runtime.types import SYNTHETIC_CONTACT_EVENTS_SENDER_ID
 from thenvoi.integrations.base import check_and_format_participants
 
 logger = logging.getLogger(__name__)
@@ -23,11 +29,21 @@ class DefaultPreprocessor(Preprocessor):
 
     Handles:
     - Self-message filtering
+    - Mention gating (mentions are the only way to wake an agent)
     - Event to PlatformMessage conversion (using tagged union pattern matching)
     - Session bootstrap detection + history loading (respects enable_context_hydration)
     - Participant change detection
     - AgentTools creation
     """
+
+    def __init__(self, *, require_mention: bool = True) -> None:
+        """
+        Args:
+            require_mention: When True (default), unmentioned room text does not
+                wake the agent. Set False to process every room text message
+                (pre-mention-gate behavior).
+        """
+        self._require_mention = require_mention
 
     async def process(
         self,
@@ -55,6 +71,15 @@ class DefaultPreprocessor(Preprocessor):
         # Skip messages from self
         if msg_data.sender_type == "Agent" and msg_data.sender_id == agent_id:
             logger.debug("Room %s: Skipping own message %s", room_id, msg_data.id)
+            return None
+
+        if not self._should_wake_agent(ctx, msg_data, agent_id):
+            logger.debug(
+                "Room %s: Skipping message %s because it does not mention agent %s",
+                room_id,
+                msg_data.id,
+                agent_id,
+            )
             return None
 
         # Look up sender name from participants list
@@ -102,6 +127,54 @@ class DefaultPreprocessor(Preprocessor):
             is_session_bootstrap=is_bootstrap,
             room_id=room_id,
         )
+
+    def _should_wake_agent(
+        self,
+        ctx: ExecutionContext,
+        msg_data: Any,
+        agent_id: str,
+    ) -> bool:
+        """Return whether an inbound platform message should trigger this agent."""
+        if not is_text_message_type(msg_data.message_type):
+            return False
+
+        if not self._require_mention:
+            return True
+
+        if msg_data.sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID:
+            return True
+
+        metadata = msg_data.metadata
+        mentions = getattr(metadata, "mentions", None)
+        if mentions is None and isinstance(metadata, dict):
+            mentions = metadata.get("mentions")
+        if not mentions:
+            return False
+
+        agent_handles = {
+            str(participant.get(field, "")).lstrip("@")
+            for participant in ctx.participants
+            for field in ("handle", "username")
+            if participant.get("id") == agent_id and participant.get(field)
+        }
+        for mention in mentions:
+            mention_id = self._mention_field(mention, "id")
+            if str(mention_id) == agent_id:
+                return True
+
+            for field in ("handle", "username"):
+                value = self._mention_field(mention, field)
+                if value and str(value).lstrip("@") in agent_handles:
+                    return True
+
+        return False
+
+    @staticmethod
+    def _mention_field(mention: Any, field: str) -> Any:
+        value = getattr(mention, field, None)
+        if value is None and isinstance(mention, dict):
+            value = mention.get(field)
+        return value
 
     def _drain_system_messages(self, ctx: ExecutionContext) -> str | None:
         """Drain pending system messages from context.

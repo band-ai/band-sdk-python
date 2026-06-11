@@ -35,17 +35,47 @@ _SRC_ROOT = _REPO_ROOT / "src" / "thenvoi"
 
 def _discover_adapter_modules() -> set[str]:
     adapter_dir = _SRC_ROOT / "adapters"
-    return {
-        p.stem
-        for p in adapter_dir.iterdir()
-        if p.suffix == ".py" and p.name != "__init__.py"
-    }
+    modules: set[str] = set()
+    for p in adapter_dir.iterdir():
+        if p.suffix == ".py" and p.name != "__init__.py":
+            modules.add(p.stem)
+        elif p.is_dir() and (p / "__init__.py").is_file():
+            # Package-style adapters (e.g. adapters/codex/) must also be bound
+            # or excluded — a package-only adapter cannot skip the gate.
+            modules.add(p.name)
+    return modules
+
+
+def _literal_string_sequence(node: ast.AST) -> set[str]:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        raise AssertionError(
+            "tests/e2e/conftest.py adapter_entry params must be a literal "
+            "adapter-name sequence"
+        )
+
+    adapters: set[str] = set()
+    for elt in node.elts:
+        if not isinstance(elt, ast.Constant) or not isinstance(elt.value, str):
+            raise AssertionError(
+                "tests/e2e/conftest.py adapter_entry params must contain only "
+                "literal adapter-name strings"
+            )
+        adapters.add(elt.value)
+    return adapters
 
 
 def _e2e_parametrized_adapters() -> set[str]:
     """Read the shared E2E adapter matrix without importing optional deps."""
     conftest = _REPO_ROOT / "tests" / "e2e" / "conftest.py"
     tree = ast.parse(conftest.read_text(encoding="utf-8"), filename=str(conftest))
+    module_constants: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    module_constants[target.id] = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            module_constants[node.target.id] = node.value
 
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef) or node.name != "adapter_entry":
@@ -62,23 +92,12 @@ def _e2e_parametrized_adapters() -> set[str]:
             ):
                 continue
             for keyword in decorator.keywords:
-                if keyword.arg == "params" and isinstance(
-                    keyword.value, (ast.List, ast.Tuple)
-                ):
-                    adapters: set[str] = set()
-                    for elt in keyword.value.elts:
-                        if not isinstance(elt, ast.Constant) or not isinstance(
-                            elt.value, str
-                        ):
-                            raise AssertionError(
-                                "tests/e2e/conftest.py adapter_entry params must be "
-                                "literal adapter-name strings"
-                            )
-                        adapters.add(elt.value)
-                    return adapters
-    raise AssertionError(
-        "Could not find pytest.fixture(params=[...]) for adapter_entry"
-    )
+                if keyword.arg != "params":
+                    continue
+                if isinstance(keyword.value, ast.Name):
+                    return _literal_string_sequence(module_constants[keyword.value.id])
+                return _literal_string_sequence(keyword.value)
+    raise AssertionError("Could not find pytest.fixture(params=...) for adapter_entry")
 
 
 class SeamNotFound(Exception):

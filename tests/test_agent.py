@@ -432,7 +432,11 @@ class TestStartupRaceCondition:
     @pytest.mark.asyncio
     async def test_adapter_on_started_before_first_message(self):
         """System prompt must be set before any message processing."""
-        from thenvoi.client.streaming import MessageCreatedPayload, MessageMetadata
+        from thenvoi.client.streaming import (
+            MessageCreatedPayload,
+            MessageMetadata,
+            Mention,
+        )
         from thenvoi.platform.event import MessageEvent
         from thenvoi.runtime.types import ConversationContext
         from datetime import datetime, timezone
@@ -511,7 +515,10 @@ class TestStartupRaceCondition:
                         sender_id="user-1",
                         sender_type="User",
                         message_type="text",
-                        metadata=MessageMetadata(mentions=[], status="sent"),
+                        metadata=MessageMetadata(
+                            mentions=[Mention(id="agent-123", handle="test-bot")],
+                            status="sent",
+                        ),
                         chat_room_id="room-123",
                         inserted_at=datetime.now(timezone.utc).isoformat(),
                         updated_at=datetime.now(timezone.utc).isoformat(),

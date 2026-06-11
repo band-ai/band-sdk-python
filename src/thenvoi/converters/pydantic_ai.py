@@ -11,6 +11,7 @@ try:
         RetryPromptPart,
         ToolCallPart,
         ToolReturnPart,
+        TextPart,
         UserPromptPart,
     )
 except ImportError as e:
@@ -20,6 +21,7 @@ except ImportError as e:
     ) from e
 
 from thenvoi.core.protocols import HistoryConverter
+from thenvoi.core.types import is_text_message_type
 
 from ._tool_parsing import parse_tool_call, parse_tool_result
 
@@ -61,7 +63,7 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
     - other agents' messages → ModelRequest with UserPromptPart (with [name] prefix)
     - tool_call → ModelResponse with ToolCallPart
     - tool_result → ModelRequest with ToolReturnPart (or RetryPromptPart if is_error=True)
-    - this agent's text messages → skipped (redundant with tool results)
+    - this agent's text messages → ModelResponse with TextPart
 
     Tool events are stored in platform as JSON:
     - tool_call: {"name": "...", "args": {...}, "tool_call_id": "..."}
@@ -140,7 +142,7 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
                         )
                     pending_tool_results.append(tool_result_part)
 
-            elif message_type == "text":
+            elif is_text_message_type(message_type):
                 # Flush pending tool calls and results first
                 _flush_pending_tool_calls(messages, pending_tool_calls)
                 _flush_pending_tool_results(messages, pending_tool_results)
@@ -148,14 +150,17 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
                 role = hist.get("role", "user")
                 sender_name = hist.get("sender_name", "")
 
-                if role == "assistant" and sender_name == self._agent_name:
-                    # Skip THIS agent's text (redundant with tool results)
-                    continue
+                formatted_content = (
+                    f"[{sender_name}]: {content}" if sender_name else content
+                )
+                if (
+                    role == "assistant"
+                    and self._agent_name
+                    and sender_name == self._agent_name
+                ):
+                    messages.append(ModelResponse(parts=[TextPart(content=content)]))
                 else:
                     # User messages AND other agents' messages
-                    formatted_content = (
-                        f"[{sender_name}]: {content}" if sender_name else content
-                    )
                     messages.append(
                         ModelRequest(parts=[UserPromptPart(content=formatted_content)])
                     )

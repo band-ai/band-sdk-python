@@ -1,10 +1,10 @@
-"""The Tier-1 ``InjectionBinding`` registry (INT-826 / INT-827).
+"""The Tier-1 ``InjectionBinding`` registry.
 
 This is the single source of truth for *how every adapter participates in Tier-1
 conformance*: which family it belongs to, the declared seam its translator
 installs at, where dispatch is observed, and — for the adapters that have no honest
-in-isolation seam — the recorded N-A reason plus the Tier-2/E2E test that
-compensates.
+in-isolation seam — the recorded N-A reason plus the live E2E lane that can be
+expanded into scenario-equivalent Tier-2 evidence.
 
 The companion ``test_injection_binding_drift.py`` fail-closes on this registry: a
 new adapter cannot be added without declaring a binding, an honest binding cannot
@@ -106,7 +106,7 @@ class InjectionBinding:
     # RUNTIME_OWNED_ROUTING (N_A_TIER2):
     na_subreason: NASubreason | None = None
     tier2_coverage: str | None = (
-        None  # repo-relative path to the compensating E2E/integration test
+        None  # repo-relative path to the candidate live E2E/integration lane
     )
 
     def is_honest(self) -> bool:
@@ -195,7 +195,7 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.N_A_TIER2,
         drift_risk=DriftRisk.LOW,
         na_subreason=NASubreason.IN_PROCESS_PRIVATE_PARSER,
-        tier2_coverage="tests/e2e/adapters/test_all_adapters.py",
+        tier2_coverage="tests/e2e/adapters/test_crewai.py",
     ),
     InjectionBinding(
         adapter="crewai_flow",

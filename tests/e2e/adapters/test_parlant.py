@@ -13,7 +13,7 @@ Run with:
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator
 import asyncio
 import contextlib
 import json
@@ -32,8 +32,10 @@ from thenvoi.core.types import AdapterFeatures, Emit
 from tests.e2e.conftest import E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
+    message_value,
     run_smoke_test,
     send_trigger_message,
+    wait_for_chat_messages,
 )
 
 try:
@@ -58,23 +60,17 @@ def native_echo_handler(args: NativeEchoInput) -> dict:
 requires_parlant = pytest.mark.skipif(not HAS_PARLANT, reason="parlant not installed")
 
 
-def _message_value(payload, key: str):
-    if isinstance(payload, dict):
-        return payload.get(key)
-    return getattr(payload, key, None)
-
-
 def _is_agent_text_message(payload, agent_id: str, expected_content: str) -> bool:
     return (
-        _message_value(payload, "message_type") == "text"
-        and _message_value(payload, "sender_type") == "Agent"
-        and _message_value(payload, "sender_id") == agent_id
-        and expected_content in str(_message_value(payload, "content") or "")
+        message_value(payload, "message_type") == "text"
+        and message_value(payload, "sender_type") == "Agent"
+        and message_value(payload, "sender_id") == agent_id
+        and expected_content in str(message_value(payload, "content") or "")
     )
 
 
 def _message_timestamp_key(payload) -> str:
-    timestamp = _message_value(payload, "inserted_at") or _message_value(
+    timestamp = message_value(payload, "inserted_at") or message_value(
         payload, "created_at"
     )
     if timestamp is None:
@@ -82,60 +78,42 @@ def _message_timestamp_key(payload) -> str:
     return str(timestamp)
 
 
-async def _wait_for_chat_messages(
-    client: AsyncRestClient,
-    chat_id: str,
-    predicate: Callable[[list], bool],
-    timeout: float,
-):
-    """Poll the durable human-visible room history until the expected messages exist."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    last_messages = []
-    while asyncio.get_running_loop().time() < deadline:
-        response = await client.human_api_messages.list_my_chat_messages(
-            chat_id,
-            page_size=50,
-        )
-        last_messages = list(response.data or [])
-        if predicate(last_messages):
-            return last_messages
-        await asyncio.sleep(0.5)
-
-    summary = [
-        {
-            "type": _message_value(msg, "message_type"),
-            "sender": _message_value(msg, "sender_name"),
-            "content": str(_message_value(msg, "content") or "")[:160],
-        }
-        for msg in last_messages[:12]
-    ]
-    raise TimeoutError(f"Timed out waiting for expected Parlant messages: {summary}")
-
-
-def _configure_parlant_agent_credentials() -> None:
-    """Use the local Parlant agent config when a sourced env exposes a user key."""
+def _parlant_agent_credentials() -> tuple[str, str] | None:
+    """Return local Parlant agent credentials without mutating process env."""
     current_key = os.getenv("THENVOI_API_KEY", "")
-    if current_key.startswith(("thnv_a", "band_a")) and os.getenv("TEST_AGENT_ID"):
-        return
-
-    if current_key.startswith(("thnv_u", "band_u")) and not os.getenv(
-        "THENVOI_API_KEY_USER"
-    ):
-        os.environ["THENVOI_API_KEY_USER"] = current_key
+    test_agent_id = os.getenv("TEST_AGENT_ID")
+    if current_key.startswith(("thnv_a", "band_a")) and test_agent_id:
+        return test_agent_id, current_key
 
     try:
         from thenvoi.config import load_agent_config
 
-        agent_id, api_key = load_agent_config("tom_agent")
+        return load_agent_config("tom_agent")
     except (FileNotFoundError, ValueError):
-        return
-
-    os.environ["THENVOI_API_KEY"] = api_key
-    os.environ["TEST_AGENT_ID"] = agent_id
-    os.environ.setdefault("THENVOI_AGENT_ID", agent_id)
+        return None
 
 
-_configure_parlant_agent_credentials()
+@pytest.fixture(scope="session")
+def e2e_config() -> E2ESettings:
+    """Provide Parlant agent credentials without collection-time env mutation."""
+    settings = E2ESettings()
+    credentials = _parlant_agent_credentials()
+    if credentials is None:
+        return settings
+
+    agent_id, api_key = credentials
+    updates = {
+        "thenvoi_api_key": api_key,
+        "test_agent_id": agent_id,
+    }
+    current_key = os.getenv("THENVOI_API_KEY", "")
+    if (
+        current_key.startswith(("thnv_u", "band_u"))
+        and not settings.thenvoi_api_key_user
+    ):
+        updates["thenvoi_api_key_user"] = current_key
+
+    return settings.model_copy(update=updates)
 
 
 def _unused_local_port() -> int:
@@ -156,7 +134,9 @@ async def e2e_parlant_room(
     persistent Band room would hydrate stale prompts and responses into that new
     Parlant session, making LLM behavior depend on previous runs.
     """
-    peers_response = await e2e_session_client.agent_api_peers.list_agent_peers()
+    peers_response = await e2e_session_client.agent_api_peers.list_agent_peers(
+        page_size=100,
+    )
     user_peer = next((p for p in peers_response.data if p.type == "User"), None)
     if user_peer is None:
         pytest.skip("No User peer available for Parlant E2E tests")
@@ -222,18 +202,16 @@ class TestParlantE2E:
             await parlant_agent.create_guideline(
                 condition="User asks you to reply with a specific word or phrase",
                 action=(
-                    "Call thenvoi_send_message with the requested word or phrase "
-                    "as content, and set mentions to the user's name or handle. "
-                    "Do not address or mention yourself."
+                    "Reply to the user with the requested word or phrase as the "
+                    "message content. Do not address or mention yourself."
                 ),
             )
             await parlant_agent.create_guideline(
                 condition="User asks for echo validation with a code",
                 action=(
-                    "Call the nativeecho tool with the exact validation code as "
-                    "the `code` argument. Then call thenvoi_send_message with "
-                    "content containing the returned echo code, and mention the "
-                    "user, not yourself."
+                    "Use the native echo tool with the exact validation code. "
+                    "Then reply to the user with content containing the returned "
+                    "echo code, not with a message addressed to yourself."
                 ),
             )
 
@@ -291,7 +269,7 @@ class TestParlantE2E:
         running_parlant_agent: Agent,
         api_client: AsyncRestClient,
     ):
-        """Verify the agent uses thenvoi_send_message tool to respond."""
+        """Verify the agent sends a visible chat response."""
         chat_id, _user_id, user_name = e2e_parlant_room
         agent_id, agent_name = e2e_agent_info
         token = f"PINEAPPLE-{uuid.uuid4().hex[:8]}"
@@ -302,7 +280,7 @@ class TestParlantE2E:
             agent_name,
             agent_id,
         )
-        received = await _wait_for_chat_messages(
+        received = await wait_for_chat_messages(
             api_client,
             chat_id,
             lambda messages: any(
@@ -335,15 +313,15 @@ class TestParlantE2E:
 
         def has_expected_messages(messages) -> bool:
             has_tool_call = any(
-                _message_value(msg, "message_type") == "tool_call"
-                and "nativeecho" in str(_message_value(msg, "content") or "")
-                and code in str(_message_value(msg, "content") or "")
+                message_value(msg, "message_type") == "tool_call"
+                and "nativeecho" in str(message_value(msg, "content") or "")
+                and code in str(message_value(msg, "content") or "")
                 for msg in messages
             )
             has_tool_result = any(
-                _message_value(msg, "message_type") == "tool_result"
-                and "nativeecho" in str(_message_value(msg, "content") or "")
-                and code in str(_message_value(msg, "content") or "")
+                message_value(msg, "message_type") == "tool_result"
+                and "nativeecho" in str(message_value(msg, "content") or "")
+                and code in str(message_value(msg, "content") or "")
                 for msg in messages
             )
             has_text_reply = any(
@@ -358,7 +336,7 @@ class TestParlantE2E:
             agent_name,
             agent_id,
         )
-        received = await _wait_for_chat_messages(
+        received = await wait_for_chat_messages(
             api_client,
             chat_id,
             has_expected_messages,
@@ -368,16 +346,16 @@ class TestParlantE2E:
         tool_call = next(
             msg
             for msg in received
-            if _message_value(msg, "message_type") == "tool_call"
-            and "nativeecho" in str(_message_value(msg, "content") or "")
-            and code in str(_message_value(msg, "content") or "")
+            if message_value(msg, "message_type") == "tool_call"
+            and "nativeecho" in str(message_value(msg, "content") or "")
+            and code in str(message_value(msg, "content") or "")
         )
         tool_result = next(
             msg
             for msg in received
-            if _message_value(msg, "message_type") == "tool_result"
-            and "nativeecho" in str(_message_value(msg, "content") or "")
-            and code in str(_message_value(msg, "content") or "")
+            if message_value(msg, "message_type") == "tool_result"
+            and "nativeecho" in str(message_value(msg, "content") or "")
+            and code in str(message_value(msg, "content") or "")
         )
         text_reply = next(
             msg
@@ -388,8 +366,8 @@ class TestParlantE2E:
         assert ordered_messages.index(tool_call) < ordered_messages.index(tool_result)
         assert ordered_messages.index(tool_result) < ordered_messages.index(text_reply)
 
-        call_payload = json.loads(_message_value(tool_call, "content"))
-        result_payload = json.loads(_message_value(tool_result, "content"))
+        call_payload = json.loads(message_value(tool_call, "content"))
+        result_payload = json.loads(message_value(tool_result, "content"))
         assert call_payload["name"] == "nativeecho"
         assert call_payload["args"]["code"] == code
         assert result_payload["name"] == "nativeecho"

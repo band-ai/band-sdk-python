@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from thenvoi.core.protocols import HistoryConverter
+from thenvoi.core.types import is_text_message_type
 
 from ._tool_parsing import parse_tool_call, parse_tool_result
 
@@ -140,9 +141,9 @@ class AnthropicHistoryConverter(HistoryConverter[AnthropicMessages]):
 
     Handles:
     - text messages: User messages with [name] prefix, other agents as user messages
+    - this agent's visible text messages as assistant history
     - tool_call: Assistant message with tool_use content blocks
     - tool_result: User message with tool_result content blocks
-    - This agent's text messages are skipped (redundant with tool results)
 
     Tool events are stored in platform as JSON:
     - tool_call: {"name": "...", "args": {...}, "tool_call_id": "..."}
@@ -154,8 +155,8 @@ class AnthropicHistoryConverter(HistoryConverter[AnthropicMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with tool results). Messages from other
+            agent_name: Name of this agent. Visible text messages from this agent
+                       are included as assistant history. Messages from other
                        agents are included as user messages.
         """
         self._agent_name = agent_name
@@ -213,7 +214,7 @@ class AnthropicHistoryConverter(HistoryConverter[AnthropicMessages]):
                         tool_result_block["is_error"] = True
                     pending_tool_results.append(tool_result_block)
 
-            elif message_type == "text":
+            elif is_text_message_type(message_type):
                 # Flush pending tool calls and results first
                 _flush_pending_tool_calls(messages, pending_tool_calls)
                 _flush_pending_tool_results(messages, pending_tool_results)
@@ -221,9 +222,17 @@ class AnthropicHistoryConverter(HistoryConverter[AnthropicMessages]):
                 role = hist.get("role", "user")
                 sender_name = hist.get("sender_name", "")
 
-                if role == "assistant" and sender_name == self._agent_name:
-                    # Skip THIS agent's text (redundant with tool results)
-                    continue
+                if (
+                    role == "assistant"
+                    and self._agent_name
+                    and sender_name == self._agent_name
+                ):
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": content,
+                        }
+                    )
                 else:
                     # User messages AND other agents' messages
                     messages.append(

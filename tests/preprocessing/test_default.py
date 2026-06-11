@@ -2,8 +2,9 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
-from thenvoi.client.streaming import MessageCreatedPayload, MessageMetadata
+from thenvoi.client.streaming import MessageCreatedPayload, MessageMetadata, Mention
 from thenvoi.core.protocols import Preprocessor
 from thenvoi.core.types import AgentInput, HistoryProvider
 from thenvoi.platform.event import (
@@ -12,7 +13,7 @@ from thenvoi.platform.event import (
     ParticipantAddedEvent,
 )
 from thenvoi.preprocessing.default import DefaultPreprocessor
-from thenvoi.runtime.types import SessionConfig
+from thenvoi.runtime.types import SYNTHETIC_CONTACT_EVENTS_SENDER_ID, SessionConfig
 
 
 def make_message_payload(
@@ -23,13 +24,21 @@ def make_message_payload(
     sender_type: str = "User",
     room_id: str = "room-1",
     message_type: str = "text",
+    mentions: list[Mention] | None = None,
+    metadata: MessageMetadata | None = None,
 ) -> MessageCreatedPayload:
     """Create test MessageCreatedPayload."""
     return MessageCreatedPayload(
         id=id,
         content=content,
         message_type=message_type,
-        metadata=MessageMetadata(mentions=[], status="sent"),
+        metadata=metadata
+        or MessageMetadata(
+            mentions=mentions
+            if mentions is not None
+            else [Mention(id="agent-1", handle="alice/test-agent")],
+            status="sent",
+        ),
         sender_id=sender_id,
         sender_type=sender_type,
         chat_room_id=room_id,
@@ -45,6 +54,8 @@ def make_message_event(
     content: str = "Hello",
     sender_id: str = "user-1",
     sender_type: str = "User",
+    mentions: list[Mention] | None = None,
+    metadata: MessageMetadata | None = None,
 ) -> MessageEvent:
     """Create test MessageEvent."""
     return MessageEvent(
@@ -54,6 +65,8 @@ def make_message_event(
             sender_id=sender_id,
             sender_type=sender_type,
             room_id=room_id,
+            mentions=mentions,
+            metadata=metadata,
         ),
     )
 
@@ -71,7 +84,15 @@ def make_mock_ctx(
     ctx.room_id = room_id
     ctx.is_llm_initialized = is_llm_initialized
     ctx.config = SessionConfig(enable_context_hydration=enable_context_hydration)
-    ctx.participants = [{"id": "user-1", "name": "Alice", "type": "User"}]
+    ctx.participants = [
+        {"id": "user-1", "name": "Alice", "type": "User", "handle": "alice"},
+        {
+            "id": "agent-1",
+            "name": "Test Agent",
+            "type": "Agent",
+            "handle": "alice/test-agent",
+        },
+    ]
     ctx.participants_changed = MagicMock(return_value=participants_changed)
     ctx.mark_llm_initialized = MagicMock()
     ctx.mark_participants_sent = MagicMock()
@@ -175,6 +196,161 @@ class TestSelfMessageFiltering:
 
         assert result is not None
         assert isinstance(result, AgentInput)
+
+    async def test_processes_legacy_message_type_as_text(self):
+        """Legacy message_type='message' still follows text mention routing."""
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        event = make_message_event(sender_id="user-1", sender_type="User")
+        event.payload.message_type = "message"
+
+        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "thenvoi.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is not None
+        assert isinstance(result, AgentInput)
+
+    async def test_skips_unmentioned_text_messages(self):
+        """Unmentioned room text should not wake the agent."""
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        event = make_message_event(
+            sender_id="user-1",
+            sender_type="User",
+            mentions=[],
+        )
+
+        result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is None
+
+    async def test_processes_synthetic_contact_hub_messages_without_mentions(self):
+        """Contact hub events are synthetic agent work, not room chatter."""
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        event = make_message_event(
+            sender_id=SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
+            sender_type="System",
+            mentions=[],
+        )
+
+        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "thenvoi.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is not None
+        assert result.msg.sender_id == SYNTHETIC_CONTACT_EVENTS_SENDER_ID
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "/answer Ship the adapter",
+            "/approve turn-123",
+            "/always turn-123",
+            "/reject turn-123",
+        ],
+    )
+    async def test_processes_mentioned_adapter_control_commands(
+        self,
+        content: str,
+    ):
+        """Control replies always carry a mention (platform requires one)."""
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        event = make_message_event(
+            content=content,
+            sender_id="user-1",
+            sender_type="User",
+        )
+
+        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "thenvoi.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is not None
+        assert result.msg.content == content
+
+    async def test_unmentioned_slash_commands_do_not_wake(self):
+        """Slash commands without a mention stay mention-gated like any text."""
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        event = make_message_event(
+            content="/approve turn-123",
+            sender_id="user-1",
+            sender_type="User",
+            mentions=[],
+        )
+
+        result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is None
+
+    async def test_require_mention_false_processes_unmentioned_text(self):
+        """Opting out of the mention gate restores process-everything behavior."""
+        preprocessor = DefaultPreprocessor(require_mention=False)
+        ctx = make_mock_ctx()
+        event = make_message_event(
+            sender_id="user-1",
+            sender_type="User",
+            mentions=[],
+        )
+
+        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "thenvoi.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is not None
+
+    async def test_mention_by_username_wakes_agent(self):
+        """Mentions that carry only a username must still wake the agent."""
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        ctx.participants[1]["username"] = "test-agent-username"
+        event = make_message_event(
+            sender_id="user-1",
+            sender_type="User",
+            mentions=[Mention(id="other-id", username="test-agent-username")],
+        )
+
+        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "thenvoi.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is not None
+
+    async def test_skips_non_text_message_events(self):
+        """Tool/event messages should remain observability data, not agent turns."""
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        event = MessageEvent(
+            room_id="room-1",
+            payload=make_message_payload(message_type="tool_call"),
+        )
+
+        result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is None
 
 
 class TestAgentInputConstruction:

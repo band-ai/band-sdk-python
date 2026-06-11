@@ -142,7 +142,7 @@ class Execution(Protocol):
         .. versionchanged:: 0.2.0
             Custom ``Execution`` implementations should add ``request_resync()``.
             ``AgentRuntime`` falls back safely for legacy implementations that do
-            not provide it, but typed protocol conformance now includes this method.
+            not provide it, but the ``Execution`` protocol now includes this method.
 
         Called after WebSocket reconnect to catch messages that arrived while
         the socket was down. Custom implementations may provide a no-op.

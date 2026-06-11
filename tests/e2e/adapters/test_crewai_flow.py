@@ -76,6 +76,7 @@ async def test_crewai_flow_terminal_decision_sends_visible_message(
             chat_id,
             timeout=e2e_config.e2e_timeout,
             raise_on_timeout=True,
+            expected_agent_id=agent_id,
         ) as wait:
             await send_trigger_message(
                 api_client,

@@ -139,6 +139,7 @@ def _build_anthropic_config() -> ConverterConfig:
         empty_result=[],
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
+        includes_own_text_without_tool_events=True,
         output_adapter=DictListOutputAdapter(),
     )
 
@@ -168,10 +169,10 @@ def _build_crewai_config() -> ConverterConfig:
         display_name="CrewAI",
         converter_factory=_crewai_factory,
         empty_result=[],
-        skips_tool_events=True,
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         has_sender_metadata=True,
+        includes_own_text_without_tool_events=True,
         # CrewAI treats other agents as peers (assistant role) rather than
         # remapping them to user, because its crew workflow expects all agent
         # outputs to carry the "assistant" role.
@@ -193,6 +194,7 @@ def _build_claude_sdk_config() -> ConverterConfig:
         missing_sender_behavior=SenderBehavior.UNKNOWN_PREFIX,
         skips_empty_content=True,
         has_role_concept=False,
+        includes_own_text_without_tool_events=True,
         output_adapter=ClaudeSDKOutputAdapter(),
     )
 
@@ -207,6 +209,7 @@ def _build_pydantic_ai_config() -> ConverterConfig:
         empty_result=[],
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
+        includes_own_text_without_tool_events=True,
         output_adapter=PydanticAIOutputAdapter(),
     )
 
@@ -220,7 +223,6 @@ def _build_parlant_config() -> ConverterConfig:
         converter_factory=_parlant_factory,
         empty_result=[],
         filters_own_messages=False,
-        skips_tool_events=True,
         skips_empty_content=True,
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,

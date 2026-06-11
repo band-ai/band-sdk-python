@@ -326,12 +326,11 @@ class ArchiveMemoryInput(BaseModel):
     memory_id: str = Field(..., description="Memory ID (UUID)")
 
 
-# --- Human-tool input models (copied from thenvoi-mcp/src/thenvoi_mcp/tools/human/*.py) ---
+# --- Human-tool input models (mirrors thenvoi-mcp human tool handler signatures) ---
 #
-# These models mirror the current thenvoi-mcp human tool handler signatures
-# field-for-field. They are the canonical contract preserved by Phase 1 of
-# INT-338: the observable tool surface stays identical to today's MCP
-# behavior. Widening to full Fern parity is out of scope for this ticket.
+# These models intentionally preserve the observable thenvoi-mcp human tool
+# surface field-for-field. Do not widen them to full Fern parity here; callers
+# rely on the narrower MCP-compatible contract.
 
 
 # human_agents.py
@@ -724,7 +723,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         method_name="archive_memory",
     ),
     # --- Human tools (surface="human") ---
-    # One entry per method in the Phase 1 human-tool mapping table.
+    # One entry per supported thenvoi-mcp human tool mapping.
     # Method names match HumanTools attributes; hasattr(HumanTools, method_name)
     # must resolve for every surface="human" definition.
     "thenvoi_list_my_agents": ToolDefinition(
@@ -2179,9 +2178,9 @@ class HumanTools:
     ``chat_id`` argument.
 
     Each method is a thin wrapper around a Fern ``human_api_*`` call. The
-    observable tool surface mirrors today's ``thenvoi-mcp`` human tool
-    handlers (Phase 1 of INT-338 copies those signatures verbatim); widening
-    to full Fern parity is explicitly out of scope.
+    observable tool surface mirrors ``thenvoi-mcp`` human tool handlers; keep
+    those signatures stable unless the MCP-compatible contract is intentionally
+    widened.
     """
 
     def __init__(self, rest: "AsyncRestClient") -> None:
