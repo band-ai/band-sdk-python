@@ -29,7 +29,7 @@ def format_replay_message(message: dict[str, Any]) -> str | None:
     """Render a persisted room message as plain replay context."""
     message_type = str(message.get("message_type") or "text")
     content = optional_str(message.get("content"))
-    if not content:
+    if content is None or not content.strip():
         return None
 
     if is_text_message_type(message_type):

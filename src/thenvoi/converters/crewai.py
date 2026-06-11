@@ -19,7 +19,8 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
     Output: [{"role": "user", "content": "...", "sender": "..."}]
 
     Note:
-    - Only converts text messages (tool_call/tool_result events are skipped)
+    - Text messages are converted normally
+    - Tool call/result events are included as labeled replay context
     - User messages include sender name for context
     - Agent messages are included with role "assistant" and sender attribution
     """
@@ -29,15 +30,15 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with internal state). Messages from other
-                       agents are included with their sender info.
+            agent_name: Name of this agent. Stored for interface consistency;
+                       this converter includes own-agent and peer-agent messages
+                       with sender attribution.
         """
         self._agent_name = agent_name
 
     def set_agent_name(self, name: str) -> None:
         """
-        Set agent name so converter knows which messages to skip.
+        Set agent name retained for interface consistency.
 
         Args:
             name: Name of this agent
@@ -70,6 +71,11 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
                         "sender_type": "System",
                     }
                 )
+                continue
+
+            if content is None or (
+                isinstance(content, str) and content and not content.strip()
+            ):
                 continue
 
             if role == "assistant":

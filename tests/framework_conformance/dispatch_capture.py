@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -15,13 +16,18 @@ from pydantic import BaseModel
 
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
-from tests.framework_conformance.injection_registry import INJECTION_BINDINGS
+from tests.framework_conformance.injection_registry import (
+    INJECTION_BINDINGS,
+    ObservationPath,
+    bindings_by_adapter,
+)
 from tests.framework_conformance.platform_fixtures import ROOM_ID, USER_ID
 from tests.framework_conformance.request_capture import ConformanceSchemaRecorder
 
 HONEST_DISPATCH_ADAPTER_IDS = tuple(
     binding.adapter for binding in INJECTION_BINDINGS if binding.is_honest()
 )
+_BINDINGS_BY_ADAPTER = bindings_by_adapter()
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -74,6 +80,22 @@ def make_dispatch_agent_input(tools: ConformanceSchemaRecorder) -> AgentInput:
     )
 
 
+def _participant_id_for(identifier: str) -> str:
+    try:
+        return str(uuid.UUID(identifier))
+    except ValueError:
+        return f"p-{identifier}"
+
+
+def _assert_expected_execute_tool_call(result: DispatchResult) -> None:
+    expected_call = {"tool_name": result.tool_name, "arguments": result.arguments}
+    binding = _BINDINGS_BY_ADAPTER[result.adapter_id]
+    if ObservationPath.EXECUTE_TOOL_CALL in binding.observation_paths:
+        assert result.tool_calls == [expected_call]
+    else:
+        assert result.tool_calls == []
+
+
 def assert_dispatch_result(result: DispatchResult) -> None:
     if result.tool_name == "thenvoi_send_message":
         assert result.messages_sent == [
@@ -83,11 +105,25 @@ def assert_dispatch_result(result: DispatchResult) -> None:
                 "mentions": result.arguments["mentions"],
             }
         ]
+        _assert_expected_execute_tool_call(result)
+        assert result.participants_added == []
+        assert result.participants_removed == []
+        assert result.context_calls == []
         return
     if result.tool_name == "thenvoi_add_participant":
-        assert result.participants_added
-        assert result.participants_added[0]["handle"] == result.arguments["identifier"]
-        assert result.participants_added[0]["role"] == result.arguments["role"]
+        identifier = result.arguments["identifier"]
+        assert result.participants_added == [
+            {
+                "id": _participant_id_for(identifier),
+                "name": identifier,
+                "role": result.arguments["role"],
+                "handle": identifier,
+            }
+        ]
+        _assert_expected_execute_tool_call(result)
+        assert result.messages_sent == []
+        assert result.participants_removed == []
+        assert result.context_calls == []
         return
     if result.tool_name == "thenvoi_remove_participant":
         assert result.participants_removed == [
@@ -96,11 +132,19 @@ def assert_dispatch_result(result: DispatchResult) -> None:
                 "name": result.arguments["identifier"],
             }
         ]
+        _assert_expected_execute_tool_call(result)
+        assert result.messages_sent == []
+        assert result.participants_added == []
+        assert result.context_calls == []
         return
     if result.tool_name in {"thenvoi_get_participants", "thenvoi_lookup_peers"}:
         assert result.tool_calls == [
             {"tool_name": result.tool_name, "arguments": result.arguments}
         ]
+        assert result.messages_sent == []
+        assert result.participants_added == []
+        assert result.participants_removed == []
+        assert result.context_calls == []
         return
     raise AssertionError(f"Unhandled dispatch tool {result.tool_name}")
 

@@ -215,6 +215,7 @@ async def test_l4_handled_message_is_history_not_current_work(adapter_id: str) -
     assert state.current_work_message_ids == (pending_id,)
     assert handled_id in state.history_message_ids
     assert handled_id not in state.current_work_message_ids
+    assert state.source_message_counts[handled_id] == 1
 
 
 @pytest.mark.asyncio

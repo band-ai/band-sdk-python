@@ -327,13 +327,13 @@ uv sync --extra dev
 uv sync --extra dev-crewai
 
 # Run unit tests
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 
 # Run single test
 uv run pytest tests/ -k "test_name"
 
 # Run with coverage
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ --cov=src/thenvoi
+uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e --cov=src/thenvoi
 
 # Run integration tests (requires API key)
 uv run pytest tests/integration/ -v -s --no-cov
@@ -382,8 +382,8 @@ resolves each in a separate fork.
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
-- `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-4o-mini`)
-- `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-3-haiku-20240307`)
+- `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
+- `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-sonnet-4-6`)
 - `E2E_TIMEOUT`: Response timeout in seconds for E2E tests (default: `30`)
 
 ## Adding a New Framework Integration
@@ -428,7 +428,7 @@ In `src/thenvoi/adapters/<framework>.py`: `on_started` sets agent name/descripti
 ```bash
 uv run pytest tests/framework_conformance/ tests/framework_configs/ -v
 uv run pytest tests/adapters/test_<framework>_adapter.py tests/converters/test_<framework>.py -v
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 uv run ruff check . && uv run ruff format .
 ```
 
@@ -498,5 +498,5 @@ Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anth
 uv run ruff check .
 uv run ruff format .
 uv run pyrefly check
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 ```

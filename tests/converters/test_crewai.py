@@ -57,6 +57,21 @@ class TestAssistantMessages:
             }
         ]
 
+    def test_skips_whitespace_only_text_history(self):
+        """Blank persisted text rows should not become replay context."""
+        converter = CrewAIHistoryConverter(agent_name="Main Agent")
+        raw = [
+            {
+                "role": "user",
+                "content": "   ",
+                "sender_name": "Noisy Sender",
+                "sender_type": "User",
+                "message_type": "text",
+            }
+        ]
+
+        assert converter.convert(raw) == []
+
 
 class TestCrewWorkflow:
     """Tests for CrewAI-style crew workflows."""

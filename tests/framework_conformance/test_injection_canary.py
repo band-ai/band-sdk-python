@@ -457,9 +457,8 @@ async def test_canary_routes_to_declared_observation_path(
         pytest.skip(f"{binding.adapter}: optional framework dep not installed ({exc})")
 
     count = _observed_dispatch_count(binding, result.tools)
-    assert count >= 1, (
-        f"{binding.adapter}: canary produced no dispatch on declared observation_paths "
-        f"{sorted(p.value for p in binding.observation_paths)}. The seam still resolves but "
-        f"routing no longer reaches the recorder — tool_calls={result.tools.tool_calls}, "
-        f"messages_sent={result.tools.messages_sent}"
+    assert count == 1, (
+        f"{binding.adapter}: canary must dispatch exactly once on declared "
+        f"observation_paths {sorted(p.value for p in binding.observation_paths)}. "
+        f"tool_calls={result.tools.tool_calls}, messages_sent={result.tools.messages_sent}"
     )

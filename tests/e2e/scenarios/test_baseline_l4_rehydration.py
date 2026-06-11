@@ -222,6 +222,7 @@ async def test_l4_live_adapter_cold_restart_rehydrates_without_replaying_invite_
         "what were the three keywords and favorite color I gave you earlier?"
     )
     input_texts.append(restart_prompt)
+    before_restart = message_ids(await fetch_chat_messages(api_client, chat_id))
     await send_trigger_message(
         api_client,
         chat_id,
@@ -229,7 +230,6 @@ async def test_l4_live_adapter_cold_restart_rehydrates_without_replaying_invite_
         agent_name,
         agent_id,
     )
-    before_restart = message_ids(await fetch_chat_messages(api_client, chat_id))
 
     restarted_adapter = factory(e2e_config)
     restarted_adapter.clear_provider_usage()

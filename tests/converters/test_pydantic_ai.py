@@ -547,6 +547,20 @@ class TestMixedHistory:
         assert isinstance(result[2], ModelResponse)
         assert result[2].parts[0].content == "Hello Alice and Bob!"
 
+    def test_skips_whitespace_only_text_history(self):
+        """Blank persisted text rows should not become model-visible history."""
+        converter = PydanticAIHistoryConverter(agent_name="Agent")
+        raw = [
+            {
+                "role": "user",
+                "content": "   ",
+                "sender_name": "Noisy Sender",
+                "message_type": "text",
+            }
+        ]
+
+        assert converter.convert(raw) == []
+
     def test_missing_agent_name_does_not_classify_unknown_assistant_as_own_response(
         self,
     ):

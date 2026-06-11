@@ -75,15 +75,15 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with tool results). Messages from other
-                       agents are included as ModelRequest.
+            agent_name: Name of this agent. Used to distinguish own assistant
+                       text, which is included as ModelResponse, from peer and
+                       user messages included as ModelRequest.
         """
         self._agent_name = agent_name
 
     def set_agent_name(self, name: str) -> None:
         """
-        Set agent name so converter knows which messages to skip.
+        Set agent name used to classify own assistant text.
 
         Args:
             name: Name of this agent
@@ -143,6 +143,11 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
                     pending_tool_results.append(tool_result_part)
 
             elif is_text_message_type(message_type):
+                if content is None or (
+                    isinstance(content, str) and content and not content.strip()
+                ):
+                    continue
+
                 # Flush pending tool calls and results first
                 _flush_pending_tool_calls(messages, pending_tool_calls)
                 _flush_pending_tool_results(messages, pending_tool_results)

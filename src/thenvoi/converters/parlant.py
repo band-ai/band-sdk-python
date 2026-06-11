@@ -19,7 +19,8 @@ class ParlantHistoryConverter(HistoryConverter[ParlantMessages]):
     Output: [{"role": "user", "content": "...", "sender": "..."}]
 
     Note:
-    - Only converts text messages (tool_call/tool_result events are skipped)
+    - Text messages are converted normally
+    - Tool call/result events are included as labeled replay context
     - User messages are prefixed with sender name for context
     - ALL assistant messages are included (unlike other adapters)
 
@@ -79,7 +80,7 @@ class ParlantHistoryConverter(HistoryConverter[ParlantMessages]):
                 )
                 continue
 
-            if not content:
+            if content is None or not str(content).strip():
                 continue
 
             if role == "assistant":
