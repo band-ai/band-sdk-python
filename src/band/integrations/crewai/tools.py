@@ -830,7 +830,7 @@ def _make_platform_tools(
             memory_type = kwargs.get("memory_type", "")
             segment = kwargs.get("segment", "")
             thought = kwargs.get("thought", "")
-            scope = kwargs.get("scope", MemoryStoreScope.ORGANIZATION)
+            scope = kwargs.get("scope")
             subject_id = kwargs.get("subject_id")
             metadata = kwargs.get("metadata")
 
