@@ -24,7 +24,6 @@ from pydantic_ai.messages import (
 )
 
 from band.core.exceptions import BandConfigError
-from band.core.memory_types import MemoryStoreScope
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -381,7 +380,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 type: str,
                 segment: str,
                 thought: str,
-                scope: str = MemoryStoreScope.ORGANIZATION,
+                scope: str,
                 subject_id: str | None = None,
                 metadata: dict[str, Any] | None = None,
             ) -> dict[str, Any] | str:

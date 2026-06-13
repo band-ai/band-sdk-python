@@ -221,6 +221,7 @@ class TestToolSetComposition:
                     "memory_type": "fact",
                     "segment": "user",
                     "thought": "useful later",
+                    "scope": "organization",
                 },
             ),
         ],
@@ -267,6 +268,7 @@ class TestToolSetComposition:
                 "memory_type": "semantic",
                 "segment": "user",
                 "thought": "useful later",
+                "scope": "organization",
                 "metadata": {"source": "crewai"},
             }
         ).metadata == {"source": "crewai"}
@@ -471,5 +473,6 @@ class TestStoreMemoryInputDescription:
                     "memory_type": "semantic",
                     "segment": "user",
                     "thought": "useful later",
+                    "scope": "organization",
                 }
             )

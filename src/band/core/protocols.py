@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 
-from band.core.memory_types import MemoryStoreScope
-
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
@@ -190,7 +188,7 @@ class AgentToolsProtocol(Protocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = MemoryStoreScope.ORGANIZATION,
+        scope: str,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:

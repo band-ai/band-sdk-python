@@ -421,9 +421,7 @@ class _StoreMemoryInput(BaseModel):
     memory_type: MemoryType = Field(..., description=memory_type_field_description())
     segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: MemoryStoreScope = Field(
-        default=MemoryStoreScope.ORGANIZATION, description="Visibility scope"
-    )
+    scope: MemoryStoreScope = Field(..., description="Visibility scope")
     subject_id: str | None = Field(
         default=None, description="UUID of the subject (required for subject scope)"
     )

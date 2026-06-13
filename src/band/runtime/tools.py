@@ -280,9 +280,7 @@ class StoreMemoryInput(BaseModel):
     type: MemoryType = Field(..., description=memory_type_field_description())
     segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: MemoryStoreScope = Field(
-        MemoryStoreScope.ORGANIZATION, description="Visibility scope"
-    )
+    scope: MemoryStoreScope = Field(..., description="Visibility scope")
     subject_id: str | None = Field(
         None,
         description="UUID of the subject this memory is about (required for subject scope)",
@@ -1808,7 +1806,7 @@ class AgentTools(AgentToolsProtocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = MemoryStoreScope.ORGANIZATION,
+        scope: str,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:

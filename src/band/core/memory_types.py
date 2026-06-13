@@ -48,7 +48,7 @@ class MemoryStoreScope(StrEnum):
     """Visibility scope for ``band_store_memory``."""
 
     SUBJECT = "subject"  # About one person/agent; requires subject_id
-    ORGANIZATION = "organization"  # Shared org-wide; default when storing
+    ORGANIZATION = "organization"  # Shared org-wide
 
 
 class MemoryListScope(StrEnum):

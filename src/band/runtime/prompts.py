@@ -99,13 +99,14 @@ _MEMORY_SCOPE_GUIDANCE = f"""When storing with `scope="{MemoryStoreScope.SUBJECT
 
 
 def _memory_section() -> str:
-    field_rules = f"""When calling `band_store_memory`, the `system`, `type`, and `segment` fields
+    field_rules = f"""When calling `band_store_memory`, the `system`, `type`, `segment`, and `scope` fields
 must use these exact values (case-sensitive):
 
 - **system**: {_quote_choices(enum_values(MemorySystem))}
 - **type** (must match the chosen system):
 {_memory_type_lines()}
-- **segment**: {_quote_choices(enum_values(MemorySegment))}"""
+- **segment**: {_quote_choices(enum_values(MemorySegment))}
+- **scope**: {_quote_choices(enum_values(MemoryStoreScope))}"""
 
     return "\n\n".join(
         [

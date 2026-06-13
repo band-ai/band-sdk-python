@@ -5,8 +5,6 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from band.core.memory_types import MemoryStoreScope
-
 
 class FakeAgentTools:
     """
@@ -236,7 +234,7 @@ class FakeAgentTools:
         type: str,
         segment: str,
         thought: str,
-        scope: str = MemoryStoreScope.ORGANIZATION,
+        scope: str,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:

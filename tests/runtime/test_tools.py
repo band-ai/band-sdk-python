@@ -206,6 +206,7 @@ class TestMemoryTools:
                     "type": "semantic",
                     "segment": "user",
                     "thought": "useful later",
+                    "scope": "organization",
                 }
             )
 

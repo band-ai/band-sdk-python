@@ -7,6 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.memory_types import (
+    MemorySegment,
+    MemoryStoreScope,
+    MemorySystem,
+    WorkingLongTermMemoryType,
+)
 from band.core.types import AdapterFeatures, Capability
 from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
 from band.runtime.tools import CHAT_TOOL_NAMES, CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
@@ -113,17 +119,18 @@ async def test_wrappers_call_agent_tools_methods() -> None:
             "type": "semantic",
             "segment": "user",
             "thought": "user stated preference",
+            "scope": "organization",
         }
     ) == {"id": "memory-1"}
     tools.execute_tool_call.assert_any_await(
         "band_store_memory",
         {
             "content": "prefers concise answers",
-            "system": "long_term",
-            "type": "semantic",
-            "segment": "user",
+            "system": MemorySystem.LONG_TERM,
+            "type": WorkingLongTermMemoryType.SEMANTIC,
+            "segment": MemorySegment.USER,
             "thought": "user stated preference",
-            "scope": "subject",
+            "scope": MemoryStoreScope.ORGANIZATION,
             "subject_id": None,
             "metadata": None,
         },
