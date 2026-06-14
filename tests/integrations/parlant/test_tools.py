@@ -257,6 +257,47 @@ class TestCreateParlantTools:
         assert "band_list_contacts" in tool_names
         assert "band_respond_contact_request" in tool_names
 
+    def test_excludes_memory_tools_without_capability(self):
+        """Memory tools excluded when MEMORY capability is absent."""
+        from band.core.types import AdapterFeatures
+
+        tools = create_parlant_tools(features=AdapterFeatures())
+        tool_names = [t.tool.name for t in tools]
+
+        assert "band_send_message" in tool_names
+        assert "band_create_chatroom" in tool_names
+        assert "band_list_memories" not in tool_names
+        assert "band_store_memory" not in tool_names
+        assert "band_get_memory" not in tool_names
+        assert "band_supersede_memory" not in tool_names
+        assert "band_archive_memory" not in tool_names
+
+    def test_includes_memory_tools_with_capability(self):
+        """Memory tools included when MEMORY capability is present."""
+        from band.core.types import AdapterFeatures, Capability
+
+        tools = create_parlant_tools(
+            features=AdapterFeatures(capabilities={Capability.MEMORY})
+        )
+        tool_names = [t.tool.name for t in tools]
+
+        assert "band_list_memories" in tool_names
+        assert "band_store_memory" in tool_names
+        assert "band_get_memory" in tool_names
+        assert "band_supersede_memory" in tool_names
+        assert "band_archive_memory" in tool_names
+
+    def test_excludes_memory_tools_when_no_features(self):
+        """Memory tools stay opt-in when features is None."""
+        tools = create_parlant_tools(features=None)
+        tool_names = [t.tool.name for t in tools]
+
+        assert "band_list_memories" not in tool_names
+        assert "band_store_memory" not in tool_names
+        assert "band_get_memory" not in tool_names
+        assert "band_supersede_memory" not in tool_names
+        assert "band_archive_memory" not in tool_names
+
 
 class TestParlantToolFunctions:
     """Tests for individual Parlant tool functions."""
@@ -286,6 +327,11 @@ class TestParlantToolFunctions:
             return_value=[{"name": "User1", "type": "User"}]
         )
         tools.create_chatroom = AsyncMock(return_value="new-room-123")
+        tools.list_memories = AsyncMock(return_value={"data": []})
+        tools.store_memory = AsyncMock(return_value={"id": "memory-123"})
+        tools.get_memory = AsyncMock(return_value={"id": "memory-123"})
+        tools.supersede_memory = AsyncMock(return_value={"id": "memory-123"})
+        tools.archive_memory = AsyncMock(return_value={"id": "memory-123"})
         return tools
 
     @pytest.fixture
@@ -307,6 +353,16 @@ class TestParlantToolFunctions:
         """Create Parlant tools from the real create_parlant_tools."""
         tools = create_parlant_tools()
         # Build a dict mapping tool name to the tool's function
+        return {entry.tool.name: entry.function for entry in tools}
+
+    @pytest.fixture
+    def memory_parlant_tools(self):
+        """Create Parlant tools with memory capability enabled."""
+        from band.core.types import AdapterFeatures, Capability
+
+        tools = create_parlant_tools(
+            features=AdapterFeatures(capabilities={Capability.MEMORY})
+        )
         return {entry.tool.name: entry.function for entry in tools}
 
     @pytest.mark.asyncio
@@ -513,6 +569,100 @@ class TestParlantToolFunctions:
 
         mock_tools.create_chatroom.assert_called_once_with(None)
         assert "Created new chat room" in result.data
+
+    @pytest.mark.asyncio
+    async def test_store_memory_calls_tools_store_memory_without_empty_optionals(
+        self, memory_parlant_tools, mock_tools, mock_context
+    ):
+        """Should call tools.store_memory and omit empty optional fields."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        store_memory = memory_parlant_tools["band_store_memory"]
+        result = await store_memory(
+            mock_context,
+            "Favorite color is green",
+            "long_term",
+            "semantic",
+            "user",
+            "User explicitly asked me to remember it.",
+            "organization",
+            "",
+            "",
+        )
+
+        mock_tools.store_memory.assert_called_once_with(
+            content="Favorite color is green",
+            system="long_term",
+            type="semantic",
+            segment="user",
+            thought="User explicitly asked me to remember it.",
+            scope="organization",
+        )
+        assert "memory-123" in result.data
+
+    @pytest.mark.asyncio
+    async def test_store_memory_returns_error_when_underlying_tool_fails(
+        self, memory_parlant_tools, mock_tools, mock_context
+    ):
+        """Should surface store_memory errors as ToolResult data."""
+        mock_tools.store_memory.side_effect = ValueError("invalid memory type")
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        store_memory = memory_parlant_tools["band_store_memory"]
+        result = await store_memory(
+            mock_context,
+            "Favorite color is green",
+            "sensory",
+            "semantic",
+            "user",
+            "User explicitly asked me to remember it.",
+            "organization",
+            "",
+            "",
+        )
+
+        assert "Error storing memory" in result.data
+        assert "invalid memory type" in result.data
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_name", "mock_method_name"),
+        [
+            ("band_get_memory", "get_memory"),
+            ("band_supersede_memory", "supersede_memory"),
+            ("band_archive_memory", "archive_memory"),
+        ],
+    )
+    async def test_id_based_memory_tools_without_id_return_guidance(
+        self,
+        memory_parlant_tools,
+        mock_tools,
+        mock_context,
+        tool_name,
+        mock_method_name,
+    ):
+        """Should guide the model to list memories before using ID-based tools."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        memory_tool = memory_parlant_tools[tool_name]
+        result = await memory_tool(mock_context, "")
+
+        assert "memory_id is required" in result.data
+        assert "band_list_memories" in result.data
+        getattr(mock_tools, mock_method_name).assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_get_memory_with_id_calls_tools_get_memory(
+        self, memory_parlant_tools, mock_tools, mock_context
+    ):
+        """Should pass through non-empty memory IDs to AgentTools."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        get_memory = memory_parlant_tools["band_get_memory"]
+        result = await get_memory(mock_context, "memory-123")
+
+        mock_tools.get_memory.assert_awaited_once_with("memory-123")
+        assert "memory-123" in result.data
 
     @pytest.mark.asyncio
     async def test_tool_handles_exception(

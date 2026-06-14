@@ -304,3 +304,8 @@ version_files = [
 ]
 # Tag format aligned with release-please (package-name-v$version)
 tag_format = "band-sdk-python-v$version"
+
+[dependency-groups]
+dev = [
+    "ollama>=0.6.2",
+]

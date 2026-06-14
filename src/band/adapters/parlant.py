@@ -226,15 +226,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             logger.error("Error processing message: %s", e, exc_info=True)
             await self._report_error(tools, str(e))
             raise
-        finally:
-            # Clear tools after message processing
-            set_session_tools(session_id_str, None)
-            logger.info(
-                "Room %s: Cleared tools for session_id=%s",
-                room_id,
-                session_id_str,
-            )
 
+        # Tools are intentionally NOT cleared here. With slow models, Parlant may
+        # execute the planned tool batch after this wait loop returns; clearing now
+        # would orphan those calls ("No tools available for session"). The registry
+        # is bound to the room/session lifetime and cleared in on_cleanup/cleanup_all.
         logger.debug("Message %s processed successfully", msg.id)
 
     async def _get_or_create_session(
@@ -594,8 +590,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up session when agent leaves a room."""
-        if room_id in self._room_sessions:
-            del self._room_sessions[room_id]
+        session_id = self._room_sessions.pop(room_id, None)
+        if session_id is not None:
+            set_session_tools(str(session_id), None)
         if room_id in self._room_customers:
             del self._room_customers[room_id]
 
@@ -610,6 +607,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
     async def cleanup_all(self) -> None:
         """Cleanup all sessions (call on stop)."""
+        for session_id in self._room_sessions.values():
+            set_session_tools(str(session_id), None)
         self._room_sessions.clear()
         self._room_customers.clear()
         logger.info("Parlant adapter cleanup complete")

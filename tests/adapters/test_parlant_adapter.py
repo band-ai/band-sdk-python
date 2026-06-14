@@ -8,7 +8,7 @@ Application container, session management, history injection, and error handling
 """
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 import sys
 
 import pytest
@@ -326,12 +326,11 @@ class TestOnMessage:
                     room_id="room-123",
                 )
 
-            # Verify tools were set with session_id and then cleared
-            assert mock_set_tools.call_count == 2
-            # First call sets the tools with session_id
+            # Tools are set with session_id and intentionally NOT cleared during
+            # on_message (clearing happens on room teardown via on_cleanup so that
+            # slow/late Parlant tool executions still find the registry populated).
             mock_set_tools.assert_any_call("session-123", mock_tools)
-            # Second call clears the tools
-            mock_set_tools.assert_any_call("session-123", None)
+            assert call("session-123", None) not in mock_set_tools.call_args_list
 
     @pytest.mark.asyncio
     async def test_reuses_existing_session(
@@ -390,6 +389,28 @@ class TestOnCleanup:
 
         assert "room-123" not in adapter._room_sessions
         assert "room-123" not in adapter._room_customers
+
+    @pytest.mark.asyncio
+    async def test_on_cleanup_clears_session_tools(
+        self, mock_parlant_server, mock_parlant_agent, mock_tools
+    ):
+        """Should clear the session tools registry on room teardown."""
+        from band.integrations.parlant.tools import (
+            get_session_tools,
+            set_session_tools,
+        )
+
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+        )
+        adapter._room_sessions["room-123"] = "session-123"
+        set_session_tools("session-123", mock_tools)
+        assert get_session_tools("session-123") is not None
+
+        await adapter.on_cleanup("room-123")
+
+        assert get_session_tools("session-123") is None
 
 
 class TestHistoryInjection:
@@ -482,6 +503,30 @@ class TestCleanupAll:
         assert len(adapter._room_sessions) == 0
         assert len(adapter._room_customers) == 0
 
+    @pytest.mark.asyncio
+    async def test_cleanup_all_clears_session_tools(
+        self, mock_parlant_server, mock_parlant_agent, mock_tools
+    ):
+        """Should clear the session tools registry for all sessions."""
+        from band.integrations.parlant.tools import (
+            get_session_tools,
+            set_session_tools,
+        )
+
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+        )
+        adapter._room_sessions["room-1"] = "session-1"
+        adapter._room_sessions["room-2"] = "session-2"
+        set_session_tools("session-1", mock_tools)
+        set_session_tools("session-2", mock_tools)
+
+        await adapter.cleanup_all()
+
+        assert get_session_tools("session-1") is None
+        assert get_session_tools("session-2") is None
+
 
 class TestErrorHandling:
     """Tests for error handling."""
@@ -536,10 +581,10 @@ class TestErrorHandling:
         mock_tools.send_event.assert_called()
 
     @pytest.mark.asyncio
-    async def test_clears_tools_on_error(
+    async def test_does_not_clear_tools_on_error(
         self, mock_parlant_server, mock_parlant_agent, sample_message, mock_tools
     ):
-        """Should clear tools even when error occurs."""
+        """Should NOT clear tools on error; session stays alive until room teardown."""
         adapter = ParlantAdapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
@@ -581,8 +626,10 @@ class TestErrorHandling:
                         room_id="room-123",
                     )
 
-            # Tools should be cleared in finally block with session_id
-            mock_set_tools.assert_any_call("session-123", None)
+            # Tools are set, and NOT cleared on error (cleanup happens on room
+            # teardown via on_cleanup, not per-message).
+            mock_set_tools.assert_any_call("session-123", mock_tools)
+            assert call("session-123", None) not in mock_set_tools.call_args_list
 
     @pytest.mark.asyncio
     async def test_handles_uninitialized_app(

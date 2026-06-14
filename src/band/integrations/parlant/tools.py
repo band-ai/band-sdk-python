@@ -17,6 +17,11 @@ This module provides the same tools as LangGraph/Claude adapters:
 - remove_contact: Remove an existing contact
 - list_contact_requests: List received and sent requests
 - respond_contact_request: Approve, reject, or cancel requests
+- list_memories: List stored Band memories
+- store_memory: Store a Band memory
+- get_memory: Retrieve a Band memory by ID
+- supersede_memory: Mark a Band memory as superseded
+- archive_memory: Archive a Band memory
 
 NOTE: We intentionally do NOT use `from __future__ import annotations` here
 because Parlant's @p.tool decorator checks annotation types at runtime.
@@ -102,7 +107,8 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
 
     Args:
         features: Optional adapter features. When CONTACTS capability is absent,
-            contact-management tools are excluded from the returned list.
+            contact-management tools are excluded from the returned list. Memory
+            tools are included only when MEMORY capability is present.
 
     Returns:
         List of Parlant ToolEntry objects
@@ -445,6 +451,279 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             return ToolResult(data=f"Error creating chatroom: {e}")
 
     include_contacts = features is None or Capability.CONTACTS in features.capabilities
+    include_memory = features is not None and Capability.MEMORY in features.capabilities
+
+    @p.tool
+    async def band_list_memories(
+        context: ToolContext,
+        content_query: str = "",
+        scope: str = "",
+        system: str = "",
+        memory_type: str = "",
+        segment: str = "",
+        status: str = "",
+        page_size: int = 50,
+    ) -> ToolResult:
+        """
+        List memories accessible to the agent.
+
+        Args:
+            context: Parlant tool context (automatically provided)
+            content_query: Optional full-text search query
+            scope: Optional scope filter: 'subject', 'organization', or 'all'
+            system: Optional memory system: 'sensory', 'working', or 'long_term'
+            memory_type: Optional memory type such as 'semantic' or 'procedural'
+            segment: Optional segment: 'user', 'agent', 'tool', or 'guideline'
+            status: Optional status: 'active', 'superseded', 'archived', or 'all'
+            page_size: Number of memories to return (default 50)
+
+        Returns:
+            JSON with memories and pagination metadata
+        """
+        logger.info(
+            "[Parlant Tool] list_memories called: session=%s, query=%s",
+            context.session_id,
+            content_query,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] list_memories: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        list_kwargs: dict[str, Any] = {"page_size": page_size}
+        optional_filters = {
+            "content_query": content_query,
+            "scope": scope,
+            "system": system,
+            "type": memory_type,
+            "segment": segment,
+            "status": status,
+        }
+        list_kwargs.update(
+            {key: value for key, value in optional_filters.items() if value}
+        )
+
+        try:
+            result = await tools.list_memories(**list_kwargs)
+            data = result.model_dump() if hasattr(result, "model_dump") else result
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error("[Parlant Tool] Error listing memories: %s", e, exc_info=True)
+            return ToolResult(data=f"Error listing memories: {e}")
+
+    @p.tool
+    async def band_store_memory(
+        context: ToolContext,
+        content: str,
+        system: str,
+        type: str,
+        segment: str,
+        thought: str,
+        scope: str,
+        subject_id: str = "",
+        metadata: str = "",
+    ) -> ToolResult:
+        """
+        Store durable information in Band memory.
+
+        Args:
+            context: Parlant tool context (automatically provided)
+            content: The durable memory content to store
+            system: Memory system: 'sensory', 'working', or 'long_term'
+            type: Memory type. For long_term use 'semantic' or 'procedural'
+            segment: Segment: 'user', 'agent', 'tool', or 'guideline'
+            thought: Brief reason why this information is durable
+            scope: Visibility scope: 'subject' or 'organization'
+            subject_id: Required only when scope is 'subject'; omit otherwise
+            metadata: Optional JSON object string with extra metadata
+
+        Returns:
+            JSON for the stored memory or an error message
+        """
+        logger.info(
+            "[Parlant Tool] store_memory called: session=%s, system=%s, type=%s, scope=%s",
+            context.session_id,
+            system,
+            type,
+            scope,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] store_memory: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        store_kwargs: dict[str, Any] = {
+            "content": content,
+            "system": system,
+            "type": type,
+            "segment": segment,
+            "thought": thought,
+            "scope": scope,
+        }
+        if subject_id:
+            store_kwargs["subject_id"] = subject_id
+        if metadata:
+            try:
+                metadata_data = json.loads(metadata)
+            except json.JSONDecodeError as e:
+                return ToolResult(data=f"Error: metadata must be valid JSON: {e}")
+            if not isinstance(metadata_data, dict):
+                return ToolResult(data="Error: metadata must be a JSON object")
+            store_kwargs["metadata"] = metadata_data
+
+        try:
+            result = await tools.store_memory(**store_kwargs)
+            data = result.model_dump() if hasattr(result, "model_dump") else result
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error("[Parlant Tool] Error storing memory: %s", e, exc_info=True)
+            return ToolResult(data=f"Error storing memory: {e}")
+
+    @p.tool
+    async def band_get_memory(
+        context: ToolContext,
+        memory_id: str = "",
+    ) -> ToolResult:
+        """
+        Retrieve a specific Band memory by ID.
+
+        Only use this when you already have a memory_id from band_list_memories.
+
+        Args:
+            context: Parlant tool context (automatically provided)
+            memory_id: Memory ID (UUID)
+
+        Returns:
+            JSON for the memory or an error message
+        """
+        logger.info(
+            "[Parlant Tool] get_memory called: session=%s, memory_id=%s",
+            context.session_id,
+            memory_id,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] get_memory: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        if not memory_id:
+            return ToolResult(
+                data=(
+                    "Error: memory_id is required. Use band_list_memories first "
+                    "with a content_query to find the memory_id, then retry."
+                )
+            )
+
+        try:
+            result = await tools.get_memory(memory_id)
+            data = result.model_dump() if hasattr(result, "model_dump") else result
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error("[Parlant Tool] Error getting memory: %s", e, exc_info=True)
+            return ToolResult(data=f"Error getting memory: {e}")
+
+    @p.tool
+    async def band_supersede_memory(
+        context: ToolContext,
+        memory_id: str = "",
+    ) -> ToolResult:
+        """
+        Mark a Band memory as superseded when it is outdated.
+
+        Only use this when you already have a memory_id from band_list_memories.
+
+        Args:
+            context: Parlant tool context (automatically provided)
+            memory_id: Memory ID (UUID)
+
+        Returns:
+            JSON for the superseded memory or an error message
+        """
+        logger.info(
+            "[Parlant Tool] supersede_memory called: session=%s, memory_id=%s",
+            context.session_id,
+            memory_id,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] supersede_memory: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        if not memory_id:
+            return ToolResult(
+                data=(
+                    "Error: memory_id is required. Use band_list_memories first "
+                    "with a content_query to find the memory_id, then retry."
+                )
+            )
+
+        try:
+            result = await tools.supersede_memory(memory_id)
+            data = result.model_dump() if hasattr(result, "model_dump") else result
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error(
+                "[Parlant Tool] Error superseding memory: %s", e, exc_info=True
+            )
+            return ToolResult(data=f"Error superseding memory: {e}")
+
+    @p.tool
+    async def band_archive_memory(
+        context: ToolContext,
+        memory_id: str = "",
+    ) -> ToolResult:
+        """
+        Archive a Band memory that should be hidden but preserved.
+
+        Only use this when you already have a memory_id from band_list_memories.
+
+        Args:
+            context: Parlant tool context (automatically provided)
+            memory_id: Memory ID (UUID)
+
+        Returns:
+            JSON for the archived memory or an error message
+        """
+        logger.info(
+            "[Parlant Tool] archive_memory called: session=%s, memory_id=%s",
+            context.session_id,
+            memory_id,
+        )
+        tools = get_session_tools(context.session_id)
+        if not tools:
+            logger.error(
+                "[Parlant Tool] archive_memory: No tools available for session %s",
+                context.session_id,
+            )
+            return ToolResult(data="Error: No tools available in current context")
+
+        if not memory_id:
+            return ToolResult(
+                data=(
+                    "Error: memory_id is required. Use band_list_memories first "
+                    "with a content_query to find the memory_id, then retry."
+                )
+            )
+
+        try:
+            result = await tools.archive_memory(memory_id)
+            data = result.model_dump() if hasattr(result, "model_dump") else result
+            return ToolResult(data=json.dumps(data, default=str))
+        except Exception as e:
+            logger.error("[Parlant Tool] Error archiving memory: %s", e, exc_info=True)
+            return ToolResult(data=f"Error archiving memory: {e}")
 
     @p.tool
     async def band_list_contacts(
@@ -704,6 +983,17 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 band_remove_contact,
                 band_list_contact_requests,
                 band_respond_contact_request,
+            ]
+        )
+
+    if include_memory:
+        tools.extend(
+            [
+                band_list_memories,
+                band_store_memory,
+                band_get_memory,
+                band_supersede_memory,
+                band_archive_memory,
             ]
         )
 
