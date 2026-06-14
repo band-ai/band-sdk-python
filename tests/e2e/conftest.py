@@ -19,8 +19,8 @@ from typing import TYPE_CHECKING
 import pytest
 from dotenv import load_dotenv
 from pydantic import ValidationError
-from thenvoi_rest import AsyncRestClient, ChatRoomRequest
-from thenvoi_rest.types import (
+from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest.types import (
     ParticipantRequest,
 )
 from thenvoi_testing.settings import BaseTestSettings

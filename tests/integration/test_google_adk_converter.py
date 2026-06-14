@@ -14,8 +14,8 @@ import logging
 import uuid
 
 import pytest
-from thenvoi_rest import ChatEventRequest, ChatMessageRequest
-from thenvoi_rest.types import ChatMessageRequestMentionsItem as Mention
+from band_rest import ChatEventRequest, ChatMessageRequest
+from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from tests.integration.conftest import requires_api
 

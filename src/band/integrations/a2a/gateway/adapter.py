@@ -36,11 +36,11 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
-from thenvoi_rest import Peer
-from thenvoi_rest.agent_api_peers.types.list_agent_peers_response import (
+from band_rest import Peer
+from band_rest.agent_api_peers.types.list_agent_peers_response import (
     ListAgentPeersResponse,
 )
-from thenvoi_rest.core.api_error import ApiError
+from band_rest.core.api_error import ApiError
 
 logger = logging.getLogger(__name__)
 

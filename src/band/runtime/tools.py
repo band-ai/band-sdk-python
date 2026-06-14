@@ -1829,7 +1829,7 @@ class AgentTools(AgentToolsProtocol):
             Fern Memory model (Pydantic). Serialized to dict by
             execute_tool_call() at the adapter boundary.
         """
-        from band.client.rest import MemoryCreateRequest
+        from band.client.rest import AgentMemoryCreateRequest
 
         logger.debug(
             "Storing memory: system=%s, type=%s, segment=%s, scope=%s",
@@ -1851,7 +1851,7 @@ class AgentTools(AgentToolsProtocol):
         if metadata is not None:
             memory_kwargs["metadata"] = metadata
         response = await self.rest.agent_api_memories.create_agent_memory(
-            memory=MemoryCreateRequest(**memory_kwargs),
+            memory=AgentMemoryCreateRequest(**memory_kwargs),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:
@@ -2240,7 +2240,7 @@ class HumanTools:
 
     async def register_my_agent(self, name: str, description: str) -> Any:
         """Register a new remote agent owned by the user."""
-        from thenvoi_rest import AgentRegisterRequest
+        from band_rest import AgentRegisterRequest
 
         logger.debug("Registering my agent: name=%s", name)
         agent_request = AgentRegisterRequest(name=name, description=description)
@@ -2264,7 +2264,7 @@ class HumanTools:
 
     async def create_my_chat_room(self, task_id: str | None = None) -> Any:
         """Create a new chat room with the user as owner."""
-        from thenvoi_rest import CreateMyChatRoomRequestChat
+        from band_rest import CreateMyChatRoomRequestChat
 
         logger.debug("Creating my chat room: task_id=%s", task_id)
         chat_request = (
@@ -2299,7 +2299,7 @@ class HumanTools:
         self, recipient_handle: str, message: str | None = None
     ) -> Any:
         """Send a contact request to another user."""
-        from thenvoi_rest import CreateContactRequestRequestContactRequest
+        from band_rest import CreateContactRequestRequestContactRequest
 
         logger.debug("Creating contact request to: %s", recipient_handle)
         kwargs: dict[str, Any] = {"recipient_handle": recipient_handle}
@@ -2444,7 +2444,7 @@ class HumanTools:
         MCP handler output verbatim (no exception raised) so the
         observable tool-surface error shape is preserved.
         """
-        from thenvoi_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
+        from band_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
 
         recipient_names = [
             name.strip().lower() for name in recipients.split(",") if name.strip()
@@ -2528,7 +2528,7 @@ class HumanTools:
         Returns ``f"Added participant: {participant_id}"`` (discards the
         Fern response body) to match today's MCP handler output verbatim.
         """
-        from thenvoi_rest import ParticipantRequest
+        from band_rest import ParticipantRequest
 
         logger.debug(
             "Adding my chat participant: chat_id=%s, participant_id=%s, role=%s",
