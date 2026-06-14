@@ -49,6 +49,7 @@ from .types import (
 )
 from .retry_tracker import MessageRetryTracker
 from ._context_serialization import context_item_to_dict
+from .working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
     from band.platform.link import BandLink
@@ -211,6 +212,18 @@ class ExecutionContext:
         self._on_participant_added = on_participant_added
         self._on_participant_removed = on_participant_removed
         self.hub_room_id = hub_room_id
+
+        # Per-room boolean working-state reporter. Disabled for the contact-hub
+        # room: it's internal housekeeping, not a peer-facing conversation, so no
+        # counterpart watches a "Reasoning…" indicator there.
+        self._working_reporter = WorkingStateReporter(
+            self._report_working_state,
+            keep_alive_seconds=self.config.working_keep_alive_seconds,
+            max_working_state_seconds=self.config.max_working_state_seconds,
+            enabled=(
+                self.config.enable_working_state and self.room_id != self.hub_room_id
+            ),
+        )
 
         # Per-room state
         self.queue: asyncio.Queue[PlatformEvent] = asyncio.Queue()
@@ -466,6 +479,11 @@ class ExecutionContext:
         except asyncio.CancelledError:
             pass
         self._process_loop_task = None
+
+        # Defensively clear any lingering working-state keep-alive so a removed
+        # room can't leak its refresh task. Idempotent: a no-op if not active
+        # (the per-cycle finally normally clears it already).
+        await self._working_reporter.stop()
         return graceful
 
     async def _wait_for_idle(self, timeout: float) -> bool:
@@ -1265,8 +1283,9 @@ class ExecutionContext:
                 ),
             )
 
-            # Call execution handler
-            await self._on_execute(self, event)
+            # Call execution handler (backlog messages are always reasoning
+            # cycles, so always report the working signal).
+            await self._execute_message_cycle(event)
 
             # SUCCESS: Mark as processed on server
             durable_processed = await self.link.mark_processed(self.room_id, msg_id)
@@ -1327,6 +1346,29 @@ class ExecutionContext:
         # Re-add non-duplicates
         for item in items:
             self.queue.put_nowait(item)
+
+    async def _report_working_state(self, working: bool) -> bool:
+        """Report the room's boolean working state (wired into the reporter)."""
+        return await self.link.report_activity(
+            self.room_id,
+            working,
+            timeout_seconds=self.config.working_request_timeout_seconds,
+        )
+
+    async def _execute_message_cycle(self, event: PlatformEvent) -> None:
+        """Run the adapter for a message reasoning cycle, bracketed by the
+        working-state signal.
+
+        ``start()`` emits working:true (+ keep-alive); ``stop()`` in the finally
+        emits the authoritative working:false on success, exception, and cancel —
+        mirroring the ``_set_state('idle')`` placement. The reporter is a no-op
+        when disabled or for the hub room, so call sites need no extra gating.
+        """
+        await self._working_reporter.start()
+        try:
+            await self._on_execute(self, event)
+        finally:
+            await self._working_reporter.stop()
 
     async def _process_event(self, event: PlatformEvent) -> bool:
         """
@@ -1463,8 +1505,12 @@ class ExecutionContext:
                 self.remove_participant(event.payload.id)
                 await self._notify_participant_removed(event)
 
-            # Call execution handler
-            await self._on_execute(self, event)
+            # Call execution handler. Only message-driven cycles report the
+            # working signal; participant add/remove events are housekeeping.
+            if isinstance(event, MessageEvent):
+                await self._execute_message_cycle(event)
+            else:
+                await self._on_execute(self, event)
 
             # For messages: mark as processed on server
             if isinstance(event, MessageEvent) and msg_id:
