@@ -11,8 +11,7 @@ CrewAI agent with memory tools enabled.
 This example shows how to configure a CrewAI agent to use Band memory
 tools for durable preferences, facts, and reusable instructions.
 
-It runs against a local Ollama model by default. Configure the model and
-endpoint with the OLLAMA_MODEL and OLLAMA_API_BASE environment variables.
+Configure the model and provider-specific settings with environment variables.
 
 Try prompts like:
 - "Remember that I prefer concise status updates."
@@ -57,12 +56,7 @@ async def main() -> None:
     ws_url = get_required_env("BAND_WS_URL")
     rest_url = get_required_env("BAND_REST_URL")
 
-    # CrewAI talks to models through LiteLLM. To use a local Ollama model, set
-    # OLLAMA_API_BASE so LiteLLM can reach the server and prefix the model name
-    # with "ollama/".
-    os.environ.setdefault("OLLAMA_API_BASE", "http://localhost:11434")
-    ollama_model = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
-    model = f"ollama/{ollama_model}"
+    model = get_required_env("CREWAI_MODEL")
 
     features = AdapterFeatures(capabilities={Capability.MEMORY})
 
