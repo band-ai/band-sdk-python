@@ -102,6 +102,11 @@ class BandLink:
         # Durable terminal disconnect reason for the current connection lifecycle.
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
 
+        # Debounce flag for activity-report failures: keep-alive runs at a few
+        # seconds per room, so a down endpoint would otherwise flood the log on
+        # every refresh. Log the first failure and the recovery, suppress repeats.
+        self._activity_report_failing = False
+
     @property
     def is_connected(self) -> bool:
         return self._is_connected
@@ -546,6 +551,44 @@ class BandLink:
         except Exception as e:
             logger.warning("Failed to mark message %s as failed: %s", message_id, e)
             return False
+        return True
+
+    async def report_activity(self, room_id: str, working: bool) -> bool:
+        """
+        Report the agent's boolean working state for a room's execution.
+
+        Sends ``working: true`` while a reasoning cycle is active (refreshed on a
+        keep-alive cadence) and ``working: false`` when it ends. Failures are
+        swallowed and returned as ``False`` — the platform's TTL is the backstop,
+        so activity reporting must never break message processing.
+        """
+        try:
+            await self.rest.agent_api_activity.report_agent_chat_activity(
+                chat_id=room_id,
+                working=working,
+                request_options=DEFAULT_REQUEST_OPTIONS,
+            )
+        except Exception as e:
+            if not self._activity_report_failing:
+                self._activity_report_failing = True
+                logger.warning(
+                    "Failed to report activity (working=%s) for room %s: %s; "
+                    "suppressing repeat warnings until recovery",
+                    working,
+                    room_id,
+                    e,
+                )
+            else:
+                logger.debug(
+                    "Activity report still failing (working=%s) for room %s: %s",
+                    working,
+                    room_id,
+                    e,
+                )
+            return False
+        if self._activity_report_failing:
+            self._activity_report_failing = False
+            logger.info("Activity reporting recovered for room %s", room_id)
         return True
 
     async def get_next_message(self, room_id: str) -> PlatformMessage | None:
