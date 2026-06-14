@@ -12,10 +12,21 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 from band.core.exceptions import BandToolError
+from band.core.memory_types import (
+    MemoryListScope,
+    MemorySegment,
+    MemoryStatus,
+    MemoryStoreScope,
+    MemorySystem,
+    MemoryType,
+    memory_type_field_description,
+    validate_memory_type_for_system,
+    validate_subject_scope,
+)
 from band.core.protocols import AgentToolsProtocol
 
 if TYPE_CHECKING:
@@ -247,24 +258,13 @@ class ListMemoriesInput(BaseModel):
     subject_id: str | None = Field(
         None, description="Filter by subject UUID (required for subject-scoped queries)"
     )
-    scope: Literal["subject", "organization", "all"] | None = Field(
-        None, description="Filter by scope"
-    )
-    system: Literal["sensory", "working", "long_term"] | None = Field(
-        None, description="Filter by memory system"
-    )
-    type: (
-        Literal["iconic", "echoic", "haptic", "episodic", "semantic", "procedural"]
-        | None
-    ) = Field(None, description="Filter by memory type")
-    segment: Literal["user", "agent", "tool", "guideline"] | None = Field(
-        None, description="Filter by segment"
-    )
+    scope: MemoryListScope | None = Field(None, description="Filter by scope")
+    system: MemorySystem | None = Field(None, description="Filter by memory system")
+    type: MemoryType | None = Field(None, description="Filter by memory type")
+    segment: MemorySegment | None = Field(None, description="Filter by segment")
     content_query: str | None = Field(None, description="Full-text search query")
     page_size: int = Field(50, description="Number of results per page", ge=1, le=50)
-    status: Literal["active", "superseded", "archived", "all"] | None = Field(
-        None, description="Filter by status"
-    )
+    status: MemoryStatus | None = Field(None, description="Filter by status")
 
 
 class StoreMemoryInput(BaseModel):
@@ -276,19 +276,11 @@ class StoreMemoryInput(BaseModel):
     """
 
     content: str = Field(..., description="The memory content")
-    system: Literal["sensory", "working", "long_term"] = Field(
-        ..., description="Memory system tier"
-    )
-    type: Literal[
-        "iconic", "echoic", "haptic", "episodic", "semantic", "procedural"
-    ] = Field(..., description="Memory type (must be valid for selected system)")
-    segment: Literal["user", "agent", "tool", "guideline"] = Field(
-        ..., description="Logical segment"
-    )
+    system: MemorySystem = Field(..., description="Memory system tier")
+    type: MemoryType = Field(..., description=memory_type_field_description())
+    segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: Literal["subject", "organization"] = Field(
-        "subject", description="Visibility scope"
-    )
+    scope: MemoryStoreScope = Field(..., description="Visibility scope")
     subject_id: str | None = Field(
         None,
         description="UUID of the subject this memory is about (required for subject scope)",
@@ -296,6 +288,12 @@ class StoreMemoryInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Additional metadata (tags, references)"
     )
+
+    @model_validator(mode="after")
+    def validate_memory_fields(self) -> "StoreMemoryInput":
+        validate_memory_type_for_system(self.system, self.type)
+        validate_subject_scope(self.scope, self.subject_id)
+        return self
 
 
 class GetMemoryInput(BaseModel):
@@ -1808,7 +1806,7 @@ class AgentTools(AgentToolsProtocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = "subject",
+        scope: str,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
@@ -1831,12 +1829,16 @@ class AgentTools(AgentToolsProtocol):
         """
         from band.client.rest import AgentMemoryCreateRequest
 
+        validate_memory_type_for_system(system, type)
+        validate_subject_scope(MemoryStoreScope(scope), subject_id)
+
         logger.debug(
-            "Storing memory: system=%s, type=%s, segment=%s, scope=%s",
+            "Storing memory: system=%s, type=%s, segment=%s, scope=%s, subject_id=%s",
             system,
             type,
             segment,
             scope,
+            subject_id,
         )
         memory_kwargs: dict[str, Any] = {
             "content": content,

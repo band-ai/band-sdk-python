@@ -39,7 +39,7 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 The SDK uses Fern-generated REST client with property-based namespace API:
 
-```python
+```python notest
 # Pattern: agent_api_<resource>.method()
 await link.rest.agent_api_chats.create_agent_chat(...)
 await link.rest.agent_api_messages.create_agent_chat_message(...)
@@ -64,7 +64,7 @@ await link.rest.agent_api_participants.list_agent_chat_participants(...)
 
 All models use `ConfigDict(extra="allow")` to accept additional fields from the backend.
 
-```python
+```python notest
 MessageCreatedPayload:
   id, content, message_type, sender_id, sender_type,
   sender_name?, metadata? (MessageMetadata), chat_room_id?,
@@ -91,7 +91,7 @@ Mention:
 
 ### PlatformEvent Union (Tagged Union Pattern)
 
-```python
+```python notest
 PlatformEvent = (
     MessageEvent | RoomAddedEvent | RoomRemovedEvent
     | ParticipantAddedEvent | ParticipantRemovedEvent
@@ -199,7 +199,7 @@ adapter = A2AAdapter(
 ```python
 from band.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
 
-adapter = A2AGatewayAdapter(gateway_port=10000)
+adapter = A2AGatewayAdapter(port=10000)
 ```
 
 ### Key files
@@ -276,13 +276,13 @@ Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
 
 When calling REST endpoints with optional parameters, **never pass `None`** - the Fern client sends `null` which fails backend validation. Instead, use kwargs:
 
-```python
+```python fixture:client
 # WRONG - sends {"action": "approve", "handle": null, "request_id": "..."}
-await client.respond_to_agent_contact_request(action="approve", handle=None, request_id="...")
+await client.agent_api_contacts.respond_to_agent_contact_request(action="approve", handle=None, request_id="...")
 
 # CORRECT - sends {"action": "approve", "request_id": "..."}
 kwargs = {"action": "approve", "request_id": "..."}
-await client.respond_to_agent_contact_request(**kwargs)
+await client.agent_api_contacts.respond_to_agent_contact_request(**kwargs)
 ```
 
 ## Code Structure

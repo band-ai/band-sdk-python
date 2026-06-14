@@ -118,6 +118,7 @@ dmypy.json
 .pyre/
 
 # IDE files
+.cursorignore
 .vscode/
 .idea/
 *.swp

@@ -221,6 +221,7 @@ class TestToolSetComposition:
                     "memory_type": "fact",
                     "segment": "user",
                     "thought": "useful later",
+                    "scope": "organization",
                 },
             ),
         ],
@@ -267,6 +268,7 @@ class TestToolSetComposition:
                 "memory_type": "semantic",
                 "segment": "user",
                 "thought": "useful later",
+                "scope": "organization",
                 "metadata": {"source": "crewai"},
             }
         ).metadata == {"source": "crewai"}
@@ -426,3 +428,51 @@ class TestRunAsyncLazyPatch:
         # nest_asyncio.apply should have been called exactly once across
         # multiple run_async invocations (the lazy patch).
         assert crewai_mocks.apply.call_count == 1
+
+
+class TestStoreMemoryInputDescription:
+    def test_crewai_store_memory_type_description_is_generated(self, builder_mod):
+        """CrewAI store_memory args schema should use memory_type_field_description()."""
+        from band.core.memory_types import memory_type_field_description
+
+        expected = memory_type_field_description()
+        assert (
+            builder_mod._StoreMemoryInput.model_fields["memory_type"].description
+            == expected
+        )
+
+    def test_crewai_store_memory_rejects_subject_scope_without_subject_id(
+        self, builder_mod
+    ) -> None:
+        """CrewAI input validation rejects missing subject IDs."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="requires a subject_id"):
+            builder_mod._StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "working",
+                    "memory_type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "subject",
+                }
+            )
+
+    def test_crewai_store_memory_rejects_type_for_wrong_system(
+        self, builder_mod
+    ) -> None:
+        """CrewAI input validation rejects system/type mismatches."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
+            builder_mod._StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "sensory",
+                    "memory_type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "organization",
+                }
+            )
