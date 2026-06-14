@@ -25,6 +25,7 @@ In this repo, the CrewAI adapter lets those agents use Band rooms and Band tools
 | `06_jerry_agent.py` | **Character agent** - Jerry the mouse with a custom character prompt. |
 | `07_contact_and_memory_agent.py` | **Contacts + memory** - Shows CrewAI contact tools, memory tools, and broadcast contact updates. |
 | `08_flow_router.py` | **Flow router (experimental)** - Uses `CrewAIFlowAdapter` for room-native multi-turn orchestration with parallel join and sequential composition. |
+| `10_memory_tool_usage.py` | **Memory tools** - Enables durable Band memory for user preferences, facts, and reusable instructions. |
 
 ## Adapter choice
 
@@ -165,6 +166,14 @@ crewai_contact_memory_agent:
 crewai_flow_router:
   agent_id: "your-crewai-flow-router-agent-id"
   api_key: "your-crewai-flow-router-agent-api-key"
+```
+
+Memory tools example:
+
+```yaml
+memory_agent:
+  agent_id: "your-memory-agent-id"
+  api_key: "your-memory-agent-api-key"
 ```
 
 ## Important runtime note
@@ -311,6 +320,31 @@ Suggested prompts:
 2. ask it to send or review a contact request
 3. ask it to store a preference as memory
 4. ask it later to recall that preference
+
+### `10_memory_tool_usage.py`
+
+Use this example if:
+
+- you want a focused CrewAI example that only exercises memory tools
+- you want the agent to capture durable preferences, facts, and reusable instructions
+
+This example reads the model from the `CREWAI_MODEL` environment variable, so set it in `.env` before running:
+
+```bash
+CREWAI_MODEL=gpt-5.4-mini
+```
+
+Run:
+
+```bash
+uv run examples/crewai/10_memory_tool_usage.py
+```
+
+Suggested prompts:
+
+1. "Remember that I prefer concise status updates."
+2. "Remember that this project uses CrewAI for orchestration."
+3. "What do you remember about my update style?"
 
 ## CrewAI agent definition
 
