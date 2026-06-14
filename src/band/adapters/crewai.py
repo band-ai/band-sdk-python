@@ -403,6 +403,15 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                     }
                 )
 
+            if not (reply_tracker is not None and reply_tracker.replied):
+                await self._report_error(
+                    tools,
+                    "CrewAI completed without sending a Band message. This usually "
+                    f"means repeated tool failures exhausted max_iter={self.max_iter} "
+                    "or the agent returned a final answer instead of using the "
+                    "band_send_message tool.",
+                )
+
             logger.info(
                 "Room %s: CrewAI agent completed (output_length=%s)",
                 room_id,
