@@ -56,6 +56,12 @@ await agent.run()
 | `02_custom_tools.py` | **Custom tools** - Built-in agent + calculator and weather tools using `additional_tools`. |
 | `03_custom_personality.py` | Custom personality - built-in agent plus pirate behavior using `custom_section`. |
 
+### Platform Capabilities
+
+| File | Description |
+|------|-------------|
+| `10_memory_tool_usage.py` | **Memory tools** - Enables durable Band memory for user preferences, facts, and reusable instructions. |
+
 ### Advanced: Delegating to Sub-Agents
 
 | File | Description |
@@ -192,6 +198,9 @@ uv run --extra langgraph python examples/langgraph/08_jerry_agent.py
 
 # Custom operations graph with platform reporting and subgraph delegation
 uv run --extra langgraph python examples/langgraph/09_research_ops_orchestrator.py
+
+# Memory tools
+uv run --extra langgraph python examples/langgraph/10_memory_tool_usage.py
 ```
 
 **Using as external library:**
@@ -234,6 +243,10 @@ sql_agent:
 research_ops_agent:
   agent_id: "agent_ops"
   api_key: "key_ops"
+
+memory_agent:
+  agent_id: "agent_memory"
+  api_key: "key_memory"
 
 # Also used by multi-agent examples:
 tom_agent:

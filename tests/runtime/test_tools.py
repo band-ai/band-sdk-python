@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from pydantic import ValidationError
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.runtime.tools import (
@@ -12,6 +13,7 @@ from band.runtime.tools import (
     AgentTools,
     SendMessageInput,
     SendEventInput,
+    StoreMemoryInput,
     AddParticipantInput,
     LookupPeersInput,
     GetParticipantsInput,
@@ -149,6 +151,7 @@ class TestMemoryTools:
             type="semantic",
             segment="user",
             thought="useful later",
+            scope="organization",
         )
 
         call_kwargs = (
@@ -158,6 +161,54 @@ class TestMemoryTools:
         assert "subject_id" not in memory_payload
         assert "metadata" not in memory_payload
         assert call_kwargs["request_options"] is DEFAULT_REQUEST_OPTIONS
+
+    @pytest.mark.asyncio
+    async def test_store_memory_rejects_subject_scope_without_subject_id(
+        self, mock_rest_client
+    ) -> None:
+        """Reject subject-scoped writes before they reach the API."""
+        mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock()
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="requires a subject_id"):
+            await tools.store_memory(
+                content="remember this",
+                system="working",
+                type="semantic",
+                segment="user",
+                thought="useful later",
+                scope="subject",
+            )
+
+        mock_rest_client.agent_api_memories.create_agent_memory.assert_not_called()
+
+    def test_store_memory_input_rejects_subject_scope_without_subject_id(self) -> None:
+        """Validate tool input rejects subject scope without subject_id."""
+        with pytest.raises(ValidationError, match="requires a subject_id"):
+            StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "working",
+                    "type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "subject",
+                }
+            )
+
+    def test_store_memory_input_rejects_type_for_wrong_system(self) -> None:
+        """Validate memory type matches the chosen system."""
+        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
+            StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "sensory",
+                    "type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "organization",
+                }
+            )
 
     @pytest.mark.parametrize(
         ("tool_method", "rest_method"),
