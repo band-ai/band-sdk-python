@@ -553,7 +553,9 @@ class BandLink:
             return False
         return True
 
-    async def report_activity(self, room_id: str, working: bool) -> bool:
+    async def report_activity(
+        self, room_id: str, working: bool, *, timeout_seconds: int = 2
+    ) -> bool:
         """
         Report the agent's boolean working state for a room's execution.
 
@@ -561,12 +563,21 @@ class BandLink:
         keep-alive cadence) and ``working: false`` when it ends. Failures are
         swallowed and returned as ``False`` — the platform's TTL is the backstop,
         so activity reporting must never break message processing.
+
+        The call is time-bounded by ``timeout_seconds`` (a per-POST deadline, not
+        the client default) so a slow/half-open endpoint can never wedge the
+        reasoning loop's teardown or stall the keep-alive. Retries are disabled:
+        a dropped keep-alive is re-sent on the next cadence tick, and a dropped
+        ``false`` is cleared by the platform TTL, so retrying only adds latency.
         """
         try:
             await self.rest.agent_api_activity.report_agent_chat_activity(
                 chat_id=room_id,
                 working=working,
-                request_options=DEFAULT_REQUEST_OPTIONS,
+                request_options={
+                    "timeout_in_seconds": timeout_seconds,
+                    "max_retries": 0,
+                },
             )
         except Exception as e:
             if not self._activity_report_failing:

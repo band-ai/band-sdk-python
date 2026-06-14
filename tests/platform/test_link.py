@@ -833,6 +833,20 @@ class TestReportActivity:
         assert call.call_args.kwargs["working"] is True
 
     @pytest.mark.asyncio
+    async def test_passes_per_post_timeout_and_no_retries(self):
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock()
+
+        await link.report_activity("room-1", True, timeout_seconds=2)
+
+        opts = link.rest.agent_api_activity.report_agent_chat_activity.call_args.kwargs[
+            "request_options"
+        ]
+        assert opts["timeout_in_seconds"] == 2
+        assert opts["max_retries"] == 0
+
+    @pytest.mark.asyncio
     async def test_reports_working_false(self):
         link = BandLink(agent_id="agent-123", api_key="test-key")
         link.rest = MagicMock()
