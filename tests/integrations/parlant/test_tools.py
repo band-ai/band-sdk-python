@@ -626,6 +626,33 @@ class TestParlantToolFunctions:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        "missing_field",
+        ["content", "system", "memory_type", "segment", "thought", "scope"],
+    )
+    async def test_store_memory_without_required_field_returns_guidance(
+        self, memory_parlant_tools, mock_tools, mock_context, missing_field
+    ):
+        """Should guide the model and not call the tool when a required field is missing."""
+        set_session_tools(mock_context.session_id, mock_tools)
+
+        args = {
+            "content": "Favorite color is green",
+            "system": "long_term",
+            "memory_type": "semantic",
+            "segment": "user",
+            "thought": "User asked me to remember it.",
+            "scope": "organization",
+        }
+        args[missing_field] = ""
+
+        store_memory = memory_parlant_tools["band_store_memory"]
+        result = await store_memory(mock_context, **args)
+
+        assert "band_store_memory needs" in result.data
+        mock_tools.store_memory.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         ("tool_name", "mock_method_name"),
         [
             ("band_get_memory", "get_memory"),

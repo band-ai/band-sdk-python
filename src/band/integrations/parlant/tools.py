@@ -32,6 +32,13 @@ import logging
 import warnings
 from typing import Any, Optional
 
+from band.core.memory_types import (
+    MemorySegment,
+    MemoryStoreScope,
+    MemorySystem,
+    enum_values,
+    memory_type_field_description,
+)
 from band.core.types import AdapterFeatures, Capability
 
 logger = logging.getLogger(__name__)
@@ -517,23 +524,30 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
     @p.tool
     async def band_store_memory(
         context: ToolContext,
-        content: str,
-        system: str,
-        type: str,
-        segment: str,
-        thought: str,
-        scope: str,
+        content: str = "",
+        system: str = "",
+        memory_type: str = "",
+        segment: str = "",
+        thought: str = "",
+        scope: str = "",
         subject_id: str = "",
         metadata: str = "",
     ) -> ToolResult:
         """
         Store durable information in Band memory.
 
+        All of content, system, memory_type, segment, thought, and scope are
+        required; if any is missing the tool returns guidance listing the valid
+        choices. Value validation (system/type pairing, subject scope) is handled
+        by the platform and surfaced as an error you can act on.
+
         Args:
             context: Parlant tool context (automatically provided)
             content: The durable memory content to store
             system: Memory system: 'sensory', 'working', or 'long_term'
-            type: Memory type. For long_term use 'semantic' or 'procedural'
+            memory_type: Memory type that must match the system: 'sensory' uses
+                'iconic'/'echoic'/'haptic'; 'working'/'long_term' use
+                'episodic'/'semantic'/'procedural'
             segment: Segment: 'user', 'agent', 'tool', or 'guideline'
             thought: Brief reason why this information is durable
             scope: Visibility scope: 'subject' or 'organization'
@@ -547,7 +561,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             "[Parlant Tool] store_memory called: session=%s, system=%s, type=%s, scope=%s",
             context.session_id,
             system,
-            type,
+            memory_type,
             scope,
         )
         tools = get_session_tools(context.session_id)
@@ -558,10 +572,34 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             )
             return ToolResult(data="Error: No tools available in current context")
 
+        required_hints = {
+            "content": "content (the text to remember)",
+            "system": f"system (one of: {', '.join(enum_values(MemorySystem))})",
+            "memory_type": memory_type_field_description(),
+            "segment": f"segment (one of: {', '.join(enum_values(MemorySegment))})",
+            "thought": "thought (brief reason this information is durable)",
+            "scope": f"scope (one of: {', '.join(enum_values(MemoryStoreScope))})",
+        }
+        provided = {
+            "content": content,
+            "system": system,
+            "memory_type": memory_type,
+            "segment": segment,
+            "thought": thought,
+            "scope": scope,
+        }
+        missing = [
+            hint for field, hint in required_hints.items() if not provided[field]
+        ]
+        if missing:
+            return ToolResult(
+                data="Error: band_store_memory needs: " + "; ".join(missing) + "."
+            )
+
         store_kwargs: dict[str, Any] = {
             "content": content,
             "system": system,
-            "type": type,
+            "type": memory_type,
             "segment": segment,
             "thought": thought,
             "scope": scope,

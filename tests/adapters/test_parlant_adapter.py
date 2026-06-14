@@ -333,6 +333,51 @@ class TestOnMessage:
             assert call("session-123", None) not in mock_set_tools.call_args_list
 
     @pytest.mark.asyncio
+    async def test_session_tools_persist_after_on_message_until_cleanup(
+        self, initialized_adapter, sample_message, mock_tools
+    ):
+        """Tools must stay in the real registry after on_message so a slow/late
+        Parlant tool batch still resolves them; on_cleanup clears them."""
+        from band.integrations.parlant.tools import (
+            get_session_tools,
+            set_session_tools,
+        )
+
+        set_session_tools("session-123", None)
+
+        mock_moderation = MagicMock()
+        mock_moderation.NONE = "none"
+
+        with patch.dict(
+            sys.modules,
+            {
+                "parlant.core.app_modules.sessions": MagicMock(
+                    Moderation=mock_moderation
+                ),
+                "parlant.core.sessions": MagicMock(
+                    EventSource=MagicMock(CUSTOMER="customer", AI_AGENT="ai_agent"),
+                    EventKind=MagicMock(MESSAGE="message"),
+                ),
+                "parlant.core.async_utils": MagicMock(Timeout=lambda x: x),
+            },
+        ):
+            await initialized_adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        # Registry still populated after on_message returns (the actual fix).
+        assert get_session_tools("session-123") is mock_tools
+
+        await initialized_adapter.on_cleanup("room-123")
+        assert get_session_tools("session-123") is None
+
+    @pytest.mark.asyncio
     async def test_reuses_existing_session(
         self, initialized_adapter, sample_message, mock_tools, mock_parlant_server
     ):
