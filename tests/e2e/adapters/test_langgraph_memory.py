@@ -11,7 +11,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from uuid import uuid4
 
 import pytest
-from thenvoi_rest import AsyncRestClient
+from band_rest import AsyncRestClient
 
 from band import Agent
 from band.adapters.langgraph import LangGraphAdapter
