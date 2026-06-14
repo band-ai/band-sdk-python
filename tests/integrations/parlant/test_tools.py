@@ -5,13 +5,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.integrations.parlant.tools import (
-    _session_message_sent,
-    _session_tools,
     create_parlant_tools,
     get_session_tools,
     mark_message_sent,
     set_session_tools,
     was_message_sent,
+)
+from band.integrations.parlant.tools.registry import (
+    _session_message_sent,
+    _session_tools,
 )
 
 
