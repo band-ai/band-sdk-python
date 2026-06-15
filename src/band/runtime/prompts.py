@@ -93,8 +93,11 @@ _MEMORY_COMMON_PATTERNS = f"""Common patterns:
 - How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
 
 
-_MEMORY_SCOPE_GUIDANCE = f"""When storing with `scope="{MemoryStoreScope.SUBJECT.value}"`, you must pass a real `subject_id` UUID
-(e.g. from `band_lookup_peers` or the participant list). 
+_MEMORY_SCOPE_GUIDANCE = f"""Prefer `scope="{MemoryStoreScope.SUBJECT.value}"` whenever the memory is about a specific person or agent, so it
+stays attached to that subject rather than leaking org-wide. Storing with `scope="{MemoryStoreScope.SUBJECT.value}"` requires a
+real `subject_id` UUID, so resolve it first via `band_lookup_peers` or the participant list.
+Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization and
+is not about any one subject.
 """
 
 
