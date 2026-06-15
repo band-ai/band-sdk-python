@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 try:
@@ -23,6 +24,8 @@ except ImportError as e:
 from band.core.protocols import HistoryConverter
 
 from ._tool_parsing import parse_tool_call, parse_tool_result
+
+logger = logging.getLogger(__name__)
 
 # Type alias for Pydantic AI messages (can be requests or responses)
 PydanticAIMessages = list[ModelRequest | ModelResponse]
@@ -121,7 +124,10 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
                         pending_tool_calls,
                         pending_tool_results,
                     )
-                # Other types (e.g. "thought") are intentionally ignored.
+                case "thought" | "error" | "task":
+                    pass # Known platform-internal types intentionally excluded from LLM history.
+                case _:
+                    logger.warning("Unknown message_type in history: %s", message_type)
 
         # Flush any remaining pending tool calls and results
         _flush_pending_tool_calls(messages, pending_tool_calls)
