@@ -21,8 +21,7 @@ from pydantic_ai import (
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    TextPart,
-    ToolCallPart,
+    ThinkingPart,
     UserPromptPart,
 )
 
@@ -40,11 +39,23 @@ from band.runtime.tools import get_tool_description
 logger = logging.getLogger(__name__)
 
 
+# A response made up only of these (or with no parts at all) serializes to
+# content:null, which providers reject when it's replayed as history.
+_NON_REPLAYABLE_RESPONSE_PARTS = (ThinkingPart,)
+
+
 def _is_replayable_history_message(message: Any) -> bool:
-    """Drop assistant responses that OpenAI replays as content:null."""
+    """Drop assistant responses that would replay as content:null.
+
+    Keep any response with at least one content-bearing part (text, tool
+    calls, builtin tool calls/returns, files). Drop thinking-only and empty
+    responses, which providers reject when sent back as history.
+    """
     if isinstance(message, ModelResponse):
-        # Only TextPart/ToolCallPart replay safely; ThinkingPart-only etc. become content:null.
-        return any(isinstance(part, (TextPart, ToolCallPart)) for part in message.parts)
+        return any(
+            not isinstance(part, _NON_REPLAYABLE_RESPONSE_PARTS)
+            for part in message.parts
+        )
     return True
 
 

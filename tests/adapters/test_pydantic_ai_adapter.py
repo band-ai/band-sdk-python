@@ -18,6 +18,7 @@ from pydantic_ai import (
     FunctionToolResultEvent,
 )
 from pydantic_ai.messages import (
+    BuiltinToolCallPart,
     ModelRequest,
     ModelResponse,
     TextPart,
@@ -26,7 +27,10 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
-from band.adapters.pydantic_ai import PydanticAIAdapter
+from band.adapters.pydantic_ai import (
+    PydanticAIAdapter,
+    _is_replayable_history_message,
+)
 from band.core.types import AdapterFeatures, Capability, PlatformMessage
 
 
@@ -462,6 +466,20 @@ class TestHistoryManagement:
             text_response,
         ]
         assert content_null_response not in stored_history
+
+    def test_keeps_response_with_only_builtin_tool_part(self):
+        """Builtin tool calls carry content the provider expects — keep them."""
+        response = ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name="web_search",
+                    args={"query": "weather"},
+                    tool_call_id="call_1",
+                )
+            ]
+        )
+
+        assert _is_replayable_history_message(response) is True
 
     @pytest.mark.asyncio
     async def test_ensures_history_exists_for_non_bootstrap(
