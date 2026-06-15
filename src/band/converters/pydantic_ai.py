@@ -22,6 +22,7 @@ except ImportError as e:
     ) from e
 
 from band.core.protocols import HistoryConverter
+from band.core.types import MessageType
 
 from ._tool_parsing import parse_tool_call, parse_tool_result
 
@@ -108,15 +109,15 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
             content = hist.get("content", "")
 
             match message_type:
-                case "tool_call":
+                case MessageType.TOOL_CALL:
                     self._handle_tool_call(
                         content, messages, pending_tool_calls, pending_tool_results
                     )
-                case "tool_result":
+                case MessageType.TOOL_RESULT:
                     self._handle_tool_result(
                         content, messages, pending_tool_calls, pending_tool_results
                     )
-                case "text":
+                case MessageType.TEXT:
                     self._handle_text(
                         hist,
                         content,
@@ -124,8 +125,10 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
                         pending_tool_calls,
                         pending_tool_results,
                     )
-                case "thought" | "error" | "task":
-                    pass # Known platform-internal types intentionally excluded from LLM history.
+                case MessageType.THOUGHT | MessageType.ERROR | MessageType.TASK:
+                    # Known platform-internal types intentionally excluded from
+                    # LLM history.
+                    pass
                 case _:
                     logger.warning("Unknown message_type in history: %s", message_type)
 

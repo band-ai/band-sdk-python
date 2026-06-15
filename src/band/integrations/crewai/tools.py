@@ -51,7 +51,13 @@ from band.core.memory_types import (
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    EventMessageType,
+    MessageType,
+)
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -297,8 +303,8 @@ class _SendMessageInput(BaseModel):
 
 class _SendEventInput(BaseModel):
     content: str = Field(..., description="Human-readable event content")
-    message_type: Literal["thought", "error", "task"] = Field(
-        default="thought",
+    message_type: EventMessageType = Field(
+        default=MessageType.THOUGHT,
         description="Type of event: 'thought', 'error', or 'task'",
     )
     metadata: dict[str, Any] | None = Field(

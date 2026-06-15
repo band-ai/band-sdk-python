@@ -12,7 +12,7 @@ import asyncio
 import logging
 import warnings
 from contextvars import ContextVar
-from typing import ClassVar, TYPE_CHECKING, Any, Literal
+from typing import ClassVar, TYPE_CHECKING, Any
 
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
@@ -48,8 +48,6 @@ _current_room_context: ContextVar[tuple[str, AgentToolsProtocol] | None] = Conte
 _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
     "_crewai_reply_tracker", default=None
 )
-
-MessageType = Literal["thought", "error", "task"]
 
 
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
