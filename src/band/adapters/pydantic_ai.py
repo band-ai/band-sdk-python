@@ -20,6 +20,9 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 
@@ -35,6 +38,14 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import get_tool_description
 
 logger = logging.getLogger(__name__)
+
+
+def _is_replayable_history_message(message: Any) -> bool:
+    """Drop assistant responses that OpenAI replays as content:null."""
+    if isinstance(message, ModelResponse):
+        # Only TextPart/ToolCallPart replay safely; ThinkingPart-only etc. become content:null.
+        return any(isinstance(part, (TextPart, ToolCallPart)) for part in message.parts)
+    return True
 
 
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
@@ -468,9 +479,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         if is_session_bootstrap:
             if history:
                 self._message_history[room_id] = list(history)
-                logger.debug(
-                    "Room %s: Loaded %s Pydantic AI messages", room_id, len(history)
-                )
             else:
                 self._message_history[room_id] = []
         elif room_id not in self._message_history:
@@ -542,8 +550,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     except Exception as e:
                         logger.warning("Failed to send tool_result event: %s", e)
             elif isinstance(event, AgentRunResultEvent):
-                # Update stored history with all messages from this run
-                self._message_history[room_id] = list(event.result.all_messages())
+                # Keep native run history; drop poison ModelResponses (e.g. thinking-only).
+                self._message_history[room_id] = [
+                    message
+                    for message in event.result.all_messages()
+                    if _is_replayable_history_message(message)
+                ]
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",

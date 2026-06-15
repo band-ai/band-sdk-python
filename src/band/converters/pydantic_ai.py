@@ -9,6 +9,7 @@ try:
         ModelRequest,
         ModelResponse,
         RetryPromptPart,
+        TextPart,
         ToolCallPart,
         ToolReturnPart,
         UserPromptPart,
@@ -61,7 +62,7 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
     - other agents' messages → ModelRequest with UserPromptPart (with [name] prefix)
     - tool_call → ModelResponse with ToolCallPart
     - tool_result → ModelRequest with ToolReturnPart (or RetryPromptPart if is_error=True)
-    - this agent's text messages → skipped (redundant with tool results)
+    - this agent's text messages → ModelResponse with TextPart
 
     Tool events are stored in platform as JSON:
     - tool_call: {"name": "...", "args": {...}, "tool_call_id": "..."}
@@ -73,15 +74,15 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with tool results). Messages from other
-                       agents are included as ModelRequest.
+            agent_name: Name of this agent. Messages from this agent are preserved
+                       as ModelResponse. Messages from other agents are included
+                       as ModelRequest.
         """
         self._agent_name = agent_name
 
     def set_agent_name(self, name: str) -> None:
         """
-        Set agent name so converter knows which messages to skip.
+        Set agent name so the converter can recognize this agent's own messages.
 
         Args:
             name: Name of this agent
@@ -148,9 +149,13 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
                 role = hist.get("role", "user")
                 sender_name = hist.get("sender_name", "")
 
-                if role == "assistant" and sender_name == self._agent_name:
-                    # Skip THIS agent's text (redundant with tool results)
-                    continue
+                if (
+                    role == "assistant"
+                    and self._agent_name
+                    and sender_name == self._agent_name
+                ):
+                    # Preserve own text so restart rehydration knows the agent already replied.
+                    messages.append(ModelResponse(parts=[TextPart(content=content)]))
                 else:
                     # User messages AND other agents' messages
                     formatted_content = (
