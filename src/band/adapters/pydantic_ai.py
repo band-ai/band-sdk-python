@@ -479,6 +479,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         if is_session_bootstrap:
             if history:
                 self._message_history[room_id] = list(history)
+                logger.debug(
+                    "Room %s: rehydrated %s message(s) from platform history",
+                    room_id,
+                    len(history),
+                )
             else:
                 self._message_history[room_id] = []
         elif room_id not in self._message_history:
@@ -552,11 +557,19 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             elif isinstance(event, AgentRunResultEvent):
                 # Keep native run history, but drop responses that replay as
                 # content:null (e.g. thinking-only) — providers reject them next request.
+                run_messages = list(event.result.all_messages())
                 self._message_history[room_id] = [
                     message
-                    for message in event.result.all_messages()
+                    for message in run_messages
                     if _is_replayable_history_message(message)
                 ]
+                dropped = len(run_messages) - len(self._message_history[room_id])
+                if dropped:
+                    logger.debug(
+                        "Room %s: dropped %s content:null response(s) from history",
+                        room_id,
+                        dropped,
+                    )
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",
