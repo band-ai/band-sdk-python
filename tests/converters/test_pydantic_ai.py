@@ -347,6 +347,43 @@ class TestToolEventConversion:
         assert result[0].parts[0].tool_name == "tool1"
         assert result[0].parts[1].tool_name == "tool2"
 
+    def test_drops_own_text_between_tool_call_and_result(self):
+        """Own text emitted mid tool call is dropped so the call/result pair stays intact.
+
+        band_send_message posts the agent's text between the tool_call and
+        tool_result events. Keeping that text would split the ToolCallPart from
+        its ToolReturnPart, which providers reject.
+        """
+        converter = PydanticAIHistoryConverter(agent_name="Bot")
+        raw = [
+            {
+                "role": "assistant",
+                "content": '{"name": "band_send_message", "args": {"content": "hi"}, "tool_call_id": "call_1"}',
+                "sender_name": "Bot",
+                "message_type": "tool_call",
+            },
+            {
+                "role": "assistant",
+                "content": "hi",
+                "sender_name": "Bot",
+                "message_type": "text",
+            },
+            {
+                "role": "assistant",
+                "content": '{"name": "band_send_message", "output": {"id": "msg_1"}, "tool_call_id": "call_1"}',
+                "sender_name": "Bot",
+                "message_type": "tool_result",
+            },
+        ]
+
+        result = converter.convert(raw)
+
+        assert len(result) == 2
+        assert isinstance(result[0], ModelResponse)
+        assert isinstance(result[0].parts[0], ToolCallPart)
+        assert isinstance(result[1], ModelRequest)
+        assert isinstance(result[1].parts[0], ToolReturnPart)
+
     def test_uses_retry_prompt_part_for_error_results(self):
         """tool_result with is_error=True uses RetryPromptPart instead of ToolReturnPart."""
         converter = PydanticAIHistoryConverter()

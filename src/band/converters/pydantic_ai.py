@@ -63,6 +63,8 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
     - tool_call → ModelResponse with ToolCallPart
     - tool_result → ModelRequest with ToolReturnPart (or RetryPromptPart if is_error=True)
     - this agent's text messages → ModelResponse with TextPart
+      (dropped when emitted mid tool call, where it would split the
+      ToolCallPart from its ToolReturnPart)
 
     Tool events are stored in platform as JSON:
     - tool_call: {"name": "...", "args": {...}, "tool_call_id": "..."}
@@ -142,18 +144,25 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
                     pending_tool_results.append(tool_result_part)
 
             elif message_type == "text":
+                role = hist.get("role", "user")
+                sender_name = hist.get("sender_name", "")
+                is_own = (
+                    role == "assistant"
+                    and self._agent_name
+                    and sender_name == self._agent_name
+                )
+
+                # Own platform text while a tool call is unresolved is usually the side
+                # effect of band_send_message. Replaying it here would split the
+                # ToolCallPart from its ToolReturnPart, which providers reject.
+                if is_own and pending_tool_calls:
+                    continue
+
                 # Flush pending tool calls and results first
                 _flush_pending_tool_calls(messages, pending_tool_calls)
                 _flush_pending_tool_results(messages, pending_tool_results)
 
-                role = hist.get("role", "user")
-                sender_name = hist.get("sender_name", "")
-
-                if (
-                    role == "assistant"
-                    and self._agent_name
-                    and sender_name == self._agent_name
-                ):
+                if is_own:
                     # Preserve own text so restart rehydration knows the agent already replied.
                     messages.append(ModelResponse(parts=[TextPart(content=content)]))
                 else:
