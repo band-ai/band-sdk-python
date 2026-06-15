@@ -550,7 +550,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     except Exception as e:
                         logger.warning("Failed to send tool_result event: %s", e)
             elif isinstance(event, AgentRunResultEvent):
-                # Keep native run history; drop poison ModelResponses (e.g. thinking-only).
+                # Keep native run history, but drop responses that replay as
+                # content:null (e.g. thinking-only) — providers reject them next request.
                 self._message_history[room_id] = [
                     message
                     for message in event.result.all_messages()

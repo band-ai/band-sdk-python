@@ -403,7 +403,7 @@ class TestHistoryManagement:
         assert adapter._message_history["room-123"] == new_messages
 
     @pytest.mark.asyncio
-    async def test_keeps_native_history_and_drops_poison_responses(
+    async def test_keeps_native_history_and_drops_content_null_responses(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
         """Should keep native tool history but drop responses that replay as null."""
@@ -431,13 +431,13 @@ class TestHistoryManagement:
                 )
             ]
         )
-        poison_response = ModelResponse(parts=[])
+        content_null_response = ModelResponse(parts=[])
         text_response = ModelResponse(parts=[TextPart(content="A1")])
         result_messages = [
             user_request,
             tool_call_response,
             tool_return_request,
-            poison_response,
+            content_null_response,
             text_response,
         ]
         adapter._agent.run_stream_events = MagicMock(
@@ -461,7 +461,7 @@ class TestHistoryManagement:
             tool_return_request,
             text_response,
         ]
-        assert poison_response not in stored_history
+        assert content_null_response not in stored_history
 
     @pytest.mark.asyncio
     async def test_ensures_history_exists_for_non_bootstrap(
