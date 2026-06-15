@@ -18,7 +18,7 @@ import logging
 import uuid
 
 import pytest
-from thenvoi_rest import AsyncRestClient
+from band_rest import AsyncRestClient
 
 from band.agent import Agent
 

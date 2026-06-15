@@ -11,8 +11,8 @@ import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from thenvoi_rest import AsyncRestClient, ChatMessageRequest
-from thenvoi_rest.types import (
+from band_rest import AsyncRestClient, ChatMessageRequest
+from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
 )
 

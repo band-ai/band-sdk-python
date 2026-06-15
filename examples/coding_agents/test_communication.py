@@ -34,8 +34,8 @@ def load_agent_config(filename: str) -> dict:
 
 
 async def main() -> None:
-    from thenvoi_rest import AsyncRestClient
-    from thenvoi_rest.types import (
+    from band_rest import AsyncRestClient
+    from band_rest.types import (
         ChatMessageRequest,
         ChatMessageRequestMentionsItem,
         ChatRoomRequest,

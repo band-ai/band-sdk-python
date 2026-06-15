@@ -80,7 +80,7 @@ class RoomAddedPayload(BaseModel):
     """Payload for room_added events.
 
     Required/optional fields aligned with the Fern-generated ChatRoom model
-    (thenvoi_rest.types.chat_room.ChatRoom). The WebSocket may include
+    (band_rest.types.chat_room.ChatRoom). The WebSocket may include
     additional fields which are captured by ``extra="allow"``.
     """
 
