@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -114,6 +115,33 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # Band capability tools (memory/contacts) are wired into the copy once,
         # on the first message, since they are room-agnostic.
         self._band_tools_wired = False
+
+        self._warn_on_memory_collision(agent)
+
+    def _warn_on_memory_collision(self, agent: AgnoAgent) -> None:
+        """Warn if Band memory was requested while Agno's own memory is enabled.
+
+        Only relevant when the caller enabled ``Capability.MEMORY``: the adapter
+        then exposes Band memory tools to the agent, which collides with Agno's
+        built-in memory (``update_memory_on_run`` / ``enable_agentic_memory``).
+        """
+        if Capability.MEMORY not in self.features.capabilities:
+            return
+
+        enabled: list[str] = []
+        if agent.update_memory_on_run:
+            enabled.append("update_memory_on_run")
+        if agent.enable_agentic_memory:
+            enabled.append("enable_agentic_memory")
+
+        if enabled:
+            warnings.warn(
+                "Capability.MEMORY exposes Band memory tools to the agent, but "
+                f"this Agno agent also manages its own memory ({', '.join(enabled)}). "
+                "The two memory systems collide; disable one of them.",
+                UserWarning,
+                stacklevel=3,
+            )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Deep-copy the caller's agent and sync the converter identity."""
