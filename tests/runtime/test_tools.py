@@ -1111,8 +1111,8 @@ class TestEmptyMentionsValidation:
         with pytest.raises(BandToolError, match="@user-one"):
             await tools.send_message("Hello!", mentions=[])
 
-    async def test_uses_name_when_no_handle(self, mock_rest_client):
-        """Should fall back to participant name when handle is missing."""
+    async def test_omits_participant_without_handle(self, mock_rest_client):
+        """Should omit handle-less participants — they can't be @mentioned."""
         from band.core.exceptions import BandToolError
 
         participants = [
@@ -1120,8 +1120,14 @@ class TestEmptyMentionsValidation:
         ]
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(BandToolError, match="User One"):
+        with pytest.raises(
+            BandToolError, match="At least one mention is required"
+        ) as exc_info:
             await tools.send_message("Hello!", mentions=[])
+
+        # Name must not be offered as a mention target — only real handles are.
+        assert "User One" not in str(exc_info.value)
+        assert "Available participants: []" in str(exc_info.value)
 
     async def test_no_error_when_mentions_provided(
         self, mock_rest_client, participants

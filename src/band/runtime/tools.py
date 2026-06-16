@@ -88,22 +88,6 @@ def available_mention_handles(
     ]
 
 
-def available_mention_participant_labels(
-    participants: list[dict[str, Any] | Any],
-    agent_id: str | None = None,
-) -> list[str]:
-    """Return mentionable participant handles, falling back to names."""
-    return [
-        label
-        for participant in participants
-        if (agent_id is None or _entity_field(participant, "id") != agent_id)
-        and (
-            label := _entity_field(participant, "handle")
-            or _entity_field(participant, "name")
-        )
-    ]
-
-
 def append_mention_handles_hint(error: str, handles: list[str]) -> str:
     """Append a retryable handles hint to a tool error when handles are known."""
     if not handles or "Available handles:" in error:
@@ -1306,12 +1290,10 @@ class AgentTools(AgentToolsProtocol):
         # Validate mentions are not empty — API requires ≥1 mention.
         # Return a helpful error so the LLM can retry with proper mentions.
         if not resolved_mentions:
-            participant_names = available_mention_participant_labels(
-                self._participants, self._agent_id
-            )
+            available = self.available_mention_handles()
             raise BandToolError(
                 "At least one mention is required. "
-                f"Available participants: {participant_names}. "
+                f"Available participants: {available}. "
                 "Please retry with mentions specifying who this message is for."
             )
 
