@@ -16,6 +16,7 @@ import os
 import shlex
 import shutil
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
 
@@ -50,12 +51,57 @@ def _require_anthropic_key() -> None:
         pytest.skip("ANTHROPIC_API_KEY not set")
 
 
+def _require_gemini_key_or_vertex() -> None:
+    """Skip test if neither Gemini Developer API nor Vertex AI env is configured."""
+    if os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"):
+        return
+    if os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") == "true" and os.environ.get(
+        "GOOGLE_CLOUD_PROJECT"
+    ):
+        return
+    pytest.skip("GOOGLE_API_KEY/GEMINI_API_KEY or Vertex AI env not set")
+
+
 def _is_conflicting_crewai_lane() -> bool:
     """Detect the default dev lane that cannot safely run CrewAI E2E tests."""
     return any(
         importlib.util.find_spec(module_name) is not None
         for module_name in ("parlant", "pydantic_ai")
     )
+
+
+def _write_capable_auto_approval_opted_in() -> bool:
+    return os.environ.get("E2E_ALLOW_WRITE_CAPABLE_AUTO_APPROVAL") == "true"
+
+
+def _safe_approval_mode(
+    *,
+    adapter_name: str,
+    env_var: str,
+    default: str,
+) -> str:
+    mode = os.environ.get(env_var, default)
+    if mode == "auto_accept" and not _write_capable_auto_approval_opted_in():
+        pytest.skip(
+            f"{adapter_name} E2E auto_accept requires "
+            "E2E_ALLOW_WRITE_CAPABLE_AUTO_APPROVAL=true"
+        )
+    return mode
+
+
+def _require_codex_disposable_cwd() -> str:
+    cwd = os.environ.get("CODEX_CWD")
+    if not cwd:
+        pytest.skip("CODEX_CWD must point to an explicit disposable directory")
+    path = Path(cwd).expanduser().resolve()
+    if not path.is_dir():
+        pytest.skip(f"CODEX_CWD must be an existing directory: {path}")
+    if os.environ.get("E2E_CODEX_CWD_IS_DISPOSABLE") != "true":
+        pytest.skip("CODEX E2E requires E2E_CODEX_CWD_IS_DISPOSABLE=true")
+    repo_root = Path(__file__).resolve().parents[3]
+    if path == repo_root or repo_root in path.parents:
+        pytest.skip("CODEX_CWD must not be inside the SDK repository")
+    return str(path)
 
 
 def create_langgraph_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
@@ -158,8 +204,12 @@ def create_opencode_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
             model_id=os.environ.get("OPENCODE_MODEL_ID", "minimax-m2.5-free"),
             agent=os.environ.get("OPENCODE_AGENT") or None,
             custom_section="Keep responses short and concise.",
-            approval_mode="auto_accept",
-            question_mode="auto_reject",
+            approval_mode=_safe_approval_mode(
+                adapter_name="OpenCode",
+                env_var="OPENCODE_APPROVAL_MODE",
+                default="auto_decline",
+            ),
+            question_mode=os.environ.get("OPENCODE_QUESTION_MODE", "auto_reject"),
         ),
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
@@ -178,6 +228,7 @@ def create_codex_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     binary = command[0] if command else "codex"
     if transport == "stdio" and not shutil.which(binary):
         pytest.skip("Codex E2E requires the codex CLI on PATH")
+    cwd = _require_codex_disposable_cwd()
 
     return CodexAdapter(
         config=CodexAdapterConfig(
@@ -185,11 +236,15 @@ def create_codex_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
             codex_command=command,
             codex_ws_url=os.environ.get("CODEX_WS_URL", "ws://127.0.0.1:8765"),
             model=os.environ.get("CODEX_MODEL", settings.e2e_llm_model),
-            cwd=os.environ.get("CODEX_CWD", os.getcwd()),
+            cwd=cwd,
             approval_policy=os.environ.get("CODEX_APPROVAL_POLICY", "never"),
             approval_mode=cast(
                 Any,
-                os.environ.get("CODEX_APPROVAL_MODE", "auto_accept"),
+                _safe_approval_mode(
+                    adapter_name="Codex",
+                    env_var="CODEX_APPROVAL_MODE",
+                    default="manual",
+                ),
             ),
             custom_section="Keep responses short and direct.",
             enable_task_events=False,
@@ -234,6 +289,78 @@ def create_letta_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 
 
 # =============================================================================
+# Baseline Default Adapter Factories
+# =============================================================================
+
+
+def create_baseline_default_langgraph_adapter(
+    settings: E2ESettings,
+) -> SimpleAdapter[Any]:
+    """Create an unsteered LangGraph adapter for baseline live proof."""
+    _require_openai_key()
+    from langchain_openai import ChatOpenAI
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from thenvoi.adapters.langgraph import LangGraphAdapter
+
+    return LangGraphAdapter(
+        llm=ChatOpenAI(model=settings.e2e_llm_model),
+        checkpointer=MemorySaver(),
+    )
+
+
+def create_baseline_default_anthropic_adapter(
+    settings: E2ESettings,
+) -> SimpleAdapter[Any]:
+    """Create an unsteered Anthropic adapter for baseline live proof."""
+    _require_anthropic_key()
+    from thenvoi.adapters.anthropic import AnthropicAdapter
+
+    return AnthropicAdapter(model=settings.e2e_anthropic_model)
+
+
+def create_baseline_default_pydantic_ai_adapter(
+    settings: E2ESettings,
+) -> SimpleAdapter[Any]:
+    """Create an unsteered Pydantic AI adapter for baseline live proof."""
+    _require_openai_key()
+    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+
+    return PydanticAIAdapter(model=f"openai:{settings.e2e_llm_model}")
+
+
+def create_baseline_default_claude_sdk_adapter(
+    settings: E2ESettings,
+) -> SimpleAdapter[Any]:
+    """Create an unsteered Claude SDK adapter for baseline live proof."""
+    _require_anthropic_key()
+    from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter
+
+    return ClaudeSDKAdapter(model=settings.e2e_anthropic_model)
+
+
+def create_baseline_default_gemini_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
+    """Create an unsteered Gemini adapter for baseline live proof."""
+    _require_gemini_key_or_vertex()
+    from thenvoi.adapters.gemini import GeminiAdapter
+
+    return GeminiAdapter(model=os.environ.get("E2E_GEMINI_MODEL", "gemini-2.5-flash"))
+
+
+def create_baseline_default_google_adk_adapter(
+    settings: E2ESettings,
+) -> SimpleAdapter[Any]:
+    """Create an unsteered Google ADK adapter for baseline live proof."""
+    del settings
+    _require_gemini_key_or_vertex()
+    from thenvoi.adapters.google_adk import GoogleADKAdapter
+
+    return GoogleADKAdapter(
+        model=os.environ.get("E2E_GEMINI_MODEL", "gemini-2.5-flash")
+    )
+
+
+# =============================================================================
 # Adapter Registry
 # =============================================================================
 
@@ -249,6 +376,15 @@ ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
     "letta": create_letta_adapter,
 }
 
+BASELINE_DEFAULT_ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
+    "langgraph": create_baseline_default_langgraph_adapter,
+    "anthropic": create_baseline_default_anthropic_adapter,
+    "pydantic_ai": create_baseline_default_pydantic_ai_adapter,
+    "claude_sdk": create_baseline_default_claude_sdk_adapter,
+    "gemini": create_baseline_default_gemini_adapter,
+    "google_adk": create_baseline_default_google_adk_adapter,
+}
+
 PROVIDER_USAGE_ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
     name: factory
     for name, factory in ADAPTER_FACTORIES.items()
@@ -258,6 +394,39 @@ PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES: tuple[str, ...] = tuple(
     name
     for name in ADAPTER_FACTORIES
     if provider_usage_blocked_reason(name) is not None
+)
+BASELINE_DEFAULT_PROVIDER_USAGE_ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
+    name: factory
+    for name, factory in BASELINE_DEFAULT_ADAPTER_FACTORIES.items()
+    if provider_usage_blocked_reason(name) is None
+}
+_BASELINE_EXTRA_BLOCKED_ADAPTER_NAMES: tuple[str, ...] = ("parlant",)
+BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        name
+        for name in [
+            *ADAPTER_FACTORIES,
+            *BASELINE_DEFAULT_ADAPTER_FACTORIES,
+            *_BASELINE_EXTRA_BLOCKED_ADAPTER_NAMES,
+        ]
+        if provider_usage_blocked_reason(name) is not None
+    )
+)
+BASELINE_L0_ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
+    "langgraph": create_baseline_default_langgraph_adapter,
+    "anthropic": create_baseline_default_anthropic_adapter,
+    "pydantic_ai": create_baseline_default_pydantic_ai_adapter,
+    "claude_sdk": create_baseline_default_claude_sdk_adapter,
+    "gemini": create_baseline_default_gemini_adapter,
+    "google_adk": create_baseline_default_google_adk_adapter,
+    "opencode": create_opencode_adapter,
+    "codex": create_codex_adapter,
+    "letta": create_letta_adapter,
+}
+BASELINE_L0_BLOCKED_ADAPTER_NAMES: tuple[str, ...] = (
+    "crewai",
+    "crewai_flow",
+    "parlant",
 )
 
 # Note: CrewAI Flow and Parlant are excluded from the default parametrized set.

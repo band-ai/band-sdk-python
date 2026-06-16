@@ -13,8 +13,8 @@ from thenvoi.converters.parlant import ParlantHistoryConverter
 class TestAssistantMessages:
     """Tests for Parlant-specific assistant message handling."""
 
-    def test_includes_other_agents_as_assistant(self):
-        """Other agents' messages are included with role assistant."""
+    def test_includes_peer_agents_as_user_context(self):
+        """Other agents' messages are included as user-attributed context."""
         converter = ParlantHistoryConverter(agent_name="Main Agent")
         raw = [
             {
@@ -29,7 +29,7 @@ class TestAssistantMessages:
         result = converter.convert(raw)
 
         assert len(result) == 1
-        assert result[0]["role"] == "assistant"
+        assert result[0]["role"] == "user"
         assert result[0]["content"] == "[Helper Agent]: Here's my analysis."
         assert result[0]["sender"] == "Helper Agent"
 
@@ -74,11 +74,7 @@ class TestAssistantMessages:
 
 
 class TestGuidelineBasedConversation:
-    """Tests for Parlant-style guideline-based conversations.
-
-    NOTE: Parlant converter includes ALL assistant messages (own + others)
-    to properly reconstruct session state.
-    """
+    """Tests for Parlant-style guideline-based conversations."""
 
     def test_support_conversation_flow(self):
         """Should handle a customer support conversation flow."""
@@ -127,9 +123,7 @@ class TestGuidelineBasedConversation:
         assert result[0]["content"] == "[Customer]: I want a refund for my order"
 
         assert result[1]["role"] == "assistant"
-        assert (
-            result[1]["content"] == "[Support Agent]: Let me check your order status..."
-        )
+        assert result[1]["content"] == "Let me check your order status..."
 
         assert result[2]["role"] == "assistant"
         assert result[2]["content"] == '[Tool Call]: {"tool": "check_order_status"}'
@@ -204,10 +198,11 @@ class TestGuidelineBasedConversation:
         # All text messages included (Parlant needs full history)
         assert len(result) == 4
 
+        assert result[0]["role"] == "user"
         assert result[0]["content"] == "[User]: Analyze this document"
-        assert (
-            result[1]["content"]
-            == "[Coordinator]: I'll have the analyzer look at this."
-        )
+        assert result[1]["role"] == "assistant"
+        assert result[1]["content"] == "I'll have the analyzer look at this."
+        assert result[2]["role"] == "user"
         assert result[2]["content"] == "[Analyzer Agent]: Analysis complete: ..."
-        assert result[3]["content"] == "[Coordinator]: Here's the analysis summary."
+        assert result[3]["role"] == "assistant"
+        assert result[3]["content"] == "Here's the analysis summary."

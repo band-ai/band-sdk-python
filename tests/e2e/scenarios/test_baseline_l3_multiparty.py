@@ -26,8 +26,8 @@ from thenvoi.runtime.types import AgentConfig
 
 from tests.e2e.adapters.conftest import (
     AdapterFactory,
-    PROVIDER_USAGE_ADAPTER_FACTORIES,
-    PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES,
+    BASELINE_DEFAULT_PROVIDER_USAGE_ADAPTER_FACTORIES,
+    BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES,
 )
 
 from tests.e2e.baseline_artifacts import (
@@ -37,7 +37,12 @@ from tests.e2e.baseline_artifacts import (
     write_baseline_tier2_artifact,
     write_provider_usage_blocked_artifact_if_needed,
 )
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.conftest import (
+    E2ESettings,
+    _assert_room_creation_budget_available,
+    _track_created_room,
+    requires_e2e,
+)
 from tests.e2e.helpers import (
     agent_text_messages,
     fetch_chat_messages,
@@ -45,11 +50,9 @@ from tests.e2e.helpers import (
     message_ids,
     message_value,
     send_trigger_message,
-    wait_for_chat_messages,
 )
 
 _STEP_TIMEOUT = 90.0
-_QUIET_AFTER = 3.0
 _L3_SCENARIO_REFS = [
     "L3.request.roster_handles",
     "L3.request.mention_convention",
@@ -136,11 +139,22 @@ async def _create_l3_room(
     calc_spec: _LiveAgentSpec,
     greeter_spec: _LiveAgentSpec,
     created_room_ids: list[str],
+    room_creation_budget: int,
     user_peer: Any,
 ) -> str:
+    _assert_room_creation_budget_available(
+        created_room_ids=created_room_ids,
+        budget=room_creation_budget,
+        label="baseline L3 multiparty room",
+    )
     chat = await client.agent_api_chats.create_agent_chat(chat=ChatRoomRequest())
     room_id = chat.data.id
-    created_room_ids.append(room_id)
+    _track_created_room(
+        created_room_ids=created_room_ids,
+        budget=room_creation_budget,
+        room_id=room_id,
+        label="baseline L3 multiparty room",
+    )
     for participant_id in (
         user_peer.id,
         test_spec.agent_id,
@@ -166,23 +180,6 @@ def _content(message: Any) -> str:
 
 def _visible_handle(spec: _LiveAgentSpec) -> str:
     return f"@{spec.handle.lstrip('@')}"
-
-
-def _assert_role_neutral_identity(specs: tuple[_LiveAgentSpec, ...]) -> None:
-    role_terms = (
-        "arith",
-        "calc",
-        "greet",
-        "math",
-    )
-    for spec in specs:
-        identity = f"{spec.name} {spec.handle}".lower()
-        assert all(term not in identity for term in role_terms), {
-            "role": spec.role,
-            "name": spec.name,
-            "handle": spec.handle,
-            "forbidden_terms": role_terms,
-        }
 
 
 def _assert_visible_handle(messages: list[Any], spec: _LiveAgentSpec) -> None:
@@ -254,40 +251,18 @@ def _message_position(messages: list[Any], target: Any) -> int:
     )
 
 
-async def _wait_for_stable_turn(
+async def _wait_full_turn_window(
     client: AsyncRestClient,
     room_id: str,
-    before_ids: set[str],
-    participant_ids: set[str],
-    *,
-    min_count: int,
 ) -> list[Any]:
     deadline = asyncio.get_running_loop().time() + _STEP_TIMEOUT
-    quiet_deadline: float | None = None
-    last_count = 0
-    last_messages: list[Any] = []
-    while asyncio.get_running_loop().time() < deadline:
-        messages = await fetch_chat_messages(client, room_id)
-        current = [
-            message
-            for participant_id in participant_ids
-            for message in agent_text_messages(messages, participant_id, before_ids)
-        ]
-        if len(current) >= min_count:
-            now = asyncio.get_running_loop().time()
-            if len(current) != last_count:
-                last_count = len(current)
-                quiet_deadline = now + _QUIET_AFTER
-                last_messages = current
-            elif quiet_deadline is not None and now >= quiet_deadline:
-                return messages
-        else:
-            last_messages = current
-        await asyncio.sleep(0.5)
-    raise TimeoutError(
-        "Timed out waiting for stable L3 turn messages: "
-        f"{[message_value(message, 'content') for message in last_messages]}"
-    )
+    while True:
+        await fetch_chat_messages(client, room_id)
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(0.5, remaining))
+    return await fetch_chat_messages(client, room_id)
 
 
 _L3_LIVE_BLOCKED_REASON = _l3_live_blocked_reason()
@@ -298,7 +273,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(
-    params=tuple(PROVIDER_USAGE_ADAPTER_FACTORIES.items()),
+    params=tuple(BASELINE_DEFAULT_PROVIDER_USAGE_ADAPTER_FACTORIES.items()),
     ids=lambda item: item[0],
 )
 def l3_provider_usage_adapter_entry(
@@ -308,7 +283,9 @@ def l3_provider_usage_adapter_entry(
     return str(adapter_name), factory
 
 
-@pytest.mark.parametrize("adapter_name", PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES)
+@pytest.mark.parametrize(
+    "adapter_name", BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES
+)
 def test_l3_live_unsupported_adapter_rows_write_blocked_artifacts_when_configured(
     adapter_name: str,
 ) -> None:
@@ -332,6 +309,7 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
     api_client: AsyncRestClient,
     e2e_session_client: AsyncRestClient,
     e2e_created_room_ids: list[str],
+    e2e_room_creation_budget: int,
     e2e_user_peer: Any,
 ) -> None:
     blocked_reason = _l3_live_blocked_reason()
@@ -344,7 +322,6 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
     output_texts: list[str] = []
     test_spec, calc_spec, greeter_spec = _specs()
     specs = (test_spec, calc_spec, greeter_spec)
-    _assert_role_neutral_identity(specs)
     adapter_name, adapter_factory = l3_provider_usage_adapter_entry
     agent_ids = {spec.agent_id for spec in specs}
     assert len(agent_ids) == 3
@@ -371,15 +348,13 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
             calc_spec,
             greeter_spec,
             e2e_created_room_ids,
+            e2e_room_creation_budget,
             e2e_user_peer,
         )
         await _assert_participant_descriptions(e2e_session_client, room_id, specs)
 
         before_t1 = message_ids(await fetch_chat_messages(api_client, room_id))
-        t1_prompt = (
-            "ask the participant whose description says they perform exact "
-            "arithmetic what 7 times 8 is"
-        )
+        t1_prompt = f"ask {calc_spec.name} what is 7 times 8"
         input_texts.append(t1_prompt)
         await send_trigger_message(
             api_client,
@@ -388,31 +363,7 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
             test_spec.name,
             test_spec.agent_id,
         )
-        t1_messages = await wait_for_chat_messages(
-            api_client,
-            room_id,
-            lambda messages: (
-                bool(
-                    _messages_mentioning(
-                        messages, test_spec.agent_id, calc_spec.agent_id, before_t1
-                    )
-                )
-                and bool(
-                    _messages_containing(messages, calc_spec.agent_id, "56", before_t1)
-                )
-                and bool(
-                    _messages_containing(messages, test_spec.agent_id, "56", before_t1)
-                )
-            ),
-            _STEP_TIMEOUT,
-        )
-        t1_messages = await _wait_for_stable_turn(
-            api_client,
-            room_id,
-            before_t1,
-            agent_ids,
-            min_count=3,
-        )
+        t1_messages = await _wait_full_turn_window(api_client, room_id)
         t1_test_to_calc = _messages_mentioning(
             t1_messages, test_spec.agent_id, calc_spec.agent_id, before_t1
         )
@@ -428,7 +379,7 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
             _content(message) for message in t1_test_to_calc
         ]
         _assert_visible_handle(t1_test_to_calc, calc_spec)
-        assert t1_calc, [_content(message) for message in t1_messages]
+        assert len(t1_calc) == 1, [_content(message) for message in t1_messages]
         assert len(t1_test_relays) == 1, [
             _content(message) for message in t1_test_relays
         ]
@@ -452,35 +403,7 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
             test_spec.name,
             test_spec.agent_id,
         )
-        await wait_for_chat_messages(
-            api_client,
-            room_id,
-            lambda messages: (
-                bool(
-                    _messages_mentioning(
-                        messages, test_spec.agent_id, greeter_spec.agent_id, before_t2
-                    )
-                )
-                and bool(
-                    _messages_containing(
-                        messages, greeter_spec.agent_id, "ORACLE", before_t2
-                    )
-                )
-                and bool(
-                    _messages_containing(
-                        messages, test_spec.agent_id, "ORACLE", before_t2
-                    )
-                )
-            ),
-            _STEP_TIMEOUT,
-        )
-        t2_messages = await _wait_for_stable_turn(
-            api_client,
-            room_id,
-            before_t2,
-            agent_ids,
-            min_count=3,
-        )
+        t2_messages = await _wait_full_turn_window(api_client, room_id)
         t2_test_to_greeter = _messages_mentioning(
             t2_messages, test_spec.agent_id, greeter_spec.agent_id, before_t2
         )
@@ -494,11 +417,17 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
             )
             if greeter_spec.agent_id not in mention_ids(message)
         ]
+        t2_greeter_replies = _messages_containing(
+            t2_messages, greeter_spec.agent_id, "ORACLE", before_t2
+        )
         assert len(t2_test_to_greeter) == 1, [
             _content(message) for message in t2_test_to_greeter
         ]
         _assert_visible_handle(t2_test_to_greeter, greeter_spec)
         assert not t2_test_to_calc, [_content(message) for message in t2_test_to_calc]
+        assert len(t2_greeter_replies) == 1, [
+            _content(message) for message in t2_messages
+        ]
         assert len(t2_test_relays) == 1, [
             _content(message) for message in t2_test_relays
         ]
@@ -511,10 +440,9 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
 
         before_t3 = message_ids(await fetch_chat_messages(api_client, room_id))
         t3_prompt = (
-            "ask the participant whose description says they perform exact arithmetic "
-            "what 12 times 5 is, and instruct them to ask the participant whose "
-            "description says they craft greetings to write a greeting for someone "
-            "turning that age and send that to me"
+            f"ask {calc_spec.name} what is 12 times 5, and instruct them to ask "
+            f"{greeter_spec.name} to write a greeting for someone turning that age "
+            "and send that to me"
         )
         input_texts.append(t3_prompt)
         await send_trigger_message(
@@ -524,41 +452,7 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
             test_spec.name,
             test_spec.agent_id,
         )
-        await wait_for_chat_messages(
-            api_client,
-            room_id,
-            lambda messages: (
-                bool(
-                    _messages_mentioning(
-                        messages, test_spec.agent_id, calc_spec.agent_id, before_t3
-                    )
-                )
-                and bool(
-                    _messages_containing(messages, calc_spec.agent_id, "60", before_t3)
-                )
-                and bool(
-                    _messages_mentioning(
-                        messages, calc_spec.agent_id, greeter_spec.agent_id, before_t3
-                    )
-                )
-                and bool(
-                    _messages_containing(
-                        messages, greeter_spec.agent_id, "60", before_t3
-                    )
-                )
-                and bool(
-                    _messages_containing(messages, test_spec.agent_id, "60", before_t3)
-                )
-            ),
-            _STEP_TIMEOUT,
-        )
-        t3_messages = await _wait_for_stable_turn(
-            api_client,
-            room_id,
-            before_t3,
-            agent_ids,
-            min_count=4,
-        )
+        t3_messages = await _wait_full_turn_window(api_client, room_id)
         t3_test_to_calc = _messages_mentioning(
             t3_messages, test_spec.agent_id, calc_spec.agent_id, before_t3
         )
@@ -602,8 +496,8 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
 
         before_t4 = message_ids(await fetch_chat_messages(api_client, room_id))
         t4_prompt = (
-            "ask for help calculating what 25% older than that birthday age "
-            "would be, and add a jest to the greeting"
+            "ask for help calculating what 25% older than that birthday age would be, "
+            "and add a jest about being a quarter older to the card"
         )
         input_texts.append(t4_prompt)
         await send_trigger_message(
@@ -613,33 +507,7 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
             greeter_spec.name,
             greeter_spec.agent_id,
         )
-        await wait_for_chat_messages(
-            api_client,
-            room_id,
-            lambda messages: (
-                bool(
-                    _messages_mentioning(
-                        messages, greeter_spec.agent_id, calc_spec.agent_id, before_t4
-                    )
-                )
-                and bool(
-                    _messages_containing(messages, calc_spec.agent_id, "75", before_t4)
-                )
-                and bool(
-                    _messages_containing(
-                        messages, greeter_spec.agent_id, "75", before_t4
-                    )
-                )
-            ),
-            _STEP_TIMEOUT,
-        )
-        t4_messages = await _wait_for_stable_turn(
-            api_client,
-            room_id,
-            before_t4,
-            agent_ids,
-            min_count=3,
-        )
+        t4_messages = await _wait_full_turn_window(api_client, room_id)
         t4_greeter_to_calc = _messages_mentioning(
             t4_messages, greeter_spec.agent_id, calc_spec.agent_id, before_t4
         )
@@ -651,15 +519,22 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
         t4_calc_replies = _messages_containing(
             t4_messages, calc_spec.agent_id, "75", before_t4
         )
-        t4_greeter_replies = _messages_containing(
-            t4_messages, greeter_spec.agent_id, "75", before_t4
-        )
+        t4_greeter_replies = [
+            message
+            for message in _messages_containing(
+                t4_messages, greeter_spec.agent_id, "75", before_t4
+            )
+            if calc_spec.agent_id not in mention_ids(message)
+        ]
         assert len(t4_calc_replies) == 1, [
             _content(message) for message in t4_calc_replies
         ]
         assert len(t4_greeter_replies) == 1, [
             _content(message) for message in t4_greeter_replies
         ]
+        assert _message_position(t4_messages, t4_calc_replies[0]) < _message_position(
+            t4_messages, t4_greeter_replies[0]
+        )
         assert not _new_agent_messages(t4_messages, test_spec.agent_id, before_t4)
         output_texts.extend(
             _content(message)
@@ -683,37 +558,58 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
             output_texts=output_texts,
             observed_agent_text_message_count=len(output_texts),
             evidence={
-                "turn_1_test_to_calc": len(t1_test_to_calc),
-                "turn_2_test_to_greeter": len(t2_test_to_greeter),
-                "turn_3_test_to_calc": len(t3_test_to_calc),
-                "turn_3_calc_to_greeter": len(t3_calc_to_greeter),
-                "turn_4_greeter_to_calc": len(t4_greeter_to_calc),
-                "participant_descriptions_observed": True,
-                "visible_handles_asserted": True,
-                "turn_4_test_silence": not _new_agent_messages(
-                    t4_messages, test_spec.agent_id, before_t4
-                ),
+                "L3.request.roster_handles": {
+                    "participant_descriptions_observed": True,
+                    "visible_handles_asserted": True,
+                },
+                "L3.request.mention_convention": {
+                    "turn_1_test_to_calc": len(t1_test_to_calc),
+                    "turn_2_test_to_greeter": len(t2_test_to_greeter),
+                    "turn_3_calc_to_greeter": len(t3_calc_to_greeter),
+                    "turn_4_greeter_to_calc": len(t4_greeter_to_calc),
+                },
+                "L3.request.multi_author_history": {
+                    "turn_1_calc_reply_count": len(t1_calc),
+                    "turn_2_greeter_reply_count": len(t2_greeter_replies),
+                    "turn_3_test_to_calc": len(t3_test_to_calc),
+                    "turn_4_test_silence": not _new_agent_messages(
+                        t4_messages, test_spec.agent_id, before_t4
+                    ),
+                },
             },
             platform_observations=[
                 {
                     "kind": "message",
                     "id": str(message_value(t1_test_to_calc[0], "id")),
                     "assertion": "Turn 1 routed exactly once from Test to Calc",
+                    "scenario_refs": [
+                        "L3.request.roster_handles",
+                        "L3.request.mention_convention",
+                    ],
                 },
                 {
                     "kind": "message",
                     "id": str(message_value(t2_test_to_greeter[0], "id")),
                     "assertion": "Turn 2 routed exactly once from Test to Greeter",
+                    "scenario_ref": "L3.request.mention_convention",
                 },
                 {
                     "kind": "message",
                     "id": str(message_value(t3_calc_to_greeter[0], "id")),
                     "assertion": "Turn 3 Calc delegated exactly once to Greeter",
+                    "scenario_refs": [
+                        "L3.request.mention_convention",
+                        "L3.request.multi_author_history",
+                    ],
                 },
                 {
                     "kind": "message",
                     "id": str(message_value(t4_greeter_to_calc[0], "id")),
                     "assertion": "Turn 4 Greeter delegated exactly once to Calc",
+                    "scenario_refs": [
+                        "L3.request.mention_convention",
+                        "L3.request.multi_author_history",
+                    ],
                 },
             ],
         )

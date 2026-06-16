@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+import os
 from pathlib import Path
 import re
 
@@ -33,7 +34,11 @@ from tests.framework_conformance.injection_registry import (
     INJECTION_EXCLUDED_MODULES,
     Family,
 )
-from tests.framework_conformance.request_capture import REQUEST_CAPTURE_PROBES
+from tests.framework_conformance.request_capture import (
+    REQUEST_CAPTURE_PROBES,
+    SENTINEL_OPENAI_API_KEY,
+    tier1_sentinel_provider_env,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _HARNESS_ROOT = _REPO_ROOT / "tests" / "framework_conformance"
@@ -104,6 +109,26 @@ def test_harness_code_uses_domain_contracts_not_issue_ids() -> None:
             offenders.append(str(path.relative_to(_REPO_ROOT)))
 
     assert not offenders
+
+
+def test_tier1_provider_env_forces_sentinel_key_and_clears_base_urls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-proj-real-looking-value")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://live-provider.invalid/v1")
+    monkeypatch.setenv("OPENAI_API_BASE", "https://legacy-provider.invalid/v1")
+    monkeypatch.setenv("OPENAI_API_HOST", "https://host-provider.invalid")
+
+    with tier1_sentinel_provider_env():
+        assert os.environ["OPENAI_API_KEY"] == SENTINEL_OPENAI_API_KEY
+        assert "OPENAI_BASE_URL" not in os.environ
+        assert "OPENAI_API_BASE" not in os.environ
+        assert "OPENAI_API_HOST" not in os.environ
+
+    assert os.environ["OPENAI_API_KEY"] == "sk-proj-real-looking-value"
+    assert os.environ["OPENAI_BASE_URL"] == "https://live-provider.invalid/v1"
+    assert os.environ["OPENAI_API_BASE"] == "https://legacy-provider.invalid/v1"
+    assert os.environ["OPENAI_API_HOST"] == "https://host-provider.invalid"
 
 
 def test_scorecard_is_seeded_from_static_registries() -> None:
@@ -271,6 +296,26 @@ def test_tier2_blocked_rows_do_not_claim_live_pointer_credit() -> None:
     assert all(cell.reason for cell in blocked)
     assert all(not cell.tier2_pointer for cell in blocked)
     assert all(not cell.coverage_evidence for cell in blocked)
+
+
+def test_crewai_flow_l0_request_rows_stay_blocked_not_smoke_covered() -> None:
+    l0_request_cells = [
+        cell
+        for cell in build_applicability_matrix()
+        if cell.adapter_id == "crewai_flow"
+        and cell.scenario_id.startswith("L0.request.")
+    ]
+
+    assert l0_request_cells
+    assert all(
+        cell.status is ApplicabilityStatus.TIER2_BLOCKED for cell in l0_request_cells
+    )
+    assert all(
+        "no scenario-equivalent coverage" in str(cell.reason)
+        for cell in l0_request_cells
+    )
+    assert all(not cell.coverage_evidence for cell in l0_request_cells)
+    assert all(not cell.covered_by_existing for cell in l0_request_cells)
 
 
 def test_dispatch_na_rows_have_e2e_pointer_and_honest_rows_are_applicable() -> None:

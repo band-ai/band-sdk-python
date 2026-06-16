@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,10 +18,20 @@ from pathlib import Path
 from typing import Any
 
 from thenvoi.core.simple_adapter import ProviderUsageSnapshot, SimpleAdapter
+from tests.baseline_l1_fixtures import L1_CUSTOM_TOOL_NAME
 from tests.framework_conformance.baseline_scenarios import SCENARIOS_BY_ID
 
 
-_DEFAULT_ARTIFACT_DIR = Path(".claude/reports/e2e-baseline-artifacts")
+_DEFAULT_ARTIFACT_DIR = Path("artifacts/e2e-baseline-artifacts")
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)\b([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*\s*[:=]\s*)"
+    r"(\"[^\"]+\"|'[^']+'|[^\s,}]+)"
+)
+_SECRET_VALUE_PATTERN = re.compile(
+    r"\b(?:sk-proj-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{8,}|"
+    r"thnv_[au]_[A-Za-z0-9_-]{8,}|band_[au]_[A-Za-z0-9_-]{8,}|"
+    r"AIza[0-9A-Za-z_-]{20,})\b"
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -120,6 +131,12 @@ def estimate_tokens(texts: list[str]) -> int:
 def provider_usage_blocked_reason(adapter: str) -> str | None:
     if adapter in _PROVIDER_USAGE_SUPPORTED_ADAPTERS:
         return None
+    if adapter == "parlant":
+        return (
+            "tier2_blocked: Parlant baseline proof requires a dedicated in-process "
+            "Parlant server runner and does not expose provider-owned input/output "
+            "token usage for baseline cost proof"
+        )
     return (
         "tier2_blocked: adapter does not expose provider-owned input/output token "
         f"usage for baseline cost proof: {adapter}"
@@ -158,6 +175,36 @@ def provider_usage_from_adapter(
             f"{adapter_name}"
         )
     return aggregate_provider_usage(snapshots)
+
+
+def l0_usage_from_live_observation(
+    *,
+    adapter: SimpleAdapter[Any],
+    adapter_name: str,
+    input_texts: list[str],
+    output_texts: list[str],
+    observed_agent_text_message_count: int,
+) -> BaselineProviderUsage:
+    """Return provider usage when available, otherwise L0-only text estimates.
+
+    L0 proves live Band platform adaptation. Its approved pass/fail contract does
+    not depend on provider token/cost reporting, so missing provider-owned usage
+    must not block an otherwise valid L0 full-flow artifact.
+    """
+
+    snapshots = adapter.provider_usage_snapshots()
+    if snapshots:
+        return aggregate_provider_usage(snapshots)
+    input_tokens = estimate_tokens(input_texts)
+    output_tokens = estimate_tokens(output_texts)
+    return BaselineProviderUsage(
+        api_call_count=max(1, observed_agent_text_message_count),
+        input_tokens=max(1, input_tokens),
+        output_tokens=max(1, output_tokens),
+        total_tokens=max(1, input_tokens + output_tokens),
+        source=f"l0_deterministic_text_estimate_provider_usage_unavailable:{adapter_name}",
+        raw_snapshots=[],
+    )
 
 
 def aggregate_provider_usage(
@@ -206,6 +253,149 @@ def _validate_scenario_ids(scenario_id: str, scenario_refs: list[str]) -> None:
         raise AssertionError("tier2_blocked: scenario_refs must name proven rows")
 
 
+def _sanitize_artifact_text(text: str) -> str:
+    sanitized = _SECRET_ASSIGNMENT_PATTERN.sub(
+        lambda match: f"{match.group(1)}<redacted>", text
+    )
+    return _SECRET_VALUE_PATTERN.sub("<redacted>", sanitized)
+
+
+def _sanitize_artifact_texts(texts: list[str]) -> list[str]:
+    return [_sanitize_artifact_text(str(text)) for text in texts]
+
+
+def _sanitize_artifact_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return _sanitize_artifact_text(value)
+    if isinstance(value, list):
+        return [_sanitize_artifact_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_artifact_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _sanitize_artifact_value(item) for key, item in value.items()}
+    return value
+
+
+def _observation_scenario_refs(observation: dict[str, Any]) -> set[str]:
+    refs: set[str] = set()
+    scenario_ref = observation.get("scenario_ref")
+    if scenario_ref:
+        refs.add(str(scenario_ref))
+
+    scenario_refs = observation.get("scenario_refs")
+    if isinstance(scenario_refs, str):
+        refs.add(scenario_refs)
+    elif isinstance(scenario_refs, (list, tuple, set)):
+        refs.update(str(ref) for ref in scenario_refs)
+    return refs
+
+
+def _require_evidence_mapping(
+    evidence: dict[str, Any],
+    scenario_ref: str,
+) -> dict[str, Any]:
+    row = evidence.get(scenario_ref)
+    if not isinstance(row, dict):
+        raise AssertionError(
+            f"tier2_blocked: missing structured L1 evidence for {scenario_ref}"
+        )
+    return row
+
+
+def _require_truthy(row: dict[str, Any], scenario_ref: str, key: str) -> None:
+    if not row.get(key):
+        raise AssertionError(
+            f"tier2_blocked: missing L1 proof field {scenario_ref}.{key}"
+        )
+
+
+def _validate_l1_successful_artifact_evidence(
+    *,
+    scenario_refs: list[str],
+    evidence: dict[str, Any],
+) -> None:
+    claimed_refs = set(scenario_refs)
+    if "L1.request.custom_prompt_present" in claimed_refs:
+        row = _require_evidence_mapping(evidence, "L1.request.custom_prompt_present")
+        _require_truthy(row, "L1.request.custom_prompt_present", "custom_prompt_marker")
+        marker_steps = row.get("custom_prompt_marker_seen_in_steps")
+        if not isinstance(marker_steps, list) or not marker_steps:
+            raise AssertionError(
+                "tier2_blocked: missing L1 proof field "
+                "L1.request.custom_prompt_present.custom_prompt_marker_seen_in_steps"
+            )
+
+    if "L1.request.custom_prompt_additive" in claimed_refs:
+        row = _require_evidence_mapping(evidence, "L1.request.custom_prompt_additive")
+        expected_values = {
+            "platform_live_user_seen": True,
+            "platform_non_participant_absent": True,
+            "platform_observation_source": "live_room_answer",
+        }
+        for key, expected in expected_values.items():
+            if row.get(key) != expected:
+                raise AssertionError(
+                    f"tier2_blocked: invalid L1 proof field "
+                    f"L1.request.custom_prompt_additive.{key}"
+                )
+
+    if "L1.dispatch.custom_tool" in claimed_refs:
+        row = _require_evidence_mapping(evidence, "L1.dispatch.custom_tool")
+        if row.get("custom_tool_name") != L1_CUSTOM_TOOL_NAME:
+            raise AssertionError(
+                "tier2_blocked: invalid L1 proof field "
+                "L1.dispatch.custom_tool.custom_tool_name"
+            )
+        calls = row.get("custom_tool_calls")
+        if not isinstance(calls, int) or calls <= 0:
+            raise AssertionError(
+                "tier2_blocked: invalid L1 proof field "
+                "L1.dispatch.custom_tool.custom_tool_calls"
+            )
+        custom_tool_args = row.get("custom_tool_args")
+        if not isinstance(custom_tool_args, dict) or not custom_tool_args.get(
+            "message"
+        ):
+            raise AssertionError(
+                "tier2_blocked: missing L1 proof field "
+                "L1.dispatch.custom_tool.custom_tool_args"
+            )
+        if row.get("custom_tool_return_seen") is not True:
+            raise AssertionError(
+                "tier2_blocked: invalid L1 proof field "
+                "L1.dispatch.custom_tool.custom_tool_return_seen"
+            )
+
+
+def _validate_successful_artifact_evidence(
+    *,
+    scenario_refs: list[str],
+    evidence: dict[str, Any],
+    platform_observations: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if not platform_observations:
+        raise AssertionError(
+            "tier2_blocked: successful artifact requires platform_observations"
+        )
+
+    claimed_refs = set(scenario_refs)
+    evidenced_refs = {ref for ref in claimed_refs if ref in evidence}
+    for observation in platform_observations:
+        evidenced_refs.update(_observation_scenario_refs(observation) & claimed_refs)
+
+    missing_refs = sorted(claimed_refs - evidenced_refs)
+    if missing_refs:
+        raise AssertionError(
+            "tier2_blocked: missing row-specific artifact evidence for "
+            + ", ".join(missing_refs)
+        )
+    _validate_l1_successful_artifact_evidence(
+        scenario_refs=scenario_refs,
+        evidence=evidence,
+    )
+    return platform_observations
+
+
 def write_baseline_tier2_artifact(
     *,
     scenario_id: str,
@@ -237,6 +427,16 @@ def write_baseline_tier2_artifact(
         raise AssertionError(
             "tier2_blocked: provider input/output token counts must be positive"
         )
+    platform_observations = _validate_successful_artifact_evidence(
+        scenario_refs=scenario_refs,
+        evidence=evidence,
+        platform_observations=platform_observations,
+    )
+    sanitized_input_texts = _sanitize_artifact_texts(input_texts)
+    sanitized_output_texts = _sanitize_artifact_texts(output_texts)
+    sanitized_platform_observations = _sanitize_artifact_value(platform_observations)
+    sanitized_evidence = _sanitize_artifact_value(evidence)
+    sanitized_raw_snapshots = _sanitize_artifact_value(provider_usage.raw_snapshots)
     estimated_usd = provider_usage.cost_usd
     if estimated_usd is None:
         estimated_usd = (
@@ -256,6 +456,13 @@ def write_baseline_tier2_artifact(
     target_dir.mkdir(parents=True, exist_ok=True)
     path = target_dir / f"{run_id}-{safe_scenario}-{safe_adapter}.json"
 
+    token_count_source = (
+        "l0_deterministic_text_estimate_provider_usage_unavailable"
+        if provider_usage.source.startswith(
+            "l0_deterministic_text_estimate_provider_usage_unavailable:"
+        )
+        else "provider_reported_usage"
+    )
     artifact: dict[str, Any] = {
         "schema_version": 1,
         "level": scenario_id.split(".", 1)[0],
@@ -272,10 +479,10 @@ def write_baseline_tier2_artifact(
         "input_tokens": provider_usage.input_tokens,
         "output_tokens": provider_usage.output_tokens,
         "total_tokens": provider_usage.total_tokens,
-        "token_count_source": "provider_reported_usage",
+        "token_count_source": token_count_source,
         "provider_usage": {
             "source": provider_usage.source,
-            "raw_snapshots": provider_usage.raw_snapshots,
+            "raw_snapshots": sanitized_raw_snapshots,
         },
         "estimated_usd": round(estimated_usd, 8),
         "pricing": {
@@ -283,39 +490,51 @@ def write_baseline_tier2_artifact(
             "output_usd_per_million_tokens": pricing.output_usd_per_million_tokens,
             "source": pricing.source,
         },
-        "platform_observations": platform_observations or [],
-        "evidence": evidence,
+        "input_texts": sanitized_input_texts,
+        "output_texts": sanitized_output_texts,
+        "platform_observations": sanitized_platform_observations,
+        "evidence": sanitized_evidence,
     }
     if l4_provider_token_split is not None:
         missing = {
-            "pre_restart_input_tokens",
-            "pre_restart_output_tokens",
-            "post_restart_input_tokens",
-            "post_restart_output_tokens",
+            "history_replay_tokens",
+            "new_inference_tokens",
+            "history_to_new_token_ratio",
         } - set(l4_provider_token_split)
         if missing:
             raise AssertionError(
                 "tier2_blocked: incomplete L4 provider token split "
                 + ", ".join(sorted(missing))
             )
-        non_positive = sorted(
+        token_keys = ("history_replay_tokens", "new_inference_tokens")
+        non_positive_tokens = sorted(
             key
-            for key in (
-                "pre_restart_input_tokens",
-                "pre_restart_output_tokens",
-                "post_restart_input_tokens",
-                "post_restart_output_tokens",
-            )
-            if l4_provider_token_split[key] <= 0
+            for key in token_keys
+            if not isinstance(l4_provider_token_split[key], int)
+            or isinstance(l4_provider_token_split[key], bool)
+            or l4_provider_token_split[key] <= 0
         )
-        if non_positive:
+        ratio = l4_provider_token_split["history_to_new_token_ratio"]
+        ratio_invalid = (
+            not isinstance(ratio, int | float)
+            or isinstance(ratio, bool)
+            or not math.isfinite(float(ratio))
+            or ratio <= 0
+        )
+        if non_positive_tokens or ratio_invalid:
+            invalid = [*non_positive_tokens]
+            if ratio_invalid:
+                invalid.append("history_to_new_token_ratio")
             raise AssertionError(
                 "tier2_blocked: L4 provider token split values must be positive "
-                + ", ".join(non_positive)
+                + ", ".join(invalid)
             )
+        source = l4_provider_token_split.get(
+            "source", "provider_reported_first_post_restart_call_proxy"
+        )
         artifact["l4_provider_token_split"] = {
             **l4_provider_token_split,
-            "source": "provider_reported_usage_by_adapter_instance",
+            "source": source,
         }
 
     if l4_scenario_text_token_estimate is not None:

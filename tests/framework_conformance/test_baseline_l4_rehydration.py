@@ -24,6 +24,7 @@ from tests.framework_conformance.baseline_status import BaselineContract
 from tests.framework_conformance.platform_fixtures import (
     AGENT_ID,
     ROOM_ID,
+    USER_ID,
     ConformanceExecutionContext,
     build_agent_input_through_preprocessor,
     canonical_history,
@@ -183,7 +184,7 @@ async def test_l4_handled_message_is_history_not_current_work(adapter_id: str) -
     handled_message = history_message(
         message_id=handled_id,
         content="HANDLED-L4 should remain historical only.",
-        sender_id="22222222-2222-4222-8222-222222222222",
+        sender_id=USER_ID,
         sender_type="User",
         sender_name="Darvell",
         offset_seconds=4,
@@ -192,11 +193,11 @@ async def test_l4_handled_message_is_history_not_current_work(adapter_id: str) -
     handled_reply = history_message(
         message_id="msg-l4-handled-reply",
         content="HANDLED-L4 already answered.",
-        sender_id="11111111-1111-4111-8111-111111111111",
+        sender_id=AGENT_ID,
         sender_type="Agent",
         sender_name="Test Agent",
         offset_seconds=5,
-        metadata={"mentions": [], "source_message_id": "msg-l4-handled-reply"},
+        metadata={"mentions": [], "source_message_id": handled_id},
     )
     ctx = ConformanceExecutionContext(
         history_messages=[*canonical_history(), handled_message, handled_reply]
@@ -215,30 +216,71 @@ async def test_l4_handled_message_is_history_not_current_work(adapter_id: str) -
     assert state.current_work_message_ids == (pending_id,)
     assert handled_id in state.history_message_ids
     assert handled_id not in state.current_work_message_ids
-    assert state.source_message_counts[handled_id] == 1
+    assert state.source_message_counts[handled_id] == 2
+    assert "HANDLED-L4 should remain historical only." in _visible_text(captured)
+    assert "HANDLED-L4 already answered." in _visible_text(captured)
 
 
 @pytest.mark.asyncio
 async def test_l4_processed_replay_message_does_not_reach_adapter_handler() -> None:
     handled_id = "msg-l4-processed-replay"
+    handled_context_message = history_message(
+        message_id=handled_id,
+        content="@darvell/test-agent PROCESSED-L4 must not reopen.",
+        sender_id=USER_ID,
+        sender_type="User",
+        sender_name="Darvell",
+        offset_seconds=4,
+        metadata={
+            "mentions": [],
+            "source_message_id": handled_id,
+            "delivery_status": {AGENT_ID: {"status": "processed"}},
+        },
+    )
+    handled_reply = history_message(
+        message_id="msg-l4-processed-reply",
+        content="PROCESSED-L4 was already answered.",
+        sender_id=AGENT_ID,
+        sender_type="Agent",
+        sender_name="Test Agent",
+        offset_seconds=5,
+        metadata={"mentions": [], "source_message_id": handled_id},
+    )
+    context_items = []
+    for message in (handled_context_message, handled_reply):
+        item = MagicMock()
+        item.id = message["id"]
+        item.content = message["content"]
+        item.sender_id = message["sender_id"]
+        item.sender_type = message["sender_type"]
+        item.sender_name = message["sender_name"]
+        item.message_type = message["message_type"]
+        item.metadata = message["metadata"]
+        item.inserted_at = message["inserted_at"]
+        context_items.append(item)
+
     handler = AsyncMock()
     link = MagicMock()
     link.mark_processing = AsyncMock(return_value=True)
     link.mark_processed = AsyncMock(return_value=True)
     link.mark_failed = AsyncMock(return_value=True)
+    link.rest.agent_api_participants.list_agent_chat_participants = AsyncMock(
+        return_value=MagicMock(data=[])
+    )
+    link.rest.agent_api_context.get_agent_chat_context = AsyncMock(
+        return_value=MagicMock(data=context_items)
+    )
     ctx = ExecutionContext(
         room_id=ROOM_ID,
         link=link,
         on_execute=handler,
-        config=SessionConfig(enable_context_hydration=False),
+        config=SessionConfig(enable_context_hydration=True),
         agent_id=AGENT_ID,
     )
     replay_event = current_message_event(
         content="@darvell/test-agent PROCESSED-L4 must not reopen.",
         message_id=handled_id,
     )
-    assert replay_event.payload is not None
-    replay_event.payload.metadata.delivery_status = {AGENT_ID: {"status": "processed"}}
 
     processed = await ctx._process_event(replay_event)
 

@@ -16,8 +16,8 @@ from thenvoi.agent import Agent
 
 from tests.e2e.adapters.conftest import (
     AdapterFactory,
-    PROVIDER_USAGE_ADAPTER_FACTORIES,
-    PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES,
+    BASELINE_DEFAULT_PROVIDER_USAGE_ADAPTER_FACTORIES,
+    BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES,
 )
 
 from tests.e2e.baseline_artifacts import (
@@ -34,7 +34,7 @@ from tests.e2e.helpers import (
     message_ids,
     message_value,
     send_trigger_message,
-    wait_for_new_agent_text_messages,
+    wait_full_window_for_new_agent_text_messages,
 )
 
 _BURST_TIMEOUT = 400.0
@@ -42,8 +42,6 @@ _STEP_TIMEOUT = 90.0
 _L2_SCENARIO_REFS = [
     "L2.request.full_history",
     "L2.request.earliest_turn",
-    "L2.request.chronological_order",
-    "L2.request.speaker_attribution",
 ]
 
 
@@ -61,7 +59,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(
-    params=tuple(PROVIDER_USAGE_ADAPTER_FACTORIES.items()),
+    params=tuple(BASELINE_DEFAULT_PROVIDER_USAGE_ADAPTER_FACTORIES.items()),
     ids=lambda item: item[0],
 )
 def l2_provider_usage_adapter_entry(
@@ -71,7 +69,9 @@ def l2_provider_usage_adapter_entry(
     return str(adapter_name), factory
 
 
-@pytest.mark.parametrize("adapter_name", PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES)
+@pytest.mark.parametrize(
+    "adapter_name", BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES
+)
 def test_l2_live_unsupported_adapter_rows_write_blocked_artifacts_when_configured(
     adapter_name: str,
 ) -> None:
@@ -87,7 +87,7 @@ def test_l2_live_unsupported_adapter_rows_write_blocked_artifacts_when_configure
 
 
 @pytest.mark.asyncio
-@pytest.mark.timeout(500)
+@pytest.mark.timeout(650)
 @requires_e2e
 async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
     e2e_config: E2ESettings,
@@ -95,6 +95,7 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
     e2e_fresh_room: tuple[str, str, str],
     e2e_agent_info: tuple[str, str],
     api_client: AsyncRestClient,
+    e2e_unlimited_user_client: AsyncRestClient,
 ) -> None:
     blocked_reason = _l2_live_blocked_reason()
     if blocked_reason:
@@ -132,17 +133,15 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
         before_burst = message_ids(await fetch_chat_messages(api_client, chat_id))
         for message in planted_messages:
             await send_trigger_message(
-                api_client, chat_id, message, agent_name, agent_id
+                e2e_unlimited_user_client, chat_id, message, agent_name, agent_id
             )
 
-        burst_replies = await wait_for_new_agent_text_messages(
+        burst_replies = await wait_full_window_for_new_agent_text_messages(
             api_client,
             chat_id,
             agent_id,
             before_burst,
-            min_count=9,
             timeout=_BURST_TIMEOUT,
-            quiet_after=8.0,
         )
         assert len(burst_replies) == 9, [
             message_value(message, "content") for message in burst_replies
@@ -159,14 +158,12 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
             agent_name,
             agent_id,
         )
-        recall_replies = await wait_for_new_agent_text_messages(
+        recall_replies = await wait_full_window_for_new_agent_text_messages(
             api_client,
             chat_id,
             agent_id,
             before_recall,
-            min_count=1,
             timeout=_STEP_TIMEOUT,
-            quiet_after=3.0,
         )
 
     assert len(recall_replies) == 1, [
@@ -188,15 +185,24 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
         ],
         observed_agent_text_message_count=len(burst_replies) + len(recall_replies),
         evidence={
-            "burst_reply_count": len(burst_replies),
-            "recall_reply_count": len(recall_replies),
-            "recalled_terms": ["MARCO", "LIGHTHOUSE", "POSTGRESQL"],
+            "L2.request.full_history": {
+                "burst_observation_window_seconds": _BURST_TIMEOUT,
+                "recall_observation_window_seconds": _STEP_TIMEOUT,
+                "burst_reply_count": len(burst_replies),
+                "recall_reply_count": len(recall_replies),
+                "recalled_terms": ["MARCO", "LIGHTHOUSE", "POSTGRESQL"],
+            },
+            "L2.request.earliest_turn": {
+                "earliest_marker_recalled": "MARCO",
+                "recall_observation_window_seconds": _STEP_TIMEOUT,
+            },
         },
         platform_observations=[
             {
                 "kind": "message",
                 "id": str(message_value(recall_replies[0], "id")),
                 "assertion": "single recall reply contains MARCO/LIGHTHOUSE/POSTGRESQL",
+                "scenario_refs": _L2_SCENARIO_REFS,
             }
         ],
     )

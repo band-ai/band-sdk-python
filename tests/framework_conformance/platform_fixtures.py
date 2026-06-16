@@ -7,9 +7,19 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
-from thenvoi.client.streaming import MessageCreatedPayload, MessageMetadata, Mention
+from thenvoi.client.streaming import (
+    MessageCreatedPayload,
+    MessageMetadata,
+    Mention,
+    ParticipantAddedPayload,
+    ParticipantRemovedPayload,
+)
 from thenvoi.core.types import AgentInput
-from thenvoi.platform.event import MessageEvent
+from thenvoi.platform.event import (
+    MessageEvent,
+    ParticipantAddedEvent,
+    ParticipantRemovedEvent,
+)
 from thenvoi.preprocessing.default import DefaultPreprocessor
 
 ROOM_ID = "11111111-1111-4111-8111-111111111111"
@@ -241,6 +251,67 @@ def pending_work_state() -> dict[str, Any]:
         "processed_message_ids": {"msg-history-002"},
         "completed_tool_call_ids": {"tool-call-001"},
     }
+
+
+def participant_added_event(
+    *,
+    participant_id: str = SECOND_PEER_AGENT_ID,
+    name: str = "Greeter",
+    participant_type: str = "Agent",
+    handle: str = SECOND_PEER_AGENT_HANDLE,
+) -> ParticipantAddedEvent:
+    return ParticipantAddedEvent(
+        room_id=ROOM_ID,
+        payload=ParticipantAddedPayload(
+            id=participant_id,
+            name=name,
+            type=participant_type,
+            handle=handle,
+        ),
+        raw={"event": "participant_added", "room_id": ROOM_ID},
+    )
+
+
+def participant_removed_event(
+    *,
+    participant_id: str = SECOND_PEER_AGENT_ID,
+) -> ParticipantRemovedEvent:
+    return ParticipantRemovedEvent(
+        room_id=ROOM_ID,
+        payload=ParticipantRemovedPayload(id=participant_id),
+        raw={"event": "participant_removed", "room_id": ROOM_ID},
+    )
+
+
+def apply_participant_event(
+    ctx: ConformanceExecutionContext,
+    event: ParticipantAddedEvent | ParticipantRemovedEvent,
+) -> None:
+    if isinstance(event, ParticipantAddedEvent):
+        if event.payload is None:
+            return
+        participant = event.payload.model_dump()
+        if any(
+            existing.get("id") == participant.get("id") for existing in ctx.participants
+        ):
+            return
+        ctx.participants.append(
+            {
+                "id": participant.get("id"),
+                "name": participant.get("name"),
+                "type": participant.get("type"),
+                "handle": participant.get("handle"),
+            }
+        )
+        return
+
+    if event.payload is None:
+        return
+    ctx.participants = [
+        participant
+        for participant in ctx.participants
+        if participant.get("id") != event.payload.id
+    ]
 
 
 async def build_agent_input_through_preprocessor(

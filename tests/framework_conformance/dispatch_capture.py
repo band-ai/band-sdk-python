@@ -3,31 +3,44 @@
 from __future__ import annotations
 
 import json
-import os
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, cast
-from unittest.mock import patch
-
 import pytest
-from anthropic.types import TextBlock, ToolUseBlock
 from pydantic import BaseModel
 
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
+from tests.baseline_l1_fixtures import (
+    L1_CUSTOM_TOOL_NAME,
+    LogKeywordInput,
+    make_l1_langgraph_structured_tool,
+    make_l1_pydantic_ai_tool,
+)
 from tests.framework_conformance.injection_registry import (
     INJECTION_BINDINGS,
     ObservationPath,
     bindings_by_adapter,
+    tier1_dependency_blocked_reason,
 )
 from tests.framework_conformance.platform_fixtures import ROOM_ID, USER_ID
-from tests.framework_conformance.request_capture import ConformanceSchemaRecorder
+from tests.framework_conformance.request_capture import (
+    ConformanceSchemaRecorder,
+    tier1_sentinel_provider_env,
+)
 
 HONEST_DISPATCH_ADAPTER_IDS = tuple(
     binding.adapter for binding in INJECTION_BINDINGS if binding.is_honest()
 )
 _BINDINGS_BY_ADAPTER = bindings_by_adapter()
+
+
+def _assert_dispatch_dependencies(adapter_id: str) -> None:
+    binding = _BINDINGS_BY_ADAPTER[adapter_id]
+    blocked_reason = tier1_dependency_blocked_reason(binding)
+    if blocked_reason is not None:
+        raise AssertionError(blocked_reason)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -42,18 +55,12 @@ class DispatchResult:
     context_calls: list[dict[str, Any]]
 
 
-class L1CustomEchoInput(BaseModel):
-    """Echo back the L1 validation code."""
-
-    code: str
-
-
 @dataclass(frozen=True, kw_only=True)
 class CustomDispatchResult:
     adapter_id: str
     tool_name: str
     arguments: dict[str, Any]
-    calls: list[L1CustomEchoInput]
+    calls: list[LogKeywordInput]
     tool_calls: list[dict[str, Any]]
 
 
@@ -156,6 +163,7 @@ async def dispatch_tool(
     arguments: dict[str, Any],
     tools: ConformanceSchemaRecorder,
 ) -> DispatchResult:
+    _assert_dispatch_dependencies(adapter_id)
     if adapter_id == "anthropic":
         await _dispatch_anthropic(tool_name, arguments, tools)
     elif adapter_id == "gemini":
@@ -186,20 +194,19 @@ async def dispatch_tool(
 async def dispatch_l1_custom_tool(
     adapter_id: str,
     *,
-    code: str,
+    message: str,
     tools: ConformanceSchemaRecorder,
 ) -> CustomDispatchResult:
-    from thenvoi.runtime.custom_tools import get_custom_tool_name
+    _assert_dispatch_dependencies(adapter_id)
+    calls: list[LogKeywordInput] = []
+    tool_name = L1_CUSTOM_TOOL_NAME
+    arguments = {"message": message}
 
-    calls: list[L1CustomEchoInput] = []
-    tool_name = get_custom_tool_name(L1CustomEchoInput)
-    arguments = {"code": code}
-
-    async def handler(args: L1CustomEchoInput) -> dict[str, str]:
+    async def handler(args: LogKeywordInput) -> dict[str, str]:
         calls.append(args)
-        return {"echo": f"verified-{args.code}"}
+        return {"keyword": "FLIBBERTIGIBBET"}
 
-    custom_tool = (L1CustomEchoInput, handler)
+    custom_tool = (LogKeywordInput, handler)
 
     if adapter_id == "anthropic":
         await _dispatch_l1_custom_anthropic(tool_name, arguments, custom_tool, tools)
@@ -232,6 +239,7 @@ async def _dispatch_anthropic(
     arguments: dict[str, Any],
     tools: ConformanceSchemaRecorder,
 ) -> None:
+    from anthropic.types import TextBlock, ToolUseBlock
     from thenvoi.adapters.anthropic import AnthropicAdapter
 
     class _Adapter(AnthropicAdapter):
@@ -460,7 +468,7 @@ async def _drive_langgraph_script(
     )
     await adapter.on_started("Test Agent", "A conformance test agent")
     await adapter.on_event(make_dispatch_agent_input(tools))
-    assert tool_name in model.bound_tool_names
+    assert {tool_name, "thenvoi_send_message"} <= set(model.bound_tool_names)
 
 
 async def _dispatch_langgraph(
@@ -500,10 +508,7 @@ async def _dispatch_pydantic_ai(
         else:
             yield name_or_text
 
-    with patch.dict(
-        os.environ,
-        {"OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", "sk-conformance-not-used")},
-    ):
+    with tier1_sentinel_provider_env():
         adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
         await adapter.on_started("Test Agent", "A conformance test agent")
         if adapter._agent is None:
@@ -537,7 +542,9 @@ async def _drive_codex_replay(
     )
     await adapter.on_started("Test Agent", "A conformance test agent")
     await adapter.on_event(make_dispatch_agent_input(tools))
-    assert tool_name in client.thread_start_dynamic_tool_names
+    assert {tool_name, "thenvoi_send_message"} <= set(
+        client.thread_start_dynamic_tool_names
+    )
 
 
 async def _dispatch_codex(
@@ -554,6 +561,7 @@ async def _dispatch_l1_custom_anthropic(
     custom_tool: tuple[type[BaseModel], Any],
     tools: ConformanceSchemaRecorder,
 ) -> None:
+    from anthropic.types import TextBlock, ToolUseBlock
     from thenvoi.adapters.anthropic import AnthropicAdapter
 
     class _Adapter(AnthropicAdapter):
@@ -726,22 +734,16 @@ async def _dispatch_l1_custom_google_adk(
 async def _dispatch_l1_custom_langgraph(
     tool_name: str,
     arguments: dict[str, Any],
-    calls: list[L1CustomEchoInput],
+    calls: list[LogKeywordInput],
     tools: ConformanceSchemaRecorder,
 ) -> None:
     pytest.importorskip("langchain", reason="langgraph extra not installed")
-    from langchain_core.tools import StructuredTool
 
-    async def l1_custom_echo(code: str) -> dict[str, str]:
-        calls.append(L1CustomEchoInput(code=code))
-        return {"echo": f"verified-{code}"}
+    async def handler(args: LogKeywordInput) -> dict[str, str]:
+        calls.append(args)
+        return {"keyword": "FLIBBERTIGIBBET"}
 
-    custom_tool = StructuredTool.from_function(
-        coroutine=l1_custom_echo,
-        name=tool_name,
-        description="Echo back the L1 validation code.",
-        args_schema=L1CustomEchoInput,
-    )
+    custom_tool = make_l1_langgraph_structured_tool(handler)
 
     await _drive_langgraph_script(
         tool_name=tool_name,
@@ -754,25 +756,19 @@ async def _dispatch_l1_custom_langgraph(
 async def _dispatch_l1_custom_pydantic_ai(
     tool_name: str,
     arguments: dict[str, Any],
-    calls: list[L1CustomEchoInput],
+    calls: list[LogKeywordInput],
     tools: ConformanceSchemaRecorder,
 ) -> None:
     pytest.importorskip("pydantic_ai", reason="pydantic-ai extra not installed")
-    from pydantic_ai import RunContext
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
     from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
 
-    had_run_context = "RunContext" in globals()
-    previous_run_context = globals().get("RunContext")
-    globals()["RunContext"] = RunContext
+    async def handler(args: LogKeywordInput) -> dict[str, str]:
+        calls.append(args)
+        return {"keyword": "FLIBBERTIGIBBET"}
 
-    async def l1customecho(
-        ctx: RunContext[AgentToolsProtocol], code: str
-    ) -> dict[str, str]:
-        del ctx
-        calls.append(L1CustomEchoInput(code=code))
-        return {"echo": f"verified-{code}"}
+    custom_tool = make_l1_pydantic_ai_tool(handler)
 
     cursor: list[tuple[str, str, dict[str, Any] | None]] = [
         ("tool", tool_name, arguments),
@@ -793,32 +789,19 @@ async def _dispatch_l1_custom_pydantic_ai(
         else:
             yield name_or_text
 
-    try:
-        with patch.dict(
-            os.environ,
-            {
-                "OPENAI_API_KEY": os.environ.get(
-                    "OPENAI_API_KEY", "sk-conformance-not-used"
-                )
-            },
-        ):
-            adapter = PydanticAIAdapter(
-                model="openai:gpt-4o-mini",
-                additional_tools=[l1customecho],
-            )
-            await adapter.on_started("Test Agent", "A conformance test agent")
-            if adapter._agent is None:
-                raise AssertionError("PydanticAIAdapter did not create an agent")
-            assert {tool_name, "thenvoi_send_message"} <= set(
-                adapter._agent._function_toolset.tools
-            )
-            with adapter._agent.override(model=FunctionModel(stream_function=_stream)):
-                await adapter.on_event(make_dispatch_agent_input(tools))
-    finally:
-        if had_run_context:
-            globals()["RunContext"] = previous_run_context
-        else:
-            globals().pop("RunContext", None)
+    with tier1_sentinel_provider_env():
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-4o-mini",
+            additional_tools=[custom_tool],
+        )
+        await adapter.on_started("Test Agent", "A conformance test agent")
+        if adapter._agent is None:
+            raise AssertionError("PydanticAIAdapter did not create an agent")
+        assert {tool_name, "thenvoi_send_message"} <= set(
+            adapter._agent._function_toolset.tools
+        )
+        with adapter._agent.override(model=FunctionModel(stream_function=_stream)):
+            await adapter.on_event(make_dispatch_agent_input(tools))
 
 
 async def _dispatch_l1_custom_codex(

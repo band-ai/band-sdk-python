@@ -13,8 +13,8 @@ from thenvoi.converters.crewai import CrewAIHistoryConverter
 class TestAssistantMessages:
     """Tests for CrewAI-specific assistant message handling."""
 
-    def test_includes_other_agents_as_assistant(self):
-        """Other agents' messages are included with role assistant."""
+    def test_includes_peer_agents_as_user_context(self):
+        """Other agents' messages are included as user-attributed context."""
         converter = CrewAIHistoryConverter(agent_name="Main Agent")
         raw = [
             {
@@ -29,7 +29,7 @@ class TestAssistantMessages:
         result = converter.convert(raw)
 
         assert len(result) == 1
-        assert result[0]["role"] == "assistant"
+        assert result[0]["role"] == "user"
         assert result[0]["content"] == "[Research Agent]: Here's my analysis."
         assert result[0]["sender"] == "Research Agent"
 
@@ -112,19 +112,25 @@ class TestCrewWorkflow:
 
         result = converter.convert(raw)
 
-        # Should have: user message + all agent messages.
+        # Should have: user message + own-agent message + peer-agent context.
         assert len(result) == 4
 
         assert result[0]["role"] == "user"
         assert result[0]["content"] == "[Alice]: Research AI trends for 2024"
 
         assert result[1]["role"] == "assistant"
+        assert result[1]["content"] == "Here are the key AI trends..."
         assert result[1]["sender"] == "Research Analyst"
 
-        assert result[2]["role"] == "assistant"
+        assert result[2]["role"] == "user"
+        assert (
+            result[2]["content"]
+            == "[Content Writer]: Based on the research, here's my draft..."
+        )
         assert result[2]["sender"] == "Content Writer"
 
-        assert result[3]["role"] == "assistant"
+        assert result[3]["role"] == "user"
+        assert result[3]["content"] == "[Editor]: Final edited version..."
         assert result[3]["sender"] == "Editor"
 
     def test_preserves_sender_type(self):

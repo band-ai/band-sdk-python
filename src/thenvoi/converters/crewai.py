@@ -21,8 +21,8 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
     Note:
     - Text messages are converted normally
     - Tool call/result events are included as labeled replay context
-    - User messages include sender name for context
-    - Agent messages are included with role "assistant" and sender attribution
+    - User and peer-agent messages include sender name for context
+    - Only this agent's own messages are included with role "assistant"
     """
 
     def __init__(self, agent_name: str = ""):
@@ -30,15 +30,14 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Stored for interface consistency;
-                       this converter includes own-agent and peer-agent messages
-                       with sender attribution.
+            agent_name: Name of this agent, used to distinguish own-agent
+                       turns from peer-agent context.
         """
         self._agent_name = agent_name
 
     def set_agent_name(self, name: str) -> None:
         """
-        Set agent name retained for interface consistency.
+        Set agent name used to identify own-agent turns.
 
         Args:
             name: Name of this agent
@@ -78,19 +77,20 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
             ):
                 continue
 
-            if role == "assistant":
+            if (
+                role == "assistant"
+                and self._agent_name
+                and sender_name == self._agent_name
+            ):
                 messages.append(
                     {
                         "role": "assistant",
-                        "content": f"[{sender_name}]: {content}"
-                        if sender_name
-                        else content,
+                        "content": content,
                         "sender": sender_name,
                         "sender_type": sender_type,
                     }
                 )
             else:
-                # User messages
                 messages.append(
                     {
                         "role": "user",

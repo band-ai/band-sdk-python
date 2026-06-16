@@ -29,6 +29,7 @@ from tests.e2e.helpers import (
     assert_content_contains,
     assert_no_content_contains,
     listening_for_agent_responses,
+    participant_ids,
     send_trigger_message,
 )
 
@@ -54,15 +55,12 @@ class TestRoomIsolation:
         """Agents in different rooms don't see each other's context.
 
         Room A (adapter's dedicated room): Send "The code is <unique_a>"
-        Room B (shared isolation room): Send "The code is <unique_b>"
+        Room B (adapter-owned isolation room): Send "The code is <unique_b>"
         Room A: Ask "What's the code?" -> Assert unique_a, not unique_b
         Room B: Ask "What's the code?" -> Assert unique_b, not unique_a
 
-        Uses unique keywords per adapter+run to avoid cross-adapter and
-        cross-run contamination in shared rooms that persist across sessions.
-        Note: Room B is shared across all adapters; stale history accumulates
-        across runs. If LLMs start confusing old codes with new ones, prune
-        the room or create a fresh agent.
+        Uses unique keywords per adapter+run to avoid contamination from rooms
+        that persist across sessions.
         """
         adapter_name, factory = adapter_entry
         timeout = e2e_config.e2e_timeout
@@ -85,6 +83,8 @@ class TestRoomIsolation:
         room_a_id, _user_id, _user_name = e2e_adapter_room
         room_b_id = e2e_isolation_room_b[0]
         logger.info("Room A: %s, Room B: %s", room_a_id, room_b_id)
+        assert agent_id in await participant_ids(api_client, room_a_id)
+        assert agent_id in await participant_ids(api_client, room_b_id)
 
         # Create adapter and agent (single agent, two rooms)
         adapter = factory(e2e_config)

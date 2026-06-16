@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 import asyncio
-import contextlib
 import json
 import os
 import socket
+import sys
 import uuid
 
 import pytest
@@ -29,7 +29,12 @@ from thenvoi_rest.types import ParticipantRequest
 from thenvoi.agent import Agent
 from thenvoi.core.types import AdapterFeatures, Emit
 
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.conftest import (
+    E2ESettings,
+    _assert_room_creation_budget_available,
+    _track_created_room,
+    requires_e2e,
+)
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     message_value,
@@ -127,6 +132,7 @@ def _unused_local_port() -> int:
 async def e2e_parlant_room(
     e2e_session_client: AsyncRestClient,
     e2e_created_room_ids: list[str],
+    e2e_room_creation_budget: int,
 ) -> tuple[str, str, str]:
     """Create a fresh Band room for each Parlant E2E test.
 
@@ -141,6 +147,11 @@ async def e2e_parlant_room(
     if user_peer is None:
         pytest.skip("No User peer available for Parlant E2E tests")
 
+    _assert_room_creation_budget_available(
+        created_room_ids=e2e_created_room_ids,
+        budget=e2e_room_creation_budget,
+        label="parlant:fresh",
+    )
     response = await e2e_session_client.agent_api_chats.create_agent_chat(
         chat=ChatRoomRequest()
     )
@@ -151,7 +162,12 @@ async def e2e_parlant_room(
         room_id,
         participant=ParticipantRequest(participant_id=user_peer.id, role="member"),
     )
-    e2e_created_room_ids.append(room_id)
+    _track_created_room(
+        created_room_ids=e2e_created_room_ids,
+        budget=e2e_room_creation_budget,
+        room_id=room_id,
+        label="parlant:fresh",
+    )
     return room_id, user_peer.id, user_peer.name
 
 
@@ -234,8 +250,19 @@ class TestParlantE2E:
             async with agent:
                 yield agent
         finally:
-            with contextlib.suppress(TimeoutError):
+            body_exc = sys.exc_info()[1]
+            try:
                 await asyncio.wait_for(server.__aexit__(None, None, None), timeout=30)
+            except Exception as cleanup_exc:
+                message = (
+                    "Failed to stop the in-process Parlant E2E server. "
+                    "Teardown failures can leak listeners into later tests."
+                )
+                if body_exc is not None:
+                    if hasattr(body_exc, "add_note"):
+                        body_exc.add_note(f"{message} Cleanup error: {cleanup_exc!r}")
+                else:
+                    raise AssertionError(message) from cleanup_exc
 
     async def test_smoke_responds_to_message(
         self,

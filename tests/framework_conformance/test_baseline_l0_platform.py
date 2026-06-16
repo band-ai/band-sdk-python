@@ -20,13 +20,19 @@ from tests.framework_conformance.dispatch_capture import (
 )
 from tests.framework_conformance.platform_fixtures import (
     AGENT_ID,
+    PEER_AGENT_ID,
+    PEER_AGENT_HANDLE,
     ROOM_ID,
+    SECOND_PEER_AGENT_HANDLE,
     ConformanceExecutionContext,
+    apply_participant_event,
     build_agent_input_through_preprocessor,
     canonical_history,
     canonical_participants,
     canonical_peers,
     current_message_event,
+    participant_added_event,
+    participant_removed_event,
 )
 from tests.framework_conformance.request_capture import (
     REQUEST_CAPTURE_ADAPTER_IDS,
@@ -100,13 +106,21 @@ async def test_l0_history_and_current_trigger_are_present_without_duplication(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adapter_id", REQUEST_CAPTURE_ADAPTER_IDS)
-async def test_l0_participant_change_roster_reaches_adapter_surface(
+async def test_l0_participant_add_update_roster_reaches_adapter_surface(
     adapter_id: str,
 ) -> None:
     ctx = ConformanceExecutionContext(history_messages=canonical_history())
+    ctx.mark_participants_sent()
+    assert canonical_peers()[0]["handle"] == SECOND_PEER_AGENT_HANDLE
+    assert all(
+        participant.get("handle") != SECOND_PEER_AGENT_HANDLE
+        for participant in ctx.participants
+    )
+
+    apply_participant_event(ctx, participant_added_event())
     agent_input = await build_agent_input_through_preprocessor(
         ctx=ctx,
-        event=current_message_event(message_id="msg-participant-first"),
+        event=current_message_event(message_id="msg-participant-added"),
         agent_id=AGENT_ID,
     )
 
@@ -117,10 +131,38 @@ async def test_l0_participant_change_roster_reaches_adapter_surface(
     assert "@darvell" in visible_text
     assert "@darvell/test-agent" in visible_text
     assert "@darvell/calc" in visible_text
+    assert "@darvell/greeter" in visible_text
     assert "(User)" in visible_text
     assert "(Agent)" in visible_text
-    assert canonical_peers()[0]["handle"] == "darvell/greeter"
-    assert "@darvell/greeter" not in visible_text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adapter_id", REQUEST_CAPTURE_ADAPTER_IDS)
+async def test_l0_participant_remove_update_roster_reaches_adapter_surface(
+    adapter_id: str,
+) -> None:
+    ctx = ConformanceExecutionContext(history_messages=canonical_history())
+    ctx.mark_participants_sent()
+    assert any(
+        participant.get("id") == PEER_AGENT_ID for participant in ctx.participants
+    )
+
+    apply_participant_event(
+        ctx, participant_removed_event(participant_id=PEER_AGENT_ID)
+    )
+    agent_input = await build_agent_input_through_preprocessor(
+        ctx=ctx,
+        event=current_message_event(message_id="msg-participant-removed"),
+        agent_id=AGENT_ID,
+    )
+
+    captured = await capture_request(adapter_id, agent_input)
+    visible_text = _visible_text(captured.system_text, captured.message_texts)
+
+    assert "## Current Participants" in visible_text
+    assert "@darvell" in visible_text
+    assert "@darvell/test-agent" in visible_text
+    assert f"@{PEER_AGENT_HANDLE}" not in visible_text
 
 
 @pytest.mark.asyncio

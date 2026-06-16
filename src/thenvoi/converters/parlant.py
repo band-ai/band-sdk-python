@@ -21,12 +21,12 @@ class ParlantHistoryConverter(HistoryConverter[ParlantMessages]):
     Note:
     - Text messages are converted normally
     - Tool call/result events are included as labeled replay context
-    - User messages are prefixed with sender name for context
-    - ALL assistant messages are included (unlike other adapters)
+    - User and peer-agent messages are prefixed with sender name for context
+    - Only this agent's own messages are included with role "assistant"
 
-    Unlike LangGraph/Claude adapters, Parlant needs the FULL conversation history
-    including this agent's own responses, because we reconstruct the session state
-    in Parlant's internal storage.
+    Parlant needs the full conversation history to reconstruct session state in
+    its internal storage, but peer-agent turns must remain user-attributed
+    context rather than this agent's own AI_AGENT events.
     """
 
     def __init__(self, agent_name: str = ""):
@@ -34,8 +34,8 @@ class ParlantHistoryConverter(HistoryConverter[ParlantMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent (stored but not used for filtering,
-                       since Parlant needs full history).
+            agent_name: Name of this agent, used to distinguish own-agent
+                       turns from peer-agent context.
         """
         self._agent_name = agent_name
 
@@ -49,11 +49,7 @@ class ParlantHistoryConverter(HistoryConverter[ParlantMessages]):
         self._agent_name = name
 
     def convert(self, raw: list[dict[str, Any]]) -> ParlantMessages:
-        """Convert platform history to Parlant format.
-
-        Unlike other adapters, Parlant needs the full conversation history
-        including this agent's own responses to properly reconstruct sessions.
-        """
+        """Convert platform history to Parlant format."""
         messages: ParlantMessages = []
 
         for hist in raw:
@@ -83,21 +79,20 @@ class ParlantHistoryConverter(HistoryConverter[ParlantMessages]):
             if content is None or not str(content).strip():
                 continue
 
-            if role == "assistant":
-                # Include ALL assistant messages (this agent + other agents)
-                # Parlant needs full history to reconstruct session state
+            if (
+                role == "assistant"
+                and self._agent_name
+                and sender_name == self._agent_name
+            ):
                 messages.append(
                     {
                         "role": "assistant",
-                        "content": f"[{sender_name}]: {content}"
-                        if sender_name
-                        else content,
+                        "content": content,
                         "sender": sender_name,
                         "sender_type": sender_type,
                     }
                 )
             else:
-                # User messages
                 messages.append(
                     {
                         "role": "user",

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Generator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any, Literal, cast
@@ -17,11 +18,47 @@ from thenvoi.runtime.tools import iter_tool_definitions
 from thenvoi.testing.fake_tools import FakeAgentTools
 
 from tests.framework_conformance.baseline_status import SeamOwner
+from tests.framework_conformance.injection_registry import (
+    bindings_by_adapter,
+    tier1_dependency_blocked_reason,
+)
 
 HistoryShape = Literal["discrete", "flattened", "engine_input", "metadata_only"]
 CaptureFn = Callable[[AgentInput, str | None], Awaitable["CapturedRequest"]]
 
 DEFAULT_CUSTOM_PROMPT = "Custom conformance prompt."
+SENTINEL_OPENAI_API_KEY = "sk-tier1-conformance-sentinel-not-a-secret"
+_PROVIDER_BASE_URL_ENV_VARS = (
+    "OPENAI_BASE_URL",
+    "OPENAI_API_BASE",
+    "OPENAI_API_HOST",
+)
+
+
+@contextmanager
+def tier1_sentinel_provider_env() -> Generator[None, None, None]:
+    """Force Tier-1 provider construction to use a non-secret sentinel key.
+
+    The PydanticAI adapter requires an OpenAI-shaped key to construct an
+    ``openai:`` model before the test overrides it with ``FunctionModel``. Tier 1
+    must never preserve a developer's real provider key or base URL, because a
+    broken override should fail locally rather than falling through to a live
+    provider.
+    """
+
+    names = ("OPENAI_API_KEY", *_PROVIDER_BASE_URL_ENV_VARS)
+    original = {name: os.environ.get(name) for name in names}
+    try:
+        os.environ["OPENAI_API_KEY"] = SENTINEL_OPENAI_API_KEY
+        for name in _PROVIDER_BASE_URL_ENV_VARS:
+            os.environ.pop(name, None)
+        yield
+    finally:
+        for name, value in original.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 class RequestItemPurpose(str, Enum):
@@ -694,10 +731,7 @@ async def capture_pydantic_ai_request(
         captured_tool_names[:] = [tool.name for tool in info.function_tools]
         yield "done"
 
-    env = {
-        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY", "sk-conformance-not-used")
-    }
-    with patch.dict(os.environ, env):
+    with tier1_sentinel_provider_env():
         adapter = PydanticAIAdapter(
             model="openai:gpt-4o-mini",
             custom_section=custom_prompt,
@@ -1399,6 +1433,11 @@ async def capture_request(
     custom_prompt: str | None = DEFAULT_CUSTOM_PROMPT,
 ) -> CapturedRequest:
     probe = REQUEST_CAPTURE_PROBES[adapter_id]
+    binding = bindings_by_adapter().get(adapter_id)
+    if binding is not None:
+        blocked_reason = tier1_dependency_blocked_reason(binding)
+        if blocked_reason is not None:
+            raise AssertionError(blocked_reason)
     if probe.required_module:
         pytest.importorskip(probe.required_module)
     captured = await probe.capture(agent_input, custom_prompt)

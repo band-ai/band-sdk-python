@@ -102,6 +102,18 @@ class SimpleAdapter(Generic[H], ABC):
 
         return list(self._provider_usage_snapshots)
 
+    @staticmethod
+    def _coerce_non_negative_int(value: Any) -> int | None:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        return value
+
+    @staticmethod
+    def _coerce_positive_int(value: Any) -> int | None:
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            return None
+        return value
+
     def _record_provider_usage(
         self,
         *,
@@ -115,20 +127,27 @@ class SimpleAdapter(Generic[H], ABC):
     ) -> None:
         """Record provider-owned model/API usage when a framework exposes it."""
 
-        if input_tokens is None or output_tokens is None:
+        resolved_input = self._coerce_non_negative_int(input_tokens)
+        resolved_output = self._coerce_non_negative_int(output_tokens)
+        resolved_call_count = self._coerce_positive_int(api_call_count)
+        if (
+            resolved_input is None
+            or resolved_output is None
+            or resolved_call_count is None
+        ):
             return
-        if input_tokens < 0 or output_tokens < 0 or api_call_count <= 0:
-            return
-        resolved_total = total_tokens
-        if resolved_total is None or resolved_total < input_tokens + output_tokens:
-            resolved_total = input_tokens + output_tokens
+
+        resolved_total = self._coerce_non_negative_int(total_tokens)
+        token_sum = resolved_input + resolved_output
+        if resolved_total is None or resolved_total < token_sum:
+            resolved_total = token_sum
         self._provider_usage_snapshots.append(
             ProviderUsageSnapshot(
                 source=source,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+                input_tokens=resolved_input,
+                output_tokens=resolved_output,
                 total_tokens=resolved_total,
-                api_call_count=api_call_count,
+                api_call_count=resolved_call_count,
                 cost_usd=cost_usd,
                 raw=raw or {},
             )

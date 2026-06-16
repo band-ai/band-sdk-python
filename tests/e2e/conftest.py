@@ -169,6 +169,8 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 # Platform limits agents to 10 active chat rooms; cap room searches accordingly.
 _MAX_ROOMS_TO_SEARCH = 10
+_DEFAULT_CREATED_ROOM_BUDGET = 10
+_CREATED_ROOM_BUDGET_ENV = "E2E_CREATED_ROOM_BUDGET"
 
 
 # =============================================================================
@@ -189,7 +191,7 @@ class E2ESettings(ThenvoiTestSettings):
 
     # E2E-specific settings (override via environment variables)
     e2e_llm_model: str = "gpt-5.4-mini"
-    e2e_anthropic_model: str = "claude-sonnet-4-6"
+    e2e_anthropic_model: str = "claude-haiku-4-5-20251001"
     e2e_timeout: int = 30
     e2e_tests_enabled: bool = False
 
@@ -260,6 +262,49 @@ requires_e2e = pytest.mark.skipif(
 # =============================================================================
 
 
+def _created_room_budget_from_env() -> int:
+    value = os.environ.get(_CREATED_ROOM_BUDGET_ENV)
+    if value is None:
+        return _DEFAULT_CREATED_ROOM_BUDGET
+    try:
+        budget = int(value)
+    except ValueError as exc:
+        raise ValueError(f"{_CREATED_ROOM_BUDGET_ENV} must be an integer") from exc
+    if budget < 0:
+        raise ValueError(f"{_CREATED_ROOM_BUDGET_ENV} must be >= 0")
+    return budget
+
+
+def _assert_room_creation_budget_available(
+    *,
+    created_room_ids: list[str],
+    budget: int,
+    label: str,
+) -> None:
+    if len(created_room_ids) >= budget:
+        pytest.fail(
+            f"E2E room creation budget exhausted before creating {label!r}: "
+            f"{len(created_room_ids)}/{budget} rooms already created this run. "
+            f"Increase {_CREATED_ROOM_BUDGET_ENV} only when the live platform room "
+            "cap has enough headroom."
+        )
+
+
+def _track_created_room(
+    *,
+    created_room_ids: list[str],
+    budget: int,
+    room_id: str,
+    label: str,
+) -> None:
+    _assert_room_creation_budget_available(
+        created_room_ids=created_room_ids,
+        budget=budget,
+        label=label,
+    )
+    created_room_ids.append(room_id)
+
+
 @pytest.fixture(scope="session")
 def e2e_config() -> E2ESettings:
     """Provide E2E settings to tests (session-scoped singleton)."""
@@ -276,6 +321,12 @@ def e2e_created_room_ids() -> list[str]:
     creation order for the summary log.
     """
     return []
+
+
+@pytest.fixture(scope="session")
+def e2e_room_creation_budget() -> int:
+    """Maximum persistent rooms this test process may create before failing."""
+    return _created_room_budget_from_env()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -339,6 +390,23 @@ def e2e_user_client(
     return cast(
         AsyncRestClient,
         _RateLimitedObjectProxy(client, e2e_rest_rate_limiter),
+    )
+
+
+@pytest.fixture(scope="session")
+def e2e_unlimited_user_client(e2e_config: E2ESettings) -> AsyncRestClient:
+    """User REST client without the shared E2E rate limiter.
+
+    This exists only for spec-level burst tests where hidden harness pacing would
+    weaken the behavior being proven. Ordinary E2E tests should use
+    ``e2e_user_client`` or ``api_client``.
+    """
+    if not e2e_config.thenvoi_api_key_user:
+        pytest.skip("THENVOI_API_KEY_USER not set (needed for user REST client)")
+
+    return AsyncRestClient(
+        api_key=e2e_config.thenvoi_api_key_user,
+        base_url=e2e_config.thenvoi_base_url,
     )
 
 
@@ -446,6 +514,7 @@ async def e2e_user_peer(e2e_session_client: AsyncRestClient) -> Any:
 async def e2e_room_allocator(
     e2e_session_client: AsyncRestClient,
     e2e_created_room_ids: list[str],
+    e2e_room_creation_budget: int,
     e2e_user_peer: Any,
 ) -> RoomAllocator:
     """Lazy per-adapter room allocator (session-scoped).
@@ -456,9 +525,9 @@ async def e2e_room_allocator(
 
     The platform limits agents to 10 active rooms, and rooms persist (no delete
     API). Each adapter gets its own room to avoid cross-adapter contamination
-    in room history. Full allocation is exactly 10 rooms: 7 shared-matrix
-    adapters, CrewAI Flow's dedicated room, Parlant's dedicated room, and the
-    shared isolation Room B.
+    in room history. Adapter-owned lanes use their own allocator below because
+    a session-client room can be visible to the owner without waking the adapter
+    identity under test.
     """
     client = e2e_session_client
     cache: dict[str, tuple[str, str, str]] = {}
@@ -503,6 +572,11 @@ async def e2e_room_allocator(
                 return result
 
         # No existing room available — create one
+        _assert_room_creation_budget_available(
+            created_room_ids=e2e_created_room_ids,
+            budget=e2e_room_creation_budget,
+            label=name,
+        )
         response = await client.agent_api_chats.create_agent_chat(
             chat=ChatRoomRequest()
         )
@@ -514,7 +588,12 @@ async def e2e_room_allocator(
             participant=ParticipantRequest(participant_id=user_peer.id, role="member"),
         )
         used_room_ids.add(room_id)
-        e2e_created_room_ids.append(room_id)
+        _track_created_room(
+            created_room_ids=e2e_created_room_ids,
+            budget=e2e_room_creation_budget,
+            room_id=room_id,
+            label=name,
+        )
         result = (room_id, user_peer.id, user_peer.name)
         cache[name] = result
         logger.info(
@@ -531,11 +610,17 @@ async def e2e_room_allocator(
 async def e2e_fresh_room(
     e2e_session_client: AsyncRestClient,
     e2e_created_room_ids: list[str],
+    e2e_room_creation_budget: int,
     e2e_user_peer: Any,
 ) -> tuple[str, str, str]:
     """Create a fresh room for live scenarios whose assertions depend on clean history."""
     user_peer = e2e_user_peer
 
+    _assert_room_creation_budget_available(
+        created_room_ids=e2e_created_room_ids,
+        budget=e2e_room_creation_budget,
+        label="fresh session-client room",
+    )
     response = await e2e_session_client.agent_api_chats.create_agent_chat(
         chat=ChatRoomRequest()
     )
@@ -546,7 +631,12 @@ async def e2e_fresh_room(
         room_id,
         participant=ParticipantRequest(participant_id=user_peer.id, role="member"),
     )
-    e2e_created_room_ids.append(room_id)
+    _track_created_room(
+        created_room_ids=e2e_created_room_ids,
+        budget=e2e_room_creation_budget,
+        room_id=room_id,
+        label="fresh session-client room",
+    )
     logger.info("E2E: Created fresh room %s", room_id)
     return room_id, user_peer.id, user_peer.name
 
@@ -558,12 +648,62 @@ def e2e_adapter_room_cache() -> dict[tuple[str, str], tuple[str, str, str]]:
     return {}
 
 
+async def _create_adapter_owned_room(
+    *,
+    label: str,
+    e2e_config: E2ESettings,
+    e2e_rest_rate_limiter: _E2ERestRateLimiter,
+    e2e_created_room_ids: list[str],
+    e2e_room_creation_budget: int,
+    e2e_user_peer: Any,
+    e2e_adapter_agent_credentials: E2EAgentCredentials,
+) -> tuple[str, str, str]:
+    """Create a room through the current adapter agent identity.
+
+    Session-client rooms are visible to the owner, but they are not guaranteed to
+    wake the adapter identity under test. Adapter lanes must allocate through the
+    same agent credentials that will process the room.
+    """
+    _assert_room_creation_budget_available(
+        created_room_ids=e2e_created_room_ids,
+        budget=e2e_room_creation_budget,
+        label=label,
+    )
+    client = cast(
+        AsyncRestClient,
+        _RateLimitedObjectProxy(
+            AsyncRestClient(
+                api_key=e2e_adapter_agent_credentials.api_key,
+                base_url=e2e_config.thenvoi_base_url,
+            ),
+            e2e_rest_rate_limiter,
+        ),
+    )
+    response = await client.agent_api_chats.create_agent_chat(chat=ChatRoomRequest())
+    if response.data is None:
+        pytest.fail(f"create_agent_chat returned no data for {label}")
+    room_id = response.data.id
+    await client.agent_api_participants.add_agent_chat_participant(
+        room_id,
+        participant=ParticipantRequest(participant_id=e2e_user_peer.id, role="member"),
+    )
+    _track_created_room(
+        created_room_ids=e2e_created_room_ids,
+        budget=e2e_room_creation_budget,
+        room_id=room_id,
+        label=label,
+    )
+    logger.info("E2E: Created adapter-owned room %s for '%s'", room_id, label)
+    return room_id, e2e_user_peer.id, e2e_user_peer.name
+
+
 @pytest.fixture
 async def e2e_adapter_room(
     adapter_entry: tuple[str, AdapterFactory],
     e2e_config: E2ESettings,
     e2e_rest_rate_limiter: _E2ERestRateLimiter,
     e2e_created_room_ids: list[str],
+    e2e_room_creation_budget: int,
     e2e_user_peer: Any,
     e2e_adapter_agent_credentials: E2EAgentCredentials,
     e2e_adapter_room_cache: dict[tuple[str, str], tuple[str, str, str]],
@@ -580,29 +720,40 @@ async def e2e_adapter_room(
     if cache_key in e2e_adapter_room_cache:
         return e2e_adapter_room_cache[cache_key]
 
-    client = cast(
-        AsyncRestClient,
-        _RateLimitedObjectProxy(
-            AsyncRestClient(
-                api_key=e2e_adapter_agent_credentials.api_key,
-                base_url=e2e_config.thenvoi_base_url,
-            ),
-            e2e_rest_rate_limiter,
-        ),
+    result = await _create_adapter_owned_room(
+        label=name,
+        e2e_config=e2e_config,
+        e2e_rest_rate_limiter=e2e_rest_rate_limiter,
+        e2e_created_room_ids=e2e_created_room_ids,
+        e2e_room_creation_budget=e2e_room_creation_budget,
+        e2e_user_peer=e2e_user_peer,
+        e2e_adapter_agent_credentials=e2e_adapter_agent_credentials,
     )
-    response = await client.agent_api_chats.create_agent_chat(chat=ChatRoomRequest())
-    if response.data is None:
-        pytest.fail(f"create_agent_chat returned no data for {name}")
-    room_id = response.data.id
-    await client.agent_api_participants.add_agent_chat_participant(
-        room_id,
-        participant=ParticipantRequest(participant_id=e2e_user_peer.id, role="member"),
-    )
-    e2e_created_room_ids.append(room_id)
-    result = (room_id, e2e_user_peer.id, e2e_user_peer.name)
     e2e_adapter_room_cache[cache_key] = result
-    logger.info("E2E: Created adapter room %s for '%s'", room_id, name)
     return result
+
+
+@pytest.fixture
+async def e2e_fresh_adapter_room(
+    adapter_entry: tuple[str, AdapterFactory],
+    e2e_config: E2ESettings,
+    e2e_rest_rate_limiter: _E2ERestRateLimiter,
+    e2e_created_room_ids: list[str],
+    e2e_room_creation_budget: int,
+    e2e_user_peer: Any,
+    e2e_adapter_agent_credentials: E2EAgentCredentials,
+) -> tuple[str, str, str]:
+    """Fresh room owned by the current adapter identity for clean live scenarios."""
+    name, _ = adapter_entry
+    return await _create_adapter_owned_room(
+        label=f"{name}:fresh",
+        e2e_config=e2e_config,
+        e2e_rest_rate_limiter=e2e_rest_rate_limiter,
+        e2e_created_room_ids=e2e_created_room_ids,
+        e2e_room_creation_budget=e2e_room_creation_budget,
+        e2e_user_peer=e2e_user_peer,
+        e2e_adapter_agent_credentials=e2e_adapter_agent_credentials,
+    )
 
 
 @pytest.fixture
@@ -615,14 +766,37 @@ async def e2e_parlant_room(
 
 @pytest.fixture
 async def e2e_isolation_room_b(
-    e2e_room_allocator: RoomAllocator,
+    adapter_entry: tuple[str, AdapterFactory],
+    e2e_config: E2ESettings,
+    e2e_rest_rate_limiter: _E2ERestRateLimiter,
+    e2e_created_room_ids: list[str],
+    e2e_room_creation_budget: int,
+    e2e_user_peer: Any,
+    e2e_adapter_agent_credentials: E2EAgentCredentials,
+    e2e_adapter_room_cache: dict[tuple[str, str], tuple[str, str, str]],
 ) -> tuple[str, str, str]:
-    """Shared Room B for room isolation tests.
+    """Second room for isolation tests, owned by the current adapter identity.
 
-    All adapters' isolation tests share this as their second room.
-    Room A is the adapter's own room (``e2e_adapter_room``).
+    Room B cannot come from the session-client allocator: a user-owned room may
+    not wake the adapter identity under test. It is cached per adapter identity
+    so isolation tests get two wakeable rooms without creating a new Room B for
+    every test method.
     """
-    return await e2e_room_allocator("_isolation_b")
+    name, _ = adapter_entry
+    cache_key = (f"{name}:isolation_b", e2e_adapter_agent_credentials.agent_id)
+    if cache_key in e2e_adapter_room_cache:
+        return e2e_adapter_room_cache[cache_key]
+    result = await _create_adapter_owned_room(
+        label=f"{name}:isolation_b",
+        e2e_config=e2e_config,
+        e2e_rest_rate_limiter=e2e_rest_rate_limiter,
+        e2e_created_room_ids=e2e_created_room_ids,
+        e2e_room_creation_budget=e2e_room_creation_budget,
+        e2e_user_peer=e2e_user_peer,
+        e2e_adapter_agent_credentials=e2e_adapter_agent_credentials,
+    )
+    e2e_adapter_room_cache[cache_key] = result
+    return result
 
 
 @pytest.fixture(scope="session")

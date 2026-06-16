@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -74,7 +75,20 @@ async def _agent_message_observer(
     try:
         yield AgentMessageObserver(received=received, ready=ready)
     finally:
-        await ws.leave_chat_room_channel(room_id)
+        body_exc = sys.exc_info()[1]
+        try:
+            await ws.leave_chat_room_channel(room_id)
+        except Exception as cleanup_exc:
+            message = (
+                f"Failed to leave LangGraph smoke listener for room {room_id}. "
+                "Listener cleanup failures can leak events into later phases."
+            )
+            if body_exc is not None:
+                if hasattr(body_exc, "add_note"):
+                    body_exc.add_note(f"{message} Cleanup error: {cleanup_exc!r}")
+                logger.exception("%s Preserving primary test failure.", message)
+            else:
+                raise AssertionError(message) from cleanup_exc
 
 
 def _require_env(name: str) -> str:
@@ -274,14 +288,24 @@ async def run_langgraph_answers_down_message_once_after_restart() -> None:
                 "second_restart_no_new_reply=True"
             )
     finally:
+        body_exc = sys.exc_info()[1]
         if agent is not None:
             try:
                 await user_client.human_api_agents.delete_my_agent(
                     agent.agent_id,
                     force=True,
                 )
-            except Exception:
-                logger.exception("Failed to delete temporary LangGraph smoke agent")
+            except Exception as cleanup_exc:
+                message = (
+                    "Failed to delete temporary LangGraph smoke agent "
+                    f"{agent.agent_id}. Cleanup failures leave live resources behind."
+                )
+                if body_exc is not None:
+                    if hasattr(body_exc, "add_note"):
+                        body_exc.add_note(f"{message} Cleanup error: {cleanup_exc!r}")
+                    logger.exception("%s Preserving primary test failure.", message)
+                else:
+                    raise AssertionError(message) from cleanup_exc
 
 
 @pytest.mark.asyncio

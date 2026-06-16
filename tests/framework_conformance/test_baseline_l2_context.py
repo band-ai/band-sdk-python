@@ -107,10 +107,24 @@ def _assert_token_order(captured: CapturedRequest, *tokens: str) -> None:
     assert positions == sorted(positions)
 
 
+def _expected_l2_source_ids() -> list[str]:
+    return [*_LONG_HISTORY_IDS, _CURRENT_L2_ID]
+
+
+def _assert_l2_source_counts(captured: CapturedRequest) -> None:
+    expected_ids = _expected_l2_source_ids()
+    assert captured.rehydration is not None
+    source_counts = captured.rehydration.source_message_counts
+    assert set(source_counts) == set(expected_ids)
+    for message_id in expected_ids:
+        assert source_counts[message_id] == 1
+
+
 def _assert_l2_recall_oracle(captured: CapturedRequest) -> None:
-    expected_ids = [*_LONG_HISTORY_IDS, _CURRENT_L2_ID]
+    expected_ids = _expected_l2_source_ids()
     text = _visible_text(captured)
     assert captured.message_ids == expected_ids
+    _assert_l2_source_counts(captured)
     for token in (
         "EARLIEST-L2-TURN",
         "MIDDLE-L2-TURN",
@@ -125,6 +139,54 @@ def _assert_l2_recall_oracle(captured: CapturedRequest) -> None:
         "LATEST-L2-TURN",
         _CURRENT_L2_SENTINEL,
     )
+
+
+def _source_items_by_id(captured: CapturedRequest) -> dict[str, list[Any]]:
+    items_by_id: dict[str, list[Any]] = {}
+    for item in captured.items:
+        if item.source_message_id:
+            items_by_id.setdefault(item.source_message_id, []).append(item)
+    return items_by_id
+
+
+def _expected_l2_roles() -> dict[str, set[str]]:
+    roles: dict[str, set[str]] = {}
+    for message in _long_history():
+        message_id = str(message["id"])
+        if message["sender_id"] == AGENT_ID:
+            roles[message_id] = {"assistant", "ai", "model"}
+        else:
+            roles[message_id] = {"user", "human"}
+    roles[_CURRENT_L2_ID] = {"user", "human"}
+    return roles
+
+
+def _history_label_content_pairs() -> list[tuple[str, str]]:
+    return [
+        (str(message["sender_name"]), str(message["content"]))
+        for message in _long_history()
+    ]
+
+
+def _assert_l2_speaker_attribution_oracle(captured: CapturedRequest) -> None:
+    text = _visible_text(captured)
+    if captured.supports_speaker_roles:
+        items_by_id = _source_items_by_id(captured)
+        for message_id, allowed_roles in _expected_l2_roles().items():
+            matching_items = items_by_id.get(message_id, [])
+            assert matching_items, f"{message_id} missing from captured request items"
+            assert {item.role for item in matching_items} <= allowed_roles
+        return
+
+    for sender_name, content in _history_label_content_pairs():
+        if sender_name == "Test Agent":
+            assert content in text
+            continue
+        assert f"[{sender_name}]: {content}" in text
+    for sender_name, content in _history_label_content_pairs():
+        if sender_name == "Test Agent":
+            continue
+        assert f"assistant: [{sender_name}]: {content}" not in text
 
 
 @pytest.mark.asyncio
@@ -168,6 +230,42 @@ async def test_l2_recall_oracle_rejects_reversed_chronology() -> None:
 
 
 @pytest.mark.asyncio
+async def test_l2_recall_oracle_rejects_duplicated_source_turn() -> None:
+    captured = await _capture_l2_request(REQUEST_CAPTURE_ADAPTER_IDS[0])
+    assert captured.rehydration is not None
+    source_counts = dict(captured.rehydration.source_message_counts)
+    source_counts[_LONG_HISTORY_IDS[4]] = 2
+    mutated = replace(
+        captured,
+        rehydration=replace(captured.rehydration, source_message_counts=source_counts),
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_l2_recall_oracle(mutated)
+
+
+@pytest.mark.asyncio
+async def test_l2_recall_oracle_rejects_missing_middle_turn() -> None:
+    captured = await _capture_l2_request(REQUEST_CAPTURE_ADAPTER_IDS[0])
+    assert captured.rehydration is not None
+    missing_id = _LONG_HISTORY_IDS[5]
+    source_counts = dict(captured.rehydration.source_message_counts)
+    source_counts.pop(missing_id)
+    mutated = replace(
+        captured,
+        message_ids=[
+            message_id
+            for message_id in captured.message_ids
+            if message_id != missing_id
+        ],
+        rehydration=replace(captured.rehydration, source_message_counts=source_counts),
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_l2_recall_oracle(mutated)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("adapter_id", REQUEST_CAPTURE_ADAPTER_IDS)
 async def test_l2_history_order_is_chronological_with_current_trigger_last(
     adapter_id: str,
@@ -184,23 +282,47 @@ async def test_l2_speaker_attribution_survives_adapter_payload_construction(
 ) -> None:
     captured = await _capture_l2_request(adapter_id)
 
-    text = _visible_text(captured)
-    assert "[Darvell]:" in text
-    if not captured.supports_speaker_roles:
-        assert "[Test Agent]:" in text
-    assert "[Calc]:" in text
-    assert "MARCO" in text
-    assert "LIGHTHOUSE" in text
-    assert "POSTGRESQL" in text
+    _assert_l2_speaker_attribution_oracle(captured)
 
-    if captured.supports_speaker_roles:
-        own_turn_index, _ = _token_position(captured, "MIDDLE-L2-TURN")
-        assert captured.message_roles[own_turn_index] in {"assistant", "ai", "model"}
 
-        user_turn_index, _ = _token_position(captured, "EARLIEST-L2-TURN")
-        peer_turn_index, _ = _token_position(captured, "LATEST-L2-TURN")
-        assert captured.message_roles[user_turn_index] == "user"
-        assert captured.message_roles[peer_turn_index] in {"user", "human"}
+@pytest.mark.asyncio
+async def test_l2_speaker_attribution_oracle_rejects_wrong_flattened_speaker() -> None:
+    captured = await _capture_l2_request(REQUEST_CAPTURE_ADAPTER_IDS[0])
+    mutated = replace(
+        captured,
+        supports_speaker_roles=False,
+        message_texts=[
+            text.replace(
+                "[Calc]: LATEST-L2-TURN planted POSTGRESQL for recall.",
+                "[Darvell]: LATEST-L2-TURN planted POSTGRESQL for recall.",
+            )
+            for text in captured.message_texts
+        ],
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_l2_speaker_attribution_oracle(mutated)
+
+
+@pytest.mark.asyncio
+async def test_l2_speaker_attribution_oracle_rejects_peer_as_assistant_channel() -> (
+    None
+):
+    captured = await _capture_l2_request(REQUEST_CAPTURE_ADAPTER_IDS[0])
+    mutated = replace(
+        captured,
+        supports_speaker_roles=False,
+        message_texts=[
+            text.replace(
+                "[Calc]: LATEST-L2-TURN planted POSTGRESQL for recall.",
+                "assistant: [Calc]: LATEST-L2-TURN planted POSTGRESQL for recall.",
+            )
+            for text in captured.message_texts
+        ],
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_l2_speaker_attribution_oracle(mutated)
 
 
 @pytest.mark.asyncio

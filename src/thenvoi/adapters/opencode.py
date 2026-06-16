@@ -751,7 +751,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 if room_state.tools:
                     await room_state.tools.send_message(
                         (
-                            "OpenCode is waiting for answers. Reply with `/answer` "
+                            "OpenCode is waiting for answers. reply with `/answer` "
                             "followed by one line per question, or `/reject` to "
                             "reject the question."
                         )

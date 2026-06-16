@@ -21,12 +21,15 @@ from packaging.requirements import Requirement
 from tests.framework_conformance.injection_registry import (
     INJECTION_BINDINGS,
     INJECTION_EXCLUDED_MODULES,
+    TIER2_L0_BLOCKED_COVERAGE,
     DriftRisk,
     Family,
     ModelSeamKind,
     NASubreason,
     ObservationPath,
     Tier1Status,
+    missing_required_modules,
+    tier1_dependency_blocked_reason,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -98,6 +101,40 @@ def _e2e_parametrized_adapters() -> set[str]:
                     return _literal_string_sequence(module_constants[keyword.value.id])
                 return _literal_string_sequence(keyword.value)
     raise AssertionError("Could not find pytest.fixture(params=...) for adapter_entry")
+
+
+def _e2e_adapter_factory_names() -> set[str]:
+    """Read BASELINE_L0_ADAPTER_FACTORIES keys without importing optional deps."""
+    conftest = _REPO_ROOT / "tests" / "e2e" / "adapters" / "conftest.py"
+    tree = ast.parse(conftest.read_text(encoding="utf-8"), filename=str(conftest))
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            is_factories = any(
+                isinstance(target, ast.Name)
+                and target.id == "BASELINE_L0_ADAPTER_FACTORIES"
+                for target in node.targets
+            )
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            is_factories = node.target.id == "BASELINE_L0_ADAPTER_FACTORIES"
+            value = node.value
+        else:
+            continue
+        if not is_factories:
+            continue
+        if not isinstance(value, ast.Dict):
+            raise AssertionError("BASELINE_L0_ADAPTER_FACTORIES must be a literal dict")
+        names: set[str] = set()
+        for key in value.keys:
+            if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                raise AssertionError(
+                    "BASELINE_L0_ADAPTER_FACTORIES keys must be literal strings"
+                )
+            names.add(key.value)
+        return names
+    raise AssertionError(
+        "Could not find BASELINE_L0_ADAPTER_FACTORIES in tests/e2e/adapters/conftest.py"
+    )
 
 
 class SeamNotFound(Exception):
@@ -195,6 +232,33 @@ class TestInjectionRegistryCoverage:
         overlap = bound & INJECTION_EXCLUDED_MODULES
         assert not overlap, f"Adapters both bound and excluded: {overlap}. Pick one."
 
+    def test_non_bridge_bindings_have_l0_live_factory_or_blocked_artifact(self) -> None:
+        bound = {b.adapter for b in INJECTION_BINDINGS}
+        live_factories = _e2e_adapter_factory_names()
+        blocked = set(TIER2_L0_BLOCKED_COVERAGE)
+        missing = bound - live_factories - blocked
+        assert not missing, (
+            "Non-bridge InjectionBindings with no live L0 E2E factory and no explicit "
+            f"blocked artifact coverage: {missing}. Add an adapter factory or a "
+            "TIER2_L0_BLOCKED_COVERAGE entry."
+        )
+
+    def test_l0_live_blocked_artifact_entries_are_real_and_not_stale(self) -> None:
+        bound = {b.adapter for b in INJECTION_BINDINGS}
+        live_factories = _e2e_adapter_factory_names()
+        for adapter_id, coverage in TIER2_L0_BLOCKED_COVERAGE.items():
+            assert adapter_id in bound
+            assert coverage.adapter == adapter_id
+            assert coverage.status.value == "blocked_artifact_required"
+            assert adapter_id not in live_factories, (
+                f"{adapter_id}: remove stale blocked coverage now that an E2E factory exists"
+            )
+            assert coverage.reason.startswith("tier2_blocked:"), coverage.reason
+            assert (_REPO_ROOT / coverage.artifact_path).is_file(), (
+                f"{adapter_id}: blocked artifact path {coverage.artifact_path!r} "
+                "does not exist"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Per-binding invariants (parametrized so each adapter fails independently).
@@ -283,6 +347,53 @@ class TestBindingInvariants:
         assert spike.is_file(), (
             f"{binding.adapter}: spike_test {binding.spike_test!r} does not exist"
         )
+
+    @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
+    def test_honest_binding_dependency_contract_is_explicit(self, binding) -> None:
+        if not binding.is_honest():
+            return
+        if binding.required_modules:
+            assert binding.required_extra, (
+                f"{binding.adapter}: required_modules must name the install lane"
+            )
+        else:
+            assert binding.adapter == "codex", (
+                f"{binding.adapter}: honest bindings with optional framework deps must "
+                "declare required_modules; only scripted in-repo replay may omit them"
+            )
+
+    def test_request_capture_probe_dependencies_are_declared_on_bindings(self) -> None:
+        from tests.framework_conformance.request_capture import REQUEST_CAPTURE_PROBES
+
+        bindings = {binding.adapter: binding for binding in INJECTION_BINDINGS}
+        missing: dict[str, str] = {}
+        for adapter_id, probe in REQUEST_CAPTURE_PROBES.items():
+            if probe.required_module is None:
+                continue
+            binding = bindings[adapter_id]
+            if probe.required_module not in binding.required_modules:
+                missing[adapter_id] = probe.required_module
+
+        assert not missing, (
+            "Request-capture probes must not own optional dependency truth outside "
+            f"InjectionBinding.required_modules: {missing}"
+        )
+
+    @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
+    def test_honest_binding_missing_dependency_reason_is_explicit(
+        self, binding
+    ) -> None:
+        if not binding.is_honest():
+            return
+        reason = tier1_dependency_blocked_reason(binding)
+        missing = missing_required_modules(binding)
+        if missing:
+            assert reason is not None
+            assert reason.startswith("tier1_dependency_blocked:"), reason
+            for module in missing:
+                assert module in reason
+        else:
+            assert reason is None
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
     def test_model_seam_kind_only_for_injectable(self, binding) -> None:

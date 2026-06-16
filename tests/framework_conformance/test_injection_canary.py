@@ -31,7 +31,9 @@ from tests.framework_conformance.injection_registry import (
     INJECTION_BINDINGS,
     InjectionBinding,
     ObservationPath,
+    tier1_dependency_blocked_reason,
 )
+from tests.framework_conformance.request_capture import tier1_sentinel_provider_env
 from thenvoi.core.protocols import AgentToolsProtocol
 from thenvoi.core.types import PlatformMessage
 from thenvoi.testing.fake_tools import FakeAgentTools
@@ -245,17 +247,10 @@ async def _canary_gemini() -> _CanaryResult:
 
 async def _canary_pydantic_ai() -> _CanaryResult:
     import json
-    import os
 
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
     from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
-
-    # FunctionModel replaces the model entirely; the key is never used for
-    # inference but must exist for Agent('openai:...') construction. Restore the
-    # prior env value so the builder leaves no process-global state behind.
-    _prev_key = os.environ.get("OPENAI_API_KEY")
-    os.environ["OPENAI_API_KEY"] = "sk-canary-not-used"
 
     turns: list[Any] = [
         ("tool", _CANARY_TOOL, json.dumps(_CANARY_ARGS)),
@@ -270,9 +265,9 @@ async def _canary_pydantic_ai() -> _CanaryResult:
         else:
             yield decision[1]
 
-    adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
     tools = FakeAgentTools(room_id="canary-pyai")
-    try:
+    with tier1_sentinel_provider_env():
+        adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
         await adapter.on_started("CanaryBot", "Tier-1 positive-routing canary bot.")
         assert adapter._agent is not None
         with adapter._agent.override(model=FunctionModel(stream_function=_stream)):
@@ -285,11 +280,6 @@ async def _canary_pydantic_ai() -> _CanaryResult:
                 is_session_bootstrap=True,
                 room_id="canary-pyai",
             )
-    finally:
-        if _prev_key is None:
-            os.environ.pop("OPENAI_API_KEY", None)
-        else:
-            os.environ["OPENAI_API_KEY"] = _prev_key
     return _CanaryResult(tools)
 
 
@@ -451,10 +441,17 @@ async def test_canary_routes_to_declared_observation_path(
             f"{binding.adapter}: no canary builder (see fail-closed gate above)"
         )
 
+    blocked_reason = tier1_dependency_blocked_reason(binding)
+    if blocked_reason is not None:
+        pytest.fail(blocked_reason)
+
     try:
         result = await builder()
     except ImportError as exc:
-        pytest.skip(f"{binding.adapter}: optional framework dep not installed ({exc})")
+        pytest.fail(
+            f"tier1_dependency_blocked: {binding.adapter} import failed after "
+            f"declared dependencies resolved: {exc}"
+        )
 
     count = _observed_dispatch_count(binding, result.tools)
     assert count == 1, (

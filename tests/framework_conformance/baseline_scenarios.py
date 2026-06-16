@@ -185,7 +185,7 @@ SCENARIOS: tuple[BaselineScenario, ...] = (
         domain_contract=BaselineContract.L1_CUSTOMIZATION,
         applies_to_dispatch_bindings=True,
         required_oracles=frozenset({EvidenceOracle.TOOL_DISPATCH}),
-        required_tools=frozenset({"l1_custom_echo"}),
+        required_tools=frozenset({"log_keyword"}),
     ),
     tier1(
         id="L2.request.full_history",

@@ -10,18 +10,30 @@ from __future__ import annotations
 import os
 import shlex
 import shutil
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 import pytest
-from pydantic import BaseModel
 from thenvoi_rest import AsyncRestClient
 
 from thenvoi.agent import Agent
 from thenvoi.core.simple_adapter import SimpleAdapter
 from thenvoi.core.types import AdapterFeatures, Emit
-from thenvoi.runtime.custom_tools import CustomToolDef
-
+from tests.baseline_l1_fixtures import (
+    L1_CUSTOM_PROMPT_MARKER,
+    L1_CUSTOM_RETURN_MARKER,
+    L1_CUSTOM_TOOL_NAME,
+    LogKeywordInput,
+    make_l1_custom_tool_def,
+    make_l1_langgraph_structured_tool,
+    make_l1_pydantic_ai_tool,
+)
+from tests.e2e.adapters.conftest import (
+    BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES,
+    _require_codex_disposable_cwd,
+    _require_gemini_key_or_vertex,
+    _safe_approval_mode,
+)
 from tests.e2e.baseline_artifacts import (
     baseline_pricing_from_env,
     provider_usage_blocked_reason,
@@ -34,7 +46,6 @@ from tests.e2e.conftest import E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     agent_text_messages,
     assert_content_contains,
-    assert_no_content_contains,
     fetch_chat_messages,
     message_ids,
     message_value,
@@ -43,7 +54,9 @@ from tests.e2e.helpers import (
 )
 
 _STEP_TIMEOUT = 90.0
-_CUSTOM_PROMPT = "Always include the word SNOLLYGOSTER in every response you send."
+_CUSTOM_PROMPT = (
+    f"Always include the word {L1_CUSTOM_PROMPT_MARKER} in every response you send."
+)
 _L1_SCENARIO_REFS = [
     "L1.request.custom_prompt_present",
     "L1.request.custom_prompt_additive",
@@ -51,18 +64,13 @@ _L1_SCENARIO_REFS = [
 ]
 
 
-class LogKeywordInput(BaseModel):
-    """Input for the L1 custom tool proof."""
-
-    message: str
-
-
-L1AdapterFactory = Callable[[E2ESettings, list[CustomToolDef]], SimpleAdapter[Any]]
+L1ToolHandler = Callable[[LogKeywordInput], Awaitable[dict[str, str]]]
+L1AdapterFactory = Callable[[E2ESettings, L1ToolHandler], SimpleAdapter[Any]]
 
 
 def _create_l1_anthropic_adapter(
     settings: E2ESettings,
-    custom_tools: list[CustomToolDef],
+    handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("ANTHROPIC_API_KEY not set for Anthropic L1 live flow")
@@ -71,13 +79,14 @@ def _create_l1_anthropic_adapter(
     return AnthropicAdapter(
         model=settings.e2e_anthropic_model,
         prompt=_CUSTOM_PROMPT,
-        additional_tools=custom_tools,
+        additional_tools=[make_l1_custom_tool_def(handler)],
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
 
 def _create_l1_claude_sdk_adapter(
     settings: E2ESettings,
-    custom_tools: list[CustomToolDef],
+    handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("ANTHROPIC_API_KEY not set for Claude SDK L1 live flow")
@@ -86,13 +95,79 @@ def _create_l1_claude_sdk_adapter(
     return ClaudeSDKAdapter(
         model=settings.e2e_anthropic_model,
         custom_section=_CUSTOM_PROMPT,
-        additional_tools=custom_tools,
+        additional_tools=[make_l1_custom_tool_def(handler)],
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
+    )
+
+
+def _create_l1_langgraph_adapter(
+    settings: E2ESettings,
+    handler: L1ToolHandler,
+) -> SimpleAdapter[Any]:
+    if not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY not set for LangGraph L1 live flow")
+    from langchain_openai import ChatOpenAI
+    from langgraph.checkpoint.memory import MemorySaver
+    from thenvoi.adapters.langgraph import LangGraphAdapter
+
+    return LangGraphAdapter(
+        llm=ChatOpenAI(model=settings.e2e_llm_model),
+        checkpointer=MemorySaver(),
+        custom_section=_CUSTOM_PROMPT,
+        additional_tools=[make_l1_langgraph_structured_tool(handler)],
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
+    )
+
+
+def _create_l1_pydantic_ai_adapter(
+    settings: E2ESettings,
+    handler: L1ToolHandler,
+) -> SimpleAdapter[Any]:
+    if not os.environ.get("OPENAI_API_KEY"):
+        pytest.skip("OPENAI_API_KEY not set for PydanticAI L1 live flow")
+    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+
+    return PydanticAIAdapter(
+        model=f"openai:{settings.e2e_llm_model}",
+        custom_section=_CUSTOM_PROMPT,
+        additional_tools=[make_l1_pydantic_ai_tool(handler)],
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
+    )
+
+
+def _create_l1_gemini_adapter(
+    _settings: E2ESettings,
+    handler: L1ToolHandler,
+) -> SimpleAdapter[Any]:
+    _require_gemini_key_or_vertex()
+    from thenvoi.adapters.gemini import GeminiAdapter
+
+    return GeminiAdapter(
+        model=os.environ.get("E2E_GEMINI_MODEL", "gemini-2.5-flash"),
+        prompt=_CUSTOM_PROMPT,
+        additional_tools=[make_l1_custom_tool_def(handler)],
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
+    )
+
+
+def _create_l1_google_adk_adapter(
+    _settings: E2ESettings,
+    handler: L1ToolHandler,
+) -> SimpleAdapter[Any]:
+    _require_gemini_key_or_vertex()
+    from thenvoi.adapters.google_adk import GoogleADKAdapter
+
+    return GoogleADKAdapter(
+        model=os.environ.get("E2E_GEMINI_MODEL", "gemini-2.5-flash"),
+        custom_section=_CUSTOM_PROMPT,
+        additional_tools=[make_l1_custom_tool_def(handler)],
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
 
 def _create_l1_codex_adapter(
     settings: E2ESettings,
-    custom_tools: list[CustomToolDef],
+    handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
     from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
 
@@ -105,6 +180,7 @@ def _create_l1_codex_adapter(
     binary = command[0] if command else "codex"
     if transport == "stdio" and not shutil.which(binary):
         pytest.skip("Codex L1 live flow requires the codex CLI on PATH")
+    cwd = _require_codex_disposable_cwd()
 
     return CodexAdapter(
         config=CodexAdapterConfig(
@@ -112,23 +188,28 @@ def _create_l1_codex_adapter(
             codex_command=command,
             codex_ws_url=os.environ.get("CODEX_WS_URL", "ws://127.0.0.1:8765"),
             model=os.environ.get("CODEX_MODEL", settings.e2e_llm_model),
-            cwd=os.environ.get("CODEX_CWD", os.getcwd()),
+            cwd=cwd,
             approval_policy=os.environ.get("CODEX_APPROVAL_POLICY", "never"),
             approval_mode=cast(
-                Any, os.environ.get("CODEX_APPROVAL_MODE", "auto_accept")
+                Any,
+                _safe_approval_mode(
+                    adapter_name="Codex",
+                    env_var="CODEX_APPROVAL_MODE",
+                    default="manual",
+                ),
             ),
             custom_section=_CUSTOM_PROMPT,
             enable_task_events=False,
             enable_execution_reporting=False,
         ),
-        additional_tools=custom_tools,
+        additional_tools=[make_l1_custom_tool_def(handler)],
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
 
 def _create_l1_opencode_adapter(
     settings: E2ESettings,
-    custom_tools: list[CustomToolDef],
+    handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
     base_url = os.environ.get("OPENCODE_BASE_URL")
     if not base_url:
@@ -142,10 +223,14 @@ def _create_l1_opencode_adapter(
             model_id=os.environ.get("OPENCODE_MODEL_ID", "minimax-m2.5-free"),
             agent=os.environ.get("OPENCODE_AGENT") or None,
             custom_section=_CUSTOM_PROMPT,
-            approval_mode="auto_accept",
-            question_mode="auto_reject",
+            approval_mode=_safe_approval_mode(
+                adapter_name="OpenCode",
+                env_var="OPENCODE_APPROVAL_MODE",
+                default="auto_decline",
+            ),
+            question_mode=os.environ.get("OPENCODE_QUESTION_MODE", "auto_reject"),
         ),
-        additional_tools=custom_tools,
+        additional_tools=[make_l1_custom_tool_def(handler)],
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
@@ -153,6 +238,10 @@ def _create_l1_opencode_adapter(
 _L1_CUSTOM_TOOL_ADAPTERS: tuple[tuple[str, L1AdapterFactory], ...] = (
     ("anthropic", _create_l1_anthropic_adapter),
     ("claude_sdk", _create_l1_claude_sdk_adapter),
+    ("langgraph", _create_l1_langgraph_adapter),
+    ("pydantic_ai", _create_l1_pydantic_ai_adapter),
+    ("gemini", _create_l1_gemini_adapter),
+    ("google_adk", _create_l1_google_adk_adapter),
     ("codex", _create_l1_codex_adapter),
     ("opencode", _create_l1_opencode_adapter),
 )
@@ -162,9 +251,16 @@ _L1_PROVIDER_USAGE_ADAPTERS: tuple[tuple[str, L1AdapterFactory], ...] = tuple(
     if provider_usage_blocked_reason(adapter_name) is None
 )
 _L1_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES: tuple[str, ...] = tuple(
-    adapter_name
-    for adapter_name, _factory in _L1_CUSTOM_TOOL_ADAPTERS
-    if adapter_name not in dict(_L1_PROVIDER_USAGE_ADAPTERS)
+    dict.fromkeys(
+        [
+            *(
+                adapter_name
+                for adapter_name, _factory in _L1_CUSTOM_TOOL_ADAPTERS
+                if adapter_name not in dict(_L1_PROVIDER_USAGE_ADAPTERS)
+            ),
+            *BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES,
+        ]
+    )
 )
 
 
@@ -225,13 +321,14 @@ async def test_l1_live_custom_prompt_tool_and_platform_tool_survive_when_configu
     chat_id, _user_id, user_name = e2e_fresh_room
     agent_id, agent_name = e2e_agent_info
     adapter_name, adapter_factory = l1_custom_adapter_entry
+    custom_message = "M1_PROBE"
     calls: list[LogKeywordInput] = []
 
     async def log_keyword(args: LogKeywordInput) -> dict[str, str]:
         calls.append(args)
-        return {"keyword": "FLIBBERTIGIBBET"}
+        return {"keyword": L1_CUSTOM_RETURN_MARKER}
 
-    adapter = adapter_factory(e2e_config, [(LogKeywordInput, log_keyword)])
+    adapter = adapter_factory(e2e_config, log_keyword)
     adapter.clear_provider_usage()
     agent = Agent.create(
         adapter=adapter,
@@ -243,7 +340,10 @@ async def test_l1_live_custom_prompt_tool_and_platform_tool_survive_when_configu
 
     async with agent:
         before_step_1 = message_ids(await fetch_chat_messages(api_client, chat_id))
-        step_1_prompt = 'use the log keyword tool with the message "M1_PROBE" and tell me the exact keyword it returned'
+        step_1_prompt = (
+            f"use the {L1_CUSTOM_TOOL_NAME} tool with the message "
+            f"{custom_message!r} and tell me the exact keyword it returned"
+        )
         input_texts.append(step_1_prompt)
         await send_trigger_message(
             api_client,
@@ -264,9 +364,9 @@ async def test_l1_live_custom_prompt_tool_and_platform_tool_survive_when_configu
         output_texts.extend(
             str(message_value(message, "content") or "") for message in step_1_replies
         )
-        assert any(call.message == "M1_PROBE" for call in calls), calls
-        assert_content_contains(step_1_replies, "FLIBBERTIGIBBET")
-        assert_content_contains(step_1_replies, "SNOLLYGOSTER")
+        assert any(call.message == custom_message for call in calls), calls
+        assert_content_contains(step_1_replies, L1_CUSTOM_RETURN_MARKER)
+        assert_content_contains(step_1_replies, L1_CUSTOM_PROMPT_MARKER)
 
         before_step_2 = message_ids(await fetch_chat_messages(api_client, chat_id))
         step_2_prompt = "list the names of everyone in this room"
@@ -291,12 +391,19 @@ async def test_l1_live_custom_prompt_tool_and_platform_tool_survive_when_configu
     output_texts.extend(
         str(message_value(message, "content") or "") for message in step_2_replies
     )
-    assert any(
-        user_name.lower() in str(message_value(message, "content") or "").lower()
-        and "SNOLLYGOSTER" in str(message_value(message, "content") or "")
+    platform_messages = [
+        message
         for message in agent_text_messages(step_2_replies, agent_id)
+        if user_name.lower() in str(message_value(message, "content") or "").lower()
+        and L1_CUSTOM_PROMPT_MARKER in str(message_value(message, "content") or "")
+    ]
+    assert platform_messages, [
+        message_value(message, "content") for message in step_2_replies
+    ]
+    assert not any(
+        "Echo" in str(message_value(message, "content") or "")
+        for message in step_2_replies
     ), [message_value(message, "content") for message in step_2_replies]
-    assert_no_content_contains(step_2_replies, "Echo")
     write_baseline_tier2_artifact(
         scenario_id="L1.request.custom_prompt_present",
         scenario_refs=_L1_SCENARIO_REFS,
@@ -308,23 +415,37 @@ async def test_l1_live_custom_prompt_tool_and_platform_tool_survive_when_configu
         output_texts=output_texts,
         observed_agent_text_message_count=len(step_1_replies) + len(step_2_replies),
         evidence={
-            "custom_tool_calls": len(calls),
-            "custom_prompt_keyword_seen": any(
-                "SNOLLYGOSTER" in str(message_value(message, "content") or "")
-                for message in [*step_1_replies, *step_2_replies]
-            ),
-            "platform_tool_room_listing_replied": len(step_2_replies),
+            "L1.request.custom_prompt_present": {
+                "custom_prompt_marker": L1_CUSTOM_PROMPT_MARKER,
+                "custom_prompt_marker_seen_in_steps": ["custom_tool", "room_listing"],
+            },
+            "L1.request.custom_prompt_additive": {
+                "platform_live_user_seen": True,
+                "platform_non_participant_absent": True,
+                "platform_observation_source": "live_room_answer",
+            },
+            "L1.dispatch.custom_tool": {
+                "custom_tool_name": L1_CUSTOM_TOOL_NAME,
+                "custom_tool_args": {"message": custom_message},
+                "custom_tool_calls": len(calls),
+                "custom_tool_return_seen": True,
+            },
         },
         platform_observations=[
             {
                 "kind": "message",
                 "id": str(message_value(step_1_replies[0], "id")),
                 "assertion": "custom tool return and custom prompt marker reached user",
+                "scenario_refs": [
+                    "L1.request.custom_prompt_present",
+                    "L1.dispatch.custom_tool",
+                ],
             },
             {
                 "kind": "message",
-                "id": str(message_value(step_2_replies[0], "id")),
-                "assertion": "platform room-listing tool still works under custom config",
+                "id": str(message_value(platform_messages[0], "id")),
+                "assertion": "platform roster reply contained live room data and prompt marker",
+                "scenario_ref": "L1.request.custom_prompt_additive",
             },
         ],
     )
