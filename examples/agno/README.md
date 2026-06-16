@@ -50,6 +50,7 @@ await agent.run()
 | File | Description |
 |------|-------------|
 | `01_basic_agent.py` | **Minimal setup** - A Claude-backed Agno agent bridged to Band via `AgnoAdapter`. |
+| `02_tool_reporting.py` | **Tool-execution reporting** - An Agno agent with its own tools; `AdapterFeatures(emit={Emit.EXECUTION})` posts tool_call/tool_result events to the room. |
 
 ---
 
