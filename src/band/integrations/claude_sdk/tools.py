@@ -13,7 +13,7 @@ import json
 import logging
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool  # type: ignore[import-not-found]
@@ -41,6 +41,9 @@ from band.runtime.tools import (
     mcp_tool_names,
     validate_tool_arguments,
 )
+
+if TYPE_CHECKING:
+    from band.runtime.execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -313,23 +316,24 @@ def create_band_mcp_server(agent: Any) -> Any:
     """
     from band.runtime.tools import AgentTools
 
-    def get_tools(room_id: str) -> AgentTools:
+    def _execution_for(room_id: str) -> ExecutionContext | None:
         executions = agent.runtime.executions if agent.runtime else {}
-        execution = executions.get(room_id)
+        return executions.get(room_id)
+
+    def get_tools(room_id: str) -> AgentTools:
+        execution = _execution_for(room_id)
         participants = execution.participants if execution else []
-        agent_id = getattr(execution, "agent_id", None)
+        agent_id = execution.agent_id if execution else None
         return AgentTools(room_id, agent.link.rest, participants, agent_id=agent_id)
 
     def get_participant_handles(room_id: str) -> list[str]:
-        executions = agent.runtime.executions if agent.runtime else {}
-        execution = executions.get(room_id)
+        execution = _execution_for(room_id)
         participants = execution.participants if execution else []
-        agent_id = getattr(execution, "agent_id", None)
+        agent_id = execution.agent_id if execution else None
         return available_mention_handles(participants, agent_id)
 
     def tool_result_hook(tool_name: str, room_id: str, result: Any) -> None:
-        executions = agent.runtime.executions if agent.runtime else {}
-        execution = executions.get(room_id)
+        execution = _execution_for(room_id)
         if execution is None:
             return
 
@@ -348,7 +352,7 @@ def create_band_mcp_server(agent: Any) -> Any:
         if tool_name == "band_remove_participant" and isinstance(result, dict):
             participant_id = result.get("id")
             if participant_id:
-                execution.remove_participant(participant_id)
+                execution.remove_participant(str(participant_id))
 
     tool_definitions = [
         definition
