@@ -294,6 +294,11 @@ class ExecutionContext:
         return self._participants.copy()
 
     @property
+    def agent_id(self) -> str | None:
+        """This agent's own ID, used to exclude itself from mention lists."""
+        return self._agent_id
+
+    @property
     def is_llm_initialized(self) -> bool:
         """Check if LLM has been initialized with system prompt."""
         return self._llm_initialized

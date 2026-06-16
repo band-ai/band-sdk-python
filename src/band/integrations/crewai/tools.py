@@ -49,6 +49,7 @@ from band.core.memory_types import (
     validate_memory_type_for_system,
     validate_subject_scope,
 )
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability, Emit
@@ -227,6 +228,28 @@ def serialize_success_result(result: Any) -> str:
     return json.dumps({"status": "success", "result": result}, default=str)
 
 
+def _participant_handles(tools: AgentToolsProtocol) -> list[str]:
+    """Extract the mentionable handles from the room's cached participants.
+
+    The agent's own participant is skipped — an agent can't @mention itself,
+    so offering its handle as a retry option only misleads the LLM.
+    """
+    self_id = getattr(tools, "agent_id", None)
+    handles: list[str] = []
+    for participant in tools.participants:
+        if isinstance(participant, dict):
+            participant_id = participant.get("id")
+            handle = participant.get("handle")
+        else:
+            participant_id = getattr(participant, "id", None)
+            handle = getattr(participant, "handle", None)
+        if self_id and participant_id == self_id:
+            continue
+        if handle:
+            handles.append(handle)
+    return handles
+
+
 def _execute_tool(
     *,
     tool_name: str,
@@ -256,6 +279,18 @@ def _execute_tool(
             return await coro_factory(tools)
         except Exception as e:
             error_msg = str(e)
+            # For mention validation failures, surface the room's actual
+            # handles so the LLM can retry with real values instead of the
+            # placeholder example in the tool schema.
+            if tool_name == _SEND_MESSAGE_TOOL and isinstance(
+                e, (ValueError, BandToolError)
+            ):
+                handles = _participant_handles(tools)
+                if handles:
+                    error_msg = (
+                        f"{error_msg}. Available handles: {handles}. "
+                        "Use participant handles from the list."
+                    )
             logger.error("%s failed in room %s: %s", tool_name, room_id, error_msg)
             await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
@@ -281,7 +316,7 @@ def _execute_tool(
 class _SendMessageInput(BaseModel):
     content: str = Field(..., description="The message content to send")
     mentions: str = Field(
-        default="[]",
+        ...,
         description='JSON array of participant handles to @mention (e.g., \'["@john", "@john/weather-agent"]\')',
     )
 

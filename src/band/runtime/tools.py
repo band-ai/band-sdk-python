@@ -1156,6 +1156,7 @@ class AgentTools(AgentToolsProtocol):
         participants: list[dict[str, Any]] | None = None,
         *,
         hub_room_id: str | None = None,
+        agent_id: str | None = None,
     ):
         """
         Initialize AgentTools for a specific room.
@@ -1176,7 +1177,13 @@ class AgentTools(AgentToolsProtocol):
         self.rest = rest
         self._participants = participants or []
         self._hub_room_id = hub_room_id
+        self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
+
+    @property
+    def agent_id(self) -> str | None:
+        """This agent's own ID, used to exclude itself from mention lists."""
+        return self._agent_id
 
     @property
     def participants(self) -> list[dict[str, Any]]:
@@ -1201,6 +1208,7 @@ class AgentTools(AgentToolsProtocol):
             ctx.link.rest,
             ctx.participants,
             hub_room_id=getattr(ctx, "hub_room_id", None),
+            agent_id=ctx.agent_id,
         )
         tools._ctx = ctx
         return tools
@@ -1246,7 +1254,9 @@ class AgentTools(AgentToolsProtocol):
         # Return a helpful error so the LLM can retry with proper mentions.
         if not resolved_mentions:
             participant_names = [
-                p.get("handle") or p["name"] for p in self._participants
+                p.get("handle") or p["name"]
+                for p in self._participants
+                if not self._agent_id or p.get("id") != self._agent_id
             ]
             raise BandToolError(
                 "At least one mention is required. "

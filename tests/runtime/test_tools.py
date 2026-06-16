@@ -465,6 +465,24 @@ class TestAgentToolsSendMessage:
         assert message.mentions[0].id == "user-1"
         assert message.mentions[0].handle == "@user-one"
 
+    async def test_send_message_empty_mentions_excludes_self(
+        self, mock_rest_client, participants
+    ):
+        """The empty-mentions error lists other participants but not the agent
+        itself — an agent can't @mention itself."""
+        from band.core.exceptions import BandToolError
+
+        tools = AgentTools(
+            "room-123", mock_rest_client, participants, agent_id="user-2"
+        )
+
+        with pytest.raises(BandToolError) as exc_info:
+            await tools.send_message("Hello!", mentions=[])
+
+        message = str(exc_info.value)
+        assert "@user-one" in message
+        assert "@user-two" not in message
+
     async def test_send_message_unknown_mention_raises(
         self, mock_rest_client, participants
     ):

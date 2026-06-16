@@ -333,6 +333,65 @@ class TestToolSetComposition:
         assert result["status"] == "error"
         assert tracker.replied is False
 
+    def test_send_failure_appends_available_handles(self, builder_mod):
+        """A mention validation failure surfaces the room's real handles so the
+        LLM can retry with actual values instead of the schema placeholder."""
+        from band.core.exceptions import BandToolError
+
+        tools_obj = MagicMock()
+        tools_obj.send_message = AsyncMock(
+            side_effect=BandToolError("At least one mention is required.")
+        )
+        tools_obj.participants = [
+            {"id": "1", "name": "John", "handle": "@john"},
+            {"id": "2", "name": "Weather", "handle": "@john/weather-agent"},
+            {"id": "3", "name": "No Handle"},
+        ]
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_message = next(t for t in tools if t.name == "band_send_message")
+
+        result = json.loads(send_message._run(content="hello", mentions="[]"))
+
+        assert result["status"] == "error"
+        assert "@john" in result["message"]
+        assert "@john/weather-agent" in result["message"]
+        # Participants without a handle are not offered as mention options.
+        assert "No Handle" not in result["message"]
+
+    def test_send_failure_excludes_agent_own_handle(self, builder_mod):
+        """The agent's own handle is never offered as a retry option — an
+        agent can't @mention itself, so listing it only misleads the LLM."""
+        from band.core.exceptions import BandToolError
+
+        tools_obj = MagicMock()
+        tools_obj.agent_id = "self-2"
+        tools_obj.send_message = AsyncMock(
+            side_effect=BandToolError("At least one mention is required.")
+        )
+        tools_obj.participants = [
+            {"id": "1", "name": "John", "handle": "@john"},
+            {"id": "self-2", "name": "Me", "handle": "@john/weather-agent"},
+        ]
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_message = next(t for t in tools if t.name == "band_send_message")
+
+        result = json.loads(send_message._run(content="hello", mentions="[]"))
+
+        assert result["status"] == "error"
+        assert "@john" in result["message"]
+        # The agent's own handle is excluded from the available options.
+        assert "@john/weather-agent" not in result["message"]
+
 
 # --- Reporter behavior ---
 
