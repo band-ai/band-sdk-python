@@ -103,18 +103,24 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             features=features,
         )
 
-        # The developer's Agno agent; reused across rooms/messages. Agno keeps
-        # per-run state in its run context, so a single instance is safe to
-        # reuse (Band history is passed as input on every call).
-        self.agent = agent
+        # The caller's agent is the source of configuration. We never mutate it:
+        # on_started builds a deep copy (`self.agent`) that we wire Band tools
+        # into and run. The copy is shared across rooms/messages; Agno keeps
+        # per-run state in its run context and Band history is passed as input
+        # on every call, so a single instance is safe to reuse.
+        self._source_agent = agent
+        self.agent: AgnoAgent | None = None
 
-        # Band capability tools (memory/contacts) are wired into the agent once,
+        # Band capability tools (memory/contacts) are wired into the copy once,
         # on the first message, since they are room-agnostic.
         self._band_tools_wired = False
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Sync the converter's identity with the Band agent name."""
+        """Deep-copy the caller's agent and sync the converter identity."""
         await super().on_started(agent_name, agent_description)
+
+        # Run a copy so wiring Band tools never mutates the caller's object.
+        self.agent = self._source_agent.deep_copy()
 
         # Keep the converter's own-agent filtering in sync with our identity.
         if isinstance(self.history_converter, AgnoHistoryConverter):
@@ -135,6 +141,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     ) -> None:
         """Run the developer's Agno agent on the history and reply with text."""
         from agno.models.message import Message
+
+        if self.agent is None:
+            raise RuntimeError("Agno agent not initialized; on_started was not called")
 
         sender = msg.sender_name or msg.sender_type
         logger.info("Room %s: handling message from %s", room_id, sender)
@@ -199,17 +208,23 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         ``_current_tools`` ContextVar at call time), so they are added to the
         shared agent a single time on the first message.
         """
-        if self._band_tools_wired:
+        if self._band_tools_wired or self.agent is None:
             return
 
         band_tools = self._build_band_tools(tools)
+        wired: list[str] = []
         for fn in band_tools:
-            self.agent.add_tool(fn)
-        if band_tools:
+            try:
+                self.agent.add_tool(fn)
+                wired.append(fn.name)
+            except RuntimeError as e:
+                # add_tool rejects when the agent's tools is a callable factory.
+                logger.warning("Could not wire Band tool %s: %s", fn.name, e)
+        if wired:
             logger.info(
                 "Wired %d Band capability tool(s) into Agno agent: %s",
-                len(band_tools),
-                ", ".join(t.name for t in band_tools),
+                len(wired),
+                ", ".join(wired),
             )
         # Synchronous, no await: safe to mark wired even across concurrent calls.
         self._band_tools_wired = True
