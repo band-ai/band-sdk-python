@@ -157,7 +157,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
                 logger.warning("[Parlant Tool] send_message: No mentions provided")
                 error = append_available_mention_handles(
                     "At least one mention is required",
-                    getattr(tools, "participants", []),
+                    tools.participants,
                     getattr(tools, "agent_id", None),
                 )
                 return ToolResult(data=f"Error: {error}")
@@ -174,7 +174,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             if isinstance(e, (ValueError, BandToolError)):
                 error = append_available_mention_handles(
                     error,
-                    getattr(tools, "participants", []),
+                    tools.participants,
                     getattr(tools, "agent_id", None),
                 )
             return ToolResult(data=f"Error sending message: {error}")

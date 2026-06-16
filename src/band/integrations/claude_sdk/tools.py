@@ -350,8 +350,7 @@ def create_band_mcp_server(agent: Any) -> Any:
                 )
 
         if tool_name == "band_remove_participant" and isinstance(result, dict):
-            participant_id = result.get("id")
-            if participant_id:
+            if participant_id := result.get("id"):
                 execution.remove_participant(str(participant_id))
 
     tool_definitions = [
