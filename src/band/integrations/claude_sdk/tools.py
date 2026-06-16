@@ -36,7 +36,6 @@ from band.runtime.tools import (
     CHAT_TOOL_NAMES,
     ToolDefinition,
     append_mention_handles_hint,
-    available_mention_handles,
     iter_tool_definitions,
     mcp_tool_names,
     validate_tool_arguments,
@@ -327,10 +326,7 @@ def create_band_mcp_server(agent: Any) -> Any:
         return AgentTools(room_id, agent.link.rest, participants, agent_id=agent_id)
 
     def get_participant_handles(room_id: str) -> list[str]:
-        execution = _execution_for(room_id)
-        participants = execution.participants if execution else []
-        agent_id = execution.agent_id if execution else None
-        return available_mention_handles(participants, agent_id)
+        return get_tools(room_id).available_mention_handles()
 
     def tool_result_hook(tool_name: str, room_id: str, result: Any) -> None:
         execution = _execution_for(room_id)
