@@ -1190,6 +1190,13 @@ class AgentTools(AgentToolsProtocol):
         """Return a shallow copy of the cached participant list."""
         return list(self._participants)
 
+    def _participants_excluding_self(self) -> list[dict[str, Any]]:
+        return [
+            p
+            for p in self._participants
+            if not self._agent_id or p.get("id") != self._agent_id
+        ]
+
     @classmethod
     def from_context(cls, ctx: "ExecutionContext") -> "AgentTools":
         """
@@ -1255,8 +1262,7 @@ class AgentTools(AgentToolsProtocol):
         if not resolved_mentions:
             participant_names = [
                 p.get("handle") or p["name"]
-                for p in self._participants
-                if not self._agent_id or p.get("id") != self._agent_id
+                for p in self._participants_excluding_self()
             ]
             raise BandToolError(
                 "At least one mention is required. "

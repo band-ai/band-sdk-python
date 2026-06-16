@@ -78,11 +78,6 @@ class AgentToolsProtocol(Protocol):
         """Read-only snapshot of cached room participants."""
         ...
 
-    @property
-    def agent_id(self) -> str | None:
-        """This agent's own ID (excluded from mention lists)."""
-        ...
-
     async def get_participants(self) -> Any:
         """Get participants in the current room."""
         ...

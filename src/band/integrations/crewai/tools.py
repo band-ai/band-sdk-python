@@ -228,26 +228,21 @@ def serialize_success_result(result: Any) -> str:
     return json.dumps({"status": "success", "result": result}, default=str)
 
 
-def _participant_handles(tools: AgentToolsProtocol) -> list[str]:
-    """Extract the mentionable handles from the room's cached participants.
+def _participant_field(participant: Any, field: str) -> Any:
+    if isinstance(participant, dict):
+        return participant.get(field)
+    return getattr(participant, field, None)
 
-    The agent's own participant is skipped — an agent can't @mention itself,
-    so offering its handle as a retry option only misleads the LLM.
-    """
-    self_id = getattr(tools, "agent_id", None)
-    handles: list[str] = []
-    for participant in tools.participants:
-        if isinstance(participant, dict):
-            participant_id = participant.get("id")
-            handle = participant.get("handle")
-        else:
-            participant_id = getattr(participant, "id", None)
-            handle = getattr(participant, "handle", None)
-        if self_id and participant_id == self_id:
-            continue
-        if handle:
-            handles.append(handle)
-    return handles
+
+def _mentionable_handles(tools: AgentToolsProtocol) -> list[str]:
+    """Room handles the agent may @mention — everyone but itself."""
+    own_id = getattr(tools, "agent_id", None)
+    return [
+        handle
+        for participant in tools.participants
+        if (handle := _participant_field(participant, "handle"))
+        and (own_id is None or _participant_field(participant, "id") != own_id)
+    ]
 
 
 def _execute_tool(
@@ -279,13 +274,10 @@ def _execute_tool(
             return await coro_factory(tools)
         except Exception as e:
             error_msg = str(e)
-            # For mention validation failures, surface the room's actual
-            # handles so the LLM can retry with real values instead of the
-            # placeholder example in the tool schema.
             if tool_name == _SEND_MESSAGE_TOOL and isinstance(
                 e, (ValueError, BandToolError)
             ):
-                handles = _participant_handles(tools)
+                handles = _mentionable_handles(tools)
                 if handles:
                     error_msg = (
                         f"{error_msg}. Available handles: {handles}. "
