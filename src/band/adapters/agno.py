@@ -14,6 +14,7 @@ text-only skeleton — Band platform tools are not wired into the Agno agent yet
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, ClassVar
 
@@ -29,17 +30,20 @@ from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 
 if TYPE_CHECKING:
     from agno.agent import Agent as AgnoAgent
+    from agno.run.agent import RunOutput
 
 logger = logging.getLogger(__name__)
 
 
 class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     """
-    Agno framework adapter (text-only skeleton).
+    Agno framework adapter (text output + execution reporting).
 
     Takes a developer-built Agno ``Agent`` and bridges it to Band. Stateless per
     room: Band history is the source of truth and is passed as input on every
-    message. No Band platform tools are wired into the Agno agent yet.
+    message. Band platform tools are not wired into the Agno agent yet, but when
+    ``Emit.EXECUTION`` is enabled the agent's own tool executions are reported to
+    the room as tool_call/tool_result events.
 
     Example:
         from agno.agent import Agent as AgnoAgent
@@ -54,8 +58,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         await agent.run()
     """
 
-    # Skeleton: no execution events emitted, no tool capabilities yet.
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset()
+    # Can report the Agno agent's own tool executions to the room.
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    # No Band platform-tool capabilities wired yet.
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset()
 
     def __init__(
@@ -118,6 +123,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         if response is None:
             return
 
+        # Report the agent's own tool executions (happened during the run, so
+        # before the final reply) when execution reporting is enabled.
+        if Emit.EXECUTION in self.features.emit:
+            await self._report_tool_executions(response, tools, room_id)
+
         # get_content_as_string() handles str, structured (BaseModel -> JSON),
         # and dict/list output uniformly.
         text = response.get_content_as_string().strip()
@@ -134,3 +144,43 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
         await tools.send_message(text, mentions=mention)
+
+    async def _report_tool_executions(
+        self,
+        response: RunOutput,
+        tools: AgentToolsProtocol,
+        room_id: str,
+    ) -> None:
+        """Emit tool_call/tool_result events for the agent's tool executions."""
+        for te in getattr(response, "tools", None) or []:
+            tool_call_id = getattr(te, "tool_call_id", None) or ""
+            tool_name = getattr(te, "tool_name", None) or ""
+            try:
+                await tools.send_event(
+                    content=json.dumps(
+                        {
+                            "name": tool_name,
+                            "args": getattr(te, "tool_args", None) or {},
+                            "tool_call_id": tool_call_id,
+                        }
+                    ),
+                    message_type="tool_call",
+                )
+                await tools.send_event(
+                    content=json.dumps(
+                        {
+                            "name": tool_name,
+                            "output": str(getattr(te, "result", "") or ""),
+                            "tool_call_id": tool_call_id,
+                            "is_error": bool(getattr(te, "tool_call_error", False)),
+                        }
+                    ),
+                    message_type="tool_result",
+                )
+            except Exception as e:
+                logger.warning(
+                    "Room %s: failed to report tool execution %s: %s",
+                    room_id,
+                    tool_name,
+                    e,
+                )
