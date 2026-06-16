@@ -100,6 +100,12 @@ def _enrich_send_message_error(
     tools: AgentToolsProtocol,
     error: ValueError | BandToolError,
 ) -> ValueError | BandToolError:
+    """Return the error with available mention handles appended.
+
+    For ``band_send_message`` failures, returns a new error of the same type
+    whose message lists the handles the agent may retry with; for any other
+    tool the original error is returned unchanged.
+    """
     if definition.name != "band_send_message":
         return error
 
