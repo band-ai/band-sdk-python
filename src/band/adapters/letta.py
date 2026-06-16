@@ -49,7 +49,7 @@ EVERY response MUST include at least one tool call. Specifically:
 Just responding with plain text like this.
 
 ## CORRECT:
-Call band_send_message(content="Your response", mentions=["@username"])
+Call band_send_message(content="Your response", mentions=["@user-id"])
 
 If you respond without calling `band_send_message`, the user sees NOTHING.
 
