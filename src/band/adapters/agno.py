@@ -115,10 +115,22 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             logger.exception("Error running Agno agent in room %s: %s", room_id, e)
             raise
 
-        text = (response.content or "").strip() if response is not None else ""
+        if response is None:
+            return
+
+        # get_content_as_string() handles str, structured (BaseModel -> JSON),
+        # and dict/list output uniformly.
+        text = response.get_content_as_string().strip()
         if not text:
             logger.debug("Room %s: Agno agent returned empty content", room_id)
             return
+
+        if response.content_type not in ("str", ""):
+            logger.debug(
+                "Room %s: Agno returned %s output; sending JSON-serialized form",
+                room_id,
+                response.content_type,
+            )
 
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
         await tools.send_message(text, mentions=mention)
