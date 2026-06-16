@@ -8,8 +8,9 @@ Agno messages, runs the developer's agent, and sends the text reply back.
 
 Unlike adapters that run an explicit tool-calling loop, Agno owns its own agent
 loop internally: ``Agent.arun(input=...)`` accepts a list of Agno messages and
-returns a run output whose ``.content`` is the final text. This adapter is a
-text-only skeleton — Band platform tools are not wired into the Agno agent yet.
+returns a run output whose ``.content`` is the final text. Band platform tools
+are not wired into the Agno agent yet, but the agent's own tool executions are
+reported to the room when ``Emit.EXECUTION`` is enabled.
 """
 
 from __future__ import annotations
@@ -104,6 +105,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         """Run the developer's Agno agent on the history and reply with text."""
         from agno.models.message import Message
 
+        sender = msg.sender_name or msg.sender_type
+        logger.info("Room %s: handling message from %s", room_id, sender)
+
         # Band history is the source of truth; build the input fresh each call.
         messages: list[Message] = list(history)
         if participants_msg:
@@ -114,6 +118,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             messages.append(Message(role="user", content=f"[System]: {contacts_msg}"))
         messages.append(Message(role="user", content=msg.format_for_llm()))
 
+        logger.debug(
+            "Room %s: running Agno agent (%d input messages)", room_id, len(messages)
+        )
         try:
             response = await self.agent.arun(input=messages)
         except Exception as e:
@@ -121,6 +128,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             raise
 
         if response is None:
+            logger.debug("Room %s: Agno agent returned no response", room_id)
             return
 
         # Report the agent's own tool executions (happened during the run, so
@@ -143,6 +151,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
 
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
+        logger.info("Room %s: sending reply (%d chars)", room_id, len(text))
         await tools.send_message(text, mentions=mention)
 
     async def _report_tool_executions(
@@ -152,15 +161,31 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         room_id: str,
     ) -> None:
         """Emit tool_call/tool_result events for the agent's tool executions."""
-        for te in getattr(response, "tools", None) or []:
+        executions = list(getattr(response, "tools", None) or [])
+        if not executions:
+            return
+
+        logger.info("Room %s: reporting %d tool execution(s)", room_id, len(executions))
+        for te in executions:
             tool_call_id = getattr(te, "tool_call_id", None) or ""
             tool_name = getattr(te, "tool_name", None) or ""
+            tool_args = getattr(te, "tool_args", None) or {}
+            is_error = bool(getattr(te, "tool_call_error", False))
+            result = str(getattr(te, "result", "") or "")
+            logger.debug(
+                "Room %s: tool %s(%s) -> %s%s",
+                room_id,
+                tool_name,
+                tool_args,
+                result[:200],
+                " [error]" if is_error else "",
+            )
             try:
                 await tools.send_event(
                     content=json.dumps(
                         {
                             "name": tool_name,
-                            "args": getattr(te, "tool_args", None) or {},
+                            "args": tool_args,
                             "tool_call_id": tool_call_id,
                         }
                     ),
@@ -170,9 +195,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                     content=json.dumps(
                         {
                             "name": tool_name,
-                            "output": str(getattr(te, "result", "") or ""),
+                            "output": result,
                             "tool_call_id": tool_call_id,
-                            "is_error": bool(getattr(te, "tool_call_error", False)),
+                            "is_error": is_error,
                         }
                     ),
                     message_type="tool_result",
