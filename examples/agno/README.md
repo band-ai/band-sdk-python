@@ -57,8 +57,8 @@ await agent.run()
 
 ```bash
 # From repository root
-cp examples/agno/agent_config.yaml.example agent_config.yaml
-# edit agent_config.yaml with your Band agent_id + api_key
+cp agent_config.yaml.example agent_config.yaml
+# edit the agno_agent entry in agent_config.yaml with your Band agent_id + api_key
 
 uv run examples/agno/01_basic_agent.py
 ```

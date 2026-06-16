@@ -15,7 +15,8 @@ agent's text output.
 
 Requires:
     - agent_config.yaml in the working directory with an `agno_agent` entry
-      (copy agent_config.yaml.example to agent_config.yaml and fill it in)
+      (copy the repo-root agent_config.yaml.example to agent_config.yaml and
+      fill in the agno_agent credentials)
     - BAND_WS_URL and BAND_REST_URL environment variables (the platform the
       agent_config.yaml credentials belong to)
     - ANTHROPIC_API_KEY environment variable (for the Claude model)
@@ -53,13 +54,6 @@ def load_environment() -> None:
 async def main() -> None:
     load_environment()
 
-    ws_url = os.environ.get("BAND_WS_URL")
-    rest_url = os.environ.get("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
     # Build the Agno agent — you choose the model, instructions, and tools.
     agno_agent = AgnoAgent(
         model=Claude(id="claude-sonnet-4-6"),
@@ -72,8 +66,8 @@ async def main() -> None:
     agent = Agent.from_config(
         "agno_agent",
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
+        ws_url=os.environ.get("BAND_WS_URL"),
+        rest_url=os.environ.get("BAND_REST_URL"),
     )
 
     logger.info("Starting Agno agent...")
