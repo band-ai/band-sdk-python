@@ -2016,6 +2016,8 @@ class AgentTools(AgentToolsProtocol):
                 participant = id_to_participant.get(identifier)
 
             if not participant:
+                # Offer only real, mentionable handles to retry with: @-prefixed,
+                # excluding self and handle-less participants (not the raw lookup keys).
                 available_handles = self.available_mention_handles()
                 raise ValueError(
                     f"Unknown participant '{identifier}'. "
