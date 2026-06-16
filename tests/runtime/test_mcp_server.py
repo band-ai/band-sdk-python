@@ -91,6 +91,36 @@ class TestBuildBandMcpToolRegistrations:
 
         rest.agent_api_participants.list_agent_chat_participants.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_resolved_send_message_errors_include_available_handles(
+        self,
+    ) -> None:
+        room_tools = AgentTools(
+            "room-123",
+            MagicMock(),
+            [
+                {"id": "user-1", "name": "Alice", "handle": "@alice"},
+                {"id": "self", "name": "Self", "handle": "@self"},
+            ],
+            agent_id="self",
+        )
+        registrations = build_resolved_band_mcp_tool_registrations(
+            get_tools={"room-123": room_tools}.get
+        )
+        registration = next(
+            item for item in registrations if item.name == "band_send_message"
+        )
+
+        with pytest.raises(Exception) as exc_info:
+            await registration.execute(
+                {"room_id": "room-123", "content": "hello", "mentions": []}
+            )
+
+        message = str(exc_info.value)
+        assert "At least one mention is required" in message
+        assert "@alice" in message
+        assert "@self" not in message
+
 
 class TestLocalMcpServer:
     @pytest.mark.asyncio

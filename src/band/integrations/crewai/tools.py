@@ -59,7 +59,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import append_available_mention_handles, get_tool_description
 
 logger = logging.getLogger(__name__)
 
@@ -228,23 +228,6 @@ def serialize_success_result(result: Any) -> str:
     return json.dumps({"status": "success", "result": result}, default=str)
 
 
-def _participant_field(participant: Any, field: str) -> Any:
-    if isinstance(participant, dict):
-        return participant.get(field)
-    return getattr(participant, field, None)
-
-
-def _mentionable_handles(tools: AgentToolsProtocol) -> list[str]:
-    """Room handles the agent may @mention — everyone but itself."""
-    own_id = getattr(tools, "agent_id", None)
-    return [
-        handle
-        for participant in tools.participants
-        if (handle := _participant_field(participant, "handle"))
-        and (own_id is None or _participant_field(participant, "id") != own_id)
-    ]
-
-
 def _execute_tool(
     *,
     tool_name: str,
@@ -277,12 +260,11 @@ def _execute_tool(
             if tool_name == _SEND_MESSAGE_TOOL and isinstance(
                 e, (ValueError, BandToolError)
             ):
-                handles = _mentionable_handles(tools)
-                if handles:
-                    error_msg = (
-                        f"{error_msg}. Available handles: {handles}. "
-                        "Use participant handles from the list."
-                    )
+                error_msg = append_available_mention_handles(
+                    error_msg,
+                    tools.participants,
+                    getattr(tools, "agent_id", None),
+                )
             logger.error("%s failed in room %s: %s", tool_name, room_id, error_msg)
             await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})

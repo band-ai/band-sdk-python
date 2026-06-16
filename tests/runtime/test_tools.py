@@ -19,6 +19,7 @@ from band.runtime.tools import (
     GetParticipantsInput,
     CreateChatroomInput,
     _matches_identifier,
+    available_mention_handles,
 )
 
 
@@ -1188,6 +1189,16 @@ class TestMentionResolution:
 class TestHandleMentionResolution:
     """Test handle-based mention resolution."""
 
+    def test_available_mention_handles_excludes_self_and_missing_handles(self):
+        """Available handle hints should include only mentionable room handles."""
+        participants = [
+            {"id": "user-1", "name": "User One", "handle": "@user-one"},
+            {"id": "self", "name": "Self", "handle": "@self"},
+            {"id": "user-3", "name": "No Handle", "handle": None},
+        ]
+
+        assert available_mention_handles(participants, agent_id="self") == ["@user-one"]
+
     def test_resolve_by_handle(self, mock_rest_client, participants):
         """Should resolve mentions by handle."""
         tools = AgentTools("room-123", mock_rest_client, participants)
@@ -1230,11 +1241,17 @@ class TestHandleMentionResolution:
 
     def test_resolve_unknown_handle_raises(self, mock_rest_client, participants):
         """Should raise for unknown handle."""
-        tools = AgentTools("room-123", mock_rest_client, participants)
+        tools = AgentTools(
+            "room-123", mock_rest_client, participants, agent_id="user-2"
+        )
 
         # @ prefix is stripped during normalization
-        with pytest.raises(ValueError, match="Unknown participant 'unknown'"):
+        with pytest.raises(ValueError, match="Unknown participant 'unknown'") as exc:
             tools._resolve_mentions(["@unknown"])
+
+        message = str(exc.value)
+        assert "@user-one" in message
+        assert "@user-two" not in message
 
     def test_resolve_participant_without_handle(self, mock_rest_client):
         """Should resolve by name when participant has no handle."""

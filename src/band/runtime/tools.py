@@ -75,6 +75,55 @@ def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
     return False
 
 
+def available_mention_handles(
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> list[str]:
+    """Return room handles this agent may mention, excluding itself."""
+    return [
+        handle
+        for participant in participants
+        if (handle := _entity_field(participant, "handle"))
+        and (agent_id is None or _entity_field(participant, "id") != agent_id)
+    ]
+
+
+def available_mention_participant_labels(
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> list[str]:
+    """Return mentionable participant handles, falling back to names."""
+    return [
+        label
+        for participant in participants
+        if (agent_id is None or _entity_field(participant, "id") != agent_id)
+        and (
+            label := _entity_field(participant, "handle")
+            or _entity_field(participant, "name")
+        )
+    ]
+
+
+def append_mention_handles_hint(error: str, handles: list[str]) -> str:
+    """Append a retryable handles hint to a tool error when handles are known."""
+    if not handles or "Available handles:" in error:
+        return error
+    return (
+        f"{error}. Available handles: {handles}. Use participant handles from the list."
+    )
+
+
+def append_available_mention_handles(
+    error: str,
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> str:
+    """Append retryable mention handles to a tool error when available."""
+    return append_mention_handles_hint(
+        error, available_mention_handles(participants, agent_id)
+    )
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """Metadata for a built-in Band tool."""
@@ -1190,12 +1239,9 @@ class AgentTools(AgentToolsProtocol):
         """Return a shallow copy of the cached participant list."""
         return list(self._participants)
 
-    def _participants_excluding_self(self) -> list[dict[str, Any]]:
-        return [
-            p
-            for p in self._participants
-            if not self._agent_id or p.get("id") != self._agent_id
-        ]
+    def available_mention_handles(self) -> list[str]:
+        """Return handles this agent may @mention in the current room."""
+        return available_mention_handles(self._participants, self._agent_id)
 
     @classmethod
     def from_context(cls, ctx: "ExecutionContext") -> "AgentTools":
@@ -1260,10 +1306,9 @@ class AgentTools(AgentToolsProtocol):
         # Validate mentions are not empty — API requires ≥1 mention.
         # Return a helpful error so the LLM can retry with proper mentions.
         if not resolved_mentions:
-            participant_names = [
-                p.get("handle") or p["name"]
-                for p in self._participants_excluding_self()
-            ]
+            participant_names = available_mention_participant_labels(
+                self._participants, self._agent_id
+            )
             raise BandToolError(
                 "At least one mention is required. "
                 f"Available participants: {participant_names}. "
@@ -1989,7 +2034,7 @@ class AgentTools(AgentToolsProtocol):
                 participant = id_to_participant.get(identifier)
 
             if not participant:
-                available_handles = list(handle_to_participant.keys())
+                available_handles = self.available_mention_handles()
                 raise ValueError(
                     f"Unknown participant '{identifier}'. "
                     f"Available handles: {available_handles}"

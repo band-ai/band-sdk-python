@@ -35,6 +35,8 @@ from band.runtime.tools import (
     BASE_TOOL_NAMES,
     CHAT_TOOL_NAMES,
     ToolDefinition,
+    append_mention_handles_hint,
+    available_mention_handles,
     iter_tool_definitions,
     mcp_tool_names,
     validate_tool_arguments,
@@ -226,10 +228,7 @@ def _build_builtin_sdk_tool(
                 and get_participant_handles is not None
             ):
                 available = get_participant_handles(room_id)
-                return _make_error(
-                    f"{error}. Available handles: {available}. "
-                    "Use participant handles from the list."
-                )
+                return _make_error(append_mention_handles_hint(str(error), available))
             return _make_error(str(error))
         except Exception as error:
             logger.exception("%s failed: %s", definition.name, error)
@@ -318,13 +317,15 @@ def create_band_mcp_server(agent: Any) -> Any:
         executions = agent.runtime.executions if agent.runtime else {}
         execution = executions.get(room_id)
         participants = execution.participants if execution else []
-        return AgentTools(room_id, agent.link.rest, participants)
+        agent_id = getattr(execution, "agent_id", None)
+        return AgentTools(room_id, agent.link.rest, participants, agent_id=agent_id)
 
     def get_participant_handles(room_id: str) -> list[str]:
         executions = agent.runtime.executions if agent.runtime else {}
         execution = executions.get(room_id)
         participants = execution.participants if execution else []
-        return [p.get("handle", "") for p in participants if p.get("handle")]
+        agent_id = getattr(execution, "agent_id", None)
+        return available_mention_handles(participants, agent_id)
 
     def tool_result_hook(tool_name: str, room_id: str, result: Any) -> None:
         executions = agent.runtime.executions if agent.runtime else {}
