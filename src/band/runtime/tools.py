@@ -1225,7 +1225,7 @@ class AgentTools(AgentToolsProtocol):
 
     def available_mention_handles(self) -> list[str]:
         """Return handles this agent may @mention in the current room."""
-        return available_mention_handles(self._participants, self._agent_id)
+        return available_mention_handles(self.participants, self._agent_id)
 
     @classmethod
     def from_context(cls, ctx: "ExecutionContext") -> "AgentTools":
