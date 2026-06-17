@@ -81,6 +81,11 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
                     continue  # skip thought and other non-text, non-tool events
 
         self._flush_tool_calls(messages, pending_calls)
+        logger.debug(
+            "Converted %d platform event(s) into %d Agno message(s)",
+            len(raw),
+            len(messages),
+        )
         return messages
 
     @staticmethod

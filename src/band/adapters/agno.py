@@ -161,6 +161,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             self.history_converter.set_agent_name(agent_name)
 
         logger.info("Agno adapter started for agent: %s", agent_name)
+        logger.debug(
+            "Agno adapter features: emit=%s capabilities=%s",
+            sorted(e.value for e in self.features.emit),
+            sorted(c.value for c in self.features.capabilities),
+        )
 
     async def on_message(
         self,
@@ -189,6 +194,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # bootstrap (or restart); otherwise reuse what we have accumulated.
         if is_session_bootstrap:
             self._message_history[room_id] = list(history)
+            logger.debug(
+                "Room %s: bootstrap seeded %d message(s) from rehydrated history",
+                room_id,
+                len(history),
+            )
         elif room_id not in self._message_history:
             self._message_history[room_id] = []
         messages = self._message_history[room_id]
