@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import warnings
+from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -51,7 +52,7 @@ _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
 )
 
 
-def _make_band_entrypoint(tool_name: str) -> Any:
+def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
     """Build an async Agno tool entrypoint that runs a Band platform tool."""
 
     async def _entrypoint(**kwargs: Any) -> str:
@@ -189,26 +190,65 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Run the developer's Agno agent on the history and reply with text."""
-        from agno.models.message import Message
-
+        """Run the developer's Agno agent and ensure a reply is sent."""
         if self.agent is None:
             raise RuntimeError("Agno agent not initialized; on_started was not called")
 
-        sender = msg.sender_name or msg.sender_type
         logger.info(
             "Room %s msg %s: handling from %s (sender=%s)",
             room_id,
             msg.id,
-            sender,
+            msg.sender_name or msg.sender_type,
             msg.sender_id,
         )
 
-        # Expose Band memory/contact tools to the agent (once, room-agnostic).
         self._ensure_band_tools(tools)
+        messages = self._build_run_input(
+            msg,
+            history,
+            participants_msg,
+            contacts_msg,
+            is_session_bootstrap=is_session_bootstrap,
+            room_id=room_id,
+        )
+        response = await self._run_agent(
+            messages, tools, room_id=room_id, msg_id=msg.id
+        )
+        if response is None:
+            return
 
-        # Seed the running transcript from the rehydrated platform history on
-        # bootstrap (or restart); otherwise reuse what we have accumulated.
+        if Emit.THOUGHTS in self.features.emit:
+            await self._report_thoughts(response, tools, room_id=room_id, msg_id=msg.id)
+        if Emit.EXECUTION in self.features.emit:
+            await self._report_tool_executions(
+                response, tools, room_id=room_id, msg_id=msg.id
+            )
+
+        self._persist_turn(room_id, response)
+        await self._send_reply(msg, tools, response, room_id=room_id)
+
+    async def on_cleanup(self, room_id: str) -> None:
+        """Drop the room's accumulated transcript when the agent leaves."""
+        self._message_history.pop(room_id, None)
+
+    def _build_run_input(
+        self,
+        msg: PlatformMessage,
+        history: AgnoMessages,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> list[Message]:
+        """Seed the per-room transcript and append the new system/user messages.
+
+        Band delivers the rehydrated platform history only on bootstrap (incl.
+        after a restart); later messages arrive empty, so the adapter keeps the
+        running transcript itself.
+        """
+        from agno.models.message import Message
+
         if is_session_bootstrap:
             self._message_history[room_id] = list(history)
             logger.debug(
@@ -219,8 +259,8 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
         elif room_id not in self._message_history:
             self._message_history[room_id] = []
-        messages = self._message_history[room_id]
 
+        messages = self._message_history[room_id]
         if participants_msg:
             messages.append(
                 Message(role="user", content=f"[System]: {participants_msg}")
@@ -228,20 +268,33 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         if contacts_msg:
             messages.append(Message(role="user", content=f"[System]: {contacts_msg}"))
         messages.append(Message(role="user", content=msg.format_for_llm()))
+        return messages
+
+    async def _run_agent(
+        self,
+        messages: list[Message],
+        tools: AgentToolsProtocol,
+        *,
+        room_id: str,
+        msg_id: str,
+    ) -> RunOutput | None:
+        """Run the Agno agent with the room's tools bound for this call."""
+        agent = self.agent
+        assert agent is not None  # on_message guarantees the agent is initialized
 
         logger.debug(
             "Room %s msg %s: running Agno agent (%d input messages)",
             room_id,
-            msg.id,
+            msg_id,
             len(messages),
         )
         # Bind the room's tools so wired Band tools execute against this room.
         token = _current_tools.set(tools)
         try:
-            response = await self.agent.arun(input=messages)
+            response = await agent.arun(input=messages)
         except Exception as e:
             logger.exception(
-                "Room %s msg %s: error running Agno agent: %s", room_id, msg.id, e
+                "Room %s msg %s: error running Agno agent: %s", room_id, msg_id, e
             )
             raise
         finally:
@@ -249,29 +302,34 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         if response is None:
             logger.debug(
-                "Room %s msg %s: Agno agent returned no response", room_id, msg.id
+                "Room %s msg %s: Agno agent returned no response", room_id, msg_id
             )
-            return
+        return response
 
-        # Surface the agent's reasoning (if any) before its actions/reply.
-        if Emit.THOUGHTS in self.features.emit:
-            await self._report_thoughts(response, tools, room_id, msg.id)
+    def _persist_turn(self, room_id: str, response: RunOutput) -> None:
+        """Persist the agent's full turn (tool calls/results + reply) for continuity.
 
-        # Report the agent's own tool executions (happened during the run, so
-        # before the final reply) when execution reporting is enabled.
-        if Emit.EXECUTION in self.features.emit:
-            await self._report_tool_executions(response, tools, room_id, msg.id)
-
-        # Persist the agent's full turn (tool calls/results + reply) so the next
-        # message has continuity; Agno's run message list is the source of truth.
+        Agno's run message list is the source of truth; the system message is
+        dropped because Agno re-injects it from the agent's instructions.
+        """
         if response.messages:
             self._message_history[room_id] = [
                 m for m in response.messages if m.role != "system"
             ]
 
-        # The agent may post via band_send_message itself. If it did, we are
-        # done; otherwise fall back to sending its final text so every agent
-        # replies regardless of whether it used the tool.
+    async def _send_reply(
+        self,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        response: RunOutput,
+        *,
+        room_id: str,
+    ) -> None:
+        """Send the agent's text reply unless it already replied via a tool.
+
+        Autonomous agents post through band_send_message themselves; if the agent
+        did not, its final text is sent as a fallback so it always responds.
+        """
         if any(
             getattr(te, "tool_name", None) == "band_send_message"
             for te in (getattr(response, "tools", None) or [])
@@ -296,10 +354,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             mentions,
         )
         await tools.send_message(text, mentions=mentions)
-
-    async def on_cleanup(self, room_id: str) -> None:
-        """Drop the room's accumulated transcript when the agent leaves."""
-        self._message_history.pop(room_id, None)
 
     def _ensure_band_tools(self, tools: AgentToolsProtocol) -> None:
         """Wire the in-scope Band tools into the Agno agent once.
@@ -364,6 +418,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self,
         response: RunOutput,
         tools: AgentToolsProtocol,
+        *,
         room_id: str,
         msg_id: str,
     ) -> None:
@@ -395,6 +450,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self,
         response: RunOutput,
         tools: AgentToolsProtocol,
+        *,
         room_id: str,
         msg_id: str,
     ) -> None:
@@ -418,48 +474,56 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             msg_id,
             len(executions),
         )
-        for te in executions:
-            tool_call_id = getattr(te, "tool_call_id", None) or ""
-            tool_name = getattr(te, "tool_name", None) or ""
-            tool_args = getattr(te, "tool_args", None) or {}
-            is_error = bool(getattr(te, "tool_call_error", False))
-            result = str(getattr(te, "result", "") or "")
-            logger.debug(
-                "Room %s msg %s: tool %s(%s) -> %s%s",
+        for execution in executions:
+            await self._emit_execution(execution, tools, room_id=room_id, msg_id=msg_id)
+
+    async def _emit_execution(
+        self,
+        execution: Any,
+        tools: AgentToolsProtocol,
+        *,
+        room_id: str,
+        msg_id: str,
+    ) -> None:
+        """Emit the tool_call + tool_result event pair for one tool execution."""
+        tool_call_id = getattr(execution, "tool_call_id", None) or ""
+        tool_name = getattr(execution, "tool_name", None) or ""
+        tool_args = getattr(execution, "tool_args", None) or {}
+        is_error = bool(getattr(execution, "tool_call_error", False))
+        result = str(getattr(execution, "result", "") or "")
+
+        logger.debug(
+            "Room %s msg %s: tool %s(%s) -> %s%s",
+            room_id,
+            msg_id,
+            tool_name,
+            tool_args,
+            result[:200],
+            " [error]" if is_error else "",
+        )
+        try:
+            await tools.send_event(
+                content=json.dumps(
+                    {"name": tool_name, "args": tool_args, "tool_call_id": tool_call_id}
+                ),
+                message_type="tool_call",
+            )
+            await tools.send_event(
+                content=json.dumps(
+                    {
+                        "name": tool_name,
+                        "output": result,
+                        "tool_call_id": tool_call_id,
+                        "is_error": is_error,
+                    }
+                ),
+                message_type="tool_result",
+            )
+        except Exception as e:
+            logger.warning(
+                "Room %s msg %s: failed to report tool execution %s: %s",
                 room_id,
                 msg_id,
                 tool_name,
-                tool_args,
-                result[:200],
-                " [error]" if is_error else "",
+                e,
             )
-            try:
-                await tools.send_event(
-                    content=json.dumps(
-                        {
-                            "name": tool_name,
-                            "args": tool_args,
-                            "tool_call_id": tool_call_id,
-                        }
-                    ),
-                    message_type="tool_call",
-                )
-                await tools.send_event(
-                    content=json.dumps(
-                        {
-                            "name": tool_name,
-                            "output": result,
-                            "tool_call_id": tool_call_id,
-                            "is_error": is_error,
-                        }
-                    ),
-                    message_type="tool_result",
-                )
-            except Exception as e:
-                logger.warning(
-                    "Room %s msg %s: failed to report tool execution %s: %s",
-                    room_id,
-                    msg_id,
-                    tool_name,
-                    e,
-                )
