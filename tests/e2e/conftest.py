@@ -97,7 +97,7 @@ class E2ESettings(BaseTestSettings):
 
     # E2E-specific settings (override via environment variables)
     e2e_llm_model: str = "gpt-5.4-mini"
-    e2e_anthropic_model: str = "claude-3-haiku-20240307"
+    e2e_anthropic_model: str = "claude-haiku-4-5-20251001"
     e2e_timeout: int = 30
     e2e_tests_enabled: bool = False
 
