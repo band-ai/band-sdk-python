@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from band.core.protocols import HistoryConverter
@@ -16,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Forward-referenced so this module imports without agno installed; the real
-# Message type is imported lazily inside convert().
+# Message type is resolved lazily via the converter's _message_class property.
 AgnoMessages = list["Message"]
 
 
@@ -40,6 +41,21 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
 
     def set_agent_name(self, name: str) -> None:
         self._agent_name = name
+
+    @cached_property
+    def _message_class(self) -> type[Message]:
+        """Agno's ``Message`` class, imported lazily and once per converter.
+
+        Keeps this module importable without agno installed; raises a clear
+        error only when a message is actually built.
+        """
+        try:
+            from agno.models.message import Message
+        except ImportError as e:
+            raise ImportError(
+                "Agno dependencies not installed. Install with: uv add band-sdk[agno]"
+            ) from e
+        return Message
 
     def convert(self, raw: list[dict[str, Any]]) -> AgnoMessages:
         """Dispatch each platform event to its Agno-message builder."""
@@ -82,30 +98,26 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
             },
         }
 
-    @staticmethod
     def _flush_tool_calls(
-        messages: AgnoMessages, pending_calls: list[dict[str, Any]]
+        self, messages: AgnoMessages, pending_calls: list[dict[str, Any]]
     ) -> None:
         """Emit buffered tool calls as one assistant message, then clear them."""
         if not pending_calls:
             return
-        from agno.models.message import Message
-
         messages.append(
-            Message(role="assistant", content=None, tool_calls=list(pending_calls))
+            self._message_class(
+                role="assistant", content=None, tool_calls=list(pending_calls)
+            )
         )
         pending_calls.clear()
 
-    @staticmethod
-    def _append_tool_result(messages: AgnoMessages, content: str) -> None:
+    def _append_tool_result(self, messages: AgnoMessages, content: str) -> None:
         """Append a tool_result event as a tool-role message."""
         parsed = parse_tool_result(content)
         if parsed is None:
             return
-        from agno.models.message import Message
-
         messages.append(
-            Message(
+            self._message_class(
                 role="tool",
                 tool_call_id=parsed.tool_call_id,
                 tool_name=parsed.name,
@@ -116,14 +128,12 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
 
     def _text_message(self, hist: dict[str, Any]) -> Message:
         """Map a text event to a user/assistant message with sender attribution."""
-        from agno.models.message import Message
-
         content = hist.get("content", "")
         if hist.get("role") == "assistant" and hist.get("sender_name") == (
             self._agent_name
         ):
-            return Message(role="assistant", content=content)
+            return self._message_class(role="assistant", content=content)
 
         sender_name = hist.get("sender_name", "")
         formatted = f"[{sender_name}]: {content}" if sender_name else content
-        return Message(role="user", content=formatted)
+        return self._message_class(role="user", content=formatted)
