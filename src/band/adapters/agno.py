@@ -241,9 +241,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 response.content_type,
             )
 
-        mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
         logger.info("Room %s: sending reply (%d chars)", room_id, len(text))
-        await tools.send_message(text, mentions=mention)
+        # mentions accepts handles/names/IDs as strings; the SDK resolves them.
+        await tools.send_message(text, mentions=[msg.sender_id])
 
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's accumulated transcript when the agent leaves."""
