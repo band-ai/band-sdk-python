@@ -7,10 +7,13 @@ and asserting on message content in E2E tests.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
+from rich.console import Console
 from band_rest import AsyncRestClient, ChatMessageRequest
 from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
@@ -19,6 +22,26 @@ from band_rest.types import (
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Pretty logging (followable transcript when running with -s)
+# =============================================================================
+
+# Rich renders a readable transcript under ``pytest -s`` and degrades to plain
+# text when stdout is captured/non-tty. Console is the standard tool for this;
+# no need to hand-roll banner formatting.
+_console = Console()
+
+
+def log_banner(title: str) -> None:
+    """Render a visually distinct section banner via a Rich rule."""
+    _console.rule(f"[bold cyan]{title}[/]")
+
+
+def log_step(n: int | str | float, text: str) -> None:
+    """Render a numbered step marker within a scenario."""
+    _console.print(f"  [bold green]\\[step {n}][/] {text}")
 
 
 class TrackingWebSocketClient:
@@ -169,6 +192,122 @@ async def listening_for_agent_responses(
         yield wait
     finally:
         await ws_client.leave_chat_room_channel(room_id)
+
+
+@asynccontextmanager
+async def listening_for_room_activity(
+    ws_client: WebSocketClient | TrackingWebSocketClient,
+    room_id: str,
+    *,
+    timeout: float = 30.0,
+    message_types: tuple[str, ...] = ("text",),
+    sender_id: str | None = None,
+    min_messages: int = 1,
+    raise_on_timeout: bool = False,
+) -> AsyncGenerator[Callable[[], Awaitable[list[MessageCreatedPayload]]], None]:
+    """Subscribe to a room and collect agent activity matching a filter.
+
+    A generalized variant of :func:`listening_for_agent_responses` that can
+    capture non-text events (``thought``, ``tool_call``, ``tool_result``) and
+    optionally restrict to a single sender. Collects every ``message_created``
+    payload from an Agent whose ``message_type`` is in *message_types* (and,
+    when *sender_id* is given, whose ``sender_id`` matches).
+
+    Usage::
+
+        async with listening_for_room_activity(
+            ws, room_id, message_types=("thought",)
+        ) as wait:
+            await send_trigger_message(client, room_id, "Think it through", ...)
+            thoughts = await wait()
+
+    Args:
+        ws_client: Connected WebSocket client (or TrackingWebSocketClient).
+        room_id: Chat room to listen on.
+        timeout: Maximum seconds ``wait()`` will block.
+        message_types: Message types to collect (default text only).
+        sender_id: If set, only collect activity from this sender.
+        min_messages: Minimum matching messages before ``wait()`` returns.
+        raise_on_timeout: If True, ``wait()`` raises ``TimeoutError`` instead
+            of returning partial results.
+
+    Yields:
+        An async callable that blocks until *min_messages* matching messages
+        arrive (or *timeout* elapses) and returns the collected payloads.
+    """
+    received: list[MessageCreatedPayload] = []
+    event = asyncio.Event()
+
+    async def handler(payload: MessageCreatedPayload) -> None:
+        if payload.sender_type != "Agent" or payload.message_type not in message_types:
+            return
+        if sender_id is not None and payload.sender_id != sender_id:
+            return
+        received.append(payload)
+        logger.info(
+            "Received %s from %s in room %s: %s",
+            payload.message_type,
+            payload.sender_name or payload.sender_id,
+            room_id,
+            payload.content[:80],
+        )
+        if len(received) >= min_messages:
+            event.set()
+
+    await ws_client.join_chat_room_channel(room_id, handler)
+    try:
+
+        async def wait() -> list[MessageCreatedPayload]:
+            try:
+                await asyncio.wait_for(event.wait(), timeout=timeout)
+            except TimeoutError:
+                logger.warning(
+                    "Timeout waiting for %s in room %s (received %d/%d after %.1fs)",
+                    message_types,
+                    room_id,
+                    len(received),
+                    min_messages,
+                    timeout,
+                )
+                if raise_on_timeout:
+                    raise
+            return received
+
+        yield wait
+    finally:
+        await ws_client.leave_chat_room_channel(room_id)
+
+
+def find_tool_call_in_context(items: list[Any], tool_name: str) -> bool:
+    """Return True if any context item is a ``tool_call`` event for *tool_name*.
+
+    The Agno adapter posts tool executions as ``tool_call`` events whose
+    ``content`` is a JSON object ``{"name": ..., "args": ..., ...}`` (see
+    ``AgnoAdapter._emit_execution``). This parses those payloads and matches
+    on the tool name, falling back to a substring check if the content is not
+    valid JSON.
+
+    Args:
+        items: Context items from ``fetch_all_context`` (each has
+            ``message_type`` and ``content`` attributes).
+        tool_name: The tool name to look for (e.g. ``"add_numbers"``).
+    """
+    matches = (
+        _tool_call_name_matches(item, tool_name)
+        for item in items
+        if getattr(item, "message_type", None) == "tool_call"
+    )
+    return any(matches)
+
+
+def _tool_call_name_matches(item: Any, tool_name: str) -> bool:
+    """Check a single ``tool_call`` context item against *tool_name*."""
+    content = getattr(item, "content", "") or ""
+    try:
+        parsed = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return tool_name in content
+    return isinstance(parsed, dict) and parsed.get("name") == tool_name
 
 
 def assert_content_contains(

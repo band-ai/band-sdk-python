@@ -85,7 +85,8 @@ class E2ESettings(BaseTestSettings):
     (e.g. E2E_LLM_MODEL -> e2e_llm_model) with case-insensitive matching.
     """
 
-    _env_file_path = Path(__file__).parent.parent.parent / ".env.test"
+    class Config:
+        env_file = _ENV_TEST_PATH
 
     band_api_key: str = ""
     band_api_key_2: str = ""
@@ -382,6 +383,38 @@ async def e2e_agent_info(e2e_session_client: AsyncRestClient) -> tuple[str, str]
     Used by tests that need to @mention the agent in trigger messages.
     """
     agent_me = await e2e_session_client.agent_api_identity.get_agent_me()
+    return agent_me.data.id, agent_me.data.name
+
+
+@pytest.fixture(scope="session")
+def e2e_session_client_2(
+    e2e_config: E2ESettings,
+) -> AsyncRestClient:
+    """Session-scoped REST client for the *second* test agent.
+
+    Multi-agent E2E tests need a distinct agent identity (different API key)
+    so two agents can coexist in the same room. Skips cleanly when the second
+    agent is not provisioned in .env.test.
+    """
+    if not e2e_config.band_api_key_2:
+        pytest.skip("BAND_API_KEY_2 not set (needed for multi-agent E2E tests)")
+
+    return AsyncRestClient(
+        api_key=e2e_config.band_api_key_2,
+        base_url=e2e_config.band_base_url,
+    )
+
+
+@pytest.fixture(scope="session")
+async def e2e_agent_info_2(
+    e2e_session_client_2: AsyncRestClient,
+) -> tuple[str, str]:
+    """Get (agent_id, agent_name) for the second test agent.
+
+    Used by multi-agent tests to @mention the second agent and to verify it
+    was added to / removed from a room.
+    """
+    agent_me = await e2e_session_client_2.agent_api_identity.get_agent_me()
     return agent_me.data.id, agent_me.data.name
 
 

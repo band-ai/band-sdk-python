@@ -186,6 +186,10 @@ dev = [
     "python-dotenv>=1.2.2",
     # Include bridge_agentcore deps for testing
     "boto3>=1.35.0",
+    # Pretty E2E test output
+    "rich>=13.0.0",
+    # Retry/cooldown for rate-limited platform reconnects in E2E tests
+    "tenacity>=8.0.0",
     # Development tools
     "pre-commit>=3.0.0",
     "ruff>=0.8.0",
@@ -211,6 +215,10 @@ dev-crewai = [
     "openai>=2.0.0",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
+    # Pretty E2E test output
+    "rich>=13.0.0",
+    # Retry/cooldown for rate-limited platform reconnects in E2E tests
+    "tenacity>=8.0.0",
     # Development tools
     "ruff>=0.8.0",
     "pyrefly>=0.18.0",
