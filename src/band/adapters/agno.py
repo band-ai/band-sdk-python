@@ -147,10 +147,15 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Deep-copy the caller's agent."""
+        """Deep-copy the caller's agent and sync the converter identity."""
         await super().on_started(agent_name, agent_description)
 
         self._agent = self._source_agent.deep_copy()
+
+        # Keep the converter's own-agent filtering in sync with our identity, so
+        # rehydrated history maps this agent's past messages to the assistant role.
+        if isinstance(self.history_converter, AgnoHistoryConverter):
+            self.history_converter.set_agent_name(agent_name)
 
         logger.info("Agno adapter started for agent: %s", agent_name)
         logger.debug(
