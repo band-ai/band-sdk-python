@@ -8,10 +8,9 @@ Agno messages, runs the developer's agent, and sends the text reply back.
 
 Unlike adapters that run an explicit tool-calling loop, Agno owns its own agent
 loop internally: ``Agent.arun(input=...)`` accepts a list of Agno messages and
-returns a run output whose ``.content`` is the final text. When the matching
-capabilities are enabled, Band's memory/contact tools are wired into the Agno
-agent so the model can call them, and the agent's tool executions are reported
-to the room when ``Emit.EXECUTION`` is enabled.
+returns a run output whose ``.content`` is the final text. The Band toolset is
+exposed to the agent so it can send messages and act on the platform itself;
+tool executions are reported to the room when ``Emit.EXECUTION`` is enabled.
 """
 
 from __future__ import annotations
@@ -68,10 +67,16 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
     Takes a developer-built Agno ``Agent`` and bridges it to Band. Stateless per
     room: Band history is the source of truth and is passed as input on every
-    message. Band's memory/contact tools are exposed to the agent when the
-    matching capabilities are enabled, and the agent's tool executions are
-    reported to the room as tool_call/tool_result events when ``Emit.EXECUTION``
-    is enabled.
+    message.
+
+    The Band toolset is exposed to the agent — chat and participant tools always,
+    plus memory/contact tools when the matching capabilities are enabled — so it
+    can send messages, invite peers, and act on the platform itself. If the agent
+    does not post via ``band_send_message``, its final text is sent as a fallback,
+    so simple agents still reply without any Band-specific prompting.
+
+    Tool executions are reported to the room as tool_call/tool_result events when
+    ``Emit.EXECUTION`` is enabled.
 
     Example:
         from agno.agent import Agent as AgnoAgent
@@ -247,26 +252,29 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         if Emit.EXECUTION in self.features.emit:
             await self._report_tool_executions(response, tools, room_id, msg.id)
 
-        # get_content_as_string() handles str, structured (BaseModel -> JSON),
-        # and dict/list output uniformly.
-        text = response.get_content_as_string().strip()
-        if not text:
+        # Persist the agent's full turn (tool calls/results + reply) so the next
+        # message has continuity; Agno's run message list is the source of truth.
+        if response.messages:
+            self._message_history[room_id] = [
+                m for m in response.messages if m.role != "system"
+            ]
+
+        # The agent may post via band_send_message itself. If it did, we are
+        # done; otherwise fall back to sending its final text so every agent
+        # replies regardless of whether it used the tool.
+        if any(
+            getattr(te, "tool_name", None) == "band_send_message"
+            for te in (getattr(response, "tools", None) or [])
+        ):
             logger.debug(
-                "Room %s msg %s: Agno agent returned empty content", room_id, msg.id
+                "Room %s msg %s: agent replied via band_send_message", room_id, msg.id
             )
             return
 
-        # Persist the reply so the next turn (which arrives with empty history)
-        # still has the full conversation context.
-        messages.append(Message(role="assistant", content=text))
-
-        if response.content_type not in ("str", ""):
-            logger.debug(
-                "Room %s msg %s: Agno returned %s output; sending JSON-serialized form",
-                room_id,
-                msg.id,
-                response.content_type,
-            )
+        text = response.get_content_as_string().strip()
+        if not text:
+            logger.debug("Room %s msg %s: agent produced no reply", room_id, msg.id)
+            return
 
         # mentions accepts handles/names/IDs as strings; the SDK resolves them.
         mentions = [msg.sender_id]
@@ -284,7 +292,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._message_history.pop(room_id, None)
 
     def _ensure_band_tools(self, tools: AgentToolsProtocol) -> None:
-        """Wire Band memory/contact tools into the Agno agent once.
+        """Wire the in-scope Band tools into the Agno agent once.
 
         These tools are room-agnostic (the active room is supplied via the
         ``_current_tools`` ContextVar at call time), so they are added to the
@@ -304,7 +312,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 logger.warning("Could not wire Band tool %s: %s", fn.name, e)
         if wired:
             logger.info(
-                "Wired %d Band capability tool(s) into Agno agent: %s",
+                "Wired %d Band tool(s) into Agno agent: %s",
                 len(wired),
                 ", ".join(wired),
             )
@@ -312,30 +320,23 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._band_tools_wired = True
 
     def _build_band_tools(self, tools: AgentToolsProtocol) -> list[Function]:
-        """Convert the capability-gated Band tool schemas into Agno Functions."""
+        """Convert the in-scope Band tool schemas into Agno Functions.
+
+        Chat/participant tools are always exposed; memory/contact tools are added
+        when the matching capabilities are enabled.
+        """
         from agno.tools.function import Function
 
-        include_memory = Capability.MEMORY in self.features.capabilities
-        include_contacts = Capability.CONTACTS in self.features.capabilities
-        if not (include_memory or include_contacts):
-            return []
-
-        # The base tools (send_message, participants, ...) are driven by the
-        # adapter itself; expose only the capability-gated memory/contact tools.
-        base_names = {
-            schema["function"]["name"]
-            for schema in tools.get_openai_tool_schemas(
-                include_memory=False, include_contacts=False
-            )
-        }
+        schemas = tools.get_openai_tool_schemas(
+            include_memory=Capability.MEMORY in self.features.capabilities,
+            include_contacts=Capability.CONTACTS in self.features.capabilities,
+        )
 
         band_tools: list[Function] = []
-        for schema in tools.get_openai_tool_schemas(
-            include_memory=include_memory, include_contacts=include_contacts
-        ):
+        for schema in schemas:
             fn = schema.get("function", {})
             name = fn.get("name")
-            if not name or name in base_names:
+            if not name:
                 continue
             band_tools.append(
                 Function(

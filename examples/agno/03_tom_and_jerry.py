@@ -13,9 +13,8 @@ each backed by its own Agno agent with a distinct personality, and runs them
 concurrently with asyncio.gather.
 
 Add both agents to the same Band room and mention them: they reply in character
-and bicker back and forth. (Unlike the CrewAI Tom/Jerry example, the Agno
-adapter is reply-only — it does not expose chat/participant tools, so the
-agents respond when mentioned rather than autonomously inviting each other.)
+and bicker back and forth. Each agent has the Band toolset, so they can also
+look up and invite each other, then keep the chase going.
 
 Requires:
     - agent_config.yaml with `tom` and `jery` entries (agent_id + api_key)
@@ -39,6 +38,7 @@ from dotenv import load_dotenv
 
 from band import Agent
 from band.adapters import AgnoAdapter
+from band.core.types import AdapterFeatures, Emit
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -74,7 +74,11 @@ def build_agent(config_key: str, instructions: str, ws_url: str, rest_url: str) 
     )
     return Agent.from_config(
         config_key,
-        adapter=AgnoAdapter(agno_agent),
+        # emit=EXECUTION posts tool_call/tool_result events so the agents'
+        # platform actions (lookup, invite, send) are visible in the room.
+        adapter=AgnoAdapter(
+            agno_agent, features=AdapterFeatures(emit={Emit.EXECUTION})
+        ),
         ws_url=ws_url,
         rest_url=rest_url,
     )
