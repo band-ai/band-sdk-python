@@ -50,7 +50,12 @@ def _flush_tool_calls(
         return
     message_cls = agno_message_class()
     messages.append(
-        message_cls(role="assistant", content=None, tool_calls=list(pending_calls))
+        message_cls(
+            role="assistant",
+            content=None,
+            tool_calls=list(pending_calls),
+            from_history=True,
+        )
     )
     pending_calls.clear()
 
@@ -118,17 +123,20 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
                 tool_name=parsed.name,
                 content=parsed.output,
                 tool_call_error=parsed.is_error,
+                from_history=True,
             )
         )
 
     def _text_message(self, hist: dict[str, Any]) -> Message:
+        # Converter output is rehydrated history; tag it so Agno's
+        # any(msg.from_history) check doesn't re-add stored session history.
         message_cls = agno_message_class()
         content = hist.get("content", "")
         if hist.get("role") == "assistant" and hist.get("sender_name") == (
             self._agent_name
         ):
-            return message_cls(role="assistant", content=content)
+            return message_cls(role="assistant", content=content, from_history=True)
 
         sender_name = hist.get("sender_name", "")
         formatted = f"[{sender_name}]: {content}" if sender_name else content
-        return message_cls(role="user", content=formatted)
+        return message_cls(role="user", content=formatted, from_history=True)
