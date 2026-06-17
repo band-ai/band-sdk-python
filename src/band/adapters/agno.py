@@ -185,7 +185,13 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             raise RuntimeError("Agno agent not initialized; on_started was not called")
 
         sender = msg.sender_name or msg.sender_type
-        logger.info("Room %s: handling message from %s", room_id, sender)
+        logger.info(
+            "Room %s msg %s: handling from %s (sender=%s)",
+            room_id,
+            msg.id,
+            sender,
+            msg.sender_id,
+        )
 
         # Expose Band memory/contact tools to the agent (once, room-agnostic).
         self._ensure_band_tools(tools)
@@ -195,8 +201,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         if is_session_bootstrap:
             self._message_history[room_id] = list(history)
             logger.debug(
-                "Room %s: bootstrap seeded %d message(s) from rehydrated history",
+                "Room %s msg %s: bootstrap seeded %d message(s) from rehydrated history",
                 room_id,
+                msg.id,
                 len(history),
             )
         elif room_id not in self._message_history:
@@ -212,32 +219,41 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         messages.append(Message(role="user", content=msg.format_for_llm()))
 
         logger.debug(
-            "Room %s: running Agno agent (%d input messages)", room_id, len(messages)
+            "Room %s msg %s: running Agno agent (%d input messages)",
+            room_id,
+            msg.id,
+            len(messages),
         )
         # Bind the room's tools so wired Band tools execute against this room.
         token = _current_tools.set(tools)
         try:
             response = await self.agent.arun(input=messages)
         except Exception as e:
-            logger.exception("Error running Agno agent in room %s: %s", room_id, e)
+            logger.exception(
+                "Room %s msg %s: error running Agno agent: %s", room_id, msg.id, e
+            )
             raise
         finally:
             _current_tools.reset(token)
 
         if response is None:
-            logger.debug("Room %s: Agno agent returned no response", room_id)
+            logger.debug(
+                "Room %s msg %s: Agno agent returned no response", room_id, msg.id
+            )
             return
 
         # Report the agent's own tool executions (happened during the run, so
         # before the final reply) when execution reporting is enabled.
         if Emit.EXECUTION in self.features.emit:
-            await self._report_tool_executions(response, tools, room_id)
+            await self._report_tool_executions(response, tools, room_id, msg.id)
 
         # get_content_as_string() handles str, structured (BaseModel -> JSON),
         # and dict/list output uniformly.
         text = response.get_content_as_string().strip()
         if not text:
-            logger.debug("Room %s: Agno agent returned empty content", room_id)
+            logger.debug(
+                "Room %s msg %s: Agno agent returned empty content", room_id, msg.id
+            )
             return
 
         # Persist the reply so the next turn (which arrives with empty history)
@@ -246,14 +262,22 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         if response.content_type not in ("str", ""):
             logger.debug(
-                "Room %s: Agno returned %s output; sending JSON-serialized form",
+                "Room %s msg %s: Agno returned %s output; sending JSON-serialized form",
                 room_id,
+                msg.id,
                 response.content_type,
             )
 
-        logger.info("Room %s: sending reply (%d chars)", room_id, len(text))
         # mentions accepts handles/names/IDs as strings; the SDK resolves them.
-        await tools.send_message(text, mentions=[msg.sender_id])
+        mentions = [msg.sender_id]
+        logger.info(
+            "Room %s msg %s: sending reply (%d chars), mentions=%s",
+            room_id,
+            msg.id,
+            len(text),
+            mentions,
+        )
+        await tools.send_message(text, mentions=mentions)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's accumulated transcript when the agent leaves."""
@@ -330,13 +354,19 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         response: RunOutput,
         tools: AgentToolsProtocol,
         room_id: str,
+        msg_id: str,
     ) -> None:
         """Emit tool_call/tool_result events for the agent's tool executions."""
         executions = list(getattr(response, "tools", None) or [])
         if not executions:
             return
 
-        logger.info("Room %s: reporting %d tool execution(s)", room_id, len(executions))
+        logger.info(
+            "Room %s msg %s: reporting %d tool execution(s)",
+            room_id,
+            msg_id,
+            len(executions),
+        )
         for te in executions:
             tool_call_id = getattr(te, "tool_call_id", None) or ""
             tool_name = getattr(te, "tool_name", None) or ""
@@ -344,8 +374,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             is_error = bool(getattr(te, "tool_call_error", False))
             result = str(getattr(te, "result", "") or "")
             logger.debug(
-                "Room %s: tool %s(%s) -> %s%s",
+                "Room %s msg %s: tool %s(%s) -> %s%s",
                 room_id,
+                msg_id,
                 tool_name,
                 tool_args,
                 result[:200],
@@ -375,8 +406,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 )
             except Exception as e:
                 logger.warning(
-                    "Room %s: failed to report tool execution %s: %s",
+                    "Room %s msg %s: failed to report tool execution %s: %s",
                     room_id,
+                    msg_id,
                     tool_name,
                     e,
                 )
