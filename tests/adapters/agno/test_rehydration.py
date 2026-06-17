@@ -14,7 +14,6 @@ from agno.models.message import Message
 from agno.run.agent import RunOutput
 
 from band.runtime.formatters import format_history_for_llm
-from band.testing import FakeAgentTools
 from tests.framework_configs.fixtures import TOOL_CALL_SEARCH, TOOL_RESULT_SEARCH
 
 from .helpers import make_agent_input, platform_msg, run_input, started
@@ -142,7 +141,7 @@ class TestRehydrationPipeline:
 
 class TestUnansweredMessage:
     async def test_current_message_excluded_from_history_then_answered(
-        self, sample_platform_message
+        self, sample_platform_message, tools
     ):
         current = sample_platform_message
         # The platform context includes the current message; the formatter must
@@ -157,7 +156,6 @@ class TestUnansweredMessage:
         assert len(raw) == 1
         assert all(current.content not in h["content"] for h in raw)
 
-        tools = FakeAgentTools()
         adapter, copy = await started(RunOutput(content="here is your answer"))
 
         await adapter.on_event(
@@ -173,7 +171,7 @@ class TestUnansweredMessage:
         assert msgs[-1].content == formatted
 
     async def test_answers_unanswered_message_on_restart_bootstrap(
-        self, sample_platform_message
+        self, sample_platform_message, tools
     ):
         # Agent restarts: first event is bootstrap, with a completed exchange in
         # history and a brand-new unanswered question as the current message.
@@ -186,7 +184,6 @@ class TestUnansweredMessage:
             ],
             exclude_id=sample_platform_message.id,
         )
-        tools = FakeAgentTools()
         adapter, copy = await started(RunOutput(content="fresh answer"))
 
         await adapter.on_event(
@@ -202,7 +199,7 @@ class TestUnansweredMessage:
         assert run_input(copy)[-1].content == sample_platform_message.format_for_llm()
 
     async def test_trailing_unanswered_user_turns_are_preserved(
-        self, sample_platform_message
+        self, sample_platform_message, tools
     ):
         # Several user turns with no assistant reply between them: agno keeps them
         # all as user messages (it does not require complete exchanges).
@@ -214,7 +211,6 @@ class TestUnansweredMessage:
             ],
             exclude_id=sample_platform_message.id,
         )
-        tools = FakeAgentTools()
         adapter, copy = await started(RunOutput(content="answering all"))
 
         await adapter.on_event(

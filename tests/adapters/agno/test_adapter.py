@@ -156,8 +156,7 @@ class TestBandToolWiring:
 
 
 class TestBandEntrypointBinding:
-    async def test_routes_to_execute_tool_call_inside_context(self):
-        tools = FakeAgentTools()
+    async def test_routes_to_execute_tool_call_inside_context(self, tools):
         entry = _make_band_entrypoint("band_lookup_peers")
 
         with _bind_room_tools(tools):
@@ -177,8 +176,7 @@ class TestBandEntrypointBinding:
         with _bind_room_tools(_StrTools()):
             assert await entry() == "raw-string"
 
-    async def test_errors_outside_any_bound_context(self):
-        tools = FakeAgentTools()
+    async def test_errors_outside_any_bound_context(self, tools):
         entry = _make_band_entrypoint("band_lookup_peers")
 
         # Bind then exit; the ContextVar must reset so later calls have no tools.
@@ -192,9 +190,8 @@ class TestBandEntrypointBinding:
 
 class TestReply:
     async def test_sends_fallback_text_when_agent_did_not_post(
-        self, sample_platform_message
+        self, sample_platform_message, tools
     ):
-        tools = FakeAgentTools()
         adapter, _ = await started(RunOutput(content="hello"))
 
         await adapter.on_message(
@@ -210,9 +207,8 @@ class TestReply:
         tools.assert_message_sent(content="hello", mentions=["user-456"])
 
     async def test_skips_fallback_when_agent_called_band_send_message(
-        self, sample_platform_message
+        self, sample_platform_message, tools
     ):
-        tools = FakeAgentTools()
         response = RunOutput(
             content="hello", tools=[tool_execution("band_send_message")]
         )
@@ -230,8 +226,7 @@ class TestReply:
 
         tools.assert_no_messages_sent()
 
-    async def test_no_send_for_empty_content(self, sample_platform_message):
-        tools = FakeAgentTools()
+    async def test_no_send_for_empty_content(self, sample_platform_message, tools):
         adapter, _ = await started(RunOutput(content="   "))
 
         await adapter.on_message(
@@ -248,8 +243,9 @@ class TestReply:
 
 
 class TestEmitExecution:
-    async def test_emits_tool_call_and_result_events(self, sample_platform_message):
-        tools = FakeAgentTools()
+    async def test_emits_tool_call_and_result_events(
+        self, sample_platform_message, tools
+    ):
         response = RunOutput(
             tools=[tool_execution("band_lookup_peers", args={"page": "1"}, result="ok")]
         )
@@ -280,9 +276,8 @@ class TestEmitExecution:
         assert result_payload["is_error"] is False
 
     async def test_self_reporting_tools_are_not_re_emitted(
-        self, sample_platform_message
+        self, sample_platform_message, tools
     ):
-        tools = FakeAgentTools()
         response = RunOutput(tools=[tool_execution("band_send_message")])
         adapter, _ = await started(
             response, features=AdapterFeatures(emit={Emit.EXECUTION})
@@ -300,8 +295,9 @@ class TestEmitExecution:
 
         assert tools.events_sent == []
 
-    async def test_no_events_without_execution_emit(self, sample_platform_message):
-        tools = FakeAgentTools()
+    async def test_no_events_without_execution_emit(
+        self, sample_platform_message, tools
+    ):
         response = RunOutput(tools=[tool_execution("band_lookup_peers")])
         adapter, _ = await started(response)  # no emit configured
 
@@ -319,8 +315,7 @@ class TestEmitExecution:
 
 
 class TestEmitThoughts:
-    async def test_emits_reasoning_as_thought(self, sample_platform_message):
-        tools = FakeAgentTools()
+    async def test_emits_reasoning_as_thought(self, sample_platform_message, tools):
         response = RunOutput(reasoning_content="thinking hard")
         adapter, _ = await started(
             response, features=AdapterFeatures(emit={Emit.THOUGHTS})
@@ -339,8 +334,9 @@ class TestEmitThoughts:
         tools.assert_event_sent(message_type="thought")
         assert tools.events_sent[0]["content"] == "thinking hard"
 
-    async def test_no_thought_without_thoughts_emit(self, sample_platform_message):
-        tools = FakeAgentTools()
+    async def test_no_thought_without_thoughts_emit(
+        self, sample_platform_message, tools
+    ):
         response = RunOutput(reasoning_content="thinking hard")
         adapter, _ = await started(response)  # no emit configured
 
@@ -356,8 +352,7 @@ class TestEmitThoughts:
 
         assert tools.events_sent == []
 
-    async def test_no_thought_for_blank_reasoning(self, sample_platform_message):
-        tools = FakeAgentTools()
+    async def test_no_thought_for_blank_reasoning(self, sample_platform_message, tools):
         adapter, _ = await started(
             RunOutput(reasoning_content="  "),
             features=AdapterFeatures(emit={Emit.THOUGHTS}),
