@@ -425,6 +425,7 @@ async def ws_client(
         "pydantic_ai",
         "claude_sdk",
         "crewai",
+        "agno",
     ]
 )
 def adapter_entry(

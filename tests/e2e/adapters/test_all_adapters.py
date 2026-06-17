@@ -4,7 +4,7 @@ Verifies that each adapter can:
 - Start, process a message, and stop against a real platform
 - Execute platform tools (send_message)
 
-Adapters tested: langgraph, anthropic, pydantic_ai, claude_sdk, crewai.
+Adapters tested: langgraph, anthropic, pydantic_ai, claude_sdk, crewai, agno.
 Parlant is excluded (requires separate server setup, see test_parlant.py).
 
 Run with:

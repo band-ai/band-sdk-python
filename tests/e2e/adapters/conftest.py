@@ -106,6 +106,21 @@ def create_crewai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
+def create_agno_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
+    """Create an Agno adapter with a cheap Claude model."""
+    _require_anthropic_key()
+    from agno.agent import Agent as AgnoAgent
+    from agno.models.anthropic import Claude
+
+    from band.adapters.agno import AgnoAdapter
+
+    agno_agent = AgnoAgent(
+        model=Claude(id=settings.e2e_anthropic_model),
+        instructions="Keep responses short and concise.",
+    )
+    return AgnoAdapter(agno_agent)
+
+
 # =============================================================================
 # Adapter Registry
 # =============================================================================
@@ -116,6 +131,7 @@ ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
     "pydantic_ai": create_pydantic_ai_adapter,
     "claude_sdk": create_claude_sdk_adapter,
     "crewai": create_crewai_adapter,
+    "agno": create_agno_adapter,
 }
 
 # Note: Parlant is excluded from the default parametrized set because it
