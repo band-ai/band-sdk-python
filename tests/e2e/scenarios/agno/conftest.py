@@ -322,7 +322,7 @@ async def assert_calculator_ran(
         f"but found none in {len(items)} context item(s). The calculator agent "
         "did not run its tool."
     )
-    log_step("assert", f"calculator tool '{CALCULATOR_TOOL}' executed ✔")
+    log_step("assert", f"calculator tool '{CALCULATOR_TOOL}' executed")
 
 
 async def assert_thought_emitted(
@@ -344,7 +344,7 @@ async def assert_thought_emitted(
         f"Expected a 'thought' event in room {room_id} context, but found none "
         f"among {len(items)} item(s). The reasoning agent did not emit a thought."
     )
-    log_step("assert", f"{len(thoughts)} thought event(s) present via REST ✔")
+    log_step("assert", f"{len(thoughts)} thought event(s) present via REST")
     return thoughts
 
 
@@ -364,7 +364,7 @@ async def assert_total_reported(
         f"Expected the total ({GROCERY_TOTAL:.2f}) to appear in a room message, "
         f"but it was not found among {len(texts)} text message(s)."
     )
-    log_step("assert", f"total {GROCERY_TOTAL:.2f} reported in room ✔")
+    log_step("assert", f"total {GROCERY_TOTAL:.2f} reported in room")
 
 
 # =============================================================================

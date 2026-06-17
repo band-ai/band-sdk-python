@@ -151,7 +151,7 @@ class TestAgnoMultiAgent:
                 f"participant of room {room_id} after the flow completed; the "
                 "assistant did not remove it."
             )
-            log_step("assert", "calculator removed from room ✔")
+            log_step("assert", "calculator removed from room")
 
         log_banner(f"Scenario 1 PASSED (run {run_id})")
 
