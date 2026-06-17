@@ -418,19 +418,17 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         band_tools: list[Function] = []
         for schema in schemas:
             fn = schema.get("function", {})
-            name = fn.get("name")
-            if not name:
-                continue
-            band_tools.append(
-                function_cls(
-                    name=name,
-                    description=fn.get("description", "") or "",
-                    parameters=fn.get("parameters")
-                    or {"type": "object", "properties": {}},
-                    entrypoint=_make_band_entrypoint(name),
-                    skip_entrypoint_processing=True,
+            if name := fn.get("name"):
+                band_tools.append(
+                    function_cls(
+                        name=name,
+                        description=fn.get("description", "") or "",
+                        parameters=fn.get("parameters")
+                        or {"type": "object", "properties": {}},
+                        entrypoint=_make_band_entrypoint(name),
+                        skip_entrypoint_processing=True,
+                    )
                 )
-            )
         return band_tools
 
     async def _report_thoughts(

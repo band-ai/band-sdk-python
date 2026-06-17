@@ -91,7 +91,7 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
                     self._flush_tool_calls(messages, pending_calls)
                     messages.append(self._text_message(hist))
                 case _:
-                    continue  # skip thought and other non-text, non-tool events
+                    pass  # skip thought and other non-text, non-tool events
 
         self._flush_tool_calls(messages, pending_calls)
         logger.debug(
