@@ -40,6 +40,11 @@ R = TypeVar("R")
 # These tools already produce visible room output.
 _SELF_REPORTING_TOOLS = frozenset({"band_send_message", "band_send_event"})
 
+# Conversation roles to persist across turns. Allowlisting these drops Agno's
+# per-run injected messages (system/developer instructions, datetime/state
+# context, summaries) so they are not replayed alongside freshly injected ones.
+_CONVERSATION_ROLES = frozenset({"user", "assistant", "tool"})
+
 # Current room tools for wired Agno tool entrypoints.
 _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
     "agno_current_tools", default=None
@@ -276,14 +281,20 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         return response
 
     def _persist_turn(self, room_id: str, response: RunOutput) -> None:
-        """Persist Agno's transcript, excluding generated system messages."""
+        """Persist Agno's transcript, keeping only conversation messages.
+
+        Allowlisting conversation roles drops Agno's per-run injected messages
+        (instructions, context, summaries) so they are not replayed alongside
+        the freshly injected ones on the next run.
+        """
         if response.messages:
             self._message_history[room_id] = [
-                m for m in response.messages if m.role != "system"
+                m for m in response.messages if m.role in _CONVERSATION_ROLES
             ]
 
+    @classmethod
     async def _send_reply(
-        self,
+        cls,
         msg: PlatformMessage,
         tools: AgentToolsProtocol,
         response: RunOutput,
@@ -360,8 +371,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 )
         return band_tools
 
+    @classmethod
     async def _report_thoughts(
-        self,
+        cls,
         response: RunOutput,
         tools: AgentToolsProtocol,
         *,
@@ -413,8 +425,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         for execution in executions:
             await self._emit_execution(execution, tools, room_id=room_id, msg_id=msg_id)
 
+    @classmethod
     async def _emit_execution(
-        self,
+        cls,
         execution: Any,
         tools: AgentToolsProtocol,
         *,
