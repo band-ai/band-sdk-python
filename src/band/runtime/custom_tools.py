@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import re
 from functools import lru_cache
 from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
 
 logger = logging.getLogger(__name__)
+_CUSTOM_TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 # Type alias for custom tool definition: (InputModel, callable)
 CustomToolDef = tuple[type[BaseModel], Callable[..., Any]]
@@ -51,12 +53,24 @@ def get_custom_tool_name(input_model: type[BaseModel]) -> str:
     """
     Derive tool name from input model class name.
 
-    Convention: Remove "Input" suffix and lowercase.
+    Convention: Remove "Input" suffix and lowercase, unless the model defines
+    ``__thenvoi_tool_name__`` for an explicit provider-visible tool name.
     Examples:
         WeatherInput -> "weather"
         CalculatorInput -> "calculator"
         SearchWebInput -> "searchweb"
     """
+    explicit_name = getattr(input_model, "__thenvoi_tool_name__", None)
+    if explicit_name is not None:
+        if not isinstance(
+            explicit_name, str
+        ) or not _CUSTOM_TOOL_NAME_PATTERN.fullmatch(explicit_name):
+            raise ValueError(
+                f"Invalid custom tool name for {input_model.__name__}: "
+                "expected lowercase letters, digits, and underscores"
+            )
+        return explicit_name
+
     name = input_model.__name__
     if name.endswith("Input"):
         name = name[:-5]  # Remove "Input" suffix

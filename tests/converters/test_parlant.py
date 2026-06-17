@@ -13,8 +13,8 @@ from band.converters.parlant import ParlantHistoryConverter
 class TestAssistantMessages:
     """Tests for Parlant-specific assistant message handling."""
 
-    def test_includes_other_agents_as_assistant(self):
-        """Other agents' messages are included with role assistant."""
+    def test_includes_peer_agents_as_user_context(self):
+        """Other agents' messages are included as user-attributed context."""
         converter = ParlantHistoryConverter(agent_name="Main Agent")
         raw = [
             {
@@ -29,17 +29,52 @@ class TestAssistantMessages:
         result = converter.convert(raw)
 
         assert len(result) == 1
-        assert result[0]["role"] == "assistant"
-        assert result[0]["content"] == "Here's my analysis."
+        assert result[0]["role"] == "user"
+        assert result[0]["content"] == "[Helper Agent]: Here's my analysis."
         assert result[0]["sender"] == "Helper Agent"
+
+    def test_message_type_alias_is_text_history(self):
+        """Legacy message events should keep normal sender attribution."""
+        converter = ParlantHistoryConverter(agent_name="Main Agent")
+        raw = [
+            {
+                "role": "user",
+                "content": "Legacy hello",
+                "sender_name": "Alice",
+                "sender_type": "User",
+                "message_type": "message",
+            }
+        ]
+
+        result = converter.convert(raw)
+
+        assert result == [
+            {
+                "role": "user",
+                "content": "[Alice]: Legacy hello",
+                "sender": "Alice",
+                "sender_type": "User",
+            }
+        ]
+
+    def test_skips_whitespace_only_text_history(self):
+        """Blank persisted text rows should not become replay context."""
+        converter = ParlantHistoryConverter(agent_name="Main Agent")
+        raw = [
+            {
+                "role": "user",
+                "content": "   ",
+                "sender_name": "Noisy Sender",
+                "sender_type": "User",
+                "message_type": "text",
+            }
+        ]
+
+        assert converter.convert(raw) == []
 
 
 class TestGuidelineBasedConversation:
-    """Tests for Parlant-style guideline-based conversations.
-
-    NOTE: Parlant converter includes ALL assistant messages (own + others)
-    to properly reconstruct session state.
-    """
+    """Tests for Parlant-style guideline-based conversations."""
 
     def test_support_conversation_flow(self):
         """Should handle a customer support conversation flow."""
@@ -59,13 +94,13 @@ class TestGuidelineBasedConversation:
                 "sender_name": "Support Agent",
                 "message_type": "text",
             },
-            # Tool call event (skipped)
+            # Completed tool events are replayed as inert history
             {
                 "role": "assistant",
                 "content": '{"tool": "check_order_status"}',
                 "message_type": "tool_call",
             },
-            # Tool result event (skipped)
+            # Tool result event
             {
                 "role": "assistant",
                 "content": '{"status": "delivered"}',
@@ -82,8 +117,7 @@ class TestGuidelineBasedConversation:
 
         result = converter.convert(raw)
 
-        # Should have: 2 customer messages + 1 agent message (tool events skipped)
-        assert len(result) == 3
+        assert len(result) == 5
 
         assert result[0]["role"] == "user"
         assert result[0]["content"] == "[Customer]: I want a refund for my order"
@@ -91,8 +125,14 @@ class TestGuidelineBasedConversation:
         assert result[1]["role"] == "assistant"
         assert result[1]["content"] == "Let me check your order status..."
 
-        assert result[2]["role"] == "user"
-        assert result[2]["content"] == "[Customer]: The product was damaged"
+        assert result[2]["role"] == "assistant"
+        assert result[2]["content"] == '[Tool Call]: {"tool": "check_order_status"}'
+
+        assert result[3]["role"] == "user"
+        assert result[3]["content"] == '[Tool Result]: {"status": "delivered"}'
+
+        assert result[4]["role"] == "user"
+        assert result[4]["content"] == "[Customer]: The product was damaged"
 
     def test_preserves_sender_type(self):
         """Should preserve sender_type in output."""
@@ -158,7 +198,11 @@ class TestGuidelineBasedConversation:
         # All text messages included (Parlant needs full history)
         assert len(result) == 4
 
+        assert result[0]["role"] == "user"
         assert result[0]["content"] == "[User]: Analyze this document"
+        assert result[1]["role"] == "assistant"
         assert result[1]["content"] == "I'll have the analyzer look at this."
-        assert result[2]["content"] == "Analysis complete: ..."
+        assert result[2]["role"] == "user"
+        assert result[2]["content"] == "[Analyzer Agent]: Analysis complete: ..."
+        assert result[3]["role"] == "assistant"
         assert result[3]["content"] == "Here's the analysis summary."

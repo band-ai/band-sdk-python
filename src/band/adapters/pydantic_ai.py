@@ -6,6 +6,7 @@ Extracted from band.integrations.pydantic_ai.agent.BandPydanticAgent.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import warnings
@@ -20,8 +21,8 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     ModelRequest,
-    ModelResponse,
-    ThinkingPart,
+    SystemPromptPart,
+    TextPart,
     UserPromptPart,
 )
 
@@ -37,26 +38,6 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import get_tool_description
 
 logger = logging.getLogger(__name__)
-
-
-# A response made up only of these (or with no parts at all) serializes to
-# content:null, which providers reject when it's replayed as history.
-_NON_REPLAYABLE_RESPONSE_PARTS = (ThinkingPart,)
-
-
-def _is_replayable_history_message(message: Any) -> bool:
-    """Drop assistant responses that would replay as content:null.
-
-    Keep any response with at least one content-bearing part (text, tool
-    calls, builtin tool calls/returns, files). Drop thinking-only and empty
-    responses, which providers reject when sent back as history.
-    """
-    if isinstance(message, ModelResponse):
-        return any(
-            not isinstance(part, _NON_REPLAYABLE_RESPONSE_PARTS)
-            for part in message.parts
-        )
-    return True
 
 
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
@@ -171,9 +152,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # (instead of `None`) keeps newer pydantic-ai-slim versions happy —
         # 1.87+ rejects `output_type=None` with `UserError("At least one output
         # type must be provided other than `None`")`.
+        #
+        # `instructions` (not `system_prompt`) because pydantic-ai only
+        # injects `system_prompt` when message_history is empty; rooms that
+        # bootstrap with prior history would otherwise never show the model
+        # its identity or platform instructions. Instructions are re-attached
+        # to every request regardless of history.
         agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
-            system_prompt=system,
+            instructions=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
         )
@@ -218,7 +205,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error adding participant '{identifier}': {e}"
 
-        band_add_participant.__doc__ = get_tool_description("band_add_participant")
+        band_add_participant.__doc__ = get_tool_description(
+            "band_add_participant"
+        )
         agent.tool(band_add_participant)
 
         async def band_remove_participant(
@@ -256,7 +245,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error getting participants: {e}"
 
-        band_get_participants.__doc__ = get_tool_description("band_get_participants")
+        band_get_participants.__doc__ = get_tool_description(
+            "band_get_participants"
+        )
         agent.tool(band_get_participants)
 
         async def band_create_chatroom(
@@ -268,7 +259,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error creating chatroom (task_id={task_id}): {e}"
 
-        band_create_chatroom.__doc__ = get_tool_description("band_create_chatroom")
+        band_create_chatroom.__doc__ = get_tool_description(
+            "band_create_chatroom"
+        )
         agent.tool(band_create_chatroom)
 
         # Contact management tools (opt-in via Capability.CONTACTS)
@@ -284,7 +277,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing contacts: {e}"
 
-            band_list_contacts.__doc__ = get_tool_description("band_list_contacts")
+            band_list_contacts.__doc__ = get_tool_description(
+                "band_list_contacts"
+            )
             agent.tool(band_list_contacts)
 
             async def band_add_contact(
@@ -310,7 +305,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error removing contact: {e}"
 
-            band_remove_contact.__doc__ = get_tool_description("band_remove_contact")
+            band_remove_contact.__doc__ = get_tool_description(
+                "band_remove_contact"
+            )
             agent.tool(band_remove_contact)
 
             async def band_list_contact_requests(
@@ -392,7 +389,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing memories: {e}"
 
-            band_list_memories.__doc__ = get_tool_description("band_list_memories")
+            band_list_memories.__doc__ = get_tool_description(
+                "band_list_memories"
+            )
             agent.tool(band_list_memories)
 
             async def band_store_memory(
@@ -402,7 +401,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 type: str,
                 segment: str,
                 thought: str,
-                scope: str,
+                scope: str = "subject",
                 subject_id: str | None = None,
                 metadata: dict[str, Any] | None = None,
             ) -> dict[str, Any] | str:
@@ -458,7 +457,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error archiving memory: {e}"
 
-            band_archive_memory.__doc__ = get_tool_description("band_archive_memory")
+            band_archive_memory.__doc__ = get_tool_description(
+                "band_archive_memory"
+            )
             agent.tool(band_archive_memory)
 
         # Register custom tools (user-provided PydanticAI-compatible functions)
@@ -467,6 +468,32 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             logger.debug("Registered custom tool: %s", custom_tool.__name__)
 
         return agent
+
+    def _replayable_history(self, messages: list[Any]) -> PydanticAIMessages:
+        """Strip provider-native tool parts from history kept across turns.
+
+        Filters at the part level rather than dropping whole messages: the
+        first ModelRequest of a run bundles SystemPromptPart with the user
+        prompt, and pydantic-ai only re-injects system prompts when
+        message_history is empty, so dropping that message would silently
+        remove the system prompt (and the first user turn) from every
+        subsequent run.
+        """
+        replayable: PydanticAIMessages = []
+        for message in messages:
+            parts = getattr(message, "parts", [])
+            safe_parts = [
+                part
+                for part in parts
+                if isinstance(part, (SystemPromptPart, TextPart, UserPromptPart))
+            ]
+            if not safe_parts:
+                continue
+            if len(safe_parts) == len(parts):
+                replayable.append(message)
+            else:
+                replayable.append(dataclasses.replace(message, parts=safe_parts))
+        return replayable
 
     # --- Adapted from BandPydanticAgent._handle_message ---
     async def on_message(
@@ -491,9 +518,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             if history:
                 self._message_history[room_id] = list(history)
                 logger.debug(
-                    "Room %s: rehydrated %s message(s) from platform history",
-                    room_id,
-                    len(history),
+                    "Room %s: Loaded %s Pydantic AI messages", room_id, len(history)
                 )
             else:
                 self._message_history[room_id] = []
@@ -566,21 +591,24 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     except Exception as e:
                         logger.warning("Failed to send tool_result event: %s", e)
             elif isinstance(event, AgentRunResultEvent):
-                # Keep native run history, but drop responses that replay as
-                # content:null (e.g. thinking-only) — providers reject them next request.
-                run_messages = list(event.result.all_messages())
-                self._message_history[room_id] = [
-                    message
-                    for message in run_messages
-                    if _is_replayable_history_message(message)
-                ]
-                dropped = len(run_messages) - len(self._message_history[room_id])
-                if dropped:
-                    logger.debug(
-                        "Room %s: dropped %s content:null response(s) from history",
-                        room_id,
-                        dropped,
-                    )
+                usage = event.result.usage()
+                self._record_provider_usage(
+                    source="pydantic_ai.agent_run_result.usage",
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    total_tokens=usage.total_tokens,
+                    api_call_count=usage.requests,
+                    raw={
+                        "requests": usage.requests,
+                        "input_tokens": usage.input_tokens,
+                        "output_tokens": usage.output_tokens,
+                        "total_tokens": usage.total_tokens,
+                    },
+                )
+                # Update stored history with replay-safe text/user messages only.
+                self._message_history[room_id] = self._replayable_history(
+                    list(event.result.all_messages())
+                )
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",

@@ -147,6 +147,9 @@ INJECTION_EXCLUDED_MODULES: frozenset[str] = frozenset(
 _L0_LIVE_ARTIFACT_TEST = "tests/e2e/scenarios/test_baseline_l0_platform.py"
 
 
+_L0_LIVE_ARTIFACT_TEST = "tests/e2e/scenarios/test_baseline_l0_platform.py"
+
+
 INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
     # ---- INJECTABLE_MODEL_OBJECT ------------------------------------------
     InjectionBinding(

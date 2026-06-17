@@ -23,7 +23,7 @@ from band_rest import AsyncRestClient
 from band.agent import Agent
 
 from tests.e2e.adapters.conftest import AdapterFactory
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.conftest import E2EAgentCredentials, E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     assert_content_contains,
@@ -44,7 +44,7 @@ class TestContextPersistence:
         self,
         e2e_config: E2ESettings,
         e2e_adapter_room: tuple[str, str, str],
-        e2e_agent_info: tuple[str, str],
+        e2e_adapter_agent_credentials: E2EAgentCredentials,
         ws_client: TrackingWebSocketClient,
         adapter_entry: tuple[str, AdapterFactory],
         api_client: AsyncRestClient,
@@ -60,7 +60,8 @@ class TestContextPersistence:
         """
         adapter_name, factory = adapter_entry
         chat_id, _user_id, _user_name = e2e_adapter_room
-        agent_id, agent_name = e2e_agent_info
+        agent_id = e2e_adapter_agent_credentials.agent_id
+        agent_name = e2e_adapter_agent_credentials.name
         timeout = e2e_config.e2e_timeout
         # Unique code per adapter AND per run to prevent cross-run contamination
         # in shared rooms that persist across test sessions.
@@ -77,15 +78,19 @@ class TestContextPersistence:
         adapter = factory(e2e_config)
         agent = Agent.create(
             adapter=adapter,
-            agent_id=e2e_config.test_agent_id,
-            api_key=e2e_config.band_api_key,
+            agent_id=agent_id,
+            api_key=e2e_adapter_agent_credentials.api_key,
             ws_url=e2e_config.band_ws_url,
             rest_url=e2e_config.band_base_url,
         )
 
         async with agent:
             async with listening_for_agent_responses(
-                ws_client, chat_id, timeout=timeout, raise_on_timeout=True
+                ws_client,
+                chat_id,
+                timeout=timeout,
+                raise_on_timeout=True,
+                expected_agent_id=agent_id,
             ) as wait:
                 await send_trigger_message(
                     api_client,
@@ -107,15 +112,19 @@ class TestContextPersistence:
         adapter2 = factory(e2e_config)
         agent2 = Agent.create(
             adapter=adapter2,
-            agent_id=e2e_config.test_agent_id,
-            api_key=e2e_config.band_api_key,
+            agent_id=agent_id,
+            api_key=e2e_adapter_agent_credentials.api_key,
             ws_url=e2e_config.band_ws_url,
             rest_url=e2e_config.band_base_url,
         )
 
         async with agent2:
             async with listening_for_agent_responses(
-                ws_client, chat_id, timeout=timeout, raise_on_timeout=True
+                ws_client,
+                chat_id,
+                timeout=timeout,
+                raise_on_timeout=True,
+                expected_agent_id=agent_id,
             ) as wait:
                 await send_trigger_message(
                     api_client,

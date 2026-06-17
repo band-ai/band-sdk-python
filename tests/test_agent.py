@@ -86,8 +86,8 @@ class TestCreateFactory:
             mock_runtime_class.assert_called_once_with(
                 agent_id="agent-123",
                 api_key="test-key",
-                ws_url="wss://app.band.ai/api/v1/socket/websocket",
-                rest_url="https://app.band.ai",
+                ws_url="wss://app.band.com/api/v1/socket/websocket",
+                rest_url="https://app.band.com",
                 config=None,
                 session_config=None,
                 contact_config=None,
@@ -432,7 +432,11 @@ class TestStartupRaceCondition:
     @pytest.mark.asyncio
     async def test_adapter_on_started_before_first_message(self):
         """System prompt must be set before any message processing."""
-        from band.client.streaming import MessageCreatedPayload, MessageMetadata
+        from band.client.streaming import (
+            MessageCreatedPayload,
+            MessageMetadata,
+            Mention,
+        )
         from band.platform.event import MessageEvent
         from band.runtime.types import ConversationContext
         from datetime import datetime, timezone
@@ -511,7 +515,10 @@ class TestStartupRaceCondition:
                         sender_id="user-1",
                         sender_type="User",
                         message_type="text",
-                        metadata=MessageMetadata(mentions=[], status="sent"),
+                        metadata=MessageMetadata(
+                            mentions=[Mention(id="agent-123", handle="test-bot")],
+                            status="sent",
+                        ),
                         chat_room_id="room-123",
                         inserted_at=datetime.now(timezone.utc).isoformat(),
                         updated_at=datetime.now(timezone.utc).isoformat(),

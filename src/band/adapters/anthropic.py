@@ -275,6 +275,18 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
                     messages=self._message_history[room_id],
                     tools=tool_schemas,
                 )
+                usage = getattr(response, "usage", None)
+                self._record_provider_usage(
+                    source="anthropic.messages.create.usage",
+                    input_tokens=getattr(usage, "input_tokens", None),
+                    output_tokens=getattr(usage, "output_tokens", None),
+                    raw={
+                        "input_tokens": getattr(usage, "input_tokens", None),
+                        "output_tokens": getattr(usage, "output_tokens", None),
+                    }
+                    if usage is not None
+                    else {},
+                )
             except Exception as e:
                 logger.error("Error calling Anthropic: %s", e, exc_info=True)
                 await self._report_error(tools, str(e))

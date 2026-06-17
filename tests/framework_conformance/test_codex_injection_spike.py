@@ -129,7 +129,9 @@ async def test_real_codex_tool_call_frame_routes_to_execute_tool_call() -> None:
     finally:
         await adapter.on_cleanup(room_id)
 
-    dispatched = [c for c in tools.tool_calls if c["tool_name"] == "band_send_message"]
+    dispatched = [
+        c for c in tools.tool_calls if c["tool_name"] == "band_send_message"
+    ]
     assert len(dispatched) == 1, (
         f"expected exactly one band_send_message dispatch from the real "
         f"captured frame, got: {tools.tool_calls}"

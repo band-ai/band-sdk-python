@@ -12,11 +12,13 @@ try:
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 except ImportError as e:
     raise ImportError(
-        "LangChain dependencies not installed. Install with: uv add band-sdk[langgraph]"
+        "LangChain dependencies not installed. "
+        "Install with: uv add band-sdk[langgraph]"
     ) from e
 
 from band.converters._tool_parsing import parse_tool_call, parse_tool_result
 from band.core.protocols import HistoryConverter
+from band.core.types import is_text_message_type
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +153,7 @@ class LangChainHistoryConverter(HistoryConverter[LangChainMessages]):
                     )
                 )
 
-            elif message_type == "text":
+            elif is_text_message_type(message_type):
                 if role == "assistant" and sender_name == self._agent_name:
                     if pending_tool_calls:
                         # Text while a tool call is open would interrupt the

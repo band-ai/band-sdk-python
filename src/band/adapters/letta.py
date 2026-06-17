@@ -120,6 +120,7 @@ class _RoomContext:
     conversation_id: str | None = None
     last_interaction: datetime | None = None
     summary: str | None = None
+    replay_history_on_bootstrap: bool = False
 
 
 class LettaAdapter(SimpleAdapter[LettaSessionState]):
@@ -386,6 +387,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             if room_ctx
             else await self._ensure_agent(room_id, history, tools)
         )
+        room_ctx = self._rooms.get(room_id)
 
         # Build user message content
         # NOTE: Unlike other adapters that pass participants_msg and contacts_msg
@@ -394,6 +396,26 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # prefixed lines in the user message body so the agent sees participant
         # and contact updates inline with the conversation.
         parts: list[str] = []
+
+        # Inject platform history when the active Letta state is fresh for this room.
+        # A persisted agent_id can be stale; after a failed resume, _ensure_agent()
+        # creates a blank runtime agent and marks the room context for replay.
+        should_replay_history = bool(
+            is_session_bootstrap
+            and history.replay_messages
+            and (
+                not history.has_agent()
+                or (room_ctx and room_ctx.replay_history_on_bootstrap)
+            )
+        )
+        if should_replay_history:
+            parts.append(
+                "[Previous conversation context]\n"
+                + "\n".join(history.replay_messages or [])
+                + "\n[End of previous context]"
+            )
+            if room_ctx:
+                room_ctx.replay_history_on_bootstrap = False
 
         # Inject rejoin context when resuming after absence
         if is_session_bootstrap and room_ctx and room_ctx.last_interaction:
@@ -591,6 +613,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     ) -> str:
         """Ensure a shared agent and per-room conversation exist."""
         # Create or resume the shared agent (once)
+        resumed_shared_agent = bool(self._shared_agent_id)
         if not self._shared_agent_id:
             resume_agent_id = (
                 history.agent_id if history.has_agent() else self.config.agent_id
@@ -601,6 +624,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     self._shared_agent_id = resume_agent_id
                     await self._update_instruction_block(resume_agent_id, room_id)
                     await self._verify_mcp_tools_attached(resume_agent_id)
+                    resumed_shared_agent = True
                     logger.info("Shared mode: Resumed agent %s", resume_agent_id)
                 except Exception as e:
                     logger.warning(
@@ -620,6 +644,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         self._rooms[room_id] = _RoomContext(
             agent_id=self._shared_agent_id,
             conversation_id=conversation_id,
+            replay_history_on_bootstrap=bool(
+                history.replay_messages and not resumed_shared_agent
+            ),
         )
         logger.info(
             "Room %s: Created conversation %s for shared agent %s",
@@ -644,6 +671,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         resume_agent_id = (
             history.agent_id if history.has_agent() else self.config.agent_id
         )
+        resume_failed = False
         if resume_agent_id:
             try:
                 await self._client.agents.retrieve(resume_agent_id)
@@ -666,11 +694,15 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     resume_agent_id,
                     e,
                 )
+                resume_failed = True
 
         # Create new agent
         agent_id = await self._create_agent()
 
-        self._rooms[room_id] = _RoomContext(agent_id=agent_id)
+        self._rooms[room_id] = _RoomContext(
+            agent_id=agent_id,
+            replay_history_on_bootstrap=bool(history.replay_messages and resume_failed),
+        )
         logger.info("Room %s: Created Letta agent %s", room_id, agent_id)
 
         await self._emit_task_event(tools, room_id, agent_id)

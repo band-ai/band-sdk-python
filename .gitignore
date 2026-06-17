@@ -137,6 +137,7 @@ Thumbs.db
 # Project specific
 agents.json
 agent_config.yaml
+/artifacts/e2e-baseline-artifacts/
 
 # Docker multi-agent credentials (real keys)
 docker/multi-agent/claude-planner.yaml

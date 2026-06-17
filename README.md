@@ -705,7 +705,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup. Quick start:
 
 ```bash
 uv sync --extra dev
-uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
+uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 uv run ruff check . && uv run ruff format src tests examples
 ```
 

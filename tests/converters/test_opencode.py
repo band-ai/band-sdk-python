@@ -79,6 +79,12 @@ class TestOpencodeHistoryConverter:
                     "sender_type": "Agent",
                 },
                 {
+                    "message_type": "text",
+                    "content": "   ",
+                    "sender_name": "Noisy Sender",
+                    "sender_type": "User",
+                },
+                {
                     "message_type": "task",
                     "metadata": {"opencode_session_id": "sess-1"},
                 },

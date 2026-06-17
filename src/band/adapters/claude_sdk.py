@@ -18,7 +18,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, Mapping
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -61,10 +61,6 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
-from band.integrations.claude_sdk.dedup_tools import (
-    DEFAULT_DEDUP_TTL_SECONDS,
-    DedupingAgentTools,
-)
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -79,21 +75,13 @@ logger = logging.getLogger(__name__)
 
 # Tool names as constants (MCP naming convention: mcp__{server}__{tool})
 # Derived from TOOL_MODELS — single source of truth
-BAND_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
-BAND_MEMORY_TOOLS: list[str] = mcp_tool_names(MEMORY_TOOL_NAMES)
+THENVOI_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
+THENVOI_MEMORY_TOOLS: list[str] = mcp_tool_names(MEMORY_TOOL_NAMES)
 # All tools: chat + contacts + memory (17 total). For chat-only tools (7),
-# see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
-BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
+# see band.integrations.claude_sdk.tools.THENVOI_CHAT_TOOLS.
+THENVOI_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
 
-_BAND_TOOLS: list[str] = BAND_ALL_TOOLS
-
-# Default model used when the caller does not specify one. Letting the npm
-# `claude` CLI auto-select its default fails under API-key auth: the CLI sends
-# the legacy `thinking.type.enabled` request shape, which current models reject
-# ("thinking.type.enabled is not supported for this model. Use
-# thinking.type.adaptive"), so the run returns an error result with no output.
-# Pinning a known-good model avoids that path; callers can override via `model=`.
-_DEFAULT_MODEL = "claude-sonnet-4-6"
+_THENVOI_TOOLS: list[str] = THENVOI_ALL_TOOLS
 
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -142,16 +130,16 @@ class _PendingApproval:
 
 
 def __getattr__(name: str) -> Any:
-    if name == "BAND_TOOLS":
+    if name == "THENVOI_TOOLS":
         warnings.warn(
-            "BAND_TOOLS is deprecated, use BAND_ALL_TOOLS instead. "
-            f"Note: this contains all {len(_BAND_TOOLS)} tools (chat + contacts + memory). "
+            "THENVOI_TOOLS is deprecated, use THENVOI_ALL_TOOLS instead. "
+            f"Note: this contains all {len(_THENVOI_TOOLS)} tools (chat + contacts + memory). "
             "For chat-only tools, use "
-            "band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.",
+            "band.integrations.claude_sdk.tools.THENVOI_CHAT_TOOLS.",
             DeprecationWarning,
             stacklevel=2,
         )
-        return _BAND_TOOLS
+        return _THENVOI_TOOLS
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -203,7 +191,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         max_pending_approvals_per_room: int = 50,
         approval_authorized_senders: set[str] | None = None,
         features: AdapterFeatures | None = None,
-        send_message_dedup_ttl_seconds: float = DEFAULT_DEDUP_TTL_SECONDS,
     ):
         """
         Initialize the Claude SDK adapter.
@@ -212,9 +199,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             model: Claude model to use. Pass a full ID (e.g.
                 ``"claude-opus-4-7-20251224"``) or a family alias
                 (``"sonnet"`` / ``"opus"`` / ``"haiku"`` / ``"inherit"``).
-                When ``None`` (default), the adapter pins ``_DEFAULT_MODEL``
-                rather than letting the npm ``claude`` binary auto-select,
-                which fails under API-key auth (legacy thinking request shape).
+                When ``None`` (default), the npm ``claude`` binary picks
+                its own default — no ``--model`` flag is sent.
             fallback_model: Optional fallback model passed to
                 ``ClaudeAgentOptions.fallback_model``. The npm ``claude``
                 binary uses it when the primary model is unavailable.
@@ -254,12 +240,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features: Unified adapter feature settings. When provided alongside
                 deprecated ``enable_execution_reporting`` or ``enable_memory_tools``,
                 raises ``BandConfigError``.
-            send_message_dedup_ttl_seconds: Window (seconds) inside which two
-                ``band_send_message`` MCP tool calls with identical
-                ``(content, mentions)`` are collapsed into one platform POST.
-                Mitigates duplicate-message events caused by Claude CLI / MCP
-                transport retries when the event loop is stalled.
-                Defaults to 30 s; set to ``0`` to disable dedup entirely.
         """
         if not _CLAUDE_SDK_AVAILABLE:
             raise ImportError(
@@ -327,11 +307,6 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self.max_pending_approvals_per_room = max_pending_approvals_per_room
         self.approval_authorized_senders: set[str] | None = approval_authorized_senders
 
-        # send_message dedup window.  0 disables the wrapper.
-        if send_message_dedup_ttl_seconds < 0:
-            raise ValueError("send_message_dedup_ttl_seconds must be >= 0")
-        self.send_message_dedup_ttl_seconds = send_message_dedup_ttl_seconds
-
         # Session manager and MCP server (created after start)
         self._session_manager: ClaudeSessionManager | None = None
         self._mcp_server = None
@@ -373,13 +348,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features=self.features,
         )
 
-        # Build SDK options. When the caller doesn't pin a model, default to a
-        # known-good one rather than the npm `claude` binary's auto-selection,
-        # which fails under API-key auth (see _DEFAULT_MODEL). fallback_model
-        # stays None unless explicitly set.
-        resolved_model = self.model or _DEFAULT_MODEL
+        # Build SDK options. Both model and fallback_model upstream default
+        # to None — passing None is equivalent to omitting them, which lets
+        # the npm `claude` binary pick its own default.
         sdk_options = ClaudeAgentOptions(
-            model=resolved_model,
+            model=self.model,
             fallback_model=self.fallback_model,
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
@@ -419,7 +392,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         logger.info(
             "Claude SDK adapter started for agent: %s (model=%s, fallback_model=%s, thinking=%s, approval=%s)",
             agent_name,
-            resolved_model,
+            self.model or "auto",
             self.fallback_model or "none",
             self.max_thinking_tokens,
             self.approval_mode,
@@ -477,40 +450,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        # Store tools for MCP server access.  Wrap with the send_message
-        # dedup shim so MCP-driven retries (event-loop saturation
-        # under Claude CLI load causes the same band_send_message tool
-        # call to fire more than once for a single LLM-intended send) do
-        # not turn into duplicate chat messages.  Bypass the wrapper when
-        # the operator has explicitly opted out via ttl=0.
-        #
-        # The wrapper MUST persist for the room so a lingering MCP retry can
-        # still see the cache through self._room_tools.get. MCP tool calls
-        # only resolve by room id, not by the original inbound message id, so
-        # the cache is intentionally keyed by the outgoing payload within the
-        # per-room wrapper. Swap the inner reference instead of rebuilding the
-        # wrapper.
-        #
-        # DedupingAgentTools is structurally a superset of AgentToolsProtocol
-        # (the dedup shim only intercepts send_message and __getattr__-forwards
-        # everything else), but pyrefly cannot reason about __getattr__ for
-        # protocol conformance, so we cast through Any.
-        if self.send_message_dedup_ttl_seconds > 0:
-            existing = self._room_tools.get(room_id)
-            if isinstance(existing, DedupingAgentTools):
-                if existing._inner is not tools:
-                    await existing.update_inner(tools)
-                tools = cast(AgentToolsProtocol, existing)
-            else:
-                wrapper = DedupingAgentTools(
-                    tools,
-                    ttl_seconds=self.send_message_dedup_ttl_seconds,
-                    label=room_id,
-                )
-                tools = cast(AgentToolsProtocol, wrapper)
-                self._room_tools[room_id] = tools
-        else:
-            self._room_tools[room_id] = tools
+        # Store tools for MCP server access
+        self._room_tools[room_id] = tools
 
         # Approval flow: track notify target and intercept local commands
         if self.approval_mode is not None:
@@ -644,6 +585,115 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         logger.debug("Message %s processed successfully", msg.id)
 
+    @staticmethod
+    def _nonnegative_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int) and value >= 0:
+            return value
+        return None
+
+    @classmethod
+    def _usage_counts_from_mapping(
+        cls, usage: Mapping[str, Any] | None
+    ) -> tuple[int | None, int | None, int | None]:
+        if usage is None:
+            return None, None, None
+
+        input_values = [
+            cls._nonnegative_int(usage.get(key))
+            for key in (
+                "input_tokens",
+                "input_token_count",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+            )
+        ]
+        output_values = [
+            cls._nonnegative_int(usage.get(key))
+            for key in ("output_tokens", "output_token_count")
+        ]
+        input_tokens = sum(value for value in input_values if value is not None)
+        output_tokens = sum(value for value in output_values if value is not None)
+        if not any(value is not None for value in input_values):
+            input_token_count: int | None = None
+        else:
+            input_token_count = input_tokens
+        if not any(value is not None for value in output_values):
+            output_token_count: int | None = None
+        else:
+            output_token_count = output_tokens
+
+        total_tokens = cls._nonnegative_int(usage.get("total_tokens"))
+        if total_tokens is None and (
+            input_token_count is not None or output_token_count is not None
+        ):
+            total_tokens = (input_token_count or 0) + (output_token_count or 0)
+        return input_token_count, output_token_count, total_tokens
+
+    @classmethod
+    def _usage_counts_from_model_usage(
+        cls, model_usage: Mapping[str, Any] | None
+    ) -> tuple[int | None, int | None, int | None]:
+        if model_usage is None:
+            return None, None, None
+
+        input_total = 0
+        output_total = 0
+        total_total = 0
+        saw_input = False
+        saw_output = False
+        saw_total = False
+        for usage in model_usage.values():
+            if not isinstance(usage, Mapping):
+                continue
+            input_tokens, output_tokens, total_tokens = cls._usage_counts_from_mapping(
+                usage
+            )
+            if input_tokens is not None:
+                input_total += input_tokens
+                saw_input = True
+            if output_tokens is not None:
+                output_total += output_tokens
+                saw_output = True
+            if total_tokens is not None:
+                total_total += total_tokens
+                saw_total = True
+
+        return (
+            input_total if saw_input else None,
+            output_total if saw_output else None,
+            total_total if saw_total else None,
+        )
+
+    def _record_claude_sdk_provider_usage(self, sdk_message: ResultMessage) -> None:
+        usage = sdk_message.usage if isinstance(sdk_message.usage, Mapping) else None
+        model_usage = (
+            sdk_message.model_usage
+            if isinstance(sdk_message.model_usage, Mapping)
+            else None
+        )
+        input_tokens, output_tokens, total_tokens = self._usage_counts_from_mapping(
+            usage
+        )
+        if input_tokens is None or output_tokens is None:
+            input_tokens, output_tokens, total_tokens = (
+                self._usage_counts_from_model_usage(model_usage)
+            )
+
+        self._record_provider_usage(
+            source="claude_agent_sdk.result.usage",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            cost_usd=sdk_message.total_cost_usd,
+            raw={
+                "usage": dict(usage) if usage is not None else None,
+                "model_usage": dict(model_usage) if model_usage is not None else None,
+                "total_cost_usd": sdk_message.total_cost_usd,
+            },
+        )
+
     # --- Copied from BandClaudeSDKAgent._process_response ---
     async def _process_response(
         self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
@@ -733,6 +783,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     sdk_message.duration_ms,
                     sdk_message.total_cost_usd or 0,
                 )
+                self._record_claude_sdk_provider_usage(sdk_message)
                 # Capture session_id for potential resume
                 if sdk_message.session_id:
                     prev_session_id = self._session_ids.get(room_id)
