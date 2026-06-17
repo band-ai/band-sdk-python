@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from functools import cached_property
+from functools import lru_cache
+from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 from band.core.protocols import HistoryConverter
@@ -13,12 +14,39 @@ from ._tool_parsing import parse_tool_call, parse_tool_result
 
 if TYPE_CHECKING:
     from agno.models.message import Message
+    from agno.tools.function import Function
 
 logger = logging.getLogger(__name__)
 
 # Forward-referenced so this module imports without agno installed; the real
-# Message type is resolved lazily via the converter's _message_class property.
+# Agno types are resolved lazily via the accessors below.
 AgnoMessages = list["Message"]
+
+
+def _require_agno(module: str, attr: str) -> Any:
+    """Import an Agno attribute lazily with a clear error if agno is missing."""
+    try:
+        return getattr(import_module(module), attr)
+    except ImportError as e:
+        raise ImportError(
+            "Agno dependencies not installed. Install with: uv add band-sdk[agno]"
+        ) from e
+
+
+@lru_cache(maxsize=1)
+def agno_message_class() -> type[Message]:
+    """Agno's ``Message`` class, imported lazily and once.
+
+    Single home for this optional-dependency type; shared by the converter and
+    the AgnoAdapter so the import lives in one place.
+    """
+    return _require_agno("agno.models.message", "Message")
+
+
+@lru_cache(maxsize=1)
+def agno_function_class() -> type[Function]:
+    """Agno's ``Function`` class, imported lazily and once."""
+    return _require_agno("agno.tools.function", "Function")
 
 
 class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
@@ -41,21 +69,6 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
 
     def set_agent_name(self, name: str) -> None:
         self._agent_name = name
-
-    @cached_property
-    def _message_class(self) -> type[Message]:
-        """Agno's ``Message`` class, imported lazily and once per converter.
-
-        Keeps this module importable without agno installed; raises a clear
-        error only when a message is actually built.
-        """
-        try:
-            from agno.models.message import Message
-        except ImportError as e:
-            raise ImportError(
-                "Agno dependencies not installed. Install with: uv add band-sdk[agno]"
-            ) from e
-        return Message
 
     def convert(self, raw: list[dict[str, Any]]) -> AgnoMessages:
         """Dispatch each platform event to its Agno-message builder."""
@@ -109,10 +122,9 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
         """Emit buffered tool calls as one assistant message, then clear them."""
         if not pending_calls:
             return
+        message_cls = agno_message_class()
         messages.append(
-            self._message_class(
-                role="assistant", content=None, tool_calls=list(pending_calls)
-            )
+            message_cls(role="assistant", content=None, tool_calls=list(pending_calls))
         )
         pending_calls.clear()
 
@@ -121,8 +133,9 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
         parsed = parse_tool_result(content)
         if parsed is None:
             return
+        message_cls = agno_message_class()
         messages.append(
-            self._message_class(
+            message_cls(
                 role="tool",
                 tool_call_id=parsed.tool_call_id,
                 tool_name=parsed.name,
@@ -133,12 +146,13 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
 
     def _text_message(self, hist: dict[str, Any]) -> Message:
         """Map a text event to a user/assistant message with sender attribution."""
+        message_cls = agno_message_class()
         content = hist.get("content", "")
         if hist.get("role") == "assistant" and hist.get("sender_name") == (
             self._agent_name
         ):
-            return self._message_class(role="assistant", content=content)
+            return message_cls(role="assistant", content=content)
 
         sender_name = hist.get("sender_name", "")
         formatted = f"[{sender_name}]: {content}" if sender_name else content
-        return self._message_class(role="user", content=formatted)
+        return message_cls(role="user", content=formatted)

@@ -31,7 +31,12 @@ from band.core.types import (
     Emit,
     PlatformMessage,
 )
-from band.converters.agno import AgnoHistoryConverter, AgnoMessages
+from band.converters.agno import (
+    AgnoHistoryConverter,
+    AgnoMessages,
+    agno_function_class,
+    agno_message_class,
+)
 
 if TYPE_CHECKING:
     from agno.agent import Agent as AgnoAgent
@@ -217,11 +222,12 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             raise RuntimeError("Agno agent not initialized; on_started was not called")
 
         logger.info(
-            "Room %s msg %s: handling from %s (sender=%s)",
+            "Room %s msg %s: handling from %s (sender=%s, bootstrap=%s)",
             room_id,
             msg.id,
             msg.sender_name or msg.sender_type,
             msg.sender_id,
+            is_session_bootstrap,
         )
 
         self._ensure_band_tools(tools)
@@ -269,27 +275,22 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         after a restart); later messages arrive empty, so the adapter keeps the
         running transcript itself.
         """
-        from agno.models.message import Message
-
         if is_session_bootstrap:
             self._message_history[room_id] = list(history)
-            logger.debug(
-                "Room %s msg %s: bootstrap seeded %d message(s) from rehydrated history",
-                room_id,
-                msg.id,
-                len(history),
-            )
-        elif room_id not in self._message_history:
-            self._message_history[room_id] = []
+        else:
+            self._message_history.setdefault(room_id, [])
 
+        message_cls = agno_message_class()
         messages = self._message_history[room_id]
         if participants_msg:
             messages.append(
-                Message(role="user", content=f"[System]: {participants_msg}")
+                message_cls(role="user", content=f"[System]: {participants_msg}")
             )
         if contacts_msg:
-            messages.append(Message(role="user", content=f"[System]: {contacts_msg}"))
-        messages.append(Message(role="user", content=msg.format_for_llm()))
+            messages.append(
+                message_cls(role="user", content=f"[System]: {contacts_msg}")
+            )
+        messages.append(message_cls(role="user", content=msg.format_for_llm()))
         return messages
 
     async def _run_agent(
@@ -408,8 +409,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         Chat/participant tools are always exposed; memory/contact tools are added
         when the matching capabilities are enabled.
         """
-        from agno.tools.function import Function
-
+        function_cls = agno_function_class()
         schemas = tools.get_openai_tool_schemas(
             include_memory=Capability.MEMORY in self.features.capabilities,
             include_contacts=Capability.CONTACTS in self.features.capabilities,
@@ -422,7 +422,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             if not name:
                 continue
             band_tools.append(
-                Function(
+                function_cls(
                     name=name,
                     description=fn.get("description", "") or "",
                     parameters=fn.get("parameters")
