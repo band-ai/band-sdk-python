@@ -570,6 +570,7 @@ crewai = [
 dev = [
     { name = "a2a-sdk" },
     { name = "agent-client-protocol" },
+    { name = "agno" },
     { name = "aiohttp" },
     { name = "anthropic" },
     { name = "beautifulsoup4" },
@@ -674,6 +675,7 @@ requires-dist = [
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.9.0" },
     { name = "agent-client-protocol", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "agno", marker = "extra == 'agno'", specifier = ">=2.6.0" },
+    { name = "agno", marker = "extra == 'dev'", specifier = ">=2.6.0" },
     { name = "aiohttp", marker = "extra == 'bridge'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'bridge-agentcore'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
