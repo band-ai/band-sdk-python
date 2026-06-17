@@ -58,6 +58,16 @@ _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
 )
 
 
+def _tool_executions(response: RunOutput) -> list[Any]:
+    """Return Agno tool executions, normalizing absent/empty tool lists."""
+    return list(getattr(response, "tools", None) or [])
+
+
+def _tool_name(execution: Any) -> str:
+    """Return the tool name from an Agno execution object."""
+    return getattr(execution, "tool_name", None) or ""
+
+
 def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
     """Build an async Agno tool entrypoint that runs a Band platform tool."""
 
@@ -351,8 +361,8 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         did not, its final text is sent as a fallback so it always responds.
         """
         if any(
-            getattr(te, "tool_name", None) == "band_send_message"
-            for te in (getattr(response, "tools", None) or [])
+            _tool_name(execution) == "band_send_message"
+            for execution in _tool_executions(response)
         ):
             logger.debug(
                 "Room %s msg %s: agent replied via band_send_message", room_id, msg.id
@@ -478,9 +488,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         reply (and duplicate it on rehydration).
         """
         executions = [
-            te
-            for te in (getattr(response, "tools", None) or [])
-            if (getattr(te, "tool_name", None) or "") not in _SELF_REPORTING_TOOLS
+            execution
+            for execution in _tool_executions(response)
+            if _tool_name(execution) not in _SELF_REPORTING_TOOLS
         ]
         if not executions:
             return
