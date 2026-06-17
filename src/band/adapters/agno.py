@@ -1,17 +1,4 @@
-"""
-Agno adapter using the SimpleAdapter pattern.
-
-Agno is model-agnostic: the developer builds and configures their own Agno
-``Agent`` (model, instructions, tools, reasoning, ...) and hands it to this
-adapter. The adapter simply bridges it to Band — it converts Band history to
-Agno messages, runs the developer's agent, and sends the text reply back.
-
-Unlike adapters that run an explicit tool-calling loop, Agno owns its own agent
-loop internally: ``Agent.arun(input=...)`` accepts a list of Agno messages and
-returns a run output whose ``.content`` is the final text. The Band toolset is
-exposed to the agent so it can send messages and act on the platform itself;
-tool executions are reported to the room when ``Emit.EXECUTION`` is enabled.
-"""
+"""Agno adapter using the SimpleAdapter pattern."""
 
 from __future__ import annotations
 
@@ -21,7 +8,8 @@ import warnings
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, ClassVar
+from functools import wraps
+from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, ParamSpec, TypeVar
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -46,31 +34,40 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Tools whose effect is already a visible room message/event, so their
-# execution must not be re-reported as tool_call/tool_result events.
+P = ParamSpec("P")
+R = TypeVar("R")
+
+# These tools already produce visible room output.
 _SELF_REPORTING_TOOLS = frozenset({"band_send_message", "band_send_event"})
 
-# The Band tools handle for the room being processed. Wired Band tools read it
-# at call time so a single shared Agno agent can serve concurrent rooms — each
-# on_message coroutine sets its own value (ContextVars are task-isolated).
+# Current room tools for wired Agno tool entrypoints.
 _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
     "agno_current_tools", default=None
 )
 
 
 def _tool_executions(response: RunOutput) -> list[Any]:
-    """Return Agno tool executions, normalizing absent/empty tool lists."""
     return list(getattr(response, "tools", None) or [])
 
 
 def _tool_name(execution: Any) -> str:
-    """Return the tool name from an Agno execution object."""
     return getattr(execution, "tool_name", None) or ""
 
 
-def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
-    """Build an async Agno tool entrypoint that runs a Band platform tool."""
+def _with_agent(
+    fn: Callable[Concatenate[Any, AgnoAgent, P], Awaitable[R]],
+) -> Callable[Concatenate[Any, P], Awaitable[R]]:
+    @wraps(fn)
+    async def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
+        agent = getattr(self, "_agent", None)
+        if agent is None:
+            raise RuntimeError("AgnoAdapter was used before on_started()")
+        return await fn(self, agent, *args, **kwargs)
 
+    return wrapper
+
+
+def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
     async def _entrypoint(**kwargs: Any) -> str:
         active = _current_tools.get()
         if active is None:
@@ -84,12 +81,7 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
 
 @contextmanager
 def _bind_room_tools(tools: AgentToolsProtocol) -> Iterator[None]:
-    """Bind the room's Band tools for the duration of an Agno run.
-
-    Wired Band tool entrypoints read ``_current_tools`` at call time; binding it
-    here (and always resetting on exit) lets a single shared agent serve
-    concurrent rooms without their tool calls crossing over.
-    """
+    """Bind room tools for one Agno run."""
     token = _current_tools.set(tools)
     try:
         yield
@@ -98,40 +90,11 @@ def _bind_room_tools(tools: AgentToolsProtocol) -> Iterator[None]:
 
 
 class AgnoAdapter(SimpleAdapter[AgnoMessages]):
-    """
-    Agno framework adapter (text output + execution reporting).
+    """Bridge a developer-built Agno agent to Band."""
 
-    Takes a developer-built Agno ``Agent`` and bridges it to Band. Stateless per
-    room: Band history is the source of truth and is passed as input on every
-    message.
-
-    The Band toolset is exposed to the agent — chat and participant tools always,
-    plus memory/contact tools when the matching capabilities are enabled — so it
-    can send messages, invite peers, and act on the platform itself. If the agent
-    does not post via ``band_send_message``, its final text is sent as a fallback,
-    so simple agents still reply without any Band-specific prompting.
-
-    Tool executions are reported to the room as tool_call/tool_result events when
-    ``Emit.EXECUTION`` is enabled.
-
-    Example:
-        from agno.agent import Agent as AgnoAgent
-        from agno.models.anthropic import Claude
-
-        agno_agent = AgnoAgent(
-            model=Claude(id="claude-sonnet-4-6"),
-            instructions="You are a helpful assistant.",
-        )
-        adapter = AgnoAdapter(agno_agent)
-        agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
-        await agent.run()
-    """
-
-    # Can report the agent's tool executions and reasoning to the room.
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.EXECUTION, Emit.THOUGHTS}
     )
-    # Can expose Band memory/contact tools to the Agno agent.
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -148,38 +111,23 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             features=features,
         )
 
-        # The caller's agent is the source of configuration. We never mutate it:
-        # on_started builds a deep copy (exposed read-only via ``agent``) that we
-        # wire Band tools into and run. The copy is shared across rooms/messages;
-        # Agno keeps per-run state in its run context, so reuse is safe.
+        # Keep caller configuration immutable; runtime wiring happens on the copy.
         self._source_agent = agent
         self._agent: AgnoAgent | None = None
 
-        # Per-room running transcript. Band delivers the rehydrated platform
-        # history only on session bootstrap (including after a restart); later
-        # messages arrive with empty history, so the adapter accumulates the
-        # conversation itself and feeds it to Agno on every run.
+        # Running per-room transcripts; bootstrap history seeds each room.
         self._message_history: dict[str, list[Message]] = {}
-
-        # Band capability tools (memory/contacts) are wired into the copy once,
-        # on the first message, since they are room-agnostic.
         self._band_tools_wired = False
 
         self._warn_on_memory_collision(agent)
 
     @property
     def agent(self) -> AgnoAgent | None:
-        """The running Agno agent (a deep copy of the caller's), or None until
-        on_started. Read-only: the adapter owns and wires this instance."""
+        """The running Agno agent, initialized in on_started."""
         return self._agent
 
     def _warn_on_memory_collision(self, agent: AgnoAgent) -> None:
-        """Warn if Band memory was requested while Agno's own memory is enabled.
-
-        Only relevant when the caller enabled ``Capability.MEMORY``: the adapter
-        then exposes Band memory tools to the agent, which collides with Agno's
-        built-in memory (``update_memory_on_run`` / ``enable_agentic_memory``).
-        """
+        """Warn when Band and Agno memory are both enabled."""
         if Capability.MEMORY not in self.features.capabilities:
             return
 
@@ -199,15 +147,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Deep-copy the caller's agent and sync the converter identity."""
+        """Deep-copy the caller's agent."""
         await super().on_started(agent_name, agent_description)
 
-        # Run a copy so wiring Band tools never mutates the caller's object.
         self._agent = self._source_agent.deep_copy()
-
-        # Keep the converter's own-agent filtering in sync with our identity.
-        if isinstance(self.history_converter, AgnoHistoryConverter):
-            self.history_converter.set_agent_name(agent_name)
 
         logger.info("Agno adapter started for agent: %s", agent_name)
         logger.debug(
@@ -228,9 +171,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         room_id: str,
     ) -> None:
         """Run the developer's Agno agent and ensure a reply is sent."""
-        if self.agent is None:
-            raise RuntimeError("Agno agent not initialized; on_started was not called")
-
         logger.info(
             "Room %s msg %s: handling from %s (sender=%s, bootstrap=%s)",
             room_id,
@@ -279,12 +219,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> list[Message]:
-        """Seed the per-room transcript and append the new system/user messages.
-
-        Band delivers the rehydrated platform history only on bootstrap (incl.
-        after a restart); later messages arrive empty, so the adapter keeps the
-        running transcript itself.
-        """
+        """Build Agno input for this turn."""
         if is_session_bootstrap:
             self._message_history[room_id] = list(history)
         else:
@@ -303,8 +238,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         messages.append(message_cls(role="user", content=msg.format_for_llm()))
         return messages
 
+    @_with_agent
     async def _run_agent(
         self,
+        agent: AgnoAgent,
         messages: list[Message],
         tools: AgentToolsProtocol,
         *,
@@ -312,9 +249,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         msg_id: str,
     ) -> RunOutput | None:
         """Run the Agno agent with the room's tools bound for this call."""
-        agent = self.agent
-        assert agent is not None  # on_message guarantees the agent is initialized
-
         logger.debug(
             "Room %s msg %s: running Agno agent (%d input messages)",
             room_id,
@@ -337,11 +271,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         return response
 
     def _persist_turn(self, room_id: str, response: RunOutput) -> None:
-        """Persist the agent's full turn (tool calls/results + reply) for continuity.
-
-        Agno's run message list is the source of truth; the system message is
-        dropped because Agno re-injects it from the agent's instructions.
-        """
+        """Persist Agno's transcript, excluding generated system messages."""
         if response.messages:
             self._message_history[room_id] = [
                 m for m in response.messages if m.role != "system"
@@ -355,11 +285,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         *,
         room_id: str,
     ) -> None:
-        """Send the agent's text reply unless it already replied via a tool.
-
-        Autonomous agents post through band_send_message themselves; if the agent
-        did not, its final text is sent as a fallback so it always responds.
-        """
+        """Send final text unless the agent already posted through Band."""
         if any(
             _tool_name(execution) == "band_send_message"
             for execution in _tool_executions(response)
@@ -374,7 +300,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             logger.debug("Room %s msg %s: agent produced no reply", room_id, msg.id)
             return
 
-        # mentions accepts handles/names/IDs as strings; the SDK resolves them.
         mentions = [msg.sender_id]
         logger.info(
             "Room %s msg %s: sending reply (%d chars), mentions=%s",
@@ -386,12 +311,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         await tools.send_message(text, mentions=mentions)
 
     def _ensure_band_tools(self, tools: AgentToolsProtocol) -> None:
-        """Wire the in-scope Band tools into the Agno agent once.
-
-        These tools are room-agnostic (the active room is supplied via the
-        ``_current_tools`` ContextVar at call time), so they are added to the
-        shared agent a single time on the first message.
-        """
+        """Wire Band tools into the copied Agno agent once."""
         if self._band_tools_wired or self._agent is None:
             return
 
@@ -402,7 +322,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 self._agent.add_tool(fn)
                 wired.append(fn.name)
             except RuntimeError as e:
-                # add_tool rejects when the agent's tools is a callable factory.
                 logger.warning("Could not wire Band tool %s: %s", fn.name, e)
         if wired:
             logger.info(
@@ -410,15 +329,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 len(wired),
                 ", ".join(wired),
             )
-        # Synchronous, no await: safe to mark wired even across concurrent calls.
         self._band_tools_wired = True
 
     def _build_band_tools(self, tools: AgentToolsProtocol) -> list[Function]:
-        """Convert the in-scope Band tool schemas into Agno Functions.
-
-        Chat/participant tools are always exposed; memory/contact tools are added
-        when the matching capabilities are enabled.
-        """
+        """Convert Band tool schemas into Agno Functions."""
         function_cls = agno_function_class()
         schemas = tools.get_openai_tool_schemas(
             include_memory=Capability.MEMORY in self.features.capabilities,
@@ -449,12 +363,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         room_id: str,
         msg_id: str,
     ) -> None:
-        """Post the agent's reasoning content as a thought event.
-
-        Only produces output when the developer's Agno agent has reasoning
-        enabled (e.g. ``reasoning=True`` or a reasoning model); otherwise
-        ``reasoning_content`` is empty and nothing is posted.
-        """
+        """Post Agno reasoning as a thought event."""
         reasoning = getattr(response, "reasoning_content", None)
         text = (reasoning or "").strip() if isinstance(reasoning, str) else ""
         if not text:
@@ -481,12 +390,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         room_id: str,
         msg_id: str,
     ) -> None:
-        """Emit tool_call/tool_result events for the agent's tool executions.
-
-        Skips band_send_message/band_send_event: their effect is already a
-        visible room message/event, so reporting them would double-record the
-        reply (and duplicate it on rehydration).
-        """
+        """Emit tool_call/tool_result events for reportable executions."""
         executions = [
             execution
             for execution in _tool_executions(response)
