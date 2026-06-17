@@ -91,8 +91,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         await agent.run()
     """
 
-    # Can report the Agno agent's own tool executions to the room.
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    # Can report the agent's tool executions and reasoning to the room.
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
+        {Emit.EXECUTION, Emit.THOUGHTS}
+    )
     # Can expose Band memory/contact tools to the Agno agent.
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -247,6 +249,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
             return
 
+        # Surface the agent's reasoning (if any) before its actions/reply.
+        if Emit.THOUGHTS in self.features.emit:
+            await self._report_thoughts(response, tools, room_id, msg.id)
+
         # Report the agent's own tool executions (happened during the run, so
         # before the final reply) when execution reporting is enabled.
         if Emit.EXECUTION in self.features.emit:
@@ -350,6 +356,37 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
         return band_tools
 
+    async def _report_thoughts(
+        self,
+        response: RunOutput,
+        tools: AgentToolsProtocol,
+        room_id: str,
+        msg_id: str,
+    ) -> None:
+        """Post the agent's reasoning content as a thought event.
+
+        Only produces output when the developer's Agno agent has reasoning
+        enabled (e.g. ``reasoning=True`` or a reasoning model); otherwise
+        ``reasoning_content`` is empty and nothing is posted.
+        """
+        reasoning = getattr(response, "reasoning_content", None)
+        text = (reasoning or "").strip() if isinstance(reasoning, str) else ""
+        if not text:
+            return
+
+        logger.info(
+            "Room %s msg %s: reporting reasoning as thought (%d chars)",
+            room_id,
+            msg_id,
+            len(text),
+        )
+        try:
+            await tools.send_event(content=text, message_type="thought")
+        except Exception as e:
+            logger.warning(
+                "Room %s msg %s: failed to report thought: %s", room_id, msg_id, e
+            )
+
     async def _report_tool_executions(
         self,
         response: RunOutput,
@@ -357,8 +394,17 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         room_id: str,
         msg_id: str,
     ) -> None:
-        """Emit tool_call/tool_result events for the agent's tool executions."""
-        executions = list(getattr(response, "tools", None) or [])
+        """Emit tool_call/tool_result events for the agent's tool executions.
+
+        Skips band_send_message/band_send_event: their effect is already a
+        visible room message/event, so reporting them would double-record the
+        reply (and duplicate it on rehydration).
+        """
+        executions = [
+            te
+            for te in (getattr(response, "tools", None) or [])
+            if (getattr(te, "tool_name", None) or "") not in _SELF_REPORTING_TOOLS
+        ]
         if not executions:
             return
 
