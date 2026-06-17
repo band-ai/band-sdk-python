@@ -171,8 +171,17 @@ gemini_agent:
 # Agno Examples
 # =============================================================================
 
-# 01_basic_agent.py
+# 01_basic_agent.py, 02_tool_reporting.py
 agno_agent:
+  agent_id: ""
+  api_key: ""
+
+# 03_tom_and_jerry.py - two character agents in one process
+tom:
+  agent_id: ""
+  api_key: ""
+
+jery:
   agent_id: ""
   api_key: ""
 
