@@ -39,6 +39,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Tools whose effect is already a visible room message/event, so their
+# execution must not be re-reported as tool_call/tool_result events.
+_SELF_REPORTING_TOOLS = frozenset({"band_send_message", "band_send_event"})
+
 # The Band tools handle for the room being processed. Wired Band tools read it
 # at call time so a single shared Agno agent can serve concurrent rooms — each
 # on_message coroutine sets its own value (ContextVars are task-isolated).
