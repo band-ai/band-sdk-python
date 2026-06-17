@@ -112,6 +112,12 @@ def _parlant_factory(**kw: Any) -> Any:
     return ParlantHistoryConverter(**kw)
 
 
+def _agno_factory(**kw: Any) -> Any:
+    from band.converters.agno import AgnoHistoryConverter
+
+    return AgnoHistoryConverter(**kw)
+
+
 def _gemini_factory(**kw: Any) -> Any:
     from band.converters.gemini import GeminiHistoryConverter
 
@@ -233,6 +239,24 @@ def _build_parlant_config() -> ConverterConfig:
     )
 
 
+def _build_agno_config() -> ConverterConfig:
+    from tests.framework_configs.output_adapters import AgnoOutputAdapter
+
+    return ConverterConfig(
+        framework_id="agno",
+        display_name="Agno",
+        converter_factory=_agno_factory,
+        empty_result=[],
+        # Keeps own-agent text as an assistant Message (not filtered).
+        filters_own_messages=False,
+        # Text-only converter: tool_call/tool_result events are skipped.
+        skips_tool_events=True,
+        empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
+        missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
+        output_adapter=AgnoOutputAdapter(),
+    )
+
+
 def _build_gemini_config() -> ConverterConfig:
     from tests.framework_configs.output_adapters import GeminiOutputAdapter
 
@@ -301,6 +325,7 @@ _CONVERTER_CONFIG_BUILDERS: list[Callable[[], ConverterConfig]] = [
     _build_claude_sdk_config,
     _build_pydantic_ai_config,
     _build_parlant_config,
+    _build_agno_config,
     _build_gemini_config,
     _build_google_adk_config,
 ]
