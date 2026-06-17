@@ -200,7 +200,18 @@ class AgnoOutputAdapter:
         return len(result) == 0
 
     def content_contains(self, result: list, substring: str) -> bool:
-        return any(substring in (msg.content or "") for msg in result)
+        for msg in result:
+            if msg.content and substring in str(msg.content):
+                return True
+            if getattr(msg, "tool_name", None) and substring in msg.tool_name:
+                return True
+            for tc in getattr(msg, "tool_calls", None) or []:
+                fn = tc.get("function", {})
+                if substring in fn.get("name", "") or substring in str(
+                    fn.get("arguments", "")
+                ):
+                    return True
+        return False
 
     def assert_element_type(self, result: list, index: int, expected_role: str) -> None:
         from agno.models.message import Message

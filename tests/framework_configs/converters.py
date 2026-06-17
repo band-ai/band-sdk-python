@@ -249,8 +249,8 @@ def _build_agno_config() -> ConverterConfig:
         empty_result=[],
         # Keeps own-agent text as an assistant Message (not filtered).
         filters_own_messages=False,
-        # Text-only converter: tool_call/tool_result events are skipped.
-        skips_tool_events=True,
+        # Converts tool_call -> assistant tool_calls, tool_result -> tool message.
+        skips_tool_events=False,
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         output_adapter=AgnoOutputAdapter(),

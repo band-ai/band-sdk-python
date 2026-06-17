@@ -10,8 +10,11 @@ instructions, and — in a later iteration — tools), then bridge it to Band wi
 `AgnoAdapter`. The adapter converts Band room history into Agno messages, runs
 your agent, and replies with its text output.
 
-> **Note:** This is an early, text-only integration. Band platform tools
-> (`band_send_message`, etc.) are not wired into the Agno agent yet.
+> **Note:** Band's memory/contact tools are exposed to the agent when the
+> matching capabilities are enabled, and tool executions are reported to (and
+> rehydrated from) the room. The chat/participant tools (`band_send_message`,
+> etc.) are not exposed — the adapter sends the agent's reply to the room
+> directly.
 
 ## Prerequisites
 
