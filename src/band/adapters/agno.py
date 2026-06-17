@@ -18,7 +18,8 @@ from __future__ import annotations
 import json
 import logging
 import warnings
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -64,6 +65,21 @@ def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
 
     _entrypoint.__name__ = tool_name
     return _entrypoint
+
+
+@contextmanager
+def _bind_room_tools(tools: AgentToolsProtocol) -> Iterator[None]:
+    """Bind the room's Band tools for the duration of an Agno run.
+
+    Wired Band tool entrypoints read ``_current_tools`` at call time; binding it
+    here (and always resetting on exit) lets a single shared agent serve
+    concurrent rooms without their tool calls crossing over.
+    """
+    token = _current_tools.set(tools)
+    try:
+        yield
+    finally:
+        _current_tools.reset(token)
 
 
 class AgnoAdapter(SimpleAdapter[AgnoMessages]):
@@ -118,11 +134,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
 
         # The caller's agent is the source of configuration. We never mutate it:
-        # on_started builds a deep copy (`self.agent`) that we wire Band tools
-        # into and run. The copy is shared across rooms/messages; Agno keeps
-        # per-run state in its run context, so a single instance is safe to reuse.
+        # on_started builds a deep copy (exposed read-only via ``agent``) that we
+        # wire Band tools into and run. The copy is shared across rooms/messages;
+        # Agno keeps per-run state in its run context, so reuse is safe.
         self._source_agent = agent
-        self.agent: AgnoAgent | None = None
+        self._agent: AgnoAgent | None = None
 
         # Per-room running transcript. Band delivers the rehydrated platform
         # history only on session bootstrap (including after a restart); later
@@ -135,6 +151,12 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._band_tools_wired = False
 
         self._warn_on_memory_collision(agent)
+
+    @property
+    def agent(self) -> AgnoAgent | None:
+        """The running Agno agent (a deep copy of the caller's), or None until
+        on_started. Read-only: the adapter owns and wires this instance."""
+        return self._agent
 
     def _warn_on_memory_collision(self, agent: AgnoAgent) -> None:
         """Warn if Band memory was requested while Agno's own memory is enabled.
@@ -166,7 +188,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         await super().on_started(agent_name, agent_description)
 
         # Run a copy so wiring Band tools never mutates the caller's object.
-        self.agent = self._source_agent.deep_copy()
+        self._agent = self._source_agent.deep_copy()
 
         # Keep the converter's own-agent filtering in sync with our identity.
         if isinstance(self.history_converter, AgnoHistoryConverter):
@@ -288,17 +310,14 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             msg_id,
             len(messages),
         )
-        # Bind the room's tools so wired Band tools execute against this room.
-        token = _current_tools.set(tools)
         try:
-            response = await agent.arun(input=messages)
+            with _bind_room_tools(tools):
+                response = await agent.arun(input=messages)
         except Exception as e:
             logger.exception(
                 "Room %s msg %s: error running Agno agent: %s", room_id, msg_id, e
             )
             raise
-        finally:
-            _current_tools.reset(token)
 
         if response is None:
             logger.debug(
@@ -362,14 +381,14 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         ``_current_tools`` ContextVar at call time), so they are added to the
         shared agent a single time on the first message.
         """
-        if self._band_tools_wired or self.agent is None:
+        if self._band_tools_wired or self._agent is None:
             return
 
         band_tools = self._build_band_tools(tools)
         wired: list[str] = []
         for fn in band_tools:
             try:
-                self.agent.add_tool(fn)
+                self._agent.add_tool(fn)
                 wired.append(fn.name)
             except RuntimeError as e:
                 # add_tool rejects when the agent's tools is a callable factory.
