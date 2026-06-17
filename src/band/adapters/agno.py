@@ -34,6 +34,7 @@ from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 
 if TYPE_CHECKING:
     from agno.agent import Agent as AgnoAgent
+    from agno.models.message import Message
     from agno.run.agent import RunOutput
     from agno.tools.function import Function
 
@@ -107,10 +108,15 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # The caller's agent is the source of configuration. We never mutate it:
         # on_started builds a deep copy (`self.agent`) that we wire Band tools
         # into and run. The copy is shared across rooms/messages; Agno keeps
-        # per-run state in its run context and Band history is passed as input
-        # on every call, so a single instance is safe to reuse.
+        # per-run state in its run context, so a single instance is safe to reuse.
         self._source_agent = agent
         self.agent: AgnoAgent | None = None
+
+        # Per-room running transcript. Band delivers the rehydrated platform
+        # history only on session bootstrap (including after a restart); later
+        # messages arrive with empty history, so the adapter accumulates the
+        # conversation itself and feeds it to Agno on every run.
+        self._message_history: dict[str, list[Message]] = {}
 
         # Band capability tools (memory/contacts) are wired into the copy once,
         # on the first message, since they are room-agnostic.
@@ -179,8 +185,14 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # Expose Band memory/contact tools to the agent (once, room-agnostic).
         self._ensure_band_tools(tools)
 
-        # Band history is the source of truth; build the input fresh each call.
-        messages: list[Message] = list(history)
+        # Seed the running transcript from the rehydrated platform history on
+        # bootstrap (or restart); otherwise reuse what we have accumulated.
+        if is_session_bootstrap:
+            self._message_history[room_id] = list(history)
+        elif room_id not in self._message_history:
+            self._message_history[room_id] = []
+        messages = self._message_history[room_id]
+
         if participants_msg:
             messages.append(
                 Message(role="user", content=f"[System]: {participants_msg}")
@@ -218,6 +230,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             logger.debug("Room %s: Agno agent returned empty content", room_id)
             return
 
+        # Persist the reply so the next turn (which arrives with empty history)
+        # still has the full conversation context.
+        messages.append(Message(role="assistant", content=text))
+
         if response.content_type not in ("str", ""):
             logger.debug(
                 "Room %s: Agno returned %s output; sending JSON-serialized form",
@@ -228,6 +244,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         mention = [{"id": msg.sender_id, "name": msg.sender_name or msg.sender_type}]
         logger.info("Room %s: sending reply (%d chars)", room_id, len(text))
         await tools.send_message(text, mentions=mention)
+
+    async def on_cleanup(self, room_id: str) -> None:
+        """Drop the room's accumulated transcript when the agent leaves."""
+        self._message_history.pop(room_id, None)
 
     def _ensure_band_tools(self, tools: AgentToolsProtocol) -> None:
         """Wire Band memory/contact tools into the Agno agent once.
