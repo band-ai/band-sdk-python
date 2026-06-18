@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from band_rest import AsyncRestClient
@@ -31,6 +31,9 @@ from tests.conftest_integration import fetch_all_context
 from tests.e2e.adapters.conftest import _require_anthropic_key
 from tests.e2e.conftest import E2ESettings, RoomAllocator
 from tests.e2e.helpers import find_tool_call_in_context, log_step
+
+if TYPE_CHECKING:
+    from band.adapters.agno import AgnoAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +141,41 @@ def build_assistant_adapter(
     agno_agent = AgnoAgent(
         model=Claude(id=settings.e2e_anthropic_model),
         instructions=instructions,
+    )
+    return AgnoAdapter(agno_agent)
+
+
+def build_db_backed_agno_adapter(
+    settings: E2ESettings,
+    *,
+    db: Any,
+    session_id: str,
+) -> "AgnoAdapter":
+    """Build an Agno adapter whose agent owns its history via a database.
+
+    ``add_history_to_context=True`` with a ``db`` makes Agno persist and replay
+    prior turns itself (keyed by ``session_id``). The AgnoAdapter detects this
+    and disables Band's own history rehydration, so prior context comes from
+    Agno alone and is not duplicated. Passing the *same* ``db`` object and
+    ``session_id`` to a second adapter instance models a restart against a
+    persistent backend.
+    """
+    _require_anthropic_key()
+    from agno.agent import Agent as AgnoAgent
+    from agno.models.anthropic import Claude
+
+    from band.adapters.agno import AgnoAdapter
+
+    agno_agent = AgnoAgent(
+        model=Claude(id=settings.e2e_anthropic_model),
+        db=db,
+        session_id=session_id,
+        add_history_to_context=True,
+        instructions=(
+            "You are a helpful assistant with a long-term memory. Whenever you "
+            "acknowledge OR recall a value you were asked to remember, you MUST "
+            "include the exact value verbatim in your reply. Keep responses short."
+        ),
     )
     return AgnoAdapter(agno_agent)
 
@@ -289,3 +327,18 @@ async def agno_thoughts_room(
 ) -> tuple[str, str, str]:
     """Dedicated room for the Agno thoughts scenario."""
     return await e2e_room_allocator("agno_thoughts")
+
+
+@pytest.fixture
+async def agno_database_room(
+    e2e_fresh_room_allocator: RoomAllocator,
+) -> tuple[str, str, str]:
+    """Fresh, uncontaminated room for the db-backed Agno restart scenario.
+
+    Uses the fresh-room allocator (not the reusing one) on purpose: this
+    scenario disables Band's history rehydration, so the agent's only memory is
+    Agno's ephemeral db. A reused room's stale "remember X" messages from prior
+    runs would otherwise be answered on bootstrap and contaminate the recall
+    assertion with an old secret.
+    """
+    return await e2e_fresh_room_allocator("agno_database_restart")
