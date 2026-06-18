@@ -6,7 +6,7 @@ framework.
 ## Overview
 
 Agno is model-agnostic: you build and configure your own Agno `Agent` (model,
-instructions, and — in a later iteration — tools), then bridge it to Band with
+instructions, tools, database, and other Agno settings), then bridge it to Band with
 `AgnoAdapter`. The adapter converts Band room history into Agno messages, runs
 your agent, and replies with its text output.
 
@@ -46,6 +46,19 @@ agent = Agent.from_config("agno_agent", adapter=adapter)
 await agent.run()
 ```
 
+Passing `agent=` runs the adapter against `agent.deep_copy()` so your instance
+stays immutable. If you'd rather skip the deep-copy and hand the adapter a fresh
+agent at startup, pass an `agent_factory` instead (provide exactly one):
+
+```python
+adapter = AgnoAdapter(
+    agent_factory=lambda: AgnoAgent(
+        model=Claude(id="claude-sonnet-4-6"),
+        instructions="You are helpful.",
+    )
+)
+```
+
 ---
 
 ## Examples
@@ -55,6 +68,8 @@ await agent.run()
 | `01_basic_agent.py` | **Minimal setup** - A Claude-backed Agno agent bridged to Band via `AgnoAdapter`. |
 | `02_tool_reporting.py` | **Tool-execution reporting** - An Agno agent with its own tools; `AdapterFeatures(emit={Emit.EXECUTION})` posts tool_call/tool_result events to the room. |
 | `03_tom_and_jerry.py` | **Two agents in one process** - Tom and Jerry, each its own Agno-backed Band agent with a distinct personality, run concurrently with `asyncio.gather`. |
+| `04_memory_secretary.py` | **Band memory tools** - Enables `Capability.MEMORY` so an Agno agent can store and recall durable Band memories. |
+| `05_agno_db_history.py` | **Agno-owned history** - Uses `db`, `session_id`, and `add_history_to_context=True`; the adapter disables Band history rehydration to avoid duplicate context. |
 
 ---
 

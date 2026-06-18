@@ -56,6 +56,14 @@ def make_agno_agent() -> Callable[..., tuple[MagicMock, MagicMock]]:
         copy.arun = AsyncMock(
             return_value=response if response is not None else RunOutput()
         )
+        # The adapter detects history/memory management against the *runtime*
+        # agent (this copy), so mirror the source's config here too. Without
+        # these explicit values the bare MagicMock would expose truthy
+        # auto-attributes and spuriously trip the guards.
+        copy.update_memory_on_run = update_memory_on_run
+        copy.enable_agentic_memory = enable_agentic_memory
+        copy.add_history_to_context = add_history_to_context
+        copy.db = db
         source.deep_copy = MagicMock(return_value=copy)
         return source, copy
 

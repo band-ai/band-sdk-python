@@ -25,11 +25,13 @@ from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_inpu
 
 
 class TestDetection:
-    def test_warns_and_flags_when_db_and_history_enabled(self, make_agno_agent):
+    async def test_warns_and_flags_when_db_and_history_enabled(self, make_agno_agent):
         source, _ = make_agno_agent(add_history_to_context=True, db=object())
+        adapter = AgnoAdapter(source)
 
+        # Detection runs against the runtime agent at startup, not in __init__.
         with pytest.warns(UserWarning, match="manages its own conversation history"):
-            adapter = AgnoAdapter(source)
+            await adapter.on_started("TestBot", "desc")
 
         assert adapter._agno_manages_history is True
 
@@ -41,16 +43,17 @@ class TestDetection:
             (False, None),  # neither
         ],
     )
-    def test_no_guard_unless_both_set(
+    async def test_no_guard_unless_both_set(
         self, make_agno_agent, add_history_to_context, db
     ):
         source, _ = make_agno_agent(
             add_history_to_context=add_history_to_context, db=db
         )
+        adapter = AgnoAdapter(source)
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # any history warning would fail here
-            adapter = AgnoAdapter(source)
+            await adapter.on_started("TestBot", "desc")
 
         assert adapter._agno_manages_history is False
 

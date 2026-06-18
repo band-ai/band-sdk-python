@@ -74,11 +74,11 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
             instructions="You are Bot.",
         )
 
-    # Construction warns that Band rehydration is disabled, and flags the guard.
+    # Startup warns that Band rehydration is disabled, and flags the guard.
+    adapter = AgnoAdapter(build_agent("first answer"))
     with pytest.warns(UserWarning, match="manages its own conversation history"):
-        adapter = AgnoAdapter(build_agent("first answer"))
+        await adapter.on_started("Bot", "desc")
     assert adapter._agno_manages_history is True
-    await adapter.on_started("Bot", "desc")
 
     # Turn 1 — Band supplies NO history (raw=[]); only the live message is sent.
     first = _platform_message("m1", "remember the code is 42")
@@ -88,9 +88,9 @@ async def test_history_survives_restart_and_is_loaded_by_agno_not_band():
     assert not any(m.from_history for m in _captured(adapter).captured_messages or [])
 
     # "Reset": a brand-new adapter/agent instance pointed at the same db+session.
+    adapter2 = AgnoAdapter(build_agent("second answer"))
     with pytest.warns(UserWarning, match="manages its own conversation history"):
-        adapter2 = AgnoAdapter(build_agent("second answer"))
-    await adapter2.on_started("Bot", "desc")
+        await adapter2.on_started("Bot", "desc")
 
     # Turn 2 — hand Band a DISTINCT platform history. With the guard on it must
     # be ignored; only Agno's own db history should reach the model.

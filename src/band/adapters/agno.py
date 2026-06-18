@@ -115,31 +115,62 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
     def __init__(
         self,
-        agent: AgnoAgent,
+        agent: AgnoAgent | None = None,
         *,
+        agent_factory: Callable[[], AgnoAgent] | None = None,
         history_converter: AgnoHistoryConverter | None = None,
         features: AdapterFeatures | None = None,
         session_id_factory: Callable[[str], str] = lambda room_id: room_id,
     ) -> None:
-        """Bridge ``agent`` to Band.
+        """Bridge a developer-built Agno agent to Band.
+
+        Provide **exactly one** of ``agent`` or ``agent_factory``:
+
+        - ``agent``: a fully configured Agno agent. The adapter runs against
+          ``agent.deep_copy()`` so the caller's instance stays immutable.
+        - ``agent_factory``: a zero-arg callable returning a fresh Agno agent.
+          The adapter calls it once at startup, avoiding ``deep_copy()``
+          overhead for callers that can cheaply mint a new agent::
+
+              adapter = AgnoAdapter(
+                  agent_factory=lambda: AgnoAgent(
+                      model=Claude(id="claude-sonnet-4-6"),
+                      instructions="You are helpful.",
+                  )
+              )
 
         Args:
             session_id_factory: Maps a Band ``room_id`` to the Agno
                 ``session_id`` used for that room's runs. Defaults to using the
                 ``room_id`` itself, so each Band room is an isolated Agno
                 session. This **overrides** any ``session_id`` configured on
-                ``agent``. Consequence: Agno DB history previously stored under
+                the agent. Consequence: Agno DB history previously stored under
                 the agent's original ``session_id`` is no longer reused (runs
                 are keyed by ``room_id``). To keep a single shared session
                 across rooms, pass e.g. ``session_id_factory=lambda _r: "fixed"``.
         """
+        if agent is not None and agent_factory is not None:
+            raise ValueError(
+                "AgnoAdapter accepts `agent` or `agent_factory`, not both."
+            )
+        if agent is not None:
+            # Run against a copy so the caller's configured agent stays immutable.
+            factory: Callable[[], AgnoAgent] = agent.deep_copy
+        elif agent_factory is not None:
+            factory = agent_factory
+        else:
+            raise ValueError(
+                "AgnoAdapter requires exactly one of `agent` or `agent_factory`."
+            )
+
         super().__init__(
             history_converter=history_converter or AgnoHistoryConverter(),
             features=features,
         )
 
-        # Keep caller configuration immutable; runtime wiring happens on the copy.
-        self._source_agent = agent
+        # The runtime agent is built once at startup (deep-copy or factory call),
+        # deferring any factory invocation out of __init__.
+        self._agent_factory = factory
         self._agent: AgnoAgent | None = None
         self._session_id_factory = session_id_factory
 
@@ -151,8 +182,8 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._wired_tool_names: set[str] = set()
         self._band_instructions_injected = False
 
-        self._agno_manages_history = self._detect_agno_history(agent)
-        self._warn_on_memory_collision(agent)
+        # Resolved against the runtime agent in on_started, once it exists.
+        self._agno_manages_history = False
 
     @property
     def agent(self) -> AgnoAgent | None:
@@ -206,10 +237,18 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Deep-copy the caller's agent and sync the converter identity."""
+        """Build the runtime agent and sync the converter identity.
+
+        The runtime agent is produced by the factory captured at construction —
+        either the caller's ``agent.deep_copy`` or a developer ``agent_factory``.
+        Agent-dependent checks run here (not in ``__init__``) so the factory is
+        only ever invoked at startup.
+        """
         await super().on_started(agent_name, agent_description)
 
-        self._agent = self._source_agent.deep_copy()
+        self._agent = self._agent_factory()
+        self._agno_manages_history = self._detect_agno_history(self._agent)
+        self._warn_on_memory_collision(self._agent)
 
         # Keep the converter's own-agent filtering in sync with our identity, so
         # rehydrated history maps this agent's past messages to the assistant role.

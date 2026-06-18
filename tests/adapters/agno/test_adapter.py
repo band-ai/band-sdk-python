@@ -13,6 +13,7 @@ import json
 import warnings
 from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from agno.models.message import Message
@@ -54,6 +55,25 @@ def _msg(
     )
 
 
+def _factory_agent_stub() -> MagicMock:
+    """A fake runtime agent as returned by an ``agent_factory``.
+
+    Unlike the deep-copy path, the factory's agent is used as-is, so it carries
+    the falsy history/memory defaults and its own ``deep_copy`` to assert the
+    adapter never copies it.
+    """
+    agent = MagicMock(name="factory_agent")
+    agent.update_memory_on_run = False
+    agent.enable_agentic_memory = False
+    agent.add_history_to_context = False
+    agent.db = None
+    agent.additional_context = None
+    agent.add_tool = MagicMock()
+    agent.arun = AsyncMock(return_value=RunOutput())
+    agent.deep_copy = MagicMock()
+    return agent
+
+
 class TestOnStarted:
     async def test_runs_against_a_deep_copy_not_the_source(self, make_agno_agent):
         source, copy = make_agno_agent()
@@ -71,33 +91,101 @@ class TestOnStarted:
         assert adapter.history_converter._agent_name == "TestBot"
 
 
+class TestAgentFactory:
+    """``agent_factory`` mints the runtime agent at startup without deep_copy()."""
+
+    def test_factory_not_called_in_init(self):
+        factory = MagicMock(name="agent_factory")
+
+        AgnoAdapter(agent_factory=factory)
+
+        factory.assert_not_called()
+
+    async def test_factory_called_once_in_on_started(self):
+        runtime_agent = _factory_agent_stub()
+        factory = MagicMock(name="agent_factory", return_value=runtime_agent)
+        adapter = AgnoAdapter(agent_factory=factory)
+
+        await adapter.on_started("TestBot", "desc")
+
+        factory.assert_called_once_with()
+
+    async def test_factory_agent_used_directly_not_deep_copied(self):
+        runtime_agent = _factory_agent_stub()
+        adapter = AgnoAdapter(agent_factory=lambda: runtime_agent)
+
+        await adapter.on_started("TestBot", "desc")
+
+        assert adapter.agent is runtime_agent
+        # The factory's agent is used as-is; the adapter must not deep_copy it.
+        runtime_agent.deep_copy.assert_not_called()
+
+    async def test_factory_built_adapter_runs_the_agent_and_replies(self, tools):
+        # End-to-end through the factory path: the factory's agent must be the
+        # one actually run on a message, and its output delivered to the room.
+        runtime_agent = _factory_agent_stub()
+        runtime_agent.arun = AsyncMock(return_value=RunOutput(content="hi from factory"))
+        adapter = AgnoAdapter(agent_factory=lambda: runtime_agent)
+        await adapter.on_started("TestBot", "desc")
+
+        await adapter.on_message(
+            _msg("room-1", "hello"),
+            tools,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        runtime_agent.arun.assert_awaited_once()
+        tools.assert_message_sent(content="hi from factory", mentions=["user-1"])
+
+    def test_neither_agent_nor_factory_raises(self):
+        with pytest.raises(ValueError, match="exactly one"):
+            AgnoAdapter()
+
+    def test_both_agent_and_factory_raises(self, make_agno_agent):
+        source, _ = make_agno_agent()
+
+        with pytest.raises(ValueError, match="not both"):
+            AgnoAdapter(source, agent_factory=lambda: source)
+
+
 class TestMemoryCollisionWarning:
-    def test_warns_on_update_memory_on_run_with_memory_capability(
+    """Collision is detected against the runtime agent at startup, not __init__."""
+
+    async def test_warns_on_update_memory_on_run_with_memory_capability(
         self, make_agno_agent
     ):
         source, _ = make_agno_agent(update_memory_on_run=True)
+        adapter = AgnoAdapter(
+            source, features=AdapterFeatures(capabilities={Capability.MEMORY})
+        )
 
         with pytest.warns(UserWarning, match="update_memory_on_run"):
-            AgnoAdapter(
-                source, features=AdapterFeatures(capabilities={Capability.MEMORY})
-            )
+            await adapter.on_started("TestBot", "desc")
 
-    def test_warns_on_agentic_memory_with_memory_capability(self, make_agno_agent):
+    async def test_warns_on_agentic_memory_with_memory_capability(
+        self, make_agno_agent
+    ):
         source, _ = make_agno_agent(enable_agentic_memory=True)
+        adapter = AgnoAdapter(
+            source, features=AdapterFeatures(capabilities={Capability.MEMORY})
+        )
 
         with pytest.warns(UserWarning, match="enable_agentic_memory"):
-            AgnoAdapter(
-                source, features=AdapterFeatures(capabilities={Capability.MEMORY})
-            )
+            await adapter.on_started("TestBot", "desc")
 
-    def test_no_warning_without_memory_capability(self, make_agno_agent):
+    async def test_no_warning_without_memory_capability(self, make_agno_agent):
         source, _ = make_agno_agent(
             update_memory_on_run=True, enable_agentic_memory=True
         )
+        adapter = AgnoAdapter(source)  # no MEMORY capability -> no collision
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            AgnoAdapter(source)  # no MEMORY capability -> no collision
+            await adapter.on_started("TestBot", "desc")
 
 
 class TestBandToolWiring:
