@@ -53,34 +53,6 @@ _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
     "agno_current_tools", default=None
 )
 
-# JSON-Schema numeric-range keywords that some providers reject on tool parameter
-# schemas. Agno is model-agnostic and forwards Band's schemas to whatever model
-# backs the agent; an Anthropic-backed Agno agent rejects ``maximum`` on integer
-# params ("For 'integer' type, property 'maximum' is not supported"). Band's
-# pagination params carry these via Pydantic ``Field(ge=..., le=...)``. The bounds
-# are still enforced locally when tool-call arguments are validated, so dropping
-# them from the advertised schema loses no real guardrail.
-_UNSUPPORTED_SCHEMA_KEYS = frozenset(
-    {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"}
-)
-
-
-def _strip_numeric_constraints(schema: Any) -> Any:
-    """Recursively drop numeric-range keywords from a JSON-Schema structure.
-
-    Returns a new structure; the input is left untouched. Mirrors the schema
-    sanitizing other adapters do (e.g. Google ADK strips ``additionalProperties``).
-    """
-    if isinstance(schema, list):
-        return [_strip_numeric_constraints(item) for item in schema]
-    if not isinstance(schema, dict):
-        return schema
-    return {
-        key: _strip_numeric_constraints(value)
-        for key, value in schema.items()
-        if key not in _UNSUPPORTED_SCHEMA_KEYS
-    }
-
 
 def _tool_executions(response: RunOutput) -> list[Any]:
     return list(getattr(response, "tools", None) or [])
@@ -572,9 +544,8 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                     function_cls(
                         name=name,
                         description=fn.get("description", "") or "",
-                        parameters=_strip_numeric_constraints(
-                            fn.get("parameters") or {"type": "object", "properties": {}}
-                        ),
+                        parameters=fn.get("parameters")
+                        or {"type": "object", "properties": {}},
                         entrypoint=_make_band_entrypoint(name),
                         skip_entrypoint_processing=True,
                     )

@@ -28,6 +28,7 @@ from band.core.memory_types import (
     validate_subject_scope,
 )
 from band.core.protocols import AgentToolsProtocol
+from band.core.tool_filter import sanitize_tool_schema
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -2087,6 +2088,11 @@ class AgentTools(AgentToolsProtocol):
             schema = definition.input_model.model_json_schema()
             # Remove Pydantic-specific keys
             schema.pop("title", None)
+            # Pydantic Field(ge=..., le=...) renders as JSON-Schema minimum/maximum,
+            # which some providers reject on integer params (e.g. Gemini, and
+            # Anthropic-backed Agno). The bounds stay enforced at execution via
+            # model_validate, so drop them from the advertised schema.
+            schema = sanitize_tool_schema(schema, drop_numeric_bounds=True)
 
             if format == "openai":
                 tools.append(

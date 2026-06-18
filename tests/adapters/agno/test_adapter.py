@@ -23,7 +23,6 @@ from band.adapters.agno import (
     AgnoAdapter,
     _bind_room_tools,
     _make_band_entrypoint,
-    _strip_numeric_constraints,
 )
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.testing import FakeAgentTools
@@ -768,66 +767,6 @@ class TestHubContactExposure:
         assert wired == ["band_send_message", "band_add_contact"]
         # A run still executes per message against the single shared agent.
         assert copy.arun.await_count == 2
-
-
-class TestSchemaSanitization:
-    """Band pagination params carry numeric-range keywords (Pydantic ge/le ->
-    minimum/maximum); some providers reject those on integers, so the adapter
-    strips them before wiring tools into Agno."""
-
-    def test_strip_removes_range_keywords_recursively(self):
-        schema = {
-            "type": "object",
-            "properties": {
-                "page": {"type": "integer", "minimum": 1},
-                "page_size": {"type": "integer", "minimum": 1, "maximum": 100},
-                "name": {"type": "string"},
-            },
-        }
-
-        cleaned = _strip_numeric_constraints(schema)
-
-        assert cleaned["properties"]["page"] == {"type": "integer"}
-        assert cleaned["properties"]["page_size"] == {"type": "integer"}
-        assert cleaned["properties"]["name"] == {"type": "string"}
-        # The input schema is left untouched (a new structure is returned).
-        assert "maximum" in schema["properties"]["page_size"]
-
-    async def test_wired_tool_schema_has_no_numeric_constraints(
-        self, make_started_adapter
-    ):
-        schema = {
-            "type": "function",
-            "function": {
-                "name": "band_lookup_peers",
-                "description": "lookup peers",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "page_size": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "maximum": 100,
-                        },
-                    },
-                },
-            },
-        }
-        adapter, copy = await make_started_adapter()
-
-        await adapter.on_message(
-            _msg("room-1", "hi"),
-            SchemaTools([schema]),
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-
-        wired = copy.add_tool.call_args_list[0].args[0]
-        page_size = wired.parameters["properties"]["page_size"]
-        assert page_size == {"type": "integer"}
 
 
 class TestFeatureFilters:

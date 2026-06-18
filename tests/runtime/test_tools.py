@@ -971,6 +971,23 @@ class TestAgentToolsSchemas:
         assert "band_send_message" in tool_names
         assert "band_list_contacts" in tool_names
 
+    def test_schemas_drop_numeric_bounds(self, mock_rest_client):
+        """Pydantic Field(ge=.., le=..) renders minimum/maximum, which some
+        providers reject on integer params; the schemas must omit them while the
+        models still enforce the bounds at execution."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        schemas = tools.get_tool_schemas("openai", include_memory=True)
+
+        page_size = next(
+            s["function"]["parameters"]["properties"]["page_size"]
+            for s in schemas
+            if s["function"]["name"] == "band_lookup_peers"
+        )
+        assert "minimum" not in page_size
+        assert "maximum" not in page_size
+        assert page_size["type"] == "integer"
+
 
 class TestAgentToolsExecuteToolCall:
     """Test execute_tool_call dispatch."""
