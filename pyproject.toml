@@ -212,6 +212,7 @@ dev-crewai = [
 
 [project.scripts]
 band-acp = "band.integrations.acp.cli:entry_point"
+band-register-agent = "band.cli.register_agent:main"
 band-trigger = "band.cli.trigger:main"
 
 [tool.setuptools.packages.find]
@@ -225,6 +226,7 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "band.integrations.slack" = ["templates/*.yaml"]
+"band.cli" = ["*.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
