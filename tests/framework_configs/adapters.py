@@ -12,7 +12,7 @@ import inspect
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 from tests.framework_configs._sentinel import MISSING, STRICT_CI, _MissingSentinel
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
@@ -242,6 +242,9 @@ def _parlant_factory(**kw: Any) -> Any:
         mock_agent = MagicMock()
         mock_agent.id = "parlant-agent-123"
         mock_agent.name = "TestBot"
+        mock_agent.create_guideline = AsyncMock(
+            return_value=MagicMock(id="guideline-123")
+        )
         kw["parlant_agent"] = mock_agent
     return ParlantAdapter(**kw)
 
@@ -573,7 +576,8 @@ def _build_parlant_config() -> AdapterConfig:
             "system_prompt": "Custom system prompt",
             "custom_section": "Be helpful.",
         },
-        has_custom_tools_attr=False,
+        has_custom_tools_attr=True,
+        custom_tools_attr="_custom_tools",
         # on_started does a runtime `from parlant.core.application import Application`
         # which fails when parlant SDK is not installed (conflict group with crewai).
         skip_on_started_conformance=not _parlant_available,
