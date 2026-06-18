@@ -66,7 +66,9 @@ def load_environment() -> tuple[str, str]:
     return ws_url, rest_url
 
 
-def build_agent(config_key: str, instructions: str, ws_url: str, rest_url: str) -> Agent:
+def build_agent(
+    config_key: str, instructions: str, ws_url: str, rest_url: str
+) -> Agent:
     """Build a Band agent backed by an in-character Agno agent."""
     agno_agent = AgnoAgent(
         model=Claude(id="claude-sonnet-4-6"),
