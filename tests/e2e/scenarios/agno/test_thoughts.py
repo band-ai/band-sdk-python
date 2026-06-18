@@ -30,12 +30,12 @@ from tests.e2e.helpers import (
     listening_for_room_activity,
     log_banner,
     log_step,
+    running_agent,
     send_trigger_message,
 )
 from tests.e2e.scenarios.agno.conftest import (
     assert_thought_emitted,
     build_thinking_adapter,
-    running_agent,
 )
 
 logger = logging.getLogger(__name__)

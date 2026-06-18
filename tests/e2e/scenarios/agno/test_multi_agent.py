@@ -36,6 +36,7 @@ from tests.e2e.helpers import (
     listening_for_room_activity,
     log_banner,
     log_step,
+    running_agent,
     send_trigger_message,
 )
 from tests.e2e.scenarios.agno.conftest import (
@@ -46,7 +47,6 @@ from tests.e2e.scenarios.agno.conftest import (
     create_calculator_agno_adapter,
     grocery_list_text,
     participant_present,
-    running_agent,
     wait_participant_absent,
 )
 

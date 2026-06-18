@@ -7,35 +7,24 @@ focused on the flow being verified:
   ``build_thinking_adapter``)
 - the grocery-list fixture data used by the multi-agent scenarios
 - direct-REST assertion helpers (tool execution, reported total, participant
-  presence) and the ``running_agent`` lifecycle context manager
+  presence)
 - dedicated room fixtures
 
 Generic, framework-agnostic E2E utilities (WebSocket listeners, trigger
-messages, pretty logging, the second-agent fixtures) remain in
-``tests/e2e/helpers.py`` and ``tests/e2e/conftest.py``.
+messages, pretty logging, the second-agent fixtures, and the ``running_agent``
+lifecycle context manager) remain in ``tests/e2e/helpers.py`` and
+``tests/e2e/conftest.py``.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
 from band_rest import AsyncRestClient
-from tenacity import (
-    RetryCallState,
-    retry,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
 
-from band.agent import Agent
-from band.client.streaming.errors import WebSocketUpgradeError
 from band.core.simple_adapter import SimpleAdapter
 
 from tests.conftest_integration import fetch_all_context
@@ -44,39 +33,6 @@ from tests.e2e.conftest import E2ESettings, RoomAllocator
 from tests.e2e.helpers import find_tool_call_in_context, log_step
 
 logger = logging.getLogger(__name__)
-
-# The platform rate-limits how often a single agent may (re)open its WebSocket
-# "after a recent supersede" (HTTP 429). The restart scenarios deliberately
-# stop/start the same agent repeatedly, so back-to-back runs can trip this.
-# Retry the connect with tenacity, honoring the server-supplied retry-after.
-_RETRYABLE_WS_STATUS = frozenset({429, 503})
-_WS_CONNECT_ATTEMPTS = 6
-
-
-def _is_rate_limited_ws_error(exc: BaseException) -> bool:
-    return (
-        isinstance(exc, WebSocketUpgradeError)
-        and exc.status_code in _RETRYABLE_WS_STATUS
-    )
-
-
-def _ws_retry_wait(retry_state: RetryCallState) -> float:
-    """Wait the server-supplied ``retry_after`` if present, else back off."""
-    exc = retry_state.outcome.exception() if retry_state.outcome else None
-    if isinstance(exc, WebSocketUpgradeError) and exc.retry_after:
-        return float(exc.retry_after)
-    return wait_exponential(multiplier=2, min=2, max=30)(retry_state)
-
-
-def _log_ws_retry(retry_state: RetryCallState) -> None:
-    exc = retry_state.outcome.exception() if retry_state.outcome else None
-    status = getattr(exc, "status_code", "?")
-    log_step(
-        "retry",
-        f"WebSocket rate-limited (HTTP {status}); cooling down before "
-        f"attempt {retry_state.attempt_number + 1}",
-    )
-
 
 CALCULATOR_TOOL = "add_numbers"
 
@@ -217,63 +173,6 @@ def build_thinking_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 # =============================================================================
 # Lifecycle + assertion helpers
 # =============================================================================
-
-
-@retry(
-    retry=retry_if_exception(_is_rate_limited_ws_error),
-    wait=_ws_retry_wait,
-    stop=stop_after_attempt(_WS_CONNECT_ATTEMPTS),
-    before_sleep=_log_ws_retry,
-    reraise=True,
-)
-async def _start_agent(
-    adapter: SimpleAdapter[Any],
-    *,
-    agent_id: str,
-    api_key: str,
-    config: E2ESettings,
-) -> Agent:
-    """Create and start an agent, retrying when the connect is rate-limited.
-
-    A fresh ``Agent`` is built per attempt and a partial start is torn down
-    before tenacity retries, so a 429 leaves no half-connected agent behind.
-    """
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=agent_id,
-        api_key=api_key,
-        ws_url=config.band_ws_url,
-        rest_url=config.band_base_url,
-    )
-    try:
-        await agent.start()
-    except Exception:
-        with contextlib.suppress(Exception):
-            await agent.stop()
-        raise
-    return agent
-
-
-@asynccontextmanager
-async def running_agent(
-    adapter: SimpleAdapter[Any],
-    *,
-    agent_id: str,
-    api_key: str,
-    config: E2ESettings,
-) -> AsyncGenerator[Agent, None]:
-    """Run an agent for the duration of the ``async with`` block.
-
-    Wraps :func:`_start_agent` (which carries the tenacity retry) so callers
-    get clean start/stop bracketing.
-    """
-    agent = await _start_agent(
-        adapter, agent_id=agent_id, api_key=api_key, config=config
-    )
-    try:
-        yield agent
-    finally:
-        await agent.stop()
 
 
 async def wait_participant_absent(
