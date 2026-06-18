@@ -8,11 +8,13 @@ Run manually only, never in CI/CD:
 
 Configuration is loaded from .env.test with E2E-specific overrides from env vars.
 
-Fixtures live in concern-focused plugin modules (loaded via ``pytest_plugins``
-below): ``fixtures.clients`` (config + REST/WS clients), ``fixtures.rooms`` (room
-allocation + agent identity), ``fixtures.memory`` (memory toolkit). This module
-keeps only what tests import by name — ``E2ESettings``, the ``requires_*``
-markers, and the ``RoomAllocator`` type — plus the collection hook.
+Fixtures live in concern-focused modules: ``fixtures.clients`` (config + REST/WS
+clients), ``fixtures.rooms`` (room allocation + agent identity), ``fixtures.memory``
+(memory toolkit). They are imported into this conftest's namespace at the bottom
+of the file (not via ``pytest_plugins``, which is only honored in the top-level
+conftest) so they stay scoped to ``tests/e2e/``. This module also keeps what tests
+import by name — ``E2ESettings``, the ``requires_*`` markers, and the
+``RoomAllocator`` type — plus the collection hook.
 """
 
 from __future__ import annotations
@@ -33,14 +35,6 @@ _ENV_TEST_PATH = Path(__file__).parent.parent.parent / ".env.test"
 load_dotenv(_ENV_TEST_PATH, override=False)
 
 logger = logging.getLogger(__name__)
-
-# Fixture plugins, grouped by concern. pytest_plugins must be declared in a
-# conftest; listing the modules here keeps each fixture file small and focused.
-pytest_plugins = (
-    "tests.e2e.fixtures.clients",
-    "tests.e2e.fixtures.rooms",
-    "tests.e2e.fixtures.memory",
-)
 
 # Async callable: name -> (room_id, user_id, user_name). Shared by room fixtures
 # and by tests that accept an allocator; defined here so both can import it.
@@ -138,4 +132,35 @@ requires_e2e = pytest.mark.skipif(
 requires_openai = pytest.mark.skipif(
     not os.environ.get("OPENAI_API_KEY"),
     reason="OPENAI_API_KEY not set",
+)
+
+
+# =============================================================================
+# Fixture registration
+# =============================================================================
+# Imported here (rather than via ``pytest_plugins``, which is only honored in the
+# top-level conftest) so the fixtures stay scoped to ``tests/e2e/``. The imports
+# live at the bottom because the fixture modules import ``E2ESettings`` and
+# ``RoomAllocator`` from this module, which must already be defined above.
+from tests.e2e.fixtures.clients import (  # noqa: E402, F401
+    api_client,
+    e2e_config,
+    e2e_created_room_ids,
+    e2e_room_summary,
+    e2e_session_client,
+    e2e_session_client_2,
+    e2e_user_client,
+    ws_client,
+)
+from tests.e2e.fixtures.memory import memory  # noqa: E402, F401
+from tests.e2e.fixtures.rooms import (  # noqa: E402, F401
+    adapter_entry,
+    e2e_adapter_room,
+    e2e_agent_id,
+    e2e_agent_info,
+    e2e_agent_info_2,
+    e2e_fresh_room_allocator,
+    e2e_isolation_room_b,
+    e2e_parlant_room,
+    e2e_room_allocator,
 )

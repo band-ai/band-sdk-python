@@ -124,7 +124,9 @@ class TestAgentFactory:
         # End-to-end through the factory path: the factory's agent must be the
         # one actually run on a message, and its output delivered to the room.
         runtime_agent = _factory_agent_stub()
-        runtime_agent.arun = AsyncMock(return_value=RunOutput(content="hi from factory"))
+        runtime_agent.arun = AsyncMock(
+            return_value=RunOutput(content="hi from factory")
+        )
         adapter = AgnoAdapter(agent_factory=lambda: runtime_agent)
         await adapter.on_started("TestBot", "desc")
 

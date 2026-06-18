@@ -1,4 +1,4 @@
-"""E2E fixture plugins, loaded via ``pytest_plugins`` in ``tests/e2e/conftest.py``.
+"""E2E fixture modules, imported into ``tests/e2e/conftest.py``'s namespace.
 
 Split by concern: ``clients`` (config + REST/WS clients), ``rooms`` (room
 allocation + agent identity), ``memory`` (memory-test toolkit).
