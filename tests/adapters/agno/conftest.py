@@ -37,11 +37,17 @@ def make_agno_agent() -> Callable[..., tuple[MagicMock, MagicMock]]:
         *,
         update_memory_on_run: bool = False,
         enable_agentic_memory: bool = False,
+        add_history_to_context: bool = False,
+        db: object | None = None,
         response: RunOutput | None = None,
     ) -> tuple[MagicMock, MagicMock]:
         source = MagicMock(name="source_agent")
         source.update_memory_on_run = update_memory_on_run
         source.enable_agentic_memory = enable_agentic_memory
+        # Explicit falsy defaults: a bare MagicMock would expose these as truthy
+        # auto-attributes and spuriously trip the history-management guard.
+        source.add_history_to_context = add_history_to_context
+        source.db = db
 
         copy = MagicMock(name="copied_agent")
         copy.add_tool = MagicMock()
@@ -67,8 +73,14 @@ def make_started_adapter(
         response: RunOutput | None = None,
         *,
         features: AdapterFeatures | None = None,
+        add_history_to_context: bool = False,
+        db: object | None = None,
     ) -> tuple[AgnoAdapter, MagicMock]:
-        source, copy = make_agno_agent(response=response)
+        source, copy = make_agno_agent(
+            response=response,
+            add_history_to_context=add_history_to_context,
+            db=db,
+        )
         adapter = AgnoAdapter(source, features=features)
         await adapter.on_started("TestBot", "desc")
         return adapter, copy

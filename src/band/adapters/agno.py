@@ -125,12 +125,39 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._message_history: dict[str, list[Message]] = {}
         self._band_tools_wired = False
 
+        self._agno_manages_history = self._detect_agno_history(agent)
         self._warn_on_memory_collision(agent)
 
     @property
     def agent(self) -> AgnoAgent | None:
         """The running Agno agent, initialized in on_started."""
         return self._agent
+
+    def _detect_agno_history(self, agent: AgnoAgent) -> bool:
+        """Detect whether Agno persists and replays its own history.
+
+        Agno loads prior runs into context only when ``add_history_to_context``
+        is set *and* a database is attached (without a ``db`` the feature is
+        inert). When it does, Band must not also rehydrate platform history into
+        the run input, or the two history sources collide and contaminate the
+        model context. Band still keeps its own per-turn transcript store; it
+        simply stops feeding it back into the run.
+        """
+        manages = bool(
+            getattr(agent, "add_history_to_context", False)
+            and getattr(agent, "db", None) is not None
+        )
+        if manages:
+            warnings.warn(
+                "This Agno agent manages its own conversation history "
+                "(add_history_to_context=True with a database). Band's history "
+                "rehydration is disabled to avoid contaminating the context; "
+                "Agno will replay prior turns from its database via session "
+                "persistence.",
+                UserWarning,
+                stacklevel=3,
+            )
+        return manages
 
     def _warn_on_memory_collision(self, agent: AgnoAgent) -> None:
         """Warn when Band and Agno memory are both enabled."""
@@ -230,14 +257,23 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> list[Message]:
-        """Build Agno input for this turn."""
-        if is_session_bootstrap:
-            self._message_history[room_id] = list(history)
-        else:
-            self._message_history.setdefault(room_id, [])
+        """Build Agno input for this turn.
 
+        When the Agno agent manages its own history, build a fresh current-turn
+        list and do not seed or replay Band's transcript — Agno supplies prior
+        turns from its database. Otherwise seed and accumulate a Band-managed
+        transcript per room.
+        """
         message_cls = agno_message_class()
-        messages = self._message_history[room_id]
+        if self._agno_manages_history:
+            messages: list[Message] = []
+        else:
+            if is_session_bootstrap:
+                self._message_history[room_id] = list(history)
+            else:
+                self._message_history.setdefault(room_id, [])
+            messages = self._message_history[room_id]
+
         if participants_msg:
             messages.append(
                 message_cls(role="user", content=f"[System]: {participants_msg}")
