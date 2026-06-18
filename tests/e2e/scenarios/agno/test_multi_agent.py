@@ -30,7 +30,7 @@ import uuid
 import pytest
 from band_rest import AsyncRestClient
 
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.settings import E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     listening_for_room_activity,

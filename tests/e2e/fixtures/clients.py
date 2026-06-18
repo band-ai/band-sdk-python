@@ -15,7 +15,7 @@ from band_rest import AsyncRestClient
 
 from band.client.streaming import WebSocketClient
 
-from tests.e2e.conftest import E2ESettings
+from tests.e2e.settings import E2ESettings
 from tests.e2e.helpers import TrackingWebSocketClient
 
 logger = logging.getLogger(__name__)

@@ -25,7 +25,7 @@ from band_rest import AsyncRestClient
 
 from band import Agent
 from band.core.types import AdapterFeatures, Capability, Emit
-from tests.e2e.conftest import (
+from tests.e2e.settings import (
     E2ESettings,
     RoomAllocator,
     requires_e2e,

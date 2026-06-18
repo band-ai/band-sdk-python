@@ -14,7 +14,7 @@ from band_rest import AsyncRestClient
 from band import Agent
 from band.adapters.langgraph import LangGraphAdapter
 from band.core.types import AdapterFeatures, Capability
-from tests.e2e.conftest import E2ESettings, requires_e2e, requires_openai
+from tests.e2e.settings import E2ESettings, requires_e2e, requires_openai
 from tests.e2e.helpers import (
     MemoryProbe,
     TrackingWebSocketClient,

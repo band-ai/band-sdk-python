@@ -18,7 +18,7 @@ from band_rest import AsyncRestClient, ChatRoomRequest
 from band_rest.types import ParticipantRequest
 
 from tests.conftest_integration import is_no_clean_mode, is_room_alive
-from tests.e2e.conftest import RoomAllocator
+from tests.e2e.settings import RoomAllocator
 
 if TYPE_CHECKING:
     from tests.e2e.adapters.conftest import AdapterFactory

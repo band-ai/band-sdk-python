@@ -39,7 +39,7 @@ from agno.db.in_memory import InMemoryDb
 from band_rest import AsyncRestClient
 
 from tests.conftest_integration import fetch_all_context
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.settings import E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     assert_content_contains,

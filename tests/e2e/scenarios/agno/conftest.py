@@ -29,7 +29,7 @@ from band.core.simple_adapter import SimpleAdapter
 
 from tests.conftest_integration import fetch_all_context
 from tests.e2e.adapters.conftest import _require_anthropic_key
-from tests.e2e.conftest import E2ESettings, RoomAllocator
+from tests.e2e.settings import E2ESettings, RoomAllocator
 from tests.e2e.helpers import find_tool_call_in_context, log_step
 
 if TYPE_CHECKING:

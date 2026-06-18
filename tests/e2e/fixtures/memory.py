@@ -8,7 +8,7 @@ import pytest
 from band_rest import AsyncRestClient
 
 from tests.conftest_integration import is_no_clean_mode
-from tests.e2e.conftest import E2ESettings
+from tests.e2e.settings import E2ESettings
 from tests.e2e.helpers import MemoryProbe
 
 

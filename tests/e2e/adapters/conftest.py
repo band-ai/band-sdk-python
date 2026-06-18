@@ -19,7 +19,7 @@ import pytest
 
 from band.core.simple_adapter import SimpleAdapter
 
-from tests.e2e.conftest import E2ESettings
+from tests.e2e.settings import E2ESettings
 
 logger = logging.getLogger(__name__)
 

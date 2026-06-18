@@ -18,7 +18,7 @@ from band.core.simple_adapter import SimpleAdapter
 from tests.e2e.helpers.log import log_step
 
 if TYPE_CHECKING:
-    from tests.e2e.conftest import E2ESettings
+    from tests.e2e.settings import E2ESettings
 
 # The platform rate-limits how often one agent_id may reopen its WebSocket after
 # a recent supersede (HTTP 429); a fresh agent is built per attempt so a partial
