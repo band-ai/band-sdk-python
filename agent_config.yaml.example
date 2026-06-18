@@ -171,7 +171,8 @@ gemini_agent:
 # Agno Examples
 # =============================================================================
 
-# 01_basic_agent.py, 02_tool_reporting.py
+# 01_basic_agent.py, 02_tool_reporting.py, 04_memory_secretary.py,
+# 05_agno_db_history.py
 agno_agent:
   agent_id: ""
   api_key: ""
