@@ -439,15 +439,41 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             logger.debug("Room %s msg %s: agent produced no reply", room_id, msg.id)
             return
 
-        mentions = [msg.sender_id]
-        logger.info(
-            "Room %s msg %s: sending reply (%d chars), mentions=%s",
+        # Address the reply to the sender. ``sender_id`` is the primary
+        # identifier, but it may not match a cached participant (id-space
+        # mismatch or a stale cache); fall back to the display name. An
+        # unresolvable mention raises ValueError in mention resolution, which
+        # would otherwise fail the whole turn — try each candidate and degrade
+        # to a warning rather than crashing.
+        candidates = [c for c in (msg.sender_id, msg.sender_name) if c]
+        for candidate in candidates:
+            try:
+                await tools.send_message(text, mentions=[candidate])
+            except ValueError as e:
+                logger.debug(
+                    "Room %s msg %s: mention %r did not resolve: %s",
+                    room_id,
+                    msg.id,
+                    candidate,
+                    e,
+                )
+            else:
+                logger.info(
+                    "Room %s msg %s: sent reply (%d chars), mention=%s",
+                    room_id,
+                    msg.id,
+                    len(text),
+                    candidate,
+                )
+                return
+
+        logger.warning(
+            "Room %s msg %s: no resolvable mention for sender %s (%s); reply not delivered",
             room_id,
             msg.id,
-            len(text),
-            mentions,
+            msg.sender_id,
+            msg.sender_name,
         )
-        await tools.send_message(text, mentions=mentions)
 
     def _ensure_band_tools(self, tools: AgentToolsProtocol) -> None:
         """Additively wire this room's Band tools onto the shared agent.

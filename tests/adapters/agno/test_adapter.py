@@ -407,6 +407,58 @@ class TestReply:
 
         tools.assert_no_messages_sent()
 
+    async def test_reply_falls_back_to_sender_name_when_id_unresolvable(
+        self, make_started_adapter, sample_platform_message
+    ):
+        # sender_id may not match a cached participant (id-space mismatch); the
+        # reply should retry with the display name rather than failing the turn.
+        class _IdRejectingTools(FakeAgentTools):
+            async def send_message(self, content, mentions=None):
+                if mentions and mentions[0] == sample_platform_message.sender_id:
+                    raise ValueError(f"Unknown participant '{mentions[0]}'")
+                return await super().send_message(content, mentions=mentions)
+
+        adapter, _ = await make_started_adapter(RunOutput(content="hello"))
+        tools = _IdRejectingTools()
+
+        await adapter.on_message(
+            sample_platform_message,
+            tools,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tools.assert_message_sent(
+            content="hello", mentions=[sample_platform_message.sender_name]
+        )
+
+    async def test_reply_does_not_crash_when_no_mention_resolves(
+        self, make_started_adapter, sample_platform_message
+    ):
+        # An unresolvable sender must not fail the whole turn (which would mark
+        # the inbound message permanently failed).
+        class _AllRejectingTools(FakeAgentTools):
+            async def send_message(self, content, mentions=None):
+                raise ValueError("Unknown participant")
+
+        adapter, _ = await make_started_adapter(RunOutput(content="hello"))
+        tools = _AllRejectingTools()
+
+        await adapter.on_message(
+            sample_platform_message,
+            tools,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        tools.assert_no_messages_sent()
+
 
 class TestEmitExecution:
     async def test_emits_tool_call_and_result_events(
