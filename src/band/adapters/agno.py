@@ -25,6 +25,7 @@ from band.converters.agno import (
     agno_function_class,
     agno_message_class,
 )
+from band.runtime.prompts import BASE_INSTRUCTIONS, CONTACT_SECTION, MEMORY_SECTION
 
 if TYPE_CHECKING:
     from agno.agent import Agent as AgnoAgent
@@ -345,7 +346,32 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 len(wired),
                 ", ".join(wired),
             )
+        self._inject_band_instructions()
         self._band_tools_wired = True
+
+    def _inject_band_instructions(self) -> None:
+        """Append Band tool guidance to the copied agent's system message.
+
+        Appended to Agno's ``additional_context`` so the developer's own
+        instructions are preserved.
+        """
+        if self._agent is None:
+            return
+
+        guidance = self._band_instructions()
+        existing = getattr(self._agent, "additional_context", None)
+        self._agent.additional_context = (
+            f"{existing}\n\n{guidance}" if existing else guidance
+        )
+
+    def _band_instructions(self) -> str:
+        """Compose Band guidance gated on enabled capabilities."""
+        parts: list[str] = [BASE_INSTRUCTIONS.strip()]
+        if Capability.MEMORY in self.features.capabilities:
+            parts.append(MEMORY_SECTION.strip())
+        if Capability.CONTACTS in self.features.capabilities:
+            parts.append(CONTACT_SECTION.strip())
+        return "\n\n".join(parts)
 
     def _build_band_tools(self, tools: AgentToolsProtocol) -> list[Function]:
         """Convert Band tool schemas into Agno Functions."""

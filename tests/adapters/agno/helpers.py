@@ -11,44 +11,18 @@ without a mocking framework.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
+from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.response import ToolExecution
-from agno.run.agent import RunOutput
+from agno.models.response import ModelResponse, ToolExecution
 
-from band.adapters.agno import AgnoAdapter
 from band.core.types import (
-    AdapterFeatures,
     AgentInput,
     HistoryProvider,
     PlatformMessage,
 )
 from band.testing import FakeAgentTools
-
-
-def make_agno_agent(
-    *,
-    update_memory_on_run: bool = False,
-    enable_agentic_memory: bool = False,
-    response: RunOutput | None = None,
-) -> tuple[MagicMock, MagicMock]:
-    """Return (source_agent, copied_agent) fakes.
-
-    ``deep_copy()`` returns the copy, mirroring how the adapter runs against a
-    copy of the developer's agent. The copy's ``arun`` yields ``response``.
-    """
-    source = MagicMock(name="source_agent")
-    source.update_memory_on_run = update_memory_on_run
-    source.enable_agentic_memory = enable_agentic_memory
-
-    copy = MagicMock(name="copied_agent")
-    copy.add_tool = MagicMock()
-    copy.arun = AsyncMock(
-        return_value=response if response is not None else RunOutput()
-    )
-    source.deep_copy = MagicMock(return_value=copy)
-    return source, copy
 
 
 def tool_execution(
@@ -68,16 +42,38 @@ def tool_execution(
     )
 
 
-async def started(
-    response: RunOutput | None = None,
-    *,
-    features: AdapterFeatures | None = None,
-) -> tuple[AgnoAdapter, MagicMock]:
-    """Build an adapter past ``on_started`` and return (adapter, copied_agent)."""
-    source, copy = make_agno_agent(response=response)
-    adapter = AgnoAdapter(source, features=features)
-    await adapter.on_started("TestBot", "desc")
-    return adapter, copy
+class CapturingModel(Model):
+    """A real Agno model that records the messages Agno asks it to respond to.
+
+    Lets tests assert on the actual system prompt Agno assembles (the agent's
+    own instructions plus ``additional_context``), rather than the attribute the
+    adapter sets. Overriding ``aresponse`` skips the provider call path, so the
+    abstract invoke hooks are inert stubs.
+    """
+
+    def __init__(self, content: str = "ok") -> None:
+        super().__init__(id="capturing", provider="fake")
+        self._content = content
+        self.captured_messages: list[Message] | None = None
+
+    def invoke(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any: ...
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Any: ...
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> Any: ...
+    def _parse_provider_response(self, *args: Any, **kwargs: Any) -> Any: ...
+    def _parse_provider_response_delta(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    async def aresponse(self, messages: list[Message], **kwargs: Any) -> ModelResponse:
+        self.captured_messages = messages
+        return ModelResponse(content=self._content)
+
+    @property
+    def captured_system_prompt(self) -> str:
+        """The concatenated system message(s) Agno sent to the model."""
+        messages = self.captured_messages or []
+        return "\n".join(
+            m.content for m in messages if m.role == "system" and m.content
+        )
 
 
 class SchemaTools(FakeAgentTools):

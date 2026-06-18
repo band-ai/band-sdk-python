@@ -16,7 +16,7 @@ from agno.run.agent import RunOutput
 from band.runtime.formatters import format_history_for_llm
 from tests.framework_configs.fixtures import TOOL_CALL_SEARCH, TOOL_RESULT_SEARCH
 
-from .helpers import make_agent_input, platform_msg, run_input, started
+from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_input
 
 
 class TestRehydrationPipeline:
@@ -24,7 +24,7 @@ class TestRehydrationPipeline:
     actual run input Agno received."""
 
     async def test_all_message_kinds_become_the_right_messages(
-        self, sample_platform_message
+        self, make_started_adapter, sample_platform_message
     ):
         # Authentic rehydration: build platform dicts and run them through the
         # real runtime formatter (which also drops the current message).
@@ -51,7 +51,7 @@ class TestRehydrationPipeline:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await started(RunOutput(content="ack"))
+        adapter, copy = await make_started_adapter(RunOutput(content="ack"))
 
         await adapter.on_event(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
@@ -71,7 +71,9 @@ class TestRehydrationPipeline:
         assert msgs[3].tool_call_id == "tc_1"
         assert msgs[-1].content == sample_platform_message.format_for_llm()
 
-    async def test_unsupported_kinds_are_dropped(self, sample_platform_message):
+    async def test_unsupported_kinds_are_dropped(
+        self, make_started_adapter, sample_platform_message
+    ):
         raw = format_history_for_llm(
             [
                 platform_msg("h1", "hello", sender_name="Alice"),
@@ -86,7 +88,7 @@ class TestRehydrationPipeline:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await started(RunOutput(content="ack"))
+        adapter, copy = await make_started_adapter(RunOutput(content="ack"))
 
         await adapter.on_event(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
@@ -100,13 +102,13 @@ class TestRehydrationPipeline:
         ]
 
     async def test_history_is_from_history_but_current_message_is_live(
-        self, sample_platform_message
+        self, make_started_adapter, sample_platform_message
     ):
         raw = format_history_for_llm(
             [platform_msg("h1", "hi", sender_name="Alice")],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await started(RunOutput(content="ack"))
+        adapter, copy = await make_started_adapter(RunOutput(content="ack"))
 
         await adapter.on_event(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
@@ -117,9 +119,9 @@ class TestRehydrationPipeline:
         assert not msgs[-1].from_history  # the message to actually answer
 
     async def test_participants_and_contacts_injected_before_current_message(
-        self, sample_platform_message
+        self, make_started_adapter, sample_platform_message
     ):
-        adapter, copy = await started(RunOutput(content="ok"))
+        adapter, copy = await make_started_adapter(RunOutput(content="ok"))
 
         await adapter.on_event(
             make_agent_input(
@@ -141,7 +143,7 @@ class TestRehydrationPipeline:
 
 class TestUnansweredMessage:
     async def test_current_message_excluded_from_history_then_answered(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
         current = sample_platform_message
         # The platform context includes the current message; the formatter must
@@ -156,7 +158,9 @@ class TestUnansweredMessage:
         assert len(raw) == 1
         assert all(current.content not in h["content"] for h in raw)
 
-        adapter, copy = await started(RunOutput(content="here is your answer"))
+        adapter, copy = await make_started_adapter(
+            RunOutput(content="here is your answer")
+        )
 
         await adapter.on_event(
             make_agent_input(current, raw, is_session_bootstrap=True, tools=tools)
@@ -171,7 +175,7 @@ class TestUnansweredMessage:
         assert msgs[-1].content == formatted
 
     async def test_answers_unanswered_message_on_restart_bootstrap(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
         # Agent restarts: first event is bootstrap, with a completed exchange in
         # history and a brand-new unanswered question as the current message.
@@ -184,7 +188,7 @@ class TestUnansweredMessage:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await started(RunOutput(content="fresh answer"))
+        adapter, copy = await make_started_adapter(RunOutput(content="fresh answer"))
 
         await adapter.on_event(
             make_agent_input(
@@ -199,7 +203,7 @@ class TestUnansweredMessage:
         assert run_input(copy)[-1].content == sample_platform_message.format_for_llm()
 
     async def test_trailing_unanswered_user_turns_are_preserved(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
         # Several user turns with no assistant reply between them: agno keeps them
         # all as user messages (it does not require complete exchanges).
@@ -211,7 +215,7 @@ class TestUnansweredMessage:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await started(RunOutput(content="answering all"))
+        adapter, copy = await make_started_adapter(RunOutput(content="answering all"))
 
         await adapter.on_event(
             make_agent_input(
@@ -231,7 +235,7 @@ class TestUnansweredMessage:
 
 class TestMultiTurnCarryover:
     async def test_persisted_transcript_feeds_the_next_turn(
-        self, sample_platform_message
+        self, make_started_adapter, sample_platform_message
     ):
         # Turn 1's run produces a transcript; _persist_turn keeps it and the next
         # turn must build on top of it (carryover through the real on_message path).
@@ -242,7 +246,7 @@ class TestMultiTurnCarryover:
                 Message(role="assistant", content="a1"),
             ],
         )
-        adapter, copy = await started(turn)
+        adapter, copy = await make_started_adapter(turn)
 
         await adapter.on_event(
             make_agent_input(sample_platform_message, [], is_session_bootstrap=True)

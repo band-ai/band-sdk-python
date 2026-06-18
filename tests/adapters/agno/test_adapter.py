@@ -25,17 +25,15 @@ from band.adapters.agno import (
 from band.core.types import AdapterFeatures, Capability, Emit
 from band.testing import FakeAgentTools
 
-from .helpers import (
+from tests.adapters.agno.helpers import (
     SchemaTools,
-    make_agno_agent,
     openai_tool_schema,
-    started,
     tool_execution,
 )
 
 
 class TestOnStarted:
-    async def test_runs_against_a_deep_copy_not_the_source(self):
+    async def test_runs_against_a_deep_copy_not_the_source(self, make_agno_agent):
         source, copy = make_agno_agent()
         adapter = AgnoAdapter(source)
 
@@ -45,14 +43,16 @@ class TestOnStarted:
         assert adapter.agent is copy
         assert adapter.agent is not source
 
-    async def test_syncs_converter_identity(self):
-        adapter, _ = await started()
+    async def test_syncs_converter_identity(self, make_started_adapter):
+        adapter, _ = await make_started_adapter()
 
         assert adapter.history_converter._agent_name == "TestBot"
 
 
 class TestMemoryCollisionWarning:
-    def test_warns_on_update_memory_on_run_with_memory_capability(self):
+    def test_warns_on_update_memory_on_run_with_memory_capability(
+        self, make_agno_agent
+    ):
         source, _ = make_agno_agent(update_memory_on_run=True)
 
         with pytest.warns(UserWarning, match="update_memory_on_run"):
@@ -60,7 +60,7 @@ class TestMemoryCollisionWarning:
                 source, features=AdapterFeatures(capabilities={Capability.MEMORY})
             )
 
-    def test_warns_on_agentic_memory_with_memory_capability(self):
+    def test_warns_on_agentic_memory_with_memory_capability(self, make_agno_agent):
         source, _ = make_agno_agent(enable_agentic_memory=True)
 
         with pytest.warns(UserWarning, match="enable_agentic_memory"):
@@ -68,7 +68,7 @@ class TestMemoryCollisionWarning:
                 source, features=AdapterFeatures(capabilities={Capability.MEMORY})
             )
 
-    def test_no_warning_without_memory_capability(self):
+    def test_no_warning_without_memory_capability(self, make_agno_agent):
         source, _ = make_agno_agent(
             update_memory_on_run=True, enable_agentic_memory=True
         )
@@ -79,14 +79,16 @@ class TestMemoryCollisionWarning:
 
 
 class TestBandToolWiring:
-    async def test_wires_each_schema_once(self, sample_platform_message):
+    async def test_wires_each_schema_once(
+        self, make_started_adapter, sample_platform_message
+    ):
         tools = SchemaTools(
             [
                 openai_tool_schema("band_send_message"),
                 openai_tool_schema("band_lookup_peers"),
             ]
         )
-        adapter, copy = await started()
+        adapter, copy = await make_started_adapter()
 
         await adapter.on_message(
             sample_platform_message,
@@ -112,9 +114,11 @@ class TestBandToolWiring:
         wired_names = [call.args[0].name for call in copy.add_tool.call_args_list]
         assert wired_names == ["band_send_message", "band_lookup_peers"]
 
-    async def test_capability_flags_drive_schema_request(self, sample_platform_message):
+    async def test_capability_flags_drive_schema_request(
+        self, make_started_adapter, sample_platform_message
+    ):
         tools = SchemaTools([])
-        adapter, _ = await started(
+        adapter, _ = await make_started_adapter(
             features=AdapterFeatures(
                 capabilities={Capability.MEMORY, Capability.CONTACTS}
             )
@@ -135,10 +139,10 @@ class TestBandToolWiring:
         ]
 
     async def test_no_capabilities_excludes_memory_and_contacts(
-        self, sample_platform_message
+        self, make_started_adapter, sample_platform_message
     ):
         tools = SchemaTools([])
-        adapter, _ = await started()
+        adapter, _ = await make_started_adapter()
 
         await adapter.on_message(
             sample_platform_message,
@@ -153,6 +157,54 @@ class TestBandToolWiring:
         assert tools.schema_calls == [
             {"include_memory": False, "include_contacts": False}
         ]
+
+
+class TestBandInstructionInjection:
+    """Drive a real Agno agent so we assert on the system prompt Agno actually
+    assembled and sent to the model, not the attribute the adapter set."""
+
+    @pytest.mark.parametrize(
+        ("capabilities", "present", "absent"),
+        [
+            (set(), [], ["## Memory Tools", "## Contact Management Tools"]),
+            (
+                {Capability.MEMORY},
+                ["## Memory Tools"],
+                ["## Contact Management Tools"],
+            ),
+            (
+                {Capability.CONTACTS},
+                ["## Contact Management Tools"],
+                ["## Memory Tools"],
+            ),
+        ],
+    )
+    async def test_capability_sections_gated_in_model_prompt(
+        self, run_real_agent, sample_platform_message, capabilities, present, absent
+    ):
+        model = await run_real_agent(
+            sample_platform_message,
+            features=AdapterFeatures(capabilities=capabilities),
+        )
+        prompt = model.captured_system_prompt
+
+        assert "## Environment" in prompt  # base guidance always injected
+        assert all(section in prompt for section in present)
+        assert all(section not in prompt for section in absent)
+
+    async def test_developer_instructions_survive_in_prompt(
+        self, run_real_agent, sample_platform_message
+    ):
+        model = await run_real_agent(
+            sample_platform_message,
+            instructions="You are Dev, a niche specialist.",
+            additional_context="Keep replies under 10 words.",
+        )
+        prompt = model.captured_system_prompt
+
+        assert "You are Dev, a niche specialist." in prompt
+        assert "Keep replies under 10 words." in prompt
+        assert "## Environment" in prompt
 
 
 class TestBandEntrypointBinding:
@@ -190,9 +242,9 @@ class TestBandEntrypointBinding:
 
 class TestReply:
     async def test_sends_fallback_text_when_agent_did_not_post(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
-        adapter, _ = await started(RunOutput(content="hello"))
+        adapter, _ = await make_started_adapter(RunOutput(content="hello"))
 
         await adapter.on_message(
             sample_platform_message,
@@ -207,12 +259,12 @@ class TestReply:
         tools.assert_message_sent(content="hello", mentions=["user-456"])
 
     async def test_skips_fallback_when_agent_called_band_send_message(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
         response = RunOutput(
             content="hello", tools=[tool_execution("band_send_message")]
         )
-        adapter, _ = await started(response)
+        adapter, _ = await make_started_adapter(response)
 
         await adapter.on_message(
             sample_platform_message,
@@ -226,8 +278,10 @@ class TestReply:
 
         tools.assert_no_messages_sent()
 
-    async def test_no_send_for_empty_content(self, sample_platform_message, tools):
-        adapter, _ = await started(RunOutput(content="   "))
+    async def test_no_send_for_empty_content(
+        self, make_started_adapter, sample_platform_message, tools
+    ):
+        adapter, _ = await make_started_adapter(RunOutput(content="   "))
 
         await adapter.on_message(
             sample_platform_message,
@@ -244,12 +298,12 @@ class TestReply:
 
 class TestEmitExecution:
     async def test_emits_tool_call_and_result_events(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
         response = RunOutput(
             tools=[tool_execution("band_lookup_peers", args={"page": "1"}, result="ok")]
         )
-        adapter, _ = await started(
+        adapter, _ = await make_started_adapter(
             response, features=AdapterFeatures(emit={Emit.EXECUTION})
         )
 
@@ -276,10 +330,10 @@ class TestEmitExecution:
         assert result_payload["is_error"] is False
 
     async def test_self_reporting_tools_are_not_re_emitted(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
         response = RunOutput(tools=[tool_execution("band_send_message")])
-        adapter, _ = await started(
+        adapter, _ = await make_started_adapter(
             response, features=AdapterFeatures(emit={Emit.EXECUTION})
         )
 
@@ -296,10 +350,10 @@ class TestEmitExecution:
         assert tools.events_sent == []
 
     async def test_no_events_without_execution_emit(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
         response = RunOutput(tools=[tool_execution("band_lookup_peers")])
-        adapter, _ = await started(response)  # no emit configured
+        adapter, _ = await make_started_adapter(response)  # no emit configured
 
         await adapter.on_message(
             sample_platform_message,
@@ -315,9 +369,11 @@ class TestEmitExecution:
 
 
 class TestEmitThoughts:
-    async def test_emits_reasoning_as_thought(self, sample_platform_message, tools):
+    async def test_emits_reasoning_as_thought(
+        self, make_started_adapter, sample_platform_message, tools
+    ):
         response = RunOutput(reasoning_content="thinking hard")
-        adapter, _ = await started(
+        adapter, _ = await make_started_adapter(
             response, features=AdapterFeatures(emit={Emit.THOUGHTS})
         )
 
@@ -335,10 +391,10 @@ class TestEmitThoughts:
         assert tools.events_sent[0]["content"] == "thinking hard"
 
     async def test_no_thought_without_thoughts_emit(
-        self, sample_platform_message, tools
+        self, make_started_adapter, sample_platform_message, tools
     ):
         response = RunOutput(reasoning_content="thinking hard")
-        adapter, _ = await started(response)  # no emit configured
+        adapter, _ = await make_started_adapter(response)  # no emit configured
 
         await adapter.on_message(
             sample_platform_message,
@@ -352,8 +408,10 @@ class TestEmitThoughts:
 
         assert tools.events_sent == []
 
-    async def test_no_thought_for_blank_reasoning(self, sample_platform_message, tools):
-        adapter, _ = await started(
+    async def test_no_thought_for_blank_reasoning(
+        self, make_started_adapter, sample_platform_message, tools
+    ):
+        adapter, _ = await make_started_adapter(
             RunOutput(reasoning_content="  "),
             features=AdapterFeatures(emit={Emit.THOUGHTS}),
         )
@@ -372,7 +430,7 @@ class TestEmitThoughts:
 
 
 class TestPersistAndAccumulate:
-    def test_persist_keeps_only_conversation_roles(self):
+    def test_persist_keeps_only_conversation_roles(self, make_agno_agent):
         source, _ = make_agno_agent()
         adapter = AgnoAdapter(source)
         response = RunOutput(
@@ -390,7 +448,9 @@ class TestPersistAndAccumulate:
         kept = [m.role for m in adapter._message_history["room-1"]]
         assert kept == ["user", "assistant", "tool"]
 
-    def test_bootstrap_seeds_then_followup_accumulates(self, sample_platform_message):
+    def test_bootstrap_seeds_then_followup_accumulates(
+        self, make_agno_agent, sample_platform_message
+    ):
         source, _ = make_agno_agent()
         adapter = AgnoAdapter(source)
         seed = [Message(role="user", content="earlier")]
@@ -420,7 +480,7 @@ class TestPersistAndAccumulate:
 
 
 class TestOnCleanup:
-    async def test_drops_room_transcript(self):
+    async def test_drops_room_transcript(self, make_agno_agent):
         source, _ = make_agno_agent()
         adapter = AgnoAdapter(source)
         adapter._message_history["room-1"] = [Message(role="user", content="hi")]
@@ -429,7 +489,7 @@ class TestOnCleanup:
 
         assert "room-1" not in adapter._message_history
 
-    async def test_unknown_room_is_noop(self):
+    async def test_unknown_room_is_noop(self, make_agno_agent):
         source, _ = make_agno_agent()
         adapter = AgnoAdapter(source)
 
@@ -437,7 +497,7 @@ class TestOnCleanup:
 
 
 class TestUsedBeforeStarted:
-    async def test_run_agent_before_on_started_raises(self):
+    async def test_run_agent_before_on_started_raises(self, make_agno_agent):
         source, _ = make_agno_agent()
         adapter = AgnoAdapter(source)
 
