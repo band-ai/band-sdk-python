@@ -85,8 +85,6 @@ class TestAgnoDatabaseRestart:
         # --- Phase 1: start the agent and have it store the secret ---
         log_step(1, f"starting db-backed Agno agent (room {room_id})")
         adapter = build_db_backed_agno_adapter(e2e_config, db=db, session_id=room_id)
-        # Guard engaged: the adapter has disabled Band's history rehydration.
-        assert adapter._agno_manages_history is True
 
         async with running_agent(
             adapter,
@@ -94,6 +92,9 @@ class TestAgnoDatabaseRestart:
             api_key=e2e_config.band_api_key,
             config=e2e_config,
         ):
+            # Guard engaged after startup: detection runs in on_started, so by
+            # now the adapter has disabled Band's history rehydration.
+            assert adapter._agno_manages_history is True
             log_step(2, f"user asks the agent to remember {secret_code}")
             async with listening_for_room_activity(
                 ws_client,
@@ -116,7 +117,6 @@ class TestAgnoDatabaseRestart:
         # --- Phase 2: reboot (fresh instance, same db + session) and recall ---
         log_step("restart", "agent stopped; rebooting with the same db + session_id")
         adapter2 = build_db_backed_agno_adapter(e2e_config, db=db, session_id=room_id)
-        assert adapter2._agno_manages_history is True
 
         async with running_agent(
             adapter2,
@@ -124,6 +124,7 @@ class TestAgnoDatabaseRestart:
             api_key=e2e_config.band_api_key,
             config=e2e_config,
         ):
+            assert adapter2._agno_manages_history is True
             log_step(3, "user asks the rebooted agent to recall the code")
             async with listening_for_room_activity(
                 ws_client,
