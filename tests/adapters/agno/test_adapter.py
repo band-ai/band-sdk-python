@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -22,7 +23,7 @@ from band.adapters.agno import (
     _bind_room_tools,
     _make_band_entrypoint,
 )
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.testing import FakeAgentTools
 
 from tests.adapters.agno.helpers import (
@@ -30,6 +31,27 @@ from tests.adapters.agno.helpers import (
     openai_tool_schema,
     tool_execution,
 )
+
+
+def _msg(
+    room_id: str,
+    content: str,
+    *,
+    msg_id: str = "m1",
+    sender_id: str = "user-1",
+) -> PlatformMessage:
+    """A minimal PlatformMessage for driving on_message in a given room."""
+    return PlatformMessage(
+        id=msg_id,
+        room_id=room_id,
+        content=content,
+        sender_id=sender_id,
+        sender_type="User",
+        sender_name="Alice",
+        message_type="text",
+        metadata={},
+        created_at=datetime.now(timezone.utc),
+    )
 
 
 class TestOnStarted:
@@ -99,7 +121,7 @@ class TestBandToolWiring:
             is_session_bootstrap=True,
             room_id="room-1",
         )
-        # Second turn must not re-wire (the _band_tools_wired guard).
+        # Second turn must not re-wire (idempotent by name via _wired_tool_names).
         await adapter.on_message(
             sample_platform_message,
             tools,
@@ -504,4 +526,254 @@ class TestUsedBeforeStarted:
         with pytest.raises(RuntimeError, match="before on_started"):
             await adapter._run_agent(
                 [], FakeAgentTools(), room_id="room-1", msg_id="m1"
+            )
+
+
+class TestSessionIsolation:
+    async def test_arun_uses_room_id_as_session_id(self, make_started_adapter):
+        adapter, copy = await make_started_adapter()
+
+        await adapter.on_message(
+            _msg("room-A", "hi"),
+            FakeAgentTools(),
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-A",
+        )
+
+        assert copy.arun.await_args.kwargs["session_id"] == "room-A"
+
+    async def test_custom_session_id_factory_is_used(self, make_agno_agent):
+        source, copy = make_agno_agent()
+        adapter = AgnoAdapter(source, session_id_factory=lambda room: f"sess::{room}")
+        await adapter.on_started("TestBot", "desc")
+
+        await adapter.on_message(
+            _msg("room-A", "hi"),
+            FakeAgentTools(),
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-A",
+        )
+
+        assert copy.arun.await_args.kwargs["session_id"] == "sess::room-A"
+
+    async def test_two_rooms_get_isolated_sessions_and_inputs(
+        self, make_started_adapter
+    ):
+        adapter, copy = await make_started_adapter()
+
+        await adapter.on_message(
+            _msg("room-A", "alpha-secret"),
+            FakeAgentTools(),
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-A",
+        )
+        await adapter.on_message(
+            _msg("room-B", "beta-secret"),
+            FakeAgentTools(),
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-B",
+        )
+
+        calls = copy.arun.await_args_list
+        assert calls[0].kwargs["session_id"] == "room-A"
+        assert calls[1].kwargs["session_id"] == "room-B"
+
+        room_b_input = " ".join(m.content or "" for m in calls[1].kwargs["input"])
+        assert "beta-secret" in room_b_input
+        assert "alpha-secret" not in room_b_input
+
+
+class TestHubContactExposure:
+    """The adapter decides contact exposure (mirrors LangGraph): the CONTACTS
+    capability OR a hub room force-includes contact tool schemas."""
+
+    async def test_normal_room_does_not_request_contacts(self, make_started_adapter):
+        adapter, _ = await make_started_adapter()
+        tools = SchemaTools([], room_id="room-A")
+
+        await adapter.on_message(
+            _msg("room-A", "hi"),
+            tools,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-A",
+        )
+
+        assert tools.schema_calls == [
+            {"include_memory": False, "include_contacts": False}
+        ]
+
+    async def test_hub_room_forces_contacts(self, make_started_adapter):
+        adapter, _ = await make_started_adapter()
+        tools = SchemaTools([], hub_room_id="hub", room_id="hub")
+
+        await adapter.on_message(
+            _msg("hub", "hi"),
+            tools,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="hub",
+        )
+
+        assert tools.schema_calls == [
+            {"include_memory": False, "include_contacts": True}
+        ]
+
+    async def test_contact_tools_added_additively_after_hub(self, make_started_adapter):
+        adapter, copy = await make_started_adapter()
+
+        normal = SchemaTools(
+            [openai_tool_schema("band_send_message")], room_id="room-A"
+        )
+        await adapter.on_message(
+            _msg("room-A", "hi"),
+            normal,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-A",
+        )
+        assert [c.args[0].name for c in copy.add_tool.call_args_list] == [
+            "band_send_message"
+        ]
+
+        hub = SchemaTools(
+            [
+                openai_tool_schema("band_send_message"),
+                openai_tool_schema("band_add_contact"),
+            ],
+            hub_room_id="hub",
+            room_id="hub",
+        )
+        await adapter.on_message(
+            _msg("hub", "hi"),
+            hub,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="hub",
+        )
+
+        # band_send_message is not re-added; band_add_contact is additively wired.
+        wired = [c.args[0].name for c in copy.add_tool.call_args_list]
+        assert wired == ["band_send_message", "band_add_contact"]
+        # A run still executes per message against the single shared agent.
+        assert copy.arun.await_count == 2
+
+
+class TestFeatureFilters:
+    """AdapterFeatures include/exclude/category filters gate which Band tools
+    are wired (parity with LangGraph)."""
+
+    ALL_SCHEMAS = [
+        openai_tool_schema("band_send_message"),  # chat
+        openai_tool_schema("band_lookup_peers"),  # chat
+        openai_tool_schema("band_store_memory"),  # memory
+        openai_tool_schema("band_add_contact"),  # contacts
+    ]
+
+    async def _wired_names(self, adapter, copy) -> list[str]:
+        await adapter.on_message(
+            _msg("room-A", "hi"),
+            SchemaTools(self.ALL_SCHEMAS),
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-A",
+        )
+        return [c.args[0].name for c in copy.add_tool.call_args_list]
+
+    async def test_include_tools_keeps_only_named(self, make_started_adapter):
+        adapter, copy = await make_started_adapter(
+            features=AdapterFeatures(include_tools=["band_send_message"])
+        )
+
+        assert await self._wired_names(adapter, copy) == ["band_send_message"]
+
+    async def test_exclude_tools_drops_named(self, make_started_adapter):
+        adapter, copy = await make_started_adapter(
+            features=AdapterFeatures(exclude_tools=["band_send_message"])
+        )
+
+        names = await self._wired_names(adapter, copy)
+        assert "band_send_message" not in names
+        assert "band_lookup_peers" in names
+
+    async def test_include_categories_keeps_only_category(self, make_started_adapter):
+        adapter, copy = await make_started_adapter(
+            features=AdapterFeatures(include_categories=["chat"])
+        )
+
+        assert sorted(await self._wired_names(adapter, copy)) == [
+            "band_lookup_peers",
+            "band_send_message",
+        ]
+
+
+class TestRunFailureReporting:
+    async def test_emits_generic_error_event_and_reraises(
+        self, make_started_adapter, tools
+    ):
+        adapter, copy = await make_started_adapter()
+        copy.arun.side_effect = RuntimeError("db dsn leaked: secret-token")
+
+        with pytest.raises(RuntimeError):
+            await adapter.on_message(
+                _msg("room-A", "hi"),
+                tools,
+                [],
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-A",
+            )
+
+        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
+        assert len(errors) == 1
+        assert (
+            errors[0]["content"]
+            == "Internal error while processing message; see agent logs."
+        )
+        # The exception text (which can carry secrets) must not leak to the room.
+        assert "secret-token" not in errors[0]["content"]
+
+    async def test_error_event_failure_does_not_mask_original(
+        self, make_started_adapter
+    ):
+        adapter, copy = await make_started_adapter()
+        copy.arun.side_effect = RuntimeError("boom")
+
+        class _FailingEventTools(FakeAgentTools):
+            async def send_event(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+                raise RuntimeError("event transport down")
+
+        # The failed error-report must not replace the original exception.
+        with pytest.raises(RuntimeError, match="boom"):
+            await adapter.on_message(
+                _msg("room-A", "hi"),
+                _FailingEventTools(),
+                [],
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-A",
             )

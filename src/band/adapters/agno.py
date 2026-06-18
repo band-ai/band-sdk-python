@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, ParamSpec, TypeVar
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -26,6 +27,7 @@ from band.converters.agno import (
     agno_message_class,
 )
 from band.runtime.prompts import BASE_INSTRUCTIONS, CONTACT_SECTION, MEMORY_SECTION
+from band.runtime.tools import get_band_tool_category
 
 if TYPE_CHECKING:
     from agno.agent import Agent as AgnoAgent
@@ -96,7 +98,13 @@ def _bind_room_tools(tools: AgentToolsProtocol) -> Iterator[None]:
 
 
 class AgnoAdapter(SimpleAdapter[AgnoMessages]):
-    """Bridge a developer-built Agno agent to Band."""
+    """Bridge a developer-built Agno agent to Band.
+
+    Note on ``Emit.THOUGHTS``: when enabled, the agent's **raw**
+    ``reasoning_content`` is posted to the room as a thought event. This can
+    surface chain-of-thought and intermediate context, so it is strictly
+    opt-in — enable it only when that visibility is intended.
+    """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.EXECUTION, Emit.THOUGHTS}
@@ -111,7 +119,20 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         *,
         history_converter: AgnoHistoryConverter | None = None,
         features: AdapterFeatures | None = None,
+        session_id_factory: Callable[[str], str] = lambda room_id: room_id,
     ) -> None:
+        """Bridge ``agent`` to Band.
+
+        Args:
+            session_id_factory: Maps a Band ``room_id`` to the Agno
+                ``session_id`` used for that room's runs. Defaults to using the
+                ``room_id`` itself, so each Band room is an isolated Agno
+                session. This **overrides** any ``session_id`` configured on
+                ``agent``. Consequence: Agno DB history previously stored under
+                the agent's original ``session_id`` is no longer reused (runs
+                are keyed by ``room_id``). To keep a single shared session
+                across rooms, pass e.g. ``session_id_factory=lambda _r: "fixed"``.
+        """
         super().__init__(
             history_converter=history_converter or AgnoHistoryConverter(),
             features=features,
@@ -120,10 +141,15 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # Keep caller configuration immutable; runtime wiring happens on the copy.
         self._source_agent = agent
         self._agent: AgnoAgent | None = None
+        self._session_id_factory = session_id_factory
 
         # Running per-room transcripts; bootstrap history seeds each room.
         self._message_history: dict[str, list[Message]] = {}
-        self._band_tools_wired = False
+        # Band tools are wired additively onto the single shared agent: the tool
+        # set is the union of what any room has needed so far. Tracking wired
+        # names keeps wiring idempotent (no duplicates, never removed).
+        self._wired_tool_names: set[str] = set()
+        self._band_instructions_injected = False
 
         self._agno_manages_history = self._detect_agno_history(agent)
         self._warn_on_memory_collision(agent)
@@ -296,19 +322,33 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         msg_id: str,
     ) -> RunOutput | None:
         """Run the Agno agent with the room's tools bound for this call."""
+        session_id = self._session_id_factory(room_id)
         logger.debug(
-            "Room %s msg %s: running Agno agent (%d input messages)",
+            "Room %s msg %s: running Agno agent (%d input messages, session_id=%s)",
             room_id,
             msg_id,
             len(messages),
+            session_id,
         )
         try:
             with _bind_room_tools(tools):
-                response = await agent.arun(input=messages)
-        except Exception as e:
+                response = await agent.arun(input=messages, session_id=session_id)
+        except Exception:
+            # Keep the user-facing payload generic; the full traceback is in the
+            # agent log via logger.exception. Exception text can include DB
+            # strings, paths, and tokens that must not surface in chat.
             logger.exception(
-                "Room %s msg %s: error running Agno agent: %s", room_id, msg_id, e
+                "Room %s msg %s: error running Agno agent", room_id, msg_id
             )
+            try:
+                await tools.send_event(
+                    content="Internal error while processing message; see agent logs.",
+                    message_type="error",
+                )
+            except Exception:
+                logger.exception(
+                    "Room %s msg %s: failed to report error event", room_id, msg_id
+                )
             raise
 
         if response is None:
@@ -338,7 +378,14 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         *,
         room_id: str,
     ) -> None:
-        """Send final text unless the agent already posted through Band."""
+        """Send final text unless the agent already posted through Band.
+
+        The shared base prompt tells the agent "plain text output is not
+        delivered" to steer it toward ``band_send_message`` (proper mentions +
+        events). This adapter still delivers final text here as a fallback
+        convenience for agents that return text directly; the fallback is
+        intentionally not advertised in the prompt.
+        """
         if any(
             _tool_name(execution) == "band_send_message"
             for execution in _tool_executions(response)
@@ -364,15 +411,29 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         await tools.send_message(text, mentions=mentions)
 
     def _ensure_band_tools(self, tools: AgentToolsProtocol) -> None:
-        """Wire Band tools into the copied Agno agent once."""
-        if self._band_tools_wired or self._agent is None:
+        """Additively wire this room's Band tools onto the shared agent.
+
+        The agent accumulates the union of tools any room has needed. Wiring is
+        idempotent by name: a tool already wired (e.g. from an earlier room) is
+        not re-added. This means once a contact-hub room is seen, contact tool
+        schemas remain visible in all rooms on the shared agent -- intentional,
+        not strict per-room visibility. Execution stays room-correct regardless
+        because each tool entrypoint routes through the current room's
+        AgentTools via the ``_current_tools`` ContextVar.
+        """
+        if self._agent is None:
             return
 
-        band_tools = self._build_band_tools(tools)
+        new_tools = [
+            fn
+            for fn in self._build_band_tools(tools)
+            if fn.name not in self._wired_tool_names
+        ]
         wired: list[str] = []
-        for fn in band_tools:
+        for fn in new_tools:
             try:
                 self._agent.add_tool(fn)
+                self._wired_tool_names.add(fn.name)
                 wired.append(fn.name)
             except RuntimeError as e:
                 logger.warning("Could not wire Band tool %s: %s", fn.name, e)
@@ -382,8 +443,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 len(wired),
                 ", ".join(wired),
             )
-        self._inject_band_instructions()
-        self._band_tools_wired = True
+        if not self._band_instructions_injected:
+            self._inject_band_instructions()
+            self._band_instructions_injected = True
 
     def _inject_band_instructions(self) -> None:
         """Append Band tool guidance to the copied agent's system message.
@@ -410,11 +472,29 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         return "\n\n".join(parts)
 
     def _build_band_tools(self, tools: AgentToolsProtocol) -> list[Function]:
-        """Convert Band tool schemas into Agno Functions."""
+        """Convert Band tool schemas into Agno Functions.
+
+        Honors the AdapterFeatures include/exclude/category filters via
+        :func:`filter_tool_schemas`. Contact tools are force-exposed for the
+        contact-hub room (mirrors LangGraph) regardless of the CONTACTS
+        capability gate.
+        """
         function_cls = agno_function_class()
+        effective_include_contacts = (
+            Capability.CONTACTS in self.features.capabilities
+            or bool(getattr(tools, "is_hub_room", False))
+        )
         schemas = tools.get_openai_tool_schemas(
             include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=Capability.CONTACTS in self.features.capabilities,
+            include_contacts=effective_include_contacts,
+        )
+        schemas = filter_tool_schemas(
+            schemas,
+            self.features,
+            get_name=lambda s: s.get("function", {}).get("name", ""),
+            get_category=lambda s: get_band_tool_category(
+                s.get("function", {}).get("name", "")
+            ),
         )
 
         band_tools: list[Function] = []

@@ -43,16 +43,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def load_environment() -> None:
-    """Load environment variables and validate required credentials."""
+def load_environment() -> tuple[str, str]:
+    """Load env vars, validate credentials, and return (ws_url, rest_url)."""
     load_dotenv()
 
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise ValueError("ANTHROPIC_API_KEY environment variable is required")
 
+    ws_url = os.environ.get("BAND_WS_URL")
+    rest_url = os.environ.get("BAND_REST_URL")
+    if not ws_url:
+        raise ValueError("BAND_WS_URL environment variable is required")
+    if not rest_url:
+        raise ValueError("BAND_REST_URL environment variable is required")
+    return ws_url, rest_url
+
 
 async def main() -> None:
-    load_environment()
+    ws_url, rest_url = load_environment()
 
     # Build the Agno agent — you choose the model, instructions, and tools.
     agno_agent = AgnoAgent(
@@ -66,8 +74,8 @@ async def main() -> None:
     agent = Agent.from_config(
         "agno_agent",
         adapter=adapter,
-        ws_url=os.environ.get("BAND_WS_URL"),
-        rest_url=os.environ.get("BAND_REST_URL"),
+        ws_url=ws_url,
+        rest_url=rest_url,
     )
 
     logger.info("Starting Agno agent...")

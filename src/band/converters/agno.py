@@ -132,6 +132,11 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
         # any(msg.from_history) check doesn't re-add stored session history.
         message_cls = agno_message_class()
         content = hist.get("content", "")
+        # Own-agent detection keys on sender_name, not a stable sender_id:
+        # formatted history dicts carry only sender_name (see
+        # band.runtime.formatters.format_message_for_llm). If two participants
+        # share a display name, or this agent is renamed, prior assistant turns
+        # may be mis-mapped to the user role.
         if hist.get("role") == "assistant" and hist.get("sender_name") == (
             self._agent_name
         ):

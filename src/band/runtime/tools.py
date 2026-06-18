@@ -984,6 +984,19 @@ BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES
 CHAT_TOOL_NAMES: frozenset[str] = BASE_TOOL_NAMES - CONTACT_TOOL_NAMES
 MCP_TOOL_PREFIX: str = "mcp__band__"
 
+# AdapterFeatures category for each platform tool name. Shared across adapters
+# so include_categories filtering is consistent (chat/contacts/memory).
+_TOOL_CATEGORIES: dict[str, str] = {
+    **{name: "chat" for name in CHAT_TOOL_NAMES},
+    **{name: "contacts" for name in CONTACT_TOOL_NAMES},
+    **{name: "memory" for name in MEMORY_TOOL_NAMES},
+}
+
+
+def get_band_tool_category(name: str) -> str | None:
+    """Return the AdapterFeatures category ("chat"/"contacts"/"memory") for a tool."""
+    return _TOOL_CATEGORIES.get(name)
+
 
 def mcp_tool_names(names: frozenset[str]) -> list[str]:
     """Convert base tool names to MCP-prefixed names for Claude SDK.
