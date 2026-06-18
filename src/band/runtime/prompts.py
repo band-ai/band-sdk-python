@@ -93,8 +93,10 @@ _MEMORY_COMMON_PATTERNS = f"""Common patterns:
 - How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
 
 
-_MEMORY_SCOPE_GUIDANCE = f"""When storing with `scope="{MemoryStoreScope.SUBJECT.value}"`, you must pass a real `subject_id` UUID
-(e.g. from `band_lookup_peers` or the participant list). 
+_MEMORY_SCOPE_GUIDANCE = f"""When storing with `scope="{MemoryStoreScope.SUBJECT.value}"`, you must pass a real `subject_id` UUID.
+For someone in the current room (e.g. the user you are talking to), call `band_get_participants`
+and use their `id`. For someone not in the room, use `band_lookup_peers`.
+For cross-room memories, use `scope="{MemoryStoreScope.ORGANIZATION.value}"`.
 """
 
 

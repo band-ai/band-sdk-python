@@ -1,80 +1,29 @@
-"""E2E test helper functions.
+"""Driving and observing chat rooms in E2E tests.
 
-Provides utilities for sending messages, waiting for agent responses,
-and asserting on message content in E2E tests.
+The core building blocks: ``TrackingWebSocketClient`` (a self-cleaning WS
+wrapper), ``send_trigger_message`` / ``send_and_wait_for_reply`` to drive an
+agent, the ``listening_for_*`` context managers to observe responses, and a few
+assertion + smoke/tool workflow helpers. Prefer ``send_and_wait_for_reply`` over
+hand-rolling the listen/send/wait dance.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
 from band_rest import AsyncRestClient, ChatMessageRequest
 from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
 )
 
-from band.agent import Agent
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
-from band.client.streaming.errors import WebSocketUpgradeError
-from band.core.simple_adapter import SimpleAdapter
-
-if TYPE_CHECKING:
-    from tests.e2e.conftest import E2ESettings
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Pretty logging (followable transcript when running with -s)
-# =============================================================================
-
-# Rich renders a readable transcript under ``pytest -s`` and degrades to plain
-# text when stdout is captured/non-tty. All dynamic text is passed through
-# ``rich.text.Text`` (no markup parsing) so values like "[Milk $3.50]" can't
-# be misread as style tags.
-_console = Console()
-
-# Style + icon per step kind. Numeric/other steps fall back to the default.
-_STEP_KINDS: dict[str, tuple[str, str]] = {
-    "assert": ("bold green", "✔"),
-    "restart": ("bold yellow", "⟳"),
-    "retry": ("bold dark_orange", "↻"),
-}
-_STEP_DEFAULT: tuple[str, str] = ("bold cyan", "▶")
-
-
-def log_banner(title: str) -> None:
-    """Render a boxed section banner; green when it announces a pass."""
-    passed = "PASS" in title.upper()
-    _console.print()
-    _console.print(
-        Panel(
-            Text(title, style="bold green" if passed else "bold bright_white"),
-            border_style="green" if passed else "bright_cyan",
-            padding=(0, 2),
-            expand=True,
-        )
-    )
-
-
-def log_step(n: int | str | float, text: str) -> None:
-    """Render a color/icon-coded step marker within a scenario."""
-    style, icon = _STEP_KINDS.get(str(n), _STEP_DEFAULT)
-    label = str(n) if str(n) in _STEP_KINDS else f"step {n}"
-    line = Text("  ")
-    line.append(f"{icon} {label}", style=style)
-    line.append("  ")
-    line.append(text, style="white")
-    _console.print(line)
 
 
 class TrackingWebSocketClient:
@@ -311,6 +260,28 @@ async def listening_for_room_activity(
         await ws_client.leave_chat_room_channel(room_id)
 
 
+async def send_and_wait_for_reply(
+    ws_client: TrackingWebSocketClient,
+    user_client: AsyncRestClient,
+    chat_id: str,
+    prompt: str,
+    agent_name: str,
+    agent_id: str,
+    *,
+    timeout: float,
+) -> None:
+    """Send a trigger message as the user and block until the agent replies (or timeout).
+
+    The standard way to drive an agent in an E2E test — use instead of hand-rolling the
+    listen/send/wait dance. Raises on timeout.
+    """
+    async with listening_for_agent_responses(
+        ws_client, chat_id, timeout=timeout, raise_on_timeout=True
+    ) as wait_for_reply:
+        await send_trigger_message(user_client, chat_id, prompt, agent_name, agent_id)
+        await wait_for_reply()
+
+
 def find_tool_call_in_context(items: list[Any], tool_name: str) -> bool:
     """Return True if any context item is a ``tool_call`` event for *tool_name*.
 
@@ -383,11 +354,6 @@ def assert_no_content_contains(
         f"Expected no message to contain '{unexpected_substring}', "
         f"but found it in: {contents}"
     )
-
-
-# =============================================================================
-# Shared Test Workflows
-# =============================================================================
 
 
 async def run_smoke_test(
@@ -464,71 +430,3 @@ async def run_tool_execution_test(
     assert_content_contains(received, "PINEAPPLE")
     logger.info("[%s] Tool execution test passed", adapter_name)
     return received
-
-
-# =============================================================================
-# Agent lifecycle with rate-limit-aware reconnect
-# =============================================================================
-
-# The platform rate-limits how often one agent_id may reopen its WebSocket after
-# a recent supersede (HTTP 429); a fresh agent is built per attempt so a partial
-# start never leaves a half-connected agent behind.
-_RETRYABLE_WS_STATUS = frozenset({429, 503})
-_MAX_CONNECT_ATTEMPTS = 6
-
-
-async def _connect_agent(
-    adapter: SimpleAdapter[Any],
-    *,
-    agent_id: str,
-    api_key: str,
-    config: E2ESettings,
-) -> Agent:
-    """Create and start an agent, retrying rate-limited (HTTP 429/503) connects.
-
-    Waits the server-supplied ``retry_after`` (else exponential backoff) for up
-    to ``_MAX_CONNECT_ATTEMPTS`` tries.
-    """
-    for attempt in range(1, _MAX_CONNECT_ATTEMPTS + 1):
-        agent = Agent.create(
-            adapter=adapter,
-            agent_id=agent_id,
-            api_key=api_key,
-            ws_url=config.band_ws_url,
-            rest_url=config.band_base_url,
-        )
-        try:
-            await agent.start()
-            return agent
-        except WebSocketUpgradeError as exc:
-            with contextlib.suppress(Exception):
-                await agent.stop()
-            last_attempt = attempt == _MAX_CONNECT_ATTEMPTS
-            if exc.status_code not in _RETRYABLE_WS_STATUS or last_attempt:
-                raise
-            cooldown = float(exc.retry_after or min(2**attempt, 30))
-            log_step(
-                "retry",
-                f"WebSocket rate-limited (HTTP {exc.status_code}); cooling down "
-                f"{cooldown:.0f}s before attempt {attempt + 1}",
-            )
-            await asyncio.sleep(cooldown)
-    raise AssertionError("unreachable: loop returns or raises")
-
-
-@asynccontextmanager
-async def running_agent(
-    adapter: SimpleAdapter[Any],
-    *,
-    agent_id: str,
-    api_key: str,
-    config: E2ESettings,
-) -> AsyncGenerator[Agent, None]:
-    """Run a started agent for the duration of the ``async with`` block."""
-    agent = await _connect_agent(
-        adapter, agent_id=agent_id, api_key=api_key, config=config
-    )
-    try:
-        yield agent
-    finally:
-        await agent.stop()

@@ -6,9 +6,7 @@ Run with:
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from uuid import uuid4
 
 import pytest
 from band_rest import AsyncRestClient
@@ -18,9 +16,9 @@ from band.adapters.langgraph import LangGraphAdapter
 from band.core.types import AdapterFeatures, Capability
 from tests.e2e.conftest import E2ESettings, requires_e2e, requires_openai
 from tests.e2e.helpers import (
+    MemoryProbe,
     TrackingWebSocketClient,
-    listening_for_agent_responses,
-    send_trigger_message,
+    send_and_wait_for_reply,
 )
 
 RoomAllocator = Callable[[str], Awaitable[tuple[str, str, str]]]
@@ -33,9 +31,11 @@ MEMORY_CUSTOM_SECTION = (
 
 @pytest.fixture
 async def langgraph_memory_room(
-    e2e_room_allocator: RoomAllocator,
+    e2e_fresh_room_allocator: RoomAllocator,
 ) -> tuple[str, str, str]:
-    return await e2e_room_allocator("langgraph-memory")
+    # A fresh room per test: the memory agent must not inherit unrelated history
+    # from reused rooms, which derails the model and can stall its reply.
+    return await e2e_fresh_room_allocator("langgraph-memory")
 
 
 @pytest.fixture
@@ -65,31 +65,6 @@ async def running_langgraph_memory_agent(
         yield agent
 
 
-async def _wait_for_org_memory_containing(
-    client: AsyncRestClient,
-    marker: str,
-    *,
-    timeout: float,
-) -> None:
-    deadline = asyncio.get_running_loop().time() + timeout
-
-    while asyncio.get_running_loop().time() < deadline:
-        response = await client.agent_api_memories.list_agent_memories(
-            page_size=50,
-            status="active",
-            scope="organization",
-        )
-        if any(
-            marker in (getattr(memory, "content", None) or "")
-            for memory in response.data or []
-        ):
-            return
-
-        await asyncio.sleep(1)
-
-    pytest.fail(f"Expected organization memory containing {marker}")
-
-
 # loop_scope="session" pins the test to the same event loop as the agent's
 # background processing task, so the agent processes the trigger concurrently with
 # the test body. A bare @pytest.mark.asyncio would run the body on a separate loop
@@ -102,35 +77,29 @@ async def test_langgraph_agent_stores_durable_user_memory(
     e2e_config: E2ESettings,
     langgraph_memory_room: tuple[str, str, str],
     e2e_agent_info: tuple[str, str],
-    e2e_session_client: AsyncRestClient,
     e2e_user_client: AsyncRestClient,
     running_langgraph_memory_agent: Agent,
     ws_client: TrackingWebSocketClient,
+    memory: MemoryProbe,
 ) -> None:
     """Ask LangGraph to remember a durable preference and verify it is stored."""
     chat_id, _user_id, _user_name = langgraph_memory_room
     agent_id, agent_name = e2e_agent_info
-    marker = f"LANGGRAPH_MEMORY_E2E_{uuid4().hex}"
+    marker = memory.marker("LGMEM")
     prompt = (
-        "Remember this durable preference exactly: "
-        f"{marker} means I prefer concise memory test responses. "
-        "Store it as a long-term semantic user memory, then acknowledge it briefly."
+        "Remember this for the whole organization so anyone can recall it: the "
+        f"project code phrase {marker} means we keep responses concise. "
+        "Acknowledge it briefly."
     )
 
-    async with listening_for_agent_responses(
-        ws_client, chat_id, timeout=e2e_config.e2e_timeout, raise_on_timeout=True
-    ) as wait_for_reply:
-        await send_trigger_message(
-            e2e_user_client,
-            chat_id,
-            prompt,
-            agent_name,
-            agent_id,
-        )
-        await wait_for_reply()
-
-    await _wait_for_org_memory_containing(
-        e2e_session_client,
-        marker,
+    await send_and_wait_for_reply(
+        ws_client,
+        e2e_user_client,
+        chat_id,
+        prompt,
+        agent_name,
+        agent_id,
         timeout=e2e_config.e2e_timeout,
     )
+
+    await memory.wait(marker, scope="organization")
