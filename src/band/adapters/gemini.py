@@ -242,6 +242,23 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 response = await self._call_gemini(
                     contents=self._message_history[room_id], tools=gemini_tools
                 )
+                usage = getattr(response, "usage_metadata", None)
+                prompt_tokens = getattr(usage, "prompt_token_count", None)
+                candidate_tokens = getattr(usage, "candidates_token_count", None)
+                total_tokens = getattr(usage, "total_token_count", None)
+                self._record_provider_usage(
+                    source="google.genai.generate_content.usage_metadata",
+                    input_tokens=prompt_tokens,
+                    output_tokens=candidate_tokens,
+                    total_tokens=total_tokens,
+                    raw={
+                        "prompt_token_count": prompt_tokens,
+                        "candidates_token_count": candidate_tokens,
+                        "total_token_count": total_tokens,
+                    }
+                    if usage is not None
+                    else {},
+                )
             except Exception as e:
                 logger.exception("Error calling Gemini: %s", e)
                 await self._report_error(tools, str(e))

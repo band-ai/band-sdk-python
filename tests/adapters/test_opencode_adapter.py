@@ -569,7 +569,7 @@ class TestOpencodeAdapter:
         assert all(msg["content"] != "Approved and done" for msg in tools.messages_sent)
 
         await adapter.on_message(
-            make_platform_message(content="approve req-1"),
+            make_platform_message(content="/approve req-1"),
             tools_protocol(tools),
             OpencodeSessionState(session_id="sess-1", room_id="room-1"),
             participants_msg=None,
@@ -628,7 +628,7 @@ class TestOpencodeAdapter:
         await wait_for(lambda: first_turn.done())
 
         await adapter.on_message(
-            make_platform_message(content="Ship the adapter"),
+            make_platform_message(content="/answer Ship the adapter"),
             tools_protocol(tools),
             OpencodeSessionState(session_id="sess-1", room_id="room-1"),
             participants_msg=None,
@@ -646,6 +646,58 @@ class TestOpencodeAdapter:
         assert fake_client.question_replies == [
             {"request_id": "q-1", "answers": [["Ship the adapter"]]}
         ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "content", ["Ship the adapter", "/answering Ship the adapter"]
+    )
+    async def test_question_reply_requires_exact_answer_command(
+        self, content: str
+    ) -> None:
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_question("sess-1", "q-1", "What should I do next?")]
+            ]
+        )
+        adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        first_turn = asyncio.create_task(
+            adapter.on_message(
+                make_platform_message(content="Need an answer"),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+        )
+        await wait_for(
+            lambda: any(
+                "asked question" in message["content"].lower()
+                for message in tools.messages_sent
+            )
+        )
+        await wait_for(lambda: first_turn.done())
+
+        await adapter.on_message(
+            make_platform_message(content=content),
+            tools_protocol(tools),
+            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert fake_client.question_replies == []
+        assert fake_client.question_rejections == []
+        assert any(
+            "reply with `/answer`" in message["content"]
+            for message in tools.messages_sent
+        )
 
     @pytest.mark.asyncio
     async def test_prompt_submission_failure_does_not_leave_room_stuck(self) -> None:
@@ -824,6 +876,39 @@ class TestOpencodeAdapter:
         ]
         assert len(tool_results) == 1
         assert json.loads(tool_results[0]["content"])["output"] == 0
+
+    @pytest.mark.asyncio
+    async def test_default_system_prompt_includes_base_instructions(self) -> None:
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_text_part("sess-1", "msg-1", "done"),
+                    event_session_idle("sess-1"),
+                ]
+            ]
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(custom_section="Prefer short answers."),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(content="hello"),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        system_prompt = fake_client.prompt_calls[0]["system"]
+        assert system_prompt is not None
+        assert "You are OpenCode Agent, A coding agent." in system_prompt
+        assert "thenvoi_send_message" in system_prompt
+        assert "Prefer short answers." in system_prompt
 
     @pytest.mark.asyncio
     async def test_does_not_echo_user_text_parts_as_assistant_output(self) -> None:

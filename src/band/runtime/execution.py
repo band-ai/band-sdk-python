@@ -142,7 +142,7 @@ class Execution(Protocol):
         .. versionchanged:: 0.2.0
             Custom ``Execution`` implementations should add ``request_resync()``.
             ``AgentRuntime`` falls back safely for legacy implementations that do
-            not provide it, but typed protocol conformance now includes this method.
+            not provide it, but the ``Execution`` protocol now includes this method.
 
         Called after WebSocket reconnect to catch messages that arrived while
         the socket was down. Custom implementations may provide a no-op.
@@ -314,6 +314,34 @@ class ExecutionContext:
             return dumped if isinstance(dumped, dict) else {}
 
         return {}
+
+    def _mention_field(self, mention: Any, field: str) -> Any:
+        if isinstance(mention, dict):
+            return mention.get(field)
+
+        value = getattr(mention, field, None)
+        if value is not None:
+            return value
+
+        mention_dict = self._metadata_to_dict(mention)
+        return mention_dict.get(field)
+
+    def _normalize_mentions(self, mentions: Any) -> list[dict[str, Any]]:
+        normalized_mentions: list[dict[str, Any]] = []
+        if not mentions:
+            return normalized_mentions
+
+        for mention in mentions:
+            normalized = {
+                field: value
+                for field in ("id", "handle", "username", "name")
+                if (value := self._mention_field(mention, field)) is not None
+            }
+            if normalized:
+                normalized.setdefault("id", "")
+                normalized_mentions.append(normalized)
+
+        return normalized_mentions
 
     def _delivery_status_for_agent(self, metadata: Any) -> str | None:
         """Return this agent's delivery status from message metadata."""
@@ -1226,23 +1254,10 @@ class ExecutionContext:
                 else datetime.now(timezone.utc).isoformat()
             )
 
-            # Normalize metadata.mentions to include username field
             metadata = self._metadata_to_dict(msg.metadata).copy()
-            if "mentions" in metadata:
-                normalized_mentions = []
-                for mention in metadata.get("mentions", []):
-                    if isinstance(mention, dict):
-                        normalized_mentions.append(
-                            {
-                                "id": mention.get("id", ""),
-                                "username": mention.get("username")
-                                or mention.get("name")
-                                or mention.get("id", ""),
-                            }
-                        )
-                metadata["mentions"] = normalized_mentions
-            else:
-                metadata["mentions"] = []
+            metadata["mentions"] = self._normalize_mentions(
+                metadata.get("mentions", [])
+            )
 
             if "status" not in metadata:
                 metadata["status"] = "sent"

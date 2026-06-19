@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from band.converters._utils import format_replay_message
 from band.core.protocols import HistoryConverter
+from band.core.types import is_text_message_type
 
 # Type alias for CrewAI messages (simple dict format)
 CrewAIMessages = list[dict[str, Any]]
@@ -17,10 +19,10 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
     Output: [{"role": "user", "content": "...", "sender": "..."}]
 
     Note:
-    - Only converts text messages (tool_call/tool_result events are skipped)
-    - User messages include sender name for context
-    - Other agents' messages are included with role "assistant"
-    - This agent's messages are skipped (redundant with CrewAI's internal state)
+    - Text messages are converted normally
+    - Tool call/result events are included as labeled replay context
+    - User and peer-agent messages include sender name for context
+    - Only this agent's own messages are included with role "assistant"
     """
 
     def __init__(self, agent_name: str = ""):
@@ -28,15 +30,14 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with internal state). Messages from other
-                       agents are included with their sender info.
+            agent_name: Name of this agent, used to distinguish own-agent
+                       turns from peer-agent context.
         """
         self._agent_name = agent_name
 
     def set_agent_name(self, name: str) -> None:
         """
-        Set agent name so converter knows which messages to skip.
+        Set agent name used to identify own-agent turns.
 
         Args:
             name: Name of this agent
@@ -50,20 +51,37 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
         for hist in raw:
             message_type = hist.get("message_type", "text")
 
-            # Only convert text messages
-            if message_type != "text":
-                continue
-
             role = hist.get("role", "user")
             content = hist.get("content", "")
             sender_name = hist.get("sender_name", "")
             sender_type = hist.get("sender_type", "User")
 
-            if role == "assistant" and sender_name == self._agent_name:
-                # Skip THIS agent's text (redundant with CrewAI state)
+            if not is_text_message_type(message_type):
+                replay = format_replay_message(hist)
+                if not replay:
+                    continue
+                # Replay lines are already labeled ([Tool Call]: / [Tool
+                # Result]:) — no sender prefix on top.
+                messages.append(
+                    {
+                        "role": "assistant" if message_type == "tool_call" else "user",
+                        "content": replay,
+                        "sender": "System",
+                        "sender_type": "System",
+                    }
+                )
                 continue
-            elif role == "assistant":
-                # Other agents' messages
+
+            if content is None or (
+                isinstance(content, str) and content and not content.strip()
+            ):
+                continue
+
+            if (
+                role == "assistant"
+                and self._agent_name
+                and sender_name == self._agent_name
+            ):
                 messages.append(
                     {
                         "role": "assistant",
@@ -73,7 +91,6 @@ class CrewAIHistoryConverter(HistoryConverter[CrewAIMessages]):
                     }
                 )
             else:
-                # User messages
                 messages.append(
                     {
                         "role": "user",

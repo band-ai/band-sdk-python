@@ -14,6 +14,7 @@ from typing import ClassVar, Any, Callable, Literal, Protocol
 
 from pydantic import BaseModel, Field, ValidationError
 
+from band.converters._utils import build_replay_messages
 from band.converters.codex import CodexHistoryConverter
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
@@ -1106,8 +1107,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 if self.config.inject_history_on_resume_failure:
                     self._needs_history_injection.add(room_id)
         else:
-            # Not a bootstrap resume — clean up any stashed history
-            self._raw_history_by_room.pop(room_id, None)
+            if is_session_bootstrap and self._raw_history_by_room.get(room_id):
+                self._needs_history_injection.add(room_id)
+            else:
+                # Not a bootstrap resume — clean up any stashed history
+                self._raw_history_by_room.pop(room_id, None)
 
         dynamic_tools = self._build_dynamic_tools(tools)
         start_params: dict[str, Any] = {
@@ -1256,21 +1260,11 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return items, injected_system_prompt
 
     def _format_history_context(self, raw: list[dict[str, Any]]) -> str | None:
-        text_messages: list[str] = []
-        for entry in raw:
-            msg_type = entry.get("message_type", "")
-            if msg_type not in {"text", "message"}:
-                continue
-            content = entry.get("content", "")
-            if not isinstance(content, str) or not content.strip():
-                continue
-            sender = entry.get("sender_name") or entry.get("sender_type") or "Unknown"
-            text_messages.append(f"[{sender}]: {content}")
-
-        if not text_messages:
+        replay_messages = build_replay_messages(raw)
+        if not replay_messages:
             return None
 
-        truncated = text_messages[-self.config.max_history_messages :]
+        truncated = replay_messages[-self.config.max_history_messages :]
         header = (
             "[Conversation History]\n"
             "The following is the conversation history from a previous session. "

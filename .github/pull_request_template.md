@@ -28,7 +28,7 @@
 ## Testing
 
 <!-- Describe how you tested these changes -->
-- [ ] Unit tests pass (`uv run pytest tests/ --ignore=tests/integration/`)
+- [ ] Unit tests pass (`uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`)
 - [ ] Pre-commit checks pass (`uv run pre-commit run --all-files`)
 - [ ] Integration tests pass (if applicable)
 

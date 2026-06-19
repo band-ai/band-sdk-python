@@ -469,6 +469,43 @@ class TestLettaAdapterOnMessagePerRoom:
         mock_client.agents.create.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_stale_history_agent_replays_context_into_fresh_agent(
+        self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
+    ) -> None:
+        adapter, mock_client = adapter_with_client
+
+        mock_client.agents.retrieve.side_effect = Exception("not found")
+        mock_client.agents.create.return_value = _make_mock_agent("fresh-agent")
+        mock_client.agents.messages.create.return_value = _make_letta_response(
+            _make_assistant_message("Fresh response")
+        )
+
+        tools = FakeAgentTools()
+        msg = make_platform_message()
+        history = LettaSessionState(
+            agent_id="stale-agent",
+            replay_messages=["[Alice]: planted MARCO"],
+        )
+
+        await adapter.on_message(
+            msg,
+            tools,
+            history,
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        mock_client.agents.retrieve.assert_called_once_with("stale-agent")
+        mock_client.agents.create.assert_called_once()
+        call_kwargs = mock_client.agents.messages.create.call_args.kwargs
+        content = call_kwargs["messages"][0]["content"]
+        assert "[Previous conversation context]" in content
+        assert "[Alice]: planted MARCO" in content
+        assert "[End of previous context]" in content
+
+    @pytest.mark.asyncio
     async def test_uninitialized_client_reports_error(self) -> None:
         adapter = LettaAdapter()
         # _client is None

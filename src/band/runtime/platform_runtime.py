@@ -161,6 +161,7 @@ class PlatformRuntime:
             agent_id=self._agent_id,
             on_execute=on_execute,
             session_config=self._session_config,
+            auto_subscribe_existing_rooms=self._config.auto_subscribe_existing_rooms,
             on_session_cleanup=on_cleanup or self._noop_cleanup,
             on_participant_added=self._on_participant_added,
             on_participant_removed=self._on_participant_removed,

@@ -1,5 +1,7 @@
 """Tests for custom tools utilities."""
 
+from typing import ClassVar
+
 import pytest
 from pydantic import BaseModel, Field
 
@@ -34,6 +36,18 @@ class SearchWebInput(BaseModel):
 
     query: str = Field(description="Search query")
     max_results: int = Field(default=10, description="Maximum results to return")
+
+
+class LogKeywordInput(BaseModel):
+    """Log a keyword marker."""
+
+    __band_tool_name__: ClassVar[str] = "log_keyword"
+    message: str
+
+
+class BadExplicitNameInput(BaseModel):
+    __band_tool_name__: ClassVar[str] = "Log Keyword"
+    message: str
 
 
 class NoDocstringInput(BaseModel):
@@ -82,6 +96,15 @@ class TestGetCustomToolName:
 
         assert get_custom_tool_name(MyTool) == "mytool"
 
+    def test_explicit_tool_name_override(self):
+        """Should use explicit provider-visible tool names when supplied."""
+        assert get_custom_tool_name(LogKeywordInput) == "log_keyword"
+
+    def test_rejects_invalid_explicit_tool_name(self):
+        """Explicit tool names should fail closed when provider-hostile."""
+        with pytest.raises(ValueError, match="Invalid custom tool name"):
+            get_custom_tool_name(BadExplicitNameInput)
+
 
 class TestCustomToolSchemas:
     """Test schema generation for custom tools."""
@@ -118,6 +141,12 @@ class TestCustomToolSchemas:
 
         assert schema["function"]["description"] == ""
 
+    def test_openai_schema_uses_explicit_tool_name(self):
+        """OpenAI schema should preserve explicit tool names."""
+        schema = custom_tool_to_openai_schema(LogKeywordInput)
+
+        assert schema["function"]["name"] == "log_keyword"
+
     def test_anthropic_schema_structure(self):
         """Anthropic schema should have name, description, input_schema."""
         schema = custom_tool_to_anthropic_schema(WeatherInput)
@@ -147,6 +176,12 @@ class TestCustomToolSchemas:
         schema = custom_tool_to_anthropic_schema(NoDocstringInput)
 
         assert schema["description"] == ""
+
+    def test_anthropic_schema_uses_explicit_tool_name(self):
+        """Anthropic schema should preserve explicit tool names."""
+        schema = custom_tool_to_anthropic_schema(LogKeywordInput)
+
+        assert schema["name"] == "log_keyword"
 
 
 class TestCustomToolsToSchemas:
@@ -213,6 +248,17 @@ class TestFindCustomTool:
 
         assert result is None
 
+    def test_finds_tool_by_explicit_name(self):
+        """Should find tools using explicit provider-visible names."""
+        tools: list[CustomToolDef] = [
+            (LogKeywordInput, async_weather),
+        ]
+
+        result = find_custom_tool(tools, "log_keyword")
+
+        assert result is not None
+        assert result[0] is LogKeywordInput
+
     def test_handles_empty_list(self):
         """Should return None for empty tool list."""
         result = find_custom_tool([], "weather")
@@ -277,6 +323,18 @@ class TestExecuteCustomTool:
         error_msg = str(exc_info.value)
         assert "city" in error_msg
         assert "Invalid arguments for weather" in error_msg
+
+    @pytest.mark.asyncio
+    async def test_validation_error_uses_explicit_tool_name(self):
+        """Validation errors should name the explicit tool users were shown."""
+        tool: CustomToolDef = (LogKeywordInput, async_weather)
+
+        with pytest.raises(ValueError) as exc_info:
+            await execute_custom_tool(tool, {})
+
+        error_msg = str(exc_info.value)
+        assert "message" in error_msg
+        assert "Invalid arguments for log_keyword" in error_msg
 
     @pytest.mark.asyncio
     async def test_execution_error_propagates(self):

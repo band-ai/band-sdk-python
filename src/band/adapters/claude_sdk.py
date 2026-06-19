@@ -18,7 +18,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Literal, cast
+from typing import Any, ClassVar, Literal, Mapping, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -255,11 +255,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 deprecated ``enable_execution_reporting`` or ``enable_memory_tools``,
                 raises ``BandConfigError``.
             send_message_dedup_ttl_seconds: Window (seconds) inside which two
-                ``band_send_message`` MCP tool calls with identical
-                ``(content, mentions)`` are collapsed into one platform POST.
-                Mitigates duplicate-message events caused by Claude CLI / MCP
-                transport retries when the event loop is stalled.
-                Defaults to 30 s; set to ``0`` to disable dedup entirely.
+                identical ``band_send_message`` MCP tool calls from the same room are
+                treated as one send. Set to ``0`` to disable the protection.
         """
         if not _CLAUDE_SDK_AVAILABLE:
             raise ImportError(
@@ -310,7 +307,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features=features,
         )
 
-        self.model = model
+        self.model = model or _DEFAULT_MODEL
         self.fallback_model = fallback_model
         self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
@@ -326,10 +323,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self.approval_timeout_decision: ApprovalDecision = approval_timeout_decision
         self.max_pending_approvals_per_room = max_pending_approvals_per_room
         self.approval_authorized_senders: set[str] | None = approval_authorized_senders
-
-        # send_message dedup window.  0 disables the wrapper.
         if send_message_dedup_ttl_seconds < 0:
-            raise ValueError("send_message_dedup_ttl_seconds must be >= 0")
+            raise ValueError("send_message_dedup_ttl_seconds must be non-negative")
         self.send_message_dedup_ttl_seconds = send_message_dedup_ttl_seconds
 
         # Session manager and MCP server (created after start)
@@ -373,13 +368,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features=self.features,
         )
 
-        # Build SDK options. When the caller doesn't pin a model, default to a
-        # known-good one rather than the npm `claude` binary's auto-selection,
-        # which fails under API-key auth (see _DEFAULT_MODEL). fallback_model
-        # stays None unless explicitly set.
-        resolved_model = self.model or _DEFAULT_MODEL
+        # Build SDK options. ``self.model`` is always populated: see
+        # ``_DEFAULT_MODEL`` above for why we avoid the npm CLI's API-key
+        # auth default path. ``fallback_model`` remains optional.
         sdk_options = ClaudeAgentOptions(
-            model=resolved_model,
+            model=self.model,
             fallback_model=self.fallback_model,
             system_prompt=system_prompt,
             mcp_servers={"band": self._mcp_server},
@@ -419,7 +412,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         logger.info(
             "Claude SDK adapter started for agent: %s (model=%s, fallback_model=%s, thinking=%s, approval=%s)",
             agent_name,
-            resolved_model,
+            self.model or "auto",
             self.fallback_model or "none",
             self.max_thinking_tokens,
             self.approval_mode,
@@ -477,11 +470,11 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        # Store tools for MCP server access.  Wrap with the send_message
+        # Store tools for MCP server access. Wrap with the send_message
         # dedup shim so MCP-driven retries (event-loop saturation
         # under Claude CLI load causes the same band_send_message tool
         # call to fire more than once for a single LLM-intended send) do
-        # not turn into duplicate chat messages.  Bypass the wrapper when
+        # not turn into duplicate chat messages. Bypass the wrapper when
         # the operator has explicitly opted out via ttl=0.
         #
         # The wrapper MUST persist for the room so a lingering MCP retry can
@@ -644,6 +637,115 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
         logger.debug("Message %s processed successfully", msg.id)
 
+    @staticmethod
+    def _nonnegative_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int) and value >= 0:
+            return value
+        return None
+
+    @classmethod
+    def _usage_counts_from_mapping(
+        cls, usage: Mapping[str, Any] | None
+    ) -> tuple[int | None, int | None, int | None]:
+        if usage is None:
+            return None, None, None
+
+        input_values = [
+            cls._nonnegative_int(usage.get(key))
+            for key in (
+                "input_tokens",
+                "input_token_count",
+                "cache_creation_input_tokens",
+                "cache_read_input_tokens",
+            )
+        ]
+        output_values = [
+            cls._nonnegative_int(usage.get(key))
+            for key in ("output_tokens", "output_token_count")
+        ]
+        input_tokens = sum(value for value in input_values if value is not None)
+        output_tokens = sum(value for value in output_values if value is not None)
+        if not any(value is not None for value in input_values):
+            input_token_count: int | None = None
+        else:
+            input_token_count = input_tokens
+        if not any(value is not None for value in output_values):
+            output_token_count: int | None = None
+        else:
+            output_token_count = output_tokens
+
+        total_tokens = cls._nonnegative_int(usage.get("total_tokens"))
+        if total_tokens is None and (
+            input_token_count is not None or output_token_count is not None
+        ):
+            total_tokens = (input_token_count or 0) + (output_token_count or 0)
+        return input_token_count, output_token_count, total_tokens
+
+    @classmethod
+    def _usage_counts_from_model_usage(
+        cls, model_usage: Mapping[str, Any] | None
+    ) -> tuple[int | None, int | None, int | None]:
+        if model_usage is None:
+            return None, None, None
+
+        input_total = 0
+        output_total = 0
+        total_total = 0
+        saw_input = False
+        saw_output = False
+        saw_total = False
+        for usage in model_usage.values():
+            if not isinstance(usage, Mapping):
+                continue
+            input_tokens, output_tokens, total_tokens = cls._usage_counts_from_mapping(
+                usage
+            )
+            if input_tokens is not None:
+                input_total += input_tokens
+                saw_input = True
+            if output_tokens is not None:
+                output_total += output_tokens
+                saw_output = True
+            if total_tokens is not None:
+                total_total += total_tokens
+                saw_total = True
+
+        return (
+            input_total if saw_input else None,
+            output_total if saw_output else None,
+            total_total if saw_total else None,
+        )
+
+    def _record_claude_sdk_provider_usage(self, sdk_message: ResultMessage) -> None:
+        usage = sdk_message.usage if isinstance(sdk_message.usage, Mapping) else None
+        model_usage = (
+            sdk_message.model_usage
+            if isinstance(sdk_message.model_usage, Mapping)
+            else None
+        )
+        input_tokens, output_tokens, total_tokens = self._usage_counts_from_mapping(
+            usage
+        )
+        if input_tokens is None or output_tokens is None:
+            input_tokens, output_tokens, total_tokens = (
+                self._usage_counts_from_model_usage(model_usage)
+            )
+
+        self._record_provider_usage(
+            source="claude_agent_sdk.result.usage",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            cost_usd=sdk_message.total_cost_usd,
+            raw={
+                "usage": dict(usage) if usage is not None else None,
+                "model_usage": dict(model_usage) if model_usage is not None else None,
+                "total_cost_usd": sdk_message.total_cost_usd,
+            },
+        )
+
     # --- Copied from BandClaudeSDKAgent._process_response ---
     async def _process_response(
         self, client: ClaudeSDKClient, room_id: str, tools: AgentToolsProtocol
@@ -733,6 +835,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                     sdk_message.duration_ms,
                     sdk_message.total_cost_usd or 0,
                 )
+                self._record_claude_sdk_provider_usage(sdk_message)
                 # Capture session_id for potential resume
                 if sdk_message.session_id:
                     prev_session_id = self._session_ids.get(room_id)

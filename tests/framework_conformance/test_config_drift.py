@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.framework_configs.adapters import ADAPTER_CONFIGS, ADAPTER_EXCLUDED_MODULES
+from tests.framework_configs.adapters import (
+    ADAPTER_CONFIGS,
+    ADAPTER_EXCLUDED_MODULES,
+    AdapterConfig,
+)
 from tests.framework_configs.converters import (
     CONVERTER_CONFIGS,
     CONVERTER_EXCLUDED_MODULES,
@@ -36,7 +40,7 @@ def _discover_modules(package_dir: Path) -> set[str]:
 class TestAdapterConfigDrift:
     """Every adapter module must be registered or explicitly excluded."""
 
-    def test_all_adapter_modules_are_covered(self):
+    def test_all_adapter_modules_are_covered(self) -> None:
         """Each module in src/band/adapters/ has a config or is excluded."""
         adapter_dir = _SRC_ROOT / "adapters"
         source_modules = _discover_modules(adapter_dir)
@@ -50,7 +54,7 @@ class TestAdapterConfigDrift:
             f"or add the module name to ADAPTER_EXCLUDED_MODULES."
         )
 
-    def test_no_stale_exclusions(self):
+    def test_no_stale_exclusions(self) -> None:
         """Excluded adapter module names still exist on disk."""
         adapter_dir = _SRC_ROOT / "adapters"
         source_modules = _discover_modules(adapter_dir)
@@ -61,7 +65,7 @@ class TestAdapterConfigDrift:
             f"Remove them from the exclusion set."
         )
 
-    def test_no_stale_configs(self):
+    def test_no_stale_configs(self) -> None:
         """Registered adapter framework_ids still correspond to a source module."""
         adapter_dir = _SRC_ROOT / "adapters"
         source_modules = _discover_modules(adapter_dir)
@@ -78,7 +82,7 @@ class TestAdapterConfigDrift:
 class TestConverterConfigDrift:
     """Every converter module must be registered or explicitly excluded."""
 
-    def test_all_converter_modules_are_covered(self):
+    def test_all_converter_modules_are_covered(self) -> None:
         """Each module in src/band/converters/ has a config or is excluded."""
         converter_dir = _SRC_ROOT / "converters"
         source_modules = _discover_modules(converter_dir)
@@ -92,7 +96,7 @@ class TestConverterConfigDrift:
             f"or add the module name to CONVERTER_EXCLUDED_MODULES."
         )
 
-    def test_no_stale_exclusions(self):
+    def test_no_stale_exclusions(self) -> None:
         """Excluded converter module names still exist on disk."""
         converter_dir = _SRC_ROOT / "converters"
         source_modules = _discover_modules(converter_dir)
@@ -103,7 +107,7 @@ class TestConverterConfigDrift:
             f"Remove them from the exclusion set."
         )
 
-    def test_no_stale_configs(self):
+    def test_no_stale_configs(self) -> None:
         """Registered converter framework_ids still correspond to a source module."""
         converter_dir = _SRC_ROOT / "converters"
         source_modules = _discover_modules(converter_dir)
@@ -123,14 +127,14 @@ class TestCrewAIConformanceGuards:
     """
 
     @staticmethod
-    def _get_crewai_config():
+    def _get_crewai_config() -> AdapterConfig | None:
         for cfg in ADAPTER_CONFIGS:
             if cfg.framework_id == "crewai":
                 return cfg
         return None
 
     @pytest.mark.asyncio
-    async def test_on_message_is_guarded(self):
+    async def test_on_message_is_guarded(self) -> None:
         """on_message on a conformance instance must raise RuntimeError."""
         cfg = self._get_crewai_config()
         if cfg is None:
@@ -140,7 +144,7 @@ class TestCrewAIConformanceGuards:
             await adapter.on_message()
 
     @pytest.mark.asyncio
-    async def test_invoke_crew_is_guarded(self):
+    async def test_invoke_crew_is_guarded(self) -> None:
         """_invoke_crew on a conformance instance must raise RuntimeError."""
         cfg = self._get_crewai_config()
         if cfg is None:

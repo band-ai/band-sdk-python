@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import MagicMock
 
 from band.core.protocols import FrameworkAdapter, HistoryConverter
 from band.core.simple_adapter import SimpleAdapter
@@ -318,3 +319,108 @@ class TestMultipleEvents:
         assert adapter.calls[0]["msg"].content == "First"
         assert adapter.calls[1]["msg"].content == "Second"
         assert adapter.calls[2]["msg"].content == "Third"
+
+
+class TestProviderUsageRecording:
+    """Tests for provider-owned usage snapshots."""
+
+    def test_records_valid_integer_usage(self):
+        adapter = RecordingAdapter()
+
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=10,
+            output_tokens=5,
+            total_tokens=20,
+            api_call_count=2,
+            raw={"provider": "test"},
+        )
+
+        snapshots = adapter.provider_usage_snapshots()
+        assert len(snapshots) == 1
+        assert snapshots[0].input_tokens == 10
+        assert snapshots[0].output_tokens == 5
+        assert snapshots[0].total_tokens == 20
+        assert snapshots[0].api_call_count == 2
+        assert snapshots[0].raw == {"provider": "test"}
+
+    def test_resolves_total_to_input_output_sum_when_missing_or_too_small(self):
+        adapter = RecordingAdapter()
+
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=10,
+            output_tokens=5,
+            total_tokens=12,
+        )
+
+        snapshots = adapter.provider_usage_snapshots()
+        assert len(snapshots) == 1
+        assert snapshots[0].total_tokens == 15
+
+    def test_ignores_mock_shaped_usage_without_crashing(self):
+        adapter = RecordingAdapter()
+
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=MagicMock(),
+            output_tokens=MagicMock(),
+        )
+
+        assert adapter.provider_usage_snapshots() == []
+
+    def test_ignores_negative_usage(self):
+        adapter = RecordingAdapter()
+
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=-1,
+            output_tokens=5,
+        )
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=5,
+            output_tokens=-1,
+        )
+
+        assert adapter.provider_usage_snapshots() == []
+
+    def test_ignores_invalid_api_call_count(self):
+        adapter = RecordingAdapter()
+
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=5,
+            output_tokens=5,
+            api_call_count=0,
+        )
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=5,
+            output_tokens=5,
+            api_call_count=MagicMock(),
+        )
+
+        assert adapter.provider_usage_snapshots() == []
+
+    def test_ignores_boolean_usage_values(self):
+        adapter = RecordingAdapter()
+
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=True,
+            output_tokens=5,
+        )
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=5,
+            output_tokens=False,
+        )
+        adapter._record_provider_usage(
+            source="test.provider",
+            input_tokens=5,
+            output_tokens=5,
+            api_call_count=True,
+        )
+
+        assert adapter.provider_usage_snapshots() == []

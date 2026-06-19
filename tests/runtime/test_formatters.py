@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from band.runtime.formatters import (
     format_message_for_llm,
     format_history_for_llm,
@@ -143,6 +145,51 @@ class TestFormatHistoryForLlm:
         result = format_history_for_llm(messages, exclude_id=None)
         assert len(result) == 2
 
+    def test_sorts_datetime_timestamps_chronologically(self):
+        messages = [
+            {
+                "id": "2",
+                "content": "Second",
+                "sender_type": "User",
+                "inserted_at": datetime(2024, 1, 1, 0, 0, 2, tzinfo=timezone.utc),
+            },
+            {
+                "id": "1",
+                "content": "First",
+                "sender_type": "User",
+                "inserted_at": datetime(2024, 1, 1, 0, 0, 1, tzinfo=timezone.utc),
+            },
+        ]
+
+        result = format_history_for_llm(messages)
+
+        assert [message["content"] for message in result] == ["First", "Second"]
+
+    def test_untimestamped_messages_keep_relative_position(self):
+        messages = [
+            {
+                "id": "1",
+                "content": "First",
+                "sender_type": "User",
+                "inserted_at": "2024-01-01T00:00:01Z",
+            },
+            {"id": "injected", "content": "Injected", "sender_type": "User"},
+            {
+                "id": "2",
+                "content": "Second",
+                "sender_type": "User",
+                "inserted_at": "2024-01-01T00:00:02Z",
+            },
+        ]
+
+        result = format_history_for_llm(messages)
+
+        assert [message["content"] for message in result] == [
+            "First",
+            "Injected",
+            "Second",
+        ]
+
 
 class TestBuildParticipantsMessage:
     def test_empty_participants(self):
@@ -168,6 +215,22 @@ class TestBuildParticipantsMessage:
         # Instruction emphasizes using exact handles, not display names
         assert "handle" in result
         assert "NOT the display name" in result
+
+    def test_includes_participant_descriptions_when_available(self):
+        participants = [
+            {
+                "id": "a1",
+                "name": "Greeter",
+                "type": "Agent",
+                "handle": "darvell/greeter",
+                "description": "Writes greeting-card copy for named recipients.",
+            }
+        ]
+        result = build_participants_message(participants)
+        assert (
+            "@darvell/greeter — Greeter (Agent): "
+            "Writes greeting-card copy for named recipients."
+        ) in result
 
     def test_handles_missing_fields(self):
         participants = [{"id": "1"}]  # Missing name and type

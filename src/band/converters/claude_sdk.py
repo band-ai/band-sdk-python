@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from band.converters._utils import format_replay_message
+from band.core.types import is_text_message_type
 from band.core.protocols import HistoryConverter
 
 logger = logging.getLogger(__name__)
@@ -24,38 +26,27 @@ class ClaudeSDKSessionState:
     session_id: str | None = None
 
 
-def _build_text(raw: list[dict[str, Any]], agent_name: str) -> str:
+def _build_text(raw: list[dict[str, Any]]) -> str:
     """Build text history from raw platform messages."""
     lines: list[str] = []
 
     for hist in raw:
         message_type = hist.get("message_type", "text")
         content = hist.get("content", "")
-        role = hist.get("role", "user")
         sender_name = hist.get("sender_name", "Unknown")
 
         # Task events are internal bookkeeping — never include in text.
         if message_type == "task":
             continue
 
-        if message_type == "text":
-            # Skip own text (redundant with tool results)
-            if role == "assistant" and sender_name == agent_name:
-                logger.debug("Skipping own message: %s...", content[:50])
-                continue
-            # Include user and other agents' messages
+        if is_text_message_type(message_type):
             if content:
                 lines.append(f"[{sender_name}]: {content}")
+            continue
 
-        elif message_type == "tool_call":
-            # Include raw tool_call JSON as-is
-            if content:
-                lines.append(content)
-
-        elif message_type == "tool_result":
-            # Include raw tool_result JSON as-is
-            if content:
-                lines.append(content)
+        replay = format_replay_message(hist)
+        if replay:
+            lines.append(replay)
 
     return "\n".join(lines) if lines else ""
 
@@ -96,5 +87,5 @@ class ClaudeSDKHistoryConverter(HistoryConverter[ClaudeSDKSessionState]):
                     session_id = sid
                     break
 
-        text = _build_text(raw, self._agent_name)
+        text = _build_text(raw)
         return ClaudeSDKSessionState(text=text, session_id=session_id)

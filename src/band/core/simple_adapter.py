@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from band.core.protocols import AgentToolsProtocol, HistoryConverter
@@ -19,6 +20,19 @@ logger = logging.getLogger(__name__)
 
 # Type variable for history type - bound by converter
 H = TypeVar("H")
+
+
+@dataclass(frozen=True, kw_only=True)
+class ProviderUsageSnapshot:
+    """Provider-owned usage for one model/API response."""
+
+    source: str
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    api_call_count: int = 1
+    cost_usd: float | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
 class SimpleAdapter(Generic[H], ABC):
@@ -76,6 +90,68 @@ class SimpleAdapter(Generic[H], ABC):
         self.features = features or AdapterFeatures()
         self.agent_name: str = ""
         self.agent_description: str = ""
+        self._provider_usage_snapshots: list[ProviderUsageSnapshot] = []
+
+    def clear_provider_usage(self) -> None:
+        """Clear provider usage snapshots recorded by previous model calls."""
+
+        self._provider_usage_snapshots.clear()
+
+    def provider_usage_snapshots(self) -> list[ProviderUsageSnapshot]:
+        """Return provider-owned usage snapshots recorded by this adapter."""
+
+        return list(self._provider_usage_snapshots)
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any) -> int | None:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return None
+        return value
+
+    @staticmethod
+    def _coerce_positive_int(value: Any) -> int | None:
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            return None
+        return value
+
+    def _record_provider_usage(
+        self,
+        *,
+        source: str,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        total_tokens: int | None = None,
+        api_call_count: int = 1,
+        cost_usd: float | None = None,
+        raw: dict[str, Any] | None = None,
+    ) -> None:
+        """Record provider-owned model/API usage when a framework exposes it."""
+
+        resolved_input = self._coerce_non_negative_int(input_tokens)
+        resolved_output = self._coerce_non_negative_int(output_tokens)
+        resolved_call_count = self._coerce_positive_int(api_call_count)
+        if (
+            resolved_input is None
+            or resolved_output is None
+            or resolved_call_count is None
+        ):
+            return
+
+        resolved_total = self._coerce_non_negative_int(total_tokens)
+        token_sum = resolved_input + resolved_output
+        if resolved_total is None or resolved_total < token_sum:
+            resolved_total = token_sum
+        self._provider_usage_snapshots.append(
+            ProviderUsageSnapshot(
+                source=source,
+                input_tokens=resolved_input,
+                output_tokens=resolved_output,
+                total_tokens=resolved_total,
+                api_call_count=resolved_call_count,
+                cost_usd=cost_usd,
+                raw=raw or {},
+            )
+        )
 
     @abstractmethod
     async def on_message(
