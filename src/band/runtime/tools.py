@@ -2089,8 +2089,9 @@ class AgentTools(AgentToolsProtocol):
             schema.pop("title", None)
             # Pydantic Field(ge=..., le=...) renders as JSON-Schema minimum/maximum,
             # which some providers reject on integer params (e.g. Gemini, and
-            # Anthropic-backed Agno). The bounds stay enforced at execution via
-            # model_validate, so drop them from the advertised schema.
+            # Anthropic-backed Agno). Dropped for every format/adapter on purpose,
+            # not just the strict providers: the bounds stay enforced at execution
+            # via model_validate, so advertising them buys nothing.
             schema = sanitize_tool_schema(schema, drop_numeric_bounds=True)
 
             if format == "openai":
