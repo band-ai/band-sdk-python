@@ -88,12 +88,23 @@ def available_mention_handles(
     ]
 
 
+# Single marker for the available-handles hint. Used both to render the hint and
+# to detect it, so the producer and the idempotency guard can never drift apart.
+_AVAILABLE_HANDLES_MARKER = "Available handles:"
+
+
 def append_mention_handles_hint(error: str, handles: list[str]) -> str:
-    """Append a retryable handles hint to a tool error when handles are known."""
-    if not handles or "Available handles:" in error:
+    """Append a retryable handles hint to a tool error when handles are known.
+
+    Idempotent: an error that already carries the hint is returned unchanged, so
+    the same error can flow through multiple adapter enrichers without doubling
+    the handle list.
+    """
+    if not handles or _AVAILABLE_HANDLES_MARKER in error:
         return error
     return (
-        f"{error}. Available handles: {handles}. Use participant handles from the list."
+        f"{error}. {_AVAILABLE_HANDLES_MARKER} {handles}. "
+        "Use participant handles from the list."
     )
 
 
@@ -1290,11 +1301,15 @@ class AgentTools(AgentToolsProtocol):
         # Validate mentions are not empty — API requires ≥1 mention.
         # Return a helpful error so the LLM can retry with proper mentions.
         if not resolved_mentions:
-            available = self.available_mention_handles()
+            # Build the error through the shared hint so it carries the canonical
+            # "Available handles:" marker. Adapter enrichers (CrewAI, MCP, Claude
+            # SDK) re-run the same hint on this error and rely on its idempotency
+            # to avoid listing the handles twice.
             raise BandToolError(
-                "At least one mention is required. "
-                f"Available participants: {available}. "
-                "Please retry with mentions specifying who this message is for."
+                append_mention_handles_hint(
+                    "At least one mention is required",
+                    self.available_mention_handles(),
+                )
             )
 
         logger.debug("Sending message to room %s", self.room_id)

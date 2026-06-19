@@ -120,6 +120,9 @@ class TestBuildBandMcpToolRegistrations:
         assert "At least one mention is required" in message
         assert "@alice" in message
         assert "@self" not in message
+        # The enricher must not re-append handles that the error already carries.
+        assert message.count("Available handles:") == 1
+        assert message.count("@alice") == 1
 
 
 class TestLocalMcpServer:

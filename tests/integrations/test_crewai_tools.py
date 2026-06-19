@@ -334,13 +334,20 @@ class TestToolSetComposition:
         assert tracker.replied is False
 
     def test_send_failure_appends_available_handles(self, builder_mod):
-        """A mention validation failure surfaces the room's real handles so the
-        LLM can retry with actual values instead of the schema placeholder."""
+        """The real empty-mentions error already lists the room's handles, so the
+        CrewAI enricher must surface them once — not append a second copy."""
         from band.core.exceptions import BandToolError
 
         tools_obj = MagicMock()
+        tools_obj.agent_id = None
+        # The actual error AgentTools.send_message raises: it already carries the
+        # "Available handles:" hint.
         tools_obj.send_message = AsyncMock(
-            side_effect=BandToolError("At least one mention is required.")
+            side_effect=BandToolError(
+                "At least one mention is required. "
+                "Available handles: ['@john', '@john/weather-agent']. "
+                "Use participant handles from the list."
+            )
         )
         tools_obj.participants = [
             {"id": "1", "name": "John", "handle": "@john"},
@@ -362,6 +369,8 @@ class TestToolSetComposition:
         assert "@john/weather-agent" in result["message"]
         # Participants without a handle are not offered as mention options.
         assert "No Handle" not in result["message"]
+        # The enricher is idempotent: the handle list is not duplicated.
+        assert result["message"].count("Available handles:") == 1
 
     def test_send_failure_excludes_agent_own_handle(self, builder_mod):
         """The agent's own handle is never offered as a retry option — an
@@ -370,8 +379,10 @@ class TestToolSetComposition:
 
         tools_obj = MagicMock()
         tools_obj.agent_id = "self-2"
+        # A failure that does not already carry handles, so the enricher computes
+        # the available options itself and must exclude the agent's own handle.
         tools_obj.send_message = AsyncMock(
-            side_effect=BandToolError("At least one mention is required.")
+            side_effect=BandToolError("Failed to deliver message")
         )
         tools_obj.participants = [
             {"id": "1", "name": "John", "handle": "@john"},

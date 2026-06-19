@@ -19,6 +19,7 @@ from band.runtime.tools import (
     GetParticipantsInput,
     CreateChatroomInput,
     _matches_identifier,
+    append_mention_handles_hint,
     available_mention_handles,
 )
 
@@ -1127,7 +1128,9 @@ class TestEmptyMentionsValidation:
 
         # Name must not be offered as a mention target — only real handles are.
         assert "User One" not in str(exc_info.value)
-        assert "Available participants: []" in str(exc_info.value)
+        # With no mentionable handles there is nothing to suggest, so the error
+        # carries no handle list rather than an empty one.
+        assert "Available handles:" not in str(exc_info.value)
 
     async def test_no_error_when_mentions_provided(
         self, mock_rest_client, participants
@@ -1204,6 +1207,22 @@ class TestHandleMentionResolution:
         ]
 
         assert available_mention_handles(participants, agent_id="self") == ["@user-one"]
+
+    def test_append_mention_handles_hint_is_idempotent(self):
+        """An error already carrying the hint is returned unchanged, so the same
+        error can pass through multiple adapter enrichers without doubling."""
+        enriched = append_mention_handles_hint(
+            "At least one mention is required", ["@alice"]
+        )
+        assert enriched.count("Available handles:") == 1
+
+        twice = append_mention_handles_hint(enriched, ["@alice"])
+        assert twice == enriched
+
+    def test_append_mention_handles_hint_no_handles_is_noop(self):
+        """With no mentionable handles there is nothing to suggest."""
+        error = "At least one mention is required"
+        assert append_mention_handles_hint(error, []) == error
 
     def test_resolve_by_handle(self, mock_rest_client, participants):
         """Should resolve mentions by handle."""
