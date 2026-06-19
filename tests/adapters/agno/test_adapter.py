@@ -30,6 +30,7 @@ from band.testing import FakeAgentTools
 from tests.adapters.agno.helpers import (
     SchemaTools,
     openai_tool_schema,
+    run_input,
     tool_execution,
 )
 
@@ -612,14 +613,17 @@ class TestPersistAndAccumulate:
         kept = [m.role for m in adapter._message_history["room-1"]]
         assert kept == ["user", "assistant", "tool"]
 
-    def test_bootstrap_seeds_then_followup_accumulates(
+    def test_bootstrap_seeds_committed_transcript_from_history(
         self, make_agno_agent, sample_platform_message
     ):
+        # Bootstrap seeds the committed transcript from rehydrated history. The
+        # returned run input is that seed plus this turn's live message, but
+        # building it must NOT push the live message into the committed store.
         source, _ = make_agno_agent()
         adapter = AgnoAdapter(source)
         seed = [Message(role="user", content="earlier")]
 
-        adapter._build_run_input(
+        run_input_msgs = adapter._build_run_input(
             sample_platform_message,
             seed,
             None,
@@ -627,20 +631,79 @@ class TestPersistAndAccumulate:
             is_session_bootstrap=True,
             room_id="room-1",
         )
+
+        assert [m.content for m in run_input_msgs] == [
+            "earlier",
+            sample_platform_message.format_for_llm(),
+        ]
+        # Committed transcript holds only the rehydrated seed.
+        assert [m.content for m in adapter._message_history["room-1"]] == ["earlier"]
+
+    def test_build_run_input_does_not_mutate_committed_transcript(
+        self, make_agno_agent, sample_platform_message
+    ):
+        # A non-bootstrap turn reads the committed transcript but never writes to
+        # it; the store is only ever advanced by _persist_turn after a run.
+        source, _ = make_agno_agent()
+        adapter = AgnoAdapter(source)
+        adapter._message_history["room-1"] = [Message(role="user", content="committed")]
+
         adapter._build_run_input(
             sample_platform_message,
             [],
-            None,
-            None,
+            "participants",
+            "contacts",
             is_session_bootstrap=False,
             room_id="room-1",
         )
 
-        transcript = adapter._message_history["room-1"]
-        # seed + bootstrap user msg + follow-up user msg
-        assert len(transcript) == 3
-        assert transcript[0].content == "earlier"
-        assert all(m.role == "user" for m in transcript)
+        assert [m.content for m in adapter._message_history["room-1"]] == ["committed"]
+
+
+class TestFailedRunDoesNotContaminateNextTurn:
+    async def test_failed_turn_leaves_no_residue_in_next_run_input(
+        self, make_agno_agent, tools
+    ):
+        # Turn 1 raises mid-run; turn 2 succeeds. The injected system/user
+        # messages from the failed turn must not survive into turn 2's input.
+        source, copy = make_agno_agent()
+        copy.arun = AsyncMock(
+            side_effect=[RuntimeError("boom"), RunOutput(content="ok")]
+        )
+        adapter = AgnoAdapter(source)
+        await adapter.on_started("TestBot", "desc")
+
+        first = _msg("room-1", "first question", msg_id="m1")
+        with pytest.raises(RuntimeError):
+            await adapter.on_message(
+                first,
+                tools,
+                [],
+                "P1-participants",
+                "C1-contacts",
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        second = _msg("room-1", "second question", msg_id="m2")
+        await adapter.on_message(
+            second,
+            tools,
+            [],
+            "P2-participants",
+            "C2-contacts",
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        contents = [m.content for m in run_input(copy)]
+        # No residue from the failed turn 1.
+        assert not any("P1-participants" in c for c in contents)
+        assert not any("C1-contacts" in c for c in contents)
+        assert first.format_for_llm() not in contents
+        # Turn 2's own injected context and live message are present.
+        assert any("P2-participants" in c for c in contents)
+        assert contents[-1] == second.format_for_llm()
 
 
 class TestOnCleanup:

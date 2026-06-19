@@ -312,6 +312,32 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         """Drop the room's accumulated transcript when the agent leaves."""
         self._message_history.pop(room_id, None)
 
+    def _prior_transcript(
+        self,
+        history: AgnoMessages,
+        *,
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> list[Message]:
+        """Committed prior-turn messages that seed this run, as a fresh list.
+
+        ``_message_history[room_id]`` is the *committed* record of prior turns.
+        It is written only at commit points — here (seeding rehydrated platform
+        history on bootstrap) and in :meth:`_persist_turn` (after a successful
+        run). A *copy* is returned so the caller composes this turn's input
+        without mutating the committed transcript; otherwise a failed or
+        message-less run would leave the injected system/user messages behind to
+        be replayed on the next turn.
+
+        When the Agno agent manages its own history this returns empty — Agno
+        replays prior turns from its database.
+        """
+        if self._agno_manages_history:
+            return []
+        if is_session_bootstrap:
+            self._message_history[room_id] = list(history)
+        return list(self._message_history.setdefault(room_id, []))
+
     def _build_run_input(
         self,
         msg: PlatformMessage,
@@ -322,22 +348,16 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> list[Message]:
-        """Build Agno input for this turn.
+        """Compose this turn's Agno input: prior transcript + injected messages.
 
-        When the Agno agent manages its own history, build a fresh current-turn
-        list and do not seed or replay Band's transcript — Agno supplies prior
-        turns from its database. Otherwise seed and accumulate a Band-managed
-        transcript per room.
+        Built from a *copy* of the committed transcript (see
+        :meth:`_prior_transcript`), so building the input never mutates
+        ``_message_history`` and a failed run leaves no injected residue behind.
         """
         message_cls = agno_message_class()
-        if self._agno_manages_history:
-            messages: list[Message] = []
-        else:
-            if is_session_bootstrap:
-                self._message_history[room_id] = list(history)
-            else:
-                self._message_history.setdefault(room_id, [])
-            messages = self._message_history[room_id]
+        messages = self._prior_transcript(
+            history, is_session_bootstrap=is_session_bootstrap, room_id=room_id
+        )
 
         if participants_msg:
             messages.append(
