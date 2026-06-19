@@ -7,10 +7,8 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from anthropic.types import TextBlock
 from pydantic import BaseModel
 
-from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AgentInput
 from band.runtime.execution import ExecutionContext
 from band.runtime.types import SessionConfig
@@ -58,32 +56,6 @@ class _L4ReplayGuardInput(BaseModel):
 class _ScriptedResponse:
     stop_reason: str
     content: list[Any]
-
-
-class _NoReplayAnthropicAdapter(AnthropicAdapter):
-    def __init__(self, *, calls: list[_L4ReplayGuardInput]) -> None:
-        async def l4_replay_guard(args: _L4ReplayGuardInput) -> dict[str, str]:
-            calls.append(args)
-            return {"replayed": args.code}
-
-        super().__init__(
-            provider_key="test-provider-key",
-            additional_tools=[(_L4ReplayGuardInput, l4_replay_guard)],
-        )
-        self._responses = [
-            _ScriptedResponse(
-                stop_reason="end_turn",
-                content=[TextBlock(text="done", type="text")],
-            )
-        ]
-
-    async def _call_anthropic(
-        self,
-        messages: list[dict[str, Any]],
-        tools: list[Any],
-    ) -> Any:
-        del messages, tools
-        return self._responses.pop(0)
 
 
 def _rehydration_state(captured: CapturedRequest) -> RehydrationRequestState:
@@ -370,6 +342,35 @@ async def test_l4_tool_replay_oracle_rejects_pending_completed_tool_split() -> N
 
 @pytest.mark.asyncio
 async def test_l4_completed_tool_history_does_not_replay_side_effects() -> None:
+    from anthropic.types import TextBlock
+
+    from band.adapters.anthropic import AnthropicAdapter
+
+    class _NoReplayAnthropicAdapter(AnthropicAdapter):
+        def __init__(self, *, calls: list[_L4ReplayGuardInput]) -> None:
+            async def l4_replay_guard(args: _L4ReplayGuardInput) -> dict[str, str]:
+                calls.append(args)
+                return {"replayed": args.code}
+
+            super().__init__(
+                provider_key="test-provider-key",
+                additional_tools=[(_L4ReplayGuardInput, l4_replay_guard)],
+            )
+            self._responses = [
+                _ScriptedResponse(
+                    stop_reason="end_turn",
+                    content=[TextBlock(text="done", type="text")],
+                )
+            ]
+
+        async def _call_anthropic(
+            self,
+            messages: list[dict[str, Any]],
+            tools: list[Any],
+        ) -> Any:
+            del messages, tools
+            return self._responses.pop(0)
+
     calls: list[_L4ReplayGuardInput] = []
     tools = ConformanceSchemaRecorder(
         participants=canonical_participants(),
