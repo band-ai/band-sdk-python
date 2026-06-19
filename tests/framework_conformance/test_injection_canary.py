@@ -20,9 +20,11 @@ spikes; this module is the generalisation, not a replacement.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from typing import Any, cast
 
 import pytest
@@ -33,7 +35,6 @@ from tests.framework_conformance.injection_registry import (
     ObservationPath,
     tier1_dependency_blocked_reason,
 )
-from tests.framework_conformance.request_capture import tier1_sentinel_provider_env
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import PlatformMessage
 from band.testing.fake_tools import FakeAgentTools
@@ -41,6 +42,29 @@ from band.testing.fake_tools import FakeAgentTools
 # The one fixed canary decision every honest binding must route.
 _CANARY_TOOL = "band_send_message"
 _CANARY_ARGS: dict[str, Any] = {"content": "CANARY", "mentions": ["@canary"]}
+_SENTINEL_OPENAI_API_KEY = "sk-tier1-conformance-sentinel-not-a-secret"
+_PROVIDER_BASE_URL_ENV_VARS = (
+    "OPENAI_BASE_URL",
+    "OPENAI_API_BASE",
+    "OPENAI_API_HOST",
+)
+
+
+@contextmanager
+def _tier1_sentinel_provider_env() -> Generator[None, None, None]:
+    names = ("OPENAI_API_KEY", *_PROVIDER_BASE_URL_ENV_VARS)
+    original = {name: os.environ.get(name) for name in names}
+    try:
+        os.environ["OPENAI_API_KEY"] = _SENTINEL_OPENAI_API_KEY
+        for name in _PROVIDER_BASE_URL_ENV_VARS:
+            os.environ.pop(name, None)
+        yield
+    finally:
+        for name, value in original.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 # Every honest adapter is told the same send_message schema, so each framework's
@@ -266,7 +290,7 @@ async def _canary_pydantic_ai() -> _CanaryResult:
             yield decision[1]
 
     tools = FakeAgentTools(room_id="canary-pyai")
-    with tier1_sentinel_provider_env():
+    with _tier1_sentinel_provider_env():
         adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
         await adapter.on_started("CanaryBot", "Tier-1 positive-routing canary bot.")
         assert adapter._agent is not None
