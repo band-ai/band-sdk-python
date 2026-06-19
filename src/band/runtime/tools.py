@@ -29,6 +29,7 @@ from band.core.memory_types import (
 )
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import sanitize_tool_schema
+from band.core.types import EventMessageType
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -121,9 +122,7 @@ class SendEventInput(BaseModel):
     """
 
     content: str = Field(..., description="Human-readable event content")
-    message_type: Literal["thought", "error", "task"] = Field(
-        ..., description="Type of event"
-    )
+    message_type: EventMessageType = Field(..., description="Type of event")
     metadata: dict[str, Any] | None = Field(
         None, description="Optional structured data for the event"
     )

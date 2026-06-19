@@ -17,9 +17,20 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
 )
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    BuiltinToolCallPart,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 
-from band.adapters.pydantic_ai import PydanticAIAdapter
+from band.adapters.pydantic_ai import (
+    PydanticAIAdapter,
+    _is_replayable_history_message,
+)
 from band.core.types import AdapterFeatures, Capability, PlatformMessage
 
 
@@ -394,6 +405,81 @@ class TestHistoryManagement:
         )
 
         assert adapter._message_history["room-123"] == new_messages
+
+    @pytest.mark.asyncio
+    async def test_keeps_native_history_and_drops_content_null_responses(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """Should keep native tool history but drop responses that replay as null."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        user_request = ModelRequest(parts=[UserPromptPart(content="Q1")])
+        tool_call_response = ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="band_send_message",
+                    args={"content": "A1", "mentions": ["Alice"]},
+                    tool_call_id="call_1",
+                )
+            ]
+        )
+        tool_return_request = ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="band_send_message",
+                    content={"id": "msg_1"},
+                    tool_call_id="call_1",
+                )
+            ]
+        )
+        content_null_response = ModelResponse(parts=[])
+        text_response = ModelResponse(parts=[TextPart(content="A1")])
+        result_messages = [
+            user_request,
+            tool_call_response,
+            tool_return_request,
+            content_null_response,
+            text_response,
+        ]
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_stream_events(result_messages=result_messages)
+        )
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        stored_history = adapter._message_history["room-123"]
+        assert stored_history == [
+            user_request,
+            tool_call_response,
+            tool_return_request,
+            text_response,
+        ]
+        assert content_null_response not in stored_history
+
+    def test_keeps_response_with_only_builtin_tool_part(self):
+        """Builtin tool calls carry content the provider expects — keep them."""
+        response = ModelResponse(
+            parts=[
+                BuiltinToolCallPart(
+                    tool_name="web_search",
+                    args={"query": "weather"},
+                    tool_call_id="call_1",
+                )
+            ]
+        )
+
+        assert _is_replayable_history_message(response) is True
 
     @pytest.mark.asyncio
     async def test_ensures_history_exists_for_non_bootstrap(

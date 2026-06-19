@@ -20,6 +20,8 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     ModelRequest,
+    ModelResponse,
+    ThinkingPart,
     UserPromptPart,
 )
 
@@ -35,6 +37,26 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import get_tool_description
 
 logger = logging.getLogger(__name__)
+
+
+# A response made up only of these (or with no parts at all) serializes to
+# content:null, which providers reject when it's replayed as history.
+_NON_REPLAYABLE_RESPONSE_PARTS = (ThinkingPart,)
+
+
+def _is_replayable_history_message(message: Any) -> bool:
+    """Drop assistant responses that would replay as content:null.
+
+    Keep any response with at least one content-bearing part (text, tool
+    calls, builtin tool calls/returns, files). Drop thinking-only and empty
+    responses, which providers reject when sent back as history.
+    """
+    if isinstance(message, ModelResponse):
+        return any(
+            not isinstance(part, _NON_REPLAYABLE_RESPONSE_PARTS)
+            for part in message.parts
+        )
+    return True
 
 
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
@@ -469,7 +491,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             if history:
                 self._message_history[room_id] = list(history)
                 logger.debug(
-                    "Room %s: Loaded %s Pydantic AI messages", room_id, len(history)
+                    "Room %s: rehydrated %s message(s) from platform history",
+                    room_id,
+                    len(history),
                 )
             else:
                 self._message_history[room_id] = []
@@ -542,8 +566,21 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     except Exception as e:
                         logger.warning("Failed to send tool_result event: %s", e)
             elif isinstance(event, AgentRunResultEvent):
-                # Update stored history with all messages from this run
-                self._message_history[room_id] = list(event.result.all_messages())
+                # Keep native run history, but drop responses that replay as
+                # content:null (e.g. thinking-only) — providers reject them next request.
+                run_messages = list(event.result.all_messages())
+                self._message_history[room_id] = [
+                    message
+                    for message in run_messages
+                    if _is_replayable_history_message(message)
+                ]
+                dropped = len(run_messages) - len(self._message_history[room_id])
+                if dropped:
+                    logger.debug(
+                        "Room %s: dropped %s content:null response(s) from history",
+                        room_id,
+                        dropped,
+                    )
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",
