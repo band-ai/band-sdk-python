@@ -18,7 +18,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Literal, Mapping
+from typing import Any, ClassVar, Literal, Mapping, cast
 
 try:
     from claude_agent_sdk import (  # type: ignore[import-not-found]
@@ -61,6 +61,10 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.claude_sdk.session_manager import ClaudeSessionManager
 from band.integrations.claude_sdk.prompts import generate_claude_sdk_agent_prompt
+from band.integrations.claude_sdk.dedup_tools import (
+    DEFAULT_DEDUP_TTL_SECONDS,
+    DedupingAgentTools,
+)
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
@@ -75,13 +79,21 @@ logger = logging.getLogger(__name__)
 
 # Tool names as constants (MCP naming convention: mcp__{server}__{tool})
 # Derived from TOOL_MODELS — single source of truth
-THENVOI_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
-THENVOI_MEMORY_TOOLS: list[str] = mcp_tool_names(MEMORY_TOOL_NAMES)
+BAND_BASE_TOOLS: list[str] = mcp_tool_names(BASE_TOOL_NAMES)
+BAND_MEMORY_TOOLS: list[str] = mcp_tool_names(MEMORY_TOOL_NAMES)
 # All tools: chat + contacts + memory (17 total). For chat-only tools (7),
-# see band.integrations.claude_sdk.tools.THENVOI_CHAT_TOOLS.
-THENVOI_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
+# see band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.
+BAND_ALL_TOOLS: list[str] = mcp_tool_names(ALL_TOOL_NAMES)
 
-_THENVOI_TOOLS: list[str] = THENVOI_ALL_TOOLS
+_BAND_TOOLS: list[str] = BAND_ALL_TOOLS
+
+# Default model used when the caller does not specify one. Letting the npm
+# `claude` CLI auto-select its default fails under API-key auth: the CLI sends
+# the legacy `thinking.type.enabled` request shape, which current models reject
+# ("thinking.type.enabled is not supported for this model. Use
+# thinking.type.adaptive"), so the run returns an error result with no output.
+# Pinning a known-good model avoids that path; callers can override via `model=`.
+_DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Approval flow types (mirrors Codex adapter patterns)
 ApprovalMode = Literal["auto_accept", "auto_decline", "manual"]
@@ -130,16 +142,16 @@ class _PendingApproval:
 
 
 def __getattr__(name: str) -> Any:
-    if name == "THENVOI_TOOLS":
+    if name == "BAND_TOOLS":
         warnings.warn(
-            "THENVOI_TOOLS is deprecated, use THENVOI_ALL_TOOLS instead. "
-            f"Note: this contains all {len(_THENVOI_TOOLS)} tools (chat + contacts + memory). "
+            "BAND_TOOLS is deprecated, use BAND_ALL_TOOLS instead. "
+            f"Note: this contains all {len(_BAND_TOOLS)} tools (chat + contacts + memory). "
             "For chat-only tools, use "
-            "band.integrations.claude_sdk.tools.THENVOI_CHAT_TOOLS.",
+            "band.integrations.claude_sdk.tools.BAND_CHAT_TOOLS.",
             DeprecationWarning,
             stacklevel=2,
         )
-        return _THENVOI_TOOLS
+        return _BAND_TOOLS
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -191,6 +203,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         max_pending_approvals_per_room: int = 50,
         approval_authorized_senders: set[str] | None = None,
         features: AdapterFeatures | None = None,
+        send_message_dedup_ttl_seconds: float = DEFAULT_DEDUP_TTL_SECONDS,
     ):
         """
         Initialize the Claude SDK adapter.
@@ -199,8 +212,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             model: Claude model to use. Pass a full ID (e.g.
                 ``"claude-opus-4-7-20251224"``) or a family alias
                 (``"sonnet"`` / ``"opus"`` / ``"haiku"`` / ``"inherit"``).
-                When ``None`` (default), the npm ``claude`` binary picks
-                its own default — no ``--model`` flag is sent.
+                When ``None`` (default), the adapter pins ``_DEFAULT_MODEL``
+                rather than letting the npm ``claude`` binary auto-select,
+                which fails under API-key auth (legacy thinking request shape).
             fallback_model: Optional fallback model passed to
                 ``ClaudeAgentOptions.fallback_model``. The npm ``claude``
                 binary uses it when the primary model is unavailable.
@@ -240,6 +254,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features: Unified adapter feature settings. When provided alongside
                 deprecated ``enable_execution_reporting`` or ``enable_memory_tools``,
                 raises ``BandConfigError``.
+            send_message_dedup_ttl_seconds: Window (seconds) inside which two
+                identical ``band_send_message`` MCP tool calls from the same room are
+                treated as one send. Set to ``0`` to disable the protection.
         """
         if not _CLAUDE_SDK_AVAILABLE:
             raise ImportError(
@@ -290,7 +307,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features=features,
         )
 
-        self.model = model
+        self.model = model or _DEFAULT_MODEL
         self.fallback_model = fallback_model
         self.custom_section = custom_section
         self.max_thinking_tokens = max_thinking_tokens
@@ -306,6 +323,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         self.approval_timeout_decision: ApprovalDecision = approval_timeout_decision
         self.max_pending_approvals_per_room = max_pending_approvals_per_room
         self.approval_authorized_senders: set[str] | None = approval_authorized_senders
+        if send_message_dedup_ttl_seconds < 0:
+            raise ValueError("send_message_dedup_ttl_seconds must be non-negative")
+        self.send_message_dedup_ttl_seconds = send_message_dedup_ttl_seconds
 
         # Session manager and MCP server (created after start)
         self._session_manager: ClaudeSessionManager | None = None
@@ -348,9 +368,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             features=self.features,
         )
 
-        # Build SDK options. Both model and fallback_model upstream default
-        # to None — passing None is equivalent to omitting them, which lets
-        # the npm `claude` binary pick its own default.
+        # Build SDK options. ``self.model`` is always populated: see
+        # ``_DEFAULT_MODEL`` above for why we avoid the npm CLI's API-key
+        # auth default path. ``fallback_model`` remains optional.
         sdk_options = ClaudeAgentOptions(
             model=self.model,
             fallback_model=self.fallback_model,
@@ -450,8 +470,40 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                 "ClaudeSDKAdapter session manager not initialized — was on_started() called?"
             )
 
-        # Store tools for MCP server access
-        self._room_tools[room_id] = tools
+        # Store tools for MCP server access. Wrap with the send_message
+        # dedup shim so MCP-driven retries (event-loop saturation
+        # under Claude CLI load causes the same band_send_message tool
+        # call to fire more than once for a single LLM-intended send) do
+        # not turn into duplicate chat messages. Bypass the wrapper when
+        # the operator has explicitly opted out via ttl=0.
+        #
+        # The wrapper MUST persist for the room so a lingering MCP retry can
+        # still see the cache through self._room_tools.get. MCP tool calls
+        # only resolve by room id, not by the original inbound message id, so
+        # the cache is intentionally keyed by the outgoing payload within the
+        # per-room wrapper. Swap the inner reference instead of rebuilding the
+        # wrapper.
+        #
+        # DedupingAgentTools is structurally a superset of AgentToolsProtocol
+        # (the dedup shim only intercepts send_message and __getattr__-forwards
+        # everything else), but pyrefly cannot reason about __getattr__ for
+        # protocol conformance, so we cast through Any.
+        if self.send_message_dedup_ttl_seconds > 0:
+            existing = self._room_tools.get(room_id)
+            if isinstance(existing, DedupingAgentTools):
+                if existing._inner is not tools:
+                    await existing.update_inner(tools)
+                tools = cast(AgentToolsProtocol, existing)
+            else:
+                wrapper = DedupingAgentTools(
+                    tools,
+                    ttl_seconds=self.send_message_dedup_ttl_seconds,
+                    label=room_id,
+                )
+                tools = cast(AgentToolsProtocol, wrapper)
+                self._room_tools[room_id] = tools
+        else:
+            self._room_tools[room_id] = tools
 
         # Approval flow: track notify target and intercept local commands
         if self.approval_mode is not None:

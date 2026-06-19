@@ -823,7 +823,7 @@ class TestSessionPersistence:
 
         mock_client.receive_response = mock_receive
 
-        with patch("thenvoi.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
+        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
             await adapter._process_response(mock_client, "room-123", mock_tools)
 
         [snapshot] = adapter.provider_usage_snapshots()
@@ -860,7 +860,7 @@ class TestSessionPersistence:
 
         mock_client.receive_response = mock_receive
 
-        with patch("thenvoi.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
+        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
             await adapter._process_response(mock_client, "room-123", mock_tools)
 
         [snapshot] = adapter.provider_usage_snapshots()

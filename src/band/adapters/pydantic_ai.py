@@ -21,8 +21,10 @@ from pydantic_ai import (
 )
 from pydantic_ai.messages import (
     ModelRequest,
+    ModelResponse,
     SystemPromptPart,
     TextPart,
+    ThinkingPart,
     UserPromptPart,
 )
 
@@ -38,6 +40,26 @@ from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import get_tool_description
 
 logger = logging.getLogger(__name__)
+
+
+# A response made up only of these (or with no parts at all) serializes to
+# content:null, which providers reject when it's replayed as history.
+_NON_REPLAYABLE_RESPONSE_PARTS = (ThinkingPart,)
+
+
+def _is_replayable_history_message(message: Any) -> bool:
+    """Drop assistant responses that would replay as content:null.
+
+    Keep any response with at least one content-bearing part (text, tool
+    calls, builtin tool calls/returns, files). Drop thinking-only and empty
+    responses, which providers reject when sent back as history.
+    """
+    if isinstance(message, ModelResponse):
+        return any(
+            not isinstance(part, _NON_REPLAYABLE_RESPONSE_PARTS)
+            for part in message.parts
+        )
+    return True
 
 
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
@@ -455,16 +477,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
         return agent
 
-    def _replayable_history(self, messages: list[Any]) -> PydanticAIMessages:
-        """Strip provider-native tool parts from history kept across turns.
-
-        Filters at the part level rather than dropping whole messages: the
-        first ModelRequest of a run bundles SystemPromptPart with the user
-        prompt, and pydantic-ai only re-injects system prompts when
-        message_history is empty, so dropping that message would silently
-        remove the system prompt (and the first user turn) from every
-        subsequent run.
-        """
+    def _replayable_history(
+        self, room_id: str, messages: list[Any]
+    ) -> PydanticAIMessages:
+        """Keep history providers can replay without content:null or native tool parts."""
         replayable: PydanticAIMessages = []
         for message in messages:
             parts = getattr(message, "parts", [])
@@ -479,6 +495,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 replayable.append(message)
             else:
                 replayable.append(dataclasses.replace(message, parts=safe_parts))
+
+        dropped = len(messages) - len(replayable)
+        if dropped:
+            logger.debug(
+                "Room %s: dropped %s content:null response(s) from history",
+                room_id,
+                dropped,
+            )
         return replayable
 
     # --- Adapted from BandPydanticAgent._handle_message ---
@@ -591,9 +615,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         "total_tokens": usage.total_tokens,
                     },
                 )
-                # Update stored history with replay-safe text/user messages only.
+                # Keep native run history, but drop responses that replay as
+                # content:null (e.g. thinking-only) and provider-native tool parts —
+                # providers reject them next request.
                 self._message_history[room_id] = self._replayable_history(
-                    list(event.result.all_messages())
+                    room_id,
+                    list(event.result.all_messages()),
                 )
 
         logger.debug(
