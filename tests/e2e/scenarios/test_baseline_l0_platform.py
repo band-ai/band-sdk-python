@@ -14,14 +14,14 @@ from contextlib import AsyncExitStack
 from typing import Any
 
 import pytest
-from thenvoi_rest import AsyncRestClient
-from thenvoi_rest.types import ParticipantRequest
+from band_rest import AsyncRestClient
+from band_rest.types import ParticipantRequest
 
-from thenvoi.agent import Agent
-from thenvoi.core.protocols import AgentToolsProtocol
-from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.core.types import AdapterFeatures, Emit, PlatformMessage
-from thenvoi.runtime.types import AgentConfig
+from band.agent import Agent
+from band.core.protocols import AgentToolsProtocol
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import AdapterFeatures, Emit, PlatformMessage
+from band.runtime.types import AgentConfig
 
 from tests.e2e.adapters.conftest import (
     AdapterFactory,
@@ -315,21 +315,21 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
     adapter.clear_provider_usage()
     agent_observation_client = AsyncRestClient(
         api_key=e2e_adapter_agent_credentials.api_key,
-        base_url=e2e_config.thenvoi_base_url,
+        base_url=e2e_config.band_base_url,
     )
     agent = Agent.create(
         adapter=adapter,
         agent_id=agent_id,
         api_key=e2e_adapter_agent_credentials.api_key,
-        ws_url=e2e_config.thenvoi_ws_url,
-        rest_url=e2e_config.thenvoi_base_url,
+        ws_url=e2e_config.band_ws_url,
+        rest_url=e2e_config.band_base_url,
     )
     echo_agent = Agent.create(
         adapter=_DeterministicEchoAdapter(),
         agent_id=echo_id,
         api_key=echo_api_key,
-        ws_url=e2e_config.thenvoi_ws_url,
-        rest_url=e2e_config.thenvoi_base_url,
+        ws_url=e2e_config.band_ws_url,
+        rest_url=e2e_config.band_base_url,
         config=AgentConfig(auto_subscribe_existing_rooms=False),
     )
 
@@ -401,8 +401,8 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
             agent_id=agent_id,
             after_message_id=step_1_trigger_id,
             required_tool_names={
-                "thenvoi_get_participants",
-                "thenvoi_lookup_peers",
+                "band_get_participants",
+                "band_lookup_peers",
             },
             timeout=_STEP_TIMEOUT,
             adapter_name=adapter_name,
@@ -455,8 +455,8 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
             agent_id=agent_id,
             after_message_id=step_2_trigger_id,
             required_tool_names={
-                "thenvoi_add_participant",
-                "thenvoi_send_message",
+                "band_add_participant",
+                "band_send_message",
             },
             timeout=_STEP_TIMEOUT,
             adapter_name=adapter_name,
@@ -524,7 +524,7 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
             room_id=chat_id,
             agent_id=agent_id,
             after_message_id=step_3_trigger_id,
-            required_tool_names={"thenvoi_remove_participant"},
+            required_tool_names={"band_remove_participant"},
             timeout=_STEP_TIMEOUT,
             adapter_name=adapter_name,
         )
@@ -583,7 +583,7 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
                             "tool_call_id": observation.tool_call_id,
                         }
                         for observation in step_1_tool_observations
-                        if observation.tool_name == "thenvoi_lookup_peers"
+                        if observation.tool_name == "band_lookup_peers"
                     ],
                 },
                 "L0.dispatch.add_participant": {
@@ -596,7 +596,7 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
                             "tool_call_id": observation.tool_call_id,
                         }
                         for observation in step_2_tool_observations
-                        if observation.tool_name == "thenvoi_add_participant"
+                        if observation.tool_name == "band_add_participant"
                     ],
                 },
                 "L0.dispatch.send_message": {
@@ -610,7 +610,7 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
                             "tool_call_id": observation.tool_call_id,
                         }
                         for observation in step_2_tool_observations
-                        if observation.tool_name == "thenvoi_send_message"
+                        if observation.tool_name == "band_send_message"
                     ],
                 },
                 "L0.dispatch.get_participants": {
@@ -625,7 +625,7 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
                             "tool_call_id": observation.tool_call_id,
                         }
                         for observation in step_1_tool_observations
-                        if observation.tool_name == "thenvoi_get_participants"
+                        if observation.tool_name == "band_get_participants"
                     ],
                 },
                 "L0.dispatch.remove_participant": {

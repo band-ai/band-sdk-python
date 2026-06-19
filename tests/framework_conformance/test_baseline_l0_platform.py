@@ -48,14 +48,14 @@ _L0_REQUEST_ROWS = {
 }
 
 _CHAT_TOOL_ARGS: dict[str, dict[str, Any]] = {
-    "thenvoi_send_message": {
+    "band_send_message": {
         "content": "L0 dispatch sentinel",
         "mentions": ["@darvell"],
     },
-    "thenvoi_add_participant": {"identifier": "darvell/greeter", "role": "member"},
-    "thenvoi_remove_participant": {"identifier": "darvell/greeter"},
-    "thenvoi_get_participants": {},
-    "thenvoi_lookup_peers": {"page": 1, "page_size": 10},
+    "band_add_participant": {"identifier": "darvell/greeter", "role": "member"},
+    "band_remove_participant": {"identifier": "darvell/greeter"},
+    "band_get_participants": {},
+    "band_lookup_peers": {"page": 1, "page_size": 10},
 }
 
 
@@ -208,7 +208,7 @@ async def test_l0_chat_tool_dispatch_reaches_real_adapter_path(
 def test_l0_dispatch_oracle_rejects_corrupted_tool_arguments() -> None:
     result = DispatchResult(
         adapter_id="anthropic",
-        tool_name="thenvoi_send_message",
+        tool_name="band_send_message",
         arguments={"content": "expected", "mentions": ["@darvell"]},
         tool_calls=[],
         messages_sent=[
