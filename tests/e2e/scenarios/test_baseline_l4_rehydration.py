@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from thenvoi_rest import AsyncRestClient
-from thenvoi_rest.types import ParticipantRequest
+from band_rest import AsyncRestClient
+from band_rest.types import ParticipantRequest
 
-from thenvoi.agent import Agent
-from thenvoi.core.simple_adapter import ProviderUsageSnapshot
+from band.agent import Agent
+from band.core.simple_adapter import ProviderUsageSnapshot
 
 from tests.e2e.adapters.conftest import (
     AdapterFactory,
@@ -349,8 +349,8 @@ async def test_l4_live_adapter_cold_restart_rehydrates_without_replaying_invite_
             adapter_name,
             agent_id,
             e2e_adapter_agent_credentials.api_key,
-            e2e_config.thenvoi_ws_url,
-            e2e_config.thenvoi_base_url,
+            e2e_config.band_ws_url,
+            e2e_config.band_base_url,
             str(usage_path),
             ready_queue,
         ),
@@ -459,8 +459,8 @@ async def test_l4_live_adapter_cold_restart_rehydrates_without_replaying_invite_
         adapter=restarted_adapter,
         agent_id=agent_id,
         api_key=e2e_adapter_agent_credentials.api_key,
-        ws_url=e2e_config.thenvoi_ws_url,
-        rest_url=e2e_config.thenvoi_base_url,
+        ws_url=e2e_config.band_ws_url,
+        rest_url=e2e_config.band_base_url,
     )
     async with restarted_agent:
         restart_replies = await wait_full_window_for_new_agent_text_messages(

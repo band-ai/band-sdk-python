@@ -363,15 +363,14 @@ def test_tool_observations_require_call_and_result_after_turn_boundary() -> None
             "event-1",
             "tool_call",
             content=(
-                '{"name":"thenvoi_get_participants","tool_call_id":"call-1","args":{}}'
+                '{"name":"band_get_participants","tool_call_id":"call-1","args":{}}'
             ),
         ),
         _fake_message(
             "event-2",
             "tool_result",
             content=(
-                '{"name":"thenvoi_get_participants",'
-                '"tool_call_id":"call-1","output":[]}'
+                '{"name":"band_get_participants","tool_call_id":"call-1","output":[]}'
             ),
         ),
     ]
@@ -389,7 +388,7 @@ def test_tool_observations_require_call_and_result_after_turn_boundary() -> None
     ]
     assert_required_tool_observations(
         observations,
-        required_tool_names={"thenvoi_get_participants"},
+        required_tool_names={"band_get_participants"},
     )
 
 
@@ -410,12 +409,12 @@ def test_tool_observations_ignore_correct_text_without_read_tool_events() -> Non
         after_message_id="trigger-1",
     )
 
-    with pytest.raises(AssertionError, match="thenvoi_get_participants"):
+    with pytest.raises(AssertionError, match="band_get_participants"):
         assert_required_tool_observations(
             observations,
             required_tool_names={
-                "thenvoi_get_participants",
-                "thenvoi_lookup_peers",
+                "band_get_participants",
+                "band_lookup_peers",
             },
         )
 
@@ -425,7 +424,7 @@ def test_tool_observations_do_not_cross_turn_boundary() -> None:
         _fake_message(
             "event-before",
             "tool_call",
-            content=('{"name":"thenvoi_remove_participant","tool_call_id":"old-call"}'),
+            content=('{"name":"band_remove_participant","tool_call_id":"old-call"}'),
         ),
         _fake_message("trigger-1", "text", sender_id="user-1"),
     ]
@@ -438,10 +437,10 @@ def test_tool_observations_do_not_cross_turn_boundary() -> None:
     )
 
     assert observations == []
-    with pytest.raises(AssertionError, match="thenvoi_remove_participant"):
+    with pytest.raises(AssertionError, match="band_remove_participant"):
         assert_required_tool_observations(
             observations,
-            required_tool_names={"thenvoi_remove_participant"},
+            required_tool_names={"band_remove_participant"},
         )
 
 
@@ -452,7 +451,7 @@ def test_successful_tool_execution_correlates_unnamed_result_by_call_id() -> Non
             "event-1",
             "tool_call",
             content=(
-                '{"name":"thenvoi_send_message",'
+                '{"name":"band_send_message",'
                 '"tool_call_id":"call-1","args":{"content":"hello"}}'
             ),
         ),
@@ -471,7 +470,7 @@ def test_successful_tool_execution_correlates_unnamed_result_by_call_id() -> Non
     )
     execution = require_successful_tool_execution(
         observations,
-        tool_name="thenvoi_send_message",
+        tool_name="band_send_message",
     )
 
     assert execution.tool_call_id == "call-1"
@@ -486,7 +485,7 @@ def test_successful_tool_execution_rejects_error_result() -> None:
             "event-1",
             "tool_call",
             content=(
-                '{"name":"thenvoi_send_message",'
+                '{"name":"band_send_message",'
                 '"tool_call_id":"call-1","args":{"content":"hello"}}'
             ),
         ),
@@ -494,8 +493,8 @@ def test_successful_tool_execution_rejects_error_result() -> None:
             "event-2",
             "tool_result",
             content=(
-                '{"name":"thenvoi_send_message",'
-                '"tool_call_id":"call-1","output":"Error executing thenvoi_send_message"}'
+                '{"name":"band_send_message",'
+                '"tool_call_id":"call-1","output":"Error executing band_send_message"}'
             ),
         ),
     ]
@@ -510,5 +509,5 @@ def test_successful_tool_execution_rejects_error_result() -> None:
     with pytest.raises(AssertionError, match="reported an error"):
         require_successful_tool_execution(
             observations,
-            tool_name="thenvoi_send_message",
+            tool_name="band_send_message",
         )

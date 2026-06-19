@@ -10,10 +10,10 @@ import pytest
 from anthropic.types import TextBlock
 from pydantic import BaseModel
 
-from thenvoi.adapters.anthropic import AnthropicAdapter
-from thenvoi.core.types import AgentInput
-from thenvoi.runtime.execution import ExecutionContext
-from thenvoi.runtime.types import SessionConfig
+from band.adapters.anthropic import AnthropicAdapter
+from band.core.types import AgentInput
+from band.runtime.execution import ExecutionContext
+from band.runtime.types import SessionConfig
 
 from tests.framework_conformance.baseline_applicability import (
     ApplicabilityStatus,
@@ -135,7 +135,7 @@ async def test_l4_cold_start_rebuilds_persisted_history_in_canonical_order(
     assert "MARCO" in text
     assert "LIGHTHOUSE" in text
     assert "POSTGRESQL" in text
-    assert "thenvoi_send_message" in text
+    assert "band_send_message" in text
     assert "tool-call-001" in text
     assert "msg-sent" in text
 
@@ -447,4 +447,5 @@ def test_l4_rehydration_rows_are_request_visible_except_cleanup_hardening() -> N
         "a2a",
         "a2a_gateway",
         "acp",
+        "slack",
     }
