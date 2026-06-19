@@ -39,10 +39,10 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel, Field
 
-from thenvoi.core.protocols import AgentToolsProtocol
-from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.core.types import AdapterFeatures, Emit, PlatformMessage
-from thenvoi.testing.fake_tools import FakeAgentTools
+from band.core.protocols import AgentToolsProtocol
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import AdapterFeatures, Emit, PlatformMessage
+from band.testing.fake_tools import FakeAgentTools
 
 pytest.importorskip("langchain", reason="langgraph extra not installed")
 pytest.importorskip("anthropic", reason="anthropic extra not installed")
@@ -78,7 +78,7 @@ SEND_ARGS: dict[str, Any] = {
     "mentions": ["@tester"],
 }
 SCRIPT: list[ModelDecision] = [
-    ModelDecision(tool_calls=[ToolCall(name="thenvoi_send_message", args=SEND_ARGS)]),
+    ModelDecision(tool_calls=[ToolCall(name="band_send_message", args=SEND_ARGS)]),
     ModelDecision(text="done"),
 ]
 
@@ -119,7 +119,7 @@ class _SchemaTools(FakeAgentTools):
                 include_contacts=include_contacts,
             )
 
-        from thenvoi.runtime.tools import iter_tool_definitions
+        from band.runtime.tools import iter_tool_definitions
 
         schemas: list[dict[str, Any]] = []
         for definition in iter_tool_definitions(
@@ -166,7 +166,7 @@ def _make_langgraph_adapter(
     from langchain_core.outputs import ChatGeneration, ChatResult
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from thenvoi.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter
 
     class _ScriptedChatModel(BaseChatModel):
         # Declared as a pydantic field; mutated in place (popped) per call.
@@ -258,7 +258,7 @@ def _make_anthropic_adapter(
     """
     from anthropic.types import TextBlock, ToolUseBlock
 
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     adapter = AnthropicAdapter(
         model="claude-sonnet-4-5-20250929",
@@ -302,7 +302,7 @@ def _make_anthropic_adapter(
 
 def _anthropic_custom_tool() -> CustomToolProbe:
     """An (InputModel, handler) CustomToolDef whose handler records its call."""
-    from thenvoi.runtime.custom_tools import get_custom_tool_name
+    from band.runtime.custom_tools import get_custom_tool_name
 
     log: list[str] = []
 
@@ -390,12 +390,10 @@ async def test_platform_tool_dispatch_right_tool_right_args(
     tools = _SchemaTools(room_id=room_id)  # the shared recorder
     await _run(binding.make_adapter(SCRIPT), tools, room_id)
 
-    dispatched = [
-        c for c in tools.tool_calls if c["tool_name"] == "thenvoi_send_message"
-    ]
+    dispatched = [c for c in tools.tool_calls if c["tool_name"] == "band_send_message"]
     assert len(dispatched) == 1, (
         f"[{binding.framework_id}/{binding.seam_type}] expected exactly one "
-        f"thenvoi_send_message dispatch, got: {tools.tool_calls}"
+        f"band_send_message dispatch, got: {tools.tool_calls}"
     )
     assert dispatched[0]["arguments"] == SEND_ARGS, (
         f"[{binding.framework_id}/{binding.seam_type}] wrong args at dispatch: "
@@ -444,10 +442,10 @@ async def test_custom_tool_dispatch_observed_via_handler_not_recorder(
 ORDER_SCRIPT: list[ModelDecision] = [
     ModelDecision(
         tool_calls=[
-            ToolCall("thenvoi_add_participant", {"identifier": "@echo"}, id="call_A")
+            ToolCall("band_add_participant", {"identifier": "@echo"}, id="call_A")
         ]
     ),
-    ModelDecision(tool_calls=[ToolCall("thenvoi_get_participants", {}, id="call_B")]),
+    ModelDecision(tool_calls=[ToolCall("band_get_participants", {}, id="call_B")]),
     ModelDecision(text="done"),
 ]
 
@@ -485,7 +483,7 @@ async def test_execution_events_emitted_in_order_and_correlated(
     call_names = [
         p["name"] for e, p in zip(events, payloads) if e["message_type"] == "tool_call"
     ]
-    assert call_names == ["thenvoi_add_participant", "thenvoi_get_participants"], (
+    assert call_names == ["band_add_participant", "band_get_participants"], (
         f"[{binding.framework_id}/{binding.seam_type}] calls out of order: {call_names}"
     )
 

@@ -33,10 +33,10 @@ pytest.importorskip("google.genai", reason="gemini extra not installed")
 
 from google.genai import types  # noqa: E402
 
-from thenvoi.adapters.gemini import GeminiAdapter  # noqa: E402
-from thenvoi.core.protocols import AgentToolsProtocol  # noqa: E402
-from thenvoi.core.types import PlatformMessage  # noqa: E402
-from thenvoi.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.adapters.gemini import GeminiAdapter  # noqa: E402
+from band.core.protocols import AgentToolsProtocol  # noqa: E402
+from band.core.types import PlatformMessage  # noqa: E402
+from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 
 _SEND_ARGS: dict[str, Any] = {
     "content": "Injected reply: PINEAPPLE",
@@ -54,7 +54,7 @@ class _SchemaTools(FakeAgentTools):
             {
                 "type": "function",
                 "function": {
-                    "name": "thenvoi_send_message",
+                    "name": "band_send_message",
                     "description": "Send a message to the chat room.",
                     "parameters": {
                         "type": "object",
@@ -133,17 +133,15 @@ async def test_scripted_gemini_response_routes_to_execute_tool_call() -> None:
     _install_scripted_call(
         adapter,
         [
-            _response_with_tool_call("thenvoi_send_message", _SEND_ARGS),
+            _response_with_tool_call("band_send_message", _SEND_ARGS),
             _text_response("done"),
         ],
     )
     await _run(adapter, tools, room_id)
 
-    dispatched = [
-        c for c in tools.tool_calls if c["tool_name"] == "thenvoi_send_message"
-    ]
+    dispatched = [c for c in tools.tool_calls if c["tool_name"] == "band_send_message"]
     assert len(dispatched) == 1, (
-        f"expected one thenvoi_send_message dispatch via real routing, got: {tools.tool_calls}"
+        f"expected one band_send_message dispatch via real routing, got: {tools.tool_calls}"
     )
     assert dispatched[0]["arguments"] == _SEND_ARGS, (
         f"args did not survive real _process_function_calls: {dispatched[0]['arguments']!r}"

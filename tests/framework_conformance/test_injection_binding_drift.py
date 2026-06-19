@@ -21,31 +21,65 @@ from packaging.requirements import Requirement
 from tests.framework_conformance.injection_registry import (
     INJECTION_BINDINGS,
     INJECTION_EXCLUDED_MODULES,
+    TIER2_L0_BLOCKED_COVERAGE,
+    InjectionBinding,
     DriftRisk,
     Family,
     ModelSeamKind,
     NASubreason,
     ObservationPath,
     Tier1Status,
+    missing_required_modules,
+    tier1_dependency_blocked_reason,
 )
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_SRC_ROOT = _REPO_ROOT / "src" / "thenvoi"
+_SRC_ROOT = _REPO_ROOT / "src" / "band"
 
 
 def _discover_adapter_modules() -> set[str]:
     adapter_dir = _SRC_ROOT / "adapters"
-    return {
-        p.stem
-        for p in adapter_dir.iterdir()
-        if p.suffix == ".py" and p.name != "__init__.py"
-    }
+    modules: set[str] = set()
+    for p in adapter_dir.iterdir():
+        if p.suffix == ".py" and p.name != "__init__.py":
+            modules.add(p.stem)
+        elif p.is_dir() and (p / "__init__.py").is_file():
+            # Package-style adapters (e.g. adapters/codex/) must also be bound
+            # or excluded — a package-only adapter cannot skip the gate.
+            modules.add(p.name)
+    return modules
+
+
+def _literal_string_sequence(node: ast.AST) -> set[str]:
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        raise AssertionError(
+            "tests/e2e/conftest.py adapter_entry params must be a literal "
+            "adapter-name sequence"
+        )
+
+    adapters: set[str] = set()
+    for elt in node.elts:
+        if not isinstance(elt, ast.Constant) or not isinstance(elt.value, str):
+            raise AssertionError(
+                "tests/e2e/conftest.py adapter_entry params must contain only "
+                "literal adapter-name strings"
+            )
+        adapters.add(elt.value)
+    return adapters
 
 
 def _e2e_parametrized_adapters() -> set[str]:
     """Read the shared E2E adapter matrix without importing optional deps."""
     conftest = _REPO_ROOT / "tests" / "e2e" / "conftest.py"
     tree = ast.parse(conftest.read_text(encoding="utf-8"), filename=str(conftest))
+    module_constants: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    module_constants[target.id] = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            module_constants[node.target.id] = node.value
 
     for node in tree.body:
         if not isinstance(node, ast.FunctionDef) or node.name != "adapter_entry":
@@ -62,22 +96,45 @@ def _e2e_parametrized_adapters() -> set[str]:
             ):
                 continue
             for keyword in decorator.keywords:
-                if keyword.arg == "params" and isinstance(
-                    keyword.value, (ast.List, ast.Tuple)
-                ):
-                    adapters: set[str] = set()
-                    for elt in keyword.value.elts:
-                        if not isinstance(elt, ast.Constant) or not isinstance(
-                            elt.value, str
-                        ):
-                            raise AssertionError(
-                                "tests/e2e/conftest.py adapter_entry params must be "
-                                "literal adapter-name strings"
-                            )
-                        adapters.add(elt.value)
-                    return adapters
+                if keyword.arg != "params":
+                    continue
+                if isinstance(keyword.value, ast.Name):
+                    return _literal_string_sequence(module_constants[keyword.value.id])
+                return _literal_string_sequence(keyword.value)
+    raise AssertionError("Could not find pytest.fixture(params=...) for adapter_entry")
+
+
+def _e2e_adapter_factory_names() -> set[str]:
+    """Read BASELINE_L0_ADAPTER_FACTORIES keys without importing optional deps."""
+    conftest = _REPO_ROOT / "tests" / "e2e" / "adapters" / "conftest.py"
+    tree = ast.parse(conftest.read_text(encoding="utf-8"), filename=str(conftest))
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            is_factories = any(
+                isinstance(target, ast.Name)
+                and target.id == "BASELINE_L0_ADAPTER_FACTORIES"
+                for target in node.targets
+            )
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            is_factories = node.target.id == "BASELINE_L0_ADAPTER_FACTORIES"
+            value = node.value
+        else:
+            continue
+        if not is_factories:
+            continue
+        if not isinstance(value, ast.Dict):
+            raise AssertionError("BASELINE_L0_ADAPTER_FACTORIES must be a literal dict")
+        names: set[str] = set()
+        for key in value.keys:
+            if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                raise AssertionError(
+                    "BASELINE_L0_ADAPTER_FACTORIES keys must be literal strings"
+                )
+            names.add(key.value)
+        return names
     raise AssertionError(
-        "Could not find pytest.fixture(params=[...]) for adapter_entry"
+        "Could not find BASELINE_L0_ADAPTER_FACTORIES in tests/e2e/adapters/conftest.py"
     )
 
 
@@ -86,7 +143,7 @@ class SeamNotFound(Exception):
 
 
 def _module_source_path(module_path: str) -> Path:
-    """Map a dotted module path under ``thenvoi`` to its source file.
+    """Map a dotted module path under ``band`` to its source file.
 
     Uses the on-disk layout, NOT import — so seam resolution never requires the
     adapter's optional framework dependency to be installed. This is what keeps
@@ -94,7 +151,7 @@ def _module_source_path(module_path: str) -> Path:
     can no longer masquerade as a renamed seam (the previous import-based
     resolver skipped on ImportError, which fails OPEN).
     """
-    assert module_path.startswith("thenvoi."), module_path
+    assert module_path.startswith("band."), module_path
     rel = Path(*module_path.split(".")[1:]).with_suffix(".py")
     return _SRC_ROOT / rel
 
@@ -103,7 +160,7 @@ def _assert_seam_defined_in_source(seam: str) -> None:
     """Fail-closed: assert the seam's attribute path is defined in the module's
     source via AST, without importing the module.
 
-    Seam form: ``"thenvoi.adapters.x:Class.method"`` or ``"thenvoi...:func"``.
+    Seam form: ``"band.adapters.x:Class.method"`` or ``"band...:func"``.
     Raises SeamNotFound if any name in the attribute path is absent.
     """
     module_path, _, attr_path = seam.partition(":")
@@ -176,6 +233,33 @@ class TestInjectionRegistryCoverage:
         overlap = bound & INJECTION_EXCLUDED_MODULES
         assert not overlap, f"Adapters both bound and excluded: {overlap}. Pick one."
 
+    def test_non_bridge_bindings_have_l0_live_factory_or_blocked_artifact(self) -> None:
+        bound = {b.adapter for b in INJECTION_BINDINGS}
+        live_factories = _e2e_adapter_factory_names()
+        blocked = set(TIER2_L0_BLOCKED_COVERAGE)
+        missing = bound - live_factories - blocked
+        assert not missing, (
+            "Non-bridge InjectionBindings with no live L0 E2E factory and no explicit "
+            f"blocked artifact coverage: {missing}. Add an adapter factory or a "
+            "TIER2_L0_BLOCKED_COVERAGE entry."
+        )
+
+    def test_l0_live_blocked_artifact_entries_are_real_and_not_stale(self) -> None:
+        bound = {b.adapter for b in INJECTION_BINDINGS}
+        live_factories = _e2e_adapter_factory_names()
+        for adapter_id, coverage in TIER2_L0_BLOCKED_COVERAGE.items():
+            assert adapter_id in bound
+            assert coverage.adapter == adapter_id
+            assert coverage.status.value == "blocked_artifact_required"
+            assert adapter_id not in live_factories, (
+                f"{adapter_id}: remove stale blocked coverage now that an E2E factory exists"
+            )
+            assert coverage.reason.startswith("tier2_blocked:"), coverage.reason
+            assert (_REPO_ROOT / coverage.artifact_path).is_file(), (
+                f"{adapter_id}: blocked artifact path {coverage.artifact_path!r} "
+                "does not exist"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Per-binding invariants (parametrized so each adapter fails independently).
@@ -187,7 +271,7 @@ _BINDING_IDS = [b.adapter for b in _BINDINGS]
 
 class TestBindingInvariants:
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_family_status_consistency(self, binding) -> None:
+    def test_family_status_consistency(self, binding: InjectionBinding) -> None:
         if binding.family is Family.RUNTIME_OWNED_ROUTING:
             assert binding.tier1_status is Tier1Status.N_A_TIER2, (
                 f"{binding.adapter}: RUNTIME_OWNED_ROUTING must be N_A_TIER2"
@@ -198,7 +282,9 @@ class TestBindingInvariants:
             )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_honest_binding_has_observation_path(self, binding) -> None:
+    def test_honest_binding_has_observation_path(
+        self, binding: InjectionBinding
+    ) -> None:
         if binding.is_honest():
             assert binding.observation_paths, (
                 f"{binding.adapter}: honest binding must declare >=1 observation_path "
@@ -206,7 +292,9 @@ class TestBindingInvariants:
             )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_honest_binding_seam_is_defined_in_source(self, binding) -> None:
+    def test_honest_binding_seam_is_defined_in_source(
+        self, binding: InjectionBinding
+    ) -> None:
         """Fail-closed seam check via AST — no import, no optional dep required.
 
         A renamed/removed seam ALWAYS fails here, even in a CI lane where the
@@ -226,7 +314,9 @@ class TestBindingInvariants:
             )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_high_drift_version_pin_matches_installed(self, binding) -> None:
+    def test_high_drift_version_pin_matches_installed(
+        self, binding: InjectionBinding
+    ) -> None:
         """HIGH-drift bindings must pin a spec that the INSTALLED framework
         satisfies, so an upstream bump trips the gate before the spike silently
         breaks against a reshaped internal contract.
@@ -254,7 +344,7 @@ class TestBindingInvariants:
         )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_honest_binding_spike_exists(self, binding) -> None:
+    def test_honest_binding_spike_exists(self, binding: InjectionBinding) -> None:
         if not binding.is_honest():
             return
         assert binding.spike_test, (
@@ -266,7 +356,58 @@ class TestBindingInvariants:
         )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_model_seam_kind_only_for_injectable(self, binding) -> None:
+    def test_honest_binding_dependency_contract_is_explicit(
+        self, binding: InjectionBinding
+    ) -> None:
+        if not binding.is_honest():
+            return
+        if binding.required_modules:
+            assert binding.required_extra, (
+                f"{binding.adapter}: required_modules must name the install lane"
+            )
+        else:
+            assert binding.adapter == "codex", (
+                f"{binding.adapter}: honest bindings with optional framework deps must "
+                "declare required_modules; only scripted in-repo replay may omit them"
+            )
+
+    def test_request_capture_probe_dependencies_are_declared_on_bindings(self) -> None:
+        from tests.framework_conformance.request_capture import REQUEST_CAPTURE_PROBES
+
+        bindings = {binding.adapter: binding for binding in INJECTION_BINDINGS}
+        missing: dict[str, str] = {}
+        for adapter_id, probe in REQUEST_CAPTURE_PROBES.items():
+            if probe.required_module is None:
+                continue
+            binding = bindings[adapter_id]
+            if probe.required_module not in binding.required_modules:
+                missing[adapter_id] = probe.required_module
+
+        assert not missing, (
+            "Request-capture probes must not own optional dependency truth outside "
+            f"InjectionBinding.required_modules: {missing}"
+        )
+
+    @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
+    def test_honest_binding_missing_dependency_reason_is_explicit(
+        self, binding
+    ) -> None:
+        if not binding.is_honest():
+            return
+        reason = tier1_dependency_blocked_reason(binding)
+        missing = missing_required_modules(binding)
+        if missing:
+            assert reason is not None
+            assert reason.startswith("tier1_dependency_blocked:"), reason
+            for module in missing:
+                assert module in reason
+        else:
+            assert reason is None
+
+    @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
+    def test_model_seam_kind_only_for_injectable(
+        self, binding: InjectionBinding
+    ) -> None:
         if binding.family is Family.INJECTABLE_MODEL_OBJECT:
             assert isinstance(binding.model_seam_kind, ModelSeamKind), (
                 f"{binding.adapter}: INJECTABLE_MODEL_OBJECT must declare model_seam_kind"
@@ -278,7 +419,7 @@ class TestBindingInvariants:
             )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_high_drift_requires_version_pin(self, binding) -> None:
+    def test_high_drift_requires_version_pin(self, binding: InjectionBinding) -> None:
         if binding.drift_risk is DriftRisk.HIGH:
             assert binding.version_pin, (
                 f"{binding.adapter}: HIGH drift_risk requires a version_pin so an "
@@ -286,7 +427,7 @@ class TestBindingInvariants:
             )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_na_binding_has_reason_and_tier2(self, binding) -> None:
+    def test_na_binding_has_reason_and_tier2(self, binding: InjectionBinding) -> None:
         if binding.tier1_status is not Tier1Status.N_A_TIER2:
             return
         assert isinstance(binding.na_subreason, NASubreason), (
@@ -313,7 +454,9 @@ class TestBindingInvariants:
             )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_na_binding_is_reached_by_e2e_matrix(self, binding) -> None:
+    def test_na_binding_is_reached_by_e2e_matrix(
+        self, binding: InjectionBinding
+    ) -> None:
         if binding.tier1_status is not Tier1Status.N_A_TIER2:
             return
         assert binding.tier2_coverage
@@ -328,7 +471,7 @@ class TestBindingInvariants:
         )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_na_binding_has_no_honest_fields(self, binding) -> None:
+    def test_na_binding_has_no_honest_fields(self, binding: InjectionBinding) -> None:
         if binding.tier1_status is not Tier1Status.N_A_TIER2:
             return
         assert binding.seam is None, (
@@ -339,6 +482,6 @@ class TestBindingInvariants:
         )
 
     @pytest.mark.parametrize("binding", _BINDINGS, ids=_BINDING_IDS)
-    def test_observation_paths_are_valid(self, binding) -> None:
+    def test_observation_paths_are_valid(self, binding: InjectionBinding) -> None:
         for p in binding.observation_paths:
             assert isinstance(p, ObservationPath)

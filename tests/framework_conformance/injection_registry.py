@@ -1,10 +1,10 @@
-"""The Tier-1 ``InjectionBinding`` registry (INT-826 / INT-827).
+"""The Tier-1 ``InjectionBinding`` registry.
 
 This is the single source of truth for *how every adapter participates in Tier-1
 conformance*: which family it belongs to, the declared seam its translator
 installs at, where dispatch is observed, and — for the adapters that have no honest
-in-isolation seam — the recorded N-A reason plus the Tier-2/E2E test that
-compensates.
+in-isolation seam — the recorded N-A reason plus the live E2E lane that can be
+expanded into scenario-equivalent Tier-2 evidence.
 
 The companion ``test_injection_binding_drift.py`` fail-closes on this registry: a
 new adapter cannot be added without declaring a binding, an honest binding cannot
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from importlib.util import find_spec
 
 
 class Family(str, Enum):
@@ -65,6 +66,13 @@ class ObservationPath(str, Enum):
     )
 
 
+class Tier2L0Status(str, Enum):
+    """Explicit live L0 disposition for non-bridge adapters."""
+
+    LIVE_FACTORY = "live_factory"
+    BLOCKED_ARTIFACT_REQUIRED = "blocked_artifact_required"
+
+
 class NASubreason(str, Enum):
     """RUNTIME_OWNED_ROUTING only: the specific reason no honest seam exists."""
 
@@ -81,10 +89,18 @@ class NASubreason(str, Enum):
 
 
 @dataclass(frozen=True)
+class Tier2L0BlockedCoverage:
+    adapter: str
+    reason: str
+    artifact_path: str
+    status: Tier2L0Status = Tier2L0Status.BLOCKED_ARTIFACT_REQUIRED
+
+
+@dataclass(frozen=True)
 class InjectionBinding:
     """How one adapter participates in Tier-1 conformance.
 
-    ``adapter`` is the adapter module base name (matches ``src/thenvoi/adapters/<adapter>.py``).
+    ``adapter`` is the adapter module base name (matches ``src/band/adapters/<adapter>.py``).
     ``seam`` is a ``"module:attribute"`` string the drift gate resolves to a real
     callable; for INJECTABLE_MODEL_OBJECT it is the construction/override point,
     for INTERNAL_CLIENT_CALL the ``_call_*`` method, for SCRIPTED_PROTOCOL_CLIENT
@@ -102,11 +118,13 @@ class InjectionBinding:
     model_seam_kind: ModelSeamKind | None = None
     spike_test: str | None = None  # repo-relative path to the runnable proof
     version_pin: str | None = None  # required when drift_risk == HIGH
+    required_modules: tuple[str, ...] = ()
+    required_extra: str | None = None
 
     # RUNTIME_OWNED_ROUTING (N_A_TIER2):
     na_subreason: NASubreason | None = None
     tier2_coverage: str | None = (
-        None  # repo-relative path to the compensating E2E/integration test
+        None  # repo-relative path to the candidate live E2E/integration lane
     )
 
     def is_honest(self) -> bool:
@@ -119,9 +137,14 @@ class InjectionBinding:
 _SPIKE_DIR = "tests/framework_conformance"
 
 # Adapter modules intentionally outside the Tier-1 taxonomy: protocol bridges with
-# a non-standard lifecycle (no on_message model→tool path). Same set the contract
-# scopes out in §5.6.
-INJECTION_EXCLUDED_MODULES: frozenset[str] = frozenset({"a2a", "a2a_gateway", "acp"})
+# a non-standard lifecycle (no ordinary on_message model→tool path). Same set the
+# contract scopes out in §5.6.
+INJECTION_EXCLUDED_MODULES: frozenset[str] = frozenset(
+    {"a2a", "a2a_gateway", "acp", "slack"}
+)
+
+
+_L0_LIVE_ARTIFACT_TEST = "tests/e2e/scenarios/test_baseline_l0_platform.py"
 
 
 INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
@@ -132,9 +155,11 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.HONEST_TODAY,
         drift_risk=DriftRisk.LOW,
         observation_paths=frozenset({ObservationPath.EXECUTE_TOOL_CALL}),
-        seam="thenvoi.adapters.langgraph:LangGraphAdapter.__init__",  # the `llm=` ctor arg
+        seam="band.adapters.langgraph:LangGraphAdapter.__init__",  # the `llm=` ctor arg
         model_seam_kind=ModelSeamKind.PUBLIC_TEST_MODEL,
         spike_test=f"{_SPIKE_DIR}/test_injection_proof_spike.py",
+        required_modules=("langgraph", "langchain", "langchain_core"),
+        required_extra="dev",
     ),
     InjectionBinding(
         adapter="pydantic_ai",
@@ -144,9 +169,11 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         # PydanticAI platform tools call typed AgentToolsProtocol methods directly
         # (ctx.deps.send_message), NOT execute_tool_call. See pydantic_ai.py:168.
         observation_paths=frozenset({ObservationPath.TYPED_METHODS}),
-        seam="thenvoi.adapters.pydantic_ai:PydanticAIAdapter._create_agent",
+        seam="band.adapters.pydantic_ai:PydanticAIAdapter._create_agent",
         model_seam_kind=ModelSeamKind.PUBLIC_TEST_MODEL,
         spike_test=f"{_SPIKE_DIR}/test_pydantic_ai_injection_spike.py",
+        required_modules=("pydantic_ai",),
+        required_extra="dev",
     ),
     InjectionBinding(
         adapter="google_adk",
@@ -154,10 +181,12 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.HONEST_VIA_DECLARED_INTERNAL_SEAM,
         drift_risk=DriftRisk.HIGH,
         observation_paths=frozenset({ObservationPath.EXECUTE_TOOL_CALL}),
-        seam="thenvoi.adapters.google_adk:GoogleADKAdapter._create_runner",
+        seam="band.adapters.google_adk:GoogleADKAdapter._create_runner",
         model_seam_kind=ModelSeamKind.INTERNAL_MODEL_SUBCLASS,
         spike_test=f"{_SPIKE_DIR}/test_google_adk_injection_spike.py",
         version_pin="google-adk>=1.10,<1.11",
+        required_modules=("google.adk",),
+        required_extra="dev",
     ),
     # ---- INTERNAL_CLIENT_CALL ---------------------------------------------
     InjectionBinding(
@@ -166,8 +195,10 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.HONEST_TODAY,
         drift_risk=DriftRisk.LOW,
         observation_paths=frozenset({ObservationPath.EXECUTE_TOOL_CALL}),
-        seam="thenvoi.adapters.anthropic:AnthropicAdapter._call_anthropic",
+        seam="band.adapters.anthropic:AnthropicAdapter._call_anthropic",
         spike_test=f"{_SPIKE_DIR}/test_injection_proof_spike.py",
+        required_modules=("anthropic",),
+        required_extra="dev",
     ),
     InjectionBinding(
         adapter="gemini",
@@ -175,8 +206,10 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.HONEST_TODAY,
         drift_risk=DriftRisk.LOW,
         observation_paths=frozenset({ObservationPath.EXECUTE_TOOL_CALL}),
-        seam="thenvoi.adapters.gemini:GeminiAdapter._call_gemini",
+        seam="band.adapters.gemini:GeminiAdapter._call_gemini",
         spike_test=f"{_SPIKE_DIR}/test_gemini_injection_spike.py",
+        required_modules=("google.genai",),
+        required_extra="dev",
     ),
     # ---- SCRIPTED_PROTOCOL_CLIENT -----------------------------------------
     InjectionBinding(
@@ -185,7 +218,7 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         tier1_status=Tier1Status.HONEST_TODAY,
         drift_risk=DriftRisk.LOW,
         observation_paths=frozenset({ObservationPath.EXECUTE_TOOL_CALL}),
-        seam="thenvoi.adapters.codex:CodexAdapter._build_client",  # consumes client_factory
+        seam="band.adapters.codex:CodexAdapter._build_client",  # consumes client_factory
         spike_test=f"{_SPIKE_DIR}/test_codex_injection_spike.py",
     ),
     # ---- RUNTIME_OWNED_ROUTING (N-A → Tier-2/E2E) --------------------------
@@ -194,8 +227,10 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         family=Family.RUNTIME_OWNED_ROUTING,
         tier1_status=Tier1Status.N_A_TIER2,
         drift_risk=DriftRisk.LOW,
+        required_modules=("crewai",),
+        required_extra="dev-crewai",
         na_subreason=NASubreason.IN_PROCESS_PRIVATE_PARSER,
-        tier2_coverage="tests/e2e/adapters/test_all_adapters.py",
+        tier2_coverage="tests/e2e/adapters/test_crewai.py",
     ),
     InjectionBinding(
         adapter="crewai_flow",
@@ -210,6 +245,8 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         family=Family.RUNTIME_OWNED_ROUTING,
         tier1_status=Tier1Status.N_A_TIER2,
         drift_risk=DriftRisk.LOW,
+        required_modules=("parlant",),
+        required_extra="dev",
         na_subreason=NASubreason.IN_PROCESS_FRAMEWORK_RUNTIME,
         tier2_coverage="tests/e2e/adapters/test_parlant.py",
     ),
@@ -218,6 +255,8 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
         family=Family.RUNTIME_OWNED_ROUTING,
         tier1_status=Tier1Status.N_A_TIER2,
         drift_risk=DriftRisk.LOW,
+        required_modules=("claude_agent_sdk",),
+        required_extra="claude_sdk",
         na_subreason=NASubreason.OUT_OF_PROCESS_SUBPROCESS_DECISION,
         tier2_coverage="tests/e2e/adapters/test_all_adapters.py",
     ),
@@ -240,5 +279,61 @@ INJECTION_BINDINGS: tuple[InjectionBinding, ...] = (
 )
 
 
+TIER2_L0_BLOCKED_COVERAGE: dict[str, Tier2L0BlockedCoverage] = {
+    "crewai": Tier2L0BlockedCoverage(
+        adapter="crewai",
+        reason=(
+            "tier2_blocked: CrewAI L0 live proof requires the separate dev-crewai "
+            "dependency lane, not the default live workflow lane"
+        ),
+        artifact_path=_L0_LIVE_ARTIFACT_TEST,
+    ),
+    "crewai_flow": Tier2L0BlockedCoverage(
+        adapter="crewai_flow",
+        reason=(
+            "tier2_blocked: CrewAI Flow has no generic model-visible request surface "
+            "for the baseline L0 full-flow live proof"
+        ),
+        artifact_path=_L0_LIVE_ARTIFACT_TEST,
+    ),
+    "parlant": Tier2L0BlockedCoverage(
+        adapter="parlant",
+        reason=(
+            "tier2_blocked: Parlant L0 live proof requires an in-process Parlant "
+            "server fixture rather than the simple baseline live adapter factory"
+        ),
+        artifact_path=_L0_LIVE_ARTIFACT_TEST,
+    ),
+}
+
+
 def bindings_by_adapter() -> dict[str, InjectionBinding]:
     return {b.adapter: b for b in INJECTION_BINDINGS}
+
+
+def missing_required_modules(binding: InjectionBinding) -> tuple[str, ...]:
+    missing: list[str] = []
+    for module in binding.required_modules:
+        try:
+            found = find_spec(module) is not None
+        except ModuleNotFoundError:
+            found = False
+        if not found:
+            missing.append(module)
+    return tuple(missing)
+
+
+def tier1_dependency_blocked_reason(binding: InjectionBinding) -> str | None:
+    missing = missing_required_modules(binding)
+    if not missing:
+        return None
+    install_hint = (
+        f" Install the {binding.required_extra!r} extra for this lane."
+        if binding.required_extra
+        else " Install the adapter's required test dependency for this lane."
+    )
+    return (
+        f"tier1_dependency_blocked: {binding.adapter} requires missing module(s) "
+        f"{', '.join(missing)} for its declared Tier-1 proof."
+        f"{install_hint}"
+    )

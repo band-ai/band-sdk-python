@@ -15,9 +15,9 @@ import uuid
 from typing import Any
 
 import pytest
-from thenvoi_rest import AsyncRestClient
+from band_rest import AsyncRestClient
 
-from thenvoi.agent import Agent
+from band.agent import Agent
 
 from tests.e2e.conftest import E2ESettings, RoomAllocator, requires_e2e
 from tests.e2e.helpers import (
@@ -46,7 +46,7 @@ async def test_crewai_flow_terminal_decision_sends_visible_message(
     api_client: AsyncRestClient,
 ) -> None:
     """A terminal Flow return is executed through the real side-effect sender."""
-    from thenvoi.adapters.crewai_flow import CrewAIFlowAdapter
+    from band.adapters.crewai_flow import CrewAIFlowAdapter
 
     validation_code = f"CREWAI_FLOW_{uuid.uuid4().hex[:8]}"
 
@@ -62,9 +62,9 @@ async def test_crewai_flow_terminal_decision_sends_visible_message(
     agent = Agent.create(
         adapter=adapter,
         agent_id=e2e_config.test_agent_id,
-        api_key=e2e_config.thenvoi_api_key,
-        ws_url=e2e_config.thenvoi_ws_url,
-        rest_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key,
+        ws_url=e2e_config.band_ws_url,
+        rest_url=e2e_config.band_base_url,
     )
 
     chat_id, _user_id, _user_name = e2e_crewai_flow_room
@@ -76,6 +76,7 @@ async def test_crewai_flow_terminal_decision_sends_visible_message(
             chat_id,
             timeout=e2e_config.e2e_timeout,
             raise_on_timeout=True,
+            expected_agent_id=agent_id,
         ) as wait:
             await send_trigger_message(
                 api_client,

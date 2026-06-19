@@ -3,7 +3,7 @@
 WHAT THIS PROVES
 ----------------
 Given a scripted model decision, ADK's real ``InMemoryRunner`` dispatches the tool
-through the adapter's real ``_ThenvoiToolBridge`` to
+through the adapter's real ``_BandToolBridge`` to
 ``AgentToolsProtocol.execute_tool_call`` — no live inference, no secrets, no
 Google API key.
 
@@ -19,7 +19,7 @@ adapter would build (``self._build_adk_tools(tools)``), only swapping
 is ADK's real machinery:
 
     scripted BaseLlm -> InMemoryRunner.run_async -> handle_function_calls_async
-      -> tool.run_async -> _ThenvoiToolBridge.run_async
+      -> tool.run_async -> _BandToolBridge.run_async
       -> tools.execute_tool_call  (google_adk.py:226)
 
 ``model_seam_kind=INTERNAL_MODEL_SUBCLASS`` / ``drift_risk=HIGH``: the scripted
@@ -43,12 +43,12 @@ from google.adk.models.llm_response import LlmResponse  # noqa: E402
 from google.adk.runners import InMemoryRunner  # noqa: E402
 from google.genai import types  # noqa: E402
 
-from thenvoi.adapters.google_adk import GoogleADKAdapter, _sanitize_adk_agent_name  # noqa: E402
-from thenvoi.core.protocols import AgentToolsProtocol  # noqa: E402
-from thenvoi.core.types import PlatformMessage  # noqa: E402
-from thenvoi.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.adapters.google_adk import GoogleADKAdapter, _sanitize_adk_agent_name  # noqa: E402
+from band.core.protocols import AgentToolsProtocol  # noqa: E402
+from band.core.types import PlatformMessage  # noqa: E402
+from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 
-_APP_NAME = "thenvoi"
+_APP_NAME = "band"
 _SEND_ARGS: dict[str, Any] = {
     "content": "Injected reply: PINEAPPLE",
     "mentions": ["@tester"],
@@ -114,7 +114,7 @@ class _SchemaTools(FakeAgentTools):
             {
                 "type": "function",
                 "function": {
-                    "name": "thenvoi_send_message",
+                    "name": "band_send_message",
                     "description": "Send a message to the chat room.",
                     "parameters": {
                         "type": "object",
@@ -162,14 +162,12 @@ async def test_scripted_base_llm_routes_to_execute_tool_call() -> None:
     room_id = "adk-spike-room"
     tools = _SchemaTools(room_id=room_id)
     adapter = GoogleADKAdapter(model="gemini-2.5-flash")
-    _install_scripted_runner(adapter, [("thenvoi_send_message", _SEND_ARGS), None])
+    _install_scripted_runner(adapter, [("band_send_message", _SEND_ARGS), None])
     await _run(adapter, tools, room_id)
 
-    dispatched = [
-        c for c in tools.tool_calls if c["tool_name"] == "thenvoi_send_message"
-    ]
+    dispatched = [c for c in tools.tool_calls if c["tool_name"] == "band_send_message"]
     assert len(dispatched) == 1, (
-        f"expected one thenvoi_send_message dispatch through ADK's real runner, "
+        f"expected one band_send_message dispatch through ADK's real runner, "
         f"got: {tools.tool_calls}"
     )
     assert dispatched[0]["arguments"] == _SEND_ARGS, (

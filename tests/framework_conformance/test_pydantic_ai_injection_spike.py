@@ -18,7 +18,7 @@ real ``run_stream_events`` call.
 OBSERVATION PATH (the load-bearing detail)
 ------------------------------------------
 PydanticAI's platform-tool wrappers call **typed** ``AgentToolsProtocol`` methods
-directly — ``thenvoi_send_message`` calls ``ctx.deps.send_message(...)``
+directly — ``band_send_message`` calls ``ctx.deps.send_message(...)``
 (``pydantic_ai.py:168``), NOT ``execute_tool_call``. So dispatch is observed on
 ``FakeAgentTools.messages_sent``, not ``.tool_calls``. This is exactly the
 ``observation_paths`` distinction the contract's registry encodes: a canary that
@@ -42,10 +42,10 @@ from pydantic_ai.models.function import (  # noqa: E402
     FunctionModel,
 )
 
-from thenvoi.adapters.pydantic_ai import PydanticAIAdapter  # noqa: E402
-from thenvoi.core.protocols import AgentToolsProtocol  # noqa: E402
-from thenvoi.core.types import PlatformMessage  # noqa: E402
-from thenvoi.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.adapters.pydantic_ai import PydanticAIAdapter  # noqa: E402
+from band.core.protocols import AgentToolsProtocol  # noqa: E402
+from band.core.types import PlatformMessage  # noqa: E402
+from band.testing.fake_tools import FakeAgentTools  # noqa: E402
 
 _SEND_CONTENT = "Injected reply: PINEAPPLE"
 _SEND_MENTIONS = ["@tester"]
@@ -137,7 +137,7 @@ async def test_scripted_function_model_routes_to_typed_send_message() -> None:
         [
             (
                 "tool",
-                "thenvoi_send_message",
+                "band_send_message",
                 json.dumps({"content": _SEND_CONTENT, "mentions": _SEND_MENTIONS}),
             ),
             ("text", "done"),

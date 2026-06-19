@@ -2,7 +2,7 @@
 
 This is the "seam exists but routing went stale" alarm the contract calls for
 (§5.6). For **every honest binding**, it drives one fixed canary decision —
-``thenvoi_send_message(content="CANARY", mentions=["@canary"])`` — through the
+``band_send_message(content="CANARY", mentions=["@canary"])`` — through the
 adapter's *real* routing at the binding's *declared* seam, then asserts the
 dispatch lands on the binding's *declared* ``observation_paths`` bucket of the
 shared recorder.
@@ -31,20 +31,22 @@ from tests.framework_conformance.injection_registry import (
     INJECTION_BINDINGS,
     InjectionBinding,
     ObservationPath,
+    tier1_dependency_blocked_reason,
 )
-from thenvoi.core.protocols import AgentToolsProtocol
-from thenvoi.core.types import PlatformMessage
-from thenvoi.testing.fake_tools import FakeAgentTools
+from tests.framework_conformance.request_capture import tier1_sentinel_provider_env
+from band.core.protocols import AgentToolsProtocol
+from band.core.types import PlatformMessage
+from band.testing.fake_tools import FakeAgentTools
 
 # The one fixed canary decision every honest binding must route.
-_CANARY_TOOL = "thenvoi_send_message"
+_CANARY_TOOL = "band_send_message"
 _CANARY_ARGS: dict[str, Any] = {"content": "CANARY", "mentions": ["@canary"]}
 
 
 # Every honest adapter is told the same send_message schema, so each framework's
 # real tool-exposure path has a valid declaration to bind.
 def _send_message_schema(format: str) -> dict[str, Any]:
-    from thenvoi.runtime.tools import TOOL_DEFINITIONS
+    from band.runtime.tools import TOOL_DEFINITIONS
 
     definition = TOOL_DEFINITIONS[_CANARY_TOOL]
     input_schema = definition.input_model.model_json_schema()
@@ -106,7 +108,7 @@ async def _drive(adapter: Any, tools: FakeAgentTools, room_id: str) -> None:
 def _history_for(adapter: Any) -> Any:
     """Most adapters accept an empty list; Codex needs a CodexSessionState."""
     if type(adapter).__name__ == "CodexAdapter":
-        from thenvoi.integrations.codex.types import CodexSessionState
+        from band.integrations.codex.types import CodexSessionState
 
         return CodexSessionState(room_id="canary")
     return []
@@ -130,7 +132,7 @@ async def _canary_langgraph() -> _CanaryResult:
     from langchain_core.outputs import ChatGeneration, ChatResult
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from thenvoi.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter
 
     decisions = [
         AIMessage(
@@ -180,7 +182,7 @@ async def _canary_langgraph() -> _CanaryResult:
 async def _canary_anthropic() -> _CanaryResult:
     from anthropic.types import TextBlock, ToolUseBlock
 
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     @dataclass(frozen=True)
     class _Resp:
@@ -212,7 +214,7 @@ async def _canary_anthropic() -> _CanaryResult:
 async def _canary_gemini() -> _CanaryResult:
     from google.genai import types
 
-    from thenvoi.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter
 
     def _resp_tool() -> types.GenerateContentResponse:
         part = types.Part(
@@ -245,17 +247,10 @@ async def _canary_gemini() -> _CanaryResult:
 
 async def _canary_pydantic_ai() -> _CanaryResult:
     import json
-    import os
 
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 
-    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
-
-    # FunctionModel replaces the model entirely; the key is never used for
-    # inference but must exist for Agent('openai:...') construction. Restore the
-    # prior env value so the builder leaves no process-global state behind.
-    _prev_key = os.environ.get("OPENAI_API_KEY")
-    os.environ["OPENAI_API_KEY"] = "sk-canary-not-used"
+    from band.adapters.pydantic_ai import PydanticAIAdapter
 
     turns: list[Any] = [
         ("tool", _CANARY_TOOL, json.dumps(_CANARY_ARGS)),
@@ -270,9 +265,9 @@ async def _canary_pydantic_ai() -> _CanaryResult:
         else:
             yield decision[1]
 
-    adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
     tools = FakeAgentTools(room_id="canary-pyai")
-    try:
+    with tier1_sentinel_provider_env():
+        adapter = PydanticAIAdapter(model="openai:gpt-4o-mini")
         await adapter.on_started("CanaryBot", "Tier-1 positive-routing canary bot.")
         assert adapter._agent is not None
         with adapter._agent.override(model=FunctionModel(stream_function=_stream)):
@@ -285,11 +280,6 @@ async def _canary_pydantic_ai() -> _CanaryResult:
                 is_session_bootstrap=True,
                 room_id="canary-pyai",
             )
-    finally:
-        if _prev_key is None:
-            os.environ.pop("OPENAI_API_KEY", None)
-        else:
-            os.environ["OPENAI_API_KEY"] = _prev_key
     return _CanaryResult(tools)
 
 
@@ -300,7 +290,7 @@ async def _canary_google_adk() -> _CanaryResult:
     from google.adk.runners import InMemoryRunner
     from google.genai import types
 
-    from thenvoi.adapters.google_adk import GoogleADKAdapter, _sanitize_adk_agent_name
+    from band.adapters.google_adk import GoogleADKAdapter, _sanitize_adk_agent_name
 
     class _ScriptedBaseLlm(BaseLlm):
         script: list[Any]
@@ -342,7 +332,7 @@ async def _canary_google_adk() -> _CanaryResult:
             instruction=adapter._system_prompt,
             tools=adk_tools,
         )
-        return InMemoryRunner(agent=adk_agent, app_name="thenvoi")
+        return InMemoryRunner(agent=adk_agent, app_name="band")
 
     adapter._create_runner = _scripted_create_runner  # type: ignore[method-assign]
     tools = _SchemaTools(room_id="canary-adk")
@@ -354,28 +344,17 @@ async def _canary_codex() -> _CanaryResult:
     # Reuse the real-wire replay machinery from the Codex spike, but script the
     # canary args into the captured item/tool/call frame so the canary asserts
     # the same content as every other adapter.
-    import json
-
-    from tests.framework_conformance.test_codex_injection_spike import (
-        _ReplayCodexClient,
-        _load_frames,
+    from tests.framework_conformance.codex_replay import (
+        ReplayCodexClient,
+        frames_with_tool_call,
     )
-    from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+    from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
-    frames = _load_frames()
-    canary_frames: list[dict[str, Any]] = []
-    for entry in frames:
-        frame = entry["frame"]
-        if isinstance(frame, dict) and frame.get("method") == "item/tool/call":
-            frame = json.loads(json.dumps(frame))  # deep copy
-            frame["params"]["tool"] = _CANARY_TOOL
-            frame["params"]["arguments"] = dict(_CANARY_ARGS)
-            entry = {**entry, "frame": frame}
-        canary_frames.append(entry)
+    canary_frames = frames_with_tool_call(_CANARY_TOOL, _CANARY_ARGS)
 
     adapter = CodexAdapter(
         config=CodexAdapterConfig(transport="stdio", model="gpt-5.4"),
-        client_factory=lambda _config: _ReplayCodexClient(canary_frames),
+        client_factory=lambda _config: ReplayCodexClient(canary_frames),
     )
     tools = _SchemaTools(room_id="canary-codex")
     await _drive(adapter, tools, "canary-codex")
@@ -415,7 +394,7 @@ def _observed_dispatch_count(binding: InjectionBinding, tools: FakeAgentTools) -
             ]
         )
     if ObservationPath.TYPED_METHODS in binding.observation_paths:
-        # thenvoi_send_message routes to the typed send_message(content, mentions).
+        # band_send_message routes to the typed send_message(content, mentions).
         total += len(
             [
                 m
@@ -462,15 +441,21 @@ async def test_canary_routes_to_declared_observation_path(
             f"{binding.adapter}: no canary builder (see fail-closed gate above)"
         )
 
+    blocked_reason = tier1_dependency_blocked_reason(binding)
+    if blocked_reason is not None:
+        pytest.fail(blocked_reason)
+
     try:
         result = await builder()
     except ImportError as exc:
-        pytest.skip(f"{binding.adapter}: optional framework dep not installed ({exc})")
+        pytest.fail(
+            f"tier1_dependency_blocked: {binding.adapter} import failed after "
+            f"declared dependencies resolved: {exc}"
+        )
 
     count = _observed_dispatch_count(binding, result.tools)
-    assert count >= 1, (
-        f"{binding.adapter}: canary produced no dispatch on declared observation_paths "
-        f"{sorted(p.value for p in binding.observation_paths)}. The seam still resolves but "
-        f"routing no longer reaches the recorder — tool_calls={result.tools.tool_calls}, "
-        f"messages_sent={result.tools.messages_sent}"
+    assert count == 1, (
+        f"{binding.adapter}: canary must dispatch exactly once on declared "
+        f"observation_paths {sorted(p.value for p in binding.observation_paths)}. "
+        f"tool_calls={result.tools.tool_calls}, messages_sent={result.tools.messages_sent}"
     )
