@@ -59,6 +59,19 @@ class TestContextPersistence:
         when sharing a room across parametrized runs.
         """
         adapter_name, factory = adapter_entry
+        # Agno is excluded from this shared "secret code" recall test. Two of its
+        # behaviors break the test's assumptions in ways that are not SDK defects:
+        # (1) Claude-haiku refuses to act on Band's @[[id]]-formatted rehydrated
+        #     history, treating it as injected directives ("each request stands on
+        #     its own"); and (2) a "secret code" prompt collides with standing
+        #     organization-scoped agent memories phrased as a "code name", so the
+        #     agent recalls the wrong value. Agno context persistence is covered
+        #     separately in tests/e2e/scenarios/agno/test_context_persistence.py,
+        #     which uses a fresh room and a benign payload to avoid those effects.
+        if adapter_name == "agno":
+            pytest.skip(
+                "agno covered by tests/e2e/scenarios/agno/test_context_persistence.py"
+            )
         chat_id, _user_id, _user_name = e2e_adapter_room
         agent_id, agent_name = e2e_agent_info
         timeout = e2e_config.e2e_timeout
