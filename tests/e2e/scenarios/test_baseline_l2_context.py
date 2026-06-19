@@ -10,9 +10,9 @@ from __future__ import annotations
 import os
 
 import pytest
-from thenvoi_rest import AsyncRestClient
+from band_rest import AsyncRestClient
 
-from thenvoi.agent import Agent
+from band.agent import Agent
 
 from tests.e2e.adapters.conftest import (
     AdapterFactory,
@@ -112,9 +112,9 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
     agent = Agent.create(
         adapter=adapter,
         agent_id=e2e_config.test_agent_id,
-        api_key=e2e_config.thenvoi_api_key,
-        ws_url=e2e_config.thenvoi_ws_url,
-        rest_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key,
+        ws_url=e2e_config.band_ws_url,
+        rest_url=e2e_config.band_base_url,
     )
 
     planted_messages = [
