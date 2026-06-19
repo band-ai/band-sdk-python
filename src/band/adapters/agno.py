@@ -8,8 +8,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from functools import wraps
-from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -37,9 +36,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-P = ParamSpec("P")
-R = TypeVar("R")
-
 # These tools already produce visible room output.
 _SELF_REPORTING_TOOLS = frozenset({"band_send_message", "band_send_event"})
 
@@ -60,19 +56,6 @@ def _tool_executions(response: RunOutput) -> list[Any]:
 
 def _tool_name(execution: Any) -> str:
     return getattr(execution, "tool_name", None) or ""
-
-
-def _with_agent(
-    fn: Callable[Concatenate[Any, AgnoAgent, P], Awaitable[R]],
-) -> Callable[Concatenate[Any, P], Awaitable[R]]:
-    @wraps(fn)
-    async def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
-        agent = getattr(self, "_agent", None)
-        if agent is None:
-            raise RuntimeError("AgnoAdapter was used before on_started()")
-        return await fn(self, agent, *args, **kwargs)
-
-    return wrapper
 
 
 def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
@@ -383,10 +366,8 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         messages.append(message_cls(role="user", content=msg.format_for_llm()))
         return messages
 
-    @_with_agent
     async def _run_agent(
         self,
-        agent: AgnoAgent,
         messages: list[Message],
         tools: AgentToolsProtocol,
         *,
@@ -394,6 +375,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         msg_id: str,
     ) -> RunOutput | None:
         """Run the Agno agent with the room's tools bound for this call."""
+        agent = self._agent
+        if agent is None:
+            raise RuntimeError("AgnoAdapter was used before on_started()")
+
         session_id = self._session_id_factory(room_id)
         logger.debug(
             "Room %s msg %s: running Agno agent (%d input messages, session_id=%s)",
