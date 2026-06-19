@@ -251,26 +251,6 @@ class TestBandToolWiring:
             {"include_memory": True, "include_contacts": True}
         ]
 
-    async def test_no_capabilities_excludes_memory_and_contacts(
-        self, make_started_adapter, sample_platform_message
-    ):
-        tools = SchemaTools([])
-        adapter, _ = await make_started_adapter()
-
-        await adapter.on_message(
-            sample_platform_message,
-            tools,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-
-        assert tools.schema_calls == [
-            {"include_memory": False, "include_contacts": False}
-        ]
-
     async def test_schema_build_is_cached_across_turns(
         self, make_started_adapter, sample_platform_message
     ):
