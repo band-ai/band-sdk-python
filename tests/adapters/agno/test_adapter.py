@@ -271,6 +271,29 @@ class TestBandToolWiring:
             {"include_memory": False, "include_contacts": False}
         ]
 
+    async def test_schema_build_is_cached_across_turns(
+        self, make_started_adapter, sample_platform_message
+    ):
+        # Same contact flag across turns -> schemas are built once and reused,
+        # not rebuilt every message.
+        tools = SchemaTools([openai_tool_schema("band_send_message")])
+        adapter, _ = await make_started_adapter()
+
+        for bootstrap in (True, False, False):
+            await adapter.on_message(
+                sample_platform_message,
+                tools,
+                [],
+                None,
+                None,
+                is_session_bootstrap=bootstrap,
+                room_id="room-1",
+            )
+
+        assert tools.schema_calls == [
+            {"include_memory": False, "include_contacts": False}
+        ]
+
 
 class TestBandInstructionInjection:
     """Drive a real Agno agent so we assert on the system prompt Agno actually
@@ -318,6 +341,15 @@ class TestBandInstructionInjection:
         assert "You are Dev, a niche specialist." in prompt
         assert "Keep replies under 10 words." in prompt
         assert "## Environment" in prompt
+
+    async def test_guidance_injected_at_startup_before_any_message(
+        self, make_started_adapter
+    ):
+        # Band guidance is injected in on_started, not lazily on first message.
+        adapter, copy = await make_started_adapter()
+
+        assert isinstance(copy.additional_context, str)
+        assert "## Environment" in copy.additional_context
 
 
 class TestBandEntrypointBinding:

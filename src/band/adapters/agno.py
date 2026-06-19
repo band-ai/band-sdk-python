@@ -180,7 +180,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # set is the union of what any room has needed so far. Tracking wired
         # names keeps wiring idempotent (no duplicates, never removed).
         self._wired_tool_names: set[str] = set()
-        self._band_instructions_injected = False
+        # Built Functions cached by their only dynamic input (include_contacts),
+        # so the schema build runs at most twice for the process lifetime rather
+        # than on every message. Entrypoints are room-agnostic, so the cached
+        # list is safe to reuse across rooms.
+        self._band_tools_cache: dict[bool, list[Function]] = {}
 
         # Resolved against the runtime agent in on_started, once it exists.
         self._agno_manages_history = False
@@ -249,6 +253,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._agent = self._agent_factory()
         self._agno_manages_history = self._detect_agno_history(self._agent)
         self._warn_on_memory_collision(self._agent)
+
+        # Band guidance is composed purely from static capabilities, so inject it
+        # once here -- before any room runs -- rather than lazily on first message.
+        self._inject_band_instructions()
 
         # Keep the converter's own-agent filtering in sync with our identity, so
         # rehydrated history maps this agent's past messages to the assistant role.
@@ -509,11 +517,19 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         if self._agent is None:
             return
 
-        new_tools = [
-            fn
-            for fn in self._build_band_tools(tools)
-            if fn.name not in self._wired_tool_names
-        ]
+        # The built Function set depends only on whether contacts are included
+        # (memory inclusion and feature filters are static), so cache on that
+        # flag and avoid rebuilding schemas every message. Wiring stays
+        # idempotent by name, so cache reuse never double-adds a tool.
+        include_contacts = Capability.CONTACTS in self.features.capabilities or bool(
+            getattr(tools, "is_hub_room", False)
+        )
+        functions = self._band_tools_cache.get(include_contacts)
+        if functions is None:
+            functions = self._build_band_tools(tools, include_contacts=include_contacts)
+            self._band_tools_cache[include_contacts] = functions
+
+        new_tools = [fn for fn in functions if fn.name not in self._wired_tool_names]
         wired: list[str] = []
         for fn in new_tools:
             try:
@@ -528,9 +544,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 len(wired),
                 ", ".join(wired),
             )
-        if not self._band_instructions_injected:
-            self._inject_band_instructions()
-            self._band_instructions_injected = True
 
     def _inject_band_instructions(self) -> None:
         """Append Band tool guidance to the copied agent's system message.
@@ -556,22 +569,20 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             parts.append(CONTACT_SECTION.strip())
         return "\n\n".join(parts)
 
-    def _build_band_tools(self, tools: AgentToolsProtocol) -> list[Function]:
+    def _build_band_tools(
+        self, tools: AgentToolsProtocol, *, include_contacts: bool
+    ) -> list[Function]:
         """Convert Band tool schemas into Agno Functions.
 
         Honors the AdapterFeatures include/exclude/category filters via
-        :func:`filter_tool_schemas`. Contact tools are force-exposed for the
-        contact-hub room (mirrors LangGraph) regardless of the CONTACTS
-        capability gate.
+        :func:`filter_tool_schemas`. ``include_contacts`` is resolved by the
+        caller (CONTACTS capability or a contact-hub room, mirroring LangGraph)
+        so the built set can be cached on that flag.
         """
         function_cls = agno_function_class()
-        effective_include_contacts = (
-            Capability.CONTACTS in self.features.capabilities
-            or bool(getattr(tools, "is_hub_room", False))
-        )
         schemas = tools.get_openai_tool_schemas(
             include_memory=Capability.MEMORY in self.features.capabilities,
-            include_contacts=effective_include_contacts,
+            include_contacts=include_contacts,
         )
         schemas = filter_tool_schemas(
             schemas,
