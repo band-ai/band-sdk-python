@@ -14,11 +14,11 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 import pytest
-from thenvoi_rest import AsyncRestClient
+from band_rest import AsyncRestClient
 
-from thenvoi.agent import Agent
-from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.core.types import AdapterFeatures, Emit
+from band.agent import Agent
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import AdapterFeatures, Emit
 from tests.baseline_l1_fixtures import (
     L1_CUSTOM_PROMPT_MARKER,
     L1_CUSTOM_RETURN_MARKER,
@@ -74,7 +74,7 @@ def _create_l1_anthropic_adapter(
 ) -> SimpleAdapter[Any]:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("ANTHROPIC_API_KEY not set for Anthropic L1 live flow")
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     return AnthropicAdapter(
         model=settings.e2e_anthropic_model,
@@ -90,7 +90,7 @@ def _create_l1_claude_sdk_adapter(
 ) -> SimpleAdapter[Any]:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("ANTHROPIC_API_KEY not set for Claude SDK L1 live flow")
-    from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter
+    from band.adapters.claude_sdk import ClaudeSDKAdapter
 
     return ClaudeSDKAdapter(
         model=settings.e2e_anthropic_model,
@@ -108,7 +108,7 @@ def _create_l1_langgraph_adapter(
         pytest.skip("OPENAI_API_KEY not set for LangGraph L1 live flow")
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import MemorySaver
-    from thenvoi.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter
 
     return LangGraphAdapter(
         llm=ChatOpenAI(model=settings.e2e_llm_model),
@@ -125,7 +125,7 @@ def _create_l1_pydantic_ai_adapter(
 ) -> SimpleAdapter[Any]:
     if not os.environ.get("OPENAI_API_KEY"):
         pytest.skip("OPENAI_API_KEY not set for PydanticAI L1 live flow")
-    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter
 
     return PydanticAIAdapter(
         model=f"openai:{settings.e2e_llm_model}",
@@ -140,7 +140,7 @@ def _create_l1_gemini_adapter(
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
     _require_gemini_key_or_vertex()
-    from thenvoi.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter
 
     return GeminiAdapter(
         model=os.environ.get("E2E_GEMINI_MODEL", "gemini-2.5-flash"),
@@ -155,7 +155,7 @@ def _create_l1_google_adk_adapter(
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
     _require_gemini_key_or_vertex()
-    from thenvoi.adapters.google_adk import GoogleADKAdapter
+    from band.adapters.google_adk import GoogleADKAdapter
 
     return GoogleADKAdapter(
         model=os.environ.get("E2E_GEMINI_MODEL", "gemini-2.5-flash"),
@@ -169,7 +169,7 @@ def _create_l1_codex_adapter(
     settings: E2ESettings,
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
-    from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+    from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
     transport = os.environ.get("CODEX_TRANSPORT", "stdio")
     if transport not in {"stdio", "ws"}:
@@ -214,7 +214,7 @@ def _create_l1_opencode_adapter(
     base_url = os.environ.get("OPENCODE_BASE_URL")
     if not base_url:
         pytest.skip("OPENCODE_BASE_URL not set for OpenCode L1 live flow")
-    from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+    from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 
     return OpencodeAdapter(
         config=OpencodeAdapterConfig(
@@ -333,9 +333,9 @@ async def test_l1_live_custom_prompt_tool_and_platform_tool_survive_when_configu
     agent = Agent.create(
         adapter=adapter,
         agent_id=e2e_config.test_agent_id,
-        api_key=e2e_config.thenvoi_api_key,
-        ws_url=e2e_config.thenvoi_ws_url,
-        rest_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key,
+        ws_url=e2e_config.band_ws_url,
+        rest_url=e2e_config.band_base_url,
     )
 
     async with agent:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from thenvoi.adapters.anthropic import AnthropicAdapter
+from band.adapters.anthropic import AnthropicAdapter
 
 from tests.baseline_l1_fixtures import L1_CUSTOM_TOOL_NAME, LogKeywordInput
 from tests.framework_conformance.baseline_applicability import (
