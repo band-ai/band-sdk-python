@@ -551,10 +551,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
 
     def _inject_band_instructions(self) -> None:
-        """Append Band tool guidance to the copied agent's system message.
+        """Append Band tool guidance to the runtime agent's ``additional_context``.
 
-        Appended to Agno's ``additional_context`` so the developer's own
-        instructions are preserved.
+        Appending (rather than replacing) preserves the developer's own
+        instructions. Called once at startup, before any room runs.
         """
         if self._agent is None:
             return
