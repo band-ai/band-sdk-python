@@ -100,6 +100,12 @@ def _bind_room_tools(tools: AgentToolsProtocol) -> Iterator[None]:
 class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     """Bridge a developer-built Agno agent to Band.
 
+    Note on replies: unlike the other adapters (which deliver only when the
+    agent calls ``band_send_message``), this adapter falls back to posting the
+    agent's final text itself, addressed to the message sender, when
+    ``band_send_message`` was not called. Steer the agent to call the tool when
+    you need explicit recipients or no auto-reply.
+
     Note on ``Emit.THOUGHTS``: when enabled, the agent's **raw**
     ``reasoning_content`` is posted to the room as a thought event. This can
     surface chain-of-thought and intermediate context, so it is strictly
