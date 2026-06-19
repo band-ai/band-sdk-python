@@ -607,7 +607,6 @@ dev = [
     { name = "ruff" },
     { name = "slack-sdk" },
     { name = "starlette" },
-    { name = "tenacity" },
     { name = "thenvoi-testing-python" },
     { name = "uvicorn" },
     { name = "werkzeug" },
@@ -628,7 +627,6 @@ dev-crewai = [
     { name = "pytest-timeout" },
     { name = "rich", version = "14.3.4", source = { registry = "https://pypi.org/simple" } },
     { name = "ruff" },
-    { name = "tenacity" },
     { name = "thenvoi-testing-python" },
 ]
 gemini = [
@@ -779,8 +777,6 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
-    { name = "tenacity", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "tenacity", marker = "extra == 'dev-crewai'", specifier = ">=8.0.0" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway'", specifier = ">=0.32.0" },
