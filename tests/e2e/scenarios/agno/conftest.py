@@ -183,9 +183,14 @@ def build_db_backed_agno_adapter(
 def build_thinking_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Build an Agno adapter with reasoning enabled and thought reporting on.
 
-    ``reasoning=True`` makes the Agno agent populate ``reasoning_content`` on
-    the run output; ``Emit.THOUGHTS`` makes the adapter post that reasoning as
-    a ``thought`` event to the room.
+    The Claude model is created with native extended thinking enabled
+    (``thinking=...``). That makes Agno treat it as a native reasoning model and
+    populate ``reasoning_content`` from Claude's own thinking output; without it,
+    Agno falls back to a structured-output chain-of-thought agent that returns
+    empty content for Claude, leaving ``reasoning_content`` blank and no thought
+    to emit. ``reasoning=True`` selects the native-reasoning dispatch and
+    ``Emit.THOUGHTS`` makes the adapter post that reasoning as a ``thought``
+    event to the room.
     """
     _require_anthropic_key()
     from agno.agent import Agent as AgnoAgent
@@ -195,7 +200,10 @@ def build_thinking_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     from band.core.types import AdapterFeatures, Emit
 
     agno_agent = AgnoAgent(
-        model=Claude(id=settings.e2e_anthropic_model),
+        model=Claude(
+            id=settings.e2e_anthropic_model,
+            thinking={"type": "enabled", "budget_tokens": 1024},
+        ),
         instructions=(
             "You are a careful assistant. Think through problems step by step "
             "before answering. Keep your final answer short."
