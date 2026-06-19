@@ -70,7 +70,7 @@ A Tier-1 input is a **script**, not a single decision: adapters run a tool loop,
 invoking the model repeatedly (call tool → see result → decide again). One
 decision is consumed per model invocation.
 
-```python
+```python notest
 @dataclass(frozen=True)
 class ToolCall:
     name: str
@@ -261,7 +261,7 @@ unit test or an unparametrized shared E2E pointer is not enough.
 Each adapter (except A2A / A2A-Gateway / ACP, which are protocol bridges, out of
 scope) declares one binding:
 
-```python
+```python notest
 @dataclass(frozen=True)
 class InjectionBinding:
     adapter: str
