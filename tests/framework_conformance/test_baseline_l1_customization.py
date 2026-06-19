@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from band.adapters.anthropic import AnthropicAdapter
-
 from tests.baseline_l1_fixtures import L1_CUSTOM_TOOL_NAME, LogKeywordInput
 from tests.framework_conformance.baseline_applicability import (
     ApplicabilityStatus,
@@ -82,6 +80,8 @@ async def test_l1_custom_prompt_is_additive_with_base_and_identity_by_default(
 
 
 def test_l1_explicit_full_override_is_separate_from_default_additive_prompt() -> None:
+    from band.adapters.anthropic import AnthropicAdapter
+
     adapter = AnthropicAdapter(
         provider_key="test-provider-key",
         system_prompt="Use only this explicit override.",
