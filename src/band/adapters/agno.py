@@ -258,10 +258,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # once here -- before any room runs -- rather than lazily on first message.
         self._inject_band_instructions()
 
-        # Keep the converter's own-agent filtering in sync with our identity, so
-        # rehydrated history maps this agent's past messages to the assistant role.
-        if isinstance(self.history_converter, AgnoHistoryConverter):
-            self.history_converter.set_agent_name(agent_name)
+        # Converter identity (used to map this agent's own past messages to the
+        # assistant role) is synced by SimpleAdapter.on_started above, which
+        # calls set_agent_name on any converter that defines it.
 
         logger.info("Agno adapter started for agent: %s", agent_name)
         logger.debug(
