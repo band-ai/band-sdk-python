@@ -12,11 +12,23 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 from band.core.exceptions import BandToolError
+from band.core.memory_types import (
+    MemoryListScope,
+    MemorySegment,
+    MemoryStatus,
+    MemoryStoreScope,
+    MemorySystem,
+    MemoryType,
+    memory_type_field_description,
+    validate_memory_type_for_system,
+    validate_subject_scope,
+)
 from band.core.protocols import AgentToolsProtocol
+from band.core.types import EventMessageType
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -109,9 +121,7 @@ class SendEventInput(BaseModel):
     """
 
     content: str = Field(..., description="Human-readable event content")
-    message_type: Literal["thought", "error", "task"] = Field(
-        ..., description="Type of event"
-    )
+    message_type: EventMessageType = Field(..., description="Type of event")
     metadata: dict[str, Any] | None = Field(
         None, description="Optional structured data for the event"
     )
@@ -247,24 +257,13 @@ class ListMemoriesInput(BaseModel):
     subject_id: str | None = Field(
         None, description="Filter by subject UUID (required for subject-scoped queries)"
     )
-    scope: Literal["subject", "organization", "all"] | None = Field(
-        None, description="Filter by scope"
-    )
-    system: Literal["sensory", "working", "long_term"] | None = Field(
-        None, description="Filter by memory system"
-    )
-    type: (
-        Literal["iconic", "echoic", "haptic", "episodic", "semantic", "procedural"]
-        | None
-    ) = Field(None, description="Filter by memory type")
-    segment: Literal["user", "agent", "tool", "guideline"] | None = Field(
-        None, description="Filter by segment"
-    )
+    scope: MemoryListScope | None = Field(None, description="Filter by scope")
+    system: MemorySystem | None = Field(None, description="Filter by memory system")
+    type: MemoryType | None = Field(None, description="Filter by memory type")
+    segment: MemorySegment | None = Field(None, description="Filter by segment")
     content_query: str | None = Field(None, description="Full-text search query")
     page_size: int = Field(50, description="Number of results per page", ge=1, le=50)
-    status: Literal["active", "superseded", "archived", "all"] | None = Field(
-        None, description="Filter by status"
-    )
+    status: MemoryStatus | None = Field(None, description="Filter by status")
 
 
 class StoreMemoryInput(BaseModel):
@@ -276,19 +275,11 @@ class StoreMemoryInput(BaseModel):
     """
 
     content: str = Field(..., description="The memory content")
-    system: Literal["sensory", "working", "long_term"] = Field(
-        ..., description="Memory system tier"
-    )
-    type: Literal[
-        "iconic", "echoic", "haptic", "episodic", "semantic", "procedural"
-    ] = Field(..., description="Memory type (must be valid for selected system)")
-    segment: Literal["user", "agent", "tool", "guideline"] = Field(
-        ..., description="Logical segment"
-    )
+    system: MemorySystem = Field(..., description="Memory system tier")
+    type: MemoryType = Field(..., description=memory_type_field_description())
+    segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: Literal["subject", "organization"] = Field(
-        "subject", description="Visibility scope"
-    )
+    scope: MemoryStoreScope = Field(..., description="Visibility scope")
     subject_id: str | None = Field(
         None,
         description="UUID of the subject this memory is about (required for subject scope)",
@@ -296,6 +287,12 @@ class StoreMemoryInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Additional metadata (tags, references)"
     )
+
+    @model_validator(mode="after")
+    def validate_memory_fields(self) -> "StoreMemoryInput":
+        validate_memory_type_for_system(self.system, self.type)
+        validate_subject_scope(self.scope, self.subject_id)
+        return self
 
 
 class GetMemoryInput(BaseModel):
@@ -326,11 +323,12 @@ class ArchiveMemoryInput(BaseModel):
     memory_id: str = Field(..., description="Memory ID (UUID)")
 
 
-# --- Human-tool input models (mirrors band-mcp human tool handler signatures) ---
+# --- Human-tool input models (copied from band-mcp/src/band_mcp/tools/human/*.py) ---
 #
-# These models intentionally preserve the observable band-mcp human tool
-# surface field-for-field. Do not widen them to full Fern parity here; callers
-# rely on the narrower MCP-compatible contract.
+# These models mirror the current band-mcp human tool handler signatures
+# field-for-field. They are the canonical contract preserved by Phase 1 of
+# INT-338: the observable tool surface stays identical to today's MCP
+# behavior. Widening to full Fern parity is out of scope for this ticket.
 
 
 # human_agents.py
@@ -723,7 +721,7 @@ TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
         method_name="archive_memory",
     ),
     # --- Human tools (surface="human") ---
-    # One entry per supported band-mcp human tool mapping.
+    # One entry per method in the Phase 1 human-tool mapping table.
     # Method names match HumanTools attributes; hasattr(HumanTools, method_name)
     # must resolve for every surface="human" definition.
     "band_list_my_agents": ToolDefinition(
@@ -1102,6 +1100,24 @@ def validate_tool_arguments(
         raise ValueError(format_tool_validation_error(tool_name, error)) from error
 
     return validated.model_dump(exclude_none=True)
+
+
+@dataclass(frozen=True)
+class ToolCallOutcome:
+    """Structured result of :meth:`AgentTools.execute_tool_call_structured`.
+
+    ``value`` is the JSON-serializable payload handed to the LLM (the
+    success result, or an error string on failure so the model can still
+    react). ``ok`` is the machine-readable success flag and
+    ``error_message`` the human-readable failure detail. Together they let
+    callers branch on success/failure without parsing ``value`` — e.g. the
+    Slack plan-progress UI marks a task ✅/❌ from ``ok`` rather than
+    sniffing the error string's prefix.
+    """
+
+    value: Any
+    ok: bool
+    error_message: str | None = None
 
 
 class AgentTools(AgentToolsProtocol):
@@ -1789,7 +1805,7 @@ class AgentTools(AgentToolsProtocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = "subject",
+        scope: str,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
@@ -1810,14 +1826,18 @@ class AgentTools(AgentToolsProtocol):
             Fern Memory model (Pydantic). Serialized to dict by
             execute_tool_call() at the adapter boundary.
         """
-        from band.client.rest import MemoryCreateRequest
+        from band.client.rest import AgentMemoryCreateRequest
+
+        validate_memory_type_for_system(system, type)
+        validate_subject_scope(MemoryStoreScope(scope), subject_id)
 
         logger.debug(
-            "Storing memory: system=%s, type=%s, segment=%s, scope=%s",
+            "Storing memory: system=%s, type=%s, segment=%s, scope=%s, subject_id=%s",
             system,
             type,
             segment,
             scope,
+            subject_id,
         )
         memory_kwargs: dict[str, Any] = {
             "content": content,
@@ -1832,7 +1852,7 @@ class AgentTools(AgentToolsProtocol):
         if metadata is not None:
             memory_kwargs["metadata"] = metadata
         response = await self.rest.agent_api_memories.create_agent_memory(
-            memory=MemoryCreateRequest(**memory_kwargs),
+            memory=AgentMemoryCreateRequest(**memory_kwargs),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:
@@ -2131,6 +2151,22 @@ class AgentTools(AgentToolsProtocol):
         Raises:
             BandToolError: When a tool method raises a typed tool failure
         """
+        outcome = await self.execute_tool_call_structured(tool_name, arguments)
+        return outcome.value
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        """Execute a tool call and report success/failure structurally.
+
+        Identical dispatch, validation, and serialization to
+        :meth:`execute_tool_call`, but returns a :class:`ToolCallOutcome`
+        whose ``ok`` flag is the authoritative success signal. Callers
+        that need to react to failure (e.g. progress UIs) should branch on
+        ``ok`` instead of inspecting the returned string, which has no
+        stable error prefix. ``BandToolError`` still propagates so
+        framework wrappers can translate it into native failures.
+        """
         # Validate arguments against Pydantic model
         try:
             definition = TOOL_DEFINITIONS.get(tool_name)
@@ -2141,32 +2177,35 @@ class AgentTools(AgentToolsProtocol):
                     arguments,
                 )
         except ValueError as error:
-            return str(error)
+            return ToolCallOutcome(value=str(error), ok=False, error_message=str(error))
         except Exception as e:
-            return f"Error validating {tool_name} arguments: {e}"
+            msg = f"Error validating {tool_name} arguments: {e}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
         definition = TOOL_DEFINITIONS.get(tool_name)
         if definition is None:
-            return f"Unknown tool: {tool_name}"
+            msg = f"Unknown tool: {tool_name}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
         try:
             method = getattr(self, definition.method_name)
             result = await method(**arguments)
             # Serialize Pydantic models to dicts at the adapter boundary
             if hasattr(result, "model_dump"):
-                return result.model_dump()
-            if isinstance(result, list):
-                return [
+                result = result.model_dump()
+            elif isinstance(result, list):
+                result = [
                     item.model_dump() if hasattr(item, "model_dump") else item
                     for item in result
                 ]
-            return result
+            return ToolCallOutcome(value=result, ok=True)
         except BandToolError:
             # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.
             raise
         except Exception as e:
-            return f"Error executing {tool_name}: {e}"
+            msg = f"Error executing {tool_name}: {e}"
+            return ToolCallOutcome(value=msg, ok=False, error_message=msg)
 
 
 class HumanTools:
@@ -2178,9 +2217,9 @@ class HumanTools:
     ``chat_id`` argument.
 
     Each method is a thin wrapper around a Fern ``human_api_*`` call. The
-    observable tool surface mirrors ``band-mcp`` human tool handlers; keep
-    those signatures stable unless the MCP-compatible contract is intentionally
-    widened.
+    observable tool surface mirrors today's ``band-mcp`` human tool
+    handlers (Phase 1 of INT-338 copies those signatures verbatim); widening
+    to full Fern parity is explicitly out of scope.
     """
 
     def __init__(self, rest: "AsyncRestClient") -> None:

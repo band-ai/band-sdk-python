@@ -205,9 +205,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error adding participant '{identifier}': {e}"
 
-        band_add_participant.__doc__ = get_tool_description(
-            "band_add_participant"
-        )
+        band_add_participant.__doc__ = get_tool_description("band_add_participant")
         agent.tool(band_add_participant)
 
         async def band_remove_participant(
@@ -245,9 +243,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error getting participants: {e}"
 
-        band_get_participants.__doc__ = get_tool_description(
-            "band_get_participants"
-        )
+        band_get_participants.__doc__ = get_tool_description("band_get_participants")
         agent.tool(band_get_participants)
 
         async def band_create_chatroom(
@@ -259,9 +255,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             except Exception as e:
                 return f"Error creating chatroom (task_id={task_id}): {e}"
 
-        band_create_chatroom.__doc__ = get_tool_description(
-            "band_create_chatroom"
-        )
+        band_create_chatroom.__doc__ = get_tool_description("band_create_chatroom")
         agent.tool(band_create_chatroom)
 
         # Contact management tools (opt-in via Capability.CONTACTS)
@@ -277,9 +271,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing contacts: {e}"
 
-            band_list_contacts.__doc__ = get_tool_description(
-                "band_list_contacts"
-            )
+            band_list_contacts.__doc__ = get_tool_description("band_list_contacts")
             agent.tool(band_list_contacts)
 
             async def band_add_contact(
@@ -305,9 +297,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error removing contact: {e}"
 
-            band_remove_contact.__doc__ = get_tool_description(
-                "band_remove_contact"
-            )
+            band_remove_contact.__doc__ = get_tool_description("band_remove_contact")
             agent.tool(band_remove_contact)
 
             async def band_list_contact_requests(
@@ -389,9 +379,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error listing memories: {e}"
 
-            band_list_memories.__doc__ = get_tool_description(
-                "band_list_memories"
-            )
+            band_list_memories.__doc__ = get_tool_description("band_list_memories")
             agent.tool(band_list_memories)
 
             async def band_store_memory(
@@ -457,9 +445,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 except Exception as e:
                     return f"Error archiving memory: {e}"
 
-            band_archive_memory.__doc__ = get_tool_description(
-                "band_archive_memory"
-            )
+            band_archive_memory.__doc__ = get_tool_description("band_archive_memory")
             agent.tool(band_archive_memory)
 
         # Register custom tools (user-provided PydanticAI-compatible functions)

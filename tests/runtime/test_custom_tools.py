@@ -41,12 +41,12 @@ class SearchWebInput(BaseModel):
 class LogKeywordInput(BaseModel):
     """Log a keyword marker."""
 
-    __thenvoi_tool_name__: ClassVar[str] = "log_keyword"
+    __band_tool_name__: ClassVar[str] = "log_keyword"
     message: str
 
 
 class BadExplicitNameInput(BaseModel):
-    __thenvoi_tool_name__: ClassVar[str] = "Log Keyword"
+    __band_tool_name__: ClassVar[str] = "Log Keyword"
     message: str
 
 

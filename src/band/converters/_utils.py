@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from thenvoi.core.types import is_text_message_type
+from band.core.types import is_text_message_type
 
 
 def optional_str(value: Any) -> str | None:

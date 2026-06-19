@@ -10,8 +10,8 @@ from typing import Any, cast
 import pytest
 from pydantic import BaseModel
 
-from thenvoi.core.protocols import AgentToolsProtocol
-from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.core.protocols import AgentToolsProtocol
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from tests.baseline_l1_fixtures import (
     L1_CUSTOM_TOOL_NAME,
     LogKeywordInput,
@@ -104,7 +104,7 @@ def _assert_expected_execute_tool_call(result: DispatchResult) -> None:
 
 
 def assert_dispatch_result(result: DispatchResult) -> None:
-    if result.tool_name == "thenvoi_send_message":
+    if result.tool_name == "band_send_message":
         assert result.messages_sent == [
             {
                 "id": "msg-0",
@@ -117,7 +117,7 @@ def assert_dispatch_result(result: DispatchResult) -> None:
         assert result.participants_removed == []
         assert result.context_calls == []
         return
-    if result.tool_name == "thenvoi_add_participant":
+    if result.tool_name == "band_add_participant":
         identifier = result.arguments["identifier"]
         assert result.participants_added == [
             {
@@ -132,7 +132,7 @@ def assert_dispatch_result(result: DispatchResult) -> None:
         assert result.participants_removed == []
         assert result.context_calls == []
         return
-    if result.tool_name == "thenvoi_remove_participant":
+    if result.tool_name == "band_remove_participant":
         assert result.participants_removed == [
             {
                 "id": f"p-{result.arguments['identifier']}",
@@ -144,7 +144,7 @@ def assert_dispatch_result(result: DispatchResult) -> None:
         assert result.participants_added == []
         assert result.context_calls == []
         return
-    if result.tool_name in {"thenvoi_get_participants", "thenvoi_lookup_peers"}:
+    if result.tool_name in {"band_get_participants", "band_lookup_peers"}:
         assert result.tool_calls == [
             {"tool_name": result.tool_name, "arguments": result.arguments}
         ]
@@ -240,7 +240,7 @@ async def _dispatch_anthropic(
     tools: ConformanceSchemaRecorder,
 ) -> None:
     from anthropic.types import TextBlock, ToolUseBlock
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     class _Adapter(AnthropicAdapter):
         def __init__(self) -> None:
@@ -291,7 +291,7 @@ async def _dispatch_gemini(
 ) -> None:
     pytest.importorskip("google.genai", reason="gemini extra not installed")
     from google.genai import types
-    from thenvoi.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter
 
     class _Adapter(GeminiAdapter):
         def __init__(self) -> None:
@@ -346,7 +346,7 @@ async def _dispatch_google_adk(
     from google.adk.models.llm_response import LlmResponse
     from google.adk.runners import InMemoryRunner
     from google.genai import types
-    from thenvoi.adapters.google_adk import GoogleADKAdapter, _sanitize_adk_agent_name
+    from band.adapters.google_adk import GoogleADKAdapter, _sanitize_adk_agent_name
 
     class _ScriptedBaseLlm(BaseLlm):
         @property
@@ -385,7 +385,7 @@ async def _dispatch_google_adk(
             instruction=adapter._system_prompt,
             tools=adapter._build_adk_tools(adk_tools),
         )
-        return InMemoryRunner(agent=adk_agent, app_name="thenvoi")
+        return InMemoryRunner(agent=adk_agent, app_name="band")
 
     adapter._create_runner = _create_runner  # type: ignore[method-assign]
     await adapter.on_started("Test Agent", "A conformance test agent")
@@ -403,7 +403,7 @@ async def _drive_langgraph_script(
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
     from langgraph.checkpoint.memory import InMemorySaver
-    from thenvoi.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter
 
     decisions = [
         AIMessage(
@@ -468,7 +468,7 @@ async def _drive_langgraph_script(
     )
     await adapter.on_started("Test Agent", "A conformance test agent")
     await adapter.on_event(make_dispatch_agent_input(tools))
-    assert {tool_name, "thenvoi_send_message"} <= set(model.bound_tool_names)
+    assert {tool_name, "band_send_message"} <= set(model.bound_tool_names)
 
 
 async def _dispatch_langgraph(
@@ -487,7 +487,7 @@ async def _dispatch_pydantic_ai(
     pytest.importorskip("pydantic_ai", reason="pydantic-ai extra not installed")
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
-    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter
 
     cursor: list[tuple[str, str, dict[str, Any] | None]] = [
         ("tool", tool_name, arguments),
@@ -524,7 +524,7 @@ async def _drive_codex_replay(
     tools: ConformanceSchemaRecorder,
     additional_tools: list[Any] | None = None,
 ) -> None:
-    from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
+    from band.adapters.codex import CodexAdapter, CodexAdapterConfig
     from tests.framework_conformance.codex_replay import (
         ReplayCodexClient,
         frames_with_tool_call,
@@ -542,7 +542,7 @@ async def _drive_codex_replay(
     )
     await adapter.on_started("Test Agent", "A conformance test agent")
     await adapter.on_event(make_dispatch_agent_input(tools))
-    assert {tool_name, "thenvoi_send_message"} <= set(
+    assert {tool_name, "band_send_message"} <= set(
         client.thread_start_dynamic_tool_names
     )
 
@@ -562,7 +562,7 @@ async def _dispatch_l1_custom_anthropic(
     tools: ConformanceSchemaRecorder,
 ) -> None:
     from anthropic.types import TextBlock, ToolUseBlock
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     class _Adapter(AnthropicAdapter):
         def __init__(self) -> None:
@@ -603,7 +603,7 @@ async def _dispatch_l1_custom_anthropic(
         ) -> Any:
             del messages
             exposed_names = {schema.get("name") for schema in tools}
-            assert {tool_name, "thenvoi_send_message"} <= exposed_names
+            assert {tool_name, "band_send_message"} <= exposed_names
             return self._responses.pop(0)
 
     adapter = _Adapter()
@@ -619,7 +619,7 @@ async def _dispatch_l1_custom_gemini(
 ) -> None:
     pytest.importorskip("google.genai", reason="gemini extra not installed")
     from google.genai import types
-    from thenvoi.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter
 
     class _Adapter(GeminiAdapter):
         def __init__(self) -> None:
@@ -662,7 +662,7 @@ async def _dispatch_l1_custom_gemini(
             del contents
             declarations = tools[0].function_declarations
             exposed_names = {declaration.name for declaration in declarations or []}
-            assert {tool_name, "thenvoi_send_message"} <= exposed_names
+            assert {tool_name, "band_send_message"} <= exposed_names
             return self._responses.pop(0)
 
     adapter = _Adapter()
@@ -682,7 +682,7 @@ async def _dispatch_l1_custom_google_adk(
     from google.adk.models.llm_response import LlmResponse
     from google.adk.runners import InMemoryRunner
     from google.genai import types
-    from thenvoi.adapters.google_adk import GoogleADKAdapter, _sanitize_adk_agent_name
+    from band.adapters.google_adk import GoogleADKAdapter, _sanitize_adk_agent_name
 
     class _ScriptedBaseLlm(BaseLlm):
         @property
@@ -717,14 +717,14 @@ async def _dispatch_l1_custom_google_adk(
     def _create_runner(adk_tools: AgentToolsProtocol) -> InMemoryRunner:
         built_tools = adapter._build_adk_tools(adk_tools)
         exposed_names = {getattr(tool, "name", "") for tool in built_tools}
-        assert {tool_name, "thenvoi_send_message"} <= exposed_names
+        assert {tool_name, "band_send_message"} <= exposed_names
         adk_agent = ADKAgent(
             name=_sanitize_adk_agent_name(adapter.agent_name),
             model=_ScriptedBaseLlm(model="scripted"),
             instruction=adapter._system_prompt,
             tools=built_tools,
         )
-        return InMemoryRunner(agent=adk_agent, app_name="thenvoi")
+        return InMemoryRunner(agent=adk_agent, app_name="band")
 
     adapter._create_runner = _create_runner  # type: ignore[method-assign]
     await adapter.on_started("Test Agent", "A conformance test agent")
@@ -762,7 +762,7 @@ async def _dispatch_l1_custom_pydantic_ai(
     pytest.importorskip("pydantic_ai", reason="pydantic-ai extra not installed")
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
-    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter
 
     async def handler(args: LogKeywordInput) -> dict[str, str]:
         calls.append(args)
@@ -797,7 +797,7 @@ async def _dispatch_l1_custom_pydantic_ai(
         await adapter.on_started("Test Agent", "A conformance test agent")
         if adapter._agent is None:
             raise AssertionError("PydanticAIAdapter did not create an agent")
-        assert {tool_name, "thenvoi_send_message"} <= set(
+        assert {tool_name, "band_send_message"} <= set(
             adapter._agent._function_toolset.tools
         )
         with adapter._agent.override(model=FunctionModel(stream_function=_stream)):

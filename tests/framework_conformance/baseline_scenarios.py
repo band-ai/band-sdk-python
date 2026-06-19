@@ -104,7 +104,7 @@ SCENARIOS: tuple[BaselineScenario, ...] = (
         required_oracles=frozenset(
             {EvidenceOracle.TOOL_DISPATCH, EvidenceOracle.PLATFORM_MESSAGE_CREATED}
         ),
-        required_tools=frozenset({"thenvoi_send_message"}),
+        required_tools=frozenset({"band_send_message"}),
     ),
     tier1(
         id="L0.dispatch.add_participant",
@@ -117,7 +117,7 @@ SCENARIOS: tuple[BaselineScenario, ...] = (
         required_oracles=frozenset(
             {EvidenceOracle.TOOL_DISPATCH, EvidenceOracle.PARTICIPANT_ADDED}
         ),
-        required_tools=frozenset({"thenvoi_add_participant"}),
+        required_tools=frozenset({"band_add_participant"}),
     ),
     tier1(
         id="L0.dispatch.remove_participant",
@@ -130,7 +130,7 @@ SCENARIOS: tuple[BaselineScenario, ...] = (
         required_oracles=frozenset(
             {EvidenceOracle.TOOL_DISPATCH, EvidenceOracle.PARTICIPANT_REMOVED}
         ),
-        required_tools=frozenset({"thenvoi_remove_participant"}),
+        required_tools=frozenset({"band_remove_participant"}),
     ),
     tier1(
         id="L0.dispatch.get_participants",
@@ -143,7 +143,7 @@ SCENARIOS: tuple[BaselineScenario, ...] = (
         required_oracles=frozenset(
             {EvidenceOracle.TOOL_DISPATCH, EvidenceOracle.PARTICIPANTS_LISTED}
         ),
-        required_tools=frozenset({"thenvoi_get_participants"}),
+        required_tools=frozenset({"band_get_participants"}),
     ),
     tier1(
         id="L0.dispatch.lookup_peers",
@@ -156,7 +156,7 @@ SCENARIOS: tuple[BaselineScenario, ...] = (
         required_oracles=frozenset(
             {EvidenceOracle.TOOL_DISPATCH, EvidenceOracle.PEERS_LISTED}
         ),
-        required_tools=frozenset({"thenvoi_lookup_peers"}),
+        required_tools=frozenset({"band_lookup_peers"}),
     ),
     tier1(
         id="L1.request.custom_prompt_present",

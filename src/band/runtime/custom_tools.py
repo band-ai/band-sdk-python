@@ -54,13 +54,13 @@ def get_custom_tool_name(input_model: type[BaseModel]) -> str:
     Derive tool name from input model class name.
 
     Convention: Remove "Input" suffix and lowercase, unless the model defines
-    ``__thenvoi_tool_name__`` for an explicit provider-visible tool name.
+    ``__band_tool_name__`` for an explicit provider-visible tool name.
     Examples:
         WeatherInput -> "weather"
         CalculatorInput -> "calculator"
         SearchWebInput -> "searchweb"
     """
-    explicit_name = getattr(input_model, "__thenvoi_tool_name__", None)
+    explicit_name = getattr(input_model, "__band_tool_name__", None)
     if explicit_name is not None:
         if not isinstance(
             explicit_name, str

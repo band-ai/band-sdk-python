@@ -7,20 +7,20 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
     Mention,
     ParticipantAddedPayload,
     ParticipantRemovedPayload,
 )
-from thenvoi.core.types import AgentInput
-from thenvoi.platform.event import (
+from band.core.types import AgentInput
+from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
     ParticipantRemovedEvent,
 )
-from thenvoi.preprocessing.default import DefaultPreprocessor
+from band.preprocessing.default import DefaultPreprocessor
 
 ROOM_ID = "11111111-1111-4111-8111-111111111111"
 USER_ID = "22222222-2222-4222-8222-222222222222"
@@ -185,7 +185,7 @@ def completed_tool_history() -> list[dict[str, Any]]:
         history_message(
             message_id="msg-tool-call-001",
             content=(
-                '{"name":"thenvoi_send_message","args":{"content":"done",'
+                '{"name":"band_send_message","args":{"content":"done",'
                 '"mentions":["@darvell"]},"tool_call_id":"tool-call-001"}'
             ),
             sender_id=AGENT_ID,
@@ -197,7 +197,7 @@ def completed_tool_history() -> list[dict[str, Any]]:
         history_message(
             message_id="msg-tool-result-001",
             content=(
-                '{"name":"thenvoi_send_message","output":{"id":"msg-sent"},'
+                '{"name":"band_send_message","output":{"id":"msg-sent"},'
                 '"tool_call_id":"tool-call-001"}'
             ),
             sender_id=AGENT_ID,

@@ -169,8 +169,8 @@ _REQUEST_PROFILES: dict[str, AdapterApplicabilityProfile] = {
     "parlant": AdapterApplicabilityProfile(
         adapter_id="parlant",
         request_read_status=ApplicabilityStatus.APPLICABLE,
-        capture_family="parlant_guidelines",
-        base_instruction_surface="guideline_description",
+        capture_family="parlant_session_message",
+        base_instruction_surface="system_prompt",
     ),
     "claude_sdk": AdapterApplicabilityProfile(
         adapter_id="claude_sdk",

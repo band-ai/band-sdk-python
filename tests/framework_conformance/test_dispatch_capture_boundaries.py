@@ -14,7 +14,7 @@ def test_langgraph_dispatch_uses_scripted_model_seam_not_graph_shortcut() -> Non
     assert ".ainvoke(" not in source
     assert "bind_tools" in source
     assert "bound_tool_names" in source
-    assert '"thenvoi_send_message"' in source
+    assert '"band_send_message"' in source
 
 
 def test_codex_dispatch_uses_replay_client_not_internal_request_shortcut() -> None:
@@ -23,7 +23,7 @@ def test_codex_dispatch_uses_replay_client_not_internal_request_shortcut() -> No
     assert "ReplayCodexClient" in source
     assert "client_factory" in source
     assert "thread_start_dynamic_tool_names" in source
-    assert '"thenvoi_send_message"' in source
+    assert '"band_send_message"' in source
     assert "_process_turn_events" not in source
     assert "_handle_server_request" not in source
     assert "RpcEvent(" not in source

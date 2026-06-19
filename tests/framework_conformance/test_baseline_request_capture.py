@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from thenvoi.runtime.tools import AgentTools, CHAT_TOOL_NAMES
+from band.runtime.tools import AgentTools, CHAT_TOOL_NAMES
 
 from tests.framework_conformance.baseline_applicability import applicability_for
 from tests.framework_conformance.baseline_scenarios import SCENARIOS_BY_ID
@@ -187,7 +187,7 @@ def assert_valid_captured_request(
     assert "msg-history-001" in captured.message_ids
     assert captured.message_texts
     assert captured.tool_names
-    assert "thenvoi_send_message" in captured.tool_names
+    assert "band_send_message" in captured.tool_names
     assert captured.seam_owner in {SeamOwner.ADAPTER_PAYLOAD, SeamOwner.ADAPTER_INPUT}
     assert captured.raw_summary
     assert captured.base_instruction_surface

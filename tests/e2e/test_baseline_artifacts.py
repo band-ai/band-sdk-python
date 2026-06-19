@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from thenvoi.core.simple_adapter import ProviderUsageSnapshot, SimpleAdapter
+from band.core.simple_adapter import ProviderUsageSnapshot, SimpleAdapter
 from tests.e2e.baseline_artifacts import (
     BaselinePricing,
     BaselineProviderUsage,

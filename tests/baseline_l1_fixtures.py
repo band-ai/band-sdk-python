@@ -5,8 +5,8 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel
 
-from thenvoi.core.protocols import AgentToolsProtocol
-from thenvoi.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from band.core.protocols import AgentToolsProtocol
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 
 L1_CUSTOM_PROMPT_MARKER = "SNOLLYGOSTER"
 L1_CUSTOM_RETURN_MARKER = "FLIBBERTIGIBBET"
@@ -15,7 +15,7 @@ L1_CUSTOM_RETURN_MARKER = "FLIBBERTIGIBBET"
 class LogKeywordInput(BaseModel):
     """Log a keyword marker and return the validation keyword."""
 
-    __thenvoi_tool_name__: ClassVar[str] = "log_keyword"
+    __band_tool_name__: ClassVar[str] = "log_keyword"
     message: str
 
 

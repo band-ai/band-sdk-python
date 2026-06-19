@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from thenvoi.core.simple_adapter import ProviderUsageSnapshot, SimpleAdapter
+from band.core.simple_adapter import ProviderUsageSnapshot, SimpleAdapter
 from tests.baseline_l1_fixtures import L1_CUSTOM_TOOL_NAME
 from tests.framework_conformance.baseline_scenarios import SCENARIOS_BY_ID
 

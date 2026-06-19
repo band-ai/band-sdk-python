@@ -12,8 +12,7 @@ try:
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 except ImportError as e:
     raise ImportError(
-        "LangChain dependencies not installed. "
-        "Install with: uv add band-sdk[langgraph]"
+        "LangChain dependencies not installed. Install with: uv add band-sdk[langgraph]"
     ) from e
 
 from band.converters._tool_parsing import parse_tool_call, parse_tool_result

@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.core.types import AgentInput
-from thenvoi.runtime.tools import iter_tool_definitions
-from thenvoi.testing.fake_tools import FakeAgentTools
+from band.core.types import AgentInput
+from band.runtime.tools import iter_tool_definitions
+from band.testing.fake_tools import FakeAgentTools
 
 from tests.framework_conformance.baseline_status import SeamOwner
 from tests.framework_conformance.injection_registry import (
@@ -148,15 +148,13 @@ class ConformanceSchemaRecorder(FakeAgentTools):
     """
 
     async def get_participants(self) -> list[dict[str, Any]]:
-        self.tool_calls.append(
-            {"tool_name": "thenvoi_get_participants", "arguments": {}}
-        )
+        self.tool_calls.append({"tool_name": "band_get_participants", "arguments": {}})
         return await super().get_participants()
 
     async def lookup_peers(self, page: int = 1, page_size: int = 50) -> dict[str, Any]:
         self.tool_calls.append(
             {
-                "tool_name": "thenvoi_lookup_peers",
+                "tool_name": "band_lookup_peers",
                 "arguments": {"page": page, "page_size": page_size},
             }
         )
@@ -166,23 +164,23 @@ class ConformanceSchemaRecorder(FakeAgentTools):
         """Record generic dispatch and route platform tools to fake side effects."""
 
         self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
-        if tool_name == "thenvoi_send_message":
+        if tool_name == "band_send_message":
             return await self.send_message(
                 content=arguments.get("content", ""),
                 mentions=arguments.get("mentions"),
             )
-        if tool_name == "thenvoi_add_participant":
+        if tool_name == "band_add_participant":
             return await self.add_participant(
                 identifier=arguments.get("identifier", ""),
                 role=arguments.get("role", "member"),
             )
-        if tool_name == "thenvoi_remove_participant":
+        if tool_name == "band_remove_participant":
             return await self.remove_participant(
                 identifier=arguments.get("identifier", "")
             )
-        if tool_name == "thenvoi_get_participants":
+        if tool_name == "band_get_participants":
             return await FakeAgentTools.get_participants(self)
-        if tool_name == "thenvoi_lookup_peers":
+        if tool_name == "band_lookup_peers":
             return await FakeAgentTools.lookup_peers(
                 self,
                 page=arguments.get("page", 1),
@@ -563,7 +561,7 @@ def _part_texts(parts: Any) -> list[str]:
 
 
 def _normalize_tool_name(name: str) -> str:
-    prefix = "mcp__thenvoi__"
+    prefix = "mcp__band__"
     return name.removeprefix(prefix)
 
 
@@ -571,7 +569,7 @@ async def capture_anthropic_request(
     agent_input: AgentInput,
     custom_prompt: str | None = DEFAULT_CUSTOM_PROMPT,
 ) -> CapturedRequest:
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     class _CapturingMessagesClient:
         def __init__(self) -> None:
@@ -621,7 +619,7 @@ async def capture_langgraph_request(
     agent_input: AgentInput,
     custom_prompt: str | None = DEFAULT_CUSTOM_PROMPT,
 ) -> CapturedRequest:
-    from thenvoi.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter
 
     class _CapturingGraph:
         graph_input: dict[str, Any]
@@ -668,7 +666,7 @@ async def capture_gemini_request(
 ) -> CapturedRequest:
     pytest.importorskip("google.genai", reason="gemini extra not installed")
     from google.genai import types
-    from thenvoi.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter
 
     class _CapturingGeminiModels:
         def __init__(self) -> None:
@@ -740,7 +738,7 @@ async def capture_pydantic_ai_request(
     pytest.importorskip("pydantic_ai", reason="pydantic-ai extra not installed")
     from pydantic_ai.messages import ModelMessage
     from pydantic_ai.models.function import AgentInfo, FunctionModel
-    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter
 
     captured_messages: list[ModelMessage] = []
     captured_tool_names: list[str] = []
@@ -825,7 +823,7 @@ async def capture_google_adk_request(
     custom_prompt: str | None = DEFAULT_CUSTOM_PROMPT,
 ) -> CapturedRequest:
     pytest.importorskip("google.adk", reason="google-adk extra not installed")
-    from thenvoi.adapters.google_adk import GoogleADKAdapter
+    from band.adapters.google_adk import GoogleADKAdapter
 
     class _FinalEvent:
         def is_final_response(self) -> bool:
@@ -848,7 +846,7 @@ async def capture_google_adk_request(
         async def close(self) -> None:
             return None
 
-    from thenvoi.adapters import google_adk as google_adk_module
+    from band.adapters import google_adk as google_adk_module
 
     real_adk_agent, _real_runner, real_base_tool, real_types = (
         google_adk_module._require_adk()
@@ -930,7 +928,7 @@ async def capture_codex_request(
     agent_input: AgentInput,
     custom_prompt: str | None = DEFAULT_CUSTOM_PROMPT,
 ) -> CapturedRequest:
-    from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig, _TurnResult
+    from band.adapters.codex import CodexAdapter, CodexAdapterConfig, _TurnResult
 
     class _RecordingClient:
         def __init__(self) -> None:
@@ -1027,7 +1025,7 @@ async def capture_claude_sdk_request(
     pytest.importorskip(
         "claude_agent_sdk", reason="claude-agent-sdk extra not installed"
     )
-    from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter
+    from band.adapters.claude_sdk import ClaudeSDKAdapter
 
     mock_client = MagicMock()
     mock_client.query = AsyncMock()
@@ -1040,7 +1038,7 @@ async def capture_claude_sdk_request(
     # exposure instead of a fixture round-trip.
     with (
         patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ) as manager_class,
         patch.object(adapter, "_process_response", new=AsyncMock()),
@@ -1084,7 +1082,7 @@ async def capture_opencode_request(
         event_session_idle,
         event_text_part,
     )
-    from thenvoi.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+    from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 
     class _CapturingOpencodeAdapter(OpencodeAdapter):
         async def _watch_turn_completion(self, *_args: Any, **_kwargs: Any) -> None:
@@ -1099,7 +1097,7 @@ async def capture_opencode_request(
             str(getattr(definition, "name", "")) for definition in definitions
         ]
         fake_backend.allowed_tools = [
-            f"mcp__thenvoi__{name}" for name in captured_backend_tool_names if name
+            f"mcp__band__{name}" for name in captured_backend_tool_names if name
         ]
         return fake_backend
 
@@ -1120,7 +1118,7 @@ async def capture_opencode_request(
         client_factory=lambda _config: fake_client,
     )
     with patch(
-        "thenvoi.adapters.opencode.create_thenvoi_mcp_backend",
+        "band.adapters.opencode.create_band_mcp_backend",
         AsyncMock(side_effect=_backend_factory),
     ):
         await adapter.on_started("Test Agent", "A conformance test agent")
@@ -1149,7 +1147,7 @@ async def capture_letta_request(
     agent_input: AgentInput,
     custom_prompt: str | None = DEFAULT_CUSTOM_PROMPT,
 ) -> CapturedRequest:
-    from thenvoi.adapters.letta import LettaAdapter, LettaAdapterConfig
+    from band.adapters.letta import LettaAdapter, LettaAdapterConfig
 
     canonical_names = canonical_tool_names()
     tool_objects = [
@@ -1244,7 +1242,7 @@ async def capture_crewai_request(
     custom_prompt: str | None = DEFAULT_CUSTOM_PROMPT,
 ) -> CapturedRequest:
     pytest.importorskip("crewai", reason="crewai extra not installed")
-    from thenvoi.adapters.crewai import CrewAIAdapter
+    from band.adapters.crewai import CrewAIAdapter
 
     class _Result:
         raw = ""
@@ -1294,7 +1292,7 @@ async def capture_parlant_request(
 ) -> CapturedRequest:
     pytest.importorskip("parlant", reason="parlant extra not installed")
     from parlant.core.application import Application  # type: ignore[missing-import]
-    from thenvoi.adapters.parlant import ParlantAdapter
+    from band.adapters.parlant import ParlantAdapter
 
     captured_engine_messages: list[str] = []
 
@@ -1324,9 +1322,6 @@ async def capture_parlant_request(
     server.create_customer = AsyncMock(return_value=MagicMock(id="customer-123"))
     parlant_agent = MagicMock()
     parlant_agent.id = "parlant-agent-123"
-    parlant_agent.create_guideline = AsyncMock(
-        return_value=MagicMock(id="guideline-123")
-    )
 
     class _CapturingParlantAdapter(ParlantAdapter):
         async def _process_agent_response(self, **_kwargs: Any) -> None:
@@ -1340,17 +1335,18 @@ async def capture_parlant_request(
     await adapter.on_started("Test Agent", "A conformance test agent")
     await adapter.on_event(agent_input)
 
-    guideline_kwargs = parlant_agent.create_guideline.await_args.kwargs
+    from band.integrations.parlant.tools import create_parlant_tools
+
     tool_names = [
         str(getattr(getattr(entry, "tool", entry), "name", ""))
-        for entry in guideline_kwargs.get("tools", [])
+        for entry in create_parlant_tools(adapter.features)
     ]
     message_texts = captured_engine_messages
     return CapturedRequest(
         adapter_id="parlant",
-        family="parlant_guidelines",
-        base_instruction_surface="guideline_description",
-        system_text=str(guideline_kwargs.get("description", "")),
+        family="parlant_session_message",
+        base_instruction_surface="system_prompt",
+        system_text=adapter._system_prompt,
         message_texts=message_texts,
         message_roles=["user" for _ in message_texts],
         message_ids=_observed_message_ids(agent_input, message_texts),
@@ -1435,7 +1431,7 @@ REQUEST_CAPTURE_PROBES: dict[str, RequestCaptureProbe] = {
     ),
     "parlant": RequestCaptureProbe(
         adapter_id="parlant",
-        family="parlant_guidelines",
+        family="parlant_session_message",
         required_module="parlant",
         history_shape="engine_input",
         capture=capture_parlant_request,

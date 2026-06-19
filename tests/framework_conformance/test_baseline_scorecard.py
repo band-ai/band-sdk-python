@@ -241,7 +241,7 @@ def test_covered_by_existing_rows_have_real_test_paths_and_assertion_summary() -
 
 
 def test_protocol_bridges_are_excluded_from_ordinary_baseline_rows() -> None:
-    assert BRIDGE_ADAPTER_IDS == frozenset({"a2a", "a2a_gateway", "acp"})
+    assert BRIDGE_ADAPTER_IDS == frozenset({"a2a", "a2a_gateway", "acp", "slack"})
 
     for adapter_id in BRIDGE_ADAPTER_IDS:
         for scenario in SCENARIOS:

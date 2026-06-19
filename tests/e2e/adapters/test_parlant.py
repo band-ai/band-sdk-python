@@ -112,10 +112,7 @@ def e2e_config() -> E2ESettings:
         "test_agent_id": agent_id,
     }
     current_key = os.getenv("THENVOI_API_KEY", "")
-    if (
-        current_key.startswith(("thnv_u", "band_u"))
-        and not settings.band_api_key_user
-    ):
+    if current_key.startswith(("thnv_u", "band_u")) and not settings.band_api_key_user:
         updates["band_api_key_user"] = current_key
 
     return settings.model_copy(update=updates)
