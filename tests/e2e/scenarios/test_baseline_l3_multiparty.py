@@ -17,12 +17,12 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-from thenvoi_rest import AsyncRestClient, ChatRoomRequest
-from thenvoi_rest.types import ParticipantRequest
+from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest.types import ParticipantRequest
 
-from thenvoi.agent import Agent
-from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.runtime.types import AgentConfig
+from band.agent import Agent
+from band.core.simple_adapter import SimpleAdapter
+from band.runtime.types import AgentConfig
 
 from tests.e2e.adapters.conftest import (
     AdapterFactory,
@@ -336,8 +336,8 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
                 adapter=adapter,
                 agent_id=spec.agent_id,
                 api_key=spec.api_key,
-                ws_url=e2e_config.thenvoi_ws_url,
-                rest_url=e2e_config.thenvoi_base_url,
+                ws_url=e2e_config.band_ws_url,
+                rest_url=e2e_config.band_base_url,
                 config=AgentConfig(auto_subscribe_existing_rooms=False),
             )
             await stack.enter_async_context(agent)
