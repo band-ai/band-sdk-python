@@ -52,15 +52,19 @@ class TestRoomIsolation:
     ):
         """Agents in different rooms don't see each other's context.
 
-        Room A: Send "The code is <unique_a>"
-        Room B: Send "The code is <unique_b>"
-        Room A: Ask "What's the code?" -> Assert unique_a, not unique_b
-        Room B: Ask "What's the code?" -> Assert unique_b, not unique_a
+        Room A: Send "Remember this note: <unique_a>"
+        Room B: Send "Remember this note: <unique_b>"
+        Room A: Ask "What was the note?" -> Assert unique_a, not unique_b
+        Room B: Ask "What was the note?" -> Assert unique_b, not unique_a
+
+        Wording note: the payload is framed as a "note", not a "secret code".
+        Models reliably refuse to repeat back a "code" (it reads as a credential),
+        which is unrelated to isolation; a neutral noun avoids that false failure.
 
         Uses fresh rooms per run (via e2e_fresh_room_allocator) so no stale
         history accumulates — otherwise a reused room bloats the rehydrated
-        context into timeouts or surfaces old codes on recall. Unique per-run
-        keywords additionally guard against any cross-run confusion.
+        context into timeouts. Unique per-run keywords additionally guard against
+        any cross-run confusion.
         """
         adapter_name, factory = adapter_entry
         timeout = e2e_config.e2e_timeout
@@ -103,7 +107,7 @@ class TestRoomIsolation:
                 await send_trigger_message(
                     api_client,
                     room_a_id,
-                    f"Remember: the secret code is {code_a}. Confirm you remember it.",
+                    f"Remember this note: {code_a}. Confirm you remember it.",
                     agent_name,
                     agent_id,
                 )
@@ -115,7 +119,7 @@ class TestRoomIsolation:
                 await send_trigger_message(
                     api_client,
                     room_b_id,
-                    f"Remember: the secret code is {code_b}. Confirm you remember it.",
+                    f"Remember this note: {code_b}. Confirm you remember it.",
                     agent_name,
                     agent_id,
                 )
@@ -135,7 +139,7 @@ class TestRoomIsolation:
                 await send_trigger_message(
                     api_client,
                     room_a_id,
-                    "What is the secret code? Reply with just the code word.",
+                    "What was the note? Reply with just it.",
                     agent_name,
                     agent_id,
                 )
@@ -147,7 +151,7 @@ class TestRoomIsolation:
                 await send_trigger_message(
                     api_client,
                     room_b_id,
-                    "What is the secret code? Reply with just the code word.",
+                    "What was the note? Reply with just it.",
                     agent_name,
                     agent_id,
                 )
