@@ -53,6 +53,10 @@ def make_agno_agent() -> Callable[..., tuple[MagicMock, MagicMock]]:
         copy.add_tool = MagicMock()
         # Real Agno agents default additional_context to None; mirror that.
         copy.additional_context = None
+        # The adapter captures the user's tools at startup, then installs a
+        # callable factory. A bare MagicMock `.tools` is itself callable and would
+        # be mistaken for a user-supplied tools factory, so pin it to a list.
+        copy.tools = []
         copy.arun = AsyncMock(
             return_value=response if response is not None else RunOutput()
         )

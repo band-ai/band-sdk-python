@@ -683,7 +683,9 @@ def _build_agno_config() -> AdapterConfig:
         # owns those); assert the adapter-level state instead.
         expected_initial_values={
             "agent": None,  # the run copy is built in on_started
-            "_wired_tool_names": set(),  # tools are wired additively per room
+            # Band tools are resolved per-run via a callable factory installed in
+            # on_started, cached by contact-flag; nothing is cached before start.
+            "_band_tools_cache": {},
         },
         # No model/prompt kwargs to customize; nothing to assert here.
         custom_kwargs={},

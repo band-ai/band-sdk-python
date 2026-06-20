@@ -182,14 +182,18 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         # Running per-room transcripts; bootstrap history seeds each room.
         self._message_history: dict[str, list[Message]] = {}
-        # Band tools are wired additively onto the single shared agent: the tool
-        # set is the union of what any room has needed so far. Tracking wired
-        # names keeps wiring idempotent (no duplicates, never removed).
-        self._wired_tool_names: set[str] = set()
+        # Band tools are exposed per-run via a callable-tools factory installed on
+        # the shared agent (see _resolve_room_tools), so each room's run offers
+        # exactly its own tool set -- no cross-room schema leakage. The user's own
+        # tools (those they configured on the agent, captured at startup) are
+        # re-included on every run. "User" here is the user who built the Agno
+        # agent, not a chat end-user.
+        self._user_tools: list[Any] = []
+        self._user_tools_factory: Callable[..., Any] | None = None
         # Built Functions cached by their only dynamic input (include_contacts),
         # so the schema build runs at most twice for the process lifetime rather
-        # than on every message. Entrypoints are room-agnostic, so the cached
-        # list is safe to reuse across rooms.
+        # than on every run. Entrypoints route through the _current_tools
+        # ContextVar, so the cached list is safe to reuse across rooms.
         self._band_tools_cache: dict[bool, list[Function]] = {}
 
         # Resolved against the runtime agent in on_started, once it exists.
@@ -260,6 +264,18 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         self._agno_manages_history = self._detect_agno_history(self._agent)
         self._warn_on_memory_collision(self._agent)
 
+        # Install per-run tool resolution: capture the user's own tools, then
+        # replace ``agent.tools`` with our factory so each run offers exactly the
+        # active room's tool set (see _resolve_room_tools). Disable Agno's
+        # callable-tools cache so the factory runs every turn regardless of
+        # session_id; we cache the built Functions ourselves in _band_tools_cache.
+        self._capture_user_tools(self._agent)
+        self._agent.cache_callables = False
+        # Agno's `tools` type annotation lists only sync factories, but its
+        # resolver (ainvoke_callable_factory) explicitly supports async ones, and
+        # the adapter only ever runs via async `arun`.
+        self._agent.tools = self._resolve_room_tools  # type: ignore[assignment]
+
         # Band guidance is composed purely from static capabilities, so inject it
         # once here -- before any room runs -- rather than lazily on first message.
         self._inject_band_instructions()
@@ -296,7 +312,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             is_session_bootstrap,
         )
 
-        self._ensure_band_tools(tools)
         messages = self._build_run_input(
             msg,
             history,
@@ -508,47 +523,78 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             msg.sender_name,
         )
 
-    def _ensure_band_tools(self, tools: AgentToolsProtocol) -> None:
-        """Additively wire this room's Band tools onto the shared agent.
+    def _capture_user_tools(self, agent: AgnoAgent) -> None:
+        """Capture the user's own tools before installing the room factory.
 
-        The agent accumulates the union of tools any room has needed. Wiring is
-        idempotent by name: a tool already wired (e.g. from an earlier room) is
-        not re-added. This means once a contact-hub room is seen, contact tool
-        schemas remain visible in all rooms on the shared agent -- intentional,
-        not strict per-room visibility. Execution stays room-correct regardless
-        because each tool entrypoint routes through the current room's
-        AgentTools via the ``_current_tools`` ContextVar.
+        "User" here is the user who built the Agno agent (not a chat end-user).
+        Replacing ``agent.tools`` with our per-run factory (see
+        :meth:`_resolve_room_tools`) would otherwise drop whatever tools the user
+        configured, so we stash them and re-include them on every run. A
+        user-supplied *callable* tools factory is kept as-is and resolved per run
+        with Agno's own semantics; a static list is copied.
         """
-        if self._agent is None:
-            return
+        from agno.tools import Toolkit
+        from agno.tools.function import Function
+        from agno.utils.callables import is_callable_factory
 
-        # The built Function set depends only on whether contacts are included
-        # (memory inclusion and feature filters are static), so cache on that
-        # flag and avoid rebuilding schemas every message. Wiring stays
-        # idempotent by name, so cache reuse never double-adds a tool.
+        tools = getattr(agent, "tools", None)
+        if tools is None:
+            self._user_tools = []
+            self._user_tools_factory = None
+        elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
+            self._user_tools = []
+            self._user_tools_factory = tools
+        else:
+            self._user_tools = list(tools)
+            self._user_tools_factory = None
+
+    async def _resolve_room_tools(self, run_context: Any = None) -> list[Any]:
+        """Per-run tool factory: developer tools + the active room's Band tools.
+
+        Installed as ``agent.tools`` in :meth:`on_started`. Agno invokes it once
+        per run (its own cache disabled) via ``ainvoke_callable_factory`` and
+        resolves the result into that run's context rather than mutating shared
+        agent state -- so concurrent rooms never see each other's tools. The
+        active room is read from the ``_current_tools`` ContextVar bound around
+        ``arun`` in :meth:`_run_agent` (the same binding that routes tool
+        execution), keeping visibility and execution aligned. Band tools are
+        gated per room: the CONTACTS capability or a contact-hub room includes
+        the contact tools, so a normal room never sees them even after a hub room
+        has run.
+        """
+        user_tools = await self._resolve_user_tools(run_context)
+
+        active = _current_tools.get()
+        if active is None:
+            # Outside a bound run we cannot know the room; expose only the user's
+            # own tools rather than guessing Band tool visibility.
+            return user_tools
+
         include_contacts = Capability.CONTACTS in self.features.capabilities or bool(
-            getattr(tools, "is_hub_room", False)
+            getattr(active, "is_hub_room", False)
         )
-        functions = self._band_tools_cache.get(include_contacts)
-        if functions is None:
-            functions = self._build_band_tools(tools, include_contacts=include_contacts)
-            self._band_tools_cache[include_contacts] = functions
+        band = self._band_tools_cache.get(include_contacts)
+        if band is None:
+            band = self._build_band_tools(active, include_contacts=include_contacts)
+            self._band_tools_cache[include_contacts] = band
+        return [*user_tools, *band]
 
-        new_tools = [fn for fn in functions if fn.name not in self._wired_tool_names]
-        wired: list[str] = []
-        for fn in new_tools:
-            try:
-                self._agent.add_tool(fn)
-                self._wired_tool_names.add(fn.name)
-                wired.append(fn.name)
-            except RuntimeError as e:
-                logger.warning("Could not wire Band tool %s: %s", fn.name, e)
-        if wired:
-            logger.info(
-                "Wired %d Band tool(s) into Agno agent: %s",
-                len(wired),
-                ", ".join(wired),
-            )
+    async def _resolve_user_tools(self, run_context: Any) -> list[Any]:
+        """Resolve the user's own tools for this run.
+
+        A static list is returned as a fresh copy; a user-supplied callable
+        factory is invoked with Agno's own signature injection
+        (agent/run_context/session_state) and may be sync or async.
+        """
+        if self._user_tools_factory is None:
+            return list(self._user_tools)
+
+        from agno.utils.callables import ainvoke_callable_factory
+
+        resolved = await ainvoke_callable_factory(
+            self._user_tools_factory, self._agent, run_context
+        )
+        return list(resolved) if resolved else []
 
     def _inject_band_instructions(self) -> None:
         """Append Band tool guidance to the runtime agent's ``additional_context``.
