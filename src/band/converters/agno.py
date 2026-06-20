@@ -4,43 +4,23 @@ from __future__ import annotations
 
 import json
 import logging
-from functools import lru_cache
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from band.core.protocols import HistoryConverter
 
 from ._tool_parsing import parse_tool_call, parse_tool_result
 
-if TYPE_CHECKING:
+try:
     from agno.models.message import Message
-    from agno.tools.function import Function
+except ImportError as e:
+    raise ImportError(
+        "agno is required for the Agno converter.\n"
+        "Install with: pip install 'band-sdk[agno]'"
+    ) from e
 
 logger = logging.getLogger(__name__)
 
-# Forward reference keeps agno optional at import time.
-AgnoMessages = list["Message"]
-
-
-def _require_agno(module: str, attr: str) -> Any:
-    try:
-        return getattr(import_module(module), attr)
-    except ImportError as e:
-        raise ImportError(
-            "Agno dependencies not installed. Install with: uv add band-sdk[agno]"
-        ) from e
-
-
-@lru_cache(maxsize=1)
-def agno_message_class() -> type[Message]:
-    """Agno Message class."""
-    return _require_agno("agno.models.message", "Message")
-
-
-@lru_cache(maxsize=1)
-def agno_function_class() -> type[Function]:
-    """Agno Function class."""
-    return _require_agno("agno.tools.function", "Function")
+AgnoMessages = list[Message]
 
 
 def _flush_tool_calls(
@@ -48,9 +28,8 @@ def _flush_tool_calls(
 ) -> None:
     if not pending_calls:
         return
-    message_cls = agno_message_class()
     messages.append(
-        message_cls(
+        Message(
             role="assistant",
             content=None,
             tool_calls=list(pending_calls),
@@ -115,9 +94,8 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
         parsed = parse_tool_result(content)
         if parsed is None:
             return
-        message_cls = agno_message_class()
         messages.append(
-            message_cls(
+            Message(
                 role="tool",
                 tool_call_id=parsed.tool_call_id,
                 tool_name=parsed.name,
@@ -130,7 +108,6 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
     def _text_message(self, hist: dict[str, Any]) -> Message:
         # Converter output is rehydrated history; tag it so Agno's
         # any(msg.from_history) check doesn't re-add stored session history.
-        message_cls = agno_message_class()
         content = hist.get("content", "")
         # Own-agent detection keys on sender_name, not a stable sender_id:
         # formatted history dicts carry only sender_name (see
@@ -140,8 +117,8 @@ class AgnoHistoryConverter(HistoryConverter[AgnoMessages]):
         if hist.get("role") == "assistant" and hist.get("sender_name") == (
             self._agent_name
         ):
-            return message_cls(role="assistant", content=content, from_history=True)
+            return Message(role="assistant", content=content, from_history=True)
 
         sender_name = hist.get("sender_name", "")
         formatted = f"[{sender_name}]: {content}" if sender_name else content
-        return message_cls(role="user", content=formatted, from_history=True)
+        return Message(role="user", content=formatted, from_history=True)

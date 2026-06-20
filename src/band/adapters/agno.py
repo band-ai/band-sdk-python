@@ -20,20 +20,24 @@ from band.core.types import (
     Emit,
     PlatformMessage,
 )
-from band.converters.agno import (
-    AgnoHistoryConverter,
-    AgnoMessages,
-    agno_function_class,
-    agno_message_class,
-)
+from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.prompts import BASE_INSTRUCTIONS, CONTACT_SECTION, MEMORY_SECTION
 from band.runtime.tools import get_band_tool_category
 
+try:
+    from agno.models.message import Message
+    from agno.tools import Toolkit
+    from agno.tools.function import Function
+    from agno.utils.callables import ainvoke_callable_factory, is_callable_factory
+except ImportError as e:
+    raise ImportError(
+        "agno is required for the Agno adapter.\n"
+        "Install with: pip install 'band-sdk[agno]'"
+    ) from e
+
 if TYPE_CHECKING:
     from agno.agent import Agent as AgnoAgent
-    from agno.models.message import Message
     from agno.run.agent import RunOutput
-    from agno.tools.function import Function
 
 logger = logging.getLogger(__name__)
 
@@ -382,20 +386,17 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         :meth:`_prior_transcript`), so building the input never mutates
         ``_message_history`` and a failed run leaves no injected residue behind.
         """
-        message_cls = agno_message_class()
         messages = self._prior_transcript(
             history, is_session_bootstrap=is_session_bootstrap, room_id=room_id
         )
 
         if participants_msg:
             messages.append(
-                message_cls(role="user", content=f"[System]: {participants_msg}")
+                Message(role="user", content=f"[System]: {participants_msg}")
             )
         if contacts_msg:
-            messages.append(
-                message_cls(role="user", content=f"[System]: {contacts_msg}")
-            )
-        messages.append(message_cls(role="user", content=msg.format_for_llm()))
+            messages.append(Message(role="user", content=f"[System]: {contacts_msg}"))
+        messages.append(Message(role="user", content=msg.format_for_llm()))
         return messages
 
     @_with_agent
@@ -533,10 +534,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         user-supplied *callable* tools factory is kept as-is and resolved per run
         with Agno's own semantics; a static list is copied.
         """
-        from agno.tools import Toolkit
-        from agno.tools.function import Function
-        from agno.utils.callables import is_callable_factory
-
         tools = getattr(agent, "tools", None)
         if tools is None:
             self._user_tools = []
@@ -549,7 +546,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             self._user_tools_factory = None
 
     async def _resolve_room_tools(self, run_context: Any = None) -> list[Any]:
-        """Per-run tool factory: developer tools + the active room's Band tools.
+        """Per-run tool factory: user tools + the active room's Band tools.
 
         Installed as ``agent.tools`` in :meth:`on_started`. Agno invokes it once
         per run (its own cache disabled) via ``ainvoke_callable_factory`` and
@@ -588,8 +585,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         """
         if self._user_tools_factory is None:
             return list(self._user_tools)
-
-        from agno.utils.callables import ainvoke_callable_factory
 
         resolved = await ainvoke_callable_factory(
             self._user_tools_factory, self._agent, run_context
@@ -630,7 +625,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         caller (CONTACTS capability or a contact-hub room, mirroring LangGraph)
         so the built set can be cached on that flag.
         """
-        function_cls = agno_function_class()
         schemas = tools.get_openai_tool_schemas(
             include_memory=Capability.MEMORY in self.features.capabilities,
             include_contacts=include_contacts,
@@ -649,7 +643,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             fn = schema.get("function", {})
             if name := fn.get("name"):
                 band_tools.append(
-                    function_cls(
+                    Function(
                         name=name,
                         description=fn.get("description", "") or "",
                         parameters=fn.get("parameters")
