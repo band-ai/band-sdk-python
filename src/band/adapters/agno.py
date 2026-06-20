@@ -162,19 +162,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 are keyed by ``room_id``). To keep a single shared session
                 across rooms, pass e.g. ``session_id_factory=lambda _r: "fixed"``.
         """
-        if agent is not None and agent_factory is not None:
-            raise ValueError(
-                "AgnoAdapter accepts `agent` or `agent_factory`, not both."
-            )
-        if agent is not None:
-            # Run against a copy so the caller's configured agent stays immutable.
-            factory: Callable[[], AgnoAgent] = agent.deep_copy
-        elif agent_factory is not None:
-            factory = agent_factory
-        else:
-            raise ValueError(
-                "AgnoAdapter requires exactly one of `agent` or `agent_factory`."
-            )
+        factory = self._resolve_agent_factory(agent, agent_factory)
 
         super().__init__(
             history_converter=history_converter or AgnoHistoryConverter(),
@@ -204,6 +192,29 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         # Resolved against the runtime agent in on_started, once it exists.
         self._agno_manages_history = False
+
+    @staticmethod
+    def _resolve_agent_factory(
+        agent: AgnoAgent | None,
+        agent_factory: Callable[[], AgnoAgent] | None,
+    ) -> Callable[[], AgnoAgent]:
+        """Pick the single agent factory from the mutually-exclusive args.
+
+        Exactly one of ``agent`` or ``agent_factory`` must be given. When an
+        ``agent`` is provided, the adapter runs against ``agent.deep_copy`` so the
+        caller's configured instance stays immutable.
+        """
+        if agent is not None and agent_factory is not None:
+            raise ValueError(
+                "AgnoAdapter accepts `agent` or `agent_factory`, not both."
+            )
+        if agent is not None:
+            return agent.deep_copy
+        if agent_factory is not None:
+            return agent_factory
+        raise ValueError(
+            "AgnoAdapter requires exactly one of `agent` or `agent_factory`."
+        )
 
     @property
     def agent(self) -> AgnoAgent | None:
