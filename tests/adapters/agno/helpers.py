@@ -55,6 +55,9 @@ class CapturingModel(Model):
         super().__init__(id="capturing", provider="fake")
         self._content = content
         self.captured_messages: list[Message] | None = None
+        # Tool names Agno offered the model on the most recent response call,
+        # so tests can assert per-run tool exposure end-to-end.
+        self.captured_tool_names: list[str] | None = None
 
     def invoke(self, *args: Any, **kwargs: Any) -> Any: ...
     async def ainvoke(self, *args: Any, **kwargs: Any) -> Any: ...
@@ -65,6 +68,9 @@ class CapturingModel(Model):
 
     async def aresponse(self, messages: list[Message], **kwargs: Any) -> ModelResponse:
         self.captured_messages = messages
+        self.captured_tool_names = [
+            _tool_schema_name(t) for t in (kwargs.get("tools") or [])
+        ]
         return ModelResponse(content=self._content)
 
     @property
@@ -74,6 +80,16 @@ class CapturingModel(Model):
         return "\n".join(
             m.content for m in messages if m.role == "system" and m.content
         )
+
+
+def _tool_schema_name(tool: Any) -> str | None:
+    """Best-effort tool name from an Agno Function or an OpenAI-format dict."""
+    name = getattr(tool, "name", None)
+    if name:
+        return name
+    if isinstance(tool, dict):
+        return tool.get("function", {}).get("name") or tool.get("name")
+    return None
 
 
 class SchemaTools(FakeAgentTools):
@@ -92,6 +108,26 @@ class SchemaTools(FakeAgentTools):
             {"include_memory": include_memory, "include_contacts": include_contacts}
         )
         return self._schemas
+
+
+class ContactAwareTools(SchemaTools):
+    """Like real AgentTools: contact tool schemas appear only when contacts are
+    requested. Always exposes ``band_send_message``; adds ``band_add_contact``
+    when ``include_contacts`` is True (CONTACTS capability or a hub room)."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__([], **kwargs)
+
+    def get_openai_tool_schemas(
+        self, *, include_memory: bool = False, include_contacts: bool = True
+    ) -> list[dict[str, Any]]:
+        self.schema_calls.append(
+            {"include_memory": include_memory, "include_contacts": include_contacts}
+        )
+        schemas = [openai_tool_schema("band_send_message")]
+        if include_contacts:
+            schemas.append(openai_tool_schema("band_add_contact"))
+        return schemas
 
 
 def openai_tool_schema(name: str) -> dict[str, Any]:

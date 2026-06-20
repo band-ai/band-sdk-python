@@ -2,9 +2,10 @@
 
 Conformance already covers init defaults, ``on_started`` name/description, and
 generic converter wiring; these tests pin Agno-only behavior: agent deep-copy,
-memory-collision warning, Band-tool wiring, the ContextVar tool binding,
-fallback-send, emit reporting, transcript persistence, and cleanup. Rehydration
-of platform history lives in ``test_rehydration.py``.
+memory-collision warning, per-run Band-tool resolution (the callable-tools
+factory + ContextVar binding), strict per-room tool visibility, fallback-send,
+emit reporting, transcript persistence, and cleanup. Rehydration of platform
+history lives in ``test_rehydration.py``.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from agno.agent import Agent as AgnoAgent
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 
@@ -28,6 +30,8 @@ from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.testing import FakeAgentTools
 
 from tests.adapters.agno.helpers import (
+    CapturingModel,
+    ContactAwareTools,
     SchemaTools,
     openai_tool_schema,
     run_input,
@@ -69,7 +73,9 @@ def _factory_agent_stub() -> MagicMock:
     agent.add_history_to_context = False
     agent.db = None
     agent.additional_context = None
-    agent.add_tool = MagicMock()
+    # A bare MagicMock `.tools` is callable and would be mistaken for a
+    # user-supplied tools factory; pin it to a list.
+    agent.tools = []
     agent.arun = AsyncMock(return_value=RunOutput())
     agent.deep_copy = MagicMock()
     return agent
@@ -191,45 +197,40 @@ class TestMemoryCollisionWarning:
             await adapter.on_started("TestBot", "desc")
 
 
-class TestBandToolWiring:
-    async def test_wires_each_schema_once(
-        self, make_started_adapter, sample_platform_message
-    ):
+class TestRoomToolResolution:
+    """Band tools are exposed per-run via the ``_resolve_room_tools`` factory
+    Agno calls each turn, not wired onto the agent. These pin what that factory
+    returns and the schema requests it makes for the active room."""
+
+    async def test_resolves_band_tools_for_active_room(self, make_started_adapter):
         tools = SchemaTools(
             [
                 openai_tool_schema("band_send_message"),
                 openai_tool_schema("band_lookup_peers"),
             ]
         )
-        adapter, copy = await make_started_adapter()
+        adapter, _ = await make_started_adapter()
 
-        await adapter.on_message(
-            sample_platform_message,
-            tools,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-        # Second turn must not re-wire (idempotent by name via _wired_tool_names).
-        await adapter.on_message(
-            sample_platform_message,
-            tools,
-            [],
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
+        with _bind_room_tools(tools):
+            resolved = await adapter._resolve_room_tools()
 
-        assert copy.add_tool.call_count == 2
-        wired_names = [call.args[0].name for call in copy.add_tool.call_args_list]
-        assert wired_names == ["band_send_message", "band_lookup_peers"]
+        assert [fn.name for fn in resolved] == [
+            "band_send_message",
+            "band_lookup_peers",
+        ]
 
-    async def test_capability_flags_drive_schema_request(
-        self, make_started_adapter, sample_platform_message
-    ):
+    async def test_no_band_tools_outside_a_bound_room(self, make_started_adapter):
+        # Defensive: with no active room bound, the factory exposes no Band tools
+        # (and does not even request schemas) rather than guessing visibility.
+        tools = SchemaTools([openai_tool_schema("band_send_message")])
+        adapter, _ = await make_started_adapter()
+
+        resolved = await adapter._resolve_room_tools()  # no _bind_room_tools
+
+        assert resolved == []
+        assert tools.schema_calls == []
+
+    async def test_capability_flags_drive_schema_request(self, make_started_adapter):
         tools = SchemaTools([])
         adapter, _ = await make_started_adapter(
             features=AdapterFeatures(
@@ -237,42 +238,43 @@ class TestBandToolWiring:
             )
         )
 
-        await adapter.on_message(
-            sample_platform_message,
-            tools,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
+        with _bind_room_tools(tools):
+            await adapter._resolve_room_tools()
 
         assert tools.schema_calls == [
             {"include_memory": True, "include_contacts": True}
         ]
 
-    async def test_schema_build_is_cached_across_turns(
-        self, make_started_adapter, sample_platform_message
-    ):
-        # Same contact flag across turns -> schemas are built once and reused,
-        # not rebuilt every message.
+    async def test_schema_build_is_cached_across_runs(self, make_started_adapter):
+        # Same contact flag across runs -> schemas are built once and reused,
+        # not rebuilt every turn.
         tools = SchemaTools([openai_tool_schema("band_send_message")])
         adapter, _ = await make_started_adapter()
 
-        for bootstrap in (True, False, False):
-            await adapter.on_message(
-                sample_platform_message,
-                tools,
-                [],
-                None,
-                None,
-                is_session_bootstrap=bootstrap,
-                room_id="room-1",
-            )
+        with _bind_room_tools(tools):
+            await adapter._resolve_room_tools()
+            await adapter._resolve_room_tools()
+            await adapter._resolve_room_tools()
 
         assert tools.schema_calls == [
             {"include_memory": False, "include_contacts": False}
         ]
+
+    async def test_user_tools_are_reincluded(self, make_agno_agent):
+        # Replacing agent.tools with our factory must not drop the user's own
+        # tools; they are re-included alongside the room's Band tools.
+        user_tool = object()
+        source, copy = make_agno_agent()
+        copy.tools = [user_tool]
+        adapter = AgnoAdapter(source)
+        await adapter.on_started("TestBot", "desc")
+
+        tools = SchemaTools([openai_tool_schema("band_send_message")])
+        with _bind_room_tools(tools):
+            resolved = await adapter._resolve_room_tools()
+
+        assert resolved[0] is user_tool
+        assert [getattr(t, "name", None) for t in resolved[1:]] == ["band_send_message"]
 
 
 class TestBandInstructionInjection:
@@ -814,21 +816,15 @@ class TestSessionIsolation:
 
 class TestHubContactExposure:
     """The adapter decides contact exposure (mirrors LangGraph): the CONTACTS
-    capability OR a hub room force-includes contact tool schemas."""
+    capability OR a hub room force-includes contact tool schemas, resolved per
+    run so visibility is strictly per-room."""
 
     async def test_normal_room_does_not_request_contacts(self, make_started_adapter):
         adapter, _ = await make_started_adapter()
         tools = SchemaTools([], room_id="room-A")
 
-        await adapter.on_message(
-            _msg("room-A", "hi"),
-            tools,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-A",
-        )
+        with _bind_room_tools(tools):
+            await adapter._resolve_room_tools()
 
         assert tools.schema_calls == [
             {"include_memory": False, "include_contacts": False}
@@ -838,62 +834,32 @@ class TestHubContactExposure:
         adapter, _ = await make_started_adapter()
         tools = SchemaTools([], hub_room_id="hub", room_id="hub")
 
-        await adapter.on_message(
-            _msg("hub", "hi"),
-            tools,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="hub",
-        )
+        with _bind_room_tools(tools):
+            await adapter._resolve_room_tools()
 
         assert tools.schema_calls == [
             {"include_memory": False, "include_contacts": True}
         ]
 
-    async def test_contact_tools_added_additively_after_hub(self, make_started_adapter):
-        adapter, copy = await make_started_adapter()
+    async def test_contacts_do_not_leak_into_normal_room_after_hub(
+        self, make_started_adapter
+    ):
+        # Core regression: after a hub room exposes contact tools, a subsequent
+        # normal room's resolution must NOT include them. The old additive wiring
+        # accumulated the union on the shared agent; per-run resolution does not.
+        adapter, _ = await make_started_adapter()
 
-        normal = SchemaTools(
-            [openai_tool_schema("band_send_message")], room_id="room-A"
-        )
-        await adapter.on_message(
-            _msg("room-A", "hi"),
-            normal,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-A",
-        )
-        assert [c.args[0].name for c in copy.add_tool.call_args_list] == [
-            "band_send_message"
-        ]
+        hub = ContactAwareTools(hub_room_id="hub", room_id="hub")
+        with _bind_room_tools(hub):
+            hub_names = [fn.name for fn in await adapter._resolve_room_tools()]
+        assert "band_add_contact" in hub_names
 
-        hub = SchemaTools(
-            [
-                openai_tool_schema("band_send_message"),
-                openai_tool_schema("band_add_contact"),
-            ],
-            hub_room_id="hub",
-            room_id="hub",
-        )
-        await adapter.on_message(
-            _msg("hub", "hi"),
-            hub,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="hub",
-        )
+        normal = ContactAwareTools(room_id="room-A")
+        with _bind_room_tools(normal):
+            normal_names = [fn.name for fn in await adapter._resolve_room_tools()]
 
-        # band_send_message is not re-added; band_add_contact is additively wired.
-        wired = [c.args[0].name for c in copy.add_tool.call_args_list]
-        assert wired == ["band_send_message", "band_add_contact"]
-        # A run still executes per message against the single shared agent.
-        assert copy.arun.await_count == 2
+        assert normal_names == ["band_send_message"]
+        assert "band_add_contact" not in normal_names
 
 
 class TestFeatureFilters:
@@ -907,40 +873,34 @@ class TestFeatureFilters:
         openai_tool_schema("band_add_contact"),  # contacts
     ]
 
-    async def _wired_names(self, adapter, copy) -> list[str]:
-        await adapter.on_message(
-            _msg("room-A", "hi"),
-            SchemaTools(self.ALL_SCHEMAS),
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-A",
-        )
-        return [c.args[0].name for c in copy.add_tool.call_args_list]
+    async def _resolved_names(self, adapter) -> list[str]:
+        tools = SchemaTools(self.ALL_SCHEMAS)
+        with _bind_room_tools(tools):
+            resolved = await adapter._resolve_room_tools()
+        return [fn.name for fn in resolved]
 
     async def test_include_tools_keeps_only_named(self, make_started_adapter):
-        adapter, copy = await make_started_adapter(
+        adapter, _ = await make_started_adapter(
             features=AdapterFeatures(include_tools=["band_send_message"])
         )
 
-        assert await self._wired_names(adapter, copy) == ["band_send_message"]
+        assert await self._resolved_names(adapter) == ["band_send_message"]
 
     async def test_exclude_tools_drops_named(self, make_started_adapter):
-        adapter, copy = await make_started_adapter(
+        adapter, _ = await make_started_adapter(
             features=AdapterFeatures(exclude_tools=["band_send_message"])
         )
 
-        names = await self._wired_names(adapter, copy)
+        names = await self._resolved_names(adapter)
         assert "band_send_message" not in names
         assert "band_lookup_peers" in names
 
     async def test_include_categories_keeps_only_category(self, make_started_adapter):
-        adapter, copy = await make_started_adapter(
+        adapter, _ = await make_started_adapter(
             features=AdapterFeatures(include_categories=["chat"])
         )
 
-        assert sorted(await self._wired_names(adapter, copy)) == [
+        assert sorted(await self._resolved_names(adapter)) == [
             "band_lookup_peers",
             "band_send_message",
         ]
@@ -994,3 +954,42 @@ class TestRunFailureReporting:
                 is_session_bootstrap=True,
                 room_id="room-A",
             )
+
+
+class TestPerRunToolExposureEndToEnd:
+    """Drive a real Agno agent so we assert on the tools Agno actually offered
+    the model per run -- proving the factory is installed and invoked per turn,
+    and that contact tools do not leak across rooms through the shared agent."""
+
+    async def test_model_receives_only_active_room_tools(self):
+        model = CapturingModel()
+        agno = AgnoAgent(model=model, instructions="You are Dev.")
+        adapter = AgnoAdapter(agno)
+        await adapter.on_started("Bot", "desc")
+
+        # Hub room: contact tools are offered to the model.
+        hub = ContactAwareTools(hub_room_id="hub", room_id="hub")
+        await adapter.on_message(
+            _msg("hub", "hi"),
+            hub,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="hub",
+        )
+        assert model.captured_tool_names is not None
+        assert "band_add_contact" in model.captured_tool_names
+
+        # Normal room afterwards on the same shared agent: no contact leak.
+        normal = ContactAwareTools(room_id="room-A")
+        await adapter.on_message(
+            _msg("room-A", "hi"),
+            normal,
+            [],
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-A",
+        )
+        assert model.captured_tool_names == ["band_send_message"]
