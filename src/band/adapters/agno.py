@@ -190,10 +190,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # the shared agent (see _resolve_room_tools), so each room's run offers
         # exactly its own tool set -- no cross-room schema leakage. The user's own
         # tools (those they configured on the agent, captured at startup) are
-        # re-included on every run. "User" here is the user who built the Agno
-        # agent, not a chat end-user.
-        self._user_tools: list[Any] = []
-        self._user_tools_factory: Callable[..., Any] | None = None
+        # re-included on every run, and may be either a static list or a per-run
+        # callable factory. "User" here is the user who built the Agno agent, not
+        # a chat end-user.
+        self._user_tools: list[Any] | Callable[..., Any] = []
         # Built Functions cached by their only dynamic input (include_contacts),
         # so the schema build runs at most twice for the process lifetime rather
         # than on every run. Entrypoints route through the _current_tools
@@ -264,21 +264,22 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         """
         await super().on_started(agent_name, agent_description)
 
-        self._agent = self._agent_factory()
-        self._agno_manages_history = self._detect_agno_history(self._agent)
-        self._warn_on_memory_collision(self._agent)
+        agent = self._agent_factory()
+        self._agent = agent
+        self._agno_manages_history = self._detect_agno_history(agent)
+        self._warn_on_memory_collision(agent)
 
         # Install per-run tool resolution: capture the user's own tools, then
         # replace ``agent.tools`` with our factory so each run offers exactly the
         # active room's tool set (see _resolve_room_tools). Disable Agno's
         # callable-tools cache so the factory runs every turn regardless of
         # session_id; we cache the built Functions ourselves in _band_tools_cache.
-        self._capture_user_tools(self._agent)
-        self._agent.cache_callables = False
+        self._capture_user_tools(agent)
+        agent.cache_callables = False
         # Agno's `tools` type annotation lists only sync factories, but its
         # resolver (ainvoke_callable_factory) explicitly supports async ones, and
         # the adapter only ever runs via async `arun`.
-        self._agent.tools = self._resolve_room_tools  # type: ignore[assignment]
+        agent.tools = self._resolve_room_tools  # type: ignore[assignment]
 
         # Band guidance is composed purely from static capabilities, so inject it
         # once here -- before any room runs -- rather than lazily on first message.
@@ -534,16 +535,13 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         user-supplied *callable* tools factory is kept as-is and resolved per run
         with Agno's own semantics; a static list is copied.
         """
-        tools = getattr(agent, "tools", None)
+        tools: Any = getattr(agent, "tools", None)
         if tools is None:
             self._user_tools = []
-            self._user_tools_factory = None
         elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
-            self._user_tools = []
-            self._user_tools_factory = tools
+            self._user_tools = tools  # a per-run callable factory
         else:
-            self._user_tools = list(tools)
-            self._user_tools_factory = None
+            self._user_tools = list(tools)  # a static list
 
     async def _resolve_room_tools(self, run_context: Any = None) -> list[Any]:
         """Per-run tool factory: user tools + the active room's Band tools.
@@ -583,11 +581,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         factory is invoked with Agno's own signature injection
         (agent/run_context/session_state) and may be sync or async.
         """
-        if self._user_tools_factory is None:
+        if not callable(self._user_tools):
             return list(self._user_tools)
 
         resolved = await ainvoke_callable_factory(
-            self._user_tools_factory, self._agent, run_context
+            self._user_tools, self._agent, run_context
         )
         return list(resolved) if resolved else []
 
