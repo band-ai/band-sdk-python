@@ -65,6 +65,18 @@ class TestRoomIsolation:
         the room or create a fresh agent.
         """
         adapter_name, factory = adapter_entry
+
+        # Agno is verified by the dedicated
+        # tests/e2e/scenarios/agno/test_room_isolation.py and is excluded here:
+        # it is unreliable in this shared cross-adapter test for reasons we have
+        # not fully pinned down (the dedicated test covers the same per-room
+        # isolation with a setup that runs consistently).
+        if adapter_name == "agno":
+            pytest.skip(
+                "Agno is covered by tests/e2e/scenarios/agno/test_room_isolation.py "
+                "(excluded here: unreliable in this shared test)"
+            )
+
         timeout = e2e_config.e2e_timeout
         agent_id, agent_name = e2e_agent_info
 
