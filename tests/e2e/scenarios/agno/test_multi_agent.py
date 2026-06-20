@@ -24,6 +24,7 @@ Run with:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 
@@ -51,6 +52,12 @@ from tests.e2e.scenarios.agno.conftest import (
 )
 
 logger = logging.getLogger(__name__)
+
+# A restarted agent reopens a WebSocket for an agent_id whose previous connection
+# just closed. Reconnecting within the platform's supersede window returns HTTP
+# 429, so pause briefly between a restart's kill and reconnect to let the old
+# connection tear down and the rate-limit window clear.
+_RESTART_RECONNECT_DELAY_S = 5.0
 
 
 @pytest.mark.asyncio
@@ -234,6 +241,7 @@ class TestAgnoMultiAgent:
         # history; for a B restart it's effectively the same first start.
         if restart_target in ("A", "both"):
             log_step("restart", f"{agent_a_name} (assistant) killed → restarting")
+            await asyncio.sleep(_RESTART_RECONNECT_DELAY_S)
 
         # --- Turn 2: ask for the total; assistant brings in the calculator ---
         log_step(
@@ -287,6 +295,7 @@ class TestAgnoMultiAgent:
         # --- Turn 3 (B / both): restart the calculator, then recompute ---
         if restart_target in ("B", "both"):
             log_step("restart", f"{agent_b_name} (calculator) killed → restarting")
+            await asyncio.sleep(_RESTART_RECONNECT_DELAY_S)
             log_step(
                 4,
                 f"turn 3 — user → {agent_a_name}: ask {agent_b_name} to recompute",

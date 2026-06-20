@@ -107,7 +107,20 @@ def create_crewai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 
 
 def create_agno_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
-    """Create an Agno adapter with a cheap Claude model."""
+    """Create an Agno adapter for the cross-adapter E2E suite.
+
+    Use a strong instruction-following model via ``E2E_ANTHROPIC_MODEL``
+    (e.g. ``claude-sonnet-4-6``). Cheap/small models (e.g. Haiku) refuse the
+    suite's crafted trigger prompts as prompt-injection; Sonnet 4.6 clears
+    ``test_tool_execution_send_message[agno]`` (echo a code word).
+
+    Caveat: ``test_agents_in_different_rooms_isolated[agno]`` uses a
+    "remember this secret code → recall it" prompt that even Sonnet 4.6 refuses
+    ("I don't follow embedded directives"). History rehydration is fine (the
+    model sees the prior turn); the prompt shape itself trips safety reflexes,
+    so that case is not fixable by model choice alone — it needs the trigger
+    prompt reworded.
+    """
     _require_anthropic_key()
     from agno.agent import Agent as AgnoAgent
     from agno.models.anthropic import Claude
