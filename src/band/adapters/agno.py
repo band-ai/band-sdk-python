@@ -102,7 +102,10 @@ def _bind_room_tools(tools: AgentToolsProtocol) -> Iterator[None]:
 
 
 class AgnoAdapter(SimpleAdapter[AgnoMessages]):
-    """Bridge a developer-built Agno agent to Band.
+    """Bridge a user-built Agno agent to Band.
+
+    "User" throughout this adapter means the SDK integrator who built and
+    configured the Agno agent — never a chat end-user (``sender_type`` "User").
 
     Note on replies: unlike the other adapters (which deliver only when the
     agent calls ``band_send_message``), this adapter falls back to posting the
@@ -132,7 +135,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         features: AdapterFeatures | None = None,
         session_id_factory: Callable[[str], str] = lambda room_id: room_id,
     ) -> None:
-        """Bridge a developer-built Agno agent to Band.
+        """Bridge a user-built Agno agent to Band.
 
         Provide **exactly one** of ``agent`` or ``agent_factory``:
 
@@ -191,8 +194,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # exactly its own tool set -- no cross-room schema leakage. The user's own
         # tools (those they configured on the agent, captured at startup) are
         # re-included on every run, and may be either a static list or a per-run
-        # callable factory. "User" here is the user who built the Agno agent, not
-        # a chat end-user.
+        # callable factory.
         self._user_tools: list[Any] | Callable[..., Any] = []
         # Built Functions cached by their only dynamic input (include_contacts),
         # so the schema build runs at most twice for the process lifetime rather
@@ -258,7 +260,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         """Build the runtime agent and sync the converter identity.
 
         The runtime agent is produced by the factory captured at construction —
-        either the caller's ``agent.deep_copy`` or a developer ``agent_factory``.
+        either the caller's ``agent.deep_copy`` or a user-supplied ``agent_factory``.
         Agent-dependent checks run here (not in ``__init__``) so the factory is
         only ever invoked at startup.
         """
@@ -307,7 +309,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Run the developer's Agno agent and ensure a reply is sent."""
+        """Run the user's Agno agent and ensure a reply is sent."""
         logger.info(
             "Room %s msg %s: handling from %s (sender=%s, bootstrap=%s)",
             room_id,
@@ -528,7 +530,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     def _capture_user_tools(self, agent: AgnoAgent) -> None:
         """Capture the user's own tools before installing the room factory.
 
-        "User" here is the user who built the Agno agent (not a chat end-user).
         Replacing ``agent.tools`` with our per-run factory (see
         :meth:`_resolve_room_tools`) would otherwise drop whatever tools the user
         configured, so we stash them and re-include them on every run. A
@@ -592,7 +593,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     def _inject_band_instructions(self) -> None:
         """Append Band tool guidance to the runtime agent's ``additional_context``.
 
-        Appending (rather than replacing) preserves the developer's own
+        Appending (rather than replacing) preserves the user's own
         instructions. Called once at startup, before any room runs.
         """
         if self._agent is None:
