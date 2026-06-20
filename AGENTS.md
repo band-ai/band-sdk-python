@@ -313,7 +313,7 @@ tests/
 ├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
 │   ├── adapters/   # Per-adapter smoke & tool execution tests
-│   └── scenarios/  # Cross-cutting scenarios (context persistence, room isolation)
+│   └── scenarios/  # Cross-cutting scenarios (context persistence, room isolation, noisy busy room)
 └── conftest.py     # Shared fixtures
 ```
 

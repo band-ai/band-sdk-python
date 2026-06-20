@@ -106,6 +106,48 @@ async def send_trigger_message(
     return message_id
 
 
+async def send_agent_message(
+    agent_client: AsyncRestClient,
+    room_id: str,
+    content: str,
+    mention_name: str,
+    mention_id: str,
+) -> str:
+    """Send a message into a room **as an agent**, @mentioning a target.
+
+    The agent-side mirror of :func:`send_trigger_message` (which sends as the
+    user). Used to produce multi-party "noise" — e.g. a second agent posting
+    chatter addressed to the user — without running that agent's own loop: we
+    only post via its REST client, so the message never cascades into an
+    inference on the sender. The @mention satisfies the platform's
+    "at least one mention" requirement and routes the message to *mention_id*,
+    not to the agent under test.
+
+    Args:
+        agent_client: REST API client (the **sending agent's** credentials).
+        room_id: Chat room to send the message in.
+        content: Message content.
+        mention_name: Name of the participant to @mention.
+        mention_id: ID of the participant to @mention.
+
+    Returns:
+        The message ID of the sent message.
+    """
+    message_content = f"@{mention_name} {content}"
+    response = await agent_client.agent_api_messages.create_agent_chat_message(
+        room_id,
+        message=ChatMessageRequest(
+            content=message_content,
+            mentions=[Mention(id=mention_id, name=mention_name)],
+        ),
+    )
+    message_id = response.data.id
+    logger.info(
+        "Agent sent message %s to room %s: %s", message_id, room_id, content[:80]
+    )
+    return message_id
+
+
 @asynccontextmanager
 async def listening_for_agent_responses(
     ws_client: WebSocketClient | TrackingWebSocketClient,
@@ -185,6 +227,7 @@ async def listening_for_room_activity(
     message_types: tuple[str, ...] = ("text",),
     sender_id: str | None = None,
     min_messages: int = 1,
+    stop_substring: str | None = None,
     raise_on_timeout: bool = False,
 ) -> AsyncGenerator[Callable[[], Awaitable[list[MessageCreatedPayload]]], None]:
     """Subscribe to a room and collect agent activity matching a filter.
@@ -210,15 +253,23 @@ async def listening_for_room_activity(
         message_types: Message types to collect (default text only).
         sender_id: If set, only collect activity from this sender.
         min_messages: Minimum matching messages before ``wait()`` returns.
+        stop_substring: If set, ``wait()`` also completes as soon as a collected
+            payload's content contains this substring (case-insensitive), in
+            addition to the *min_messages* rule. Useful for a liveness-probe
+            sentinel: the returned list is then exactly the agent's replies from
+            subscription through the probe answer, so their *count* is
+            meaningful (e.g. exactly one ⇒ the agent answered only the probe).
         raise_on_timeout: If True, ``wait()`` raises ``TimeoutError`` instead
             of returning partial results.
 
     Yields:
         An async callable that blocks until *min_messages* matching messages
-        arrive (or *timeout* elapses) and returns the collected payloads.
+        arrive (or a *stop_substring* match, or *timeout* elapses) and returns
+        the collected payloads.
     """
     received: list[MessageCreatedPayload] = []
     event = asyncio.Event()
+    stop_needle = stop_substring.lower() if stop_substring is not None else None
 
     async def handler(payload: MessageCreatedPayload) -> None:
         if payload.sender_type != "Agent" or payload.message_type not in message_types:
@@ -233,7 +284,10 @@ async def listening_for_room_activity(
             room_id,
             payload.content[:80],
         )
-        if len(received) >= min_messages:
+        matched_stop = (
+            stop_needle is not None and stop_needle in payload.content.lower()
+        )
+        if len(received) >= min_messages or matched_stop:
             event.set()
 
     await ws_client.join_chat_room_channel(room_id, handler)

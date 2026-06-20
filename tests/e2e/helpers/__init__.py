@@ -20,6 +20,7 @@ from tests.e2e.helpers.messaging import (
     listening_for_room_activity,
     run_smoke_test,
     run_tool_execution_test,
+    send_agent_message,
     send_and_wait_for_reply,
     send_trigger_message,
 )
@@ -37,6 +38,7 @@ __all__ = [
     "run_smoke_test",
     "run_tool_execution_test",
     "running_agent",
+    "send_agent_message",
     "send_and_wait_for_reply",
     "send_trigger_message",
 ]
