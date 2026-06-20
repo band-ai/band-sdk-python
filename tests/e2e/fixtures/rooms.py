@@ -151,12 +151,15 @@ async def e2e_fresh_room_allocator(
         if response.data is None:
             pytest.fail("create_agent_chat returned no data")
         room_id = response.data.id
+        # Record for teardown immediately: the room (with the agent in it) now
+        # exists on the platform, so it must be cleaned up even if adding the
+        # user participant below fails — otherwise it leaks against the cap.
+        e2e_created_room_ids.append(room_id)
+        created.append(room_id)
         await client.agent_api_participants.add_agent_chat_participant(
             room_id,
             participant=ParticipantRequest(participant_id=user_peer.id, role="member"),
         )
-        e2e_created_room_ids.append(room_id)
-        created.append(room_id)
         logger.info("E2E: Created fresh room %s for '%s'", room_id, name)
         return room_id, user_peer.id, user_peer.name
 
