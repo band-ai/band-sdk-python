@@ -27,7 +27,9 @@ import logging
 import warnings
 from typing import Any, Optional
 
+from band.core.exceptions import BandToolError
 from band.core.types import AdapterFeatures, Capability
+from band.runtime.tools import append_available_mention_handles
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +155,12 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             mention_list = [m.strip() for m in mentions.split(",") if m.strip()]
             if not mention_list:
                 logger.warning("[Parlant Tool] send_message: No mentions provided")
-                return ToolResult(data="Error: At least one mention is required")
+                error = append_available_mention_handles(
+                    "At least one mention is required",
+                    tools.participants,
+                    getattr(tools, "agent_id", None),
+                )
+                return ToolResult(data=f"Error: {error}")
 
             logger.info("[Parlant Tool] Sending message to: %s", mention_list)
             await tools.send_message(content, mention_list)
@@ -163,7 +170,14 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             return ToolResult(data=f"Message sent to {', '.join(mention_list)}")
         except Exception as e:
             logger.error("[Parlant Tool] Error sending message: %s", e, exc_info=True)
-            return ToolResult(data=f"Error sending message: {e}")
+            error = str(e)
+            if isinstance(e, (ValueError, BandToolError)):
+                error = append_available_mention_handles(
+                    error,
+                    tools.participants,
+                    getattr(tools, "agent_id", None),
+                )
+            return ToolResult(data=f"Error sending message: {error}")
 
     @p.tool
     async def band_send_event(
