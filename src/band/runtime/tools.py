@@ -2036,7 +2036,7 @@ class AgentTools(AgentToolsProtocol):
                 available_handles = self.available_mention_handles()
                 raise ValueError(
                     f"Unknown participant '{identifier}'. "
-                    f"Available handles: {available_handles}"
+                    f"{_AVAILABLE_HANDLES_MARKER} {available_handles}"
                 )
 
             resolved.append(
