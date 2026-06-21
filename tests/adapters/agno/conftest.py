@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -40,6 +41,7 @@ def make_agno_agent() -> Callable[..., MagicMock]:
         add_history_to_context: bool = False,
         db: object | None = None,
         response: RunOutput | None = None,
+        events: list[Any] | None = None,
     ) -> MagicMock:
         agent = MagicMock(name="agno_agent")
         agent.update_memory_on_run = update_memory_on_run
@@ -55,9 +57,24 @@ def make_agno_agent() -> Callable[..., MagicMock]:
         # callable factory. A bare MagicMock `.tools` is itself callable and would
         # be mistaken for a user-supplied tools factory, so pin it to a list.
         agent.tools = []
-        agent.arun = AsyncMock(
-            return_value=response if response is not None else RunOutput()
-        )
+        resp = response if response is not None else RunOutput()
+        if events is None:
+            # Non-streaming path (Emit.EXECUTION off): `await agent.arun(...)`.
+            agent.arun = AsyncMock(return_value=resp)
+        else:
+            # Streaming path (Emit.EXECUTION on): the adapter iterates
+            # `agent.arun(stream=True, ...)`, which yields the run events then the
+            # final RunOutput. A bare MagicMock returns an async iterator without
+            # awaiting, matching how the adapter consumes the stream.
+            def _arun(*args: Any, **kwargs: Any) -> Any:
+                async def _stream() -> Any:
+                    for event in events:
+                        yield event
+                    yield resp
+
+                return _stream()
+
+            agent.arun = MagicMock(side_effect=_arun)
         return agent
 
     return _make
@@ -76,11 +93,13 @@ def make_started_adapter(
         features: AdapterFeatures | None = None,
         add_history_to_context: bool = False,
         db: object | None = None,
+        events: list[Any] | None = None,
     ) -> tuple[AgnoAdapter, MagicMock]:
         agent = make_agno_agent(
             response=response,
             add_history_to_context=add_history_to_context,
             db=db,
+            events=events,
         )
         adapter = AgnoAdapter(agent, features=features)
         await adapter.on_started("TestBot", "desc")

@@ -35,6 +35,7 @@ from tests.adapters.agno.helpers import (
     SchemaTools,
     openai_tool_schema,
     run_input,
+    tool_events,
     tool_execution,
 )
 
@@ -366,11 +367,13 @@ class TestEmitExecution:
     async def test_emits_tool_call_and_result_events(
         self, make_started_adapter, sample_platform_message, tools
     ):
-        response = RunOutput(
-            tools=[tool_execution("band_lookup_peers", args={"page": "1"}, result="ok")]
+        # Streamed run: started + completed events for one tool call. Reporting
+        # is live (during the run), driven off Agno's native stream events.
+        events = tool_events(
+            tool_execution("band_lookup_peers", args={"page": "1"}, result="ok")
         )
         adapter, _ = await make_started_adapter(
-            response, features=AdapterFeatures(emit={Emit.EXECUTION})
+            features=AdapterFeatures(emit={Emit.EXECUTION}), events=events
         )
 
         await adapter.on_message(
@@ -398,9 +401,9 @@ class TestEmitExecution:
     async def test_self_reporting_tools_are_not_re_emitted(
         self, make_started_adapter, sample_platform_message, tools
     ):
-        response = RunOutput(tools=[tool_execution("band_send_message")])
+        events = tool_events(tool_execution("band_send_message"))
         adapter, _ = await make_started_adapter(
-            response, features=AdapterFeatures(emit={Emit.EXECUTION})
+            features=AdapterFeatures(emit={Emit.EXECUTION}), events=events
         )
 
         await adapter.on_message(
@@ -418,8 +421,10 @@ class TestEmitExecution:
     async def test_no_events_without_execution_emit(
         self, make_started_adapter, sample_platform_message, tools
     ):
+        # No Emit.EXECUTION -> non-streaming run, no live reporting. The final
+        # RunOutput still carries executions, but nothing is emitted.
         response = RunOutput(tools=[tool_execution("band_lookup_peers")])
-        adapter, _ = await make_started_adapter(response)  # no emit configured
+        adapter, agent = await make_started_adapter(response)  # no emit configured
 
         await adapter.on_message(
             sample_platform_message,
@@ -432,6 +437,8 @@ class TestEmitExecution:
         )
 
         assert tools.events_sent == []
+        # Confirms the non-streaming path: a single awaited arun, not a stream.
+        agent.arun.assert_awaited_once()
 
 
 class TestEmitThoughts:

@@ -8,8 +8,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from functools import wraps
-from typing import TYPE_CHECKING, Any, ClassVar, Concatenate, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -26,6 +25,11 @@ from band.runtime.tools import get_band_tool_category
 
 try:
     from agno.models.message import Message
+    from agno.run.agent import (
+        RunOutput,
+        ToolCallCompletedEvent,
+        ToolCallStartedEvent,
+    )
     from agno.tools import Toolkit
     from agno.tools.function import Function
     from agno.utils.callables import ainvoke_callable_factory, is_callable_factory
@@ -37,12 +41,9 @@ except ImportError as e:
 
 if TYPE_CHECKING:
     from agno.agent import Agent as AgnoAgent
-    from agno.run.agent import RunOutput
+    from agno.run.agent import RunOutputEvent
 
 logger = logging.getLogger(__name__)
-
-P = ParamSpec("P")
-R = TypeVar("R")
 
 # These tools already produce visible room output.
 _SELF_REPORTING_TOOLS = frozenset({"band_send_message", "band_send_event"})
@@ -64,19 +65,6 @@ def _tool_executions(response: RunOutput) -> list[Any]:
 
 def _tool_name(execution: Any) -> str:
     return getattr(execution, "tool_name", None) or ""
-
-
-def _with_agent(
-    fn: Callable[Concatenate[Any, AgnoAgent, P], Awaitable[R]],
-) -> Callable[Concatenate[Any, P], Awaitable[R]]:
-    @wraps(fn)
-    async def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> R:
-        agent = getattr(self, "_agent", None)
-        if agent is None:
-            raise RuntimeError("AgnoAdapter was used before on_started()")
-        return await fn(self, agent, *args, **kwargs)
-
-    return wrapper
 
 
 def _make_band_entrypoint(tool_name: str) -> Callable[..., Awaitable[str]]:
@@ -312,10 +300,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         if Emit.THOUGHTS in self.features.emit:
             await self._report_thoughts(response, tools, room_id=room_id, msg_id=msg.id)
-        if Emit.EXECUTION in self.features.emit:
-            await self._report_tool_executions(
-                response, tools, room_id=room_id, msg_id=msg.id
-            )
 
         self._persist_turn(room_id, response)
 
@@ -389,17 +373,24 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         messages.append(Message(role="user", content=msg.format_for_llm()))
         return messages
 
-    @_with_agent
     async def _run_agent(
         self,
-        agent: AgnoAgent,
         messages: list[Message],
         tools: AgentToolsProtocol,
         *,
         room_id: str,
         msg_id: str,
     ) -> RunOutput | None:
-        """Run the Agno agent with the room's tools bound for this call."""
+        """Run the Agno agent with the room's tools bound for this call.
+
+        When ``Emit.EXECUTION`` is enabled the run is streamed so tool_call /
+        tool_result events are emitted *as each tool runs* (see
+        :meth:`_run_streamed`), matching the other adapters' live reporting.
+        Otherwise it runs non-streaming, exactly as before.
+        """
+        agent = self._agent
+        if agent is None:
+            raise RuntimeError("AgnoAdapter was used before on_started()")
         session_id = self._session_id_factory(room_id)
         logger.debug(
             "Room %s msg %s: running Agno agent (%d input messages, session_id=%s)",
@@ -410,7 +401,17 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
         try:
             with _bind_room_tools(tools):
-                response = await agent.arun(input=messages, session_id=session_id)
+                if Emit.EXECUTION in self.features.emit:
+                    response = await self._run_streamed(
+                        agent,
+                        messages,
+                        tools,
+                        session_id=session_id,
+                        room_id=room_id,
+                        msg_id=msg_id,
+                    )
+                else:
+                    response = await agent.arun(input=messages, session_id=session_id)
         except Exception:
             # Keep the user-facing payload generic; the full traceback is in the
             # agent log via logger.exception. Exception text can include DB
@@ -434,6 +435,40 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 "Room %s msg %s: Agno agent returned no response", room_id, msg_id
             )
         return response
+
+    async def _run_streamed(
+        self,
+        agent: AgnoAgent,
+        messages: list[Message],
+        tools: AgentToolsProtocol,
+        *,
+        session_id: str,
+        room_id: str,
+        msg_id: str,
+    ) -> RunOutput | None:
+        """Stream the run, emitting tool events live, and return the final output.
+
+        ``stream_events=True`` yields a ``ToolCallStartedEvent`` /
+        ``ToolCallCompletedEvent`` for every tool call (user-configured and
+        Band), and ``yield_run_output=True`` yields the assembled ``RunOutput``
+        last. The ``_current_tools`` binding from :meth:`_run_agent` spans the
+        whole iteration, since tools execute as the stream is consumed.
+        """
+        final: RunOutput | None = None
+        async for item in agent.arun(
+            input=messages,
+            session_id=session_id,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+        ):
+            if isinstance(item, RunOutput):
+                final = item
+            else:
+                await self._emit_stream_event(
+                    item, tools, room_id=room_id, msg_id=msg_id
+                )
+        return final
 
     def _persist_turn(self, room_id: str, response: RunOutput) -> None:
         """Persist Agno's transcript, keeping only conversation messages.
@@ -601,80 +636,80 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 "Room %s msg %s: failed to report thought: %s", room_id, msg_id, e
             )
 
-    async def _report_tool_executions(
-        self,
-        response: RunOutput,
-        tools: AgentToolsProtocol,
-        *,
-        room_id: str,
-        msg_id: str,
-    ) -> None:
-        """Emit tool_call/tool_result events for reportable executions."""
-        executions = [
-            execution
-            for execution in _tool_executions(response)
-            if _tool_name(execution) not in _SELF_REPORTING_TOOLS
-        ]
-        if not executions:
-            return
-
-        logger.info(
-            "Room %s msg %s: reporting %d tool execution(s)",
-            room_id,
-            msg_id,
-            len(executions),
-        )
-        for execution in executions:
-            await self._emit_execution(execution, tools, room_id=room_id, msg_id=msg_id)
-
     @classmethod
-    async def _emit_execution(
+    async def _emit_stream_event(
         cls,
-        execution: Any,
+        item: RunOutputEvent,
         tools: AgentToolsProtocol,
         *,
         room_id: str,
         msg_id: str,
     ) -> None:
-        """Emit the tool_call + tool_result event pair for one tool execution."""
-        tool_call_id = getattr(execution, "tool_call_id", None) or ""
-        tool_name = getattr(execution, "tool_name", None) or ""
-        tool_args = getattr(execution, "tool_args", None) or {}
-        is_error = bool(getattr(execution, "tool_call_error", False))
-        result = str(getattr(execution, "result", "") or "")
+        """Emit a tool_call / tool_result event for one streamed run event.
 
-        logger.debug(
-            "Room %s msg %s: tool %s(%s) -> %s%s",
-            room_id,
-            msg_id,
-            tool_name,
-            tool_args,
-            result[:200],
-            " [error]" if is_error else "",
-        )
+        Agno yields a started + completed event (each carrying a
+        ``ToolExecution``) for every tool call -- user-configured and Band
+        alike. Self-reporting tools already produce visible room output, so they
+        are skipped. The completed event carries ``result`` + ``tool_call_error``,
+        so exactly one tool_result is emitted per call whether it succeeded or
+        failed; all other events (content deltas, reasoning, ``ToolCallErrorEvent``)
+        fall through and are ignored.
+        """
+        if (
+            isinstance(item, ToolCallStartedEvent)
+            and (ex := item.tool) is not None
+            and ex.tool_name not in _SELF_REPORTING_TOOLS
+        ):
+            await cls._emit_tool_event(
+                tools,
+                "tool_call",
+                {
+                    "name": ex.tool_name or "",
+                    "args": ex.tool_args or {},
+                    "tool_call_id": ex.tool_call_id or "",
+                },
+                room_id=room_id,
+                msg_id=msg_id,
+            )
+        elif (
+            isinstance(item, ToolCallCompletedEvent)
+            and (ex := item.tool) is not None
+            and ex.tool_name not in _SELF_REPORTING_TOOLS
+        ):
+            await cls._emit_tool_event(
+                tools,
+                "tool_result",
+                {
+                    "name": ex.tool_name or "",
+                    "output": str(ex.result or ""),
+                    "tool_call_id": ex.tool_call_id or "",
+                    "is_error": bool(ex.tool_call_error),
+                },
+                room_id=room_id,
+                msg_id=msg_id,
+            )
+
+    @staticmethod
+    async def _emit_tool_event(
+        tools: AgentToolsProtocol,
+        message_type: str,
+        payload: dict[str, Any],
+        *,
+        room_id: str,
+        msg_id: str,
+    ) -> None:
+        """Send one tool event, logging (never raising) on failure."""
+        logger.debug("Room %s msg %s: %s %s", room_id, msg_id, message_type, payload)
         try:
             await tools.send_event(
-                content=json.dumps(
-                    {"name": tool_name, "args": tool_args, "tool_call_id": tool_call_id}
-                ),
-                message_type="tool_call",
-            )
-            await tools.send_event(
-                content=json.dumps(
-                    {
-                        "name": tool_name,
-                        "output": result,
-                        "tool_call_id": tool_call_id,
-                        "is_error": is_error,
-                    }
-                ),
-                message_type="tool_result",
+                content=json.dumps(payload), message_type=message_type
             )
         except Exception as e:
             logger.warning(
-                "Room %s msg %s: failed to report tool execution %s: %s",
+                "Room %s msg %s: failed to report %s %s: %s",
                 room_id,
                 msg_id,
-                tool_name,
+                message_type,
+                payload.get("name"),
                 e,
             )

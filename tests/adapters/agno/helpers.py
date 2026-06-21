@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ToolExecution
+from agno.run.agent import ToolCallCompletedEvent, ToolCallStartedEvent
 
 from band.core.types import (
     AgentInput,
@@ -40,6 +41,19 @@ def tool_execution(
         result=result,
         tool_call_error=error,
     )
+
+
+def tool_events(execution: ToolExecution) -> list[Any]:
+    """The started + completed stream events Agno yields for one tool call.
+
+    Mirrors a streamed ``arun`` (``stream_events=True``): the started event
+    carries name/args/id; the completed event carries result/error. The same
+    ``ToolExecution`` instance is used for both, as Agno mutates and re-emits it.
+    """
+    return [
+        ToolCallStartedEvent(tool=execution),
+        ToolCallCompletedEvent(tool=execution),
+    ]
 
 
 class CapturingModel(Model):
