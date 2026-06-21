@@ -16,7 +16,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from thenvoi_rest import AsyncRestClient
+from band_rest import AsyncRestClient
 
 from band.agent import Agent
 

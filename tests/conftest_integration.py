@@ -29,9 +29,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
-from thenvoi_rest import AsyncRestClient, ChatRoomRequest
-from thenvoi_rest.core.api_error import ApiError
-from thenvoi_rest.types import ParticipantRequest
+from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest.core.api_error import ApiError
+from band_rest.types import ParticipantRequest
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
 from thenvoi_testing.settings import BaseTestSettings
 

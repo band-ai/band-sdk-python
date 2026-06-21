@@ -12,6 +12,7 @@ Configuration is loaded from .env.test with E2E-specific overrides from env vars
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,8 +20,8 @@ from typing import TYPE_CHECKING
 import pytest
 from dotenv import load_dotenv
 from pydantic import ValidationError
-from thenvoi_rest import AsyncRestClient, ChatRoomRequest
-from thenvoi_rest.types import (
+from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest.types import (
     ParticipantRequest,
 )
 from thenvoi_testing.settings import BaseTestSettings
@@ -133,6 +134,11 @@ _e2e_is_disabled, _e2e_skip_reason = _check_e2e_status()
 requires_e2e = pytest.mark.skipif(
     _e2e_is_disabled,
     reason=_e2e_skip_reason or "E2E tests disabled",
+)
+
+requires_openai = pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY"),
+    reason="OPENAI_API_KEY not set",
 )
 
 

@@ -5,13 +5,29 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar
+from enum import Enum, StrEnum
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
 
 T = TypeVar("T")
+
+
+class MessageType(StrEnum):
+    """Canonical ``message_type`` values used across platform history and events."""
+
+    TEXT = "text"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    THOUGHT = "thought"
+    ERROR = "error"
+    TASK = "task"
+
+
+# Subset of message types accepted by ``band_send_event`` — the non-history
+# event kinds. Derived from MessageType so the taxonomy stays single-sourced.
+EventMessageType = Literal[MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]
 
 
 class Capability(str, Enum):

@@ -19,13 +19,13 @@ from dataclasses import dataclass
 import pytest
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
-from thenvoi_rest import (
+from band_rest import (
     AgentRegisterRequest,
     AsyncRestClient,
     ChatMessageRequest,
     ChatRoomRequest,
 )
-from thenvoi_rest.types import (
+from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
     ParticipantRequest,
 )
@@ -33,7 +33,7 @@ from thenvoi_rest.types import (
 from band import Agent
 from band.adapters import LangGraphAdapter
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
-from tests.e2e.conftest import requires_e2e
+from tests.e2e.conftest import requires_e2e, requires_openai
 
 
 logger = logging.getLogger(__name__)
@@ -164,6 +164,7 @@ async def _wait_for_agent_messages(
 
 @pytest.mark.asyncio
 @requires_e2e
+@requires_openai
 @pytest.mark.skipif(
     os.environ.get("LANGGRAPH_RESTART_SMOKE", "").lower() != "true",
     reason="LANGGRAPH_RESTART_SMOKE=true is required for the live restart smoke",
@@ -178,7 +179,6 @@ async def test_langgraph_answers_down_message_once_after_restart() -> None:
     )
     if not user_key:
         pytest.skip("BAND_API_KEY_USER or BAND_USER_API_KEY is required")
-    _require_env("OPENAI_API_KEY")
 
     nonce = f"REHYDRATE_{uuid.uuid4().hex[:12]}"
     user_client = AsyncRestClient(api_key=user_key, base_url=base_url)

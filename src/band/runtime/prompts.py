@@ -19,6 +19,14 @@ Example:
 
 from __future__ import annotations
 
+from band.core.memory_types import (
+    MEMORY_SYSTEM_TYPE_MAP,
+    MemorySegment,
+    MemoryStoreScope,
+    MemorySystem,
+    WorkingLongTermMemoryType,
+    enum_values,
+)
 from band.core.types import AdapterFeatures, Capability
 
 
@@ -57,15 +65,63 @@ When relaying information between participants, always deliver the answer
 to the original requester. Do not stop at thanking the helper.
 """
 
-MEMORY_SECTION = """
-## Memory Tools
+
+def _quote_choices(values: tuple[str, ...]) -> str:
+    return " | ".join(f'`"{value}"`' for value in values)
+
+
+def _memory_type_lines() -> str:
+    return "\n".join(
+        f"  - {system}: {_quote_choices(types)}"
+        for system, types in MEMORY_SYSTEM_TYPE_MAP.items()
+    )
+
+
+_MEMORY_INTRO = """## Memory Tools
 
 You have access to memory tools for storing and retrieving information
 across conversations. Use `band_store_memory` to persist important
 information and `band_list_memories` / `band_get_memory` to recall it.
-Use `band_supersede_memory` to mark outdated memories.
+Use `band_supersede_memory` to mark outdated memories and
+`band_archive_memory` to hide memories that should be preserved."""
+
+
+_MEMORY_COMMON_PATTERNS = f"""Common patterns:
+- Facts learned about other agents/entities: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
+- Events that occurred: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.EPISODIC.value}"`, `segment="{MemorySegment.AGENT.value}"`
+- User preferences or profile info: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.SEMANTIC.value}"`, `segment="{MemorySegment.USER.value}"`
+- How to perform a task: `system="{MemorySystem.LONG_TERM.value}"`, `type="{WorkingLongTermMemoryType.PROCEDURAL.value}"`, `segment="{MemorySegment.TOOL.value}"`"""
+
+
+_MEMORY_SCOPE_GUIDANCE = f"""Prefer `scope="{MemoryStoreScope.SUBJECT.value}"` whenever the memory is about a specific person or agent, so it
+stays attached to that subject rather than leaking org-wide. Storing with `scope="{MemoryStoreScope.SUBJECT.value}"` requires a
+real `subject_id` UUID, so resolve it first via `band_lookup_peers` or the participant list.
+Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization and
+is not about any one subject.
 """
 
+
+def _memory_section() -> str:
+    field_rules = f"""When calling `band_store_memory`, the `system`, `type`, `segment`, and `scope` fields
+must use these exact values (case-sensitive):
+
+- **system**: {_quote_choices(enum_values(MemorySystem))}
+- **type** (must match the chosen system):
+{_memory_type_lines()}
+- **segment**: {_quote_choices(enum_values(MemorySegment))}
+- **scope**: {_quote_choices(enum_values(MemoryStoreScope))}"""
+
+    return "\n\n".join(
+        [
+            _MEMORY_INTRO.strip(),
+            field_rules.strip(),
+            _MEMORY_COMMON_PATTERNS.strip(),
+            _MEMORY_SCOPE_GUIDANCE.strip(),
+        ]
+    )
+
+
+MEMORY_SECTION = _memory_section()
 CONTACT_SECTION = """
 ## Contact Management Tools
 

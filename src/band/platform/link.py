@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from band.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
 from band.runtime.types import PlatformMessage
-from thenvoi_rest.core.api_error import ApiError
+from band_rest.core.api_error import ApiError
 
 from .event import (
     MessageEvent,
@@ -580,7 +580,7 @@ class BandLink:
             logger.warning("Failed to get next message: %s", e)
             raise
 
-        if response.data is None:
+        if response is None or response.data is None:
             return None
 
         item = response.data

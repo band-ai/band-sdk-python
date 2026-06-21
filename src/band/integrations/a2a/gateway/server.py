@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
 
-from thenvoi_rest import Peer
+from band_rest import Peer
 
 logger = logging.getLogger(__name__)
 

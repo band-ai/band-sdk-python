@@ -188,7 +188,7 @@ class AgentToolsProtocol(Protocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = "subject",
+        scope: str,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:

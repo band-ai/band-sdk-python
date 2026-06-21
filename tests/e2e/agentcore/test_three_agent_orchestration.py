@@ -33,8 +33,8 @@ import logging
 import os
 
 import pytest
-from thenvoi_rest import AsyncRestClient, CreateMyChatRoomRequestChat
-from thenvoi_rest.types import ParticipantRequest
+from band_rest import AsyncRestClient, CreateMyChatRoomRequestChat
+from band_rest.types import ParticipantRequest
 
 from tests.e2e.conftest import E2ESettings, requires_e2e
 from tests.e2e.helpers import (

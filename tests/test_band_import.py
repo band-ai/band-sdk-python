@@ -12,7 +12,7 @@ def test_band_import_surface_exposes_agent_and_link() -> None:
 
 def test_legacy_root_package_is_not_available() -> None:
     # The SDK package is `band`; the bare legacy root must not ship in-tree.
-    # `thenvoi_rest` / `thenvoi_testing` are legitimate external pip
+    # `band_rest` / `thenvoi_testing` are legitimate external pip
     # dependencies (the Fern-generated REST client and test tooling), so they
     # are intentionally importable.
     legacy_root = "then" + "voi"

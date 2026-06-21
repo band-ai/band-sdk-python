@@ -415,6 +415,98 @@ class TestErrorHandling:
         mock_tools.send_event.assert_called()
 
     @pytest.mark.asyncio
+    async def test_reports_error_when_crewai_completes_without_reply(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """A normal CrewAI return is still silent unless band_send_message ran."""
+        mock_result = MagicMock()
+        mock_result.raw = "I could not complete the request."
+        mock_crewai_agent.kickoff_async.return_value = mock_result
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        mock_tools.send_event.assert_awaited_once()
+        event_kwargs = mock_tools.send_event.await_args.kwargs
+        assert event_kwargs["message_type"] == "error"
+        assert "completed without sending a Band message" in event_kwargs["content"]
+        assert "max_iter=20" in event_kwargs["content"]
+        assert "band_send_message" in event_kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_reports_error_when_crewai_returns_none_without_reply(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """A falsey CrewAI completion is still silent unless band_send_message ran."""
+        mock_crewai_agent.kickoff_async.return_value = None
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        mock_tools.send_event.assert_awaited_once()
+        event_kwargs = mock_tools.send_event.await_args.kwargs
+        assert event_kwargs["message_type"] == "error"
+        assert "completed without sending a Band message" in event_kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_does_not_report_completion_error_after_reply(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """A turn is not silent when band_send_message already replied."""
+        import importlib
+
+        module = importlib.import_module("band.adapters.crewai")
+
+        mock_result = MagicMock()
+        mock_result.raw = "I already sent the user-facing reply."
+
+        async def _kickoff(_messages):
+            tracker = module._reply_tracker_var.get()
+            if tracker is not None:
+                tracker.replied = True
+            return mock_result
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_suppresses_empty_final_answer_after_reply(
         self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
     ):

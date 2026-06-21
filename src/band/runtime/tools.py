@@ -12,11 +12,23 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from pydantic import AliasChoices, BaseModel, Field, ValidationError
+from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 from band.core.exceptions import BandToolError
+from band.core.memory_types import (
+    MemoryListScope,
+    MemorySegment,
+    MemoryStatus,
+    MemoryStoreScope,
+    MemorySystem,
+    MemoryType,
+    memory_type_field_description,
+    validate_memory_type_for_system,
+    validate_subject_scope,
+)
 from band.core.protocols import AgentToolsProtocol
+from band.core.types import EventMessageType
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -64,6 +76,50 @@ def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
     return False
 
 
+def available_mention_handles(
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> list[str]:
+    """Return room handles this agent may mention, excluding itself."""
+    return [
+        handle
+        for participant in participants
+        if (handle := _entity_field(participant, "handle"))
+        and (agent_id is None or _entity_field(participant, "id") != agent_id)
+    ]
+
+
+# Single marker for the available-handles hint. Used both to render the hint and
+# to detect it, so the producer and the idempotency guard can never drift apart.
+_AVAILABLE_HANDLES_MARKER = "Available handles:"
+
+
+def append_mention_handles_hint(error: str, handles: list[str]) -> str:
+    """Append a retryable handles hint to a tool error when handles are known.
+
+    Idempotent: an error that already carries the hint is returned unchanged, so
+    the same error can flow through multiple adapter enrichers without doubling
+    the handle list.
+    """
+    if not handles or _AVAILABLE_HANDLES_MARKER in error:
+        return error
+    return (
+        f"{error}. {_AVAILABLE_HANDLES_MARKER} {handles}. "
+        "Use participant handles from the list."
+    )
+
+
+def append_available_mention_handles(
+    error: str,
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> str:
+    """Append retryable mention handles to a tool error when available."""
+    return append_mention_handles_hint(
+        error, available_mention_handles(participants, agent_id)
+    )
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """Metadata for a built-in Band tool."""
@@ -109,9 +165,7 @@ class SendEventInput(BaseModel):
     """
 
     content: str = Field(..., description="Human-readable event content")
-    message_type: Literal["thought", "error", "task"] = Field(
-        ..., description="Type of event"
-    )
+    message_type: EventMessageType = Field(..., description="Type of event")
     metadata: dict[str, Any] | None = Field(
         None, description="Optional structured data for the event"
     )
@@ -247,24 +301,13 @@ class ListMemoriesInput(BaseModel):
     subject_id: str | None = Field(
         None, description="Filter by subject UUID (required for subject-scoped queries)"
     )
-    scope: Literal["subject", "organization", "all"] | None = Field(
-        None, description="Filter by scope"
-    )
-    system: Literal["sensory", "working", "long_term"] | None = Field(
-        None, description="Filter by memory system"
-    )
-    type: (
-        Literal["iconic", "echoic", "haptic", "episodic", "semantic", "procedural"]
-        | None
-    ) = Field(None, description="Filter by memory type")
-    segment: Literal["user", "agent", "tool", "guideline"] | None = Field(
-        None, description="Filter by segment"
-    )
+    scope: MemoryListScope | None = Field(None, description="Filter by scope")
+    system: MemorySystem | None = Field(None, description="Filter by memory system")
+    type: MemoryType | None = Field(None, description="Filter by memory type")
+    segment: MemorySegment | None = Field(None, description="Filter by segment")
     content_query: str | None = Field(None, description="Full-text search query")
     page_size: int = Field(50, description="Number of results per page", ge=1, le=50)
-    status: Literal["active", "superseded", "archived", "all"] | None = Field(
-        None, description="Filter by status"
-    )
+    status: MemoryStatus | None = Field(None, description="Filter by status")
 
 
 class StoreMemoryInput(BaseModel):
@@ -276,19 +319,11 @@ class StoreMemoryInput(BaseModel):
     """
 
     content: str = Field(..., description="The memory content")
-    system: Literal["sensory", "working", "long_term"] = Field(
-        ..., description="Memory system tier"
-    )
-    type: Literal[
-        "iconic", "echoic", "haptic", "episodic", "semantic", "procedural"
-    ] = Field(..., description="Memory type (must be valid for selected system)")
-    segment: Literal["user", "agent", "tool", "guideline"] = Field(
-        ..., description="Logical segment"
-    )
+    system: MemorySystem = Field(..., description="Memory system tier")
+    type: MemoryType = Field(..., description=memory_type_field_description())
+    segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: Literal["subject", "organization"] = Field(
-        "subject", description="Visibility scope"
-    )
+    scope: MemoryStoreScope = Field(..., description="Visibility scope")
     subject_id: str | None = Field(
         None,
         description="UUID of the subject this memory is about (required for subject scope)",
@@ -296,6 +331,12 @@ class StoreMemoryInput(BaseModel):
     metadata: dict[str, Any] | None = Field(
         None, description="Additional metadata (tags, references)"
     )
+
+    @model_validator(mode="after")
+    def validate_memory_fields(self) -> "StoreMemoryInput":
+        validate_memory_type_for_system(self.system, self.type)
+        validate_subject_scope(self.scope, self.subject_id)
+        return self
 
 
 class GetMemoryInput(BaseModel):
@@ -1158,6 +1199,7 @@ class AgentTools(AgentToolsProtocol):
         participants: list[dict[str, Any]] | None = None,
         *,
         hub_room_id: str | None = None,
+        agent_id: str | None = None,
     ):
         """
         Initialize AgentTools for a specific room.
@@ -1178,12 +1220,22 @@ class AgentTools(AgentToolsProtocol):
         self.rest = rest
         self._participants = participants or []
         self._hub_room_id = hub_room_id
+        self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
+
+    @property
+    def agent_id(self) -> str | None:
+        """This agent's own ID, used to exclude itself from mention lists."""
+        return self._agent_id
 
     @property
     def participants(self) -> list[dict[str, Any]]:
         """Return a shallow copy of the cached participant list."""
         return list(self._participants)
+
+    def available_mention_handles(self) -> list[str]:
+        """Return handles this agent may @mention in the current room."""
+        return available_mention_handles(self.participants, self._agent_id)
 
     @classmethod
     def from_context(cls, ctx: "ExecutionContext") -> "AgentTools":
@@ -1203,6 +1255,7 @@ class AgentTools(AgentToolsProtocol):
             ctx.link.rest,
             ctx.participants,
             hub_room_id=getattr(ctx, "hub_room_id", None),
+            agent_id=ctx.agent_id,
         )
         tools._ctx = ctx
         return tools
@@ -1247,13 +1300,15 @@ class AgentTools(AgentToolsProtocol):
         # Validate mentions are not empty — API requires ≥1 mention.
         # Return a helpful error so the LLM can retry with proper mentions.
         if not resolved_mentions:
-            participant_names = [
-                p.get("handle") or p["name"] for p in self._participants
-            ]
+            # Build the error through the shared hint so it carries the canonical
+            # "Available handles:" marker. Adapter enrichers (CrewAI, MCP, Claude
+            # SDK) re-run the same hint on this error and rely on its idempotency
+            # to avoid listing the handles twice.
             raise BandToolError(
-                "At least one mention is required. "
-                f"Available participants: {participant_names}. "
-                "Please retry with mentions specifying who this message is for."
+                append_mention_handles_hint(
+                    "At least one mention is required",
+                    self.available_mention_handles(),
+                )
             )
 
         logger.debug("Sending message to room %s", self.room_id)
@@ -1808,7 +1863,7 @@ class AgentTools(AgentToolsProtocol):
         type: str,
         segment: str,
         thought: str,
-        scope: str = "subject",
+        scope: str,
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Any:
@@ -1829,14 +1884,18 @@ class AgentTools(AgentToolsProtocol):
             Fern Memory model (Pydantic). Serialized to dict by
             execute_tool_call() at the adapter boundary.
         """
-        from band.client.rest import MemoryCreateRequest
+        from band.client.rest import AgentMemoryCreateRequest
+
+        validate_memory_type_for_system(system, type)
+        validate_subject_scope(MemoryStoreScope(scope), subject_id)
 
         logger.debug(
-            "Storing memory: system=%s, type=%s, segment=%s, scope=%s",
+            "Storing memory: system=%s, type=%s, segment=%s, scope=%s, subject_id=%s",
             system,
             type,
             segment,
             scope,
+            subject_id,
         )
         memory_kwargs: dict[str, Any] = {
             "content": content,
@@ -1851,7 +1910,7 @@ class AgentTools(AgentToolsProtocol):
         if metadata is not None:
             memory_kwargs["metadata"] = metadata
         response = await self.rest.agent_api_memories.create_agent_memory(
-            memory=MemoryCreateRequest(**memory_kwargs),
+            memory=AgentMemoryCreateRequest(**memory_kwargs),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:
@@ -1971,10 +2030,12 @@ class AgentTools(AgentToolsProtocol):
                 participant = id_to_participant.get(identifier)
 
             if not participant:
-                available_handles = list(handle_to_participant.keys())
+                # Offer only real, mentionable handles to retry with: @-prefixed,
+                # excluding self and handle-less participants (not the raw lookup keys).
+                available_handles = self.available_mention_handles()
                 raise ValueError(
                     f"Unknown participant '{identifier}'. "
-                    f"Available handles: {available_handles}"
+                    f"{_AVAILABLE_HANDLES_MARKER} {available_handles}"
                 )
 
             resolved.append(
@@ -2240,7 +2301,7 @@ class HumanTools:
 
     async def register_my_agent(self, name: str, description: str) -> Any:
         """Register a new remote agent owned by the user."""
-        from thenvoi_rest import AgentRegisterRequest
+        from band_rest import AgentRegisterRequest
 
         logger.debug("Registering my agent: name=%s", name)
         agent_request = AgentRegisterRequest(name=name, description=description)
@@ -2264,7 +2325,7 @@ class HumanTools:
 
     async def create_my_chat_room(self, task_id: str | None = None) -> Any:
         """Create a new chat room with the user as owner."""
-        from thenvoi_rest import CreateMyChatRoomRequestChat
+        from band_rest import CreateMyChatRoomRequestChat
 
         logger.debug("Creating my chat room: task_id=%s", task_id)
         chat_request = (
@@ -2299,7 +2360,7 @@ class HumanTools:
         self, recipient_handle: str, message: str | None = None
     ) -> Any:
         """Send a contact request to another user."""
-        from thenvoi_rest import CreateContactRequestRequestContactRequest
+        from band_rest import CreateContactRequestRequestContactRequest
 
         logger.debug("Creating contact request to: %s", recipient_handle)
         kwargs: dict[str, Any] = {"recipient_handle": recipient_handle}
@@ -2444,7 +2505,7 @@ class HumanTools:
         MCP handler output verbatim (no exception raised) so the
         observable tool-surface error shape is preserved.
         """
-        from thenvoi_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
+        from band_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
 
         recipient_names = [
             name.strip().lower() for name in recipients.split(",") if name.strip()
@@ -2528,7 +2589,7 @@ class HumanTools:
         Returns ``f"Added participant: {participant_id}"`` (discards the
         Fern response body) to match today's MCP handler output verbatim.
         """
-        from thenvoi_rest import ParticipantRequest
+        from band_rest import ParticipantRequest
 
         logger.debug(
             "Adding my chat participant: chat_id=%s, participant_id=%s, role=%s",

@@ -12,7 +12,7 @@ import asyncio
 import logging
 import warnings
 from contextvars import ContextVar
-from typing import ClassVar, TYPE_CHECKING, Any, Literal
+from typing import ClassVar, TYPE_CHECKING, Any
 
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
@@ -48,8 +48,6 @@ _current_room_context: ContextVar[tuple[str, AgentToolsProtocol] | None] = Conte
 _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
     "_crewai_reply_tracker", default=None
 )
-
-MessageType = Literal["thought", "error", "task"]
 
 
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
@@ -401,6 +399,15 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                         "role": "assistant",
                         "content": result.raw,
                     }
+                )
+
+            if not (reply_tracker is not None and reply_tracker.replied):
+                await self._report_error(
+                    tools,
+                    "CrewAI completed without sending a Band message. This usually "
+                    f"means repeated tool failures exhausted max_iter={self.max_iter} "
+                    "or the agent returned a final answer instead of using the "
+                    "band_send_message tool.",
                 )
 
             logger.info(

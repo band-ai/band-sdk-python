@@ -33,21 +33,39 @@ from typing import (
     runtime_checkable,
 )
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
     from crewai.tools import BaseTool
 
+from band.core.memory_types import (
+    MemoryListScope,
+    MemorySegment,
+    MemoryStatus,
+    MemoryStoreScope,
+    MemorySystem,
+    MemoryType,
+    memory_type_field_description,
+    validate_memory_type_for_system,
+    validate_subject_scope,
+)
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    EventMessageType,
+    MessageType,
+)
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
     get_custom_tool_name,
 )
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import append_available_mention_handles, get_tool_description
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +263,14 @@ def _execute_tool(
             return await coro_factory(tools)
         except Exception as e:
             error_msg = str(e)
+            if tool_name == _SEND_MESSAGE_TOOL and isinstance(
+                e, (ValueError, BandToolError)
+            ):
+                error_msg = append_available_mention_handles(
+                    error_msg,
+                    tools.participants,
+                    getattr(tools, "agent_id", None),
+                )
             logger.error("%s failed in room %s: %s", tool_name, room_id, error_msg)
             await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
@@ -270,7 +296,7 @@ def _execute_tool(
 class _SendMessageInput(BaseModel):
     content: str = Field(..., description="The message content to send")
     mentions: str = Field(
-        default="[]",
+        ...,
         description='JSON array of participant handles to @mention (e.g., \'["@john", "@john/weather-agent"]\')',
     )
 
@@ -286,8 +312,8 @@ class _SendMessageInput(BaseModel):
 
 class _SendEventInput(BaseModel):
     content: str = Field(..., description="Human-readable event content")
-    message_type: Literal["thought", "error", "task"] = Field(
-        default="thought",
+    message_type: EventMessageType = Field(
+        default=MessageType.THOUGHT,
         description="Type of event: 'thought', 'error', or 'task'",
     )
     metadata: dict[str, Any] | None = Field(
@@ -379,18 +405,17 @@ class _RespondContactRequestInput(BaseModel):
 
 class _ListMemoriesInput(BaseModel):
     subject_id: str | None = Field(default=None, description="Filter by subject UUID")
-    scope: Literal["subject", "organization", "all"] | None = Field(
+    scope: MemoryListScope | None = Field(
         default=None, description="Filter by scope (subject, organization, all)"
     )
-    system: Literal["sensory", "working", "long_term"] | None = Field(
+    system: MemorySystem | None = Field(
         default=None,
         description="Filter by memory system (sensory, working, long_term)",
     )
-    memory_type: (
-        Literal["iconic", "echoic", "haptic", "episodic", "semantic", "procedural"]
-        | None
-    ) = Field(default=None, description="Filter by memory type")
-    segment: Literal["user", "agent", "tool", "guideline"] | None = Field(
+    memory_type: MemoryType | None = Field(
+        default=None, description="Filter by memory type"
+    )
+    segment: MemorySegment | None = Field(
         default=None, description="Filter by segment (user, agent, tool, guideline)"
     )
     content_query: str | None = Field(
@@ -399,7 +424,7 @@ class _ListMemoriesInput(BaseModel):
     page_size: int = Field(
         default=50, description="Number of results per page", ge=1, le=50
     )
-    status: Literal["active", "superseded", "archived", "all"] | None = Field(
+    status: MemoryStatus | None = Field(
         default=None,
         description="Filter by status (active, superseded, archived, all)",
     )
@@ -407,25 +432,23 @@ class _ListMemoriesInput(BaseModel):
 
 class _StoreMemoryInput(BaseModel):
     content: str = Field(..., description="The memory content")
-    system: Literal["sensory", "working", "long_term"] = Field(
-        ..., description="Memory system tier"
-    )
-    memory_type: Literal[
-        "iconic", "echoic", "haptic", "episodic", "semantic", "procedural"
-    ] = Field(..., description="Memory type")
-    segment: Literal["user", "agent", "tool", "guideline"] = Field(
-        ..., description="Logical segment"
-    )
+    system: MemorySystem = Field(..., description="Memory system tier")
+    memory_type: MemoryType = Field(..., description=memory_type_field_description())
+    segment: MemorySegment = Field(..., description="Logical segment")
     thought: str = Field(..., description="Agent's reasoning for storing this memory")
-    scope: Literal["subject", "organization"] = Field(
-        default="subject", description="Visibility scope"
-    )
+    scope: MemoryStoreScope = Field(..., description="Visibility scope")
     subject_id: str | None = Field(
         default=None, description="UUID of the subject (required for subject scope)"
     )
     metadata: dict[str, Any] | None = Field(
         default=None, description="Additional metadata"
     )
+
+    @model_validator(mode="after")
+    def validate_memory_fields(self) -> "_StoreMemoryInput":
+        validate_memory_type_for_system(self.system, self.memory_type)
+        validate_subject_scope(self.scope, self.subject_id)
+        return self
 
 
 class _GetMemoryInput(BaseModel):
@@ -822,7 +845,7 @@ def _make_platform_tools(
             memory_type = kwargs.get("memory_type", "")
             segment = kwargs.get("segment", "")
             thought = kwargs.get("thought", "")
-            scope = kwargs.get("scope", "subject")
+            scope = kwargs.get("scope", "")
             subject_id = kwargs.get("subject_id")
             metadata = kwargs.get("metadata")
 
