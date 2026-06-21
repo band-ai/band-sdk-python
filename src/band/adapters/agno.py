@@ -107,11 +107,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     "User" throughout this adapter means the SDK integrator who built and
     configured the Agno agent — never a chat end-user (``sender_type`` "User").
 
-    Note on replies: unlike the other adapters (which deliver only when the
-    agent calls ``band_send_message``), this adapter falls back to posting the
-    agent's final text itself, addressed to the message sender, when
-    ``band_send_message`` was not called. Steer the agent to call the tool when
-    you need explicit recipients or no auto-reply.
+    Note on replies: like the other adapters, this one delivers nothing on its
+    own — the agent must call ``band_send_message`` to communicate. The base
+    prompt states "plain text output is not delivered"; an agent that only
+    returns plain text stays silent. It is up to the agent (the LLM) to decide
+    whether to respond and whom to address.
 
     Note on ``Emit.THOUGHTS``: when enabled, the agent's **raw**
     ``reasoning_content`` is posted to the room as a thought event. This can
@@ -318,7 +318,17 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
 
         self._persist_turn(room_id, response)
-        await self._send_reply(msg, tools, response, room_id=room_id)
+
+        if not any(
+            _tool_name(execution) == "band_send_message"
+            for execution in _tool_executions(response)
+        ):
+            logger.debug(
+                "Room %s msg %s: agent did not call band_send_message; "
+                "nothing delivered",
+                room_id,
+                msg.id,
+            )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's accumulated transcript when the agent leaves."""
@@ -436,73 +446,6 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             self._message_history[room_id] = [
                 m for m in response.messages if m.role in _CONVERSATION_ROLES
             ]
-
-    @classmethod
-    async def _send_reply(
-        cls,
-        msg: PlatformMessage,
-        tools: AgentToolsProtocol,
-        response: RunOutput,
-        *,
-        room_id: str,
-    ) -> None:
-        """Send final text unless the agent already posted through Band.
-
-        The shared base prompt tells the agent "plain text output is not
-        delivered" to steer it toward ``band_send_message`` (proper mentions +
-        events). This adapter still delivers final text here as a fallback
-        convenience for agents that return text directly; the fallback is
-        intentionally not advertised in the prompt.
-        """
-        if any(
-            _tool_name(execution) == "band_send_message"
-            for execution in _tool_executions(response)
-        ):
-            logger.debug(
-                "Room %s msg %s: agent replied via band_send_message", room_id, msg.id
-            )
-            return
-
-        text = response.get_content_as_string().strip()
-        if not text:
-            logger.debug("Room %s msg %s: agent produced no reply", room_id, msg.id)
-            return
-
-        # Address the reply to the sender. ``sender_id`` is the primary
-        # identifier, but it may not match a cached participant (id-space
-        # mismatch or a stale cache); fall back to the display name. An
-        # unresolvable mention raises ValueError in mention resolution, which
-        # would otherwise fail the whole turn — try each candidate and degrade
-        # to a warning rather than crashing.
-        candidates = [c for c in (msg.sender_id, msg.sender_name) if c]
-        for candidate in candidates:
-            try:
-                await tools.send_message(text, mentions=[candidate])
-            except ValueError as e:
-                logger.debug(
-                    "Room %s msg %s: mention %r did not resolve: %s",
-                    room_id,
-                    msg.id,
-                    candidate,
-                    e,
-                )
-            else:
-                logger.info(
-                    "Room %s msg %s: sent reply (%d chars), mention=%s",
-                    room_id,
-                    msg.id,
-                    len(text),
-                    candidate,
-                )
-                return
-
-        logger.warning(
-            "Room %s msg %s: no resolvable mention for sender %s (%s); reply not delivered",
-            room_id,
-            msg.id,
-            msg.sender_id,
-            msg.sender_name,
-        )
 
     def _capture_user_tools(self, agent: AgnoAgent) -> None:
         """Capture the user's own tools before installing the room factory.

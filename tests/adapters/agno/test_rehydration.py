@@ -166,9 +166,6 @@ class TestUnansweredMessage:
             make_agent_input(current, raw, is_session_bootstrap=True, tools=tools)
         )
 
-        tools.assert_message_sent(
-            content="here is your answer", mentions=[current.sender_id]
-        )
         msgs = run_input(agent)
         formatted = current.format_for_llm()
         assert sum(1 for m in msgs if m.content == formatted) == 1
@@ -197,9 +194,6 @@ class TestUnansweredMessage:
         )
 
         agent.arun.assert_awaited_once()
-        tools.assert_message_sent(
-            content="fresh answer", mentions=[sample_platform_message.sender_id]
-        )
         assert run_input(agent)[-1].content == sample_platform_message.format_for_llm()
 
     async def test_trailing_unanswered_user_turns_are_preserved(
@@ -230,7 +224,6 @@ class TestUnansweredMessage:
             "[Bob]: second",
             "[Alice]: third",
         ]
-        tools.assert_message_sent(content="answering all")
 
 
 class TestMultiTurnCarryover:

@@ -75,9 +75,10 @@ class TestOnStarted:
 
         assert adapter.history_converter._agent_name == "TestBot"
 
-    async def test_runs_the_agent_and_replies(self, make_agno_agent, tools):
-        # End-to-end: the given agent must be the one actually run on a message,
-        # and its output delivered to the room.
+    async def test_runs_the_given_agent_on_a_message(self, make_agno_agent, tools):
+        # End-to-end: the given agent must be the one actually run on a message.
+        # The adapter delivers nothing on its own; plain agent text is not sent
+        # (only a ``band_send_message`` tool call reaches the room).
         agent = make_agno_agent(response=RunOutput(content="hi there"))
         adapter = AgnoAdapter(agent)
         await adapter.on_started("TestBot", "desc")
@@ -93,7 +94,7 @@ class TestOnStarted:
         )
 
         agent.arun.assert_awaited_once()
-        tools.assert_message_sent(content="hi there", mentions=["user-1"])
+        tools.assert_no_messages_sent()
 
 
 class TestMemoryCollisionWarning:
@@ -301,7 +302,11 @@ class TestBandEntrypointBinding:
 
 
 class TestReply:
-    async def test_sends_fallback_text_when_agent_did_not_post(
+    """The adapter delivers nothing on its own. Like the other adapters, the
+    agent must call ``band_send_message`` to reach the room; plain agent text is
+    never auto-sent and the adapter never guesses a recipient."""
+
+    async def test_no_send_when_agent_returns_only_text(
         self, make_started_adapter, sample_platform_message, tools
     ):
         adapter, _ = await make_started_adapter(RunOutput(content="hello"))
@@ -316,11 +321,12 @@ class TestReply:
             room_id="room-1",
         )
 
-        tools.assert_message_sent(content="hello", mentions=["user-456"])
+        tools.assert_no_messages_sent()
 
-    async def test_skips_fallback_when_agent_called_band_send_message(
+    async def test_no_send_when_agent_called_band_send_message(
         self, make_started_adapter, sample_platform_message, tools
     ):
+        # The tool call itself reaches the room; the adapter adds nothing on top.
         response = RunOutput(
             content="hello", tools=[tool_execution("band_send_message")]
         )
@@ -342,58 +348,6 @@ class TestReply:
         self, make_started_adapter, sample_platform_message, tools
     ):
         adapter, _ = await make_started_adapter(RunOutput(content="   "))
-
-        await adapter.on_message(
-            sample_platform_message,
-            tools,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-
-        tools.assert_no_messages_sent()
-
-    async def test_reply_falls_back_to_sender_name_when_id_unresolvable(
-        self, make_started_adapter, sample_platform_message
-    ):
-        # sender_id may not match a cached participant (id-space mismatch); the
-        # reply should retry with the display name rather than failing the turn.
-        class _IdRejectingTools(FakeAgentTools):
-            async def send_message(self, content, mentions=None):
-                if mentions and mentions[0] == sample_platform_message.sender_id:
-                    raise ValueError(f"Unknown participant '{mentions[0]}'")
-                return await super().send_message(content, mentions=mentions)
-
-        adapter, _ = await make_started_adapter(RunOutput(content="hello"))
-        tools = _IdRejectingTools()
-
-        await adapter.on_message(
-            sample_platform_message,
-            tools,
-            [],
-            None,
-            None,
-            is_session_bootstrap=True,
-            room_id="room-1",
-        )
-
-        tools.assert_message_sent(
-            content="hello", mentions=[sample_platform_message.sender_name]
-        )
-
-    async def test_reply_does_not_crash_when_no_mention_resolves(
-        self, make_started_adapter, sample_platform_message
-    ):
-        # An unresolvable sender must not fail the whole turn (which would mark
-        # the inbound message permanently failed).
-        class _AllRejectingTools(FakeAgentTools):
-            async def send_message(self, content, mentions=None):
-                raise ValueError("Unknown participant")
-
-        adapter, _ = await make_started_adapter(RunOutput(content="hello"))
-        tools = _AllRejectingTools()
 
         await adapter.on_message(
             sample_platform_message,
