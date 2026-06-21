@@ -128,31 +128,22 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
     def __init__(
         self,
-        agent: AgnoAgent | None = None,
+        agent: AgnoAgent,
         *,
-        agent_factory: Callable[[], AgnoAgent] | None = None,
         history_converter: AgnoHistoryConverter | None = None,
         features: AdapterFeatures | None = None,
         session_id_factory: Callable[[str], str] = lambda room_id: room_id,
     ) -> None:
         """Bridge a user-built Agno agent to Band.
 
-        Provide **exactly one** of ``agent`` or ``agent_factory``:
-
-        - ``agent``: a fully configured Agno agent. The adapter runs against
-          ``agent.deep_copy()`` so the caller's instance stays immutable.
-        - ``agent_factory``: a zero-arg callable returning a fresh Agno agent.
-          The adapter calls it once at startup, avoiding ``deep_copy()``
-          overhead for callers that can cheaply mint a new agent::
-
-              adapter = AgnoAdapter(
-                  agent_factory=lambda: AgnoAgent(
-                      model=Claude(id="claude-sonnet-4-6"),
-                      instructions="You are helpful.",
-                  )
-              )
+        The adapter runs against the ``agent`` instance you pass **directly**.
+        At startup it configures that instance for Band -- replacing its
+        ``tools`` with a per-run factory, disabling ``cache_callables``, and
+        appending Band guidance to ``additional_context``. The adapter therefore
+        takes ownership of the agent; do not reuse the same instance elsewhere.
 
         Args:
+            agent: A fully configured Agno agent to bridge to Band.
             session_id_factory: Maps a Band ``room_id`` to the Agno
                 ``session_id`` used for that room's runs. Defaults to using the
                 ``room_id`` itself, so each Band room is an isolated Agno
@@ -162,16 +153,15 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 are keyed by ``room_id``). To keep a single shared session
                 across rooms, pass e.g. ``session_id_factory=lambda _r: "fixed"``.
         """
-        factory = self._resolve_agent_factory(agent, agent_factory)
-
         super().__init__(
             history_converter=history_converter or AgnoHistoryConverter(),
             features=features,
         )
 
-        # The runtime agent is built once at startup (deep-copy or factory call),
-        # deferring any factory invocation out of __init__.
-        self._agent_factory = factory
+        # The caller's agent is used directly. It becomes the runtime agent
+        # (self._agent) in on_started, where the agent-dependent Band
+        # configuration is applied -- deferring that work out of __init__.
+        self._given_agent = agent
         self._agent: AgnoAgent | None = None
         self._session_id_factory = session_id_factory
 
@@ -193,32 +183,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         # Resolved against the runtime agent in on_started, once it exists.
         self._agno_manages_history = False
 
-    @staticmethod
-    def _resolve_agent_factory(
-        agent: AgnoAgent | None,
-        agent_factory: Callable[[], AgnoAgent] | None,
-    ) -> Callable[[], AgnoAgent]:
-        """Pick the single agent factory from the mutually-exclusive args.
-
-        Exactly one of ``agent`` or ``agent_factory`` must be given. When an
-        ``agent`` is provided, the adapter runs against ``agent.deep_copy`` so the
-        caller's configured instance stays immutable.
-        """
-        if agent is not None and agent_factory is not None:
-            raise ValueError(
-                "AgnoAdapter accepts `agent` or `agent_factory`, not both."
-            )
-        if agent is not None:
-            return agent.deep_copy
-        if agent_factory is not None:
-            return agent_factory
-        raise ValueError(
-            "AgnoAdapter requires exactly one of `agent` or `agent_factory`."
-        )
-
     @property
     def agent(self) -> AgnoAgent | None:
-        """The running Agno agent, initialized in on_started."""
+        """The Agno agent this adapter runs against, set in on_started."""
         return self._agent
 
     def _detect_agno_history(self, agent: AgnoAgent) -> bool:
@@ -268,16 +235,15 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
             )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Build the runtime agent and sync the converter identity.
+        """Configure the caller's agent for Band and sync the converter identity.
 
-        The runtime agent is produced by the factory captured at construction —
-        either the caller's ``agent.deep_copy`` or a user-supplied ``agent_factory``.
-        Agent-dependent checks run here (not in ``__init__``) so the factory is
-        only ever invoked at startup.
+        The adapter runs against the agent passed at construction. Agent-dependent
+        checks and the Band configuration (tool factory, ``additional_context``)
+        run here, not in ``__init__``, so they happen once at startup.
         """
         await super().on_started(agent_name, agent_description)
 
-        agent = self._agent_factory()
+        agent = self._given_agent
         self._agent = agent
         self._agno_manages_history = self._detect_agno_history(agent)
         self._warn_on_memory_collision(agent)

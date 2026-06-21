@@ -46,18 +46,10 @@ agent = Agent.from_config("agno_agent", adapter=adapter)
 await agent.run()
 ```
 
-Passing `agent=` runs the adapter against `agent.deep_copy()` so your instance
-stays immutable. If you'd rather skip the deep-copy and hand the adapter a fresh
-agent at startup, pass an `agent_factory` instead (provide exactly one):
-
-```python
-adapter = AgnoAdapter(
-    agent_factory=lambda: AgnoAgent(
-        model=Claude(id="claude-sonnet-4-6"),
-        instructions="You are helpful.",
-    )
-)
-```
+The adapter runs against the agent instance you pass and takes ownership of it:
+at startup it configures that instance for Band (replaces its `tools` with a
+per-run factory and appends Band guidance to `additional_context`). Don't reuse
+the same instance elsewhere.
 
 ---
 

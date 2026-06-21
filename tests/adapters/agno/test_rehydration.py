@@ -51,13 +51,13 @@ class TestRehydrationPipeline:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await make_started_adapter(RunOutput(content="ack"))
+        adapter, agent = await make_started_adapter(RunOutput(content="ack"))
 
         await adapter.on_event(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
         )
 
-        msgs = run_input(copy)
+        msgs = run_input(agent)
         assert [m.role for m in msgs] == [
             "user",  # other participant text
             "assistant",  # own-agent text
@@ -88,13 +88,13 @@ class TestRehydrationPipeline:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await make_started_adapter(RunOutput(content="ack"))
+        adapter, agent = await make_started_adapter(RunOutput(content="ack"))
 
         await adapter.on_event(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
         )
 
-        msgs = run_input(copy)
+        msgs = run_input(agent)
         # Only the plain text + current message survive; thought/unknown dropped.
         assert [m.content for m in msgs] == [
             "[Alice]: hello",
@@ -108,20 +108,20 @@ class TestRehydrationPipeline:
             [platform_msg("h1", "hi", sender_name="Alice")],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await make_started_adapter(RunOutput(content="ack"))
+        adapter, agent = await make_started_adapter(RunOutput(content="ack"))
 
         await adapter.on_event(
             make_agent_input(sample_platform_message, raw, is_session_bootstrap=True)
         )
 
-        msgs = run_input(copy)
+        msgs = run_input(agent)
         assert all(m.from_history for m in msgs[:-1])  # rehydrated context
         assert not msgs[-1].from_history  # the message to actually answer
 
     async def test_participants_and_contacts_injected_before_current_message(
         self, make_started_adapter, sample_platform_message
     ):
-        adapter, copy = await make_started_adapter(RunOutput(content="ok"))
+        adapter, agent = await make_started_adapter(RunOutput(content="ok"))
 
         await adapter.on_event(
             make_agent_input(
@@ -133,7 +133,7 @@ class TestRehydrationPipeline:
             )
         )
 
-        msgs = run_input(copy)
+        msgs = run_input(agent)
         assert [m.content for m in msgs] == [
             "[System]: Alice and Bob are here",
             "[System]: Carol is now a contact",
@@ -158,7 +158,7 @@ class TestUnansweredMessage:
         assert len(raw) == 1
         assert all(current.content not in h["content"] for h in raw)
 
-        adapter, copy = await make_started_adapter(
+        adapter, agent = await make_started_adapter(
             RunOutput(content="here is your answer")
         )
 
@@ -169,7 +169,7 @@ class TestUnansweredMessage:
         tools.assert_message_sent(
             content="here is your answer", mentions=[current.sender_id]
         )
-        msgs = run_input(copy)
+        msgs = run_input(agent)
         formatted = current.format_for_llm()
         assert sum(1 for m in msgs if m.content == formatted) == 1
         assert msgs[-1].content == formatted
@@ -188,7 +188,7 @@ class TestUnansweredMessage:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await make_started_adapter(RunOutput(content="fresh answer"))
+        adapter, agent = await make_started_adapter(RunOutput(content="fresh answer"))
 
         await adapter.on_event(
             make_agent_input(
@@ -196,11 +196,11 @@ class TestUnansweredMessage:
             )
         )
 
-        copy.arun.assert_awaited_once()
+        agent.arun.assert_awaited_once()
         tools.assert_message_sent(
             content="fresh answer", mentions=[sample_platform_message.sender_id]
         )
-        assert run_input(copy)[-1].content == sample_platform_message.format_for_llm()
+        assert run_input(agent)[-1].content == sample_platform_message.format_for_llm()
 
     async def test_trailing_unanswered_user_turns_are_preserved(
         self, make_started_adapter, sample_platform_message, tools
@@ -215,7 +215,7 @@ class TestUnansweredMessage:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await make_started_adapter(RunOutput(content="answering all"))
+        adapter, agent = await make_started_adapter(RunOutput(content="answering all"))
 
         await adapter.on_event(
             make_agent_input(
@@ -223,7 +223,7 @@ class TestUnansweredMessage:
             )
         )
 
-        msgs = run_input(copy)
+        msgs = run_input(agent)
         assert [m.role for m in msgs] == ["user", "user", "user", "user"]
         assert [m.content for m in msgs[:3]] == [
             "[Alice]: first",
@@ -246,7 +246,7 @@ class TestMultiTurnCarryover:
                 Message(role="assistant", content="a1"),
             ],
         )
-        adapter, copy = await make_started_adapter(turn)
+        adapter, agent = await make_started_adapter(turn)
 
         await adapter.on_event(
             make_agent_input(sample_platform_message, [], is_session_bootstrap=True)
@@ -255,7 +255,7 @@ class TestMultiTurnCarryover:
             make_agent_input(sample_platform_message, [], is_session_bootstrap=False)
         )
 
-        msgs = run_input(copy)  # the second (follow-up) turn's input
+        msgs = run_input(agent)  # the second (follow-up) turn's input
         assert [m.content for m in msgs[:2]] == ["[Alice]: q1", "a1"]
         assert msgs[-1].content == sample_platform_message.format_for_llm()
         assert len(msgs) == 3

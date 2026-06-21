@@ -1,8 +1,8 @@
 """Shared helpers for the Agno adapter tests.
 
-The adapter never calls an LLM directly: it deep-copies the developer's Agno
+The adapter never calls an LLM directly: it configures the developer's Agno
 agent in ``on_started`` and calls ``agent.arun(...)`` per turn. So the only thing
-faked here is the Agno agent (``deep_copy`` / ``add_tool`` / ``arun``); everything
+faked here is the Agno agent (``add_tool`` / ``arun``); everything
 the adapter reads off the run is a real Agno ``RunOutput`` / ``Message`` /
 ``ToolExecution``. The Band side uses ``FakeAgentTools`` so calls are tracked
 without a mocking framework.

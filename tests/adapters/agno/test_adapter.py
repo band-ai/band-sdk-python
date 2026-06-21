@@ -1,11 +1,11 @@
 """Agno adapter behavior tests.
 
 Conformance already covers init defaults, ``on_started`` name/description, and
-generic converter wiring; these tests pin Agno-only behavior: agent deep-copy,
-memory-collision warning, per-run Band-tool resolution (the callable-tools
-factory + ContextVar binding), strict per-room tool visibility, fallback-send,
-emit reporting, transcript persistence, and cleanup. Rehydration of platform
-history lives in ``test_rehydration.py``.
+generic converter wiring; these tests pin Agno-only behavior: running against
+the given agent, memory-collision warning, per-run Band-tool resolution (the
+callable-tools factory + ContextVar binding), strict per-room tool visibility,
+fallback-send, emit reporting, transcript persistence, and cleanup. Rehydration
+of platform history lives in ``test_rehydration.py``.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import json
 import warnings
 from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from agno.agent import Agent as AgnoAgent
@@ -60,81 +60,26 @@ def _msg(
     )
 
 
-def _factory_agent_stub() -> MagicMock:
-    """A fake runtime agent as returned by an ``agent_factory``.
-
-    Unlike the deep-copy path, the factory's agent is used as-is, so it carries
-    the falsy history/memory defaults and its own ``deep_copy`` to assert the
-    adapter never copies it.
-    """
-    agent = MagicMock(name="factory_agent")
-    agent.update_memory_on_run = False
-    agent.enable_agentic_memory = False
-    agent.add_history_to_context = False
-    agent.db = None
-    agent.additional_context = None
-    # A bare MagicMock `.tools` is callable and would be mistaken for a
-    # user-supplied tools factory; pin it to a list.
-    agent.tools = []
-    agent.arun = AsyncMock(return_value=RunOutput())
-    agent.deep_copy = MagicMock()
-    return agent
-
-
 class TestOnStarted:
-    async def test_runs_against_a_deep_copy_not_the_source(self, make_agno_agent):
-        source, copy = make_agno_agent()
-        adapter = AgnoAdapter(source)
+    async def test_runs_against_the_given_agent(self, make_agno_agent):
+        agent = make_agno_agent()
+        adapter = AgnoAdapter(agent)
 
         await adapter.on_started("TestBot", "desc")
 
-        source.deep_copy.assert_called_once()
-        assert adapter.agent is copy
-        assert adapter.agent is not source
+        # The adapter uses the caller's instance directly, no copy.
+        assert adapter.agent is agent
 
     async def test_syncs_converter_identity(self, make_started_adapter):
         adapter, _ = await make_started_adapter()
 
         assert adapter.history_converter._agent_name == "TestBot"
 
-
-class TestAgentFactory:
-    """``agent_factory`` mints the runtime agent at startup without deep_copy()."""
-
-    def test_factory_not_called_in_init(self):
-        factory = MagicMock(name="agent_factory")
-
-        AgnoAdapter(agent_factory=factory)
-
-        factory.assert_not_called()
-
-    async def test_factory_called_once_in_on_started(self):
-        runtime_agent = _factory_agent_stub()
-        factory = MagicMock(name="agent_factory", return_value=runtime_agent)
-        adapter = AgnoAdapter(agent_factory=factory)
-
-        await adapter.on_started("TestBot", "desc")
-
-        factory.assert_called_once_with()
-
-    async def test_factory_agent_used_directly_not_deep_copied(self):
-        runtime_agent = _factory_agent_stub()
-        adapter = AgnoAdapter(agent_factory=lambda: runtime_agent)
-
-        await adapter.on_started("TestBot", "desc")
-
-        assert adapter.agent is runtime_agent
-        # The factory's agent is used as-is; the adapter must not deep_copy it.
-        runtime_agent.deep_copy.assert_not_called()
-
-    async def test_factory_built_adapter_runs_the_agent_and_replies(self, tools):
-        # End-to-end through the factory path: the factory's agent must be the
-        # one actually run on a message, and its output delivered to the room.
-        runtime_agent = _factory_agent_stub()
-        runtime_agent.arun = AsyncMock(
-            return_value=RunOutput(content="hi from factory")
-        )
-        adapter = AgnoAdapter(agent_factory=lambda: runtime_agent)
+    async def test_runs_the_agent_and_replies(self, make_agno_agent, tools):
+        # End-to-end: the given agent must be the one actually run on a message,
+        # and its output delivered to the room.
+        agent = make_agno_agent(response=RunOutput(content="hi there"))
+        adapter = AgnoAdapter(agent)
         await adapter.on_started("TestBot", "desc")
 
         await adapter.on_message(
@@ -147,18 +92,8 @@ class TestAgentFactory:
             room_id="room-1",
         )
 
-        runtime_agent.arun.assert_awaited_once()
-        tools.assert_message_sent(content="hi from factory", mentions=["user-1"])
-
-    def test_neither_agent_nor_factory_raises(self):
-        with pytest.raises(ValueError, match="exactly one"):
-            AgnoAdapter()
-
-    def test_both_agent_and_factory_raises(self, make_agno_agent):
-        source, _ = make_agno_agent()
-
-        with pytest.raises(ValueError, match="not both"):
-            AgnoAdapter(source, agent_factory=lambda: source)
+        agent.arun.assert_awaited_once()
+        tools.assert_message_sent(content="hi there", mentions=["user-1"])
 
 
 class TestMemoryCollisionWarning:
@@ -167,9 +102,9 @@ class TestMemoryCollisionWarning:
     async def test_warns_on_update_memory_on_run_with_memory_capability(
         self, make_agno_agent
     ):
-        source, _ = make_agno_agent(update_memory_on_run=True)
+        agent = make_agno_agent(update_memory_on_run=True)
         adapter = AgnoAdapter(
-            source, features=AdapterFeatures(capabilities={Capability.MEMORY})
+            agent, features=AdapterFeatures(capabilities={Capability.MEMORY})
         )
 
         with pytest.warns(UserWarning, match="update_memory_on_run"):
@@ -178,19 +113,17 @@ class TestMemoryCollisionWarning:
     async def test_warns_on_agentic_memory_with_memory_capability(
         self, make_agno_agent
     ):
-        source, _ = make_agno_agent(enable_agentic_memory=True)
+        agent = make_agno_agent(enable_agentic_memory=True)
         adapter = AgnoAdapter(
-            source, features=AdapterFeatures(capabilities={Capability.MEMORY})
+            agent, features=AdapterFeatures(capabilities={Capability.MEMORY})
         )
 
         with pytest.warns(UserWarning, match="enable_agentic_memory"):
             await adapter.on_started("TestBot", "desc")
 
     async def test_no_warning_without_memory_capability(self, make_agno_agent):
-        source, _ = make_agno_agent(
-            update_memory_on_run=True, enable_agentic_memory=True
-        )
-        adapter = AgnoAdapter(source)  # no MEMORY capability -> no collision
+        agent = make_agno_agent(update_memory_on_run=True, enable_agentic_memory=True)
+        adapter = AgnoAdapter(agent)  # no MEMORY capability -> no collision
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")
@@ -264,9 +197,9 @@ class TestRoomToolResolution:
         # Replacing agent.tools with our factory must not drop the user's own
         # tools; they are re-included alongside the room's Band tools.
         user_tool = object()
-        source, copy = make_agno_agent()
-        copy.tools = [user_tool]
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent()
+        agent.tools = [user_tool]
+        adapter = AgnoAdapter(agent)
         await adapter.on_started("TestBot", "desc")
 
         tools = SchemaTools([openai_tool_schema("band_send_message")])
@@ -328,10 +261,10 @@ class TestBandInstructionInjection:
         self, make_started_adapter
     ):
         # Band guidance is injected in on_started, not lazily on first message.
-        adapter, copy = await make_started_adapter()
+        adapter, agent = await make_started_adapter()
 
-        assert isinstance(copy.additional_context, str)
-        assert "## Environment" in copy.additional_context
+        assert isinstance(agent.additional_context, str)
+        assert "## Environment" in agent.additional_context
 
 
 class TestBandEntrypointBinding:
@@ -610,8 +543,8 @@ class TestEmitThoughts:
 
 class TestPersistAndAccumulate:
     def test_persist_keeps_only_conversation_roles(self, make_agno_agent):
-        source, _ = make_agno_agent()
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent()
+        adapter = AgnoAdapter(agent)
         response = RunOutput(
             messages=[
                 Message(role="system", content="instructions"),
@@ -633,8 +566,8 @@ class TestPersistAndAccumulate:
         # Bootstrap seeds the committed transcript from rehydrated history. The
         # returned run input is that seed plus this turn's live message, but
         # building it must NOT push the live message into the committed store.
-        source, _ = make_agno_agent()
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent()
+        adapter = AgnoAdapter(agent)
         seed = [Message(role="user", content="earlier")]
 
         run_input_msgs = adapter._build_run_input(
@@ -658,8 +591,8 @@ class TestPersistAndAccumulate:
     ):
         # A non-bootstrap turn reads the committed transcript but never writes to
         # it; the store is only ever advanced by _persist_turn after a run.
-        source, _ = make_agno_agent()
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent()
+        adapter = AgnoAdapter(agent)
         adapter._message_history["room-1"] = [Message(role="user", content="committed")]
 
         adapter._build_run_input(
@@ -680,11 +613,11 @@ class TestFailedRunDoesNotContaminateNextTurn:
     ):
         # Turn 1 raises mid-run; turn 2 succeeds. The injected system/user
         # messages from the failed turn must not survive into turn 2's input.
-        source, copy = make_agno_agent()
-        copy.arun = AsyncMock(
+        agent = make_agno_agent()
+        agent.arun = AsyncMock(
             side_effect=[RuntimeError("boom"), RunOutput(content="ok")]
         )
-        adapter = AgnoAdapter(source)
+        adapter = AgnoAdapter(agent)
         await adapter.on_started("TestBot", "desc")
 
         first = _msg("room-1", "first question", msg_id="m1")
@@ -710,7 +643,7 @@ class TestFailedRunDoesNotContaminateNextTurn:
             room_id="room-1",
         )
 
-        contents = [m.content for m in run_input(copy)]
+        contents = [m.content for m in run_input(agent)]
         # No residue from the failed turn 1.
         assert not any("P1-participants" in c for c in contents)
         assert not any("C1-contacts" in c for c in contents)
@@ -722,8 +655,8 @@ class TestFailedRunDoesNotContaminateNextTurn:
 
 class TestOnCleanup:
     async def test_drops_room_transcript(self, make_agno_agent):
-        source, _ = make_agno_agent()
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent()
+        adapter = AgnoAdapter(agent)
         adapter._message_history["room-1"] = [Message(role="user", content="hi")]
 
         await adapter.on_cleanup("room-1")
@@ -731,16 +664,16 @@ class TestOnCleanup:
         assert "room-1" not in adapter._message_history
 
     async def test_unknown_room_is_noop(self, make_agno_agent):
-        source, _ = make_agno_agent()
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent()
+        adapter = AgnoAdapter(agent)
 
         await adapter.on_cleanup("never-seen")  # must not raise
 
 
 class TestUsedBeforeStarted:
     async def test_run_agent_before_on_started_raises(self, make_agno_agent):
-        source, _ = make_agno_agent()
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent()
+        adapter = AgnoAdapter(agent)
 
         with pytest.raises(RuntimeError, match="before on_started"):
             await adapter._run_agent(
@@ -750,7 +683,7 @@ class TestUsedBeforeStarted:
 
 class TestSessionIsolation:
     async def test_arun_uses_room_id_as_session_id(self, make_started_adapter):
-        adapter, copy = await make_started_adapter()
+        adapter, agent = await make_started_adapter()
 
         await adapter.on_message(
             _msg("room-A", "hi"),
@@ -762,11 +695,11 @@ class TestSessionIsolation:
             room_id="room-A",
         )
 
-        assert copy.arun.await_args.kwargs["session_id"] == "room-A"
+        assert agent.arun.await_args.kwargs["session_id"] == "room-A"
 
     async def test_custom_session_id_factory_is_used(self, make_agno_agent):
-        source, copy = make_agno_agent()
-        adapter = AgnoAdapter(source, session_id_factory=lambda room: f"sess::{room}")
+        agent = make_agno_agent()
+        adapter = AgnoAdapter(agent, session_id_factory=lambda room: f"sess::{room}")
         await adapter.on_started("TestBot", "desc")
 
         await adapter.on_message(
@@ -779,12 +712,12 @@ class TestSessionIsolation:
             room_id="room-A",
         )
 
-        assert copy.arun.await_args.kwargs["session_id"] == "sess::room-A"
+        assert agent.arun.await_args.kwargs["session_id"] == "sess::room-A"
 
     async def test_two_rooms_get_isolated_sessions_and_inputs(
         self, make_started_adapter
     ):
-        adapter, copy = await make_started_adapter()
+        adapter, agent = await make_started_adapter()
 
         await adapter.on_message(
             _msg("room-A", "alpha-secret"),
@@ -805,7 +738,7 @@ class TestSessionIsolation:
             room_id="room-B",
         )
 
-        calls = copy.arun.await_args_list
+        calls = agent.arun.await_args_list
         assert calls[0].kwargs["session_id"] == "room-A"
         assert calls[1].kwargs["session_id"] == "room-B"
 
@@ -910,8 +843,8 @@ class TestRunFailureReporting:
     async def test_emits_generic_error_event_and_reraises(
         self, make_started_adapter, tools
     ):
-        adapter, copy = await make_started_adapter()
-        copy.arun.side_effect = RuntimeError("db dsn leaked: secret-token")
+        adapter, agent = await make_started_adapter()
+        agent.arun.side_effect = RuntimeError("db dsn leaked: secret-token")
 
         with pytest.raises(RuntimeError):
             await adapter.on_message(
@@ -936,8 +869,8 @@ class TestRunFailureReporting:
     async def test_error_event_failure_does_not_mask_original(
         self, make_started_adapter
     ):
-        adapter, copy = await make_started_adapter()
-        copy.arun.side_effect = RuntimeError("boom")
+        adapter, agent = await make_started_adapter()
+        agent.arun.side_effect = RuntimeError("boom")
 
         class _FailingEventTools(FakeAgentTools):
             async def send_event(self, *args: Any, **kwargs: Any) -> dict[str, Any]:

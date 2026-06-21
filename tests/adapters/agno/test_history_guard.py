@@ -26,8 +26,8 @@ from tests.adapters.agno.helpers import make_agent_input, platform_msg, run_inpu
 
 class TestDetection:
     async def test_warns_and_flags_when_db_and_history_enabled(self, make_agno_agent):
-        source, _ = make_agno_agent(add_history_to_context=True, db=object())
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent(add_history_to_context=True, db=object())
+        adapter = AgnoAdapter(agent)
 
         # Detection runs against the runtime agent at startup, not in __init__.
         with pytest.warns(UserWarning, match="manages its own conversation history"):
@@ -46,10 +46,8 @@ class TestDetection:
     async def test_no_guard_unless_both_set(
         self, make_agno_agent, add_history_to_context, db
     ):
-        source, _ = make_agno_agent(
-            add_history_to_context=add_history_to_context, db=db
-        )
-        adapter = AgnoAdapter(source)
+        agent = make_agno_agent(add_history_to_context=add_history_to_context, db=db)
+        adapter = AgnoAdapter(agent)
 
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # any history warning would fail here
@@ -71,7 +69,7 @@ class TestRehydrationDisabled:
             ],
             exclude_id=sample_platform_message.id,
         )
-        adapter, copy = await make_started_adapter(
+        adapter, agent = await make_started_adapter(
             RunOutput(content="ack"), add_history_to_context=True, db=object()
         )
 
@@ -84,7 +82,7 @@ class TestRehydrationDisabled:
             )
         )
 
-        msgs = run_input(copy)
+        msgs = run_input(agent)
         # Only the participants line and the current message — no rehydrated turns.
         assert [m.content for m in msgs] == [
             "[System]: Alice and Bob are here",
@@ -101,7 +99,7 @@ class TestRehydrationDisabled:
                 Message(role="assistant", content="a1"),
             ],
         )
-        adapter, copy = await make_started_adapter(
+        adapter, agent = await make_started_adapter(
             turn, add_history_to_context=True, db=object()
         )
 
@@ -114,7 +112,7 @@ class TestRehydrationDisabled:
 
         # The follow-up turn sends only the current message: Agno supplies prior
         # turns from its own database, so Band must not replay turn 1.
-        msgs = run_input(copy)
+        msgs = run_input(agent)
         assert [m.content for m in msgs] == [sample_platform_message.format_for_llm()]
 
 

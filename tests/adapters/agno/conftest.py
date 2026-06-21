@@ -26,11 +26,11 @@ def tools() -> FakeAgentTools:
 
 
 @pytest.fixture
-def make_agno_agent() -> Callable[..., tuple[MagicMock, MagicMock]]:
-    """Factory returning ``(source_agent, copied_agent)`` fakes.
+def make_agno_agent() -> Callable[..., MagicMock]:
+    """Factory returning a configured Agno agent fake.
 
-    ``deep_copy()`` returns the copy, mirroring how the adapter runs against a
-    copy of the developer's agent. The copy's ``arun`` yields ``response``.
+    The adapter runs against this instance directly, so it carries the
+    history/memory config the guards read and its ``arun`` yields ``response``.
     """
 
     def _make(
@@ -40,46 +40,35 @@ def make_agno_agent() -> Callable[..., tuple[MagicMock, MagicMock]]:
         add_history_to_context: bool = False,
         db: object | None = None,
         response: RunOutput | None = None,
-    ) -> tuple[MagicMock, MagicMock]:
-        source = MagicMock(name="source_agent")
-        source.update_memory_on_run = update_memory_on_run
-        source.enable_agentic_memory = enable_agentic_memory
+    ) -> MagicMock:
+        agent = MagicMock(name="agno_agent")
+        agent.update_memory_on_run = update_memory_on_run
+        agent.enable_agentic_memory = enable_agentic_memory
         # Explicit falsy defaults: a bare MagicMock would expose these as truthy
         # auto-attributes and spuriously trip the history-management guard.
-        source.add_history_to_context = add_history_to_context
-        source.db = db
-
-        copy = MagicMock(name="copied_agent")
-        copy.add_tool = MagicMock()
+        agent.add_history_to_context = add_history_to_context
+        agent.db = db
+        agent.add_tool = MagicMock()
         # Real Agno agents default additional_context to None; mirror that.
-        copy.additional_context = None
+        agent.additional_context = None
         # The adapter captures the user's tools at startup, then installs a
         # callable factory. A bare MagicMock `.tools` is itself callable and would
         # be mistaken for a user-supplied tools factory, so pin it to a list.
-        copy.tools = []
-        copy.arun = AsyncMock(
+        agent.tools = []
+        agent.arun = AsyncMock(
             return_value=response if response is not None else RunOutput()
         )
-        # The adapter detects history/memory management against the *runtime*
-        # agent (this copy), so mirror the source's config here too. Without
-        # these explicit values the bare MagicMock would expose truthy
-        # auto-attributes and spuriously trip the guards.
-        copy.update_memory_on_run = update_memory_on_run
-        copy.enable_agentic_memory = enable_agentic_memory
-        copy.add_history_to_context = add_history_to_context
-        copy.db = db
-        source.deep_copy = MagicMock(return_value=copy)
-        return source, copy
+        return agent
 
     return _make
 
 
 @pytest.fixture
 def make_started_adapter(
-    make_agno_agent: Callable[..., tuple[MagicMock, MagicMock]],
+    make_agno_agent: Callable[..., MagicMock],
 ) -> Callable[..., Awaitable[tuple[AgnoAdapter, MagicMock]]]:
     """Factory building an adapter past ``on_started``; returns
-    ``(adapter, copied_agent)``."""
+    ``(adapter, agent)``."""
 
     async def _make(
         response: RunOutput | None = None,
@@ -88,14 +77,14 @@ def make_started_adapter(
         add_history_to_context: bool = False,
         db: object | None = None,
     ) -> tuple[AgnoAdapter, MagicMock]:
-        source, copy = make_agno_agent(
+        agent = make_agno_agent(
             response=response,
             add_history_to_context=add_history_to_context,
             db=db,
         )
-        adapter = AgnoAdapter(source, features=features)
+        adapter = AgnoAdapter(agent, features=features)
         await adapter.on_started("TestBot", "desc")
-        return adapter, copy
+        return adapter, agent
 
     return _make
 
