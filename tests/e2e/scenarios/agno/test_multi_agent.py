@@ -31,7 +31,7 @@ import uuid
 import pytest
 from band_rest import AsyncRestClient
 
-from tests.e2e.settings import E2ESettings, requires_e2e
+from tests.e2e.settings import E2ESettings, RoomAllocator, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     listening_for_room_activity,
@@ -70,7 +70,7 @@ class TestAgnoMultiAgent:
     async def test_assistant_invites_calculator_for_total(
         self,
         e2e_config: E2ESettings,
-        agno_multi_room: tuple[str, str, str],
+        e2e_room_allocator: RoomAllocator,
         e2e_agent_info: tuple[str, str],
         e2e_agent_info_2: tuple[str, str],
         e2e_session_client: AsyncRestClient,
@@ -83,7 +83,9 @@ class TestAgnoMultiAgent:
         Verifies (by direct REST query) that the calculator's tool ran, the
         total was reported, and the calculator was removed afterward.
         """
-        room_id, _user_id, _user_name = agno_multi_room
+        # Reusing allocator (cached by name): both multi-agent tests share one
+        # room. Starts with Agent A + User; Agent B joins during the flow.
+        room_id, _user_id, _user_name = await e2e_room_allocator("agno_multi_agent")
         agent_a_id, agent_a_name = e2e_agent_info
         agent_b_id, agent_b_name = e2e_agent_info_2
         run_id = uuid.uuid4().hex[:6]
@@ -169,7 +171,7 @@ class TestAgnoMultiAgent:
         self,
         restart_target: str,
         e2e_config: E2ESettings,
-        agno_multi_room: tuple[str, str, str],
+        e2e_room_allocator: RoomAllocator,
         e2e_agent_info: tuple[str, str],
         e2e_agent_info_2: tuple[str, str],
         e2e_session_client: AsyncRestClient,
@@ -188,7 +190,9 @@ class TestAgnoMultiAgent:
           once, then have it recompute. B must rehydrate the conversation.
         - target ``both``: restart A (then continue) and later B.
         """
-        room_id, _user_id, _user_name = agno_multi_room
+        # Reusing allocator (cached by name): both multi-agent tests share one
+        # room. Starts with Agent A + User; Agent B joins during the flow.
+        room_id, _user_id, _user_name = await e2e_room_allocator("agno_multi_agent")
         agent_a_id, agent_a_name = e2e_agent_info
         agent_b_id, agent_b_name = e2e_agent_info_2
         run_id = uuid.uuid4().hex[:6]

@@ -39,7 +39,7 @@ from agno.db.in_memory import InMemoryDb
 from band_rest import AsyncRestClient
 
 from tests.conftest_integration import fetch_all_context
-from tests.e2e.settings import E2ESettings, requires_e2e
+from tests.e2e.settings import E2ESettings, RoomAllocator, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     assert_content_contains,
@@ -64,13 +64,18 @@ class TestAgnoDatabaseRestart:
     async def test_db_backed_agent_remembers_after_restart(
         self,
         e2e_config: E2ESettings,
-        agno_database_room: tuple[str, str, str],
+        e2e_fresh_room_allocator: RoomAllocator,
         e2e_agent_info: tuple[str, str],
         e2e_session_client: AsyncRestClient,
         ws_client: TrackingWebSocketClient,
         api_client: AsyncRestClient,
     ) -> None:
-        room_id, _user_id, _user_name = agno_database_room
+        # Fresh room (not the reusing allocator): this scenario relies on Agno's
+        # ephemeral db for memory, so a reused room's stale "remember X" messages
+        # would contaminate the recall assertion.
+        room_id, _user_id, _user_name = await e2e_fresh_room_allocator(
+            "agno_database_restart"
+        )
         agent_id, agent_name = e2e_agent_info
         timeout = min(float(e2e_config.e2e_timeout) * 2, 90.0)
         run_id = uuid.uuid4().hex[:6]

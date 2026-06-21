@@ -24,7 +24,7 @@ import logging
 import pytest
 from band_rest import AsyncRestClient
 
-from tests.e2e.settings import E2ESettings, requires_e2e
+from tests.e2e.settings import E2ESettings, RoomAllocator, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     listening_for_room_activity,
@@ -50,7 +50,7 @@ class TestAgnoThoughts:
     async def test_agent_emits_thought_events(
         self,
         e2e_config: E2ESettings,
-        agno_thoughts_room: tuple[str, str, str],
+        e2e_fresh_room_allocator: RoomAllocator,
         e2e_agent_info: tuple[str, str],
         e2e_session_client: AsyncRestClient,
         ws_client: TrackingWebSocketClient,
@@ -61,7 +61,10 @@ class TestAgnoThoughts:
         Synchronizes on the agent's text reply over WebSocket (the reliable
         "turn finished" signal), then asserts the thought event via REST.
         """
-        room_id, _user_id, _user_name = agno_thoughts_room
+        # Fresh room (not the reusing allocator): a reused room's accumulated
+        # repeats of this question let Claude skip extended thinking, leaving
+        # reasoning_content empty so no thought is emitted.
+        room_id, _user_id, _user_name = await e2e_fresh_room_allocator("agno_thoughts")
         agent_id, agent_name = e2e_agent_info
         timeout = min(float(e2e_config.e2e_timeout) * 2, 90.0)
 

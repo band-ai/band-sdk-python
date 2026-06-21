@@ -22,14 +22,13 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-import pytest
 from band_rest import AsyncRestClient
 
 from band.core.simple_adapter import SimpleAdapter
 
 from tests.conftest_integration import fetch_all_context
 from tests.e2e.adapters.conftest import _require_anthropic_key
-from tests.e2e.settings import E2ESettings, RoomAllocator
+from tests.e2e.settings import E2ESettings
 from tests.e2e.helpers import find_tool_call_in_context, log_step
 
 if TYPE_CHECKING:
@@ -310,43 +309,3 @@ async def assert_total_reported(
         f"but it was not found among {len(texts)} text message(s)."
     )
     log_step("assert", f"total {GROCERY_TOTAL:.2f} reported in room")
-
-
-# =============================================================================
-# Room fixtures
-# =============================================================================
-
-
-@pytest.fixture
-async def agno_multi_room(
-    e2e_room_allocator: RoomAllocator,
-) -> tuple[str, str, str]:
-    """Dedicated room for the multi-agent Agno scenarios.
-
-    Returns (room_id, user_id, user_name). The room starts with Agent A (its
-    creator) and the User; Agent B is added during the flow.
-    """
-    return await e2e_room_allocator("agno_multi_agent")
-
-
-@pytest.fixture
-async def agno_thoughts_room(
-    e2e_room_allocator: RoomAllocator,
-) -> tuple[str, str, str]:
-    """Dedicated room for the Agno thoughts scenario."""
-    return await e2e_room_allocator("agno_thoughts")
-
-
-@pytest.fixture
-async def agno_database_room(
-    e2e_fresh_room_allocator: RoomAllocator,
-) -> tuple[str, str, str]:
-    """Fresh, uncontaminated room for the db-backed Agno restart scenario.
-
-    Uses the fresh-room allocator (not the reusing one) on purpose: this
-    scenario disables Band's history rehydration, so the agent's only memory is
-    Agno's ephemeral db. A reused room's stale "remember X" messages from prior
-    runs would otherwise be answered on bootstrap and contaminate the recall
-    assertion with an old secret.
-    """
-    return await e2e_fresh_room_allocator("agno_database_restart")
