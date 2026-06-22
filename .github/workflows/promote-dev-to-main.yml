@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Dry run (just generate the PR description without creating the PR)'
+        description: "Dry run (just generate the PR description without creating the PR)"
         required: false
         default: false
         type: boolean
@@ -29,13 +29,12 @@ jobs:
           fetch-depth: 0
           ref: dev
 
-      - name: Generate GitHub App Token
-        id: app_token_generator
-        uses: ./.github/actions/GithubToken
+      - name: Generate App Token
+        id: token
+        uses: band-ai/.github/actions/generate-app-token@v1
         with:
-          app_id: ${{ secrets.APP_ID }}
-          installation_id: ${{ secrets.INSTALLATION_ID }}
-          private_key: ${{ secrets.APP_PRIVATE_KEY }}
+          app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          app-client-id: ${{ secrets.APP_CLIENT_ID }}
 
       - name: Fetch main
         run: git fetch origin main
