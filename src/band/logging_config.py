@@ -48,56 +48,26 @@ def build_logging_config(
     normalized_root_level = _normalize_level(root_level, name="root_level")
 
     formatter_name = "console"
-    handler: LoggingConfig = {
-        "class": "logging.StreamHandler",
-        "formatter": formatter_name,
-        "stream": f"ext://sys.{normalized_stream}",
-    }
-
-    formatters: dict[str, LoggingConfig]
     if normalized_style == "standard":
-        formatters = {
-            formatter_name: {
-                "format": _STANDARD_FORMAT,
-                "datefmt": datefmt,
-            }
-        }
-    elif normalized_style == "rich":
-        _require_optional_package("rich", style="rich", extra="logging")
-        handler = {
-            "()": "band.logging_config._build_rich_handler",
-            "formatter": formatter_name,
-            "stream": normalized_stream,
-            "datefmt": datefmt,
-        }
-        formatters = {
-            formatter_name: {
-                "format": "%(message)s",
-                "datefmt": datefmt,
-            }
-        }
-    else:
-        _require_optional_package(
-            "pythonjsonlogger.json",
-            style="json",
-            extra="logging",
-            package_name="python-json-logger>=3.0.0",
+        handler, formatters = _build_standard_config(
+            formatter_name=formatter_name,
+            stream=normalized_stream,
+            datefmt=datefmt,
         )
-        fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
-        _validate_json_fields(fields)
-        json_formatter: LoggingConfig = {
-            "()": "pythonjsonlogger.json.JsonFormatter",
-            "format": " ".join(f"%({field})s" for field in fields),
-            "datefmt": datefmt,
-            "rename_fields": {
-                field: renamed
-                for field, renamed in _JSON_RENAME_FIELDS.items()
-                if field in fields
-            },
-        }
-        if static_fields:
-            json_formatter["static_fields"] = dict(static_fields)
-        formatters = {formatter_name: json_formatter}
+    elif normalized_style == "rich":
+        handler, formatters = _build_rich_config(
+            formatter_name=formatter_name,
+            stream=normalized_stream,
+            datefmt=datefmt,
+        )
+    else:
+        handler, formatters = _build_json_config(
+            formatter_name=formatter_name,
+            stream=normalized_stream,
+            datefmt=datefmt,
+            json_fields=json_fields,
+            static_fields=static_fields,
+        )
 
     loggers: dict[str, LoggingConfig] = {
         "band": {
@@ -141,6 +111,84 @@ def configure_logging(*args: Any, **kwargs: Any) -> LoggingConfig:
     config = build_logging_config(*args, **kwargs)
     logging.config.dictConfig(config)
     return config
+
+
+def _build_standard_config(
+    *,
+    formatter_name: str,
+    stream: LogStream,
+    datefmt: str,
+) -> tuple[LoggingConfig, dict[str, LoggingConfig]]:
+    handler: LoggingConfig = {
+        "class": "logging.StreamHandler",
+        "formatter": formatter_name,
+        "stream": f"ext://sys.{stream}",
+    }
+    formatters = {
+        formatter_name: {
+            "format": _STANDARD_FORMAT,
+            "datefmt": datefmt,
+        }
+    }
+    return handler, formatters
+
+
+def _build_rich_config(
+    *,
+    formatter_name: str,
+    stream: LogStream,
+    datefmt: str,
+) -> tuple[LoggingConfig, dict[str, LoggingConfig]]:
+    _require_optional_package("rich", style="rich", extra="logging")
+    handler: LoggingConfig = {
+        "()": "band.logging_config._build_rich_handler",
+        "formatter": formatter_name,
+        "stream": stream,
+        "datefmt": datefmt,
+    }
+    formatters = {
+        formatter_name: {
+            "format": "%(message)s",
+            "datefmt": datefmt,
+        }
+    }
+    return handler, formatters
+
+
+def _build_json_config(
+    *,
+    formatter_name: str,
+    stream: LogStream,
+    datefmt: str,
+    json_fields: Sequence[str] | None,
+    static_fields: Mapping[str, Any] | None,
+) -> tuple[LoggingConfig, dict[str, LoggingConfig]]:
+    _require_optional_package(
+        "pythonjsonlogger.json",
+        style="json",
+        extra="logging",
+        package_name="python-json-logger>=3.0.0",
+    )
+    fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
+    _validate_json_fields(fields)
+    handler: LoggingConfig = {
+        "class": "logging.StreamHandler",
+        "formatter": formatter_name,
+        "stream": f"ext://sys.{stream}",
+    }
+    json_formatter: LoggingConfig = {
+        "()": "pythonjsonlogger.json.JsonFormatter",
+        "format": " ".join(f"%({field})s" for field in fields),
+        "datefmt": datefmt,
+        "rename_fields": {
+            field: renamed
+            for field, renamed in _JSON_RENAME_FIELDS.items()
+            if field in fields
+        },
+    }
+    if static_fields:
+        json_formatter["static_fields"] = dict(static_fields)
+    return handler, {formatter_name: json_formatter}
 
 
 def _build_rich_handler(*, stream: LogStream, datefmt: str) -> logging.Handler:
