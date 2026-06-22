@@ -48,26 +48,27 @@ def build_logging_config(
     normalized_root_level = _normalize_level(root_level, name="root_level")
 
     formatter_name = "console"
-    if normalized_style == "standard":
-        handler, formatters = _build_standard_config(
-            formatter_name=formatter_name,
-            stream=normalized_stream,
-            datefmt=datefmt,
-        )
-    elif normalized_style == "rich":
-        handler, formatters = _build_rich_config(
-            formatter_name=formatter_name,
-            stream=normalized_stream,
-            datefmt=datefmt,
-        )
-    else:
-        handler, formatters = _build_json_config(
-            formatter_name=formatter_name,
-            stream=normalized_stream,
-            datefmt=datefmt,
-            json_fields=json_fields,
-            static_fields=static_fields,
-        )
+    match normalized_style:
+        case "standard":
+            handler, formatters = _build_standard_config(
+                formatter_name=formatter_name,
+                stream=normalized_stream,
+                datefmt=datefmt,
+            )
+        case "rich":
+            handler, formatters = _build_rich_config(
+                formatter_name=formatter_name,
+                stream=normalized_stream,
+                datefmt=datefmt,
+            )
+        case "json":
+            handler, formatters = _build_json_config(
+                formatter_name=formatter_name,
+                stream=normalized_stream,
+                datefmt=datefmt,
+                json_fields=json_fields,
+                static_fields=static_fields,
+            )
 
     loggers: dict[str, LoggingConfig] = {
         "band": {
