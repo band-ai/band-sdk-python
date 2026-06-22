@@ -68,6 +68,7 @@ def build_logging_config(
             "()": "band.logging_config._build_rich_handler",
             "formatter": formatter_name,
             "stream": normalized_stream,
+            "datefmt": datefmt,
         }
         formatters = {
             formatter_name: {
@@ -77,10 +78,10 @@ def build_logging_config(
         }
     else:
         _require_optional_package(
-            "pythonjsonlogger",
+            "pythonjsonlogger.json",
             style="json",
             extra="logging",
-            package_name="python-json-logger",
+            package_name="python-json-logger>=3.0.0",
         )
         fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
         _validate_json_fields(fields)
@@ -142,7 +143,7 @@ def configure_logging(*args: Any, **kwargs: Any) -> LoggingConfig:
     return config
 
 
-def _build_rich_handler(*, stream: LogStream) -> logging.Handler:
+def _build_rich_handler(*, stream: LogStream, datefmt: str) -> logging.Handler:
     from rich.console import Console
     from rich.logging import RichHandler
 
@@ -152,6 +153,7 @@ def _build_rich_handler(*, stream: LogStream) -> logging.Handler:
         rich_tracebacks=True,
         markup=False,
         show_path=False,
+        log_time_format=datefmt,
     )
 
 

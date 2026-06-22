@@ -89,13 +89,27 @@ def test_build_logging_config_returns_fresh_normalized_dict(monkeypatch) -> None
 
 def test_json_style_requires_optional_dependency(monkeypatch) -> None:
     def fake_find_spec(name: str):
-        if name == "pythonjsonlogger":
+        if name == "pythonjsonlogger.json":
             return None
         return importlib.util.find_spec(name)
 
     monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
 
     with pytest.raises(BandConfigError, match=r"band-sdk\[logging\]"):
+        build_logging_config(style="json")
+
+
+def test_json_style_requires_v3_json_submodule(monkeypatch) -> None:
+    def fake_find_spec(name: str):
+        if name == "pythonjsonlogger":
+            return object()
+        if name == "pythonjsonlogger.json":
+            return None
+        return importlib.util.find_spec(name)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    with pytest.raises(BandConfigError, match=r"python-json-logger>=3\.0\.0"):
         build_logging_config(style="json")
 
 
@@ -142,3 +156,18 @@ def test_configure_logging_rich_honors_stdout(
     captured = capsys.readouterr()
     assert "rich visible" in captured.out
     assert "rich visible" not in captured.err
+
+
+def test_rich_style_passes_datefmt_to_handler(monkeypatch) -> None:
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name: str):
+        if name == "rich":
+            return object()
+        return real_find_spec(name)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    config = build_logging_config(style="rich", datefmt="%H:%M:%S")
+
+    assert config["handlers"]["console"]["datefmt"] == "%H:%M:%S"
