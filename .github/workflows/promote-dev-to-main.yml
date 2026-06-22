@@ -29,12 +29,12 @@ jobs:
           fetch-depth: 0
           ref: dev
 
-      - name: Generate App Token
-        id: token
-        uses: band-ai/.github/actions/generate-app-token@v1
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
         with:
-          app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          app-client-id: ${{ secrets.APP_CLIENT_ID }}
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Fetch main
         run: git fetch origin main
@@ -101,7 +101,7 @@ jobs:
       - name: Create Pull Request
         if: steps.check_promotion.outputs.needs_promotion == 'true' && inputs.dry_run == false
         env:
-          GH_TOKEN: ${{ steps.app_token_generator.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh pr create \
             --base main \
