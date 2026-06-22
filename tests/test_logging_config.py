@@ -128,3 +128,17 @@ def test_configure_logging_json_outputs_machine_readable_records(
     assert record["logger"] == "band.runtime"
     assert record["message"] == "json visible"
     assert record["service"] == "agent"
+
+
+def test_configure_logging_rich_honors_stdout(
+    capsys,
+    restore_logging,
+) -> None:
+    pytest.importorskip("rich")
+
+    configure_logging(style="rich", stream="stdout")
+    logging.getLogger("band.runtime").info("rich visible")
+
+    captured = capsys.readouterr()
+    assert "rich visible" in captured.out
+    assert "rich visible" not in captured.err

@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import logging
 import logging.config
+import sys
 from collections.abc import Mapping, Sequence
 from typing import Any, Literal
 
@@ -63,11 +64,9 @@ def build_logging_config(
     elif normalized_style == "rich":
         _require_optional_package("rich", style="rich", extra="logging")
         handler = {
-            "class": "rich.logging.RichHandler",
+            "()": "band.logging_config._build_rich_handler",
             "formatter": formatter_name,
-            "rich_tracebacks": True,
-            "markup": False,
-            "show_path": False,
+            "stream": normalized_stream,
         }
         formatters = {
             formatter_name: {
@@ -140,6 +139,19 @@ def configure_logging(*args: Any, **kwargs: Any) -> dict[str, Any]:
     config = build_logging_config(*args, **kwargs)
     logging.config.dictConfig(config)
     return config
+
+
+def _build_rich_handler(*, stream: LogStream) -> logging.Handler:
+    from rich.console import Console
+    from rich.logging import RichHandler
+
+    output = sys.stdout if stream == "stdout" else sys.stderr
+    return RichHandler(
+        console=Console(file=output),
+        rich_tracebacks=True,
+        markup=False,
+        show_path=False,
+    )
 
 
 def _normalize_style(style: str) -> LoggingStyle:
