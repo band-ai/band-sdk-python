@@ -9,6 +9,41 @@ This file contains Anthropic-specific tool event conversion and integration test
 from band.converters.anthropic import AnthropicHistoryConverter
 
 
+class TestTextMessageConversion:
+    def test_missing_agent_name_does_not_classify_unknown_assistant_as_own_response(
+        self,
+    ):
+        """Unknown assistant rows stay attributed unless the agent name is configured."""
+        converter = AnthropicHistoryConverter()
+        raw = [
+            {
+                "role": "assistant",
+                "content": "Unattributed assistant text",
+                "sender_name": "",
+                "message_type": "text",
+            }
+        ]
+
+        result = converter.convert(raw)
+
+        assert result == [{"role": "user", "content": "Unattributed assistant text"}]
+
+    def test_legacy_message_type_is_converted_as_text(self):
+        converter = AnthropicHistoryConverter(agent_name="Agent")
+        raw = [
+            {
+                "role": "assistant",
+                "content": "Legacy own text",
+                "sender_name": "Agent",
+                "message_type": "message",
+            }
+        ]
+
+        result = converter.convert(raw)
+
+        assert result == [{"role": "assistant", "content": "Legacy own text"}]
+
+
 class TestToolEventConversion:
     """Tests for tool_call and tool_result conversion."""
 
@@ -395,6 +430,28 @@ class TestToolEventConversion:
         assert "is_error" not in tool_result_block  # Field should be omitted when False
 
 
+class TestVisibleTextHistory:
+    def test_preserves_own_agent_visible_text_as_assistant_history(self):
+        converter = AnthropicHistoryConverter(agent_name="Test Agent")
+        raw = [
+            {
+                "role": "assistant",
+                "content": "I previously said LIGHTHOUSE.",
+                "sender_name": "Test Agent",
+                "message_type": "text",
+            }
+        ]
+
+        result = converter.convert(raw)
+
+        assert result == [
+            {
+                "role": "assistant",
+                "content": "I previously said LIGHTHOUSE.",
+            }
+        ]
+
+
 class TestOrphanedToolUseSanitization:
     """Tests for orphaned tool_use block handling."""
 
@@ -584,7 +641,7 @@ class TestMixedHistory:
                 "content": '{"name": "get_weather", "output": "sunny", "tool_call_id": "toolu_123"}',
                 "message_type": "tool_result",
             },
-            # Agent responds with text (skipped - own message)
+            # Agent responds with visible text
             {
                 "role": "assistant",
                 "content": "It's sunny today!",
@@ -602,9 +659,8 @@ class TestMixedHistory:
 
         result = converter.convert(raw)
 
-        # Should have: user message, tool_use, tool_result, user follow-up
-        # (agent's own text is skipped)
-        assert len(result) == 4
+        # Should have: user message, tool_use, tool_result, agent text, user follow-up
+        assert len(result) == 5
 
         # User question
         assert result[0]["role"] == "user"
@@ -620,9 +676,13 @@ class TestMixedHistory:
         assert result[2]["content"][0]["type"] == "tool_result"
         assert result[2]["content"][0]["content"] == "sunny"
 
+        # Agent visible text
+        assert result[3]["role"] == "assistant"
+        assert result[3]["content"] == "It's sunny today!"
+
         # User follow-up
-        assert result[3]["role"] == "user"
-        assert result[3]["content"] == "[Alice]: Thanks!"
+        assert result[4]["role"] == "user"
+        assert result[4]["content"] == "[Alice]: Thanks!"
 
     def test_multi_user_conversation(self):
         """Handles multiple users in conversation."""
@@ -650,10 +710,11 @@ class TestMixedHistory:
 
         result = converter.convert(raw)
 
-        # Agent's own message is skipped
-        assert len(result) == 2
+        assert len(result) == 3
         assert result[0]["content"] == "[Alice]: Hi team!"
         assert result[1]["content"] == "[Bob]: Hello everyone!"
+        assert result[2]["role"] == "assistant"
+        assert result[2]["content"] == "Hello Alice and Bob!"
 
     def test_multi_agent_conversation_flow(self):
         """Should include other agents' messages in multi-agent conversations."""
@@ -666,7 +727,7 @@ class TestMixedHistory:
                 "sender_name": "Alice",
                 "message_type": "text",
             },
-            # Main Agent asks Weather Agent (skipped - own message)
+            # Main Agent asks Weather Agent
             {
                 "role": "assistant",
                 "content": "Let me check with the weather agent.",
@@ -680,7 +741,7 @@ class TestMixedHistory:
                 "sender_name": "Weather Agent",
                 "message_type": "text",
             },
-            # Main Agent relays the response (skipped - own message)
+            # Main Agent relays the response
             {
                 "role": "assistant",
                 "content": "The weather in Tokyo is 15°C and cloudy.",
@@ -691,12 +752,16 @@ class TestMixedHistory:
 
         result = converter.convert(raw)
 
-        # Should have: Alice's message + Weather Agent's message
-        # (Main Agent's own messages are skipped)
-        assert len(result) == 2
+        assert len(result) == 4
 
         assert result[0]["role"] == "user"
         assert result[0]["content"] == "[Alice]: What's the weather in Tokyo?"
 
-        assert result[1]["role"] == "user"
-        assert result[1]["content"] == "[Weather Agent]: Tokyo is 15°C and cloudy."
+        assert result[1]["role"] == "assistant"
+        assert result[1]["content"] == "Let me check with the weather agent."
+
+        assert result[2]["role"] == "user"
+        assert result[2]["content"] == "[Weather Agent]: Tokyo is 15°C and cloudy."
+
+        assert result[3]["role"] == "assistant"
+        assert result[3]["content"] == "The weather in Tokyo is 15°C and cloudy."

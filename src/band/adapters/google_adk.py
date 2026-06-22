@@ -135,8 +135,8 @@ def _get_tool_bridge_class() -> type:
     bridge keeps working if ADK renames or publicises the method.  At
     least one candidate must be present.
 
-    After building the class a smoke-test instantiation verifies that
-    the declaration mechanism works end-to-end (not just that the method
+    After building the class, a compatibility probe instantiation verifies
+    that the declaration mechanism works end-to-end (not just that the method
     exists), catching signature changes that ``hasattr`` alone would miss.
     """
     _, _, BaseTool, types = _require_adk()
@@ -152,9 +152,9 @@ def _get_tool_bridge_class() -> type:
         raise RuntimeError(
             "google-adk BaseTool has no known declaration method "
             f"(tried: {', '.join(_DECLARATION_CANDIDATES)}). "
-            "This adapter relies on overriding the declaration method "
-            "(pinned to google-adk >=1.0,<2). Your installed version "
-            "may be incompatible."
+            "This adapter relies on Google ADK BaseTool exposing one of the "
+            "supported declaration methods. Your installed version may be "
+            "incompatible."
         )
 
     logger.debug(
@@ -198,9 +198,8 @@ def _get_tool_bridge_class() -> type:
             except Exception as exc:
                 raise RuntimeError(
                     f"Failed to build FunctionDeclaration for tool '{tool_name}'. "
-                    "This may indicate an incompatible google-adk version — "
-                    "the adapter relies on BaseTool's declaration mechanism "
-                    "pinned to google-adk >=1.0,<2."
+                    "This may indicate an incompatible google-adk version or an "
+                    "unsupported FunctionDeclaration schema."
                 ) from exc
 
         def _build_declaration(self) -> types.FunctionDeclaration:
@@ -252,7 +251,7 @@ def _get_tool_bridge_class() -> type:
             _BandToolBridge._build_declaration,
         )
 
-    # Smoke-test: verify the declaration mechanism works end-to-end.
+    # Compatibility probe: verify the declaration mechanism works end-to-end.
     # Catches signature changes that hasattr alone would miss.
     try:
         _probe = _BandToolBridge(
@@ -269,10 +268,9 @@ def _get_tool_bridge_class() -> type:
         raise
     except Exception as exc:
         raise RuntimeError(
-            "google-adk BaseTool declaration smoke-test failed. "
+            "google-adk BaseTool declaration compatibility probe failed. "
             f"Method '{active_methods[0]}' exists but did not return a valid "
-            "FunctionDeclaration. The adapter is pinned to google-adk "
-            ">=1.0,<2 — your installed version may be incompatible."
+            "FunctionDeclaration. Your installed version may be incompatible."
         ) from exc
 
     return _BandToolBridge

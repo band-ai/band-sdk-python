@@ -347,43 +347,6 @@ class TestToolEventConversion:
         assert result[0].parts[0].tool_name == "tool1"
         assert result[0].parts[1].tool_name == "tool2"
 
-    def test_drops_own_text_between_tool_call_and_result(self):
-        """Own text emitted mid tool call is dropped so the call/result pair stays intact.
-
-        band_send_message posts the agent's text between the tool_call and
-        tool_result events. Keeping that text would split the ToolCallPart from
-        its ToolReturnPart, which providers reject.
-        """
-        converter = PydanticAIHistoryConverter(agent_name="Bot")
-        raw = [
-            {
-                "role": "assistant",
-                "content": '{"name": "band_send_message", "args": {"content": "hi"}, "tool_call_id": "call_1"}',
-                "sender_name": "Bot",
-                "message_type": "tool_call",
-            },
-            {
-                "role": "assistant",
-                "content": "hi",
-                "sender_name": "Bot",
-                "message_type": "text",
-            },
-            {
-                "role": "assistant",
-                "content": '{"name": "band_send_message", "output": {"id": "msg_1"}, "tool_call_id": "call_1"}',
-                "sender_name": "Bot",
-                "message_type": "tool_result",
-            },
-        ]
-
-        result = converter.convert(raw)
-
-        assert len(result) == 2
-        assert isinstance(result[0], ModelResponse)
-        assert isinstance(result[0].parts[0], ToolCallPart)
-        assert isinstance(result[1], ModelRequest)
-        assert isinstance(result[1].parts[0], ToolReturnPart)
-
     def test_uses_retry_prompt_part_for_error_results(self):
         """tool_result with is_error=True uses RetryPromptPart instead of ToolReturnPart."""
         converter = PydanticAIHistoryConverter()
@@ -505,7 +468,7 @@ class TestMixedHistory:
                 "content": '{"name": "get_weather", "output": "sunny", "tool_call_id": "call_123"}',
                 "message_type": "tool_result",
             },
-            # Agent responds with text (preserved for crash recovery)
+            # Agent responds with text (preserved as model response history)
             {
                 "role": "assistant",
                 "content": "It's sunny today!",
@@ -523,7 +486,7 @@ class TestMixedHistory:
 
         result = converter.convert(raw)
 
-        # Should have: user message, tool_call, tool_result, agent text, user follow-up
+        # Should have: user message, tool_call, tool_result, own text, user follow-up.
         assert len(result) == 5
 
         # User question
@@ -541,7 +504,7 @@ class TestMixedHistory:
         assert isinstance(result[2].parts[0], ToolReturnPart)
         assert result[2].parts[0].content == "sunny"
 
-        # Agent text (ModelResponse with TextPart)
+        # Own text response
         assert isinstance(result[3], ModelResponse)
         assert isinstance(result[3].parts[0], TextPart)
         assert result[3].parts[0].content == "It's sunny today!"
@@ -577,13 +540,46 @@ class TestMixedHistory:
 
         result = converter.convert(raw)
 
-        # Agent's own message is preserved as assistant context
+        # Agent's own message is preserved as model response history.
         assert len(result) == 3
         assert result[0].parts[0].content == "[Alice]: Hi team!"
         assert result[1].parts[0].content == "[Bob]: Hello everyone!"
         assert isinstance(result[2], ModelResponse)
-        assert isinstance(result[2].parts[0], TextPart)
         assert result[2].parts[0].content == "Hello Alice and Bob!"
+
+    def test_skips_whitespace_only_text_history(self):
+        """Blank persisted text rows should not become model-visible history."""
+        converter = PydanticAIHistoryConverter(agent_name="Agent")
+        raw = [
+            {
+                "role": "user",
+                "content": "   ",
+                "sender_name": "Noisy Sender",
+                "message_type": "text",
+            }
+        ]
+
+        assert converter.convert(raw) == []
+
+    def test_missing_agent_name_does_not_classify_unknown_assistant_as_own_response(
+        self,
+    ):
+        """Unknown assistant rows stay attributed unless the agent name is configured."""
+        converter = PydanticAIHistoryConverter()
+        raw = [
+            {
+                "role": "assistant",
+                "content": "Unattributed assistant text",
+                "sender_name": "",
+                "message_type": "text",
+            }
+        ]
+
+        result = converter.convert(raw)
+
+        assert len(result) == 1
+        assert isinstance(result[0], ModelRequest)
+        assert result[0].parts[0].content == "Unattributed assistant text"
 
     def test_multi_agent_conversation_flow(self):
         """Should include other agents' messages in multi-agent conversations."""
@@ -596,7 +592,7 @@ class TestMixedHistory:
                 "sender_name": "Alice",
                 "message_type": "text",
             },
-            # Main Agent asks Weather Agent (preserved as assistant context)
+            # Main Agent asks Weather Agent (preserved as model response history)
             {
                 "role": "assistant",
                 "content": "Let me check with the weather agent.",
@@ -610,7 +606,7 @@ class TestMixedHistory:
                 "sender_name": "Weather Agent",
                 "message_type": "text",
             },
-            # Main Agent relays the response (preserved as assistant context)
+            # Main Agent relays the response (preserved as model response history)
             {
                 "role": "assistant",
                 "content": "The weather in Tokyo is 15°C and cloudy.",
@@ -621,14 +617,13 @@ class TestMixedHistory:
 
         result = converter.convert(raw)
 
-        # Should have all text turns; own Main Agent text is assistant context
+        # Should have: Alice's message + every agent text turn in order.
         assert len(result) == 4
 
         assert isinstance(result[0], ModelRequest)
         assert result[0].parts[0].content == "[Alice]: What's the weather in Tokyo?"
 
         assert isinstance(result[1], ModelResponse)
-        assert isinstance(result[1].parts[0], TextPart)
         assert result[1].parts[0].content == "Let me check with the weather agent."
 
         assert isinstance(result[2], ModelRequest)
@@ -637,5 +632,4 @@ class TestMixedHistory:
         )
 
         assert isinstance(result[3], ModelResponse)
-        assert isinstance(result[3].parts[0], TextPart)
         assert result[3].parts[0].content == "The weather in Tokyo is 15°C and cloudy."

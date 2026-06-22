@@ -483,7 +483,11 @@ def _build_crewai_flow_config() -> AdapterConfig:
 
 
 def _build_claude_sdk_config() -> AdapterConfig | None:
-    from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE, ClaudeSDKAdapter
+    from band.adapters.claude_sdk import (
+        _CLAUDE_SDK_AVAILABLE,
+        _DEFAULT_MODEL,
+        ClaudeSDKAdapter,
+    )
 
     if not _CLAUDE_SDK_AVAILABLE:
         return None  # optional dep not installed; skip in CI
@@ -493,7 +497,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
         display_name="ClaudeSDK",
         adapter_factory=_claude_sdk_factory,
         expected_initial_values={
-            "model": _default_from_init(ClaudeSDKAdapter, "model"),
+            "model": _DEFAULT_MODEL,
             "fallback_model": _default_from_init(ClaudeSDKAdapter, "fallback_model"),
             "custom_section": _default_from_init(ClaudeSDKAdapter, "custom_section"),
             "max_thinking_tokens": _default_from_init(

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from band.platform.event import MessageEvent
-from band.client.streaming import MessageCreatedPayload, MessageMetadata
+from band.client.streaming import MessageCreatedPayload, MessageMetadata, Mention
 from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import ExecutionContext
 
@@ -19,7 +19,14 @@ def mock_execution_context():
     ctx.config = MagicMock()
     ctx.config.enable_context_hydration = False
     ctx.is_llm_initialized = False
-    ctx.participants = []
+    ctx.participants = [
+        {
+            "id": "agent-123",
+            "name": "Test Agent",
+            "type": "Agent",
+            "handle": "alice/test-agent",
+        }
+    ]
     ctx.get_pending_system_messages = MagicMock(return_value=[])
     ctx.mark_llm_initialized = MagicMock()
     # AgentTools.from_context needs ctx.link.rest
@@ -41,7 +48,10 @@ def sample_message_event():
             sender_id="user-456",
             sender_name="Alice",
             chat_room_id="room-123",
-            metadata=MessageMetadata(mentions=[], status="sent"),
+            metadata=MessageMetadata(
+                mentions=[Mention(id="agent-123", handle="alice/test-agent")],
+                status="sent",
+            ),
             inserted_at=datetime.now(timezone.utc).isoformat(),
             updated_at=datetime.now(timezone.utc).isoformat(),
         ),

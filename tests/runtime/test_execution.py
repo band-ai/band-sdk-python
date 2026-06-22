@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.preprocessing.default import DefaultPreprocessor
 from band.runtime.execution import (
     Execution,
     ExecutionContext,
@@ -761,6 +763,110 @@ class TestCrashRecoverySync:
         )
 
         await ctx.stop()
+
+    def test_backlog_mention_normalization_preserves_supported_fields(
+        self, mock_link_with_next, mock_handler
+    ):
+        ctx = ExecutionContext("room-123", mock_link_with_next, mock_handler)
+        object_mention = SimpleNamespace(
+            id="object-id",
+            handle="darvell/object-agent",
+            username="object-agent",
+            name="Object Agent",
+        )
+
+        assert ctx._normalize_mentions(
+            [
+                {
+                    "id": "dict-id",
+                    "handle": "darvell/dict-agent",
+                    "username": "dict-agent",
+                    "name": "Dict Agent",
+                },
+                object_mention,
+            ]
+        ) == [
+            {
+                "id": "dict-id",
+                "handle": "darvell/dict-agent",
+                "username": "dict-agent",
+                "name": "Dict Agent",
+            },
+            {
+                "id": "object-id",
+                "handle": "darvell/object-agent",
+                "username": "object-agent",
+                "name": "Object Agent",
+            },
+        ]
+
+    async def test_backlog_handle_only_mention_wakes_before_processed_mark(
+        self, mock_link_with_next
+    ):
+        """A handle-only backlog mention must survive recovery normalization."""
+        from band.runtime.types import PlatformMessage
+
+        participant = MagicMock()
+        participant.id = "agent-123"
+        participant.name = "Test Agent"
+        participant.type = "Agent"
+        participant.handle = "darvell/test-agent"
+        mock_link_with_next.rest.agent_api_participants.list_agent_chat_participants = (
+            AsyncMock(return_value=MagicMock(data=[participant]))
+        )
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+
+        observations: list[str] = []
+        adapter_handler = AsyncMock()
+        preprocessor = DefaultPreprocessor()
+
+        async def execution_handler(ctx_arg, event):
+            agent_input = await preprocessor.process(
+                ctx_arg,
+                event,
+                agent_id="agent-123",
+            )
+            if agent_input is None:
+                return
+            observations.append("delivered")
+            await adapter_handler(agent_input)
+
+        async def mark_processed(room_id: str, message_id: str) -> bool:
+            observations.append("processed")
+            return True
+
+        mock_link_with_next.mark_processed = AsyncMock(side_effect=mark_processed)
+        msg = PlatformMessage(
+            id="msg-handle-only-mention",
+            room_id="room-123",
+            content="@darvell/test-agent please wake from backlog",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={"mentions": [{"handle": "darvell/test-agent"}]},
+            created_at=datetime.now(timezone.utc),
+        )
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            execution_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        result = await ctx._process_backlog_message(msg)
+
+        assert result == _BacklogProcessResult.ADVANCED
+        adapter_handler.assert_awaited_once()
+        agent_input = adapter_handler.await_args.args[0]
+        metadata = agent_input.msg.metadata.model_dump()
+        assert metadata["mentions"][0]["id"] == ""
+        assert metadata["mentions"][0]["handle"] == "darvell/test-agent"
+        assert observations == ["delivered", "processed"]
+        mock_link_with_next.mark_processed.assert_awaited_once_with(
+            "room-123", "msg-handle-only-mention"
+        )
 
     async def test_same_id_backlog_and_ws_paths_are_locally_inflight_deduped(
         self, mock_link_with_next, mock_handler
