@@ -15,5 +15,6 @@ def setup_logging(level: int = logging.INFO) -> None:
     """
     configure_logging(
         level,
+        style="rich",
         extra_loggers={"band_parlant_agent": level},
     )

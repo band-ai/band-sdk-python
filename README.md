@@ -193,6 +193,8 @@ configure_logging(style="json", stream="stdout")
 configure_logging(style="rich")
 ```
 
+The examples intentionally show different styles: `examples/langgraph` uses the standard formatter, `examples/parlant` uses Rich, and `examples/codex` emits JSON to stdout.
+
 If you need to modify the logging setup before applying it, build a fresh `dictConfig` dictionary:
 
 ```python

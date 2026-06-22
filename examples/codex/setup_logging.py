@@ -11,6 +11,7 @@ def setup_logging(level: int = logging.INFO) -> None:
     """Configure logging for examples."""
     configure_logging(
         level=level,
+        style="json",
         root_level=level,
         stream="stdout",
         extra_loggers={
