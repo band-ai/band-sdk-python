@@ -278,6 +278,8 @@ def _normalize_stream(stream: str) -> LogStream:
 
 
 def _normalize_level(level: LogLevel, *, name: str) -> LogLevel:
+    if isinstance(level, bool):
+        raise ValueError(f"{name} must be an int or logging level name")
     if isinstance(level, int):
         if level < 0:
             raise ValueError(f"{name} must be a non-negative logging level")

@@ -113,6 +113,14 @@ def test_json_style_requires_v3_json_submodule(monkeypatch) -> None:
         build_logging_config(style="json")
 
 
+def test_bool_levels_are_rejected() -> None:
+    with pytest.raises(ValueError, match="level must be an int or logging level name"):
+        build_logging_config(level=True)
+
+    with pytest.raises(ValueError, match="root_level must be an int or logging level name"):
+        build_logging_config(root_level=False)
+
+
 def test_configure_logging_shows_band_logs_and_suppresses_noisy_info(
     capsys,
     restore_logging,
