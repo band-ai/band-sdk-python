@@ -470,7 +470,7 @@ wheels = [
 
 [[package]]
 name = "band-sdk"
-version = "0.2.11"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "band-client-rest" },
@@ -478,6 +478,7 @@ dependencies = [
     { name = "phoenix-channels-python-client" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "tenacity" },
 ]
 
 [package.optional-dependencies]
@@ -738,6 +739,7 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
+    { name = "tenacity", specifier = ">=9.0" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway'", specifier = ">=0.32.0" },

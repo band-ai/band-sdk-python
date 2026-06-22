@@ -18,10 +18,25 @@ from band.runtime.tools import (
     LookupPeersInput,
     GetParticipantsInput,
     CreateChatroomInput,
+    _MENTION_REFRESH_ATTEMPTS,
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
 )
+
+
+@pytest.fixture
+def fast_mention_retry(monkeypatch):
+    """Strip the backoff from the mention-refresh retry so tests don't sleep.
+
+    The @retry decorator captures its wait at import time, so patch the
+    decorated function's retry instance rather than the module constant.
+    """
+    from tenacity import wait_none
+
+    monkeypatch.setattr(
+        AgentTools._resolve_mentions_with_refresh.retry, "wait", wait_none()
+    )
 
 
 @pytest.fixture
@@ -493,6 +508,67 @@ class TestAgentToolsSendMessage:
 
         with pytest.raises(ValueError, match="Unknown participant 'Unknown'"):
             await tools.send_message("Hello!", mentions=["Unknown"])
+
+    async def test_send_message_cache_hit_skips_refresh(
+        self, mock_rest_client, participants
+    ):
+        """A mention already in the cache resolves without an API refresh."""
+        tools = AgentTools("room-123", mock_rest_client, participants)
+
+        await tools.send_message("Hello!", mentions=["User One"])
+
+        mock_rest_client.agent_api_participants.list_agent_chat_participants.assert_not_called()
+
+    async def test_send_message_refreshes_cold_cache_and_retries(
+        self, mock_rest_client
+    ):
+        """A miss on a cold cache refreshes participants once, then resolves."""
+        # Empty cache — the mock REST client knows about user-1.
+        tools = AgentTools("room-123", mock_rest_client)
+        assert tools._participants == []
+
+        await tools.send_message("Hello!", mentions=["user-1"])
+
+        # Refreshed once from the API, then sent successfully.
+        mock_rest_client.agent_api_participants.list_agent_chat_participants.assert_called_once()
+        call_args = (
+            mock_rest_client.agent_api_messages.create_agent_chat_message.call_args
+        )
+        message = call_args.kwargs["message"]
+        assert message.mentions[0].id == "user-1"
+
+    async def test_send_message_unknown_mention_raises_after_refresh(
+        self, mock_rest_client, fast_mention_retry
+    ):
+        """An unknown mention surfaces the error once retries are exhausted."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="Unknown participant 'Unknown'"):
+            await tools.send_message("Hello!", mentions=["Unknown"])
+
+        # One refresh per attempt (the after hook fires on each failed attempt).
+        assert (
+            mock_rest_client.agent_api_participants.list_agent_chat_participants.call_count
+            == _MENTION_REFRESH_ATTEMPTS
+        )
+
+    async def test_send_message_empty_refresh_still_raises(
+        self, mock_rest_client, fast_mention_retry
+    ):
+        """If refresh keeps returning nothing, the error surfaces after retries
+        rather than looping forever."""
+        mock_rest_client.agent_api_participants.list_agent_chat_participants.return_value = MagicMock(
+            data=None
+        )
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="Unknown participant"):
+            await tools.send_message("Hello!", mentions=["user-1"])
+
+        assert (
+            mock_rest_client.agent_api_participants.list_agent_chat_participants.call_count
+            == _MENTION_REFRESH_ATTEMPTS
+        )
 
     async def test_send_message_no_response_raises(
         self, mock_rest_client, participants

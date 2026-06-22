@@ -13,6 +13,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_chain,
+    wait_exponential,
+    wait_fixed,
+)
 
 from band.client.rest import ChatRoomRequest, DEFAULT_REQUEST_OPTIONS
 from band.core.exceptions import BandToolError
@@ -38,6 +46,20 @@ if TYPE_CHECKING:
     from .execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
+
+# Mention-resolution retry: refresh participants on a miss, then retry. First
+# retry is immediate; later ones back off for a lagging participants endpoint.
+_MENTION_REFRESH_ATTEMPTS = 2
+_MENTION_REFRESH_WAIT = wait_chain(
+    wait_fixed(0),
+    wait_exponential(multiplier=0.2, max=1.0),
+)
+
+
+async def _refresh_participants_after(retry_state: Any) -> None:
+    """tenacity ``after`` hook: refresh participants after a failed resolve."""
+    tools = retry_state.args[0]
+    await tools.get_participants()
 
 
 def _normalize_handle(value: str) -> str:
@@ -1295,7 +1317,8 @@ class AgentTools(AgentToolsProtocol):
                 stacklevel=2,
             )
 
-        resolved_mentions = self._resolve_mentions(mentions or [])
+        # Resolve mentions; refreshes participants and retries on a miss.
+        resolved_mentions = await self._resolve_mentions_with_refresh(mentions or [])
 
         # Validate mentions are not empty — API requires ≥1 mention.
         # Return a helpful error so the LLM can retry with proper mentions.
@@ -1978,6 +2001,24 @@ class AgentTools(AgentToolsProtocol):
         return response.data
 
     # --- Mention resolution ---
+
+    @retry(
+        retry=retry_if_exception_type(ValueError),
+        stop=stop_after_attempt(_MENTION_REFRESH_ATTEMPTS),
+        wait=_MENTION_REFRESH_WAIT,
+        after=_refresh_participants_after,
+        reraise=True,
+    )
+    async def _resolve_mentions_with_refresh(
+        self, mentions: list[str] | list[dict[str, str]]
+    ) -> list[dict[str, str]]:
+        """Resolve mentions against the cache; refresh and retry on a miss.
+
+        Handles a cold/stale cache (e.g. a freshly added agent whose
+        participants endpoint hasn't caught up). An unknown mention exhausts the
+        retries and the final ``ValueError`` propagates.
+        """
+        return self._resolve_mentions(mentions)
 
     def _resolve_mentions(
         self, mentions: list[str] | list[dict[str, str]]
