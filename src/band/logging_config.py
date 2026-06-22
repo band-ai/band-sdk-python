@@ -69,6 +69,8 @@ def build_logging_config(
                 json_fields=json_fields,
                 static_fields=static_fields,
             )
+        case _:
+            raise AssertionError(f"Unexpected logging style: {normalized_style!r}")
 
     loggers: dict[str, LoggingConfig] = {
         "band": {
