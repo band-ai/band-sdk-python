@@ -813,3 +813,140 @@ class TestGetStaleProcessingMessages:
 
         assert [message.id for message in messages] == ["msg-1"]
         link.rest.agent_api_messages.list_agent_messages.assert_awaited_once()
+
+
+class TestReportActivity:
+    """Tests for BandLink.report_activity (boolean working-state reporting)."""
+
+    @pytest.mark.asyncio
+    async def test_reports_working_true(self):
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock()
+
+        result = await link.report_activity("room-1", True)
+
+        assert result is True
+        call = link.rest.agent_api_activity.report_agent_chat_activity
+        call.assert_awaited_once()
+        assert call.call_args.kwargs["chat_id"] == "room-1"
+        assert call.call_args.kwargs["working"] is True
+
+    @pytest.mark.asyncio
+    async def test_passes_per_post_timeout_and_no_retries(self):
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock()
+
+        await link.report_activity("room-1", True, timeout_seconds=2)
+
+        opts = link.rest.agent_api_activity.report_agent_chat_activity.call_args.kwargs[
+            "request_options"
+        ]
+        assert opts["timeout_in_seconds"] == 2
+        assert opts["max_retries"] == 0
+
+    @pytest.mark.asyncio
+    async def test_reports_working_false(self):
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock()
+
+        result = await link.report_activity("room-1", False)
+
+        assert result is True
+        call = link.rest.agent_api_activity.report_agent_chat_activity
+        assert call.call_args.kwargs["working"] is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_not_found(self):
+        from band_rest import NotFoundError
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock(
+            side_effect=NotFoundError(headers={}, body="no active execution")
+        )
+
+        result = await link.report_activity("room-1", True)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_unauthorized(self):
+        from band_rest import UnauthorizedError
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock(
+            side_effect=UnauthorizedError(headers={}, body="bad key")
+        )
+
+        result = await link.report_activity("room-1", True)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_unprocessable_entity(self):
+        from band_rest import UnprocessableEntityError
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock(
+            side_effect=UnprocessableEntityError(headers={}, body="bad uuid")
+        )
+
+        result = await link.report_activity("room-1", True)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_returns_false_on_network_error(self):
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock(
+            side_effect=Exception("network down")
+        )
+
+        result = await link.report_activity("room-1", True)
+
+        assert result is False
+
+    def test_real_client_exposes_activity_method(self):
+        """Guard: the real REST client must actually expose the activity method.
+
+        The AsyncMock-based tests above auto-fabricate attributes, so they would
+        stay green even if `agent_api_activity.report_agent_chat_activity`
+        disappeared or was renamed in a band_rest bump. This test pins the
+        real wire contract: instantiate the real client and assert the method
+        exists and is callable.
+        """
+        from band_rest import AsyncRestClient
+
+        client = AsyncRestClient(api_key="test-key", base_url="https://test.com")
+        method = getattr(client.agent_api_activity, "report_agent_chat_activity", None)
+        assert callable(method)
+
+    @pytest.mark.asyncio
+    async def test_repeated_failures_warn_once_then_recover(self, caplog):
+        import logging
+
+        link = BandLink(agent_id="agent-123", api_key="test-key")
+        link.rest = MagicMock()
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock(
+            side_effect=Exception("down")
+        )
+
+        with caplog.at_level(logging.WARNING, logger="band.platform.link"):
+            assert await link.report_activity("room-1", True) is False
+            assert await link.report_activity("room-1", True) is False
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1  # debounced: only the first failure warns
+
+        # Recovery logs once at INFO and re-arms the warning.
+        link.rest.agent_api_activity.report_agent_chat_activity = AsyncMock()
+        with caplog.at_level(logging.INFO, logger="band.platform.link"):
+            caplog.clear()
+            assert await link.report_activity("room-1", True) is True
+        assert any("recovered" in r.message.lower() for r in caplog.records)
