@@ -77,6 +77,8 @@ def build_logging_config(
         extra_loggers=extra_loggers,
     )
 
+    # Keep existing application loggers alive; SDK helpers should not silently
+    # disable logging configured by the host process.
     return {
         "version": 1,
         "disable_existing_loggers": False,
@@ -108,6 +110,8 @@ def _build_logger_configs(
     level: LogLevel,
     extra_loggers: Mapping[str, LogLevel] | None,
 ) -> dict[str, LoggingConfig]:
+    # Band logs are opt-in at INFO by default; unrelated dependencies stay at
+    # the root level unless callers explicitly list them in extra_loggers.
     loggers: dict[str, LoggingConfig] = {
         "band": {
             "level": level,
@@ -159,6 +163,8 @@ def _build_rich_config(
     datefmt: str,
 ) -> tuple[LoggingConfig, dict[str, LoggingConfig]]:
     _require_optional_package("rich", style="rich", extra="logging")
+    # Rich needs a factory because stdout/stderr and date formatting are passed
+    # through its Console/RichHandler constructors, not a plain StreamHandler.
     handler: LoggingConfig = {
         "()": "band.logging_config._build_rich_handler",
         "formatter": formatter_name,
@@ -182,6 +188,8 @@ def _build_json_config(
     json_fields: Sequence[str] | None,
     static_fields: Mapping[str, Any] | None,
 ) -> tuple[LoggingConfig, dict[str, LoggingConfig]]:
+    # The formatter path uses the v3 submodule; check that exact import so older
+    # python-json-logger installs fail with our actionable BandConfigError.
     _require_optional_package(
         "pythonjsonlogger.json",
         style="json",
@@ -214,6 +222,7 @@ def _build_rich_handler(*, stream: LogStream, datefmt: str) -> logging.Handler:
     from rich.console import Console
     from rich.logging import RichHandler
 
+    # Do not let Rich default to stderr when callers requested stdout.
     output = sys.stdout if stream == "stdout" else sys.stderr
     return RichHandler(
         console=Console(file=output),
