@@ -188,7 +188,7 @@ For production JSON logs or Rich console output, install the logging extra:
 uv add "band-sdk[logging]"
 ```
 
-```python
+```python notest
 configure_logging(style="json", stream="stdout")
 configure_logging(style="rich")
 ```
@@ -197,7 +197,7 @@ The examples intentionally show different styles: `examples/langgraph` uses the 
 
 If you need to modify the logging setup before applying it, build a fresh `dictConfig` dictionary:
 
-```python
+```python notest
 import logging.config
 
 from band import build_logging_config
