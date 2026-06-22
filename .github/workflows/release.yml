@@ -28,18 +28,18 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Generate App Token
-        id: token
-        uses: band-ai/.github/actions/generate-app-token@v1
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
         with:
-          app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          app-client-id: ${{ secrets.APP_CLIENT_ID }}
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Release Please
         uses: googleapis/release-please-action@v5
         id: release
         with:
-          token: ${{ steps.app_token_generator.outputs.token }}
+          token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           target-branch: main
