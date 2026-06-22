@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import json
 import logging
 from collections.abc import Iterator
@@ -8,6 +9,10 @@ from collections.abc import Iterator
 import pytest
 
 from band import BandConfigError, build_logging_config, configure_logging
+
+
+def test_configure_logging_signature_matches_builder() -> None:
+    assert inspect.signature(configure_logging) == inspect.signature(build_logging_config)
 
 
 @pytest.fixture

@@ -112,7 +112,17 @@ def build_logging_config(
     }
 
 
-def configure_logging(*args: Any, **kwargs: Any) -> LoggingConfig:
+def configure_logging(
+    level: LogLevel = logging.INFO,
+    *,
+    style: LoggingStyle = "standard",
+    root_level: LogLevel = logging.WARNING,
+    stream: LogStream = "stderr",
+    datefmt: str = "%Y-%m-%d %H:%M:%S",
+    extra_loggers: Mapping[str, LogLevel] | None = None,
+    json_fields: Sequence[str] | None = None,
+    static_fields: Mapping[str, Any] | None = None,
+) -> LoggingConfig:
     """Build and apply Band's logging configuration.
 
     Returns the applied ``dictConfig`` dictionary so callers can inspect the
@@ -126,7 +136,16 @@ def configure_logging(*args: Any, **kwargs: Any) -> LoggingConfig:
 
     See :func:`build_logging_config` for all supported options.
     """
-    config = build_logging_config(*args, **kwargs)
+    config = build_logging_config(
+        level,
+        style=style,
+        root_level=root_level,
+        stream=stream,
+        datefmt=datefmt,
+        extra_loggers=extra_loggers,
+        json_fields=json_fields,
+        static_fields=static_fields,
+    )
     logging.config.dictConfig(config)
     return config
 
