@@ -5,18 +5,22 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from pydantic import ValidationError
 
-from thenvoi.client.rest import DEFAULT_REQUEST_OPTIONS
-from thenvoi.runtime.tools import (
+from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.runtime.tools import (
     TOOL_MODELS,
     AgentTools,
     SendMessageInput,
     SendEventInput,
+    StoreMemoryInput,
     AddParticipantInput,
     LookupPeersInput,
     GetParticipantsInput,
     CreateChatroomInput,
     _matches_identifier,
+    append_mention_handles_hint,
+    available_mention_handles,
 )
 
 
@@ -149,6 +153,7 @@ class TestMemoryTools:
             type="semantic",
             segment="user",
             thought="useful later",
+            scope="organization",
         )
 
         call_kwargs = (
@@ -158,6 +163,54 @@ class TestMemoryTools:
         assert "subject_id" not in memory_payload
         assert "metadata" not in memory_payload
         assert call_kwargs["request_options"] is DEFAULT_REQUEST_OPTIONS
+
+    @pytest.mark.asyncio
+    async def test_store_memory_rejects_subject_scope_without_subject_id(
+        self, mock_rest_client
+    ) -> None:
+        """Reject subject-scoped writes before they reach the API."""
+        mock_rest_client.agent_api_memories.create_agent_memory = AsyncMock()
+        tools = AgentTools("room-123", mock_rest_client)
+
+        with pytest.raises(ValueError, match="requires a subject_id"):
+            await tools.store_memory(
+                content="remember this",
+                system="working",
+                type="semantic",
+                segment="user",
+                thought="useful later",
+                scope="subject",
+            )
+
+        mock_rest_client.agent_api_memories.create_agent_memory.assert_not_called()
+
+    def test_store_memory_input_rejects_subject_scope_without_subject_id(self) -> None:
+        """Validate tool input rejects subject scope without subject_id."""
+        with pytest.raises(ValidationError, match="requires a subject_id"):
+            StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "working",
+                    "type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "subject",
+                }
+            )
+
+    def test_store_memory_input_rejects_type_for_wrong_system(self) -> None:
+        """Validate memory type matches the chosen system."""
+        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
+            StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "sensory",
+                    "type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "organization",
+                }
+            )
 
     @pytest.mark.parametrize(
         ("tool_method", "rest_method"),
@@ -315,7 +368,7 @@ class TestAgentToolsContextSyncBack:
         Uses real ExecutionContext — its ``participants`` property returns a
         copy, so without the _ctx backref the mutation would be lost.
         """
-        from thenvoi.runtime.execution import ExecutionContext
+        from band.runtime.execution import ExecutionContext
 
         ctx = ExecutionContext(
             room_id="room-789",
@@ -349,7 +402,7 @@ class TestAgentToolsContextSyncBack:
         Uses real ExecutionContext — its ``participants`` property returns a
         copy, so without the _ctx backref the removal would be lost.
         """
-        from thenvoi.runtime.execution import ExecutionContext
+        from band.runtime.execution import ExecutionContext
 
         participant = {
             "id": "user-1",
@@ -413,6 +466,24 @@ class TestAgentToolsSendMessage:
         assert len(message.mentions) == 1
         assert message.mentions[0].id == "user-1"
         assert message.mentions[0].handle == "@user-one"
+
+    async def test_send_message_empty_mentions_excludes_self(
+        self, mock_rest_client, participants
+    ):
+        """The empty-mentions error lists other participants but not the agent
+        itself — an agent can't @mention itself."""
+        from band.core.exceptions import BandToolError
+
+        tools = AgentTools(
+            "room-123", mock_rest_client, participants, agent_id="user-2"
+        )
+
+        with pytest.raises(BandToolError) as exc_info:
+            await tools.send_message("Hello!", mentions=[])
+
+        message = str(exc_info.value)
+        assert "@user-one" in message
+        assert "@user-two" not in message
 
     async def test_send_message_unknown_mention_raises(
         self, mock_rest_client, participants
@@ -833,13 +904,13 @@ class TestAgentToolsSchemas:
 
     def test_tool_models_registry(self):
         """TOOL_MODELS should contain all tool input models."""
-        assert "thenvoi_send_message" in TOOL_MODELS
-        assert "thenvoi_send_event" in TOOL_MODELS
-        assert "thenvoi_add_participant" in TOOL_MODELS
-        assert "thenvoi_remove_participant" in TOOL_MODELS
-        assert "thenvoi_lookup_peers" in TOOL_MODELS
-        assert "thenvoi_get_participants" in TOOL_MODELS
-        assert "thenvoi_create_chatroom" in TOOL_MODELS
+        assert "band_send_message" in TOOL_MODELS
+        assert "band_send_event" in TOOL_MODELS
+        assert "band_add_participant" in TOOL_MODELS
+        assert "band_remove_participant" in TOOL_MODELS
+        assert "band_lookup_peers" in TOOL_MODELS
+        assert "band_get_participants" in TOOL_MODELS
+        assert "band_create_chatroom" in TOOL_MODELS
 
     def test_tool_models_property(self, mock_rest_client):
         """tool_models property should return registry."""
@@ -855,22 +926,22 @@ class TestAgentToolsSchemas:
 
         tool_names = [s["function"]["name"] for s in schemas]
         # Base platform tools
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_send_event" in tool_names
-        assert "thenvoi_add_participant" in tool_names
-        assert "thenvoi_remove_participant" in tool_names
-        assert "thenvoi_get_participants" in tool_names
-        assert "thenvoi_lookup_peers" in tool_names
-        assert "thenvoi_create_chatroom" in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_send_event" in tool_names
+        assert "band_add_participant" in tool_names
+        assert "band_remove_participant" in tool_names
+        assert "band_get_participants" in tool_names
+        assert "band_lookup_peers" in tool_names
+        assert "band_create_chatroom" in tool_names
         # Contact tools included by default
-        assert "thenvoi_list_contacts" in tool_names
-        assert "thenvoi_add_contact" in tool_names
+        assert "band_list_contacts" in tool_names
+        assert "band_add_contact" in tool_names
         # Memory tools excluded by default
-        assert "thenvoi_list_memories" not in tool_names
-        assert "thenvoi_store_memory" not in tool_names
+        assert "band_list_memories" not in tool_names
+        assert "band_store_memory" not in tool_names
 
         send_msg = next(
-            s for s in schemas if s["function"]["name"] == "thenvoi_send_message"
+            s for s in schemas if s["function"]["name"] == "band_send_message"
         )
         assert send_msg["type"] == "function"
         assert "parameters" in send_msg["function"]
@@ -884,14 +955,14 @@ class TestAgentToolsSchemas:
 
         tool_names = [s["function"]["name"] for s in schemas]
         # Memory tools present
-        assert "thenvoi_list_memories" in tool_names
-        assert "thenvoi_store_memory" in tool_names
-        assert "thenvoi_get_memory" in tool_names
-        assert "thenvoi_supersede_memory" in tool_names
-        assert "thenvoi_archive_memory" in tool_names
+        assert "band_list_memories" in tool_names
+        assert "band_store_memory" in tool_names
+        assert "band_get_memory" in tool_names
+        assert "band_supersede_memory" in tool_names
+        assert "band_archive_memory" in tool_names
         # Base and contact tools still present
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_list_contacts" in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_list_contacts" in tool_names
 
     def test_get_tool_schemas_anthropic(self, mock_rest_client):
         """get_tool_schemas('anthropic') should return Anthropic format (memory tools excluded by default)."""
@@ -900,11 +971,11 @@ class TestAgentToolsSchemas:
         schemas = tools.get_tool_schemas("anthropic")
 
         tool_names = [s["name"] for s in schemas]
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_list_contacts" in tool_names
-        assert "thenvoi_list_memories" not in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_list_contacts" in tool_names
+        assert "band_list_memories" not in tool_names
 
-        send_msg = next(s for s in schemas if s["name"] == "thenvoi_send_message")
+        send_msg = next(s for s in schemas if s["name"] == "band_send_message")
         assert "input_schema" in send_msg
         assert "description" in send_msg
 
@@ -915,49 +986,49 @@ class TestAgentToolsSchemas:
         schemas = tools.get_tool_schemas("anthropic", include_memory=True)
 
         tool_names = [s["name"] for s in schemas]
-        assert "thenvoi_list_memories" in tool_names
-        assert "thenvoi_store_memory" in tool_names
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_list_contacts" in tool_names
+        assert "band_list_memories" in tool_names
+        assert "band_store_memory" in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_list_contacts" in tool_names
 
 
 class TestAgentToolsExecuteToolCall:
     """Test execute_tool_call dispatch."""
 
     async def test_execute_send_message(self, mock_rest_client, participants):
-        """execute_tool_call() should dispatch thenvoi_send_message."""
+        """execute_tool_call() should dispatch band_send_message."""
         tools = AgentTools("room-123", mock_rest_client, participants)
 
         result = await tools.execute_tool_call(
-            "thenvoi_send_message", {"content": "Hello!", "mentions": ["User One"]}
+            "band_send_message", {"content": "Hello!", "mentions": ["User One"]}
         )
 
         assert result["id"] == "msg-123"
 
     async def test_execute_send_event(self, mock_rest_client):
-        """execute_tool_call() should dispatch thenvoi_send_event."""
+        """execute_tool_call() should dispatch band_send_event."""
         tools = AgentTools("room-123", mock_rest_client)
 
         result = await tools.execute_tool_call(
-            "thenvoi_send_event", {"content": "Thinking...", "message_type": "thought"}
+            "band_send_event", {"content": "Thinking...", "message_type": "thought"}
         )
 
         assert result["message_type"] == "thought"
 
     async def test_execute_lookup_peers(self, mock_rest_client):
-        """execute_tool_call() should dispatch thenvoi_lookup_peers."""
+        """execute_tool_call() should dispatch band_lookup_peers."""
         tools = AgentTools("room-123", mock_rest_client)
 
-        result = await tools.execute_tool_call("thenvoi_lookup_peers", {"page": 1})
+        result = await tools.execute_tool_call("band_lookup_peers", {"page": 1})
 
         # execute_tool_call calls .model_dump() on the Fern response
         assert isinstance(result, dict)
 
     async def test_execute_get_participants(self, mock_rest_client):
-        """execute_tool_call() should dispatch thenvoi_get_participants."""
+        """execute_tool_call() should dispatch band_get_participants."""
         tools = AgentTools("room-123", mock_rest_client)
 
-        result = await tools.execute_tool_call("thenvoi_get_participants", {})
+        result = await tools.execute_tool_call("band_get_participants", {})
 
         assert isinstance(result, list)
         assert result[0]["id"] == "user-1"
@@ -977,10 +1048,10 @@ class TestAgentToolsExecuteToolCall:
 
         # Missing required field
         result = await tools.execute_tool_call(
-            "thenvoi_send_message", {"content": "Hello"}
+            "band_send_message", {"content": "Hello"}
         )
 
-        assert "Invalid arguments for thenvoi_send_message" in result
+        assert "Invalid arguments for band_send_message" in result
         assert "mentions" in result  # Should mention the missing field
 
     async def test_execute_runtime_error(self, mock_rest_client, participants):
@@ -991,7 +1062,7 @@ class TestAgentToolsExecuteToolCall:
         tools = AgentTools("room-123", mock_rest_client, participants)
 
         result = await tools.execute_tool_call(
-            "thenvoi_send_message", {"content": "Hello!", "mentions": ["User One"]}
+            "band_send_message", {"content": "Hello!", "mentions": ["User One"]}
         )
 
         assert "Error executing" in result
@@ -1003,13 +1074,13 @@ class TestEmptyMentionsValidation:
     async def test_raises_error_with_participant_names(
         self, mock_rest_client, participants
     ):
-        """Should raise ThenvoiToolError listing available participants when mentions empty."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        """Should raise BandToolError listing available participants when mentions empty."""
+        from band.core.exceptions import BandToolError
 
         tools = AgentTools("room-123", mock_rest_client, participants)
 
         with pytest.raises(
-            ThenvoiToolError, match="At least one mention is required"
+            BandToolError, match="At least one mention is required"
         ) as exc_info:
             await tools.send_message("Hello!", mentions=[])
 
@@ -1021,37 +1092,45 @@ class TestEmptyMentionsValidation:
     async def test_raises_error_when_mentions_none(
         self, mock_rest_client, participants
     ):
-        """Should raise ThenvoiToolError when mentions is None."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        """Should raise BandToolError when mentions is None."""
+        from band.core.exceptions import BandToolError
 
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(ThenvoiToolError, match="At least one mention is required"):
+        with pytest.raises(BandToolError, match="At least one mention is required"):
             await tools.send_message("Hello!", mentions=None)
 
     async def test_uses_handle_when_available(self, mock_rest_client):
         """Should prefer handle over name in error message."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        from band.core.exceptions import BandToolError
 
         participants = [
             {"id": "user-1", "name": "User One", "type": "User", "handle": "@user-one"},
         ]
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(ThenvoiToolError, match="@user-one"):
+        with pytest.raises(BandToolError, match="@user-one"):
             await tools.send_message("Hello!", mentions=[])
 
-    async def test_uses_name_when_no_handle(self, mock_rest_client):
-        """Should fall back to participant name when handle is missing."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+    async def test_omits_participant_without_handle(self, mock_rest_client):
+        """Should omit handle-less participants — they can't be @mentioned."""
+        from band.core.exceptions import BandToolError
 
         participants = [
             {"id": "user-1", "name": "User One", "type": "User"},
         ]
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(ThenvoiToolError, match="User One"):
+        with pytest.raises(
+            BandToolError, match="At least one mention is required"
+        ) as exc_info:
             await tools.send_message("Hello!", mentions=[])
+
+        # Name must not be offered as a mention target — only real handles are.
+        assert "User One" not in str(exc_info.value)
+        # With no mentionable handles there is nothing to suggest, so the error
+        # carries no handle list rather than an empty one.
+        assert "Available handles:" not in str(exc_info.value)
 
     async def test_no_error_when_mentions_provided(
         self, mock_rest_client, participants
@@ -1065,17 +1144,17 @@ class TestEmptyMentionsValidation:
         assert result.model_dump()["id"] == "msg-123"
         mock_rest_client.agent_api_messages.create_agent_chat_message.assert_called_once()
 
-    async def test_execute_tool_call_raises_thenvoi_tool_error(
+    async def test_execute_tool_call_raises_band_tool_error(
         self, mock_rest_client, participants
     ):
-        """execute_tool_call lets ThenvoiToolError propagate for wrapper translation."""
-        from thenvoi.core.exceptions import ThenvoiToolError
+        """execute_tool_call lets BandToolError propagate for wrapper translation."""
+        from band.core.exceptions import BandToolError
 
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(ThenvoiToolError, match="At least one mention is required"):
+        with pytest.raises(BandToolError, match="At least one mention is required"):
             await tools.execute_tool_call(
-                "thenvoi_send_message", {"content": "Hello!", "mentions": []}
+                "band_send_message", {"content": "Hello!", "mentions": []}
             )
 
 
@@ -1119,6 +1198,32 @@ class TestMentionResolution:
 class TestHandleMentionResolution:
     """Test handle-based mention resolution."""
 
+    def test_available_mention_handles_excludes_self_and_missing_handles(self):
+        """Available handle hints should include only mentionable room handles."""
+        participants = [
+            {"id": "user-1", "name": "User One", "handle": "@user-one"},
+            {"id": "self", "name": "Self", "handle": "@self"},
+            {"id": "user-3", "name": "No Handle", "handle": None},
+        ]
+
+        assert available_mention_handles(participants, agent_id="self") == ["@user-one"]
+
+    def test_append_mention_handles_hint_is_idempotent(self):
+        """An error already carrying the hint is returned unchanged, so the same
+        error can pass through multiple adapter enrichers without doubling."""
+        enriched = append_mention_handles_hint(
+            "At least one mention is required", ["@alice"]
+        )
+        assert enriched.count("Available handles:") == 1
+
+        twice = append_mention_handles_hint(enriched, ["@alice"])
+        assert twice == enriched
+
+    def test_append_mention_handles_hint_no_handles_is_noop(self):
+        """With no mentionable handles there is nothing to suggest."""
+        error = "At least one mention is required"
+        assert append_mention_handles_hint(error, []) == error
+
     def test_resolve_by_handle(self, mock_rest_client, participants):
         """Should resolve mentions by handle."""
         tools = AgentTools("room-123", mock_rest_client, participants)
@@ -1161,11 +1266,17 @@ class TestHandleMentionResolution:
 
     def test_resolve_unknown_handle_raises(self, mock_rest_client, participants):
         """Should raise for unknown handle."""
-        tools = AgentTools("room-123", mock_rest_client, participants)
+        tools = AgentTools(
+            "room-123", mock_rest_client, participants, agent_id="user-2"
+        )
 
         # @ prefix is stripped during normalization
-        with pytest.raises(ValueError, match="Unknown participant 'unknown'"):
+        with pytest.raises(ValueError, match="Unknown participant 'unknown'") as exc:
             tools._resolve_mentions(["@unknown"])
+
+        message = str(exc.value)
+        assert "@user-one" in message
+        assert "@user-two" not in message
 
     def test_resolve_participant_without_handle(self, mock_rest_client):
         """Should resolve by name when participant has no handle."""
@@ -1215,7 +1326,7 @@ class TestToolInputModels:
 
     def test_remove_participant_input_accepts_legacy_name_field(self):
         """RemoveParticipantInput should accept 'name' as alias for backward compat."""
-        from thenvoi.runtime.tools import RemoveParticipantInput
+        from band.runtime.tools import RemoveParticipantInput
 
         model = RemoveParticipantInput.model_validate({"name": "User One"})
         assert model.identifier == "User One"

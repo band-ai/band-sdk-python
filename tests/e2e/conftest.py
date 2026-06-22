@@ -1,6 +1,6 @@
 """E2E test configuration and fixtures.
 
-E2E tests run adapters against a real Thenvoi platform with real (cheap) LLMs.
+E2E tests run adapters against a real Band platform with real (cheap) LLMs.
 They verify platform functionality and integration correctness, not LLM output quality.
 
 Run manually only, never in CI/CD:
@@ -12,6 +12,7 @@ Configuration is loaded from .env.test with E2E-specific overrides from env vars
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,13 +20,13 @@ from typing import TYPE_CHECKING
 import pytest
 from dotenv import load_dotenv
 from pydantic import ValidationError
-from thenvoi_rest import AsyncRestClient, ChatRoomRequest
-from thenvoi_rest.types import (
+from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest.types import (
     ParticipantRequest,
 )
-from thenvoi_testing.settings import ThenvoiTestSettings
+from thenvoi_testing.settings import BaseTestSettings
 
-from thenvoi.client.streaming import WebSocketClient
+from band.client.streaming import WebSocketClient
 
 from tests.conftest_integration import is_room_alive
 from tests.e2e.helpers import TrackingWebSocketClient
@@ -76,16 +77,23 @@ _MAX_ROOMS_TO_SEARCH = 10
 # =============================================================================
 
 
-class E2ESettings(ThenvoiTestSettings):
-    """Settings for E2E tests, extending the standard test settings.
+class E2ESettings(BaseTestSettings):
+    """Settings for E2E tests, loaded from .env.test.
 
     Loads from .env.test and allows E2E-specific overrides via env vars.
     Pydantic BaseSettings automatically maps environment variables to fields
     (e.g. E2E_LLM_MODEL -> e2e_llm_model) with case-insensitive matching.
     """
 
-    # Standard ThenvoiTestSettings convention for locating the env file.
     _env_file_path = Path(__file__).parent.parent.parent / ".env.test"
+
+    band_api_key: str = ""
+    band_api_key_2: str = ""
+    band_api_key_user: str = ""
+    band_base_url: str = "http://localhost:4000"
+    band_ws_url: str = "ws://localhost:4000/api/v1/socket/websocket"
+    test_agent_id: str = ""
+    test_agent_id_2: str = ""
 
     # E2E-specific settings (override via environment variables)
     e2e_llm_model: str = "gpt-5.4-mini"
@@ -110,8 +118,8 @@ def _check_e2e_status() -> tuple[bool, str]:
         settings = E2ESettings()
         if not settings.e2e_tests_enabled:
             return True, "E2E_TESTS_ENABLED is not set to true"
-        if not settings.thenvoi_api_key:
-            return True, "THENVOI_API_KEY is not set"
+        if not settings.band_api_key:
+            return True, "BAND_API_KEY is not set"
         return False, "E2E tests enabled"
     except (ValidationError, ValueError, OSError) as exc:
         logger.warning(
@@ -126,6 +134,11 @@ _e2e_is_disabled, _e2e_skip_reason = _check_e2e_status()
 requires_e2e = pytest.mark.skipif(
     _e2e_is_disabled,
     reason=_e2e_skip_reason or "E2E tests disabled",
+)
+
+requires_openai = pytest.mark.skipif(
+    not os.environ.get("OPENAI_API_KEY"),
+    reason="OPENAI_API_KEY not set",
 )
 
 
@@ -178,12 +191,12 @@ def e2e_session_client(
     session-scoped fixture. AsyncRestClient has no close() method — the
     underlying httpx client is managed internally.
     """
-    if not e2e_config.thenvoi_api_key:
-        pytest.skip("THENVOI_API_KEY not set")
+    if not e2e_config.band_api_key:
+        pytest.skip("BAND_API_KEY not set")
 
     return AsyncRestClient(
-        api_key=e2e_config.thenvoi_api_key,
-        base_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key,
+        base_url=e2e_config.band_base_url,
     )
 
 
@@ -197,12 +210,12 @@ def e2e_user_client(
     (not the agent). The agent runtime skips self-authored messages, so
     using the agent client would silently fail to trigger processing.
     """
-    if not e2e_config.thenvoi_api_key_user:
-        pytest.skip("THENVOI_API_KEY_USER not set (needed for user REST client)")
+    if not e2e_config.band_api_key_user:
+        pytest.skip("BAND_API_KEY_USER not set (needed for user REST client)")
 
     return AsyncRestClient(
-        api_key=e2e_config.thenvoi_api_key_user,
-        base_url=e2e_config.thenvoi_base_url,
+        api_key=e2e_config.band_api_key_user,
+        base_url=e2e_config.band_base_url,
     )
 
 
@@ -378,7 +391,7 @@ async def ws_client(
 ) -> AsyncGenerator[TrackingWebSocketClient, None]:
     """Session-scoped WebSocket client for observing agent responses.
 
-    Connects as the **User** (via ``thenvoi_api_key_user``) rather than
+    Connects as the **User** (via ``band_api_key_user``) rather than
     the agent. The platform enforces one WS connection per agent, so a
     second agent connection would kill the Agent's own connection. The
     User is a room participant and receives the same ``message_created``
@@ -390,12 +403,12 @@ async def ws_client(
     Wraps the raw WebSocketClient in a TrackingWebSocketClient that tracks
     joined channels and explicitly leaves them on teardown.
     """
-    if not e2e_config.thenvoi_api_key_user:
-        pytest.skip("THENVOI_API_KEY_USER not set (needed for WS observer)")
+    if not e2e_config.band_api_key_user:
+        pytest.skip("BAND_API_KEY_USER not set (needed for WS observer)")
 
     ws = WebSocketClient(
-        ws_url=e2e_config.thenvoi_ws_url,
-        api_key=e2e_config.thenvoi_api_key_user,
+        ws_url=e2e_config.band_ws_url,
+        api_key=e2e_config.band_api_key_user,
         agent_id=None,  # User connection, not agent
     )
 

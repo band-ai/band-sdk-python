@@ -19,9 +19,9 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator
 
 import pytest
-from thenvoi_rest import AsyncRestClient
+from band_rest import AsyncRestClient
 
-from thenvoi.agent import Agent
+from band.agent import Agent
 
 from tests.e2e.adapters.conftest import AdapterFactory
 from tests.e2e.conftest import E2ESettings, requires_e2e
@@ -54,9 +54,9 @@ class TestAdapterE2E:
         agent = Agent.create(
             adapter=adapter,
             agent_id=e2e_config.test_agent_id,
-            api_key=e2e_config.thenvoi_api_key,
-            ws_url=e2e_config.thenvoi_ws_url,
-            rest_url=e2e_config.thenvoi_base_url,
+            api_key=e2e_config.band_api_key,
+            ws_url=e2e_config.band_ws_url,
+            rest_url=e2e_config.band_base_url,
         )
 
         async with agent:
@@ -97,7 +97,7 @@ class TestAdapterE2E:
         running_agent: tuple[str, Agent],
         api_client: AsyncRestClient,
     ):
-        """Verify the agent uses thenvoi_send_message tool to respond."""
+        """Verify the agent uses band_send_message tool to respond."""
         adapter_name, agent = running_agent
         chat_id, _user_id, _user_name = e2e_adapter_room
         agent_id, agent_name = e2e_agent_info

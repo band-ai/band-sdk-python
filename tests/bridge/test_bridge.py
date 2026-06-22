@@ -1,4 +1,4 @@
-"""Tests for AgentRunner and ThenvoiBridge (dumb-pipe behavior)."""
+"""Tests for AgentRunner and BandBridge (dumb-pipe behavior)."""
 
 from __future__ import annotations
 
@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock
 
-from bridge_core.bridge import AgentRunner, ThenvoiBridge
+from bridge_core.bridge import AgentRunner, BandBridge
 from bridge_core.config import BridgeConfig, ReconnectConfig
 from bridge_core.forwarder import Forwarder
-from thenvoi.runtime.types import PlatformMessage
-from thenvoi.platform.event import (
+from band.runtime.types import PlatformMessage
+from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
     RoomAddedEvent,
@@ -504,11 +504,11 @@ class TestAgentRunnerPerRoomSerialization:
 
 
 # ---------------------------------------------------------------------------
-# ThenvoiBridge — orchestration
+# BandBridge — orchestration
 # ---------------------------------------------------------------------------
 
 
-class TestThenvoiBridgeConstruction:
+class TestBandBridgeConstruction:
     def test_builds_runner_per_agent(self) -> None:
         config = BridgeConfig(
             agents=[
@@ -522,7 +522,7 @@ class TestThenvoiBridgeConstruction:
             "a2": FakeForwarder(),
         }
 
-        bridge = ThenvoiBridge(config=config, forwarders=forwarders, links=links)
+        bridge = BandBridge(config=config, forwarders=forwarders, links=links)
 
         assert len(bridge.runners) == 2
         ids = {r.agent_id for r in bridge.runners}
@@ -539,7 +539,7 @@ class TestThenvoiBridgeConstruction:
         fwd_b = FakeForwarder()
         links = {"a1": make_link_mock(), "a2": make_link_mock()}
 
-        bridge = ThenvoiBridge(
+        bridge = BandBridge(
             config=config,
             forwarders={"a1": fwd_a, "a2": fwd_b},
             links=links,
@@ -550,7 +550,7 @@ class TestThenvoiBridgeConstruction:
         assert runners_by_id["a2"].forwarder is fwd_b
 
 
-class TestThenvoiBridgeMultiIdentityIsolation:
+class TestBandBridgeMultiIdentityIsolation:
     """Regression test for the kill-shot single-identity bug: a message in
     a shared room must be forwardable to each agent that participates.
     """
@@ -564,7 +564,7 @@ class TestThenvoiBridgeMultiIdentityIsolation:
         )
         fwd_a = FakeForwarder()
         fwd_b = FakeForwarder()
-        bridge = ThenvoiBridge(
+        bridge = BandBridge(
             config=config,
             forwarders={"a1": fwd_a, "a2": fwd_b},
             links={"a1": make_link_mock(), "a2": make_link_mock()},
@@ -588,14 +588,12 @@ class TestThenvoiBridgeMultiIdentityIsolation:
         assert len(fwd_a.forwarded) == 0
 
 
-class TestThenvoiBridgeShutdown:
+class TestBandBridgeShutdown:
     async def test_shutdown_closes_runners(self) -> None:
         fwd = FakeForwarder()
         link = make_link_mock()
         config = BridgeConfig(agents=[make_http_agent(agent_id="a1")])
-        bridge = ThenvoiBridge(
-            config=config, forwarders={"a1": fwd}, links={"a1": link}
-        )
+        bridge = BandBridge(config=config, forwarders={"a1": fwd}, links={"a1": link})
 
         await bridge._shutdown()
 

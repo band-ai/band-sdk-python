@@ -1,5 +1,5 @@
 """
-Standalone calculator graph - completely independent of Thenvoi.
+Standalone calculator graph - completely independent of Band.
 
 This is a simple LangGraph that performs mathematical calculations.
 It can be imported and used as a tool in any agent.
@@ -46,7 +46,7 @@ def create_calculator_graph():
     """
     Creates a compiled calculator graph.
 
-    This is a standalone graph that knows nothing about Thenvoi.
+    This is a standalone graph that knows nothing about Band.
     It simply takes input parameters and returns results.
 
     Returns:

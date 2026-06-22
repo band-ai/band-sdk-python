@@ -14,8 +14,8 @@ import logging
 import uuid
 
 import pytest
-from thenvoi_rest import ChatEventRequest, ChatMessageRequest
-from thenvoi_rest.types import ChatMessageRequestMentionsItem as Mention
+from band_rest import ChatEventRequest, ChatMessageRequest
+from band_rest.types import ChatMessageRequestMentionsItem as Mention
 
 from tests.integration.conftest import requires_api
 
@@ -74,7 +74,7 @@ class TestGoogleADKConverterIntegration:
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
 
-        from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+        from band.converters.google_adk import GoogleADKHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -183,7 +183,7 @@ class TestGoogleADKConverterIntegration:
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
 
-        from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+        from band.converters.google_adk import GoogleADKHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -295,7 +295,7 @@ class TestGoogleADKConverterEdgeCases:
         if shared_room is None:
             pytest.skip("shared_room not available")
 
-        from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+        from band.converters.google_adk import GoogleADKHistoryConverter
 
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
@@ -331,7 +331,7 @@ class TestGoogleADKConverterEdgeCases:
         if shared_room is None:
             pytest.skip("shared_room not available")
 
-        from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+        from band.converters.google_adk import GoogleADKHistoryConverter
 
         chat_id = shared_room
         marker = uuid.uuid4().hex[:8]
@@ -369,7 +369,7 @@ class TestGoogleADKConverterEdgeCases:
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
 
-        from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+        from band.converters.google_adk import GoogleADKHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name
@@ -440,7 +440,7 @@ class TestGoogleADKMultiTurnConversation:
         if shared_room is None or shared_agent1_info is None:
             pytest.skip("shared_room or shared_agent1_info not available")
 
-        from thenvoi.converters.google_adk import GoogleADKHistoryConverter
+        from band.converters.google_adk import GoogleADKHistoryConverter
 
         chat_id = shared_room
         agent_name = shared_agent1_info.name

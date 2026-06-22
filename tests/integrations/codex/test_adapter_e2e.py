@@ -11,10 +11,10 @@ from typing import Any
 
 import pytest
 
-from thenvoi.adapters.codex import CodexAdapter, CodexAdapterConfig
-from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
-from thenvoi.integrations.codex import CodexJsonRpcError, RpcEvent
-from thenvoi.testing import FakeAgentTools
+from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.integrations.codex import CodexJsonRpcError, RpcEvent
+from band.testing import FakeAgentTools
 
 
 def _platform_message(content: str, *, room_id: str = "room-1") -> PlatformMessage:
@@ -62,7 +62,7 @@ class _ToolSchemaFakeTools(FakeAgentTools):
             {
                 "type": "function",
                 "function": {
-                    "name": "thenvoi_send_message",
+                    "name": "band_send_message",
                     "description": "Send a message",
                     "parameters": {
                         "type": "object",

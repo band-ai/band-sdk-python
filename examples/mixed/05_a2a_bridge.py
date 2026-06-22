@@ -1,14 +1,14 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["thenvoi-sdk[a2a]"]
+# dependencies = ["band-sdk[a2a]"]
 #
 # [tool.uv.sources]
-# thenvoi-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
 # ///
 """
 Mixed-example bridge launcher.
 
-Starts two Thenvoi bridge agents in one process:
+Starts two Band bridge agents in one process:
 - one bridge for the remote contract checker A2A service
 - one bridge for the remote risk reviewer A2A service
 
@@ -29,19 +29,17 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
-from thenvoi import Agent
-from thenvoi.adapters import A2AAdapter
+from band import Agent
+from band.adapters import A2AAdapter
 
 logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).with_name("agents.yaml")
 
 
 def _load_platform_urls() -> tuple[str, str]:
-    """Load Thenvoi URLs, defaulting to the hosted platform."""
-    ws_url = os.getenv(
-        "THENVOI_WS_URL", "wss://app.thenvoi.com/api/v1/socket/websocket"
-    )
-    rest_url = os.getenv("THENVOI_REST_URL", "https://app.thenvoi.com")
+    """Load Band URLs, defaulting to the hosted platform."""
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
 
     return ws_url, rest_url
 
@@ -53,7 +51,7 @@ def _build_bridge_agent(
     ws_url: str,
     rest_url: str,
 ) -> Agent:
-    """Create one Thenvoi bridge agent for a remote A2A service."""
+    """Create one Band bridge agent for a remote A2A service."""
     adapter = A2AAdapter(remote_url=remote_url, streaming=True)
 
     return Agent.from_config(

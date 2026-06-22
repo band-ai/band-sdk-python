@@ -65,7 +65,7 @@ Triggered on push to `main` (i.e. after a promotion PR merges).
 
 1. release-please opens/updates a release PR, or — when a release PR merges —
    tags the release and updates the changelog and version.
-2. On a created release, publishes both `thenvoi-sdk` and `band-sdk` to PyPI.
+2. On a created release, publishes both `band-sdk` and `band-sdk` to PyPI.
 
 ## Promotion Workflow
 

@@ -11,12 +11,12 @@ import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from thenvoi_rest import AsyncRestClient, ChatMessageRequest
-from thenvoi_rest.types import (
+from band_rest import AsyncRestClient, ChatMessageRequest
+from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
 )
 
-from thenvoi.client.streaming import MessageCreatedPayload, WebSocketClient
+from band.client.streaming import MessageCreatedPayload, WebSocketClient
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +264,7 @@ async def run_tool_execution_test(
     timeout: float,
     adapter_name: str,
 ) -> list[MessageCreatedPayload]:
-    """Run a tool execution test: verify agent uses thenvoi_send_message.
+    """Run a tool execution test: verify agent uses band_send_message.
 
     Args:
         api_client: User-scoped REST client (sends the trigger message).

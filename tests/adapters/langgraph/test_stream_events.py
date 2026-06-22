@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from thenvoi.adapters.langgraph import LangGraphAdapter
-from thenvoi.core.types import AdapterFeatures, Emit
+from band.adapters.langgraph import LangGraphAdapter
+from band.core.types import AdapterFeatures, Emit
 
 
 class TestStreamEventHandling:
@@ -22,7 +22,7 @@ class TestStreamEventHandling:
 
         event = {
             "event": "on_tool_start",
-            "name": "thenvoi_send_message",
+            "name": "band_send_message",
             "run_id": "run-123",
             "data": {"input": {"content": "Hello"}},
         }
@@ -44,7 +44,7 @@ class TestStreamEventHandling:
 
         event = {
             "event": "on_tool_end",
-            "name": "thenvoi_send_message",
+            "name": "band_send_message",
             "run_id": "run-123",
             "data": {"output": "success"},
         }
@@ -68,7 +68,7 @@ class TestStreamEventHandling:
 
         event = {
             "event": "on_tool_error",
-            "name": "thenvoi_send_message",
+            "name": "band_send_message",
             "run_id": "run-123",
             "data": {"error": "missing mentions"},
         }
@@ -125,7 +125,7 @@ class TestStreamEventHandling:
 
         event = {
             "event": "on_tool_start",
-            "name": "thenvoi_send_message",
+            "name": "band_send_message",
             "run_id": "run-123",
             "data": {"input": {"content": "Hello"}},
         }

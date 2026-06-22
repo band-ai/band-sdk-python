@@ -1,12 +1,12 @@
-# LangGraph Examples for Thenvoi
+# LangGraph Examples for Band
 
-This guide explains how to integrate LangGraph agents with the Thenvoi platform using the composition-based SDK.
+This guide explains how to integrate LangGraph agents with the Band platform using the composition-based SDK.
 
 ## Prerequisites
 
 **If running from repository:**
 ```bash
-# From thenvoi-sdk-python/ directory
+# From band-sdk-python/ directory
 uv sync --extra langgraph
 ```
 
@@ -17,15 +17,15 @@ uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[langgraph]"
 
 **Configuration:**
 - Set `OPENAI_API_KEY` environment variable. Optionally set `OPENAI_MODEL` to override the default `gpt-5.4-mini` model.
-- Configure agent credentials (see main [README](../../README.md#creating-remote-agents-on-thenvoi-platform)).
+- Configure agent credentials (see main [README](../../README.md#creating-remote-agents-on-band-platform)).
 
 ---
 
 ## Quick Start
 
 ```python
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
+from band import Agent
+from band.adapters import LangGraphAdapter
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -56,6 +56,12 @@ await agent.run()
 | `02_custom_tools.py` | **Custom tools** - Built-in agent + calculator and weather tools using `additional_tools`. |
 | `03_custom_personality.py` | Custom personality - built-in agent plus pirate behavior using `custom_section`. |
 
+### Platform Capabilities
+
+| File | Description |
+|------|-------------|
+| `10_memory_tool_usage.py` | **Memory tools** - Enables durable Band memory for user preferences, facts, and reusable instructions. |
+
 ### Advanced: Delegating to Sub-Agents
 
 | File | Description |
@@ -80,8 +86,8 @@ await agent.run()
 
 ```python
 from langchain_core.tools import tool
-from thenvoi import Agent
-from thenvoi.adapters import LangGraphAdapter
+from band import Agent
+from band.adapters import LangGraphAdapter
 
 @tool
 def my_custom_tool(query: str) -> str:
@@ -105,7 +111,7 @@ await agent.run()
 Use `graph_as_tool()` to wrap a standalone LangGraph as a tool for the main agent:
 
 ```python
-from thenvoi.integrations.langgraph import graph_as_tool
+from band.integrations.langgraph import graph_as_tool
 
 # Create a sub-graph for specialized work
 calculator_graph = create_calculator_graph()
@@ -150,17 +156,17 @@ All LangGraph agents automatically have access to:
 
 | Tool | Description |
 |------|-------------|
-| `thenvoi_send_message` | Send a message to the chat room |
-| `thenvoi_add_participant` | Add a user or agent to the room |
-| `thenvoi_remove_participant` | Remove a participant from the room |
-| `thenvoi_lookup_peers` | List users/agents that can be added |
-| `thenvoi_get_participants` | List current room participants |
-| `thenvoi_create_chatroom` | Create a new chat room |
-| `thenvoi_send_event` | Send a non-message event such as thought, task, or error |
+| `band_send_message` | Send a message to the chat room |
+| `band_add_participant` | Add a user or agent to the room |
+| `band_remove_participant` | Remove a participant from the room |
+| `band_lookup_peers` | List users/agents that can be added |
+| `band_get_participants` | List current room participants |
+| `band_create_chatroom` | Create a new chat room |
+| `band_send_event` | Send a non-message event such as thought, task, or error |
 
 Contact tools are available when `Capability.CONTACTS` is enabled. Memory tools are available when `Capability.MEMORY` is enabled.
 
-All tools automatically know which room they're operating in through the LangGraph `thread_id`; do not pass room IDs manually. Use `thenvoi_send_message` when another participant should be woken up, and include the participant in `mentions`. Use `thenvoi_send_event` for non-waking telemetry such as thoughts, task status, or errors.
+All tools automatically know which room they're operating in through the LangGraph `thread_id`; do not pass room IDs manually. Use `band_send_message` when another participant should be woken up, and include the participant in `mentions`. Use `band_send_event` for non-waking telemetry such as thoughts, task status, or errors.
 
 ---
 
@@ -192,6 +198,9 @@ uv run --extra langgraph python examples/langgraph/08_jerry_agent.py
 
 # Custom operations graph with platform reporting and subgraph delegation
 uv run --extra langgraph python examples/langgraph/09_research_ops_orchestrator.py
+
+# Memory tools
+uv run --extra langgraph python examples/langgraph/10_memory_tool_usage.py
 ```
 
 **Using as external library:**
@@ -235,6 +244,10 @@ research_ops_agent:
   agent_id: "agent_ops"
   api_key: "key_ops"
 
+memory_agent:
+  agent_id: "agent_memory"
+  api_key: "key_memory"
+
 # Also used by multi-agent examples:
 tom_agent:
   agent_id: "agent_tom"
@@ -248,7 +261,7 @@ jerry_agent:
 Load config in your code:
 
 ```python
-from thenvoi.config import load_agent_config
+from band.config import load_agent_config
 
 agent_id, api_key = load_agent_config("simple_agent")
 ```

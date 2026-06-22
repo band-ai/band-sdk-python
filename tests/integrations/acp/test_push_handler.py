@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from thenvoi.integrations.acp.push_handler import ACPPushHandler
-from thenvoi.integrations.acp.server_adapter import ThenvoiACPServerAdapter
+from band.integrations.acp.push_handler import ACPPushHandler
+from band.integrations.acp.server_adapter import BandACPServerAdapter
 
 from .conftest import make_platform_message
 
@@ -18,7 +18,7 @@ class TestACPPushHandler:
     @pytest.mark.asyncio
     async def test_push_sends_session_update(self) -> None:
         """Should send session_update for mapped room with ACP client."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         mock_client = AsyncMock()
         mock_client.session_update = AsyncMock()
         adapter._acp_client = mock_client
@@ -28,7 +28,7 @@ class TestACPPushHandler:
         msg = make_platform_message("New activity", room_id="room-123")
 
         with patch(
-            "thenvoi.integrations.acp.push_handler.EventConverter"
+            "band.integrations.acp.push_handler.EventConverter"
         ) as mock_converter:
             mock_converter.convert.return_value = "mock-chunk"
             await handler.handle_push_event(msg, "room-123")
@@ -41,7 +41,7 @@ class TestACPPushHandler:
     @pytest.mark.asyncio
     async def test_push_uses_event_converter(self) -> None:
         """Should convert message via EventConverter."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         mock_client = AsyncMock()
         adapter._acp_client = mock_client
         adapter._room_to_session["room-123"] = "session-abc"
@@ -52,7 +52,7 @@ class TestACPPushHandler:
         )
 
         with patch(
-            "thenvoi.integrations.acp.push_handler.EventConverter"
+            "band.integrations.acp.push_handler.EventConverter"
         ) as mock_converter:
             mock_converter.convert.return_value = "thought-chunk"
             await handler.handle_push_event(msg, "room-123")
@@ -62,7 +62,7 @@ class TestACPPushHandler:
     @pytest.mark.asyncio
     async def test_push_no_client_no_crash(self) -> None:
         """Should handle gracefully when no ACP client is connected."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         adapter._room_to_session["room-123"] = "session-abc"
         # No _acp_client set
 
@@ -75,7 +75,7 @@ class TestACPPushHandler:
     @pytest.mark.asyncio
     async def test_push_no_session_mapping_skips(self) -> None:
         """Should skip when room has no session mapping."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         mock_client = AsyncMock()
         adapter._acp_client = mock_client
 
@@ -89,7 +89,7 @@ class TestACPPushHandler:
     @pytest.mark.asyncio
     async def test_push_none_chunk_not_sent(self) -> None:
         """Should not send when EventConverter returns None."""
-        adapter = ThenvoiACPServerAdapter()
+        adapter = BandACPServerAdapter()
         mock_client = AsyncMock()
         adapter._acp_client = mock_client
         adapter._room_to_session["room-123"] = "session-abc"
@@ -98,7 +98,7 @@ class TestACPPushHandler:
         msg = make_platform_message("Hello", room_id="room-123")
 
         with patch(
-            "thenvoi.integrations.acp.push_handler.EventConverter"
+            "band.integrations.acp.push_handler.EventConverter"
         ) as mock_converter:
             mock_converter.convert.return_value = None
             await handler.handle_push_event(msg, "room-123")

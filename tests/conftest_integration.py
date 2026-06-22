@@ -10,7 +10,7 @@ Skip integration tests (run only unit tests):
     uv run pytest tests/ --ignore=tests/integration/
 
 To override .env.test values, set environment variables:
-    THENVOI_API_KEY="your-key" uv run pytest tests/integration/ -v
+    BAND_API_KEY="your-key" uv run pytest tests/integration/ -v
 
 Room reuse strategy:
     Tests share 2 session-scoped rooms to stay within the platform's
@@ -29,11 +29,11 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
-from thenvoi_rest import AsyncRestClient, ChatRoomRequest
-from thenvoi_rest.core.api_error import ApiError
-from thenvoi_rest.types import ParticipantRequest
+from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest.core.api_error import ApiError
+from band_rest.types import ParticipantRequest
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
-from thenvoi_testing.settings import ThenvoiTestSettings
+from thenvoi_testing.settings import BaseTestSettings
 
 if TYPE_CHECKING:
     from _pytest.config.argparsing import Parser
@@ -65,7 +65,7 @@ def is_no_clean_mode(request: pytest.FixtureRequest | None = None) -> bool:
 
     No-clean mode can be enabled via:
     - --no-clean pytest option
-    - THENVOI_TEST_NO_CLEAN environment variable
+    - BAND_TEST_NO_CLEAN environment variable
 
     Usage in fixtures:
         @pytest.fixture
@@ -76,7 +76,7 @@ def is_no_clean_mode(request: pytest.FixtureRequest | None = None) -> bool:
                 await user_api_client.human_api_agents.delete_my_agent(id=agent.id, force=True)
     """
     # Check environment variable first
-    if os.environ.get("THENVOI_TEST_NO_CLEAN", "").lower() in ("1", "true", "yes"):
+    if os.environ.get("BAND_TEST_NO_CLEAN", "").lower() in ("1", "true", "yes"):
         return True
 
     # Check pytest option if request is available
@@ -95,10 +95,18 @@ def is_no_clean_mode(request: pytest.FixtureRequest | None = None) -> bool:
 # =============================================================================
 
 
-class TestSettings(ThenvoiTestSettings):
+class TestSettings(BaseTestSettings):
     """Settings for integration tests, loaded from .env.test."""
 
     _env_file_path = Path(__file__).parent.parent / ".env.test"
+
+    band_api_key: str = ""
+    band_api_key_2: str = ""
+    band_api_key_user: str = ""
+    band_base_url: str = "http://localhost:4000"
+    band_ws_url: str = "ws://localhost:4000/api/v1/socket/websocket"
+    test_agent_id: str = ""
+    test_agent_id_2: str = ""
 
 
 # Load .env.test into os.environ so skip_without_env() markers (which check
@@ -112,23 +120,23 @@ test_settings = TestSettings()
 
 
 def get_api_key() -> str | None:
-    return test_settings.thenvoi_api_key or None
+    return test_settings.band_api_key or None
 
 
 def get_api_key_2() -> str | None:
-    return test_settings.thenvoi_api_key_2 or None
+    return test_settings.band_api_key_2 or None
 
 
 def get_user_api_key() -> str | None:
-    return test_settings.thenvoi_api_key_user or None
+    return test_settings.band_api_key_user or None
 
 
 def get_base_url() -> str:
-    return test_settings.thenvoi_base_url
+    return test_settings.band_base_url
 
 
 def get_ws_url() -> str:
-    return test_settings.thenvoi_ws_url
+    return test_settings.band_ws_url
 
 
 def get_test_agent_id() -> str | None:
@@ -140,14 +148,14 @@ def get_test_agent_id_2() -> str | None:
 
 
 # Skip markers using thenvoi_testing shared markers
-requires_api = skip_without_env("THENVOI_API_KEY")
+requires_api = skip_without_env("BAND_API_KEY")
 
 requires_multi_agent = skip_without_envs(
-    ["THENVOI_API_KEY", "THENVOI_API_KEY_2"],
-    reason="Both THENVOI_API_KEY and THENVOI_API_KEY_2 required for multi-agent tests",
+    ["BAND_API_KEY", "BAND_API_KEY_2"],
+    reason="Both BAND_API_KEY and BAND_API_KEY_2 required for multi-agent tests",
 )
 
-requires_user_api = skip_without_env("THENVOI_API_KEY_USER")
+requires_user_api = skip_without_env("BAND_API_KEY_USER")
 
 
 # =============================================================================
@@ -239,7 +247,7 @@ def session_api_client_2() -> AsyncRestClient | None:
 def api_client() -> AsyncRestClient | None:
     """Create a real async API client for integration tests (primary agent).
 
-    Returns None if THENVOI_API_KEY is not set.
+    Returns None if BAND_API_KEY is not set.
     Uses function scope to avoid event loop issues with async tests.
     """
     api_key = get_api_key()
@@ -256,7 +264,7 @@ def api_client() -> AsyncRestClient | None:
 def api_client_2() -> AsyncRestClient | None:
     """Create a real async API client for the secondary agent.
 
-    Returns None if THENVOI_API_KEY_2 is not set.
+    Returns None if BAND_API_KEY_2 is not set.
     """
     api_key = get_api_key_2()
     if not api_key:
@@ -277,7 +285,7 @@ def user_api_client() -> AsyncRestClient | None:
     - Listing owned agents
     - Deleting agents
 
-    Returns None if THENVOI_API_KEY_USER is not set.
+    Returns None if BAND_API_KEY_USER is not set.
     """
     api_key = get_user_api_key()
     if not api_key:
@@ -482,7 +490,7 @@ async def test_chat(shared_room: str | None) -> str | None:
     This replaces the old fixture that created a new room per test.
     """
     if shared_room is None:
-        pytest.skip("THENVOI_API_KEY not set")
+        pytest.skip("BAND_API_KEY not set")
 
     return shared_room
 
@@ -495,7 +503,7 @@ async def test_peer_id(api_client: AsyncRestClient | None) -> str | None:
     This avoids P4 protection rule (agent cannot remove its own owner).
     """
     if api_client is None:
-        pytest.skip("THENVOI_API_KEY not set")
+        pytest.skip("BAND_API_KEY not set")
 
     # Get agent's owner_uuid to exclude from peer selection
     agent_me = await api_client.agent_api_identity.get_agent_me()

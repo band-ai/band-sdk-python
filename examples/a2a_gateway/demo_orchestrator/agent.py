@@ -40,10 +40,10 @@ async def call_peer_agent(
     message: str,
     config: Annotated[RunnableConfig, InjectedToolArg],
 ) -> str:
-    """Call a Thenvoi platform peer via the A2A Gateway.
+    """Call a Band platform peer via the A2A Gateway.
 
     Use this tool to delegate tasks to specialized agents available on the
-    Thenvoi platform. Each peer has specific capabilities - choose the
+    Band platform. Each peer has specific capabilities - choose the
     appropriate peer based on the user's request.
 
     Args:
@@ -97,7 +97,7 @@ class OrchestratorAgent:
             logger.info("%s", item)
     """
 
-    SYSTEM_INSTRUCTION = """You are an orchestrator agent that helps users by routing their requests to specialized agents on the Thenvoi platform.
+    SYSTEM_INSTRUCTION = """You are an orchestrator agent that helps users by routing their requests to specialized agents on the Band platform.
 
 Available peers you can call via the A2A Gateway:
 {peers_list}

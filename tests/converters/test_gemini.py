@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from thenvoi.converters.gemini import GeminiHistoryConverter
+from band.converters.gemini import GeminiHistoryConverter
 
 
 class TestToolEventConversion:
@@ -227,7 +227,7 @@ class TestTextMessageConversion:
         raw = [
             {
                 "role": "assistant",
-                "content": '{"name": "thenvoi_send_message", "args": {"content": "Hello"}, "tool_call_id": "tc_1"}',
+                "content": '{"name": "band_send_message", "args": {"content": "Hello"}, "tool_call_id": "tc_1"}',
                 "sender_name": "MyBot",
                 "message_type": "tool_call",
             },
@@ -239,7 +239,7 @@ class TestTextMessageConversion:
             },
             {
                 "role": "assistant",
-                "content": '{"name": "thenvoi_send_message", "output": {"status": "sent"}, "tool_call_id": "tc_1"}',
+                "content": '{"name": "band_send_message", "output": {"status": "sent"}, "tool_call_id": "tc_1"}',
                 "sender_name": "MyBot",
                 "message_type": "tool_result",
             },

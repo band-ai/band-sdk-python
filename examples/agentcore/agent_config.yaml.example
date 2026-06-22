@@ -1,11 +1,11 @@
 # Template config for the AgentCore demo (weather / math / personal_assistant).
 #
 # This file is for the bridge: it is converted to a single JSON env var
-# (THENVOI_BRIDGE_AGENTS) consumed by bridge_core.BridgeConfig.from_env().
+# (BAND_BRIDGE_AGENTS) consumed by bridge_core.BridgeConfig.from_env().
 #
 # Each agent entry needs:
-#   agent_id:    Thenvoi agent UUID (from the platform).
-#   api_key:     Thenvoi REST API key for that agent.
+#   agent_id:    Band agent UUID (from the platform).
+#   api_key:     Band REST API key for that agent.
 #   runtime_arn: AgentCore Runtime ARN where the container is deployed.
 #   region:      AWS region for that runtime.
 #
@@ -15,7 +15,7 @@
 agents:
   - name: weather
     agent_id: ""        # e.g. "11111111-1111-1111-1111-111111111111"
-    api_key: ""         # e.g. "thnv_a_..."
+    api_key: ""         # e.g. "band_a_..."
     runtime_arn: ""     # e.g. "arn:aws:bedrock-agentcore:us-east-1:123:runtime/weather-abc"
     region: us-east-1
 

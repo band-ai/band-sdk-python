@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.integrations.parlant.tools import (
+from band.integrations.parlant.tools import (
     _session_message_sent,
     _session_tools,
     create_parlant_tools,
@@ -111,21 +111,21 @@ class TestDeprecatedFunctions:
 
     def test_set_current_tools_emits_deprecation_warning(self):
         """Should emit deprecation warning."""
-        from thenvoi.integrations.parlant.tools import set_current_tools
+        from band.integrations.parlant.tools import set_current_tools
 
         with pytest.warns(DeprecationWarning, match="set_current_tools is deprecated"):
             set_current_tools(MagicMock())
 
     def test_get_current_tools_emits_deprecation_warning(self):
         """Should emit deprecation warning."""
-        from thenvoi.integrations.parlant.tools import get_current_tools
+        from band.integrations.parlant.tools import get_current_tools
 
         with pytest.warns(DeprecationWarning, match="get_current_tools is deprecated"):
             get_current_tools()
 
     def test_get_current_tools_returns_none(self):
         """Should return None (tools now accessed via session_id)."""
-        from thenvoi.integrations.parlant.tools import get_current_tools
+        from band.integrations.parlant.tools import get_current_tools
 
         with pytest.warns(DeprecationWarning):
             result = get_current_tools()
@@ -152,18 +152,18 @@ class TestCreateParlantTools:
 
         # Tools are ToolEntry objects with a .tool attribute containing the Tool
         tool_names = [t.tool.name for t in tools]
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_send_event" in tool_names
-        assert "thenvoi_add_participant" in tool_names
-        assert "thenvoi_remove_participant" in tool_names
-        assert "thenvoi_lookup_peers" in tool_names
-        assert "thenvoi_get_participants" in tool_names
-        assert "thenvoi_create_chatroom" in tool_names
-        assert "thenvoi_list_contacts" in tool_names
-        assert "thenvoi_add_contact" in tool_names
-        assert "thenvoi_remove_contact" in tool_names
-        assert "thenvoi_list_contact_requests" in tool_names
-        assert "thenvoi_respond_contact_request" in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_send_event" in tool_names
+        assert "band_add_participant" in tool_names
+        assert "band_remove_participant" in tool_names
+        assert "band_lookup_peers" in tool_names
+        assert "band_get_participants" in tool_names
+        assert "band_create_chatroom" in tool_names
+        assert "band_list_contacts" in tool_names
+        assert "band_add_contact" in tool_names
+        assert "band_remove_contact" in tool_names
+        assert "band_list_contact_requests" in tool_names
+        assert "band_respond_contact_request" in tool_names
 
     def test_tools_have_descriptions(self):
         """Should have descriptions for all tools."""
@@ -177,7 +177,7 @@ class TestCreateParlantTools:
         tools = create_parlant_tools()
 
         send_message_entry = next(
-            t for t in tools if t.tool.name == "thenvoi_send_message"
+            t for t in tools if t.tool.name == "band_send_message"
         )
         # Parameters is a dict with param names as keys
         param_names = list(send_message_entry.tool.parameters.keys())
@@ -189,7 +189,7 @@ class TestCreateParlantTools:
         """send_event should have message_type parameter."""
         tools = create_parlant_tools()
 
-        send_event_entry = next(t for t in tools if t.tool.name == "thenvoi_send_event")
+        send_event_entry = next(t for t in tools if t.tool.name == "band_send_event")
         param_names = list(send_event_entry.tool.parameters.keys())
 
         assert "content" in param_names
@@ -200,7 +200,7 @@ class TestCreateParlantTools:
         tools = create_parlant_tools()
 
         add_participant_entry = next(
-            t for t in tools if t.tool.name == "thenvoi_add_participant"
+            t for t in tools if t.tool.name == "band_add_participant"
         )
         param_names = list(add_participant_entry.tool.parameters.keys())
 
@@ -211,7 +211,7 @@ class TestCreateParlantTools:
         tools = create_parlant_tools()
 
         lookup_peers_entry = next(
-            t for t in tools if t.tool.name == "thenvoi_lookup_peers"
+            t for t in tools if t.tool.name == "band_lookup_peers"
         )
         param_names = list(lookup_peers_entry.tool.parameters.keys())
 
@@ -221,41 +221,41 @@ class TestCreateParlantTools:
 
     def test_excludes_contact_tools_without_capability(self):
         """Contact tools excluded when CONTACTS capability is absent."""
-        from thenvoi.core.types import AdapterFeatures
+        from band.core.types import AdapterFeatures
 
         tools = create_parlant_tools(features=AdapterFeatures())
         tool_names = [t.tool.name for t in tools]
 
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_create_chatroom" in tool_names
-        assert "thenvoi_list_contacts" not in tool_names
-        assert "thenvoi_add_contact" not in tool_names
-        assert "thenvoi_remove_contact" not in tool_names
-        assert "thenvoi_list_contact_requests" not in tool_names
-        assert "thenvoi_respond_contact_request" not in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_create_chatroom" in tool_names
+        assert "band_list_contacts" not in tool_names
+        assert "band_add_contact" not in tool_names
+        assert "band_remove_contact" not in tool_names
+        assert "band_list_contact_requests" not in tool_names
+        assert "band_respond_contact_request" not in tool_names
 
     def test_includes_contact_tools_with_capability(self):
         """Contact tools included when CONTACTS capability is present."""
-        from thenvoi.core.types import AdapterFeatures, Capability
+        from band.core.types import AdapterFeatures, Capability
 
         tools = create_parlant_tools(
             features=AdapterFeatures(capabilities={Capability.CONTACTS})
         )
         tool_names = [t.tool.name for t in tools]
 
-        assert "thenvoi_list_contacts" in tool_names
-        assert "thenvoi_add_contact" in tool_names
-        assert "thenvoi_remove_contact" in tool_names
-        assert "thenvoi_list_contact_requests" in tool_names
-        assert "thenvoi_respond_contact_request" in tool_names
+        assert "band_list_contacts" in tool_names
+        assert "band_add_contact" in tool_names
+        assert "band_remove_contact" in tool_names
+        assert "band_list_contact_requests" in tool_names
+        assert "band_respond_contact_request" in tool_names
 
     def test_includes_contact_tools_when_no_features(self):
         """Contact tools included when features is None (backward compat)."""
         tools = create_parlant_tools(features=None)
         tool_names = [t.tool.name for t in tools]
 
-        assert "thenvoi_list_contacts" in tool_names
-        assert "thenvoi_respond_contact_request" in tool_names
+        assert "band_list_contacts" in tool_names
+        assert "band_respond_contact_request" in tool_names
 
 
 class TestParlantToolFunctions:
@@ -316,7 +316,7 @@ class TestParlantToolFunctions:
         """Should call tools.send_message with parsed mentions."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        send_message = parlant_tools["thenvoi_send_message"]
+        send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello world", "Alice, Bob")
 
         mock_tools.send_message.assert_called_once_with("Hello world", ["Alice", "Bob"])
@@ -329,7 +329,7 @@ class TestParlantToolFunctions:
         """Should mark message as sent after successful send."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        send_message = parlant_tools["thenvoi_send_message"]
+        send_message = parlant_tools["band_send_message"]
         await send_message(mock_context, "Hello", "Alice")
 
         assert was_message_sent(mock_context.session_id) is True
@@ -339,7 +339,7 @@ class TestParlantToolFunctions:
         self, parlant_tools, mock_context
     ):
         """Should return error when no tools available."""
-        send_message = parlant_tools["thenvoi_send_message"]
+        send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello", "Alice")
 
         assert "Error: No tools available" in result.data
@@ -349,32 +349,39 @@ class TestParlantToolFunctions:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should return error when no mentions provided."""
+        mock_tools.agent_id = "self"
+        mock_tools.participants = [
+            {"id": "user-1", "handle": "@alice"},
+            {"id": "self", "handle": "@self"},
+        ]
         set_session_tools(mock_context.session_id, mock_tools)
 
-        send_message = parlant_tools["thenvoi_send_message"]
+        send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello", "")
 
         assert "At least one mention is required" in result.data
+        assert "@alice" in result.data
+        assert "@self" not in result.data
 
     @pytest.mark.asyncio
-    async def test_send_message_translates_thenvoi_tool_error(
+    async def test_send_message_translates_band_tool_error(
         self, parlant_tools, mock_tools, mock_context
     ):
-        """ThenvoiToolError from underlying tool must surface as ToolResult, not crash.
+        """BandToolError from underlying tool must surface as ToolResult, not crash.
 
         Pins the wrapper translation contract: framework wrappers must catch
-        ThenvoiToolError raised by AgentTools and return a model-visible
+        BandToolError raised by AgentTools and return a model-visible
         failure value so the LLM can recover, instead of letting the exception
         crash the turn.
         """
-        from thenvoi.core.exceptions import ThenvoiToolError
+        from band.core.exceptions import BandToolError
 
-        mock_tools.send_message.side_effect = ThenvoiToolError(
+        mock_tools.send_message.side_effect = BandToolError(
             "Backend rejected message: 503 Service Unavailable"
         )
         set_session_tools(mock_context.session_id, mock_tools)
 
-        send_message = parlant_tools["thenvoi_send_message"]
+        send_message = parlant_tools["band_send_message"]
         # Must NOT raise — wrapper translates the exception to a tool failure
         result = await send_message(mock_context, "Hello", "Alice")
 
@@ -389,7 +396,7 @@ class TestParlantToolFunctions:
         """Should call tools.send_event with correct parameters."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        send_event = parlant_tools["thenvoi_send_event"]
+        send_event = parlant_tools["band_send_event"]
         result = await send_event(mock_context, "Thinking...", "thought")
 
         mock_tools.send_event.assert_called_once_with("Thinking...", "thought", None)
@@ -402,7 +409,7 @@ class TestParlantToolFunctions:
         """Should reject invalid message types."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        send_event = parlant_tools["thenvoi_send_event"]
+        send_event = parlant_tools["band_send_event"]
         result = await send_event(mock_context, "Test", "invalid_type")
 
         assert "Invalid message_type" in result.data
@@ -414,7 +421,7 @@ class TestParlantToolFunctions:
         """Should call tools.add_participant."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        add_participant = parlant_tools["thenvoi_add_participant"]
+        add_participant = parlant_tools["band_add_participant"]
         result = await add_participant(mock_context, "Research Agent")
 
         mock_tools.add_participant.assert_called_once_with("Research Agent", "member")
@@ -427,7 +434,7 @@ class TestParlantToolFunctions:
         """Should call tools.remove_participant."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        remove_participant = parlant_tools["thenvoi_remove_participant"]
+        remove_participant = parlant_tools["band_remove_participant"]
         result = await remove_participant(mock_context, "Research Agent")
 
         mock_tools.remove_participant.assert_called_once_with("Research Agent")
@@ -440,7 +447,7 @@ class TestParlantToolFunctions:
         """Should return formatted list of peers."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        lookup_peers = parlant_tools["thenvoi_lookup_peers"]
+        lookup_peers = parlant_tools["band_lookup_peers"]
         result = await lookup_peers(mock_context)
 
         # Pagination is hardcoded in the implementation (page=1, page_size=50)
@@ -456,7 +463,7 @@ class TestParlantToolFunctions:
         mock_tools.lookup_peers.return_value = {"peers": [], "metadata": {}}
         set_session_tools(mock_context.session_id, mock_tools)
 
-        lookup_peers = parlant_tools["thenvoi_lookup_peers"]
+        lookup_peers = parlant_tools["band_lookup_peers"]
         result = await lookup_peers(mock_context)
 
         assert "No available agents found" in result.data
@@ -468,7 +475,7 @@ class TestParlantToolFunctions:
         """Should return formatted list of participants."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        get_participants = parlant_tools["thenvoi_get_participants"]
+        get_participants = parlant_tools["band_get_participants"]
         result = await get_participants(mock_context)
 
         mock_tools.get_participants.assert_called_once()
@@ -483,7 +490,7 @@ class TestParlantToolFunctions:
         mock_tools.get_participants.return_value = []
         set_session_tools(mock_context.session_id, mock_tools)
 
-        get_participants = parlant_tools["thenvoi_get_participants"]
+        get_participants = parlant_tools["band_get_participants"]
         result = await get_participants(mock_context)
 
         assert "No participants in the room" in result.data
@@ -495,7 +502,7 @@ class TestParlantToolFunctions:
         """Should call tools.create_chatroom."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        create_chatroom = parlant_tools["thenvoi_create_chatroom"]
+        create_chatroom = parlant_tools["band_create_chatroom"]
         result = await create_chatroom(mock_context, "task-456")
 
         mock_tools.create_chatroom.assert_called_once_with("task-456")
@@ -508,7 +515,7 @@ class TestParlantToolFunctions:
         """Should handle empty task_id."""
         set_session_tools(mock_context.session_id, mock_tools)
 
-        create_chatroom = parlant_tools["thenvoi_create_chatroom"]
+        create_chatroom = parlant_tools["band_create_chatroom"]
         result = await create_chatroom(mock_context, "")
 
         mock_tools.create_chatroom.assert_called_once_with(None)
@@ -522,7 +529,7 @@ class TestParlantToolFunctions:
         mock_tools.send_message.side_effect = Exception("Connection failed")
         set_session_tools(mock_context.session_id, mock_tools)
 
-        send_message = parlant_tools["thenvoi_send_message"]
+        send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello", "Alice")
 
         assert "Error sending message: Connection failed" in result.data

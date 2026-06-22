@@ -3,10 +3,10 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from thenvoi.core.protocols import FrameworkAdapter, HistoryConverter
-from thenvoi.core.simple_adapter import SimpleAdapter
-from thenvoi.core.types import AgentInput, HistoryProvider, PlatformMessage
-from thenvoi.testing import FakeAgentTools
+from band.core.protocols import FrameworkAdapter, HistoryConverter
+from band.core.simple_adapter import SimpleAdapter
+from band.core.types import AgentInput, HistoryProvider, PlatformMessage
+from band.testing import FakeAgentTools
 
 
 class StringHistoryConverter(HistoryConverter[str]):

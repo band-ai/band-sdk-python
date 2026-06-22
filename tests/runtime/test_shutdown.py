@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.runtime.shutdown import GracefulShutdown, run_with_graceful_shutdown
+from band.runtime.shutdown import GracefulShutdown, run_with_graceful_shutdown
 
 # Scope the warning filter to this module only — _handle_signal creates a
 # task for _shutdown that may not be awaited during synchronous test teardown.

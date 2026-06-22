@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from thenvoi.converters.opencode import OpencodeHistoryConverter
+from band.converters.opencode import OpencodeHistoryConverter
 
 
 class TestOpencodeHistoryConverter:

@@ -1,6 +1,6 @@
 """Local launcher for the dumb-pipe bridge with AgentCore agents.
 
-Reads :class:`BridgeConfig` from the ``THENVOI_BRIDGE_AGENTS`` env var (a
+Reads :class:`BridgeConfig` from the ``BAND_BRIDGE_AGENTS`` env var (a
 JSON array of ``{agent_id, api_key, target}`` entries) and runs the bridge.
 
 Each agent's ``target`` may be either:
@@ -11,7 +11,7 @@ Each agent's ``target`` may be either:
 
 Run from the repo root::
 
-    THENVOI_BRIDGE_AGENTS='[
+    BAND_BRIDGE_AGENTS='[
       {"agent_id":"...","api_key":"...","target":{"type":"agentcore","runtime_arn":"arn:...","region":"us-east-1"}}
     ]' \\
         uv run python examples/agentcore/run_agentcore.py
@@ -25,10 +25,8 @@ import asyncio
 import os
 import sys
 
-# Add thenvoi-bridge dir to path so bridge_core is importable
-sys.path.insert(
-    0, os.path.join(os.path.dirname(__file__), "..", "..", "thenvoi-bridge")
-)
+# Add band-bridge dir to path so bridge_core is importable
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "band-bridge"))
 
 from dotenv import load_dotenv
 

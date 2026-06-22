@@ -3,16 +3,16 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-from thenvoi.client.streaming import MessageCreatedPayload, MessageMetadata
-from thenvoi.core.protocols import Preprocessor
-from thenvoi.core.types import AgentInput, HistoryProvider
-from thenvoi.platform.event import (
+from band.client.streaming import MessageCreatedPayload, MessageMetadata
+from band.core.protocols import Preprocessor
+from band.core.types import AgentInput, HistoryProvider
+from band.platform.event import (
     MessageEvent,
     RoomAddedEvent,
     ParticipantAddedEvent,
 )
-from thenvoi.preprocessing.default import DefaultPreprocessor
-from thenvoi.runtime.types import SessionConfig
+from band.preprocessing.default import DefaultPreprocessor
+from band.runtime.types import SessionConfig
 
 
 def make_message_payload(
@@ -148,10 +148,10 @@ class TestSelfMessageFiltering:
         ctx = make_mock_ctx()
         event = make_message_event(sender_id="agent-2", sender_type="Agent")
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -165,10 +165,10 @@ class TestSelfMessageFiltering:
         ctx = make_mock_ctx()
         event = make_message_event(sender_id="user-1", sender_type="User")
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -191,10 +191,10 @@ class TestAgentInputConstruction:
             sender_type="User",
         )
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -212,10 +212,10 @@ class TestAgentInputConstruction:
         ctx = make_mock_ctx()
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -232,10 +232,10 @@ class TestSessionBootstrap:
         ctx = make_mock_ctx(is_llm_initialized=False)
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -248,10 +248,10 @@ class TestSessionBootstrap:
         ctx = make_mock_ctx(is_llm_initialized=True)
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -264,10 +264,10 @@ class TestSessionBootstrap:
         ctx = make_mock_ctx(is_llm_initialized=False)
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -280,10 +280,10 @@ class TestSessionBootstrap:
         ctx = make_mock_ctx(is_llm_initialized=True)
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -306,14 +306,14 @@ class TestHistoryLoading:
         )
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 with patch(
-                    "thenvoi.preprocessing.default.format_history_for_llm"
+                    "band.preprocessing.default.format_history_for_llm"
                 ) as mock_format:
                     mock_format.return_value = [{"role": "user", "content": "Previous"}]
                     result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -334,10 +334,10 @@ class TestHistoryLoading:
         )
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -356,10 +356,10 @@ class TestHistoryLoading:
         )
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -379,10 +379,10 @@ class TestParticipantsHandling:
         ctx = make_mock_ctx(participants_changed=True)
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = "Alice joined the room"
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -395,10 +395,10 @@ class TestParticipantsHandling:
         ctx = make_mock_ctx(participants_changed=False)
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -416,10 +416,10 @@ class TestAgentToolsCreation:
         event = make_message_event()
 
         mock_agent_tools = MagicMock()
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools_cls:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools_cls:
             mock_tools_cls.from_context.return_value = mock_agent_tools
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")
@@ -441,10 +441,10 @@ class TestHistoryLoadingErrors:
         ctx.get_context = AsyncMock(side_effect=Exception("API error"))
         event = make_message_event()
 
-        with patch("thenvoi.preprocessing.default.AgentTools") as mock_tools:
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
             mock_tools.from_context.return_value = MagicMock()
             with patch(
-                "thenvoi.preprocessing.default.check_and_format_participants"
+                "band.preprocessing.default.check_and_format_participants"
             ) as mock_participants:
                 mock_participants.return_value = None
                 result = await preprocessor.process(ctx, event, agent_id="agent-1")

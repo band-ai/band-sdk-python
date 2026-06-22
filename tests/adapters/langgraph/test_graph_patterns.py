@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.adapters.langgraph import LangGraphAdapter
-from thenvoi.core.types import PlatformMessage
+from band.adapters.langgraph import LangGraphAdapter
+from band.core.types import PlatformMessage
 
 from .helpers import make_capture_graph
 
@@ -24,7 +24,7 @@ class TestStaticGraph:
         await adapter.on_started("TestBot", "Test bot")
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -54,7 +54,7 @@ class TestStaticGraph:
         await adapter.on_started("TestBot", "Test bot")
 
         with patch(
-            "thenvoi.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
+            "band.integrations.langgraph.langchain_tools.agent_tools_to_langchain"
         ) as mock_convert:
             mock_convert.return_value = []
 
@@ -185,10 +185,10 @@ class TestGraphFactoryMultiRoom:
         # Invoking a wrapper from each call dispatches to that room's
         # AgentToolsProtocol — proving the closures are bound per-room.
         send_a = next(
-            t for t in received_tool_lists[0] if t.name == "thenvoi_send_message"
+            t for t in received_tool_lists[0] if t.name == "band_send_message"
         )
         send_b = next(
-            t for t in received_tool_lists[1] if t.name == "thenvoi_send_message"
+            t for t in received_tool_lists[1] if t.name == "band_send_message"
         )
 
         mention_id = "00000000-0000-0000-0000-000000000001"
@@ -197,8 +197,8 @@ class TestGraphFactoryMultiRoom:
 
         # Each call dispatched to its OWN room's AgentTools — never the other.
         tools_a.execute_tool_call.assert_awaited_once_with(
-            "thenvoi_send_message", {"content": "from a", "mentions": [mention_id]}
+            "band_send_message", {"content": "from a", "mentions": [mention_id]}
         )
         tools_b.execute_tool_call.assert_awaited_once_with(
-            "thenvoi_send_message", {"content": "from b", "mentions": [mention_id]}
+            "band_send_message", {"content": "from b", "mentions": [mention_id]}
         )

@@ -7,9 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenvoi.core.types import AdapterFeatures, Capability
-from thenvoi.integrations.langgraph.langchain_tools import agent_tools_to_langchain
-from thenvoi.runtime.tools import CHAT_TOOL_NAMES, CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
+from band.core.memory_types import (
+    MemorySegment,
+    MemoryStoreScope,
+    MemorySystem,
+    WorkingLongTermMemoryType,
+)
+from band.core.types import AdapterFeatures, Capability
+from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
+from band.runtime.tools import CHAT_TOOL_NAMES, CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 
 
 def make_tools() -> MagicMock:
@@ -18,10 +24,10 @@ def make_tools() -> MagicMock:
 
     async def execute_tool_call(tool_name: str, arguments: dict[str, Any]) -> Any:
         results = {
-            "thenvoi_send_message": {"status": "sent"},
-            "thenvoi_send_event": {"status": "event-sent"},
-            "thenvoi_add_contact": {"id": "contact-1"},
-            "thenvoi_store_memory": {"id": "memory-1"},
+            "band_send_message": {"status": "sent"},
+            "band_send_event": {"status": "event-sent"},
+            "band_add_contact": {"id": "contact-1"},
+            "band_store_memory": {"id": "memory-1"},
         }
         return results.get(tool_name, {"status": "ok"})
 
@@ -76,54 +82,55 @@ async def test_wrappers_call_agent_tools_methods() -> None:
         )
     )
 
-    assert await wrapped["thenvoi_send_message"].ainvoke(
+    assert await wrapped["band_send_message"].ainvoke(
         {"content": "hello", "mentions": ["00000000-0000-0000-0000-000000000001"]}
     ) == {"status": "sent"}
     tools.execute_tool_call.assert_any_await(
-        "thenvoi_send_message",
+        "band_send_message",
         {"content": "hello", "mentions": ["00000000-0000-0000-0000-000000000001"]},
     )
 
-    assert await wrapped["thenvoi_send_event"].ainvoke(
+    assert await wrapped["band_send_event"].ainvoke(
         {"content": "working", "message_type": "thought"}
     ) == {"status": "event-sent"}
     tools.execute_tool_call.assert_any_await(
-        "thenvoi_send_event",
+        "band_send_event",
         {"content": "working", "message_type": "thought", "metadata": None},
     )
 
-    assert await wrapped["thenvoi_add_participant"].ainvoke(
-        {"identifier": "Helper"}
-    ) == {"status": "ok"}
+    assert await wrapped["band_add_participant"].ainvoke({"identifier": "Helper"}) == {
+        "status": "ok"
+    }
     tools.execute_tool_call.assert_any_await(
-        "thenvoi_add_participant", {"identifier": "Helper", "role": "member"}
+        "band_add_participant", {"identifier": "Helper", "role": "member"}
     )
 
-    assert await wrapped["thenvoi_add_contact"].ainvoke(
+    assert await wrapped["band_add_contact"].ainvoke(
         {"handle": "@bob", "message": "hi"}
     ) == {"id": "contact-1"}
     tools.execute_tool_call.assert_any_await(
-        "thenvoi_add_contact", {"handle": "@bob", "message": "hi"}
+        "band_add_contact", {"handle": "@bob", "message": "hi"}
     )
 
-    assert await wrapped["thenvoi_store_memory"].ainvoke(
+    assert await wrapped["band_store_memory"].ainvoke(
         {
             "content": "prefers concise answers",
             "system": "long_term",
             "type": "semantic",
             "segment": "user",
             "thought": "user stated preference",
+            "scope": "organization",
         }
     ) == {"id": "memory-1"}
     tools.execute_tool_call.assert_any_await(
-        "thenvoi_store_memory",
+        "band_store_memory",
         {
             "content": "prefers concise answers",
-            "system": "long_term",
-            "type": "semantic",
-            "segment": "user",
+            "system": MemorySystem.LONG_TERM,
+            "type": WorkingLongTermMemoryType.SEMANTIC,
+            "segment": MemorySegment.USER,
             "thought": "user stated preference",
-            "scope": "subject",
+            "scope": MemoryStoreScope.ORGANIZATION,
             "subject_id": None,
             "metadata": None,
         },
@@ -132,7 +139,7 @@ async def test_wrappers_call_agent_tools_methods() -> None:
 
 def test_add_participant_schema_exposes_identifier_and_role() -> None:
     wrapped = by_name(agent_tools_to_langchain(make_tools()))
-    schema_fields = wrapped["thenvoi_add_participant"].args_schema.model_fields
+    schema_fields = wrapped["band_add_participant"].args_schema.model_fields
 
     assert "identifier" in schema_fields
     assert "role" in schema_fields
@@ -144,9 +151,9 @@ async def test_wrapper_errors_are_returned_to_model() -> None:
     tools.execute_tool_call.side_effect = RuntimeError("platform unavailable")
     wrapped = by_name(agent_tools_to_langchain(tools))
 
-    result = await wrapped["thenvoi_send_message"].ainvoke(
+    result = await wrapped["band_send_message"].ainvoke(
         {"content": "hello", "mentions": ["00000000-0000-0000-0000-000000000001"]}
     )
 
-    assert result == "Error executing thenvoi_send_message: see agent logs."
+    assert result == "Error executing band_send_message: see agent logs."
     assert "platform unavailable" not in result

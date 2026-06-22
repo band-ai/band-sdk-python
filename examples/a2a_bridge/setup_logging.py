@@ -4,10 +4,10 @@ import logging
 
 
 def setup_logging(level=logging.INFO, a2a_debug: bool = False):
-    """Configure logging to show only thenvoi logs, hiding noisy dependencies.
+    """Configure logging to show only band logs, hiding noisy dependencies.
 
     Args:
-        level: Log level for thenvoi package (default: INFO)
+        level: Log level for band package (default: INFO)
         a2a_debug: If True, enable DEBUG logging for A2A adapter to trace
             context_id and session rehydration
     """
@@ -16,6 +16,6 @@ def setup_logging(level=logging.INFO, a2a_debug: bool = False):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    logging.getLogger("thenvoi").setLevel(level)
+    logging.getLogger("band").setLevel(level)
     if a2a_debug:
-        logging.getLogger("thenvoi.integrations.a2a").setLevel(logging.DEBUG)
+        logging.getLogger("band.integrations.a2a").setLevel(logging.DEBUG)

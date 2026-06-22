@@ -16,22 +16,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenvoi.adapters.claude_sdk import (
+from band.adapters.claude_sdk import (
     ClaudeSDKAdapter,
     _CLAUDE_SDK_AVAILABLE,
+    _DEFAULT_MODEL,
     _PendingApproval,
     _pre_tool_use_continue_hook,
-    THENVOI_ALL_TOOLS,
-    THENVOI_BASE_TOOLS,
-    THENVOI_MEMORY_TOOLS,
+    BAND_ALL_TOOLS,
+    BAND_BASE_TOOLS,
+    BAND_MEMORY_TOOLS,
 )
-from thenvoi.converters.claude_sdk import ClaudeSDKSessionState
-from thenvoi.runtime.tools import ALL_TOOL_NAMES
-from thenvoi.core.types import PlatformMessage
+from band.converters.claude_sdk import ClaudeSDKSessionState
+from band.runtime.tools import ALL_TOOL_NAMES
+from band.core.types import PlatformMessage
 
 pytestmark = pytest.mark.skipif(
     not _CLAUDE_SDK_AVAILABLE,
-    reason="claude-agent-sdk not installed (pip install thenvoi-sdk[claude_sdk])",
+    reason="claude-agent-sdk not installed (pip install band-sdk[claude_sdk])",
 )
 
 
@@ -71,7 +72,7 @@ class TestInitialization:
         """Should initialize with no memory capability by default."""
         adapter = ClaudeSDKAdapter()
 
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
         assert Capability.MEMORY not in adapter.features.capabilities
 
@@ -79,7 +80,7 @@ class TestInitialization:
         """Should accept enable_memory_tools parameter (deprecated)."""
         adapter = ClaudeSDKAdapter(enable_memory_tools=True)
 
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
         assert Capability.MEMORY in adapter.features.capabilities
 
@@ -94,7 +95,7 @@ class TestOnStarted:
 
         # Mock the session manager
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
@@ -109,12 +110,13 @@ class TestOnStarted:
             assert adapter._mcp_server is not None
 
     @pytest.mark.asyncio
-    async def test_default_options_have_no_model(self):
-        """Default ClaudeSDKAdapter() should pass model=None and fallback_model=None."""
+    async def test_default_options_pin_default_model(self):
+        """Default ClaudeSDKAdapter() pins _DEFAULT_MODEL (the npm `claude`
+        binary's auto-selection fails under API-key auth), fallback_model=None."""
         adapter = ClaudeSDKAdapter()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager_class.return_value = MagicMock()
 
@@ -123,7 +125,7 @@ class TestOnStarted:
             )
 
             sdk_options = mock_manager_class.call_args[0][0]
-            assert sdk_options.model is None
+            assert sdk_options.model == _DEFAULT_MODEL
             assert sdk_options.fallback_model is None
 
     @pytest.mark.asyncio
@@ -132,7 +134,7 @@ class TestOnStarted:
         adapter = ClaudeSDKAdapter(model="opus")
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager_class.return_value = MagicMock()
 
@@ -154,7 +156,7 @@ class TestOnStarted:
         adapter = ClaudeSDKAdapter(model="opus", fallback_model="sonnet")
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager_class.return_value = MagicMock()
 
@@ -181,7 +183,7 @@ class TestOnMessage:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(
@@ -201,13 +203,22 @@ class TestOnMessage:
                 room_id="room-123",
             )
 
-            assert adapter._room_tools["room-123"] is mock_tools
+            # By default the adapter wraps tools with DedupingAgentTools so
+            # MCP tool calls go through the dedup shim.  The wrapped
+            # instance is what gets stored and forwarded.
+            from band.integrations.claude_sdk.dedup_tools import (
+                DedupingAgentTools,
+            )
+
+            stored_tools = adapter._room_tools["room-123"]
+            assert isinstance(stored_tools, DedupingAgentTools)
+            assert stored_tools._inner is mock_tools
             assert adapter._session_context["room-123"] == ""
             mock_manager.get_or_create_session.assert_awaited_once_with(
                 "room-123", resume_session_id=None
             )
             mock_client.query.assert_awaited_once()
-            mock_process.assert_awaited_once_with(mock_client, "room-123", mock_tools)
+            mock_process.assert_awaited_once_with(mock_client, "room-123", stored_tools)
 
     @pytest.mark.asyncio
     async def test_loads_existing_history_on_bootstrap(
@@ -223,7 +234,7 @@ class TestOnMessage:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -257,7 +268,7 @@ class TestOnMessage:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(
@@ -297,7 +308,7 @@ class TestErrorHandling:
         mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ):
             await adapter.on_started(
@@ -341,7 +352,7 @@ class TestCLIConnectionError:
         mock_manager.invalidate_session = AsyncMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ):
             await adapter.on_started(
@@ -379,7 +390,7 @@ class TestCLIConnectionError:
         mock_manager.invalidate_session = AsyncMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ):
             await adapter.on_started(
@@ -421,7 +432,7 @@ class TestCLIConnectionError:
         mock_manager.invalidate_session = AsyncMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+            "band.adapters.claude_sdk.ClaudeSessionManager",
             return_value=mock_manager,
         ):
             await adapter.on_started(
@@ -508,59 +519,55 @@ class TestCleanupAll:
         assert len(adapter._room_tools) == 0
 
 
-class TestThenvoiTools:
-    """Tests for Thenvoi tool names constants."""
+class TestBandTools:
+    """Tests for Band tool names constants."""
 
-    def test_thenvoi_base_tools_list(self):
+    def test_band_base_tools_list(self):
         """Should define base platform tools (always included)."""
         expected = {
-            "mcp__thenvoi__thenvoi_send_message",
-            "mcp__thenvoi__thenvoi_send_event",
-            "mcp__thenvoi__thenvoi_add_participant",
-            "mcp__thenvoi__thenvoi_remove_participant",
-            "mcp__thenvoi__thenvoi_get_participants",
-            "mcp__thenvoi__thenvoi_lookup_peers",
-            "mcp__thenvoi__thenvoi_create_chatroom",
+            "mcp__band__band_send_message",
+            "mcp__band__band_send_event",
+            "mcp__band__band_add_participant",
+            "mcp__band__band_remove_participant",
+            "mcp__band__band_get_participants",
+            "mcp__band__band_lookup_peers",
+            "mcp__band__band_create_chatroom",
             # Contact management tools
-            "mcp__thenvoi__thenvoi_list_contacts",
-            "mcp__thenvoi__thenvoi_add_contact",
-            "mcp__thenvoi__thenvoi_remove_contact",
-            "mcp__thenvoi__thenvoi_list_contact_requests",
-            "mcp__thenvoi__thenvoi_respond_contact_request",
+            "mcp__band__band_list_contacts",
+            "mcp__band__band_add_contact",
+            "mcp__band__band_remove_contact",
+            "mcp__band__band_list_contact_requests",
+            "mcp__band__band_respond_contact_request",
         }
 
-        assert set(THENVOI_BASE_TOOLS) == expected
-        assert len(THENVOI_BASE_TOOLS) == len(set(THENVOI_BASE_TOOLS)), (
-            "duplicate entries in THENVOI_BASE_TOOLS"
+        assert set(BAND_BASE_TOOLS) == expected
+        assert len(BAND_BASE_TOOLS) == len(set(BAND_BASE_TOOLS)), (
+            "duplicate entries in BAND_BASE_TOOLS"
         )
 
-    def test_thenvoi_memory_tools_list(self):
+    def test_band_memory_tools_list(self):
         """Should define memory tools (enterprise only - opt-in)."""
         expected = {
-            "mcp__thenvoi__thenvoi_list_memories",
-            "mcp__thenvoi__thenvoi_store_memory",
-            "mcp__thenvoi__thenvoi_get_memory",
-            "mcp__thenvoi__thenvoi_supersede_memory",
-            "mcp__thenvoi__thenvoi_archive_memory",
+            "mcp__band__band_list_memories",
+            "mcp__band__band_store_memory",
+            "mcp__band__band_get_memory",
+            "mcp__band__band_supersede_memory",
+            "mcp__band__band_archive_memory",
         }
 
-        assert set(THENVOI_MEMORY_TOOLS) == expected
-        assert len(THENVOI_MEMORY_TOOLS) == len(set(THENVOI_MEMORY_TOOLS)), (
-            "duplicate entries in THENVOI_MEMORY_TOOLS"
+        assert set(BAND_MEMORY_TOOLS) == expected
+        assert len(BAND_MEMORY_TOOLS) == len(set(BAND_MEMORY_TOOLS)), (
+            "duplicate entries in BAND_MEMORY_TOOLS"
         )
 
-    def test_thenvoi_all_tools_combines_base_and_memory(self):
-        """THENVOI_ALL_TOOLS should combine base and memory tools without duplicates."""
-        from thenvoi.runtime.tools import mcp_tool_names
+    def test_band_all_tools_combines_base_and_memory(self):
+        """BAND_ALL_TOOLS should combine base and memory tools without duplicates."""
+        from band.runtime.tools import mcp_tool_names
 
-        assert set(THENVOI_ALL_TOOLS) == set(THENVOI_BASE_TOOLS) | set(
-            THENVOI_MEMORY_TOOLS
-        )
-        assert len(THENVOI_ALL_TOOLS) == len(set(THENVOI_ALL_TOOLS)), (
-            "duplicate entries"
-        )
-        assert set(THENVOI_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
-            "THENVOI_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "
+        assert set(BAND_ALL_TOOLS) == set(BAND_BASE_TOOLS) | set(BAND_MEMORY_TOOLS)
+        assert len(BAND_ALL_TOOLS) == len(set(BAND_ALL_TOOLS)), "duplicate entries"
+        assert set(BAND_ALL_TOOLS) == set(mcp_tool_names(ALL_TOOL_NAMES)), (
+            "BAND_ALL_TOOLS content does not match mcp_tool_names(ALL_TOOL_NAMES) — "
             "a tool may have been dropped from the registry"
         )
 
@@ -633,7 +640,7 @@ class TestCustomTools:
 
         # Mock the session manager creation
         with patch(
-            "thenvoi.adapters.claude_sdk.ClaudeSessionManager"
+            "band.adapters.claude_sdk.ClaudeSessionManager"
         ) as mock_manager_class:
             mock_manager = MagicMock()
             mock_manager_class.return_value = mock_manager
@@ -648,9 +655,9 @@ class TestCustomTools:
             sdk_options = call_args[0][0]
 
             # Verify custom tool is in allowed_tools
-            assert "mcp__thenvoi__calculator" in sdk_options.allowed_tools
+            assert "mcp__band__calculator" in sdk_options.allowed_tools
             # Platform tools should still be there
-            assert "mcp__thenvoi__thenvoi_send_message" in sdk_options.allowed_tools
+            assert "mcp__band__band_send_message" in sdk_options.allowed_tools
 
     @pytest.mark.asyncio
     async def test_custom_tools_registered_in_mcp_server(self):
@@ -674,7 +681,7 @@ class TestCustomTools:
         mock_backend.server = MagicMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.create_thenvoi_mcp_backend",
+            "band.adapters.claude_sdk.create_band_mcp_backend",
             new=AsyncMock(return_value=mock_backend),
         ) as mock_create_backend:
             backend = await adapter._create_mcp_backend()
@@ -684,16 +691,16 @@ class TestCustomTools:
         tool_definitions = mock_create_backend.await_args.kwargs["tool_definitions"]
         tool_names = [td.name for td in tool_definitions]
         # Base platform tools registered
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_send_event" in tool_names
-        assert "thenvoi_add_participant" in tool_names
-        assert "thenvoi_remove_participant" in tool_names
-        assert "thenvoi_get_participants" in tool_names
-        assert "thenvoi_lookup_peers" in tool_names
-        assert "thenvoi_create_chatroom" in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_send_event" in tool_names
+        assert "band_add_participant" in tool_names
+        assert "band_remove_participant" in tool_names
+        assert "band_get_participants" in tool_names
+        assert "band_lookup_peers" in tool_names
+        assert "band_create_chatroom" in tool_names
         # Memory and contacts excluded (no capabilities set)
-        assert "thenvoi_list_contacts" not in tool_names
-        assert "thenvoi_list_memories" not in tool_names
+        assert "band_list_contacts" not in tool_names
+        assert "band_list_memories" not in tool_names
 
     @pytest.mark.asyncio
     async def test_custom_tools_registered_with_memory_tools_enabled(self):
@@ -718,7 +725,7 @@ class TestCustomTools:
         mock_backend.server = MagicMock()
 
         with patch(
-            "thenvoi.adapters.claude_sdk.create_thenvoi_mcp_backend",
+            "band.adapters.claude_sdk.create_band_mcp_backend",
             new=AsyncMock(return_value=mock_backend),
         ) as mock_create_backend:
             backend = await adapter._create_mcp_backend()
@@ -728,18 +735,18 @@ class TestCustomTools:
         tool_definitions = mock_create_backend.await_args.kwargs["tool_definitions"]
         tool_names = [td.name for td in tool_definitions]
         # Base platform tools
-        assert "thenvoi_send_message" in tool_names
-        assert "thenvoi_create_chatroom" in tool_names
+        assert "band_send_message" in tool_names
+        assert "band_create_chatroom" in tool_names
         # Memory tools included
-        assert "thenvoi_list_memories" in tool_names
-        assert "thenvoi_store_memory" in tool_names
-        assert "thenvoi_get_memory" in tool_names
+        assert "band_list_memories" in tool_names
+        assert "band_store_memory" in tool_names
+        assert "band_get_memory" in tool_names
         # Contacts excluded (not in capabilities)
-        assert "thenvoi_list_contacts" not in tool_names
+        assert "band_list_contacts" not in tool_names
 
     def test_tool_name_derived_from_input_model(self):
         """Tool name should be derived from Pydantic model class name."""
-        from thenvoi.runtime.custom_tools import get_custom_tool_name
+        from band.runtime.custom_tools import get_custom_tool_name
         from pydantic import BaseModel
 
         class MyCustomToolInput(BaseModel):
@@ -782,7 +789,7 @@ class TestSessionPersistence:
         mock_client.receive_response = mock_receive
 
         # Patch isinstance checks for ResultMessage
-        with patch("thenvoi.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
+        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
             await adapter._process_response(mock_client, "room-123", mock_tools)
 
         # Verify task event was emitted
@@ -805,7 +812,7 @@ class TestSessionPersistence:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -840,7 +847,7 @@ class TestSessionPersistence:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -880,7 +887,7 @@ class TestSessionPersistence:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -922,7 +929,7 @@ class TestSessionPersistence:
 
         mock_client.receive_response = mock_receive
 
-        with patch("thenvoi.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
+        with patch("band.adapters.claude_sdk.ResultMessage", type(mock_result_msg)):
             # Should not raise despite send_event failure
             await adapter._process_response(mock_client, "room-123", mock_tools)
 
@@ -1638,7 +1645,7 @@ class TestOnMessageCommandInterception:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -1682,7 +1689,7 @@ class TestOnMessageCommandInterception:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -1714,7 +1721,7 @@ class TestOnMessageCommandInterception:
 
         with (
             patch(
-                "thenvoi.adapters.claude_sdk.ClaudeSessionManager",
+                "band.adapters.claude_sdk.ClaudeSessionManager",
                 return_value=mock_manager,
             ),
             patch.object(adapter, "_process_response", new_callable=AsyncMock),
@@ -1743,7 +1750,7 @@ class TestApprovalOnStarted:
     async def test_passes_factory_when_approval_enabled(self):
         adapter = ClaudeSDKAdapter(approval_mode="manual")
 
-        with patch("thenvoi.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
+        with patch("band.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
             mock_cls.return_value = MagicMock()
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -1756,7 +1763,7 @@ class TestApprovalOnStarted:
     async def test_no_factory_when_approval_disabled(self):
         adapter = ClaudeSDKAdapter()  # approval_mode=None
 
-        with patch("thenvoi.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
+        with patch("band.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
             mock_cls.return_value = MagicMock()
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -1770,7 +1777,7 @@ class TestApprovalOnStarted:
         """PreToolUse hook must be set so the SDK delegates to can_use_tool."""
         adapter = ClaudeSDKAdapter(approval_mode="auto_accept")
 
-        with patch("thenvoi.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
+        with patch("band.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
             mock_cls.return_value = MagicMock()
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -1786,7 +1793,7 @@ class TestApprovalOnStarted:
     async def test_no_hooks_when_approval_disabled(self):
         adapter = ClaudeSDKAdapter()  # approval_mode=None
 
-        with patch("thenvoi.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
+        with patch("band.adapters.claude_sdk.ClaudeSessionManager") as mock_cls:
             mock_cls.return_value = MagicMock()
             await adapter.on_started(
                 agent_name="TestBot", agent_description="A test bot"
@@ -1908,3 +1915,364 @@ class TestPendingApprovalEviction:
         # Old future should have been evicted and declined
         assert old_future.done()
         assert old_future.result() == "decline"
+
+
+class TestSendMessageDedupWiring:
+    """Tests that on_message wires the dedup shim correctly."""
+
+    @pytest.mark.asyncio
+    async def test_wraps_tools_by_default(self, sample_message, mock_tools):
+        """By default, on_message stores a DedupingAgentTools wrapper."""
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        stored = adapter._room_tools["room-1"]
+        assert isinstance(stored, DedupingAgentTools)
+        assert stored._inner is mock_tools
+
+    @pytest.mark.asyncio
+    async def test_ttl_zero_disables_wrapping(self, sample_message, mock_tools):
+        """ttl=0 keeps the raw tools — no shim — for operators who opt out."""
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter(send_message_dedup_ttl_seconds=0)
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        stored = adapter._room_tools["room-1"]
+        assert stored is mock_tools
+        assert not isinstance(stored, DedupingAgentTools)
+
+    def test_negative_ttl_rejected(self):
+        with pytest.raises(ValueError):
+            ClaudeSDKAdapter(send_message_dedup_ttl_seconds=-1)
+
+    @pytest.mark.asyncio
+    async def test_duplicate_mcp_calls_collapse_via_room_tools(
+        self, sample_message, mock_tools
+    ):
+        """End-to-end: two MCP-style calls through the stored wrapper hit
+        the inner send_message exactly once."""
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        # Simulate the MCP backend resolving room_tools.get("room-1") on
+        # each tool call (exactly what _create_mcp_backend wires up).
+        stored = adapter._room_tools["room-1"]
+        await stored.send_message("hello", ["alice"])
+        await stored.send_message("hello", ["alice"])
+
+        assert mock_tools.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_wrapper_persists_across_on_message_calls(self, sample_message):
+        """Cross-turn regression: the dominant pattern is a duplicate
+        tool call arriving *after* the original turn's Complete event. Since
+        SimpleAdapter constructs a fresh AgentTools per inbound message, a
+        wrapper rebuilt per on_message would drop the cache and let the
+        post-Complete duplicate through.
+
+        Drive two on_message calls with different inner tools (mirroring
+        AgentTools.from_context being called per message), then fire two
+        identical send_message calls against the stored wrapper — one before
+        and one after the second on_message — and assert the duplicate is
+        suppressed across the turn boundary.
+        """
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        tools_turn1 = MagicMock()
+        tools_turn1.send_message = AsyncMock(return_value={"id": "m1"})
+        tools_turn2 = MagicMock()
+        tools_turn2.send_message = AsyncMock(return_value={"id": "m2"})
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools_turn1,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+            wrapper_after_turn1 = adapter._room_tools["room-1"]
+            assert isinstance(wrapper_after_turn1, DedupingAgentTools)
+
+            # Original send during turn 1 (via the MCP-resolved wrapper).
+            await wrapper_after_turn1.send_message("hi", ["alice"])
+            assert tools_turn1.send_message.await_count == 1
+
+            # Turn 2 arrives with a distinct platform message id;
+            # SimpleAdapter builds a fresh AgentTools.
+            turn2_message = PlatformMessage(
+                id="msg-456",
+                room_id=sample_message.room_id,
+                content=sample_message.content,
+                sender_id=sample_message.sender_id,
+                sender_type=sample_message.sender_type,
+                sender_name=sample_message.sender_name,
+                message_type=sample_message.message_type,
+                metadata=sample_message.metadata,
+                created_at=sample_message.created_at,
+            )
+            await adapter.on_message(
+                msg=turn2_message,
+                tools=tools_turn2,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=False,
+                room_id="room-1",
+            )
+
+            # SAME wrapper instance must still be stored — only _inner swapped.
+            wrapper_after_turn2 = adapter._room_tools["room-1"]
+            assert wrapper_after_turn2 is wrapper_after_turn1
+            assert wrapper_after_turn2._inner is tools_turn2
+
+            # The lingering duplicate from turn 1 fires now. It must hit
+            # the cache and NOT POST through tools_turn2.
+            await wrapper_after_turn2.send_message("hi", ["alice"])
+            assert tools_turn2.send_message.await_count == 0
+            # And tools_turn1 was not called again either.
+            assert tools_turn1.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_on_cleanup_evicts_wrapper(self, sample_message, mock_tools):
+        """on_cleanup must remove the wrapper so a re-entered room rebuilds
+        fresh state (and so the cache cannot leak across detached sessions)."""
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+        mock_manager.cleanup_session = AsyncMock()
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+            assert "room-1" in adapter._room_tools
+
+            await adapter.on_cleanup("room-1")
+            assert "room-1" not in adapter._room_tools
+
+    @pytest.mark.asyncio
+    async def test_distinct_rooms_get_distinct_wrappers(self, sample_message):
+        """Per-room isolation: identical ``(content, mentions)`` in two
+        different rooms must POST twice — once per room — because rooms
+        are independent conversations and the dedup window is a per-room
+        guard, not a global one.
+
+        Pins ``_room_tools`` keying behavior so a future refactor (e.g.
+        a per-session or singleton tools cache) cannot silently turn the
+        dedup wrapper into a tenant-wide message suppressor.
+        """
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        tools_a = MagicMock()
+        tools_a.send_message = AsyncMock(return_value={"id": "a"})
+        tools_b = MagicMock()
+        tools_b.send_message = AsyncMock(return_value={"id": "b"})
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools_a,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-a",
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools_b,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-b",
+            )
+
+        wrapper_a = adapter._room_tools["room-a"]
+        wrapper_b = adapter._room_tools["room-b"]
+        assert isinstance(wrapper_a, DedupingAgentTools)
+        assert isinstance(wrapper_b, DedupingAgentTools)
+        assert wrapper_a is not wrapper_b
+
+        # Identical sends in two distinct rooms must both reach their
+        # respective inner tools — dedup is per-room, not per-tenant.
+        await wrapper_a.send_message("hello", ["alice"])
+        await wrapper_b.send_message("hello", ["alice"])
+        assert tools_a.send_message.await_count == 1
+        assert tools_b.send_message.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_update_inner_skipped_when_tools_identity_unchanged(
+        self, sample_message
+    ):
+        """When the runtime hands the adapter the same tools object twice,
+        ``update_inner`` is a no-op and must be skipped — otherwise we'd
+        briefly contend on the wrapper's lock for no reason."""
+        from band.integrations.claude_sdk.dedup_tools import DedupingAgentTools
+
+        adapter = ClaudeSDKAdapter()
+        mock_client = MagicMock()
+        mock_client.query = AsyncMock()
+        mock_manager = AsyncMock()
+        mock_manager.get_or_create_session = AsyncMock(return_value=mock_client)
+
+        tools = MagicMock()
+        tools.send_message = AsyncMock(return_value={"id": "x"})
+
+        with (
+            patch(
+                "band.adapters.claude_sdk.ClaudeSessionManager",
+                return_value=mock_manager,
+            ),
+            patch.object(adapter, "_process_response", new_callable=AsyncMock),
+        ):
+            await adapter.on_started(
+                agent_name="TestBot", agent_description="A test bot"
+            )
+            await adapter.on_message(
+                msg=sample_message,
+                tools=tools,
+                history=ClaudeSDKSessionState(text=""),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+            wrapper = adapter._room_tools["room-1"]
+            assert isinstance(wrapper, DedupingAgentTools)
+
+            with patch.object(
+                wrapper, "update_inner", new_callable=AsyncMock
+            ) as mock_update:
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=tools,  # SAME instance
+                    history=ClaudeSDKSessionState(text=""),
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=False,
+                    room_id="room-1",
+                )
+                mock_update.assert_not_awaited()

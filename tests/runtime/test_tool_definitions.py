@@ -11,7 +11,7 @@ Tests:
 import pytest
 from pydantic import ValidationError
 
-from thenvoi.runtime.tools import (
+from band.runtime.tools import (
     TOOL_MODELS,
     SendMessageInput,
     SendEventInput,
@@ -120,23 +120,23 @@ class TestToolModelsRegistry:
     def test_all_tools_registered(self):
         """All expected tools should be in the registry."""
         expected = {
-            "thenvoi_send_message",
-            "thenvoi_send_event",
-            "thenvoi_add_participant",
-            "thenvoi_remove_participant",
-            "thenvoi_lookup_peers",
-            "thenvoi_get_participants",
-            "thenvoi_create_chatroom",
-            "thenvoi_list_contacts",
-            "thenvoi_add_contact",
-            "thenvoi_remove_contact",
-            "thenvoi_list_contact_requests",
-            "thenvoi_respond_contact_request",
-            "thenvoi_list_memories",
-            "thenvoi_store_memory",
-            "thenvoi_get_memory",
-            "thenvoi_supersede_memory",
-            "thenvoi_archive_memory",
+            "band_send_message",
+            "band_send_event",
+            "band_add_participant",
+            "band_remove_participant",
+            "band_lookup_peers",
+            "band_get_participants",
+            "band_create_chatroom",
+            "band_list_contacts",
+            "band_add_contact",
+            "band_remove_contact",
+            "band_list_contact_requests",
+            "band_respond_contact_request",
+            "band_list_memories",
+            "band_store_memory",
+            "band_get_memory",
+            "band_supersede_memory",
+            "band_archive_memory",
         }
         assert set(TOOL_MODELS.keys()) == expected
 
@@ -159,7 +159,7 @@ class TestGetToolDescription:
 
     def test_returns_description_for_prefixed_name(self):
         """Should return description for prefixed tool name."""
-        desc = get_tool_description("thenvoi_send_message")
+        desc = get_tool_description("band_send_message")
         assert desc is not None
         assert len(desc) > 0
         assert "Execute" not in desc  # Should be real description, not fallback

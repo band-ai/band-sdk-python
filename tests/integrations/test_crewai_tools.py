@@ -1,6 +1,6 @@
-"""Tests for the shared CrewAI tool builder in thenvoi.integrations.crewai.
+"""Tests for the shared CrewAI tool builder in band.integrations.crewai.
 
-These tests cover the extracted surface (build_thenvoi_crewai_tools, the
+These tests cover the extracted surface (build_band_crewai_tools, the
 reporter implementations, and run_async behavior) without going through
 either CrewAIAdapter or CrewAIFlowAdapter — the builder is the seam they
 both consume.
@@ -32,9 +32,9 @@ def crewai_mocks(monkeypatch):
     mock_nest_asyncio = MagicMock()
 
     for mod in (
-        "thenvoi.integrations.crewai",
-        "thenvoi.integrations.crewai.runtime",
-        "thenvoi.integrations.crewai.tools",
+        "band.integrations.crewai",
+        "band.integrations.crewai.runtime",
+        "band.integrations.crewai.tools",
     ):
         sys.modules.pop(mod, None)
 
@@ -45,9 +45,9 @@ def crewai_mocks(monkeypatch):
         yield mock_nest_asyncio
     finally:
         for mod in (
-            "thenvoi.integrations.crewai",
-            "thenvoi.integrations.crewai.runtime",
-            "thenvoi.integrations.crewai.tools",
+            "band.integrations.crewai",
+            "band.integrations.crewai.runtime",
+            "band.integrations.crewai.tools",
         ):
             sys.modules.pop(mod, None)
 
@@ -56,14 +56,14 @@ def crewai_mocks(monkeypatch):
 def builder_mod(crewai_mocks):
     import importlib
 
-    return importlib.import_module("thenvoi.integrations.crewai.tools")
+    return importlib.import_module("band.integrations.crewai.tools")
 
 
 @pytest.fixture
 def runtime_mod(crewai_mocks):
     import importlib
 
-    return importlib.import_module("thenvoi.integrations.crewai.runtime")
+    return importlib.import_module("band.integrations.crewai.runtime")
 
 
 # --- Tool-set composition ---
@@ -71,66 +71,65 @@ def runtime_mod(crewai_mocks):
 
 class TestToolSetComposition:
     def test_base_tools_only(self, builder_mod):
-
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset(),
         )
         names = {t.name for t in tools}
         assert names == {
-            "thenvoi_send_message",
-            "thenvoi_send_event",
-            "thenvoi_add_participant",
-            "thenvoi_remove_participant",
-            "thenvoi_get_participants",
-            "thenvoi_lookup_peers",
-            "thenvoi_create_chatroom",
+            "band_send_message",
+            "band_send_event",
+            "band_add_participant",
+            "band_remove_participant",
+            "band_get_participants",
+            "band_lookup_peers",
+            "band_create_chatroom",
         }
         assert len(tools) == 7
 
     def test_capability_contacts_adds_five(self, builder_mod):
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset({Capability.CONTACTS}),
         )
         names = {t.name for t in tools}
         contact_names = {
-            "thenvoi_list_contacts",
-            "thenvoi_add_contact",
-            "thenvoi_remove_contact",
-            "thenvoi_list_contact_requests",
-            "thenvoi_respond_contact_request",
+            "band_list_contacts",
+            "band_add_contact",
+            "band_remove_contact",
+            "band_list_contact_requests",
+            "band_respond_contact_request",
         }
         assert contact_names.issubset(names)
         assert len(tools) == 12
 
     def test_capability_memory_adds_five(self, builder_mod):
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset({Capability.MEMORY}),
         )
         names = {t.name for t in tools}
         memory_names = {
-            "thenvoi_list_memories",
-            "thenvoi_store_memory",
-            "thenvoi_get_memory",
-            "thenvoi_supersede_memory",
-            "thenvoi_archive_memory",
+            "band_list_memories",
+            "band_store_memory",
+            "band_get_memory",
+            "band_supersede_memory",
+            "band_archive_memory",
         }
         assert memory_names.issubset(names)
         assert len(tools) == 12
 
     def test_both_capabilities(self, builder_mod):
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
@@ -148,7 +147,7 @@ class TestToolSetComposition:
         async def my_handler(_: MyInput) -> str:
             return "ok"
 
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset(),
@@ -158,29 +157,29 @@ class TestToolSetComposition:
         assert len(tools) == 8
 
     def test_adapter_feature_filters_apply_to_platform_tools(self, builder_mod):
-        from thenvoi.core.types import AdapterFeatures, Capability
+        from band.core.types import AdapterFeatures, Capability
 
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             features=AdapterFeatures(
                 capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
                 include_categories=("contacts", "memory"),
-                exclude_tools=("thenvoi_remove_contact", "thenvoi_archive_memory"),
+                exclude_tools=("band_remove_contact", "band_archive_memory"),
             ),
         )
 
         names = {t.name for t in tools}
-        assert "thenvoi_send_message" not in names
-        assert "thenvoi_list_contacts" in names
-        assert "thenvoi_list_memories" in names
-        assert "thenvoi_remove_contact" not in names
-        assert "thenvoi_archive_memory" not in names
+        assert "band_send_message" not in names
+        assert "band_list_contacts" in names
+        assert "band_list_memories" in names
+        assert "band_remove_contact" not in names
+        assert "band_archive_memory" not in names
 
     def test_adapter_feature_filters_only_apply_to_platform_tools(self, builder_mod):
         from pydantic import BaseModel
 
-        from thenvoi.core.types import AdapterFeatures
+        from band.core.types import AdapterFeatures
 
         class MyInput(BaseModel):
             value: str
@@ -191,37 +190,38 @@ class TestToolSetComposition:
         async def handler(_: BaseModel) -> str:
             return "ok"
 
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             features=AdapterFeatures(
-                include_tools=("thenvoi_send_message", "myinput"),
+                include_tools=("band_send_message", "myinput"),
                 exclude_tools=("myinput",),
             ),
             custom_tools=[(MyInput, handler), (OtherInput, handler)],
         )
 
         names = {t.name for t in tools}
-        assert names == {"thenvoi_send_message", "my", "other"}
+        assert names == {"band_send_message", "my", "other"}
 
     @pytest.mark.parametrize(
         ("tool_name", "payload"),
         [
-            ("thenvoi_send_event", {"content": "thinking", "message_type": "debug"}),
-            ("thenvoi_add_participant", {"identifier": "peer", "role": "viewer"}),
-            ("thenvoi_lookup_peers", {"page_size": 101}),
-            ("thenvoi_list_contacts", {"page": 0}),
-            ("thenvoi_list_contact_requests", {"sent_status": "done"}),
-            ("thenvoi_respond_contact_request", {"action": "maybe"}),
-            ("thenvoi_list_memories", {"memory_type": "fact"}),
+            ("band_send_event", {"content": "thinking", "message_type": "debug"}),
+            ("band_add_participant", {"identifier": "peer", "role": "viewer"}),
+            ("band_lookup_peers", {"page_size": 101}),
+            ("band_list_contacts", {"page": 0}),
+            ("band_list_contact_requests", {"sent_status": "done"}),
+            ("band_respond_contact_request", {"action": "maybe"}),
+            ("band_list_memories", {"memory_type": "fact"}),
             (
-                "thenvoi_store_memory",
+                "band_store_memory",
                 {
                     "content": "remember this",
                     "system": "working",
                     "memory_type": "fact",
                     "segment": "user",
                     "thought": "useful later",
+                    "scope": "organization",
                 },
             ),
         ],
@@ -231,9 +231,9 @@ class TestToolSetComposition:
     ):
         from pydantic import ValidationError
 
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset({Capability.CONTACTS, Capability.MEMORY}),
@@ -244,15 +244,15 @@ class TestToolSetComposition:
             tool.args_schema.model_validate(payload)
 
     def test_platform_tool_schemas_accept_metadata_fields(self, builder_mod):
-        from thenvoi.core.types import Capability
+        from band.core.types import Capability
 
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset({Capability.MEMORY}),
         )
-        send_event = next(t for t in tools if t.name == "thenvoi_send_event")
-        store_memory = next(t for t in tools if t.name == "thenvoi_store_memory")
+        send_event = next(t for t in tools if t.name == "band_send_event")
+        store_memory = next(t for t in tools if t.name == "band_store_memory")
 
         assert send_event.args_schema.model_validate(
             {
@@ -268,6 +268,7 @@ class TestToolSetComposition:
                 "memory_type": "semantic",
                 "segment": "user",
                 "thought": "useful later",
+                "scope": "organization",
                 "metadata": {"source": "crewai"},
             }
         ).metadata == {"source": "crewai"}
@@ -278,12 +279,12 @@ class TestToolSetComposition:
             return_value={"peers": [], "metadata": {"page": 2, "page_size": 25}}
         )
         context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: context,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset(),
         )
-        lookup_peers = next(t for t in tools if t.name == "thenvoi_lookup_peers")
+        lookup_peers = next(t for t in tools if t.name == "band_lookup_peers")
 
         result = json.loads(lookup_peers._run(page=2, page_size=25))
 
@@ -291,7 +292,7 @@ class TestToolSetComposition:
         tools_obj.lookup_peers.assert_awaited_once_with(2, 25)
 
     def test_send_message_marks_reply_tracker(self, builder_mod):
-        """A successful thenvoi_send_message flips the per-turn ReplyTracker so
+        """A successful band_send_message flips the per-turn ReplyTracker so
         the adapter can treat a later empty final answer as benign."""
         tools_obj = MagicMock()
         tools_obj.send_message = AsyncMock(return_value={"status": "sent"})
@@ -299,12 +300,12 @@ class TestToolSetComposition:
         context = builder_mod.CrewAIToolContext(
             room_id="room-1", tools=tools_obj, reply_tracker=tracker
         )
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: context,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset(),
         )
-        send_message = next(t for t in tools if t.name == "thenvoi_send_message")
+        send_message = next(t for t in tools if t.name == "band_send_message")
 
         result = json.loads(send_message._run(content="hello", mentions="[]"))
 
@@ -320,17 +321,87 @@ class TestToolSetComposition:
         context = builder_mod.CrewAIToolContext(
             room_id="room-1", tools=tools_obj, reply_tracker=tracker
         )
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: context,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset(),
         )
-        send_message = next(t for t in tools if t.name == "thenvoi_send_message")
+        send_message = next(t for t in tools if t.name == "band_send_message")
 
         result = json.loads(send_message._run(content="hello", mentions="[]"))
 
         assert result["status"] == "error"
         assert tracker.replied is False
+
+    def test_send_failure_appends_available_handles(self, builder_mod):
+        """The real empty-mentions error already lists the room's handles, so the
+        CrewAI enricher must surface them once — not append a second copy."""
+        from band.core.exceptions import BandToolError
+
+        tools_obj = MagicMock()
+        tools_obj.agent_id = None
+        # The actual error AgentTools.send_message raises: it already carries the
+        # "Available handles:" hint.
+        tools_obj.send_message = AsyncMock(
+            side_effect=BandToolError(
+                "At least one mention is required. "
+                "Available handles: ['@john', '@john/weather-agent']. "
+                "Use participant handles from the list."
+            )
+        )
+        tools_obj.participants = [
+            {"id": "1", "name": "John", "handle": "@john"},
+            {"id": "2", "name": "Weather", "handle": "@john/weather-agent"},
+            {"id": "3", "name": "No Handle"},
+        ]
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_message = next(t for t in tools if t.name == "band_send_message")
+
+        result = json.loads(send_message._run(content="hello", mentions="[]"))
+
+        assert result["status"] == "error"
+        assert "@john" in result["message"]
+        assert "@john/weather-agent" in result["message"]
+        # Participants without a handle are not offered as mention options.
+        assert "No Handle" not in result["message"]
+        # The enricher is idempotent: the handle list is not duplicated.
+        assert result["message"].count("Available handles:") == 1
+
+    def test_send_failure_excludes_agent_own_handle(self, builder_mod):
+        """The agent's own handle is never offered as a retry option — an
+        agent can't @mention itself, so listing it only misleads the LLM."""
+        from band.core.exceptions import BandToolError
+
+        tools_obj = MagicMock()
+        tools_obj.agent_id = "self-2"
+        # A failure that does not already carry handles, so the enricher computes
+        # the available options itself and must exclude the agent's own handle.
+        tools_obj.send_message = AsyncMock(
+            side_effect=BandToolError("Failed to deliver message")
+        )
+        tools_obj.participants = [
+            {"id": "1", "name": "John", "handle": "@john"},
+            {"id": "self-2", "name": "Me", "handle": "@john/weather-agent"},
+        ]
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_message = next(t for t in tools if t.name == "band_send_message")
+
+        result = json.loads(send_message._run(content="hello", mentions="[]"))
+
+        assert result["status"] == "error"
+        assert "@john" in result["message"]
+        # The agent's own handle is excluded from the available options.
+        assert "@john/weather-agent" not in result["message"]
 
 
 # --- Reporter behavior ---
@@ -339,7 +410,7 @@ class TestToolSetComposition:
 class TestEmitExecutionReporter:
     @pytest.mark.asyncio
     async def test_does_not_emit_when_emit_execution_unset(self, builder_mod):
-        from thenvoi.core.types import AdapterFeatures
+        from band.core.types import AdapterFeatures
 
         features = AdapterFeatures()  # empty emit set
         reporter = builder_mod.EmitExecutionReporter(features)
@@ -353,7 +424,7 @@ class TestEmitExecutionReporter:
 
     @pytest.mark.asyncio
     async def test_emits_when_emit_execution_set(self, builder_mod):
-        from thenvoi.core.types import AdapterFeatures, Emit
+        from band.core.types import AdapterFeatures, Emit
 
         features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
         reporter = builder_mod.EmitExecutionReporter(features)
@@ -367,7 +438,7 @@ class TestEmitExecutionReporter:
 
     @pytest.mark.asyncio
     async def test_send_event_failure_does_not_propagate(self, builder_mod):
-        from thenvoi.core.types import AdapterFeatures, Emit
+        from band.core.types import AdapterFeatures, Emit
 
         features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
         reporter = builder_mod.EmitExecutionReporter(features)
@@ -397,12 +468,12 @@ class TestNoopReporter:
 
 class TestMissingContext:
     def test_tool_returns_error_json_when_get_context_returns_none(self, builder_mod):
-        tools = builder_mod.build_thenvoi_crewai_tools(
+        tools = builder_mod.build_band_crewai_tools(
             get_context=lambda: None,
             reporter=builder_mod.NoopReporter(),
             capabilities=frozenset(),
         )
-        send_message_tool = next(t for t in tools if t.name == "thenvoi_send_message")
+        send_message_tool = next(t for t in tools if t.name == "band_send_message")
         result_str = send_message_tool._run(content="hi", mentions="[]")
         result = json.loads(result_str)
         assert result["status"] == "error"
@@ -427,3 +498,51 @@ class TestRunAsyncLazyPatch:
         # nest_asyncio.apply should have been called exactly once across
         # multiple run_async invocations (the lazy patch).
         assert crewai_mocks.apply.call_count == 1
+
+
+class TestStoreMemoryInputDescription:
+    def test_crewai_store_memory_type_description_is_generated(self, builder_mod):
+        """CrewAI store_memory args schema should use memory_type_field_description()."""
+        from band.core.memory_types import memory_type_field_description
+
+        expected = memory_type_field_description()
+        assert (
+            builder_mod._StoreMemoryInput.model_fields["memory_type"].description
+            == expected
+        )
+
+    def test_crewai_store_memory_rejects_subject_scope_without_subject_id(
+        self, builder_mod
+    ) -> None:
+        """CrewAI input validation rejects missing subject IDs."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="requires a subject_id"):
+            builder_mod._StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "working",
+                    "memory_type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "subject",
+                }
+            )
+
+    def test_crewai_store_memory_rejects_type_for_wrong_system(
+        self, builder_mod
+    ) -> None:
+        """CrewAI input validation rejects system/type mismatches."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match='type="semantic" is not valid'):
+            builder_mod._StoreMemoryInput.model_validate(
+                {
+                    "content": "remember this",
+                    "system": "sensory",
+                    "memory_type": "semantic",
+                    "segment": "user",
+                    "thought": "useful later",
+                    "scope": "organization",
+                }
+            )

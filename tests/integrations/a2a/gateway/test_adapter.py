@@ -16,14 +16,14 @@ from a2a.types import (
     TextPart,
 )
 
-from thenvoi.core.types import PlatformMessage
-from thenvoi.integrations.a2a.gateway import (
+from band.core.types import PlatformMessage
+from band.integrations.a2a.gateway import (
     A2AGatewayAdapter,
     GatewaySessionState,
 )
-from thenvoi.testing import FakeAgentTools
-from thenvoi_rest import Peer
-from thenvoi_rest.core.api_error import ApiError
+from band.testing import FakeAgentTools
+from band_rest import Peer
+from band_rest.core.api_error import ApiError
 
 
 def make_platform_message(
@@ -132,7 +132,7 @@ class TestA2AGatewayAdapterOnStarted:
 
         # Mock server
         with patch(
-            "thenvoi.integrations.a2a.gateway.adapter.GatewayServer"
+            "band.integrations.a2a.gateway.adapter.GatewayServer"
         ) as mock_server_class:
             mock_server = MagicMock()
             mock_server.start = AsyncMock()
@@ -162,7 +162,7 @@ class TestA2AGatewayAdapterOnStarted:
 
         # Mock server
         with patch(
-            "thenvoi.integrations.a2a.gateway.adapter.GatewayServer"
+            "band.integrations.a2a.gateway.adapter.GatewayServer"
         ) as mock_server_class:
             mock_server = MagicMock()
             mock_server.start = AsyncMock()
@@ -188,7 +188,7 @@ class TestA2AGatewayAdapterOnStarted:
 
         # Mock server
         with patch(
-            "thenvoi.integrations.a2a.gateway.adapter.GatewayServer"
+            "band.integrations.a2a.gateway.adapter.GatewayServer"
         ) as mock_server_class:
             mock_server = MagicMock()
             mock_server.start = AsyncMock()
@@ -215,13 +215,13 @@ class TestA2AGatewayAdapterOnStarted:
         )
 
         with patch(
-            "thenvoi.integrations.a2a.gateway.adapter.GatewayServer"
+            "band.integrations.a2a.gateway.adapter.GatewayServer"
         ) as mock_server_class:
             mock_server = MagicMock()
             mock_server.start = AsyncMock()
             mock_server_class.return_value = mock_server
             with patch(
-                "thenvoi.integrations.a2a.gateway.adapter.asyncio.sleep",
+                "band.integrations.a2a.gateway.adapter.asyncio.sleep",
                 new=AsyncMock(),
             ) as mock_sleep:
                 await adapter.on_started("Gateway", "A2A Gateway Agent")
@@ -285,7 +285,7 @@ class TestA2AGatewayAdapterOnMessage:
         msg = make_platform_message("Weather is sunny", room_id="room-123")
 
         # Set up pending task
-        from thenvoi.integrations.a2a.gateway.types import PendingA2ATask
+        from band.integrations.a2a.gateway.types import PendingA2ATask
         from a2a.types import Task, TaskStatus
 
         sse_queue: asyncio.Queue = asyncio.Queue()
@@ -325,7 +325,7 @@ class TestA2AGatewayAdapterOnMessage:
         msg = make_platform_message("Done", room_id="room-123")
 
         # Set up pending task
-        from thenvoi.integrations.a2a.gateway.types import PendingA2ATask
+        from band.integrations.a2a.gateway.types import PendingA2ATask
         from a2a.types import Task, TaskStatus
 
         sse_queue: asyncio.Queue = asyncio.Queue()
@@ -561,7 +561,7 @@ class TestA2AGatewayAdapterCleanup:
         """Should remove pending task for room."""
         adapter = A2AGatewayAdapter()
 
-        from thenvoi.integrations.a2a.gateway.types import PendingA2ATask
+        from band.integrations.a2a.gateway.types import PendingA2ATask
         from a2a.types import Task, TaskStatus
 
         sse_queue: asyncio.Queue = asyncio.Queue()

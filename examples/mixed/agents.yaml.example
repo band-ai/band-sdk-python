@@ -3,8 +3,8 @@
 # Copy this file to:
 #   examples/mixed/agents.yaml
 #
-# Then fill in the agent_id and api_key for the four Thenvoi-facing agents used
-# by the mixed example. The two remote A2A services do not need Thenvoi
+# Then fill in the agent_id and api_key for the four Band-facing agents used
+# by the mixed example. The two remote A2A services do not need Band
 # credentials. They run locally and become room participants only through the
 # bridge process.
 #
@@ -12,20 +12,20 @@
 
 # CrewAI coordinator for the engineering review room
 mixed_strategy_agent:
-  agent_id: ""  # Remote agent ID from Thenvoi
-  api_key: ""   # Agent-specific API key from Thenvoi
+  agent_id: ""  # Remote agent ID from Band
+  api_key: ""   # Agent-specific API key from Band
 
 # CrewAI writer that produces the final engineering handoff note
 mixed_writer_agent:
   agent_id: ""
   api_key: ""
 
-# Bridge agent that connects the local contract checker A2A service to Thenvoi
+# Bridge agent that connects the local contract checker A2A service to Band
 mixed_fact_bridge_agent:
   agent_id: ""
   api_key: ""
 
-# Bridge agent that connects the local risk reviewer A2A service to Thenvoi
+# Bridge agent that connects the local risk reviewer A2A service to Band
 mixed_risk_bridge_agent:
   agent_id: ""
   api_key: ""

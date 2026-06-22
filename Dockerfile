@@ -1,8 +1,8 @@
-# Multi-stage Dockerfile for Thenvoi Python SDK examples
+# Multi-stage Dockerfile for Band Python SDK examples
 # Supports LangGraph adapter examples
 #
 # Usage:
-#   docker build -t thenvoi-sdk .
+#   docker build -t band-sdk .
 #   docker compose up langgraph-01-simple
 
 FROM python:3.11-slim AS base

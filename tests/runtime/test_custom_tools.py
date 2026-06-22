@@ -3,7 +3,7 @@
 import pytest
 from pydantic import BaseModel, Field
 
-from thenvoi.runtime.custom_tools import (
+from band.runtime.custom_tools import (
     CustomToolDef,
     custom_tool_to_anthropic_schema,
     custom_tool_to_openai_schema,

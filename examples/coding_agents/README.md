@@ -1,6 +1,6 @@
 # Multi-Agent Docker Compose
 
-Run a 2-agent team (Claude SDK planner + Codex reviewer) sharing a workspace, connected to the Thenvoi platform.
+Run a 2-agent team (Claude SDK planner + Codex reviewer) sharing a workspace, connected to the Band platform.
 
 ## Architecture
 
@@ -64,7 +64,7 @@ When using HTTPS URLs, configure git credentials on host (`credential helper`, P
 - Docker and Docker Compose v2
 - Anthropic API key for planner
 - OpenAI API key for reviewer
-- Thenvoi agent credentials (`agent_id` + `api_key`)
+- Band agent credentials (`agent_id` + `api_key`)
 
 ## Setup
 
@@ -106,8 +106,8 @@ docker compose logs -f reviewer
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `THENVOI_REST_URL` | `https://app.thenvoi.com` | Platform REST API |
-| `THENVOI_WS_URL` | `wss://app.thenvoi.com/...` | Platform WebSocket |
+| `BAND_REST_URL` | `https://app.band.ai` | Platform REST API |
+| `BAND_WS_URL` | `wss://app.band.ai/...` | Platform WebSocket |
 | `ANTHROPIC_API_KEY` | -- | Anthropic API key for planner |
 | `OPENAI_API_KEY` | -- | OpenAI API key for reviewer |
 | `GIT_SSH_STRICT_HOST_KEY_CHECKING` | `true` | Enforce host-key precheck for SSH remotes |

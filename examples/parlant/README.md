@@ -1,6 +1,6 @@
-# Parlant Examples for Thenvoi
+# Parlant Examples for Band
 
-Examples showing how to use the Thenvoi SDK with [Parlant](https://github.com/emcie-co/parlant) - an AI agent framework designed for controlled, guideline-based agent behavior.
+Examples showing how to use the Band SDK with [Parlant](https://github.com/emcie-co/parlant) - an AI agent framework designed for controlled, guideline-based agent behavior.
 
 ## Why Parlant?
 
@@ -32,8 +32,8 @@ The adapter uses the Parlant SDK directly - no separate HTTP server needed:
 
 ```python
 import parlant.sdk as p
-from thenvoi import Agent
-from thenvoi.adapters import ParlantAdapter
+from band import Agent
+from band.adapters import ParlantAdapter
 
 async with p.Server() as server:
     # Create Parlant agent with guidelines
@@ -47,7 +47,7 @@ async with p.Server() as server:
         action="Acknowledge their request and provide detailed assistance",
     )
 
-    # Create Thenvoi adapter
+    # Create Band adapter
     adapter = ParlantAdapter(
         server=server,
         parlant_agent=parlant_agent,
@@ -106,9 +106,9 @@ cp agent_config.yaml.example agent_config.yaml
 ### 2. Set up environment variables in `.env`
 
 ```bash
-# Thenvoi platform URLs (required)
-THENVOI_WS_URL=wss://app.thenvoi.com/api/v1/socket/websocket
-THENVOI_REST_URL=https://app.thenvoi.com
+# Band platform URLs (required)
+BAND_WS_URL=wss://app.band.ai/api/v1/socket/websocket
+BAND_REST_URL=https://app.band.ai
 
 # OpenAI API key (used by Parlant for LLM)
 OPENAI_API_KEY=your-openai-key
@@ -116,7 +116,7 @@ OPENAI_API_KEY=your-openai-key
 
 ### 3. Add agent credentials to `agent_config.yaml`
 
-1. Create a remote agent on the [Thenvoi Platform](https://app.thenvoi.com)
+1. Create a remote agent on the [Band Platform](https://app.band.ai)
 2. Generate an API key for the agent
 3. Edit `agent_config.yaml` and fill in the Parlant agent section:
 
@@ -136,7 +136,7 @@ parlant_agent:
 
 ```bash
 # From project root
-cd /path/to/thenvoi-sdk-python
+cd /path/to/band-sdk-python
 
 # Run examples
 uv run python examples/parlant/01_basic_agent.py
@@ -198,5 +198,5 @@ Install the Parlant extra:
 ```bash
 uv sync --extra parlant
 # or
-pip install 'thenvoi-sdk[parlant]'
+pip install 'band-sdk[parlant]'
 ```

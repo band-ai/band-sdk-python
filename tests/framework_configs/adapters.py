@@ -15,7 +15,7 @@ from typing import Any, Callable
 from unittest.mock import MagicMock
 
 from tests.framework_configs._sentinel import MISSING, STRICT_CI, _MissingSentinel
-from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
+from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 
 __all__ = ["AdapterConfig", "ADAPTER_CONFIGS", "ADAPTER_EXCLUDED_MODULES"]
 
@@ -88,13 +88,13 @@ class AdapterConfig:
 
 
 def _anthropic_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     return AnthropicAdapter(**kw)
 
 
 def _langgraph_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter
 
     if "llm" not in kw and "graph_factory" not in kw and "graph" not in kw:
         kw["llm"] = MagicMock()
@@ -124,10 +124,10 @@ _crewai_import_lock = threading.Lock()
 
 
 _CREWAI_AFFECTED_MODULES = (
-    "thenvoi.adapters.crewai",
-    "thenvoi.integrations.crewai",
-    "thenvoi.integrations.crewai.runtime",
-    "thenvoi.integrations.crewai.tools",
+    "band.adapters.crewai",
+    "band.integrations.crewai",
+    "band.integrations.crewai.runtime",
+    "band.integrations.crewai.tools",
     "crewai",
     "crewai.tools",
     "nest_asyncio",
@@ -155,7 +155,7 @@ def _get_crewai_adapter_cls() -> type:
     import sys
     from unittest.mock import patch
 
-    adapter_module_name = "thenvoi.adapters.crewai"
+    adapter_module_name = "band.adapters.crewai"
 
     with _crewai_import_lock:
         # Snapshot modules that existed before we touch sys.modules.
@@ -220,13 +220,13 @@ def _crewai_factory(**kw: Any) -> Any:
 
 
 def _claude_sdk_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.claude_sdk import ClaudeSDKAdapter
+    from band.adapters.claude_sdk import ClaudeSDKAdapter
 
     return ClaudeSDKAdapter(**kw)
 
 
 def _pydantic_ai_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter
 
     if "model" not in kw:
         kw["model"] = _PYDANTIC_AI_INJECTED_MODEL
@@ -234,7 +234,7 @@ def _pydantic_ai_factory(**kw: Any) -> Any:
 
 
 def _parlant_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.parlant import ParlantAdapter
+    from band.adapters.parlant import ParlantAdapter
 
     if "server" not in kw:
         kw["server"] = MagicMock()
@@ -247,31 +247,31 @@ def _parlant_factory(**kw: Any) -> Any:
 
 
 def _codex_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.codex import CodexAdapter
+    from band.adapters.codex import CodexAdapter
 
     return CodexAdapter(**kw)
 
 
 def _letta_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.letta import LettaAdapter
+    from band.adapters.letta import LettaAdapter
 
     return LettaAdapter(**kw)
 
 
 def _opencode_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.opencode import OpencodeAdapter
+    from band.adapters.opencode import OpencodeAdapter
 
     return OpencodeAdapter(**kw)
 
 
 def _gemini_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter
 
     return GeminiAdapter(**kw)
 
 
 def _google_adk_factory(**kw: Any) -> Any:
-    from thenvoi.adapters.google_adk import GoogleADKAdapter
+    from band.adapters.google_adk import GoogleADKAdapter
 
     return GoogleADKAdapter(**kw)
 
@@ -288,7 +288,7 @@ _PYDANTIC_AI_INJECTED_MODEL = "openai:gpt-5.4"
 
 
 def _build_anthropic_config() -> AdapterConfig:
-    from thenvoi.adapters.anthropic import AnthropicAdapter
+    from band.adapters.anthropic import AnthropicAdapter
 
     return AdapterConfig(
         framework_id="anthropic",
@@ -312,7 +312,7 @@ def _build_anthropic_config() -> AdapterConfig:
 
 
 def _build_langgraph_config() -> AdapterConfig:
-    from thenvoi.adapters.langgraph import LangGraphAdapter
+    from band.adapters.langgraph import LangGraphAdapter
 
     return AdapterConfig(
         framework_id="langgraph",
@@ -390,7 +390,7 @@ def _get_crewai_flow_adapter_cls() -> type:
     """Import CrewAIFlowAdapter with mocked crewai dependencies.
 
     The flow adapter has its own optional crewai.flow.flow import. The
-    integration tools module (used by build_thenvoi_crewai_tools when a
+    integration tools module (used by build_band_crewai_tools when a
     sub-Crew is constructed at runtime) imports crewai.tools, so the same
     mock pattern as ``_get_crewai_adapter_cls`` is reused.
     """
@@ -398,12 +398,12 @@ def _get_crewai_flow_adapter_cls() -> type:
     import sys
     from unittest.mock import patch
 
-    adapter_module_name = "thenvoi.adapters.crewai_flow"
+    adapter_module_name = "band.adapters.crewai_flow"
     affected = _CREWAI_AFFECTED_MODULES + (
         adapter_module_name,
-        "thenvoi.integrations.crewai",
-        "thenvoi.integrations.crewai.runtime",
-        "thenvoi.integrations.crewai.tools",
+        "band.integrations.crewai",
+        "band.integrations.crewai.runtime",
+        "band.integrations.crewai.tools",
     )
 
     with _crewai_import_lock:
@@ -483,7 +483,7 @@ def _build_crewai_flow_config() -> AdapterConfig:
 
 
 def _build_claude_sdk_config() -> AdapterConfig | None:
-    from thenvoi.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE, ClaudeSDKAdapter
+    from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE, ClaudeSDKAdapter
 
     if not _CLAUDE_SDK_AVAILABLE:
         return None  # optional dep not installed; skip in CI
@@ -520,7 +520,7 @@ def _build_claude_sdk_config() -> AdapterConfig | None:
 
 
 def _build_pydantic_ai_config() -> AdapterConfig:
-    from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
+    from band.adapters.pydantic_ai import PydanticAIAdapter
 
     return AdapterConfig(
         framework_id="pydantic_ai",
@@ -548,7 +548,7 @@ def _build_pydantic_ai_config() -> AdapterConfig:
 
 
 def _build_parlant_config() -> AdapterConfig:
-    from thenvoi.adapters.parlant import ParlantAdapter
+    from band.adapters.parlant import ParlantAdapter
 
     try:
         import parlant.sdk  # noqa: F401
@@ -581,7 +581,7 @@ def _build_parlant_config() -> AdapterConfig:
 
 
 def _build_codex_config() -> AdapterConfig:
-    from thenvoi.adapters.codex import CodexAdapterConfig
+    from band.adapters.codex import CodexAdapterConfig
 
     return AdapterConfig(
         framework_id="codex",
@@ -604,7 +604,7 @@ def _build_codex_config() -> AdapterConfig:
 
 
 def _build_letta_config() -> AdapterConfig:
-    from thenvoi.adapters.letta import LettaAdapterConfig
+    from band.adapters.letta import LettaAdapterConfig
 
     return AdapterConfig(
         framework_id="letta",
@@ -633,7 +633,7 @@ def _build_letta_config() -> AdapterConfig:
 
 
 def _build_opencode_config() -> AdapterConfig:
-    from thenvoi.adapters.opencode import OpencodeAdapterConfig
+    from band.adapters.opencode import OpencodeAdapterConfig
 
     return AdapterConfig(
         framework_id="opencode",
@@ -665,7 +665,7 @@ def _build_opencode_config() -> AdapterConfig:
 
 
 def _build_gemini_config() -> AdapterConfig:
-    from thenvoi.adapters.gemini import GeminiAdapter
+    from band.adapters.gemini import GeminiAdapter
 
     return AdapterConfig(
         framework_id="gemini",
@@ -694,16 +694,19 @@ def _build_gemini_config() -> AdapterConfig:
 # on_cleanup contract), so they cannot share the same conformance tests.
 # acp uses the ACP protocol (Agent Client Protocol) with a similar non-standard
 # lifecycle (ACP JSON-RPC over stdio), so it is also excluded.
+# slack is a transport bridge that *wraps* an inner framework adapter (the brain)
+# and adds Slack ingress/egress; it has no model/LLM contract of its own, so it
+# cannot share the framework-adapter conformance tests (same rationale as a2a/acp).
 # claude_sdk is excluded when claude-agent-sdk optional dep is not installed.
 
-_excluded = {"a2a", "a2a_gateway", "acp"}
+_excluded = {"a2a", "a2a_gateway", "acp", "slack"}
 if not _HAS_CLAUDE_SDK:
     _excluded = _excluded | {"claude_sdk"}
 ADAPTER_EXCLUDED_MODULES: frozenset[str] = frozenset(_excluded)
 
 
 def _build_google_adk_config() -> AdapterConfig:
-    from thenvoi.adapters.google_adk import GoogleADKAdapter
+    from band.adapters.google_adk import GoogleADKAdapter
 
     return AdapterConfig(
         framework_id="google_adk",

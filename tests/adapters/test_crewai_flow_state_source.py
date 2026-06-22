@@ -6,12 +6,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from thenvoi.adapters.crewai_flow import (
+from band.adapters.crewai_flow import (
     HistoryCrewAIFlowStateSource,
     RestCrewAIFlowStateSource,
 )
-from thenvoi.core.exceptions import ThenvoiConfigError, ThenvoiToolError
-from thenvoi.testing.fake_tools import FakeAgentTools
+from band.core.exceptions import BandConfigError, BandToolError
+from band.testing.fake_tools import FakeAgentTools
 
 NS = "crewai_flow:agent-1"
 
@@ -257,13 +257,13 @@ class TestRestStateSourceCache:
 
 class TestRestStateSourceFailure:
     @pytest.mark.asyncio
-    async def test_raises_thenvoi_tool_error_after_retry(self) -> None:
+    async def test_raises_band_tool_error_after_retry(self) -> None:
         class FailingTools:
             async def fetch_room_context(self, **_: object) -> dict:
                 raise RuntimeError("boom")
 
         source = RestCrewAIFlowStateSource(retry_attempts=1)
-        with pytest.raises(ThenvoiToolError):
+        with pytest.raises(BandToolError):
             await source.load_task_events(
                 room_id="room-1",
                 metadata_namespace=NS,
@@ -313,12 +313,12 @@ class TestRestStateSourceNonBootstrapReplay:
 
 class TestHistoryStateSource:
     def test_constructor_requires_acknowledge(self) -> None:
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             HistoryCrewAIFlowStateSource()  # type: ignore[call-arg]
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             HistoryCrewAIFlowStateSource(acknowledge_test_only=False)
         # Truthy non-True must also fail per "exactly True" contract.
-        with pytest.raises(ThenvoiConfigError):
+        with pytest.raises(BandConfigError):
             HistoryCrewAIFlowStateSource(acknowledge_test_only="yes")  # type: ignore[arg-type]
 
     def test_constructor_succeeds_with_explicit_true(self) -> None:

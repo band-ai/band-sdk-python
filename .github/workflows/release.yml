@@ -44,37 +44,6 @@ jobs:
           manifest-file: .release-please-manifest.json
           target-branch: main
 
-  publish-thenvoi:
-    needs: [release]
-    if: needs.release.outputs.release_created == 'true'
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Configure git to use HTTPS for GitHub
-        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-
-      - name: Install dependencies
-        run: uv sync --all-groups
-
-      - name: Build package
-        run: uv build
-
-      - name: Publish thenvoi-sdk to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-
   publish-band:
     needs: [release]
     if: needs.release.outputs.release_created == 'true'
@@ -100,16 +69,14 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
-      - name: Build as band-sdk
-        run: |
-          sed -i 's/^name = "thenvoi-sdk"/name = "band-sdk"/' pyproject.toml
-          uv build
+      - name: Build band-sdk package
+        run: uv build
 
       - name: Publish band-sdk to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
   summary:
-    needs: [release, publish-thenvoi, publish-band]
+    needs: [release, publish-band]
     if: needs.release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
     steps:

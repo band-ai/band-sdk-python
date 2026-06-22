@@ -1,6 +1,6 @@
-"""Pytest fixtures for thenvoi SDK tests.
+"""Pytest fixtures for Band SDK tests.
 
-Most fixtures are provided by thenvoi-testing-python (auto-registered plugin).
+Most fixtures are provided by the thenvoi_testing package.
 
 Available from thenvoi_testing:
 - factory: MockDataFactory for creating test data
@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     MessageCreatedPayload,
     MessageMetadata,
     RoomAddedPayload,
@@ -33,7 +33,7 @@ from thenvoi.client.streaming import (
     ContactAddedPayload,
     ContactRemovedPayload,
 )
-from thenvoi.platform.event import (
+from band.platform.event import (
     MessageEvent,
     RoomAddedEvent,
     RoomDeletedEvent,
@@ -45,7 +45,7 @@ from thenvoi.platform.event import (
     ContactAddedEvent,
     ContactRemovedEvent,
 )
-from thenvoi.runtime.types import PlatformMessage
+from band.runtime.types import PlatformMessage
 
 # E402: module-level import not at top of file. Grouped after first-party SDK
 # imports to keep test-utility imports separate. The original interleaved
@@ -125,9 +125,16 @@ def make_participant_added_event(
     participant_id: str = "user-456",
     name: str = "Test User",
     type: str = "User",
+    **kwargs,
 ) -> ParticipantAddedEvent:
     """Create a ParticipantAddedEvent using SDK-native types."""
-    payload = ParticipantAddedPayload(id=participant_id, name=name, type=type)
+    payload = ParticipantAddedPayload(
+        id=participant_id,
+        name=name,
+        type=type,
+        is_remote=kwargs.get("is_remote"),
+        is_external=kwargs.get("is_external"),
+    )
     return ParticipantAddedEvent(room_id=room_id, payload=payload)
 
 
@@ -184,6 +191,7 @@ def make_contact_added_event(
         name=name,
         type=contact_type,
         description=kwargs.get("description"),
+        is_remote=kwargs.get("is_remote"),
         is_external=kwargs.get("is_external"),
         inserted_at=kwargs.get("inserted_at", "2026-01-01T00:00:00Z"),
     )
@@ -214,8 +222,8 @@ def dummy_message_handler():
 
 
 @pytest.fixture
-def mock_thenvoi_agent(mock_api_client, mock_websocket):
-    """Mock ThenvoiAgent coordinator for session/adapter tests."""
+def mock_band_agent(mock_api_client, mock_websocket):
+    """Mock BandAgent coordinator for session/adapter tests."""
     agent = AsyncMock()
     agent.agent_id = "agent-123"
     agent.agent_name = "TestBot"

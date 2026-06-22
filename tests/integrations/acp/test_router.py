@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from thenvoi.integrations.acp.router import AgentRouter
+from band.integrations.acp.router import AgentRouter
 
 
 class TestAgentRouter:

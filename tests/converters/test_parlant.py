@@ -7,7 +7,7 @@ This file contains Parlant-specific assistant message formatting and
 guideline-based conversation tests.
 """
 
-from thenvoi.converters.parlant import ParlantHistoryConverter
+from band.converters.parlant import ParlantHistoryConverter
 
 
 class TestAssistantMessages:

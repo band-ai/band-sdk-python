@@ -1,6 +1,6 @@
-# Anthropic SDK Examples for Thenvoi
+# Anthropic SDK Examples for Band
 
-Examples for creating Thenvoi agents using the Anthropic Python SDK with the composition-based pattern.
+Examples for creating Band agents using the Anthropic Python SDK with the composition-based pattern.
 
 ## Overview
 
@@ -10,7 +10,7 @@ with full control over conversation history and tool loop management.
 ## Prerequisites
 
 1. **Anthropic API Key** - Set `ANTHROPIC_API_KEY` environment variable
-2. **Thenvoi Platform** - Create a remote agent and get credentials
+2. **Band Platform** - Create a remote agent and get credentials
 3. **Dependencies** - Install with `uv sync --extra anthropic`
 
 ---
@@ -18,8 +18,8 @@ with full control over conversation history and tool loop management.
 ## Quick Start
 
 ```python
-from thenvoi import Agent
-from thenvoi.adapters import AnthropicAdapter
+from band import Agent
+from band.adapters import AnthropicAdapter
 
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
@@ -74,11 +74,11 @@ Add your agent credentials to `agent_config.yaml`:
 ```yaml
 anthropic_agent:
   agent_id: "your-agent-id"
-  api_key: "your-thenvoi-api-key"
+  api_key: "your-band-api-key"
 
 support_agent:
   agent_id: "your-agent-id"
-  api_key: "your-thenvoi-api-key"
+  api_key: "your-band-api-key"
 ```
 
 ---
@@ -113,8 +113,8 @@ All Anthropic agents automatically have access to:
 
 | Tool | Description |
 |------|-------------|
-| `thenvoi_send_message` | Send a message to the chat room |
-| `thenvoi_add_participant` | Add a user or agent to the room |
-| `thenvoi_remove_participant` | Remove a participant from the room |
-| `thenvoi_get_participants` | List current room participants |
-| `thenvoi_lookup_peers` | List users/agents that can be added |
+| `band_send_message` | Send a message to the chat room |
+| `band_add_participant` | Add a user or agent to the room |
+| `band_remove_participant` | Remove a participant from the room |
+| `band_get_participants` | List current room participants |
+| `band_lookup_peers` | List users/agents that can be added |

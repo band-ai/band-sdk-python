@@ -17,7 +17,7 @@ from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
-from thenvoi.client.streaming import (
+from band.client.streaming import (
     MessageCreatedPayload,
     SupersedePayload,
     WebSocketDisconnectReason,
@@ -335,7 +335,7 @@ async def test_aenter_wraps_upgrade_error(monkeypatch):
             raise upgrade_exc
 
     monkeypatch.setattr(
-        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+        "band.client.streaming.client.PHXChannelsClient", FailingPHXClient
     )
 
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
@@ -376,9 +376,9 @@ async def test_aenter_probes_initial_phx_connection_error(monkeypatch):
         return FailingProbe()
 
     monkeypatch.setattr(
-        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+        "band.client.streaming.client.PHXChannelsClient", FailingPHXClient
     )
-    monkeypatch.setattr("thenvoi.client.streaming.errors.connect", fake_connect)
+    monkeypatch.setattr("band.client.streaming.errors.connect", fake_connect)
 
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
 
@@ -404,7 +404,7 @@ async def test_aenter_restores_reconnect_after_successful_initial_connect(monkey
             return self
 
     monkeypatch.setattr(
-        "thenvoi.client.streaming.client.PHXChannelsClient", SuccessfulPHXClient
+        "band.client.streaming.client.PHXChannelsClient", SuccessfulPHXClient
     )
 
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
@@ -437,13 +437,13 @@ async def test_aenter_retries_unclassified_initial_connection_errors(monkeypatch
         sleep_delays.append(delay)
 
     monkeypatch.setattr(
-        "thenvoi.client.streaming.client.PHXChannelsClient", FlakyPHXClient
+        "band.client.streaming.client.PHXChannelsClient", FlakyPHXClient
     )
     monkeypatch.setattr(
-        "thenvoi.client.streaming.client.classify_initial_upgrade_error",
+        "band.client.streaming.client.classify_initial_upgrade_error",
         no_upgrade_error,
     )
-    monkeypatch.setattr("thenvoi.client.streaming.client.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("band.client.streaming.client.asyncio.sleep", fake_sleep)
 
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
     await client.__aenter__()
@@ -464,7 +464,7 @@ async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
             raise original_exc
 
     monkeypatch.setattr(
-        "thenvoi.client.streaming.client.PHXChannelsClient", FailingPHXClient
+        "band.client.streaming.client.PHXChannelsClient", FailingPHXClient
     )
 
     client = WebSocketClient("ws://localhost", "test-key", "agent-123")
@@ -597,12 +597,16 @@ async def test_accepts_valid_participant_added_payload():
             "id": "p-123",
             "name": "Test Agent",
             "type": "Agent",
+            "is_remote": True,
+            "is_external": True,
         }
 
     await client._handle_events(MockMessage(), {"participant_added": test_callback})
     assert isinstance(received_payload, ParticipantAddedPayload)
     assert received_payload.id == "p-123"
     assert received_payload.name == "Test Agent"
+    assert received_payload.is_remote is True
+    assert received_payload.is_external is True
 
 
 async def test_accepts_valid_participant_removed_payload():
