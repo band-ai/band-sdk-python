@@ -4,10 +4,23 @@ import importlib.util
 
 
 def test_band_import_surface_exposes_agent_and_link() -> None:
-    from band import Agent, BandLink, build_logging_config, configure_logging
+    from band import (
+        Agent,
+        BandLink,
+        LogLevel,
+        LoggingConfig,
+        LoggingStyle,
+        LogStream,
+        build_logging_config,
+        configure_logging,
+    )
 
     assert Agent.__name__ == "Agent"
     assert BandLink.__name__ == "BandLink"
+    assert LogLevel is not None
+    assert LoggingConfig is not None
+    assert LoggingStyle is not None
+    assert LogStream is not None
     assert build_logging_config.__name__ == "build_logging_config"
     assert configure_logging.__name__ == "configure_logging"
 

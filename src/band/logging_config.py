@@ -7,13 +7,14 @@ import logging
 import logging.config
 import sys
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from band.core.exceptions import BandConfigError
 
-LoggingStyle = Literal["standard", "rich", "json"]
-LogLevel = int | str
-LogStream = Literal["stderr", "stdout"]
+LoggingStyle: TypeAlias = Literal["standard", "rich", "json"]
+LogLevel: TypeAlias = int | str
+LogStream: TypeAlias = Literal["stderr", "stdout"]
+LoggingConfig: TypeAlias = dict[str, Any]
 
 _STANDARD_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _JSON_DEFAULT_FIELDS = ("asctime", "levelname", "name", "message")
@@ -34,7 +35,7 @@ def build_logging_config(
     extra_loggers: Mapping[str, LogLevel] | None = None,
     json_fields: Sequence[str] | None = None,
     static_fields: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
+) -> LoggingConfig:
     """Build a normalized ``logging.config.dictConfig`` dictionary.
 
     The default keeps noisy dependencies at WARNING while enabling Band SDK
@@ -47,13 +48,13 @@ def build_logging_config(
     normalized_root_level = _normalize_level(root_level, name="root_level")
 
     formatter_name = "console"
-    handler: dict[str, Any] = {
+    handler: LoggingConfig = {
         "class": "logging.StreamHandler",
         "formatter": formatter_name,
         "stream": f"ext://sys.{normalized_stream}",
     }
 
-    formatters: dict[str, dict[str, Any]]
+    formatters: dict[str, LoggingConfig]
     if normalized_style == "standard":
         formatters = {
             formatter_name: {
@@ -83,7 +84,7 @@ def build_logging_config(
         )
         fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
         _validate_json_fields(fields)
-        json_formatter: dict[str, Any] = {
+        json_formatter: LoggingConfig = {
             "()": "pythonjsonlogger.json.JsonFormatter",
             "format": " ".join(f"%({field})s" for field in fields),
             "datefmt": datefmt,
@@ -97,7 +98,7 @@ def build_logging_config(
             json_formatter["static_fields"] = dict(static_fields)
         formatters = {formatter_name: json_formatter}
 
-    loggers: dict[str, dict[str, Any]] = {
+    loggers: dict[str, LoggingConfig] = {
         "band": {
             "level": band_level,
             "propagate": True,
@@ -130,7 +131,7 @@ def build_logging_config(
     }
 
 
-def configure_logging(*args: Any, **kwargs: Any) -> dict[str, Any]:
+def configure_logging(*args: Any, **kwargs: Any) -> LoggingConfig:
     """Build and apply Band's logging configuration.
 
     Returns the applied ``dictConfig`` dictionary so callers can inspect the

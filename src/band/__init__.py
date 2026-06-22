@@ -54,7 +54,14 @@ from .core.exceptions import (
     BandConnectionError,
     BandToolError,
 )
-from .logging_config import build_logging_config, configure_logging
+from .logging_config import (
+    LogLevel,
+    LoggingConfig,
+    LoggingStyle,
+    LogStream,
+    build_logging_config,
+    configure_logging,
+)
 
 # Platform layer
 from .platform import BandLink, PlatformEvent
@@ -103,6 +110,10 @@ __all__ = [
     "BandConfigError",
     "BandConnectionError",
     "BandToolError",
+    "LogLevel",
+    "LoggingConfig",
+    "LoggingStyle",
+    "LogStream",
     "build_logging_config",
     "configure_logging",
     # Platform
