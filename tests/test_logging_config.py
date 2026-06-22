@@ -12,7 +12,9 @@ from band import BandConfigError, build_logging_config, configure_logging
 
 
 def test_configure_logging_signature_matches_builder() -> None:
-    assert inspect.signature(configure_logging) == inspect.signature(build_logging_config)
+    assert inspect.signature(configure_logging) == inspect.signature(
+        build_logging_config
+    )
 
 
 @pytest.fixture
@@ -57,7 +59,7 @@ def test_build_logging_config_returns_fresh_normalized_dict(monkeypatch) -> None
     real_find_spec = importlib.util.find_spec
 
     def fake_find_spec(name: str):
-        if name == "pythonjsonlogger":
+        if name == "pythonjsonlogger.json":
             return object()
         return real_find_spec(name)
 
@@ -104,6 +106,21 @@ def test_json_style_requires_optional_dependency(monkeypatch) -> None:
         build_logging_config(style="json")
 
 
+def test_json_style_raises_config_error_when_package_absent(monkeypatch) -> None:
+    # When python-json-logger is not installed at all, find_spec imports the
+    # missing parent package and raises ModuleNotFoundError rather than
+    # returning None. The guard must surface the friendly BandConfigError.
+    def fake_find_spec(name: str):
+        if name.startswith("pythonjsonlogger"):
+            raise ModuleNotFoundError(name="pythonjsonlogger")
+        return importlib.util.find_spec(name)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+
+    with pytest.raises(BandConfigError, match=r"band-sdk\[logging\]"):
+        build_logging_config(style="json")
+
+
 def test_json_style_requires_v3_json_submodule(monkeypatch) -> None:
     def fake_find_spec(name: str):
         if name == "pythonjsonlogger":
@@ -122,7 +139,9 @@ def test_bool_levels_are_rejected() -> None:
     with pytest.raises(ValueError, match="level must be an int or logging level name"):
         build_logging_config(level=True)
 
-    with pytest.raises(ValueError, match="root_level must be an int or logging level name"):
+    with pytest.raises(
+        ValueError, match="root_level must be an int or logging level name"
+    ):
         build_logging_config(root_level=False)
 
 

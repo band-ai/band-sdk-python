@@ -155,7 +155,9 @@ __all__ = [
 ]
 
 _band_logger = logging.getLogger("band")
-if not any(isinstance(handler, logging.NullHandler) for handler in _band_logger.handlers):
+if not any(
+    isinstance(handler, logging.NullHandler) for handler in _band_logger.handlers
+):
     _band_logger.addHandler(logging.NullHandler())
 
 try:

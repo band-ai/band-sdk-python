@@ -326,7 +326,14 @@ def _require_optional_package(
     extra: str,
     package_name: str | None = None,
 ) -> None:
-    if importlib.util.find_spec(import_name) is not None:
+    # find_spec imports the parent package for a dotted name, so an entirely
+    # missing dependency raises ModuleNotFoundError instead of returning None.
+    # Treat both "missing parent" and "missing submodule" as not installed.
+    try:
+        spec = importlib.util.find_spec(import_name)
+    except ModuleNotFoundError:
+        spec = None
+    if spec is not None:
         return
     dependency = package_name or import_name
     raise BandConfigError(
