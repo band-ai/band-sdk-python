@@ -4,10 +4,12 @@ import importlib.util
 
 
 def test_band_import_surface_exposes_agent_and_link() -> None:
-    from band import Agent, BandLink
+    from band import Agent, BandLink, build_logging_config, configure_logging
 
     assert Agent.__name__ == "Agent"
     assert BandLink.__name__ == "BandLink"
+    assert build_logging_config.__name__ == "build_logging_config"
+    assert configure_logging.__name__ == "configure_logging"
 
 
 def test_legacy_root_package_is_not_available() -> None:

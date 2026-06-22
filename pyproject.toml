@@ -30,6 +30,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+logging = [
+    "python-json-logger>=3.0.0",
+    "rich>=14.0.0",
+]
 codex = [
     "websockets>=13.0",
 ]

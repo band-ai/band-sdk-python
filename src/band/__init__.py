@@ -40,6 +40,7 @@ Example (Framework-light pattern):
     await link.run_forever()
 """
 
+import logging
 from importlib.metadata import version as _get_version, PackageNotFoundError
 
 # Composition layer (new pattern)
@@ -53,6 +54,7 @@ from .core.exceptions import (
     BandConnectionError,
     BandToolError,
 )
+from .logging_config import build_logging_config, configure_logging
 
 # Platform layer
 from .platform import BandLink, PlatformEvent
@@ -101,6 +103,8 @@ __all__ = [
     "BandConfigError",
     "BandConnectionError",
     "BandToolError",
+    "build_logging_config",
+    "configure_logging",
     # Platform
     "BandLink",
     "PlatformEvent",
@@ -138,6 +142,10 @@ __all__ = [
     "GracefulShutdown",
     "run_with_graceful_shutdown",
 ]
+
+_band_logger = logging.getLogger("band")
+if not any(isinstance(handler, logging.NullHandler) for handler in _band_logger.handlers):
+    _band_logger.addHandler(logging.NullHandler())
 
 try:
     __version__ = _get_version("band-sdk")
