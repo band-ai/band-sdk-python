@@ -52,8 +52,8 @@ python tests/qa/run.py --all-adapters
 ## Priority Order
 
 When running QA, prioritize in this order:
-1. **Rehydration (B)** — highest bug density; replayed messages, duplicate responses
-2. **Basic Conversation (A)** — validates the fundamental flow works
+1. **Basic Conversation (A)** — validates the fundamental flow works
+2. **Rehydration (B)** — highest bug density; replayed messages, duplicate responses
 3. **Context Isolation (C)** — cross-room leakage is a critical correctness bug
 4. **Multi-Participant (D)** — validates cross-adapter interop
 5. **Expanded (E-I)** — feature-specific validation

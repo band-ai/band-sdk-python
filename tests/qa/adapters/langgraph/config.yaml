@@ -28,6 +28,15 @@ examples:
     03_custom_personality:
       file: 03_custom_personality.py
       config_key: custom_personality_agent
+    04_calculator_as_tool:
+      file: 04_calculator_as_tool.py
+      config_key: calculator_agent
+    05_rag_as_tool:
+      file: 05_rag_as_tool.py
+      config_key: rag_agent
+    06_delegate_to_sql_agent:
+      file: 06_delegate_to_sql_agent.py
+      config_key: sql_agent
 
 # Expanded scenarios (E-I) run purpose-built agent scripts
 expanded:

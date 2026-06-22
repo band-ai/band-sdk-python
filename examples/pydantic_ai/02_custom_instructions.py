@@ -58,7 +58,7 @@ async def main() -> None:
         raise ValueError("BAND_REST_URL environment variable is required")
     # Create adapter with custom instructions
     adapter = PydanticAIAdapter(
-        model="anthropic:claude-3-5-sonnet-latest",
+        model="anthropic:claude-sonnet-4-5",
         custom_section=CUSTOM_PROMPT,
     )
 
