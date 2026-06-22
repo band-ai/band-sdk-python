@@ -72,23 +72,10 @@ def build_logging_config(
         case _:
             raise AssertionError(f"Unexpected logging style: {normalized_style!r}")
 
-    loggers: dict[str, LoggingConfig] = {
-        "band": {
-            "level": band_level,
-            "propagate": True,
-        }
-    }
-    if extra_loggers:
-        for logger_name, logger_level in extra_loggers.items():
-            if not logger_name:
-                raise ValueError("extra_loggers keys must be non-empty logger names")
-            loggers[logger_name] = {
-                "level": _normalize_level(
-                    logger_level,
-                    name=f"extra_loggers[{logger_name!r}]",
-                ),
-                "propagate": True,
-            }
+    loggers = _build_logger_configs(
+        level=band_level,
+        extra_loggers=extra_loggers,
+    )
 
     return {
         "version": 1,
@@ -114,6 +101,35 @@ def configure_logging(*args: Any, **kwargs: Any) -> LoggingConfig:
     config = build_logging_config(*args, **kwargs)
     logging.config.dictConfig(config)
     return config
+
+
+def _build_logger_configs(
+    *,
+    level: LogLevel,
+    extra_loggers: Mapping[str, LogLevel] | None,
+) -> dict[str, LoggingConfig]:
+    loggers: dict[str, LoggingConfig] = {
+        "band": {
+            "level": level,
+            "propagate": True,
+        }
+    }
+
+    if not extra_loggers:
+        return loggers
+
+    for logger_name, logger_level in extra_loggers.items():
+        if not logger_name:
+            raise ValueError("extra_loggers keys must be non-empty logger names")
+        loggers[logger_name] = {
+            "level": _normalize_level(
+                logger_level,
+                name=f"extra_loggers[{logger_name!r}]",
+            ),
+            "propagate": True,
+        }
+
+    return loggers
 
 
 def _build_standard_config(
