@@ -41,6 +41,24 @@ def build_logging_config(
     The default keeps noisy dependencies at WARNING while enabling Band SDK
     logs at INFO. Applications can inspect, modify, then apply the returned
     dict themselves, or call :func:`configure_logging`.
+
+    Args:
+        level: Logging level for the ``band`` logger. Accepts logging constants
+            like ``logging.INFO`` or names like ``"INFO"``.
+        style: Output style: ``"standard"``, ``"rich"``, or ``"json"``.
+            ``"rich"`` and ``"json"`` require ``band-sdk[logging]``.
+        root_level: Root logger level for non-Band loggers.
+        stream: Console stream: ``"stderr"`` or ``"stdout"``.
+        datefmt: Timestamp format used by standard, Rich, and JSON output.
+        extra_loggers: Optional logger-name to level mapping, for example
+            ``{"httpx": "WARNING"}``.
+        json_fields: LogRecord field names to include in JSON output.
+        static_fields: Fixed fields added to every JSON record.
+
+    Examples:
+        ``build_logging_config()``
+        ``build_logging_config(style="json", stream="stdout")``
+        ``build_logging_config(level="DEBUG", extra_loggers={"httpx": "WARNING"})``
     """
     normalized_style = _normalize_style(style)
     normalized_stream = _normalize_stream(stream)
@@ -99,6 +117,14 @@ def configure_logging(*args: Any, **kwargs: Any) -> LoggingConfig:
 
     Returns the applied ``dictConfig`` dictionary so callers can inspect the
     exact configuration.
+
+    Common forms:
+        ``configure_logging()``
+        ``configure_logging(style="rich")``
+        ``configure_logging(style="json", stream="stdout")``
+        ``configure_logging(level="DEBUG", extra_loggers={"httpx": "WARNING"})``
+
+    See :func:`build_logging_config` for all supported options.
     """
     config = build_logging_config(*args, **kwargs)
     logging.config.dictConfig(config)
