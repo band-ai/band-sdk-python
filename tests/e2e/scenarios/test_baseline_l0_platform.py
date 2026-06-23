@@ -321,7 +321,7 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
         await stack.enter_async_context(agent)
 
         before_step_1 = message_ids(await fetch_chat_messages(api_client, chat_id))
-        assert before_step_1 == [], (
+        assert before_step_1 == set(), (
             "fresh adapter-owned L0 room already contains durable messages: "
             f"{before_step_1}"
         )

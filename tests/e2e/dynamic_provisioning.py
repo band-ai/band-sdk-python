@@ -109,8 +109,10 @@ class DynamicProvisioner:
         for agent in resp.data or []:
             if (getattr(agent, "name", "") or "").startswith(AGENT_NAME_PREFIX):
                 try:
+                    # force=True so agents that accrued execution history during a
+                    # prior run are still reaped (a plain delete 422s on those).
                     await self._user_client.human_api_agents.delete_my_agent(
-                        id=agent.id
+                        id=agent.id, force=True
                     )
                     logger.info("swept orphan agent %s", agent.id)
                 except Exception:
@@ -119,7 +121,11 @@ class DynamicProvisioner:
     async def teardown(self) -> None:
         for agent_id in list(self._minted_ids):
             try:
-                await self._user_client.human_api_agents.delete_my_agent(id=agent_id)
+                # force=True: minted agents will have execution history from the
+                # run, which a plain delete refuses with a 422.
+                await self._user_client.human_api_agents.delete_my_agent(
+                    id=agent_id, force=True
+                )
             except Exception:
                 logger.warning("teardown delete failed for %s", agent_id, exc_info=True)
         self._minted_ids.clear()
