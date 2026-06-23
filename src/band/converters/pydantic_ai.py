@@ -197,6 +197,10 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
         pending_tool_results: list[ToolReturnPart | RetryPromptPart],
     ) -> None:
         """Append a text turn: own text as ModelResponse, others as ModelRequest."""
+        # Blank/whitespace-only persisted rows are inert: never model-visible.
+        if not content.strip():
+            return
+
         role = hist.get("role", "user")
         sender_name = hist.get("sender_name", "")
         is_own = (

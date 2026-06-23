@@ -207,6 +207,7 @@ def _build_pydantic_ai_config() -> ConverterConfig:
         empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
         includes_own_text_without_tool_events=True,
+        skips_empty_content=True,
         output_adapter=PydanticAIOutputAdapter(),
     )
 
