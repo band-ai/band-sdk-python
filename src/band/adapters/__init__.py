@@ -20,6 +20,7 @@ Install the extra you need::
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING
 
 # Type-only imports for static analysis (pyrefly, mypy, etc.)
@@ -52,125 +53,47 @@ if TYPE_CHECKING:
     from band.adapters.slack import SlackApp as SlackApp
     from band.adapters.slack import SlackSessionState as SlackSessionState
 
-__all__ = [
-    "LangGraphAdapter",
-    "AnthropicAdapter",
-    "PydanticAIAdapter",
-    "ClaudeSDKAdapter",
-    "ParlantAdapter",
-    "CrewAIAdapter",
-    "CrewAIFlowAdapter",
-    "A2AAdapter",
-    "A2AGatewayAdapter",
-    "CodexAdapter",
-    "CodexAdapterConfig",
-    "ACPClientAdapter",
-    "ACPServer",
-    "BandACPServerAdapter",
-    "GeminiAdapter",
-    "GoogleADKAdapter",
-    "OpencodeAdapter",
-    "OpencodeAdapterConfig",
-    "LettaAdapter",
-    "LettaAdapterConfig",
-    "SlackAdapter",
-    "SlackApp",
-    "SlackSessionState",
-]
+# Maps each lazily-exported name to the submodule (under band.adapters) it lives
+# in. Adding an export = one line here; __all__ is derived so the two can't drift.
+# Names are not mechanically derivable from module names (a2a_gateway ->
+# A2AGatewayAdapter, acp -> ACP*/Band*, slack -> Slack*), so the mapping is
+# explicit.
+_LAZY_EXPORTS: dict[str, str] = {
+    "LangGraphAdapter": "langgraph",
+    "AnthropicAdapter": "anthropic",
+    "PydanticAIAdapter": "pydantic_ai",
+    "ClaudeSDKAdapter": "claude_sdk",
+    "ParlantAdapter": "parlant",
+    "CrewAIAdapter": "crewai",
+    "CrewAIFlowAdapter": "crewai_flow",
+    "A2AAdapter": "a2a",
+    "A2AGatewayAdapter": "a2a_gateway",
+    "CodexAdapter": "codex",
+    "CodexAdapterConfig": "codex",
+    "ACPClientAdapter": "acp",
+    "ACPServer": "acp",
+    "BandACPServerAdapter": "acp",
+    "GeminiAdapter": "gemini",
+    "GoogleADKAdapter": "google_adk",
+    "OpencodeAdapter": "opencode",
+    "OpencodeAdapterConfig": "opencode",
+    "LettaAdapter": "letta",
+    "LettaAdapterConfig": "letta",
+    "SlackAdapter": "slack",
+    "SlackApp": "slack",
+    "SlackSessionState": "slack",
+}
+
+__all__ = list(_LAZY_EXPORTS)
 
 
-def __getattr__(name: str) -> type:
-    """Lazy import adapters to avoid loading optional dependencies."""
-    if name == "LangGraphAdapter":
-        from band.adapters.langgraph import LangGraphAdapter
+def __getattr__(name: str) -> object:
+    """Lazily import adapters to avoid loading optional dependencies."""
+    module = _LAZY_EXPORTS.get(name)
+    if module is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    return getattr(importlib.import_module(f"{__name__}.{module}"), name)
 
-        return LangGraphAdapter
-    elif name == "AnthropicAdapter":
-        from band.adapters.anthropic import AnthropicAdapter
 
-        return AnthropicAdapter
-    elif name == "PydanticAIAdapter":
-        from band.adapters.pydantic_ai import PydanticAIAdapter
-
-        return PydanticAIAdapter
-    elif name == "ClaudeSDKAdapter":
-        from band.adapters.claude_sdk import ClaudeSDKAdapter
-
-        return ClaudeSDKAdapter
-    elif name == "ParlantAdapter":
-        from band.adapters.parlant import ParlantAdapter
-
-        return ParlantAdapter
-    elif name == "CrewAIAdapter":
-        from band.adapters.crewai import CrewAIAdapter
-
-        return CrewAIAdapter
-    elif name == "CrewAIFlowAdapter":
-        from band.adapters.crewai_flow import CrewAIFlowAdapter
-
-        return CrewAIFlowAdapter
-    elif name == "A2AAdapter":
-        from band.adapters.a2a import A2AAdapter
-
-        return A2AAdapter
-    elif name == "A2AGatewayAdapter":
-        from band.adapters.a2a_gateway import A2AGatewayAdapter
-
-        return A2AGatewayAdapter
-    elif name == "CodexAdapter":
-        from band.adapters.codex import CodexAdapter
-
-        return CodexAdapter
-    elif name == "CodexAdapterConfig":
-        from band.adapters.codex import CodexAdapterConfig
-
-        return CodexAdapterConfig
-    elif name in (
-        "ACPClientAdapter",
-        "ACPServer",
-        "BandACPServerAdapter",
-    ):
-        from band.adapters.acp import (
-            ACPClientAdapter,
-            ACPServer,
-            BandACPServerAdapter,
-        )
-
-        if name == "ACPClientAdapter":
-            return ACPClientAdapter
-        elif name == "ACPServer":
-            return ACPServer
-        return BandACPServerAdapter
-    elif name == "GeminiAdapter":
-        from band.adapters.gemini import GeminiAdapter
-
-        return GeminiAdapter
-    elif name == "GoogleADKAdapter":
-        from band.adapters.google_adk import GoogleADKAdapter
-
-        return GoogleADKAdapter
-    elif name == "OpencodeAdapter":
-        from band.adapters.opencode import OpencodeAdapter
-
-        return OpencodeAdapter
-    elif name == "OpencodeAdapterConfig":
-        from band.adapters.opencode import OpencodeAdapterConfig
-
-        return OpencodeAdapterConfig
-    elif name == "LettaAdapter":
-        from band.adapters.letta import LettaAdapter
-
-        return LettaAdapter
-    elif name == "LettaAdapterConfig":
-        from band.adapters.letta import LettaAdapterConfig
-
-        return LettaAdapterConfig
-    elif name in ("SlackAdapter", "SlackApp", "SlackSessionState"):
-        from band.adapters.slack import SlackAdapter, SlackApp, SlackSessionState
-
-        if name == "SlackAdapter":
-            return SlackAdapter
-        elif name == "SlackApp":
-            return SlackApp
-        return SlackSessionState
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+def __dir__() -> list[str]:
+    return __all__
