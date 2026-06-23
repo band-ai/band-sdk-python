@@ -158,14 +158,20 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
        causes "Future attached to a different loop" errors when tests call
        into session-scoped WS/REST clients.
 
-    2. ``timeout(120)`` — E2E tests interact with live platforms and LLMs,
-       so they need more time than the 30s default in pyproject.toml.
+    2. ``timeout(120, method="thread")`` — E2E tests interact with live
+       platforms and LLMs, so they need more time than the 30s default in
+       pyproject.toml. The default ``signal`` method does NOT reliably
+       interrupt an ``await`` blocked in the session event loop (the SIGALRM
+       is deferred/swallowed), so a stuck live wait — e.g. an agent that never
+       connects — would hang past the deadline forever. The ``thread`` watchdog
+       faulthandler-dumps every thread's stack on timeout and then terminates,
+       so a hang can never run unbounded and the dump pinpoints the stuck await.
        ``pytestmark`` in conftest.py is NOT applied to collected tests;
        markers must be added here or directly on test items.
     """
     e2e_dir = Path(__file__).parent
     session_marker = pytest.mark.asyncio(loop_scope="session")
-    timeout_marker = pytest.mark.timeout(120)
+    timeout_marker = pytest.mark.timeout(120, method="thread")
     for item in items:
         if Path(item.path).is_relative_to(e2e_dir):
             if inspect.iscoroutinefunction(getattr(item, "obj", None)):
