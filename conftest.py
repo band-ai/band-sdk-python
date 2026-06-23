@@ -1,4 +1,4 @@
-"""Root pytest entry point for markdown code-fence tests."""
+"""Root pytest entry point for Markdown code-fence tests."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ pytest_plugins = ["tests.markdown_docs.fixtures"]
 
 @pytest.hookimpl(optionalhook=True)
 def pytest_markdown_docs_globals() -> dict[str, object]:
-    """Namespace for markdown code fences; see ``tests/markdown_docs/globals.py``."""
+    """Namespace for Markdown code fences; see ```tests/markdown_docs/globals.py```."""
     return build_globals()
 
 
-def pytest_collection_modifyitems(
+def pytest_collection_modify_items(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Silence expected SDK deprecations only during markdown snippet tests."""
+    """Silence expected SDK deprecations only during Markdown snippet tests."""
     if not config.getoption("markdowndocs", default=False):
         return
 
