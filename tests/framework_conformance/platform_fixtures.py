@@ -39,6 +39,7 @@ _EPOCH = datetime(2026, 6, 9, 12, 0, tzinfo=timezone.utc)
 @dataclass
 class ConformanceExecutionContext:
     room_id: str = ROOM_ID
+    agent_id: str = AGENT_ID
     history_messages: list[dict[str, Any]] = field(default_factory=list)
     pending_system_messages: list[str] = field(default_factory=list)
     enable_context_hydration: bool = True
