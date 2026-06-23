@@ -115,7 +115,7 @@ class GoogleSettings(BaseSettings):
     )
 
     api_key: str = ""  # GOOGLE_API_KEY
-    gemini_api_key: str = Field("", validation_alias="GEMINI_API_KEY")
+    gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
     genai_use_vertexai: bool = False  # GOOGLE_GENAI_USE_VERTEXAI
     cloud_project: str = ""  # GOOGLE_CLOUD_PROJECT
 
@@ -186,4 +186,4 @@ class LettaSettings(BaseSettings):
     api_key: str = ""
     project: str = ""
     model: str = "openai/gpt-5.4-mini"
-    mcp_server_url: str = Field("", validation_alias="MCP_SERVER_URL")
+    mcp_server_url: str = Field(default="", validation_alias="MCP_SERVER_URL")

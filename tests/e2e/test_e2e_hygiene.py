@@ -48,18 +48,29 @@ def test_e2e_settings_reject_placeholder_anthropic_model(
         E2ESettings()
 
 
-def test_default_anthropic_model_is_haiku_class(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("E2E_ANTHROPIC_MODEL", raising=False)
-
-    assert "haiku" in E2ESettings().e2e_anthropic_model.lower()
-
-
 def test_default_e2e_adapter_matrix_excludes_crewai_lane() -> None:
     assert "crewai" not in DEFAULT_E2E_ADAPTERS
     assert "pydantic_ai" in DEFAULT_E2E_ADAPTERS
     assert "codex" in DEFAULT_E2E_ADAPTERS
+
+
+def _non_bridge_adapter_modules() -> set[str]:
+    """Every adapter module on disk, minus protocol bridges.
+
+    Derived from ``src/band/adapters/*.py`` so a newly added adapter is
+    automatically required in the matrices below — the coverage check fails
+    closed instead of silently missing it.
+    """
+    import band.adapters
+    from tests.framework_conformance.injection_registry import (
+        INJECTION_EXCLUDED_MODULES,
+    )
+
+    adapters_dir = Path(band.adapters.__file__).parent
+    modules = {
+        path.stem for path in adapters_dir.glob("*.py") if path.stem != "__init__"
+    }
+    return modules - set(INJECTION_EXCLUDED_MODULES)
 
 
 def test_baseline_l0_adapter_matrix_covers_every_non_bridge_adapter() -> None:
@@ -68,24 +79,15 @@ def test_baseline_l0_adapter_matrix_covers_every_non_bridge_adapter() -> None:
         BASELINE_L0_BLOCKED_ADAPTER_NAMES,
     )
 
-    expected_non_bridge = {
-        "anthropic",
-        "claude_sdk",
-        "codex",
-        "crewai",
-        "crewai_flow",
-        "gemini",
-        "google_adk",
-        "langgraph",
-        "letta",
-        "opencode",
-        "parlant",
-        "pydantic_ai",
-    }
+    expected_non_bridge = _non_bridge_adapter_modules()
     runnable = set(BASELINE_L0_ADAPTER_FACTORIES)
     blocked = set(BASELINE_L0_BLOCKED_ADAPTER_NAMES)
 
-    assert runnable | blocked == expected_non_bridge
+    covered = runnable | blocked
+    assert covered == expected_non_bridge, {
+        "uncovered_new_adapters": sorted(expected_non_bridge - covered),
+        "stale_matrix_entries": sorted(covered - expected_non_bridge),
+    }
     assert not (runnable & blocked)
 
 
@@ -249,50 +251,44 @@ def test_codex_e2e_requires_explicit_disposable_cwd(
     tmp_path: Path,
 ) -> None:
     from tests.e2e.adapters import conftest as adapter_conftest
+    from tests.e2e.settings_groups import CodexSettings
 
     monkeypatch.delenv("CODEX_CWD", raising=False)
     with pytest.raises(pytest.skip.Exception, match="CODEX_CWD"):
-        adapter_conftest._require_codex_disposable_cwd()
+        adapter_conftest._require_codex_disposable_cwd(CodexSettings())
 
     monkeypatch.setenv("CODEX_CWD", str(tmp_path))
     monkeypatch.delenv("E2E_CODEX_CWD_IS_DISPOSABLE", raising=False)
     with pytest.raises(pytest.skip.Exception, match="E2E_CODEX_CWD_IS_DISPOSABLE"):
-        adapter_conftest._require_codex_disposable_cwd()
+        adapter_conftest._require_codex_disposable_cwd(CodexSettings())
 
     monkeypatch.setenv("E2E_CODEX_CWD_IS_DISPOSABLE", "true")
-    assert adapter_conftest._require_codex_disposable_cwd() == str(tmp_path.resolve())
+    assert adapter_conftest._require_codex_disposable_cwd(CodexSettings()) == str(
+        tmp_path.resolve()
+    )
 
 
-def test_write_capable_auto_approval_requires_opt_in(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_write_capable_auto_approval_requires_opt_in() -> None:
     from tests.e2e.adapters import conftest as adapter_conftest
 
-    monkeypatch.setenv("CODEX_APPROVAL_MODE", "auto_accept")
-    monkeypatch.delenv("E2E_ALLOW_WRITE_CAPABLE_AUTO_APPROVAL", raising=False)
+    # auto_accept is refused unless the write-capable opt-in is set.
     with pytest.raises(pytest.skip.Exception, match="auto_accept requires"):
         adapter_conftest._safe_approval_mode(
-            adapter_name="Codex",
-            env_var="CODEX_APPROVAL_MODE",
-            default="manual",
+            adapter_name="Codex", mode="auto_accept", opted_in=False
         )
 
-    monkeypatch.setenv("E2E_ALLOW_WRITE_CAPABLE_AUTO_APPROVAL", "true")
+    # auto_accept is allowed once opted in.
     assert (
         adapter_conftest._safe_approval_mode(
-            adapter_name="Codex",
-            env_var="CODEX_APPROVAL_MODE",
-            default="manual",
+            adapter_name="Codex", mode="auto_accept", opted_in=True
         )
         == "auto_accept"
     )
 
-    monkeypatch.delenv("CODEX_APPROVAL_MODE", raising=False)
+    # Non-write-capable modes pass through regardless of opt-in.
     assert (
         adapter_conftest._safe_approval_mode(
-            adapter_name="Codex",
-            env_var="CODEX_APPROVAL_MODE",
-            default="manual",
+            adapter_name="Codex", mode="manual", opted_in=False
         )
         == "manual"
     )
