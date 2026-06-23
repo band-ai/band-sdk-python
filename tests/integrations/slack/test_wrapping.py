@@ -21,6 +21,7 @@ import hashlib
 import hmac
 import json
 import time
+import warnings
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -295,7 +296,11 @@ async def test_on_started_mirrors_inner_support_no_spurious_warning(caplog):
     adapter, _, _, _ = _make_adapter(inner=inner)
 
     with caplog.at_level("WARNING"):
-        await adapter.on_started("MyBot", "")
+        with warnings.catch_warnings():
+            # A spurious UserWarning here would mean the wrapper failed to
+            # mirror the inner's support before the base check ran.
+            warnings.simplefilter("error", UserWarning)
+            await adapter.on_started("MyBot", "")
 
     # Wrapper now reflects the inner's declared support.
     assert adapter.SUPPORTED_EMIT == frozenset({Emit.EXECUTION})

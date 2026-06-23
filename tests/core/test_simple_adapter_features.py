@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import Any
 
 import pytest
@@ -88,7 +89,8 @@ class TestSimpleAdapterFeatures:
             features=AdapterFeatures(emit={Emit.EXECUTION, Emit.THOUGHTS}),
         )
         with caplog.at_level(logging.WARNING):
-            await adapter.on_started("test-agent", "A test agent")
+            with pytest.warns(UserWarning, match="does not support emit values"):
+                await adapter.on_started("test-agent", "A test agent")
         assert "does not support emit values" in caplog.text
         assert "THOUGHTS" in caplog.text or "thoughts" in caplog.text
 
@@ -102,7 +104,8 @@ class TestSimpleAdapterFeatures:
             ),
         )
         with caplog.at_level(logging.WARNING):
-            await adapter.on_started("test-agent", "A test agent")
+            with pytest.warns(UserWarning, match="does not support capability values"):
+                await adapter.on_started("test-agent", "A test agent")
         assert "does not support capability values" in caplog.text
         assert "CONTACTS" in caplog.text or "contacts" in caplog.text
 
@@ -116,7 +119,9 @@ class TestSimpleAdapterFeatures:
             ),
         )
         with caplog.at_level(logging.WARNING):
-            await adapter.on_started("test-agent", "A test agent")
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", UserWarning)
+                await adapter.on_started("test-agent", "A test agent")
         assert "does not support" not in caplog.text
 
     @pytest.mark.asyncio
@@ -125,7 +130,9 @@ class TestSimpleAdapterFeatures:
     ) -> None:
         adapter = _TestAdapter()
         with caplog.at_level(logging.WARNING):
-            await adapter.on_started("test-agent", "A test agent")
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", UserWarning)
+                await adapter.on_started("test-agent", "A test agent")
         assert "does not support" not in caplog.text
 
     @pytest.mark.asyncio
@@ -137,6 +144,7 @@ class TestSimpleAdapterFeatures:
             features=AdapterFeatures(emit={Emit.EXECUTION}),
         )
         with caplog.at_level(logging.WARNING):
-            await adapter.on_started("test-agent", "A test agent")
+            with pytest.warns(UserWarning, match="does not support emit values"):
+                await adapter.on_started("test-agent", "A test agent")
         # _BareAdapter has empty SUPPORTED_EMIT, so EXECUTION is unsupported
         assert "does not support emit values" in caplog.text
