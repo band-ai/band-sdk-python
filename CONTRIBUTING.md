@@ -21,7 +21,7 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
 2. **Add the upstream remote**
 
    ```bash
-   git remote add upstream https://github.com/thenvoi/thenvoi-sdk-python.git
+   git remote add upstream https://github.com/band-ai/band-sdk-python.git
    ```
 
 3. **Install dependencies**

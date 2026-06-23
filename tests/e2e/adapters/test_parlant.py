@@ -85,7 +85,7 @@ def _message_timestamp_key(payload) -> str:
 
 def _parlant_agent_credentials() -> tuple[str, str] | None:
     """Return local Parlant agent credentials without mutating process env."""
-    current_key = os.getenv("THENVOI_API_KEY", "")
+    current_key = os.getenv("BAND_API_KEY", "")
     test_agent_id = os.getenv("TEST_AGENT_ID")
     if current_key.startswith(("thnv_a", "band_a")) and test_agent_id:
         return test_agent_id, current_key
@@ -111,7 +111,7 @@ def e2e_config() -> E2ESettings:
         "band_api_key": api_key,
         "test_agent_id": agent_id,
     }
-    current_key = os.getenv("THENVOI_API_KEY", "")
+    current_key = os.getenv("BAND_API_KEY", "")
     if current_key.startswith(("thnv_u", "band_u")) and not settings.band_api_key_user:
         updates["band_api_key_user"] = current_key
 

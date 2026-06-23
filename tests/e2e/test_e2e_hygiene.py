@@ -157,18 +157,18 @@ def test_crewai_factory_skips_without_crewai_lane(
 def test_parlant_module_import_does_not_mutate_agent_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("THENVOI_API_KEY", "thnv_u_test_user_key")
+    monkeypatch.setenv("BAND_API_KEY", "thnv_u_test_user_key")
     monkeypatch.delenv("TEST_AGENT_ID", raising=False)
-    monkeypatch.delenv("THENVOI_AGENT_ID", raising=False)
-    monkeypatch.delenv("THENVOI_API_KEY_USER", raising=False)
+    monkeypatch.delenv("BAND_AGENT_ID", raising=False)
+    monkeypatch.delenv("BAND_API_KEY_USER", raising=False)
 
     module = importlib.import_module("tests.e2e.adapters.test_parlant")
     importlib.reload(module)
 
     assert "TEST_AGENT_ID" not in os.environ
-    assert "THENVOI_AGENT_ID" not in os.environ
-    assert "THENVOI_API_KEY_USER" not in os.environ
-    assert os.environ["THENVOI_API_KEY"] == "thnv_u_test_user_key"
+    assert "BAND_AGENT_ID" not in os.environ
+    assert "BAND_API_KEY_USER" not in os.environ
+    assert os.environ["BAND_API_KEY"] == "thnv_u_test_user_key"
 
 
 def test_room_creation_budget_rejects_before_create() -> None:

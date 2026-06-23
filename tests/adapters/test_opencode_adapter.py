@@ -907,7 +907,7 @@ class TestOpencodeAdapter:
         system_prompt = fake_client.prompt_calls[0]["system"]
         assert system_prompt is not None
         assert "You are OpenCode Agent, A coding agent." in system_prompt
-        assert "thenvoi_send_message" in system_prompt
+        assert "band_send_message" in system_prompt
         assert "Prefer short answers." in system_prompt
 
     @pytest.mark.asyncio

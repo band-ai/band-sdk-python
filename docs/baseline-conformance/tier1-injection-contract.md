@@ -82,7 +82,7 @@ class ModelDecision:
     text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
 
-ModelScript = list[ModelDecision]   # e.g. [call thenvoi_send_message(...), then stop]
+ModelScript = list[ModelDecision]   # e.g. [call band_send_message(...), then stop]
 ```
 
 The test author expresses the decision **once**, in this neutral form. A thin
@@ -186,8 +186,8 @@ separate family.
 
 ADK honesty is verified against the installed `google-adk`: a scripted `BaseLlm`
 flows through ADK's real `handle_function_calls_async` → `tool.run_async` →
-`_ThenvoiToolBridge.run_async` → `self._tools.execute_tool_call(...)`
-(`src/thenvoi/adapters/google_adk.py:226`). The seam is `_create_runner`
+`_BandToolBridge.run_async` → `self._tools.execute_tool_call(...)`
+(`src/band/adapters/google_adk.py:226`). The seam is `_create_runner`
 (`google_adk.py:435`), substituted on the instance and pinned by the drift gate —
 the same blessed pattern as `_call_anthropic`, **not** a new constructor hook
 (which §3.2 forbids).
@@ -365,7 +365,7 @@ uv run pytest tests/framework_conformance/test_codex_injection_spike.py -v --no-
 This spike proves the `SCRIPTED_PROTOCOL_CLIENT` seam is honest *against real
 protocol output*, not a self-confirming mock. The fixture
 (`fixtures/codex/codex_app_server_tool_call.jsonl`) is the **verbatim** wire
-transcript of a live `codex app-server` turn that called `thenvoi_send_message`,
+transcript of a live `codex app-server` turn that called `band_send_message`,
 captured at the SDK's own wire choke point. The replay client subclasses the
 **real** `BaseJsonRpcClient` and pushes the captured server frames through the
 **real** `_dispatch_rpc_message` parser, so the `RpcEvent` the adapter consumes is
@@ -374,7 +374,7 @@ built by production code; the adapter's real turn loop then routes it to
 are real Codex output. Asserts:
 
 1. **Real-frame dispatch** — the captured `item/tool/call` routes to
-   `execute_tool_call(thenvoi_send_message, {...})` with the captured args.
+   `execute_tool_call(band_send_message, {...})` with the captured args.
 2. **Schema-pin** — the real parser yields the exact fields the adapter reads
    (`tool` / `arguments` / `callId`); fails loudly if a future Codex release
    reshapes them, signalling a fixture re-capture.
@@ -395,7 +395,7 @@ dispatch + a negative control:
 |---|---|---|
 | `test_gemini_injection_spike.py` | `INTERNAL_CLIENT_CALL` | substitute `_call_gemini` on the instance; scripted `GenerateContentResponse` → real `_process_function_calls` → `execute_tool_call` |
 | `test_pydantic_ai_injection_spike.py` | `INJECTABLE_MODEL_OBJECT` | `Agent.override(model=FunctionModel(...))` (public test facility, no ctor change); scripted streamed tool call → real `agent.tool` wrapper |
-| `test_google_adk_injection_spike.py` | `INJECTABLE_MODEL_OBJECT` | instance-substitute `_create_runner` to wrap a scripted `BaseLlm`; real `InMemoryRunner` → `_ThenvoiToolBridge` → `execute_tool_call` |
+| `test_google_adk_injection_spike.py` | `INJECTABLE_MODEL_OBJECT` | instance-substitute `_create_runner` to wrap a scripted `BaseLlm`; real `InMemoryRunner` → `_BandToolBridge` → `execute_tool_call` |
 
 Two findings from building these confirm the contract's design choices:
 
@@ -406,7 +406,7 @@ Two findings from building these confirm the contract's design choices:
   `observation_paths` field (§5.6): a canary watching only `tool_calls` would
   wrongly fail PydanticAI.
 - **Google ADK's instance-substitution is honest.** A scripted `BaseLlm` flows
-  through ADK's real `InMemoryRunner` → `_ThenvoiToolBridge.run_async` →
+  through ADK's real `InMemoryRunner` → `_BandToolBridge.run_async` →
   `execute_tool_call` with no production-code change. The spike pins
   `drift_risk=HIGH`: the scripted `BaseLlm`/`LlmResponse` shape is ADK-internal,
   so the conformance binding carries a tested-minor `google-adk >=1.10,<1.11`
@@ -445,7 +445,7 @@ Remaining implementation work (mechanics, not contract):
   adapter, and a HIGH-drift binding without a `version_pin`.
 - **Positive-routing canary** — **done**:
   `tests/framework_conformance/test_injection_canary.py` drives one fixed canary
-  decision (`thenvoi_send_message(content="CANARY", ...)`) through every honest
+  decision (`band_send_message(content="CANARY", ...)`) through every honest
   binding's declared seam via the real adapter and asserts ≥1 dispatch on that
   binding's declared `observation_paths`. It is fail-closed and registry-driven: a
   newly-honest binding with no canary builder fails the gate, and a seam that still

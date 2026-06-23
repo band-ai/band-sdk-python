@@ -14,11 +14,11 @@ jobs:
       E2E_BASELINE_L2_LIVE: "true"
       E2E_BASELINE_RUN_ID: ${{ github.run_id }}
       E2E_BASELINE_ARTIFACT_DIR: .claude/reports/e2e-baseline-artifacts
-      THENVOI_BASE_URL: ${{ vars.THENVOI_BASE_URL }}
-      THENVOI_WS_URL: ${{ vars.THENVOI_WS_URL }}
+      BAND_BASE_URL: ${{ vars.BAND_BASE_URL }}
+      BAND_WS_URL: ${{ vars.BAND_WS_URL }}
       TEST_AGENT_ID: ${{ secrets.TEST_AGENT_ID }}
-      THENVOI_API_KEY: ${{ secrets.THENVOI_API_KEY }}
-      THENVOI_API_KEY_USER: ${{ secrets.THENVOI_API_KEY_USER }}
+      BAND_API_KEY: ${{ secrets.BAND_API_KEY }}
+      BAND_API_KEY_USER: ${{ secrets.BAND_API_KEY_USER }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}

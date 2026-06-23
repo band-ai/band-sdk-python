@@ -187,15 +187,15 @@ async def _wait_for_quiet_agent(observer: AgentMessageObserver, timeout: float) 
 
 
 async def run_langgraph_answers_down_message_once_after_restart() -> None:
-    base_url = os.environ.get("THENVOI_BASE_URL") or os.environ.get("THENVOI_REST_URL")
+    base_url = os.environ.get("BAND_BASE_URL") or os.environ.get("BAND_REST_URL")
     if not base_url:
-        pytest.skip("THENVOI_BASE_URL or THENVOI_REST_URL is required")
-    ws_url = _require_env("THENVOI_WS_URL")
-    user_key = os.environ.get("THENVOI_API_KEY_USER") or os.environ.get(
-        "THENVOI_USER_API_KEY"
+        pytest.skip("BAND_BASE_URL or BAND_REST_URL is required")
+    ws_url = _require_env("BAND_WS_URL")
+    user_key = os.environ.get("BAND_API_KEY_USER") or os.environ.get(
+        "BAND_USER_API_KEY"
     )
     if not user_key:
-        pytest.skip("THENVOI_API_KEY_USER or THENVOI_USER_API_KEY is required")
+        pytest.skip("BAND_API_KEY_USER or BAND_USER_API_KEY is required")
     _require_env("OPENAI_API_KEY")
 
     nonce = f"REHYDRATE_{uuid.uuid4().hex[:12]}"
