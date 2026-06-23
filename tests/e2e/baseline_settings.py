@@ -33,8 +33,9 @@ _L3_AGENT_REQUIRED = ("id", "api_key", "name", "handle", "description")
 class BaselineBaseSettings(E2ESettings):
     """Shared baseline configuration: pricing inputs and artifact location."""
 
-    e2e_baseline_input_usd_per_million_tokens: float | None = None
-    e2e_baseline_output_usd_per_million_tokens: float | None = None
+    # Raw strings: parsed + validated (fail-closed) in baseline_pricing_from_env.
+    e2e_baseline_input_usd_per_million_tokens: str = ""
+    e2e_baseline_output_usd_per_million_tokens: str = ""
     e2e_baseline_pricing_source: str = ""
     e2e_baseline_run_id: str = ""
     e2e_baseline_artifact_dir: str = ""

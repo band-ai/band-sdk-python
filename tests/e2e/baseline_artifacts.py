@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import math
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -77,10 +76,12 @@ def baseline_pricing_from_env() -> BaselinePricing:
     prevents stale model pricing from being baked into tests while making live
     runs fail closed if the runner did not choose a pricing source.
     """
+    from tests.e2e.baseline_settings import BaselineBaseSettings
 
-    input_rate = os.environ.get("E2E_BASELINE_INPUT_USD_PER_MILLION_TOKENS")
-    output_rate = os.environ.get("E2E_BASELINE_OUTPUT_USD_PER_MILLION_TOKENS")
-    source = os.environ.get("E2E_BASELINE_PRICING_SOURCE")
+    settings = BaselineBaseSettings()
+    input_rate = settings.e2e_baseline_input_usd_per_million_tokens
+    output_rate = settings.e2e_baseline_output_usd_per_million_tokens
+    source = settings.e2e_baseline_pricing_source
     missing = [
         name
         for name, value in (
@@ -445,14 +446,13 @@ def write_baseline_tier2_artifact(
         ) / 1_000_000
     ended_at = datetime.now(UTC).isoformat()
     wall_clock_ms = int((time.perf_counter() - timer.start_monotonic) * 1000)
-    run_id = os.environ.get(
-        "E2E_BASELINE_RUN_ID", datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    )
+    from tests.e2e.baseline_settings import BaselineBaseSettings
+
+    _baseline_settings = BaselineBaseSettings()
+    run_id = _baseline_settings.run_id
     safe_scenario = scenario_id.replace("/", "-").replace(".", "-")
     safe_adapter = adapter.replace("/", "-").replace(".", "-")
-    target_dir = artifact_dir or Path(
-        os.environ.get("E2E_BASELINE_ARTIFACT_DIR", str(_DEFAULT_ARTIFACT_DIR))
-    )
+    target_dir = artifact_dir or _baseline_settings.artifact_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     path = target_dir / f"{run_id}-{safe_scenario}-{safe_adapter}.json"
 
@@ -569,14 +569,13 @@ def write_baseline_tier2_blocked_artifact(
     """Write an explicit row-level Tier-2 blocked artifact."""
 
     _validate_scenario_ids(scenario_id, scenario_refs)
-    run_id = os.environ.get(
-        "E2E_BASELINE_RUN_ID", datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    )
+    from tests.e2e.baseline_settings import BaselineBaseSettings
+
+    _baseline_settings = BaselineBaseSettings()
+    run_id = _baseline_settings.run_id
     safe_scenario = scenario_id.replace("/", "-").replace(".", "-")
     safe_adapter = adapter.replace("/", "-").replace(".", "-")
-    target_dir = artifact_dir or Path(
-        os.environ.get("E2E_BASELINE_ARTIFACT_DIR", str(_DEFAULT_ARTIFACT_DIR))
-    )
+    target_dir = artifact_dir or _baseline_settings.artifact_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     path = target_dir / f"{run_id}-{safe_scenario}-{safe_adapter}-blocked.json"
     artifact = {
