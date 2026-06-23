@@ -283,6 +283,20 @@ requires_e2e = pytest.mark.skipif(
 )
 
 
+def _openai_key_available() -> bool:
+    """Whether an OpenAI API key is configured (evaluated at import time)."""
+    try:
+        return bool(E2ESettings().openai.api_key)
+    except (ValidationError, ValueError, OSError):
+        return False
+
+
+requires_openai = pytest.mark.skipif(
+    not _openai_key_available(),
+    reason="OPENAI_API_KEY not set",
+)
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
