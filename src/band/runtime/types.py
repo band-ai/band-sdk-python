@@ -74,6 +74,13 @@ class AgentConfig:
     auto_subscribe_existing_rooms: bool = True
 
 
+# Platform-side TTL (seconds) for the boolean working-state indicator. The
+# adapter must refresh well within this window; if refreshes stop (crash, hang,
+# disconnect) the platform clears the indicator. Mirrors the Ticket B contract
+# (TTL <= 10s). Used only to derive the keep-alive cadence guard below.
+PLATFORM_WORKING_STATE_TTL_SECONDS: float = 10.0
+
+
 @dataclass
 class SessionConfig:
     """Configuration for execution context."""
@@ -91,11 +98,61 @@ class SessionConfig:
     # round. Must be > 0; zero or negative turns Phase 2 into a REST hot loop.
     idle_resync_seconds: float = 60.0
 
+    # --- Working-state (boolean "is the agent reasoning") reporting ---
+    # Kill-switch: disable all working-state reporting instantly if needed.
+    enable_working_state: bool = True
+    # Keep-alive cadence: how often working:true is refreshed while a cycle runs.
+    # Must be < TTL/2 so a single missed/slow ping still lands inside the TTL.
+    working_keep_alive_seconds: float = 3.0
+    # Per-POST deadline for each activity report (must be < cadence so a slow
+    # POST can't pile onto the next keep-alive tick).
+    working_request_timeout_seconds: int = 2
+    # Optional upper bound on how long we keep asserting working:true for one
+    # cycle. When exceeded we stop refreshing (platform TTL clears it); we never
+    # cancel the reasoning. None = unbounded. NOT a hang-killer.
+    max_working_state_seconds: float | None = None
+
     def __post_init__(self) -> None:
         if self.idle_resync_seconds <= 0:
             raise ValueError(
                 "idle_resync_seconds must be > 0 (got %s)" % self.idle_resync_seconds
             )
+
+        # Working-state invariants only matter when reporting is enabled.
+        if self.enable_working_state:
+            ttl_half = PLATFORM_WORKING_STATE_TTL_SECONDS / 2
+            if self.working_keep_alive_seconds <= 0:
+                raise ValueError(
+                    "working_keep_alive_seconds must be > 0 (got %s)"
+                    % self.working_keep_alive_seconds
+                )
+            if self.working_keep_alive_seconds >= ttl_half:
+                raise ValueError(
+                    "working_keep_alive_seconds must be < TTL/2 (%s) to keep TTL "
+                    "headroom (got %s)" % (ttl_half, self.working_keep_alive_seconds)
+                )
+            if self.working_request_timeout_seconds <= 0:
+                raise ValueError(
+                    "working_request_timeout_seconds must be > 0 (got %s)"
+                    % self.working_request_timeout_seconds
+                )
+            if self.working_request_timeout_seconds >= self.working_keep_alive_seconds:
+                raise ValueError(
+                    "working_request_timeout_seconds (%s) must be < "
+                    "working_keep_alive_seconds (%s) so a slow POST can't stack"
+                    % (
+                        self.working_request_timeout_seconds,
+                        self.working_keep_alive_seconds,
+                    )
+                )
+            if (
+                self.max_working_state_seconds is not None
+                and self.max_working_state_seconds <= 0
+            ):
+                raise ValueError(
+                    "max_working_state_seconds must be > 0 when set (got %s)"
+                    % self.max_working_state_seconds
+                )
 
 
 @dataclass
