@@ -142,8 +142,13 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
         ]
 
         before_recall = message_ids(await fetch_chat_messages(api_client, chat_id))
+        # Probe employer (ACME), not the planted name (MARCO): the planted facts
+        # are spoken by the platform sender, so "what is my name" collides with
+        # the sender's real identity and has two defensible answers. ACME lives
+        # in the same first planted message, so this still exercises recall of
+        # the earliest burst turn without that ambiguity.
         recall_prompt = (
-            "what is my name, what project am I building, and what database do we use?"
+            "where do I work, what project am I building, and what database do we use?"
         )
         await send_trigger_message(
             api_client,
@@ -163,7 +168,7 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
     assert len(recall_replies) == 1, [
         message_value(message, "content") for message in recall_replies
     ]
-    for term in ("MARCO", "LIGHTHOUSE", "POSTGRESQL"):
+    for term in ("ACME", "LIGHTHOUSE", "POSTGRESQL"):
         assert_content_contains(recall_replies, term)
     write_baseline_tier2_artifact(
         scenario_id="L2.request.full_history",
@@ -184,10 +189,10 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
                 "recall_observation_window_seconds": _STEP_TIMEOUT,
                 "burst_reply_count": len(burst_replies),
                 "recall_reply_count": len(recall_replies),
-                "recalled_terms": ["MARCO", "LIGHTHOUSE", "POSTGRESQL"],
+                "recalled_terms": ["ACME", "LIGHTHOUSE", "POSTGRESQL"],
             },
             "L2.request.earliest_turn": {
-                "earliest_marker_recalled": "MARCO",
+                "earliest_marker_recalled": "ACME",
                 "recall_observation_window_seconds": _STEP_TIMEOUT,
             },
         },
@@ -195,7 +200,7 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
             {
                 "kind": "message",
                 "id": str(message_value(recall_replies[0], "id")),
-                "assertion": "single recall reply contains MARCO/LIGHTHOUSE/POSTGRESQL",
+                "assertion": "single recall reply contains ACME/LIGHTHOUSE/POSTGRESQL",
                 "scenario_refs": _L2_SCENARIO_REFS,
             }
         ],
