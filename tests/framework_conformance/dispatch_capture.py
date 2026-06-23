@@ -40,7 +40,9 @@ def _assert_dispatch_dependencies(adapter_id: str) -> None:
     binding = _BINDINGS_BY_ADAPTER[adapter_id]
     blocked_reason = tier1_dependency_blocked_reason(binding)
     if blocked_reason is not None:
-        raise AssertionError(blocked_reason)
+        # Missing optional framework dep (e.g. crewai in the default dev lane):
+        # skip, not fail — the adapter is covered in its own lane.
+        pytest.skip(blocked_reason)
 
 
 @dataclass(frozen=True, kw_only=True)
