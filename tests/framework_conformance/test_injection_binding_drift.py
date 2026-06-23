@@ -105,35 +105,47 @@ def _e2e_parametrized_adapters() -> set[str]:
 
 
 def _e2e_adapter_factory_names() -> set[str] | None:
-    """Read BASELINE_L0_ADAPTER_FACTORIES keys without importing optional deps."""
+    """Read the BASELINE_L0 factory ids without importing optional deps.
+
+    The factories self-register via ``@adapter_factory("<id>", groups=(...))``
+    decorators (the dicts are assembled from a registry, so there is no literal
+    to read). Derive the L0 set by AST-walking those decorators — still no
+    import, so a partially-installed CI lane can't masquerade as a change.
+    """
     conftest = _REPO_ROOT / "tests" / "e2e" / "adapters" / "conftest.py"
     tree = ast.parse(conftest.read_text(encoding="utf-8"), filename=str(conftest))
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            is_factories = any(
-                isinstance(target, ast.Name)
-                and target.id == "BASELINE_L0_ADAPTER_FACTORIES"
-                for target in node.targets
-            )
-            value = node.value
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
-            is_factories = node.target.id == "BASELINE_L0_ADAPTER_FACTORIES"
-            value = node.value
-        else:
+    names: set[str] = set()
+    found_decorator = False
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        if not is_factories:
-            continue
-        if not isinstance(value, ast.Dict):
-            raise AssertionError("BASELINE_L0_ADAPTER_FACTORIES must be a literal dict")
-        names: set[str] = set()
-        for key in value.keys:
-            if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+        for deco in node.decorator_list:
+            if not (
+                isinstance(deco, ast.Call)
+                and isinstance(deco.func, ast.Name)
+                and deco.func.id == "adapter_factory"
+            ):
+                continue
+            found_decorator = True
+            if not deco.args or not (
+                isinstance(deco.args[0], ast.Constant)
+                and isinstance(deco.args[0].value, str)
+            ):
                 raise AssertionError(
-                    "BASELINE_L0_ADAPTER_FACTORIES keys must be literal strings"
+                    "@adapter_factory first arg must be a literal adapter id string"
                 )
-            names.add(key.value)
-        return names
-    return None
+            adapter_id = deco.args[0].value
+            groups = next(
+                (kw.value for kw in deco.keywords if kw.arg == "groups"), None
+            )
+            if not isinstance(groups, ast.Tuple):
+                raise AssertionError("@adapter_factory groups= must be a literal tuple")
+            group_names = {
+                elt.value for elt in groups.elts if isinstance(elt, ast.Constant)
+            }
+            if "baseline_l0" in group_names:
+                names.add(adapter_id)
+    return names if found_decorator else None
 
 
 class SeamNotFound(Exception):
