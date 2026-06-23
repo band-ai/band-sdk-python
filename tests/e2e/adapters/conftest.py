@@ -15,6 +15,7 @@ import logging
 import shlex
 import shutil
 from collections.abc import Callable
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urlparse
@@ -39,11 +40,23 @@ AdapterFactory = Callable[[E2ESettings], SimpleAdapter[Any]]
 # are assembled from the decorations instead of hand-maintained lists. A new
 # adapter just decorates its factory; the drift gate in test_e2e_hygiene.py
 # fails closed if a non-bridge adapter ends up in no group and no exclusion.
-_FACTORY_REGISTRY: dict[str, dict[str, AdapterFactory]] = {}
+class FactoryGroup(StrEnum):
+    """The named groups a test adapter factory can belong to.
+
+    Each public factory dict below corresponds to one group; a factory opts in
+    via ``@adapter_factory(id, groups=(...))``.
+    """
+
+    DEFAULT = "default"  # general adapter_entry smoke parametrization
+    BASELINE_DEFAULT = "baseline_default"  # unsteered L1-L4 baseline lanes
+    BASELINE_L0 = "baseline_l0"  # L0 platform-adaptation lane
+
+
+_FACTORY_REGISTRY: dict[FactoryGroup, dict[str, AdapterFactory]] = {}
 
 
 def adapter_factory(
-    adapter_id: str, *, groups: tuple[str, ...]
+    adapter_id: str, *, groups: tuple[FactoryGroup, ...]
 ) -> Callable[[AdapterFactory], AdapterFactory]:
     """Register a factory under *adapter_id* for each of *groups*."""
 
@@ -114,7 +127,7 @@ def _require_codex_disposable_cwd(codex: CodexSettings) -> str:
     return str(path)
 
 
-@adapter_factory("langgraph", groups=("default",))
+@adapter_factory("langgraph", groups=(FactoryGroup.DEFAULT,))
 def create_langgraph_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a LangGraph adapter with a cheap OpenAI model."""
     _require_openai_key(settings)
@@ -130,7 +143,7 @@ def create_langgraph_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
-@adapter_factory("anthropic", groups=("default",))
+@adapter_factory("anthropic", groups=(FactoryGroup.DEFAULT,))
 def create_anthropic_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create an Anthropic adapter with a cheap Claude model."""
     _require_anthropic_key(settings)
@@ -142,7 +155,7 @@ def create_anthropic_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
-@adapter_factory("pydantic_ai", groups=("default",))
+@adapter_factory("pydantic_ai", groups=(FactoryGroup.DEFAULT,))
 def create_pydantic_ai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a Pydantic AI adapter with a cheap OpenAI model."""
     _require_openai_key(settings)
@@ -154,7 +167,7 @@ def create_pydantic_ai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
-@adapter_factory("claude_sdk", groups=("default",))
+@adapter_factory("claude_sdk", groups=(FactoryGroup.DEFAULT,))
 def create_claude_sdk_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a Claude SDK adapter with a cheap Claude model."""
     _require_anthropic_key(settings)
@@ -166,7 +179,7 @@ def create_claude_sdk_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
-@adapter_factory("crewai", groups=("default",))
+@adapter_factory("crewai", groups=(FactoryGroup.DEFAULT,))
 def create_crewai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a CrewAI adapter with a cheap OpenAI model."""
     _require_openai_key(settings)
@@ -184,7 +197,7 @@ def create_crewai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
-@adapter_factory("crewai_flow", groups=("default",))
+@adapter_factory("crewai_flow", groups=(FactoryGroup.DEFAULT,))
 def create_crewai_flow_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a CrewAI Flow adapter whose real side-effect path sends a reply."""
     from band.adapters.crewai_flow import CrewAIFlowAdapter
@@ -205,7 +218,7 @@ def create_crewai_flow_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     return CrewAIFlowAdapter(flow_factory=_E2EFlow)
 
 
-@adapter_factory("opencode", groups=("default", "baseline_l0"))
+@adapter_factory("opencode", groups=(FactoryGroup.DEFAULT, FactoryGroup.BASELINE_L0))
 def create_opencode_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create an OpenCode adapter backed by a caller-provided server."""
     opencode = OpencodeSettings()
@@ -232,7 +245,7 @@ def create_opencode_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
-@adapter_factory("codex", groups=("default", "baseline_l0"))
+@adapter_factory("codex", groups=(FactoryGroup.DEFAULT, FactoryGroup.BASELINE_L0))
 def create_codex_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a Codex adapter backed by the local Codex CLI/app-server."""
     from band.adapters.codex import CodexAdapter, CodexAdapterConfig
@@ -271,7 +284,7 @@ def create_codex_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
-@adapter_factory("letta", groups=("default", "baseline_l0"))
+@adapter_factory("letta", groups=(FactoryGroup.DEFAULT, FactoryGroup.BASELINE_L0))
 def create_letta_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create a Letta adapter backed by Letta Cloud or a self-hosted server."""
     pytest.importorskip("letta_client", reason="letta-client not installed")
@@ -312,7 +325,9 @@ def create_letta_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
 # =============================================================================
 
 
-@adapter_factory("langgraph", groups=("baseline_default", "baseline_l0"))
+@adapter_factory(
+    "langgraph", groups=(FactoryGroup.BASELINE_DEFAULT, FactoryGroup.BASELINE_L0)
+)
 def create_baseline_default_langgraph_adapter(
     settings: E2ESettings,
 ) -> SimpleAdapter[Any]:
@@ -329,7 +344,9 @@ def create_baseline_default_langgraph_adapter(
     )
 
 
-@adapter_factory("anthropic", groups=("baseline_default", "baseline_l0"))
+@adapter_factory(
+    "anthropic", groups=(FactoryGroup.BASELINE_DEFAULT, FactoryGroup.BASELINE_L0)
+)
 def create_baseline_default_anthropic_adapter(
     settings: E2ESettings,
 ) -> SimpleAdapter[Any]:
@@ -340,7 +357,9 @@ def create_baseline_default_anthropic_adapter(
     return AnthropicAdapter(model=settings.e2e_anthropic_model)
 
 
-@adapter_factory("pydantic_ai", groups=("baseline_default", "baseline_l0"))
+@adapter_factory(
+    "pydantic_ai", groups=(FactoryGroup.BASELINE_DEFAULT, FactoryGroup.BASELINE_L0)
+)
 def create_baseline_default_pydantic_ai_adapter(
     settings: E2ESettings,
 ) -> SimpleAdapter[Any]:
@@ -351,7 +370,9 @@ def create_baseline_default_pydantic_ai_adapter(
     return PydanticAIAdapter(model=f"openai:{settings.e2e_llm_model}")
 
 
-@adapter_factory("claude_sdk", groups=("baseline_default", "baseline_l0"))
+@adapter_factory(
+    "claude_sdk", groups=(FactoryGroup.BASELINE_DEFAULT, FactoryGroup.BASELINE_L0)
+)
 def create_baseline_default_claude_sdk_adapter(
     settings: E2ESettings,
 ) -> SimpleAdapter[Any]:
@@ -362,7 +383,9 @@ def create_baseline_default_claude_sdk_adapter(
     return ClaudeSDKAdapter(model=settings.e2e_anthropic_model)
 
 
-@adapter_factory("gemini", groups=("baseline_default", "baseline_l0"))
+@adapter_factory(
+    "gemini", groups=(FactoryGroup.BASELINE_DEFAULT, FactoryGroup.BASELINE_L0)
+)
 def create_baseline_default_gemini_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     """Create an unsteered Gemini adapter for baseline live proof."""
     _require_gemini_key_or_vertex(settings)
@@ -371,7 +394,9 @@ def create_baseline_default_gemini_adapter(settings: E2ESettings) -> SimpleAdapt
     return GeminiAdapter(model=settings.e2e_gemini_model)
 
 
-@adapter_factory("google_adk", groups=("baseline_default", "baseline_l0"))
+@adapter_factory(
+    "google_adk", groups=(FactoryGroup.BASELINE_DEFAULT, FactoryGroup.BASELINE_L0)
+)
 def create_baseline_default_google_adk_adapter(
     settings: E2ESettings,
 ) -> SimpleAdapter[Any]:
@@ -389,10 +414,12 @@ def create_baseline_default_google_adk_adapter(
 # Assembled from the @adapter_factory decorations above (not hand-maintained).
 # A drift gate in tests/e2e/test_e2e_hygiene.py asserts these groups + their
 # declared exclusions cover every non-bridge adapter module on disk.
-ADAPTER_FACTORIES: dict[str, AdapterFactory] = dict(_FACTORY_REGISTRY["default"])
+ADAPTER_FACTORIES: dict[str, AdapterFactory] = dict(
+    _FACTORY_REGISTRY[FactoryGroup.DEFAULT]
+)
 
 BASELINE_DEFAULT_ADAPTER_FACTORIES: dict[str, AdapterFactory] = dict(
-    _FACTORY_REGISTRY["baseline_default"]
+    _FACTORY_REGISTRY[FactoryGroup.BASELINE_DEFAULT]
 )
 
 # Non-bridge adapters intentionally absent from each group, with the reason.
@@ -440,7 +467,7 @@ BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES: tuple[str, ...] = tuple(
     )
 )
 BASELINE_L0_ADAPTER_FACTORIES: dict[str, AdapterFactory] = dict(
-    _FACTORY_REGISTRY["baseline_l0"]
+    _FACTORY_REGISTRY[FactoryGroup.BASELINE_L0]
 )
 BASELINE_L0_BLOCKED_ADAPTER_NAMES: tuple[str, ...] = (
     "crewai",

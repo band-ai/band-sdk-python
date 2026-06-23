@@ -145,6 +145,27 @@ def test_baseline_default_factory_group_covers_every_non_bridge_adapter() -> Non
     assert not (runnable & excluded)
 
 
+def test_every_factory_id_matches_a_real_adapter_module() -> None:
+    # Every @adapter_factory("<id>", ...) id must be a real src/band/adapters
+    # module stem — flags a typo'd id at the source rather than only via the
+    # coverage diffs above.
+    from tests.e2e.adapters.conftest import (
+        ADAPTER_FACTORIES,
+        BASELINE_DEFAULT_ADAPTER_FACTORIES,
+        BASELINE_L0_ADAPTER_FACTORIES,
+    )
+
+    registered = (
+        set(ADAPTER_FACTORIES)
+        | set(BASELINE_DEFAULT_ADAPTER_FACTORIES)
+        | set(BASELINE_L0_ADAPTER_FACTORIES)
+    )
+    unknown = registered - _non_bridge_adapter_modules()
+    assert not unknown, {
+        "factory ids not matching any src/band/adapters/ module": sorted(unknown)
+    }
+
+
 def test_provider_base_url_overrides_are_scoped_for_live_e2e(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

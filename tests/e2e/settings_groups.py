@@ -20,7 +20,7 @@ class LiveAgentSettings(BaseSettings):
     """Identity + credentials for a real platform agent used in a live scenario.
 
     Subclasses set ``env_prefix`` so the same field shape maps to a different
-    group of environment variables (Echo, the L3 trio, the L4 frameworks).
+    group of environment variables (Echo and the L3 trio).
     """
 
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")

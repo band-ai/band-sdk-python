@@ -114,6 +114,25 @@ def _e2e_adapter_factory_names() -> set[str] | None:
     """
     conftest = _REPO_ROOT / "tests" / "e2e" / "adapters" / "conftest.py"
     tree = ast.parse(conftest.read_text(encoding="utf-8"), filename=str(conftest))
+    # Resolve FactoryGroup members to their string values straight from the enum
+    # definition (e.g. {"BASELINE_L0": "baseline_l0"}) so groups expressed as
+    # FactoryGroup.X attributes can be read without importing the module.
+    group_values = _factory_group_member_values(tree)
+
+    def _group_value(elt: ast.expr) -> str:
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            return elt.value  # tolerate a bare string too
+        if (
+            isinstance(elt, ast.Attribute)
+            and isinstance(elt.value, ast.Name)
+            and elt.value.id == "FactoryGroup"
+            and elt.attr in group_values
+        ):
+            return group_values[elt.attr]
+        raise AssertionError(
+            "@adapter_factory groups must be FactoryGroup members or string literals"
+        )
+
     names: set[str] = set()
     found_decorator = False
     for node in ast.walk(tree):
@@ -140,12 +159,31 @@ def _e2e_adapter_factory_names() -> set[str] | None:
             )
             if not isinstance(groups, ast.Tuple):
                 raise AssertionError("@adapter_factory groups= must be a literal tuple")
-            group_names = {
-                elt.value for elt in groups.elts if isinstance(elt, ast.Constant)
-            }
+            group_names = {_group_value(elt) for elt in groups.elts}
             if "baseline_l0" in group_names:
                 names.add(adapter_id)
     return names if found_decorator else None
+
+
+def _factory_group_member_values(tree: ast.Module) -> dict[str, str]:
+    """Map FactoryGroup member name -> value by AST (no import).
+
+    e.g. ``BASELINE_L0 = "baseline_l0"`` -> ``{"BASELINE_L0": "baseline_l0"}``.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "FactoryGroup":
+            members: dict[str, str] = {}
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name)
+                    and isinstance(stmt.value, ast.Constant)
+                    and isinstance(stmt.value.value, str)
+                ):
+                    members[stmt.targets[0].id] = stmt.value.value
+            return members
+    raise AssertionError("FactoryGroup enum not found in adapters/conftest.py")
 
 
 class SeamNotFound(Exception):
