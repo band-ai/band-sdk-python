@@ -119,11 +119,18 @@ class DynamicProvisioner:
                     logger.warning("sweep failed for %s", agent.id, exc_info=True)
 
     async def teardown(self) -> None:
+        # pytest_unconfigure runs this in a fresh asyncio.run loop, but
+        # self._user_client's httpx pool is bound to the (now closed)
+        # pytest_configure loop that minting ran on — reusing it raises
+        # "Event loop is closed" when the delete requests close connections.
+        # Build a client in this loop so requests and their connection teardown
+        # both run on a live loop.
+        client = AsyncRestClient(api_key=self.user_api_key, base_url=self.base_url)
         for agent_id in list(self._minted_ids):
             try:
                 # force=True: minted agents will have execution history from the
                 # run, which a plain delete refuses with a 422.
-                await self._user_client.human_api_agents.delete_my_agent(
+                await client.human_api_agents.delete_my_agent(
                     id=agent_id, force=True
                 )
             except Exception:
