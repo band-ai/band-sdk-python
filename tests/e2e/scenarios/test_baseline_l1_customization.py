@@ -7,7 +7,6 @@ Run with:
 
 from __future__ import annotations
 
-import os
 import shlex
 import shutil
 from collections.abc import Awaitable, Callable
@@ -34,6 +33,8 @@ from tests.e2e.adapters.conftest import (
     _require_gemini_key_or_vertex,
     _safe_approval_mode,
 )
+from tests.e2e.baseline_settings import BaselineL1Settings
+from tests.e2e.settings_groups import CodexSettings, OpencodeSettings
 from tests.e2e.baseline_artifacts import (
     baseline_pricing_from_env,
     provider_usage_blocked_reason,
@@ -72,7 +73,7 @@ def _create_l1_anthropic_adapter(
     settings: E2ESettings,
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not settings.anthropic.api_key:
         pytest.skip("ANTHROPIC_API_KEY not set for Anthropic L1 live flow")
     from band.adapters.anthropic import AnthropicAdapter
 
@@ -88,7 +89,7 @@ def _create_l1_claude_sdk_adapter(
     settings: E2ESettings,
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    if not settings.anthropic.api_key:
         pytest.skip("ANTHROPIC_API_KEY not set for Claude SDK L1 live flow")
     from band.adapters.claude_sdk import ClaudeSDKAdapter
 
@@ -104,7 +105,7 @@ def _create_l1_langgraph_adapter(
     settings: E2ESettings,
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not settings.openai.api_key:
         pytest.skip("OPENAI_API_KEY not set for LangGraph L1 live flow")
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import MemorySaver
@@ -123,7 +124,7 @@ def _create_l1_pydantic_ai_adapter(
     settings: E2ESettings,
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not settings.openai.api_key:
         pytest.skip("OPENAI_API_KEY not set for PydanticAI L1 live flow")
     from band.adapters.pydantic_ai import PydanticAIAdapter
 
@@ -136,14 +137,14 @@ def _create_l1_pydantic_ai_adapter(
 
 
 def _create_l1_gemini_adapter(
-    _settings: E2ESettings,
+    settings: E2ESettings,
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
-    _require_gemini_key_or_vertex()
+    _require_gemini_key_or_vertex(settings)
     from band.adapters.gemini import GeminiAdapter
 
     return GeminiAdapter(
-        model=os.environ.get("E2E_GEMINI_MODEL", "gemini-2.5-flash"),
+        model=settings.e2e_gemini_model,
         prompt=_CUSTOM_PROMPT,
         additional_tools=[make_l1_custom_tool_def(handler)],
         features=AdapterFeatures(emit={Emit.EXECUTION}),
@@ -151,14 +152,14 @@ def _create_l1_gemini_adapter(
 
 
 def _create_l1_google_adk_adapter(
-    _settings: E2ESettings,
+    settings: E2ESettings,
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
-    _require_gemini_key_or_vertex()
+    _require_gemini_key_or_vertex(settings)
     from band.adapters.google_adk import GoogleADKAdapter
 
     return GoogleADKAdapter(
-        model=os.environ.get("E2E_GEMINI_MODEL", "gemini-2.5-flash"),
+        model=settings.e2e_gemini_model,
         custom_section=_CUSTOM_PROMPT,
         additional_tools=[make_l1_custom_tool_def(handler)],
         features=AdapterFeatures(emit={Emit.EXECUTION}),
@@ -171,31 +172,30 @@ def _create_l1_codex_adapter(
 ) -> SimpleAdapter[Any]:
     from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
-    transport = os.environ.get("CODEX_TRANSPORT", "stdio")
-    if transport not in {"stdio", "ws"}:
+    codex = CodexSettings()
+    if codex.transport not in {"stdio", "ws"}:
         pytest.skip("CODEX_TRANSPORT must be 'stdio' or 'ws' for Codex L1 live flow")
 
-    command_text = os.environ.get("CODEX_COMMAND")
-    command = tuple(shlex.split(command_text)) if command_text else None
+    command = tuple(shlex.split(codex.command)) if codex.command else None
     binary = command[0] if command else "codex"
-    if transport == "stdio" and not shutil.which(binary):
+    if codex.transport == "stdio" and not shutil.which(binary):
         pytest.skip("Codex L1 live flow requires the codex CLI on PATH")
-    cwd = _require_codex_disposable_cwd()
+    cwd = _require_codex_disposable_cwd(codex)
 
     return CodexAdapter(
         config=CodexAdapterConfig(
-            transport=cast(Any, transport),
+            transport=cast(Any, codex.transport),
             codex_command=command,
-            codex_ws_url=os.environ.get("CODEX_WS_URL", "ws://127.0.0.1:8765"),
-            model=os.environ.get("CODEX_MODEL", settings.e2e_llm_model),
+            codex_ws_url=codex.ws_url,
+            model=codex.model or settings.e2e_llm_model,
             cwd=cwd,
-            approval_policy=os.environ.get("CODEX_APPROVAL_POLICY", "never"),
+            approval_policy=codex.approval_policy,
             approval_mode=cast(
                 Any,
                 _safe_approval_mode(
                     adapter_name="Codex",
-                    env_var="CODEX_APPROVAL_MODE",
-                    default="manual",
+                    mode=codex.approval_mode,
+                    opted_in=codex.allow_write_capable_auto_approval,
                 ),
             ),
             custom_section=_CUSTOM_PROMPT,
@@ -211,24 +211,24 @@ def _create_l1_opencode_adapter(
     settings: E2ESettings,
     handler: L1ToolHandler,
 ) -> SimpleAdapter[Any]:
-    base_url = os.environ.get("OPENCODE_BASE_URL")
-    if not base_url:
+    opencode = OpencodeSettings()
+    if not opencode.base_url:
         pytest.skip("OPENCODE_BASE_URL not set for OpenCode L1 live flow")
     from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 
     return OpencodeAdapter(
         config=OpencodeAdapterConfig(
-            base_url=base_url,
-            provider_id=os.environ.get("OPENCODE_PROVIDER_ID", "opencode"),
-            model_id=os.environ.get("OPENCODE_MODEL_ID", "minimax-m2.5-free"),
-            agent=os.environ.get("OPENCODE_AGENT") or None,
+            base_url=opencode.base_url,
+            provider_id=opencode.provider_id,
+            model_id=opencode.model_id,
+            agent=opencode.agent or None,
             custom_section=_CUSTOM_PROMPT,
             approval_mode=_safe_approval_mode(
                 adapter_name="OpenCode",
-                env_var="OPENCODE_APPROVAL_MODE",
-                default="auto_decline",
+                mode=opencode.approval_mode,
+                opted_in=opencode.allow_write_capable_auto_approval,
             ),
-            question_mode=os.environ.get("OPENCODE_QUESTION_MODE", "auto_reject"),
+            question_mode=opencode.question_mode,
         ),
         additional_tools=[make_l1_custom_tool_def(handler)],
         features=AdapterFeatures(emit={Emit.EXECUTION}),
@@ -276,7 +276,7 @@ def l1_custom_adapter_entry(
 def test_l1_live_unsupported_adapter_rows_write_blocked_artifacts_when_configured(
     adapter_name: str,
 ) -> None:
-    blocked_reason = _l1_live_blocked_reason()
+    blocked_reason = _L1_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
     blocked_reason = write_provider_usage_blocked_artifact_if_needed(
@@ -287,13 +287,8 @@ def test_l1_live_unsupported_adapter_rows_write_blocked_artifacts_when_configure
     assert blocked_reason is not None
 
 
-def _l1_live_blocked_reason() -> str | None:
-    if os.environ.get("E2E_BASELINE_L1_LIVE") != "true":
-        return "tier2_blocked: E2E_BASELINE_L1_LIVE=true not set for live L1 flow"
-    return None
-
-
-_L1_LIVE_BLOCKED_REASON = _l1_live_blocked_reason()
+_L1_SETTINGS = BaselineL1Settings()
+_L1_LIVE_BLOCKED_REASON = _L1_SETTINGS.blocked_reason()
 pytestmark = pytest.mark.skipif(
     _L1_LIVE_BLOCKED_REASON is not None,
     reason=_L1_LIVE_BLOCKED_REASON or "tier2_blocked: unknown L1 live block",
@@ -310,7 +305,7 @@ async def test_l1_live_custom_prompt_tool_and_platform_tool_survive_when_configu
     e2e_agent_info: tuple[str, str],
     api_client: AsyncRestClient,
 ) -> None:
-    blocked_reason = _l1_live_blocked_reason()
+    blocked_reason = _L1_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
 

@@ -23,15 +23,22 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from dotenv import load_dotenv
-from pydantic import ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator
 from band_rest import AsyncRestClient, ChatRoomRequest
 from band_rest.types import (
     ParticipantRequest,
 )
+from pydantic_settings import SettingsConfigDict
 from thenvoi_testing.settings import BaseTestSettings
 
 from band.client.streaming import WebSocketClient
 from band.client.streaming.errors import WebSocketUpgradeError
+
+from tests.e2e.settings_groups import (
+    AnthropicSettings,
+    GoogleSettings,
+    OpenAISettings,
+)
 
 from tests.conftest_integration import is_room_alive
 from tests.e2e.helpers import TrackingWebSocketClient
@@ -186,7 +193,12 @@ class E2ESettings(BaseTestSettings):
     (e.g. E2E_LLM_MODEL -> e2e_llm_model) with case-insensitive matching.
     """
 
-    _env_file_path = Path(__file__).parent.parent.parent / ".env.test"
+    model_config = SettingsConfigDict(
+        env_file=".env.test",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     band_api_key: str = ""
     band_api_key_2: str = ""
@@ -199,8 +211,15 @@ class E2ESettings(BaseTestSettings):
     # E2E-specific settings (override via environment variables)
     e2e_llm_model: str = "gpt-5.4-mini"
     e2e_anthropic_model: str = "claude-haiku-4-5-20251001"
+    e2e_gemini_model: str = "gemini-2.5-flash"
     e2e_timeout: int = 30
     e2e_tests_enabled: bool = False
+
+    # LLM provider credential groups (also consumed directly by the provider
+    # SDKs via load_dotenv; these drive the test-level availability gating).
+    openai: OpenAISettings = Field(default_factory=OpenAISettings)
+    anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
+    google: GoogleSettings = Field(default_factory=GoogleSettings)
 
     @field_validator("e2e_llm_model")
     @classmethod
@@ -246,7 +265,7 @@ def _check_e2e_status() -> tuple[bool, str]:
         if not settings.e2e_tests_enabled:
             return True, "E2E_TESTS_ENABLED is not set to true"
         if not settings.band_api_key:
-            return True, "THENVOI_API_KEY is not set"
+            return True, "BAND_API_KEY is not set"
         return False, "E2E tests enabled"
     except (ValidationError, ValueError, OSError) as exc:
         logger.warning(
@@ -364,7 +383,7 @@ def e2e_session_client(
     underlying httpx client is managed internally.
     """
     if not e2e_config.band_api_key:
-        pytest.skip("THENVOI_API_KEY not set")
+        pytest.skip("BAND_API_KEY not set")
 
     client = AsyncRestClient(
         api_key=e2e_config.band_api_key,
@@ -388,7 +407,7 @@ def e2e_user_client(
     using the agent client would silently fail to trigger processing.
     """
     if not e2e_config.band_api_key_user:
-        pytest.skip("THENVOI_API_KEY_USER not set (needed for user REST client)")
+        pytest.skip("BAND_API_KEY_USER not set (needed for user REST client)")
 
     client = AsyncRestClient(
         api_key=e2e_config.band_api_key_user,
@@ -409,7 +428,7 @@ def e2e_unlimited_user_client(e2e_config: E2ESettings) -> AsyncRestClient:
     ``e2e_user_client`` or ``api_client``.
     """
     if not e2e_config.band_api_key_user:
-        pytest.skip("THENVOI_API_KEY_USER not set (needed for user REST client)")
+        pytest.skip("BAND_API_KEY_USER not set (needed for user REST client)")
 
     return AsyncRestClient(
         api_key=e2e_config.band_api_key_user,
@@ -490,7 +509,7 @@ async def e2e_adapter_agent_credentials(
     Live matrix runs can set ``E2E_<ADAPTER>_AGENT_ID``,
     ``E2E_<ADAPTER>_AGENT_API_KEY``, and ``E2E_<ADAPTER>_AGENT_NAME`` to
     isolate each adapter on its own stable Band identity. If unset, the shared
-    legacy ``TEST_AGENT_ID``/``THENVOI_API_KEY`` identity is used.
+    legacy ``TEST_AGENT_ID``/``BAND_API_KEY`` identity is used.
     """
     adapter_name, _factory = adapter_entry
     adapter_credentials = _adapter_credentials_from_env(adapter_name)
@@ -848,7 +867,7 @@ async def ws_client(
     joined channels and explicitly leaves them on teardown.
     """
     if not e2e_config.band_api_key_user:
-        pytest.skip("THENVOI_API_KEY_USER not set (needed for WS observer)")
+        pytest.skip("BAND_API_KEY_USER not set (needed for WS observer)")
 
     for attempt in range(4):
         ws = WebSocketClient(
