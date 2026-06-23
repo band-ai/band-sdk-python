@@ -917,6 +917,49 @@ DEFAULT_E2E_ADAPTERS = (
 )
 
 
+# =============================================================================
+# Dynamic companion-agent provisioning (opt-in via E2E_DYNAMIC_AGENTS=true)
+# =============================================================================
+#
+# Runs in pytest_configure (before collection) so the module-level baseline
+# settings in the scenario files observe the populated env. No-op unless the
+# flag is set and a user key is available.
+
+_DYNAMIC_PROVISIONER_KEY: pytest.StashKey[object] = pytest.StashKey()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if os.environ.get("E2E_DYNAMIC_AGENTS") != "true":
+        return
+    settings = E2ESettings()
+    if not settings.band_api_key_user:
+        logger.warning(
+            "E2E_DYNAMIC_AGENTS=true but BAND_API_KEY_USER is unset; "
+            "skipping dynamic companion-agent provisioning"
+        )
+        return
+
+    from tests.e2e.dynamic_provisioning import (
+        DynamicProvisioner,
+        new_run_id,
+        provision,
+    )
+
+    provisioner = DynamicProvisioner(
+        user_api_key=settings.band_api_key_user,
+        base_url=settings.band_base_url,
+        run_id=new_run_id(),
+    )
+    asyncio.run(provision(provisioner))
+    config.stash[_DYNAMIC_PROVISIONER_KEY] = provisioner
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    provisioner = config.stash.get(_DYNAMIC_PROVISIONER_KEY, None)
+    if provisioner is not None:
+        asyncio.run(provisioner.teardown())
+
+
 @pytest.fixture(params=DEFAULT_E2E_ADAPTERS)
 def adapter_entry(
     request: pytest.FixtureRequest,
