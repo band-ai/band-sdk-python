@@ -97,24 +97,15 @@ def test_provider_usage_baseline_matrix_covers_every_non_bridge_adapter() -> Non
         BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES,
     )
 
-    expected_non_bridge = {
-        "anthropic",
-        "claude_sdk",
-        "codex",
-        "crewai",
-        "crewai_flow",
-        "gemini",
-        "google_adk",
-        "langgraph",
-        "letta",
-        "opencode",
-        "parlant",
-        "pydantic_ai",
-    }
+    expected_non_bridge = _non_bridge_adapter_modules()
     runnable = set(BASELINE_DEFAULT_PROVIDER_USAGE_ADAPTER_FACTORIES)
     blocked = set(BASELINE_DEFAULT_PROVIDER_USAGE_BLOCKED_ADAPTER_NAMES)
 
-    assert runnable | blocked == expected_non_bridge
+    covered = runnable | blocked
+    assert covered == expected_non_bridge, {
+        "uncovered_new_adapters": sorted(expected_non_bridge - covered),
+        "stale_matrix_entries": sorted(covered - expected_non_bridge),
+    }
     assert not (runnable & blocked)
 
 
