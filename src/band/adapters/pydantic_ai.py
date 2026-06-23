@@ -27,6 +27,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     UserPromptPart,
 )
+from pydantic_ai.usage import RunUsage
 
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
@@ -564,64 +565,92 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             user_message[:80],
         )
 
-        # Run agent with streaming to capture tool events
-        async for event in self._agent.run_stream_events(
-            user_message,
-            deps=tools,
-            message_history=self._message_history[room_id],
-        ):
-            if isinstance(event, FunctionToolCallEvent):
-                if Emit.EXECUTION in self.features.emit:
-                    try:
-                        await tools.send_event(
-                            content=json.dumps(
-                                {
-                                    "name": event.part.tool_name,
-                                    "args": event.part.args,
-                                    "tool_call_id": event.part.tool_call_id,
-                                }
-                            ),
-                            message_type="tool_call",
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to send tool_call event: %s", e)
-            elif isinstance(event, FunctionToolResultEvent):
-                if Emit.EXECUTION in self.features.emit:
-                    try:
-                        await tools.send_event(
-                            content=json.dumps(
-                                {
-                                    "name": event.result.tool_name,
-                                    "output": str(event.result.content),
-                                    "tool_call_id": event.tool_call_id,
-                                }
-                            ),
-                            message_type="tool_result",
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to send tool_result event: %s", e)
-            elif isinstance(event, AgentRunResultEvent):
-                usage = event.result.usage()
-                self._record_provider_usage(
-                    source="pydantic_ai.agent_run_result.usage",
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    total_tokens=usage.total_tokens,
-                    api_call_count=usage.requests,
-                    raw={
-                        "requests": usage.requests,
-                        "input_tokens": usage.input_tokens,
-                        "output_tokens": usage.output_tokens,
-                        "total_tokens": usage.total_tokens,
-                    },
-                )
-                # Keep native run history, but drop responses that replay as
-                # content:null (e.g. thinking-only) and provider-native tool parts —
-                # providers reject them next request.
-                self._message_history[room_id] = self._replayable_history(
-                    room_id,
-                    list(event.result.all_messages()),
-                )
+        # Accumulate usage into our own RunUsage so a run that raises partway
+        # (e.g. a provider rejecting a replayed content:null message) still
+        # reports the tokens spent. run_stream_events only yields the terminal
+        # AgentRunResultEvent on clean completion, so recording usage solely
+        # from that event drops usage whenever the run errors mid-stream.
+        run_usage = RunUsage()
+        try:
+            # Run agent with streaming to capture tool events
+            async for event in self._agent.run_stream_events(
+                user_message,
+                deps=tools,
+                message_history=self._message_history[room_id],
+                usage=run_usage,
+            ):
+                await self._handle_stream_event(event, tools, room_id)
+        finally:
+            self._record_provider_usage(
+                source="pydantic_ai.agent_run_result.usage",
+                input_tokens=run_usage.input_tokens,
+                output_tokens=run_usage.output_tokens,
+                total_tokens=run_usage.total_tokens,
+                api_call_count=run_usage.requests,
+                raw={
+                    "requests": run_usage.requests,
+                    "input_tokens": run_usage.input_tokens,
+                    "output_tokens": run_usage.output_tokens,
+                    "total_tokens": run_usage.total_tokens,
+                },
+            )
+
+        logger.debug(
+            "Room %s: Pydantic AI agent completed (history now has %s messages)",
+            room_id,
+            len(self._message_history[room_id]),
+        )
+
+    async def _handle_stream_event(
+        self,
+        event: Any,
+        tools: AgentToolsProtocol,
+        room_id: str,
+    ) -> None:
+        """Process a single pydantic-ai stream event.
+
+        Usage recording is handled by the caller via the run-level accumulator;
+        this only emits execution events and refreshes replayable history.
+        """
+        if isinstance(event, FunctionToolCallEvent):
+            if Emit.EXECUTION in self.features.emit:
+                try:
+                    await tools.send_event(
+                        content=json.dumps(
+                            {
+                                "name": event.part.tool_name,
+                                "args": event.part.args,
+                                "tool_call_id": event.part.tool_call_id,
+                            }
+                        ),
+                        message_type="tool_call",
+                    )
+                except Exception as e:
+                    logger.warning("Failed to send tool_call event: %s", e)
+        elif isinstance(event, FunctionToolResultEvent):
+            if Emit.EXECUTION in self.features.emit:
+                try:
+                    await tools.send_event(
+                        content=json.dumps(
+                            {
+                                "name": event.result.tool_name,
+                                "output": str(event.result.content),
+                                "tool_call_id": event.tool_call_id,
+                            }
+                        ),
+                        message_type="tool_result",
+                    )
+                except Exception as e:
+                    logger.warning("Failed to send tool_result event: %s", e)
+        elif isinstance(event, AgentRunResultEvent):
+            # Keep native run history, but drop responses that replay as
+            # content:null (e.g. thinking-only) and provider-native tool parts —
+            # providers reject them next request. Usage is recorded by the
+            # caller from the run-level accumulator.
+            self._message_history[room_id] = self._replayable_history(
+                room_id,
+                list(event.result.all_messages()),
+            )
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",
