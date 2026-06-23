@@ -63,6 +63,22 @@ def _is_replayable_history_message(message: Any) -> bool:
     return True
 
 
+def _sanitize_run_history(messages: list[Any]) -> list[Any]:
+    """Drop assistant turns that serialize to content:null, before each request.
+
+    Registered as a pydantic-ai ``history_processor`` so it runs ahead of every
+    model request — including mid-run tool steps, where a model that emits an
+    empty or thinking-only ModelResponse would otherwise be replayed back to the
+    provider, which rejects content:null (e.g. OpenAI 400 "expected a string,
+    got null"). That crash aborts the run before usage/history are finalized.
+
+    Tool-call and tool-return messages carry content-bearing parts, so they are
+    kept and the active tool loop is preserved; only empty/thinking-only
+    responses are removed.
+    """
+    return [message for message in messages if _is_replayable_history_message(message)]
+
+
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
@@ -186,6 +202,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             instructions=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
+            history_processors=[_sanitize_run_history],
         )
 
         # Register platform tools dynamically from centralized definitions
