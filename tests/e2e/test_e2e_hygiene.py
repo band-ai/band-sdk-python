@@ -109,6 +109,42 @@ def test_provider_usage_baseline_matrix_covers_every_non_bridge_adapter() -> Non
     assert not (runnable & blocked)
 
 
+def test_default_factory_group_covers_every_non_bridge_adapter() -> None:
+    from tests.e2e.adapters.conftest import (
+        ADAPTER_FACTORIES,
+        DEFAULT_GROUP_EXCLUSIONS,
+    )
+
+    expected_non_bridge = _non_bridge_adapter_modules()
+    runnable = set(ADAPTER_FACTORIES)
+    excluded = set(DEFAULT_GROUP_EXCLUSIONS)
+
+    covered = runnable | excluded
+    assert covered == expected_non_bridge, {
+        "uncovered_new_adapters": sorted(expected_non_bridge - covered),
+        "stale_entries": sorted(covered - expected_non_bridge),
+    }
+    assert not (runnable & excluded)
+
+
+def test_baseline_default_factory_group_covers_every_non_bridge_adapter() -> None:
+    from tests.e2e.adapters.conftest import (
+        BASELINE_DEFAULT_ADAPTER_FACTORIES,
+        BASELINE_DEFAULT_GROUP_EXCLUSIONS,
+    )
+
+    expected_non_bridge = _non_bridge_adapter_modules()
+    runnable = set(BASELINE_DEFAULT_ADAPTER_FACTORIES)
+    excluded = set(BASELINE_DEFAULT_GROUP_EXCLUSIONS)
+
+    covered = runnable | excluded
+    assert covered == expected_non_bridge, {
+        "uncovered_new_adapters": sorted(expected_non_bridge - covered),
+        "stale_entries": sorted(covered - expected_non_bridge),
+    }
+    assert not (runnable & excluded)
+
+
 def test_provider_base_url_overrides_are_scoped_for_live_e2e(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
