@@ -16,7 +16,7 @@ def pytest_markdown_docs_globals() -> dict[str, object]:
     return build_globals()
 
 
-def pytest_collection_modify_items(
+def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
     """Silence expected SDK deprecations only during Markdown snippet tests."""
