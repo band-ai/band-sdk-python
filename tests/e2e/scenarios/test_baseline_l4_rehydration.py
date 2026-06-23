@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import multiprocessing
-import os
 import queue
 import time
 from pathlib import Path
@@ -36,6 +35,7 @@ from tests.e2e.baseline_artifacts import (
     write_baseline_tier2_blocked_artifact,
     write_provider_usage_blocked_artifact_if_needed,
 )
+from tests.e2e.baseline_settings import BaselineL4Settings
 from tests.e2e.conftest import E2EAgentCredentials, E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     assert_content_contains,
@@ -59,26 +59,7 @@ _L4_SCENARIO_REFS = [
 ]
 
 
-def _l4_live_blocked_reason() -> str | None:
-    if os.environ.get("E2E_BASELINE_L4_LIVE") != "true":
-        return "tier2_blocked: E2E_BASELINE_L4_LIVE=true not set for live L4 flow"
-    missing = [
-        name
-        for name in ("E2E_ECHO_AGENT_ID", "E2E_ECHO_AGENT_NAME")
-        if not os.environ.get(name)
-    ]
-    if missing:
-        return f"tier2_blocked: missing live L4 Echo configuration {', '.join(missing)}"
-    return None
-
-
-def _l4_langgraph_live_blocked_reason() -> str | None:
-    blocked_reason = _l4_live_blocked_reason()
-    if blocked_reason:
-        return blocked_reason
-    if os.environ.get("LANGGRAPH_RESTART_SMOKE") != "true":
-        return "tier2_blocked: LANGGRAPH_RESTART_SMOKE=true not set for supported LangGraph cold-restart proof"
-    return None
+_L4_SETTINGS = BaselineL4Settings()
 
 
 def _marker_count(messages: list[object], marker: str) -> int:
@@ -265,7 +246,7 @@ def _terminate_l4_child_process(process: multiprocessing.Process) -> None:
         raise AssertionError("tier2_blocked: first agent process survived termination")
 
 
-_L4_LIVE_BLOCKED_REASON = _l4_live_blocked_reason()
+_L4_LIVE_BLOCKED_REASON = _L4_SETTINGS.blocked_reason()
 pytestmark = pytest.mark.skipif(
     _L4_LIVE_BLOCKED_REASON is not None,
     reason=_L4_LIVE_BLOCKED_REASON or "tier2_blocked: unknown L4 live block",
@@ -287,7 +268,7 @@ def adapter_entry(request: pytest.FixtureRequest) -> tuple[str, AdapterFactory]:
 def test_l4_live_unsupported_adapter_rows_write_blocked_artifacts_when_configured(
     adapter_name: str,
 ) -> None:
-    blocked_reason = _l4_live_blocked_reason()
+    blocked_reason = _L4_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
     blocked_reason = write_provider_usage_blocked_artifact_if_needed(
@@ -309,7 +290,7 @@ async def test_l4_live_adapter_cold_restart_rehydrates_without_replaying_invite_
     e2e_adapter_agent_credentials: E2EAgentCredentials,
     tmp_path: Path,
 ) -> None:
-    blocked_reason = _l4_live_blocked_reason()
+    blocked_reason = _L4_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
 
@@ -322,7 +303,7 @@ async def test_l4_live_adapter_cold_restart_rehydrates_without_replaying_invite_
     chat_id, _user_id, _user_name = e2e_adapter_room
     agent_id = e2e_adapter_agent_credentials.agent_id
     agent_name = e2e_adapter_agent_credentials.name
-    echo_id = os.environ["E2E_ECHO_AGENT_ID"]
+    echo_id = _L4_SETTINGS.echo.id
 
     try:
         await api_client.human_api_participants.add_my_chat_participant(
@@ -656,7 +637,7 @@ async def test_l4_live_adapter_cold_restart_rehydrates_without_replaying_invite_
 async def test_l4_live_langgraph_cold_restart_no_duplicate_response_when_configured() -> (
     None
 ):
-    blocked_reason = _l4_langgraph_live_blocked_reason()
+    blocked_reason = _L4_SETTINGS.langgraph_blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
 

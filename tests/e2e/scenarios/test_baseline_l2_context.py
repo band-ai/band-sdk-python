@@ -7,8 +7,6 @@ Run with:
 
 from __future__ import annotations
 
-import os
-
 import pytest
 from band_rest import AsyncRestClient
 
@@ -27,6 +25,7 @@ from tests.e2e.baseline_artifacts import (
     write_baseline_tier2_artifact,
     write_provider_usage_blocked_artifact_if_needed,
 )
+from tests.e2e.baseline_settings import BaselineL2Settings
 from tests.e2e.conftest import E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     assert_content_contains,
@@ -45,13 +44,8 @@ _L2_SCENARIO_REFS = [
 ]
 
 
-def _l2_live_blocked_reason() -> str | None:
-    if os.environ.get("E2E_BASELINE_L2_LIVE") != "true":
-        return "tier2_blocked: E2E_BASELINE_L2_LIVE=true not set for live L2 flow"
-    return None
-
-
-_L2_LIVE_BLOCKED_REASON = _l2_live_blocked_reason()
+_L2_SETTINGS = BaselineL2Settings()
+_L2_LIVE_BLOCKED_REASON = _L2_SETTINGS.blocked_reason()
 pytestmark = pytest.mark.skipif(
     _L2_LIVE_BLOCKED_REASON is not None,
     reason=_L2_LIVE_BLOCKED_REASON or "tier2_blocked: unknown L2 live block",
@@ -75,7 +69,7 @@ def l2_provider_usage_adapter_entry(
 def test_l2_live_unsupported_adapter_rows_write_blocked_artifacts_when_configured(
     adapter_name: str,
 ) -> None:
-    blocked_reason = _l2_live_blocked_reason()
+    blocked_reason = _L2_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
     blocked_reason = write_provider_usage_blocked_artifact_if_needed(
@@ -97,7 +91,7 @@ async def test_l2_live_burst_history_recalls_planted_terms_when_configured(
     api_client: AsyncRestClient,
     e2e_unlimited_user_client: AsyncRestClient,
 ) -> None:
-    blocked_reason = _l2_live_blocked_reason()
+    blocked_reason = _L2_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
 

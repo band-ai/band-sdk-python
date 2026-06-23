@@ -11,7 +11,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
@@ -37,6 +36,7 @@ from tests.e2e.baseline_artifacts import (
     write_baseline_tier2_artifact,
     write_provider_usage_blocked_artifact_if_needed,
 )
+from tests.e2e.baseline_settings import BaselineL3Settings
 from tests.e2e.conftest import (
     E2ESettings,
     _assert_room_creation_budget_available,
@@ -70,65 +70,34 @@ class _LiveAgentSpec:
     description: str
 
 
-_REQUIRED_L3_ENV = (
-    "E2E_L3_TEST_AGENT_ID",
-    "E2E_L3_TEST_AGENT_API_KEY",
-    "E2E_L3_TEST_AGENT_NAME",
-    "E2E_L3_TEST_AGENT_HANDLE",
-    "E2E_L3_TEST_AGENT_DESCRIPTION",
-    "E2E_L3_CALC_AGENT_ID",
-    "E2E_L3_CALC_AGENT_API_KEY",
-    "E2E_L3_CALC_AGENT_NAME",
-    "E2E_L3_CALC_AGENT_HANDLE",
-    "E2E_L3_CALC_AGENT_DESCRIPTION",
-    "E2E_L3_GREETER_AGENT_ID",
-    "E2E_L3_GREETER_AGENT_API_KEY",
-    "E2E_L3_GREETER_AGENT_NAME",
-    "E2E_L3_GREETER_AGENT_HANDLE",
-    "E2E_L3_GREETER_AGENT_DESCRIPTION",
-)
-
-
-def _l3_live_blocked_reason() -> str | None:
-    if os.environ.get("E2E_BASELINE_L3_LIVE") != "true":
-        return "tier2_blocked: E2E_BASELINE_L3_LIVE=true not set for live L3 flow"
-    missing = [name for name in _REQUIRED_L3_ENV if not os.environ.get(name)]
-    if missing:
-        return f"tier2_blocked: missing live L3 configuration {', '.join(missing)}"
-    return None
+_L3_SETTINGS = BaselineL3Settings()
 
 
 def _specs() -> tuple[_LiveAgentSpec, _LiveAgentSpec, _LiveAgentSpec]:
-    test_name = os.environ["E2E_L3_TEST_AGENT_NAME"]
-    calc_name = os.environ["E2E_L3_CALC_AGENT_NAME"]
-    greeter_name = os.environ["E2E_L3_GREETER_AGENT_NAME"]
-    calc_handle = os.environ["E2E_L3_CALC_AGENT_HANDLE"].lstrip("@")
-    greeter_handle = os.environ["E2E_L3_GREETER_AGENT_HANDLE"].lstrip("@")
-    test_handle = os.environ["E2E_L3_TEST_AGENT_HANDLE"].lstrip("@")
     return (
         _LiveAgentSpec(
             role="test",
-            agent_id=os.environ["E2E_L3_TEST_AGENT_ID"],
-            api_key=os.environ["E2E_L3_TEST_AGENT_API_KEY"],
-            name=test_name,
-            handle=test_handle,
-            description=os.environ["E2E_L3_TEST_AGENT_DESCRIPTION"],
+            agent_id=_L3_SETTINGS.test_agent.id,
+            api_key=_L3_SETTINGS.test_agent.api_key,
+            name=_L3_SETTINGS.test_agent.name,
+            handle=_L3_SETTINGS.test_agent.visible_handle,
+            description=_L3_SETTINGS.test_agent.description,
         ),
         _LiveAgentSpec(
             role="calc",
-            agent_id=os.environ["E2E_L3_CALC_AGENT_ID"],
-            api_key=os.environ["E2E_L3_CALC_AGENT_API_KEY"],
-            name=calc_name,
-            handle=calc_handle,
-            description=os.environ["E2E_L3_CALC_AGENT_DESCRIPTION"],
+            agent_id=_L3_SETTINGS.calc_agent.id,
+            api_key=_L3_SETTINGS.calc_agent.api_key,
+            name=_L3_SETTINGS.calc_agent.name,
+            handle=_L3_SETTINGS.calc_agent.visible_handle,
+            description=_L3_SETTINGS.calc_agent.description,
         ),
         _LiveAgentSpec(
             role="greeter",
-            agent_id=os.environ["E2E_L3_GREETER_AGENT_ID"],
-            api_key=os.environ["E2E_L3_GREETER_AGENT_API_KEY"],
-            name=greeter_name,
-            handle=greeter_handle,
-            description=os.environ["E2E_L3_GREETER_AGENT_DESCRIPTION"],
+            agent_id=_L3_SETTINGS.greeter_agent.id,
+            api_key=_L3_SETTINGS.greeter_agent.api_key,
+            name=_L3_SETTINGS.greeter_agent.name,
+            handle=_L3_SETTINGS.greeter_agent.visible_handle,
+            description=_L3_SETTINGS.greeter_agent.description,
         ),
     )
 
@@ -265,7 +234,7 @@ async def _wait_full_turn_window(
     return await fetch_chat_messages(client, room_id)
 
 
-_L3_LIVE_BLOCKED_REASON = _l3_live_blocked_reason()
+_L3_LIVE_BLOCKED_REASON = _L3_SETTINGS.blocked_reason()
 pytestmark = pytest.mark.skipif(
     _L3_LIVE_BLOCKED_REASON is not None,
     reason=_L3_LIVE_BLOCKED_REASON or "tier2_blocked: unknown L3 live block",
@@ -289,7 +258,7 @@ def l3_provider_usage_adapter_entry(
 def test_l3_live_unsupported_adapter_rows_write_blocked_artifacts_when_configured(
     adapter_name: str,
 ) -> None:
-    blocked_reason = _l3_live_blocked_reason()
+    blocked_reason = _L3_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
     blocked_reason = write_provider_usage_blocked_artifact_if_needed(
@@ -312,7 +281,7 @@ async def test_l3_live_three_independent_real_adapter_instances_when_configured(
     e2e_room_creation_budget: int,
     e2e_user_peer: Any,
 ) -> None:
-    blocked_reason = _l3_live_blocked_reason()
+    blocked_reason = _L3_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
 

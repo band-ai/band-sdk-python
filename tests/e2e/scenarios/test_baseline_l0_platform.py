@@ -9,7 +9,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import AsyncExitStack
 from typing import Any
 
@@ -35,6 +34,7 @@ from tests.e2e.baseline_artifacts import (
     write_baseline_tier2_artifact,
     write_baseline_tier2_blocked_artifact,
 )
+from tests.e2e.baseline_settings import BaselineL0Settings
 from tests.e2e.conftest import E2EAgentCredentials, E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     ToolObservationUnavailableError,
@@ -67,25 +67,8 @@ _L0_SCENARIO_REFS = [
 ]
 
 
-def _l0_live_blocked_reason() -> str | None:
-    if os.environ.get("E2E_BASELINE_L0_LIVE") != "true":
-        return "tier2_blocked: E2E_BASELINE_L0_LIVE=true not set for live Echo flow"
-    missing = [
-        name
-        for name in (
-            "E2E_ECHO_AGENT_ID",
-            "E2E_ECHO_AGENT_API_KEY",
-            "E2E_ECHO_AGENT_NAME",
-            "E2E_ECHO_AGENT_HANDLE",
-        )
-        if not os.environ.get(name)
-    ]
-    if missing:
-        return f"tier2_blocked: missing live Echo configuration {', '.join(missing)}"
-    return None
-
-
-_L0_LIVE_BLOCKED_REASON = _l0_live_blocked_reason()
+_L0_SETTINGS = BaselineL0Settings()
+_L0_LIVE_BLOCKED_REASON = _L0_SETTINGS.blocked_reason()
 pytestmark = pytest.mark.skipif(
     _L0_LIVE_BLOCKED_REASON is not None,
     reason=_L0_LIVE_BLOCKED_REASON or "tier2_blocked: unknown L0 live block",
@@ -105,7 +88,7 @@ def adapter_entry(request: pytest.FixtureRequest) -> tuple[str, AdapterFactory]:
 def test_l0_live_unsupported_adapter_rows_write_blocked_artifacts_when_configured(
     adapter_name: str,
 ) -> None:
-    blocked_reason = _l0_live_blocked_reason()
+    blocked_reason = _L0_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
     reason = (
@@ -265,7 +248,7 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
     api_client: AsyncRestClient,
     e2e_adapter_agent_credentials: E2EAgentCredentials,
 ) -> None:
-    blocked_reason = _l0_live_blocked_reason()
+    blocked_reason = _L0_SETTINGS.blocked_reason()
     if blocked_reason:
         pytest.skip(blocked_reason)
 
@@ -278,10 +261,10 @@ async def test_l0_live_identity_context_echo_loop_and_remove_when_configured(
     chat_id, _user_id, user_name = e2e_fresh_adapter_room
     agent_id = e2e_adapter_agent_credentials.agent_id
     agent_name = e2e_adapter_agent_credentials.name
-    echo_id = os.environ["E2E_ECHO_AGENT_ID"]
-    echo_api_key = os.environ["E2E_ECHO_AGENT_API_KEY"]
-    echo_name = os.environ["E2E_ECHO_AGENT_NAME"]
-    echo_handle = os.environ["E2E_ECHO_AGENT_HANDLE"].lstrip("@")
+    echo_id = _L0_SETTINGS.echo.id
+    echo_api_key = _L0_SETTINGS.echo.api_key
+    echo_name = _L0_SETTINGS.echo.name
+    echo_handle = _L0_SETTINGS.echo.visible_handle
 
     try:
         await api_client.human_api_participants.add_my_chat_participant(
