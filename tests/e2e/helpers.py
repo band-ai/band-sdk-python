@@ -274,6 +274,24 @@ def mention_ids(message: Any) -> set[str]:
     return {str(message_value(mention, "id")) for mention in mentions}
 
 
+def mention_handles(message: Any) -> set[str]:
+    """Extract the participant handles in a message's mention metadata.
+
+    The backend resolves each ``@[[uuid]]`` mention token in the content into a
+    metadata entry carrying the peer's handle, so the readable handle lives in
+    the metadata rather than in the raw content text. Handles are normalized
+    (leading ``@`` stripped, lower-cased) for stable comparison.
+    """
+    metadata = message_value(message, "metadata")
+    mentions = message_value(metadata, "mentions") or []
+    handles = set()
+    for mention in mentions:
+        handle = message_value(mention, "handle")
+        if handle:
+            handles.add(str(handle).lstrip("@").lower())
+    return handles
+
+
 async def fetch_chat_messages(
     client: AsyncRestClient,
     room_id: str,
