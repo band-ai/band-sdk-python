@@ -190,18 +190,19 @@ async def running_minted_agent(
 ) -> AsyncGenerator[tuple[Agent, MintedAgent], None]:
     """Mint an agent and run ``adapter`` as it for the duration of the block.
 
-    Yields ``(agent, creds)`` with the agent connected. Reaping is owned by the
-    resource manager's teardown (the minted agent is tracked at mint time), so
-    this only manages the running agent's own lifecycle.
+    Yields ``(agent, minted)``: the running ``Agent`` and the ``MintedAgent``
+    record (id, name, api_key). Reaping is owned by the resource manager's
+    teardown (the minted agent is tracked at mint time), so this only manages
+    the running agent's own lifecycle.
     """
-    creds = await resources.mint_agent(label)
+    minted = await resources.mint_agent(label)
     endpoints = resources.settings.endpoints
     agent = Agent.create(
         adapter=adapter,
-        agent_id=creds.id,
-        api_key=creds.api_key,
+        agent_id=minted.id,
+        api_key=minted.api_key,
         ws_url=endpoints.ws_url,
         rest_url=endpoints.rest_url,
     )
     async with agent:
-        yield agent, creds
+        yield agent, minted
