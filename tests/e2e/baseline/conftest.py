@@ -12,6 +12,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 
 import pytest
+from anthropic import AsyncAnthropic
 from band_rest import AsyncRestClient
 
 from band.client.streaming import WebSocketClient
@@ -53,7 +54,8 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         pytest.fail("BAND_API_KEY_USER not set (E2E enabled)")
     marker = item.get_closest_marker(MARKER)
     if marker is not None:
-        for dep in marker.args[0]:
+        # requires() always wraps deps in a tuple; guard the raw-marker case.
+        for dep in marker.args[0] if marker.args else ():
             require_dep(dep, settings)
 
 
@@ -91,24 +93,26 @@ def user_ops(baseline_user_client: AsyncRestClient) -> UserOps:
 
 
 @pytest.fixture
-def judge(
+async def judge(
     baseline_settings: BaselineSettings,
-) -> Callable[..., Awaitable[Verdict]]:
-    """LLM judge with model + api_key pre-bound; call with criteria/transcript.
+) -> AsyncGenerator[Callable[..., Awaitable[Verdict]], None]:
+    """LLM judge with the client + model pre-bound; call with criteria/transcript.
 
     Self-gates on its provider key so any test using it skips cleanly when the
-    key is absent — the requirement travels with the fixture.
+    key is absent — the requirement travels with the fixture. The Anthropic
+    client is built once here (and closed on teardown) rather than per verdict.
 
     Usage::
 
         verdict = await judge(criteria="...", transcript="...")
     """
     require_dep(Dep.ANTHROPIC, baseline_settings)
-    return functools.partial(
-        _judge,
-        model=baseline_settings.llm_models.judge_model,
-        api_key=baseline_settings.llm_credentials.anthropic_api_key,
-    )
+    async with AsyncAnthropic(
+        api_key=baseline_settings.llm_credentials.anthropic_api_key
+    ) as client:
+        yield functools.partial(
+            _judge, client=client, model=baseline_settings.llm_models.judge_model
+        )
 
 
 @pytest.fixture(scope="session")

@@ -124,15 +124,18 @@ async def test_agent_recalls_earlier_facts(
             await drain(capture, user_ops, room_id, **mention)
 
             # Ask it to recall, then drain again so the answer is fully settled.
-            # Everything captured from here on is the agent's recall turn; the
-            # drain's own nonce echo is filtered out so the judge sees only the
-            # recall answer.
+            # Everything captured from here on is the agent's recall turn. Drop
+            # only the pure drain echo (a message that is *just* the nonce) —
+            # matching on exact content, not substring, so a reply that both
+            # recalls and happens to include the nonce is still judged.
             settled = len(capture.messages)
             await user_ops.send_message(
                 room_id, "What is my favorite color and my dog's name?", **mention
             )
             nonce = await drain(capture, user_ops, room_id, **mention)
-            recall = [m for m in capture.messages[settled:] if nonce not in m.content]
+            recall = [
+                m for m in capture.messages[settled:] if m.content.strip() != nonce
+            ]
 
     # Cheap structural pre-check: the recall turn mentions at least one fact.
     assert_present(recall, what="a recall reply")

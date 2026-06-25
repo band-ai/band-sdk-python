@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 
 from anthropic import AsyncAnthropic
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from band.client.streaming import MessageCreatedPayload
 
@@ -72,8 +72,8 @@ async def judge(
     criteria: str,
     transcript: str | list[MessageCreatedPayload],
     *,
+    client: AsyncAnthropic,
     model: str,
-    api_key: str,
 ) -> Verdict:
     """Render a pass/fail verdict on ``transcript`` against ``criteria``.
 
@@ -87,19 +87,24 @@ async def judge(
         f"Transcript to evaluate:\n{format_transcript(transcript)}"
     )
 
-    client = AsyncAnthropic(api_key=api_key)
-    response = await client.messages.parse(
-        model=model,
-        max_tokens=1024,
-        system=_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
-        output_format=Verdict,
-    )
+    try:
+        response = await client.messages.parse(
+            model=model,
+            max_tokens=1024,
+            system=_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+            output_format=Verdict,
+        )
+    except ValidationError as exc:
+        # max_tokens / truncated output: parse validates eagerly and raises
+        # before returning, so this is where an incomplete verdict surfaces.
+        raise ValueError("Judge returned a malformed or truncated verdict") from exc
+
     verdict = response.parsed_output
     if verdict is None:
-        # refusal / max_tokens / pause_turn: no validated verdict was produced.
+        # refusal: no schema-valid text block was produced.
         raise ValueError(
-            f"Judge did not complete a verdict (stop={response.stop_reason})"
+            f"Judge did not produce a verdict (stop={response.stop_reason})"
         )
     logger.info(
         "Judge verdict: passed=%s reasoning=%s", verdict.passed, verdict.reasoning

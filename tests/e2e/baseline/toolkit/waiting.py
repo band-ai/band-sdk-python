@@ -34,11 +34,14 @@ DEFAULT_DEADLINE_S = 60.0
 
 
 class ReplyCapture:
-    """Collects an room's agent text replies and waits on predicates over them.
+    """Collects a room's agent text replies and waits on predicates over them.
 
     Subscribed before any trigger is sent (see ``reply_capture``) so no reply
     can be missed. ``messages`` is the running buffer; ``wait_until`` blocks
     until a predicate over it holds, or raises ``TimeoutError`` at the deadline.
+
+    One waiter at a time: the internal nudge is a single shared ``asyncio.Event``,
+    so call ``wait_until`` sequentially on a capture, not from concurrent tasks.
     """
 
     def __init__(self, room_id: str) -> None:

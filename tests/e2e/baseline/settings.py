@@ -79,10 +79,12 @@ class LLMModels(BaseSettings):
     )
 
     openai_model: str = "gpt-4o-mini"  # E2E_OPENAI_MODEL (LangGraph agent)
-    anthropic_model: str = "claude-3-haiku-20240307"  # E2E_ANTHROPIC_MODEL
-    # Judge model. MUST be an Anthropic model id — the judge runs on Anthropic
-    # only. Left blank, it falls back to ``anthropic_model`` so the judge always
-    # uses a model the account has configured (E2E_JUDGE_MODEL overrides).
+    # A modern, cheap model: works for the agent under test AND for the judge,
+    # which needs structured-output support (claude-3-haiku-20240307 does not).
+    anthropic_model: str = "claude-haiku-4-5"  # E2E_ANTHROPIC_MODEL
+    # Judge model. MUST be a modern Anthropic model id (structured outputs). Left
+    # blank, it falls back to ``anthropic_model`` so the judge always uses a model
+    # the account has configured (E2E_JUDGE_MODEL overrides).
     judge_model: str = ""  # E2E_JUDGE_MODEL
 
     @model_validator(mode="after")

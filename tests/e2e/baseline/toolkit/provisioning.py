@@ -155,11 +155,13 @@ class ResourceManager:
         """
         max_age = timedelta(minutes=self._settings.run.orphan_max_age_minutes)
         cutoff = datetime.now(timezone.utc) - max_age
-        reaped = 0
+
+        # Collect candidates across all pages FIRST, then delete — deleting while
+        # paginating would shrink the list and skip agents past a page boundary.
+        # The seen-set dedups and guarantees termination even if the backend
+        # ignores `page`; the page cap bounds a best-effort sweep.
+        orphans: list[str] = []
         seen: set[str] = set()
-        # Page through matches. The seen-set both dedups and guarantees
-        # termination even if the backend ignores `page` and re-returns page 1;
-        # the page cap bounds a best-effort sweep.
         for page in range(1, 21):
             response = await self._client.human_api_agents.list_my_agents(
                 name=NAME_PREFIX, page_size=100, page=page
@@ -182,18 +184,22 @@ class ResourceManager:
                     inserted = inserted.replace(tzinfo=timezone.utc)
                 if inserted > cutoff:
                     continue  # too fresh — could be a concurrent run
-                logger.info("Sweeping orphan agent %s (%s)", agent.id, agent.name)
-                try:
-                    await self._client.human_api_agents.delete_my_agent(
-                        agent.id, force=True
-                    )
-                    reaped += 1
-                except Exception:
-                    logger.warning(
-                        "Failed to sweep orphan agent %s", agent.id, exc_info=True
-                    )
+                orphans.append(agent.id)
             if len(response.data or []) < 100:
                 break
+
+        reaped = 0
+        for agent_id in orphans:
+            logger.info("Sweeping orphan agent %s", agent_id)
+            try:
+                await self._client.human_api_agents.delete_my_agent(
+                    agent_id, force=True
+                )
+                reaped += 1
+            except Exception:
+                logger.warning(
+                    "Failed to sweep orphan agent %s", agent_id, exc_info=True
+                )
         if reaped:
             logger.info("Orphan sweep reaped %d agent(s)", reaped)
         return reaped
