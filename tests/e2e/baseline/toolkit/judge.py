@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from dataclasses import dataclass
 
 from anthropic import AsyncAnthropic
@@ -64,12 +63,17 @@ class Verdict:
 
 
 def _parse(text: str) -> Verdict:
-    """Extract the verdict JSON, tolerating prose or code fences around it."""
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match is None:
+    """Extract the verdict JSON, tolerating prose or code fences around it.
+
+    Decodes the first complete JSON object starting at the first ``{`` and
+    ignores any trailing text, so a brace in trailing prose can't corrupt the
+    parse (the model is asked for only the object; this is the safety net).
+    """
+    start = text.find("{")
+    if start == -1:
         raise ValueError(f"Judge returned no JSON object: {text!r}")
     try:
-        data = json.loads(match.group(0))
+        data, _ = json.JSONDecoder().raw_decode(text[start:])
         return Verdict(passed=bool(data["passed"]), reasoning=str(data["reasoning"]))
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise ValueError(f"Judge returned unparseable verdict: {text!r}") from exc
