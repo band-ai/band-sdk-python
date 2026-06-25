@@ -94,6 +94,9 @@ class BaselineSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env.test", extra="ignore")
 
+    # E2E_TESTS_ENABLED — the master gate for the live baseline suite.
+    e2e_tests_enabled: bool = False
+
     endpoints: BandEndpoints = Field(default_factory=BandEndpoints)
     credentials: BandCredentials = Field(default_factory=BandCredentials)
     run: BaselineRun = Field(default_factory=BaselineRun)

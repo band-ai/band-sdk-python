@@ -10,6 +10,7 @@ greeting actually happened. Validates the tools, not an L-level contract.
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Awaitable, Callable
 
 import pytest
 
@@ -17,15 +18,15 @@ from band.adapters.anthropic import AnthropicAdapter
 from band.adapters.langgraph import LangGraphAdapter
 from band.client.streaming import MessageCreatedPayload
 
+from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.tools.judge import judge
+from tests.e2e.baseline.tools.judge import Verdict
 from tests.e2e.baseline.tools.provisioning import (
     ResourceManager,
     running_minted_agent,
 )
 from tests.e2e.baseline.tools.user_ops import UserOps
 from tests.e2e.baseline.tools.waiting import drain, reply_capture
-from tests.e2e.conftest import requires_e2e
 from tests.e2e.helpers import TrackingWebSocketClient
 
 _SHORT = "Keep responses to one short sentence. Always reply using band_send_message."
@@ -57,19 +58,15 @@ def _transcript(messages: list[MessageCreatedPayload]) -> str:
     return "\n".join(f"[{m.sender_name or m.sender_id}]: {m.content}" for m in messages)
 
 
-@requires_e2e
+@requires(Dep.OPENAI, Dep.ANTHROPIC)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_two_agents_greet_each_other(
     baseline_settings: BaselineSettings,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     baseline_ws: TrackingWebSocketClient,
+    judge: Callable[..., Awaitable[Verdict]],
 ) -> None:
-    if not baseline_settings.llm_credentials.openai_api_key:
-        pytest.skip("OPENAI_API_KEY not set (needed for the LangGraph agent)")
-    if not baseline_settings.llm_credentials.anthropic_api_key:
-        pytest.skip("ANTHROPIC_API_KEY not set (needed for the Anthropic agent)")
-
     async with contextlib.AsyncExitStack() as stack:
         _, a = await stack.enter_async_context(
             running_minted_agent(
@@ -122,8 +119,6 @@ async def test_two_agents_greet_each_other(
             "Pass only if both agents greeted."
         ),
         transcript=transcript,
-        model=baseline_settings.llm_models.judge_model,
-        api_key=baseline_settings.llm_credentials.anthropic_api_key,
     )
     assert verdict.passed, (
         f"Judge failed mutual greeting: {verdict.reason}\n{transcript}"

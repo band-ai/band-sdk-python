@@ -7,17 +7,55 @@ tools add their fixtures here as they are built.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+import functools
+from collections.abc import AsyncGenerator, Awaitable, Callable
 
 import pytest
 from band_rest import AsyncRestClient
 
 from band.client.streaming import WebSocketClient
 
+from tests.e2e.baseline.requires import MARKER, Disposition, requirement_for
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.tools.judge import Verdict
+from tests.e2e.baseline.tools.judge import judge as _judge
 from tests.e2e.baseline.tools.provisioning import ResourceManager, new_run_id
 from tests.e2e.baseline.tools.user_ops import UserOps
 from tests.e2e.helpers import TrackingWebSocketClient
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        f"{MARKER}(deps): declare a baseline test's optional dependencies; the "
+        "E2E + Band-key gate is always applied. See requires.py.",
+    )
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Resolve ``@requires(...)`` before a baseline test runs.
+
+    Always-on gate: E2E disabled -> skip; E2E enabled but a Band key missing ->
+    fail (misconfig). Then each declared optional dependency skips or fails per
+    its registry disposition.
+    """
+    marker = item.get_closest_marker(MARKER)
+    if marker is None:
+        return
+    settings = BaselineSettings()
+    if not settings.e2e_tests_enabled:
+        pytest.skip("E2E_TESTS_ENABLED is not true")
+    if not settings.credentials.api_key:
+        pytest.fail("BAND_API_KEY not set (E2E enabled)")
+    if not settings.credentials.api_key_user:
+        pytest.fail("BAND_API_KEY_USER not set (E2E enabled)")
+    for dep in marker.args[0]:
+        req = requirement_for(dep)
+        if req.check(settings):
+            continue
+        if req.disposition is Disposition.FAIL:
+            pytest.fail(f"{req.reason} (required)")
+        pytest.skip(req.reason)
 
 
 @pytest.fixture(scope="session")
@@ -59,6 +97,23 @@ def user_ops(baseline_settings: BaselineSettings) -> UserOps:
         base_url=baseline_settings.endpoints.rest_url,
     )
     return UserOps(client)
+
+
+@pytest.fixture
+def judge(
+    baseline_settings: BaselineSettings,
+) -> Callable[..., Awaitable[Verdict]]:
+    """LLM judge with model + api_key pre-bound; call with criteria/transcript.
+
+    Usage::
+
+        verdict = await judge(criteria="...", transcript="...")
+    """
+    return functools.partial(
+        _judge,
+        model=baseline_settings.llm_models.judge_model,
+        api_key=baseline_settings.llm_credentials.anthropic_api_key,
+    )
 
 
 @pytest.fixture(scope="session")
