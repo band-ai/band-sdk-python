@@ -41,15 +41,15 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     """Gate every baseline test, then resolve any ``@requires(...)`` extras.
 
     The gate is unconditional (all baseline tests are live-e2e): E2E disabled
-    -> skip; E2E enabled but a Band key missing -> fail (misconfig). A test only
-    needs ``@requires(...)`` to declare *additional* optional capabilities (e.g.
-    provider keys), which skip when absent.
+    -> skip; E2E enabled but BAND_API_KEY_USER missing -> fail (misconfig). The
+    toolkit drives the platform as the user and provisions its own agents (with
+    per-agent generated keys), so a pre-existing static BAND_API_KEY is not
+    required. A test only needs ``@requires(...)`` to declare *additional*
+    optional capabilities (e.g. provider keys), which skip when absent.
     """
     settings = BaselineSettings()
     if not settings.e2e_tests_enabled:
         pytest.skip("E2E_TESTS_ENABLED is not true")
-    if not settings.credentials.api_key:
-        pytest.fail("BAND_API_KEY not set (E2E enabled)")
     if not settings.credentials.api_key_user:
         pytest.fail("BAND_API_KEY_USER not set (E2E enabled)")
     marker = item.get_closest_marker(MARKER)

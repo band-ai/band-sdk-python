@@ -92,7 +92,7 @@ Run: `E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov`
 ## Not here yet
 
 - Trajectory / tool-observation inspection and the `tool_fired` assertion (assert
-  which tool fired, with which args) are tracked in INT-913. Do not build an ad
+  which tool fired, with which args) are a tracked follow-up. Do not build an ad
   hoc version here; extend that work when it lands.
-- A full LLM-judge harness (calibration, voting/pass^k, tool-correctness) is a
-  later INT-911 sub-issue; `judge.py` notes DeepEval as the likely path.
+- A full LLM-judge harness (calibration, voting/pass^k, tool-correctness) is
+  later work; `judge.py` notes DeepEval as the likely path.

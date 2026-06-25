@@ -9,7 +9,7 @@ required to run. Add a new subclass + nested field as new concerns appear
 
 from __future__ import annotations
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,7 +78,12 @@ class LLMModels(BaseSettings):
         case_sensitive=False,
     )
 
-    openai_model: str = "gpt-4o-mini"  # E2E_OPENAI_MODEL (LangGraph agent)
+    # LangGraph/OpenAI agent model. Honors the documented E2E_LLM_MODEL (and
+    # accepts E2E_OPENAI_MODEL as an alias).
+    openai_model: str = Field(
+        default="gpt-4o-mini",
+        validation_alias=AliasChoices("E2E_LLM_MODEL", "E2E_OPENAI_MODEL"),
+    )
     # A modern, cheap model: works for the agent under test AND for the judge,
     # which needs structured-output support (claude-3-haiku-20240307 does not).
     anthropic_model: str = "claude-haiku-4-5"  # E2E_ANTHROPIC_MODEL
