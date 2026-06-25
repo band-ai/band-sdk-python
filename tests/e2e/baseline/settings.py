@@ -9,7 +9,7 @@ required to run. Add a new subclass + nested field as new concerns appear
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -55,6 +55,40 @@ class BaselineRun(BaseSettings):
     orphan_max_age_minutes: int = 120  # BAND_E2E_ORPHAN_MAX_AGE_MINUTES
 
 
+class LLMCredentials(BaseSettings):
+    """Model-provider API keys (standard provider env-var names, no prefix)."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env.test", extra="ignore", case_sensitive=False
+    )
+
+    openai_api_key: str = ""  # OPENAI_API_KEY
+    anthropic_api_key: str = ""  # ANTHROPIC_API_KEY
+
+
+class LLMModels(BaseSettings):
+    """Model ids for the agents under test and the judge."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="E2E_",
+        env_file=".env.test",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    openai_model: str = "gpt-4o-mini"  # E2E_OPENAI_MODEL (LangGraph agent)
+    anthropic_model: str = "claude-3-haiku-20240307"  # E2E_ANTHROPIC_MODEL
+    # Judge model. Left blank, it falls back to ``anthropic_model`` so the judge
+    # always uses a model the account has configured (E2E_JUDGE_MODEL overrides).
+    judge_model: str = ""  # E2E_JUDGE_MODEL
+
+    @model_validator(mode="after")
+    def _default_judge_to_anthropic(self) -> LLMModels:
+        if not self.judge_model:
+            self.judge_model = self.anthropic_model
+        return self
+
+
 class BaselineSettings(BaseSettings):
     """Top-level baseline toolkit config, composed from per-concern groups."""
 
@@ -63,3 +97,5 @@ class BaselineSettings(BaseSettings):
     endpoints: BandEndpoints = Field(default_factory=BandEndpoints)
     credentials: BandCredentials = Field(default_factory=BandCredentials)
     run: BaselineRun = Field(default_factory=BaselineRun)
+    llm_credentials: LLMCredentials = Field(default_factory=LLMCredentials)
+    llm_models: LLMModels = Field(default_factory=LLMModels)

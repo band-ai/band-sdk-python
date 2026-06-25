@@ -13,7 +13,7 @@ from tests.e2e.conftest import requires_e2e
 
 
 @requires_e2e
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_user_ops_create_list_delete_room(user_ops: UserOps) -> None:
     room_id = await user_ops.create_room(title="e2e-userops-smoke")
     try:

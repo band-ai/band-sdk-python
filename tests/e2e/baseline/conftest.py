@@ -12,9 +12,12 @@ from collections.abc import AsyncGenerator
 import pytest
 from band_rest import AsyncRestClient
 
+from band.client.streaming import WebSocketClient
+
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.tools.provisioning import ResourceManager, new_run_id
 from tests.e2e.baseline.tools.user_ops import UserOps
+from tests.e2e.helpers import TrackingWebSocketClient
 
 
 @pytest.fixture(scope="session")
@@ -56,6 +59,30 @@ def user_ops(baseline_settings: BaselineSettings) -> UserOps:
         base_url=baseline_settings.endpoints.rest_url,
     )
     return UserOps(client)
+
+
+@pytest.fixture(scope="session")
+async def baseline_ws(
+    baseline_settings: BaselineSettings,
+) -> AsyncGenerator[TrackingWebSocketClient, None]:
+    """User-authenticated WS observer for the wait primitives.
+
+    Connects as the user (not an agent), so it coexists with agents and
+    receives the same ``message_created`` events. Session-scoped to avoid
+    per-test connect/teardown latency; channels are left on teardown.
+    """
+    assert baseline_settings.credentials.api_key_user, (
+        "BAND_API_KEY_USER is required for the WS observer"
+    )
+    ws = WebSocketClient(
+        ws_url=baseline_settings.endpoints.ws_url,
+        api_key=baseline_settings.credentials.api_key_user,
+        agent_id=None,  # user connection, not an agent
+    )
+    async with ws:
+        tracking = TrackingWebSocketClient(ws)
+        yield tracking
+        await tracking.cleanup_channels()
 
 
 @pytest.fixture

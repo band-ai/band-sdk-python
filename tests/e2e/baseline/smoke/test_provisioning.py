@@ -13,7 +13,7 @@ from tests.e2e.conftest import requires_e2e
 
 
 @requires_e2e
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="session")
 async def test_mint_room_with_agent_then_reap(
     resource_manager: ResourceManager,
 ) -> None:
