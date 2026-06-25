@@ -83,9 +83,9 @@ def baseline_user_client(baseline_settings: BaselineSettings) -> AsyncRestClient
 def user_ops(baseline_settings: BaselineSettings) -> UserOps:
     """User-operation driver, authenticated as the test user.
 
-    BAND_API_KEY_USER is a required prerequisite: fail loudly rather than skip.
-    requires_e2e already gates that E2E is enabled, so a missing key here is a
-    real misconfiguration, not a reason to silently skip.
+    BAND_API_KEY_USER is a hard prerequisite. The baseline gate (see
+    pytest_runtest_setup) already fails the run when it is missing, so the
+    assert here is a belt-and-suspenders guard, not a silent skip.
     """
     assert baseline_settings.credentials.api_key_user, (
         "BAND_API_KEY_USER is required for the user-operations driver"

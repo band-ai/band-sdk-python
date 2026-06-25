@@ -1,0 +1,98 @@
+# Baseline E2E Toolkit
+
+Reusable building blocks for live end-to-end tests that drive real agents
+against a real Band platform. Read this before writing a new baseline test or
+adding a helper, so you reuse what exists instead of rebuilding it.
+
+These tools validate platform behaviour and integration, not LLM output
+quality. They are deterministic by design (no `sleep`, no silence windows).
+
+## Layout: what is where
+
+| Path | What it is |
+|------|------------|
+| `toolkit/provisioning.py` | `ResourceManager` (mint/reap agents + rooms, orphan sweep), `running_minted_agent`, `MintedAgent` |
+| `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants) |
+| `toolkit/waiting.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `drain` (token-barrier) |
+| `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
+| `toolkit/assertions.py` | tolerant assertions: `assert_present`, `assert_at_least`, `assert_contains_any`, `assert_mentions` |
+| `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
+| `requires.py` | `@requires(Dep.X)` decorator + `Dep` enum |
+| `conftest.py` | fixtures (below) + the always-on E2E gate |
+| `smoke/` | proof tests that exercise the tools end to end |
+
+The `toolkit/` modules are pytest-free and reusable anywhere. The package root
+(`settings`, `requires`, `conftest`) is the pytest wiring.
+
+## "I want to..." -> use this (do not reinvent)
+
+| Need | Use |
+|------|-----|
+| A fresh agent + room for this test | `resource_manager.mint_agent(label)` / `mint_room(...)`, or `running_minted_agent(adapter, resource_manager)` to also run it |
+| Clean up what I created | nothing: `resource_manager` reaps on teardown (set `BAND_E2E_AUTOCLEAN=false` to keep for debugging) |
+| Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
+| Observe agent replies without a race | `async with reply_capture(room_id) as capture:` then send |
+| Wait for a specific agent to reply | `await capture.wait_for_sender(agent_id)` |
+| Wait on a custom condition | `await capture.wait_until(predicate)` |
+| Know the agent finished a burst / turn | `await drain(capture, user_ops, room_id, mention_id=..., mention_name=...)` |
+| Assert something happened (cheap) | `assertions.py` helpers |
+| Assert a fuzzy/semantic outcome | the `judge` fixture (use sparingly, see below) |
+| Build a cheap agent to run | the `langgraph_adapter` / `anthropic_adapter` fixtures |
+| Gate a test on an optional dependency | `@requires(Dep.OPENAI, ...)` (the E2E + Band-key gate is automatic) |
+
+## Fixtures (from `conftest.py`)
+
+`baseline_settings`, `user_ops`, `resource_manager`, `reply_capture`,
+`judge`, `langgraph_adapter`, `anthropic_adapter`, `baseline_ws`. The
+`reply_capture` and `judge` fixtures pre-bind their plumbing (the WS observer;
+the judge model + key), so tests pass only the test-specific arguments. The
+E2E + Band-key gate is applied to every baseline test automatically, so a
+gate-only test needs no decorator.
+
+## Assertion strategy: cheap checks first, judge last
+
+Prefer the cheapest assertion that proves the point. The LLM judge costs tokens,
+adds latency, and is itself non-deterministic, so do not reach for it by reflex.
+
+1. Structural facts -> `assertions.py` (`assert_present`, `assert_at_least`,
+   `assert_contains_any`, `assert_mentions`). Free, instant, deterministic.
+2. Only when the outcome is genuinely semantic (paraphrase-proof "did it greet?",
+   "did it recall both facts?") -> the `judge` fixture.
+
+Use the structural assertions as a fast pre-check before the judge, as the smoke
+tests do. If a substring or metadata check can express the assertion, use it
+instead of the judge.
+
+## Conventions
+
+- Waits are event-driven and deterministic. Never `sleep` or poll a fixed window.
+- `deadline_s` is a failure deadline only (raises `TimeoutError`); it is never a
+  success signal.
+- `drain` is the way to know an agent is done: it relies on FIFO per-room
+  processing, so an echoed probe token proves all prior messages were handled.
+
+## A minimal test
+
+```python
+@requires(Dep.ANTHROPIC)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_example(resource_manager, user_ops, reply_capture, anthropic_adapter):
+    async with running_minted_agent(anthropic_adapter, resource_manager) as (_, agent):
+        room_id = await resource_manager.mint_room(participants=[agent.id])
+        async with reply_capture(room_id) as capture:
+            await user_ops.send_message(
+                room_id, "say hi", mention_id=agent.id, mention_name=agent.name
+            )
+            await capture.wait_for_sender(agent.id)
+        assert_present(capture.messages)
+```
+
+Run: `E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov`
+
+## Not here yet
+
+- Trajectory / tool-observation inspection and the `tool_fired` assertion (assert
+  which tool fired, with which args) are tracked in INT-913. Do not build an ad
+  hoc version here; extend that work when it lands.
+- A full LLM-judge harness (calibration, voting/pass^k, tool-correctness) is a
+  later INT-911 sub-issue; `judge.py` notes DeepEval as the likely path.
