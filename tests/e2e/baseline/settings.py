@@ -21,9 +21,7 @@ class BandEndpoints(BaseSettings):
     )
 
     rest_url: str = "http://localhost:4000"  # BAND_REST_URL
-    ws_url: str = (
-        "wss://platform.dev.band.ai/api/v1/socket/websocket"  # BAND_WS_URL
-    )
+    ws_url: str = "ws://localhost:4000/api/v1/socket/websocket"  # BAND_WS_URL
 
 
 class BandCredentials(BaseSettings):
