@@ -35,6 +35,26 @@ class BandCredentials(BaseSettings):
     api_key_user: str = ""  # BAND_API_KEY_USER (the test-user / driver key)
 
 
+class BaselineRun(BaseSettings):
+    """Run-level provisioning and cleanup policy."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="BAND_E2E_",
+        env_file=".env.test",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # Reap minted agents/rooms on teardown. Set false to keep resources around
+    # for on-purpose debugging of a failing run.
+    autoclean: bool = True  # BAND_E2E_AUTOCLEAN
+    # Run the prefix-guarded orphan sweep once at session start.
+    orphan_sweep: bool = True  # BAND_E2E_ORPHAN_SWEEP
+    # Safety guard: the sweep only reaps agents older than this, so a
+    # concurrent run on the same shared platform is never deleted mid-flight.
+    orphan_max_age_minutes: int = 120  # BAND_E2E_ORPHAN_MAX_AGE_MINUTES
+
+
 class BaselineSettings(BaseSettings):
     """Top-level baseline toolkit config, composed from per-concern groups."""
 
@@ -42,3 +62,4 @@ class BaselineSettings(BaseSettings):
 
     endpoints: BandEndpoints = Field(default_factory=BandEndpoints)
     credentials: BandCredentials = Field(default_factory=BandCredentials)
+    run: BaselineRun = Field(default_factory=BaselineRun)
