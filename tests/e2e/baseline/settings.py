@@ -20,7 +20,7 @@ class BandEndpoints(BaseSettings):
         env_prefix="BAND_", env_file=".env.test", extra="ignore", case_sensitive=False
     )
 
-    rest_url: str = "https://platform.dev.band.ai"  # BAND_REST_URL
+    rest_url: str = "http://localhost:4000"  # BAND_REST_URL
     ws_url: str = (
         "wss://platform.dev.band.ai/api/v1/socket/websocket"  # BAND_WS_URL
     )
