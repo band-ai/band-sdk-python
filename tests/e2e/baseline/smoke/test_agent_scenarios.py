@@ -17,6 +17,11 @@ import pytest
 from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.requires import Dep, requires
+from tests.e2e.baseline.toolkit.assertions import (
+    assert_at_least,
+    assert_contains_any,
+    assert_present,
+)
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
@@ -74,6 +79,11 @@ async def test_two_agents_greet_each_other(
             )
             transcript = list(capture.messages)
 
+    # Cheap structural pre-checks before the (costlier) semantic judge.
+    assert_present(transcript)
+    assert_at_least(transcript, 2)  # both agents replied at least once
+    assert_contains_any(transcript, ["hello", "hi", "hey"])
+
     verdict = await judge(
         criteria=(
             "Two agents share a room. The transcript should show BOTH agents "
@@ -121,6 +131,10 @@ async def test_agent_recalls_earlier_facts(
             )
             await drain(capture, user_ops, room_id, **mention)
             recall = list(capture.messages)[settled:]
+
+    # Cheap structural pre-check: the recall turn mentions at least one fact.
+    assert_present(recall, what="a recall reply")
+    assert_contains_any(recall, ["teal", "Pixel"])
 
     verdict = await judge(
         criteria=(

@@ -33,6 +33,8 @@ class BandCredentials(BaseSettings):
 
     api_key: str = ""  # BAND_API_KEY (agent / app key)
     api_key_user: str = ""  # BAND_API_KEY_USER (the test-user / driver key)
+    # Optional second human user, for smokes exercising two-user interaction.
+    api_key_user_2: str = ""  # BAND_API_KEY_USER_2
 
 
 class BaselineRun(BaseSettings):

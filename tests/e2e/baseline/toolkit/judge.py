@@ -13,6 +13,12 @@ Simple but effective, following the consensus of practical LLM-as-judge guides:
 
 Out of scope (the full judge harness): human-label calibration, multi-sample
 voting / pass^k, pairwise comparison, and position-bias controls.
+
+Future option: when the full judge harness is built, consider adopting DeepEval
+(https://github.com/confident-ai/deepeval) instead of growing this — its G-Eval
+metric is community-supported, pytest-native, and also covers conversational and
+tool-correctness evaluation. Deferred here to avoid the heavy dependency (mind
+this repo's existing dependency-conflict constraints) for one minimal verdict.
 """
 
 from __future__ import annotations
