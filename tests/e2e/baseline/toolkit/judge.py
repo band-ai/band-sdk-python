@@ -6,10 +6,13 @@ Simple but effective, following the consensus of practical LLM-as-judge guides:
   ask for pass/fail, not a 1-10 scale.
 - **Reasoning before the verdict (chain-of-thought).** The single biggest lever
   on judge accuracy: the model must explain its reasoning *before* committing to
-  pass/fail, so ``reasoning`` precedes ``passed`` in the required output.
+  pass/fail, so ``reasoning`` precedes ``passed`` in the schema.
 - **Explicit, single-dimension criteria.**
-- **Temperature 0** for repeatable verdicts.
-- **Structured JSON output**, parsed defensively.
+- **Native structured outputs.** ``messages.parse`` constrains the response to
+  the ``Verdict`` Pydantic schema and validates it back into the model, so the
+  verdict is guaranteed valid and conformant — no parsing heuristics, no
+  truncated-JSON failure mode. Requires a modern Anthropic judge model
+  (Sonnet 4.6 / Opus 4.8 / Haiku 4.5 / Fable 5); not the older Claude 3 Haiku.
 
 Out of scope (the full judge harness): human-label calibration, multi-sample
 voting / pass^k, pairwise comparison, and position-bias controls.
@@ -23,11 +26,10 @@ this repo's existing dependency-conflict constraints) for one minimal verdict.
 
 from __future__ import annotations
 
-import json
 import logging
-from dataclasses import dataclass
 
 from anthropic import AsyncAnthropic
+from pydantic import BaseModel
 
 from band.client.streaming import MessageCreatedPayload
 
@@ -51,32 +53,19 @@ _SYSTEM = (
     "against the given criteria — not your own preferences. Reason step by step "
     "BEFORE deciding, but keep your reasoning brief (a few sentences; do not "
     "transcribe ids). Then commit to a strict pass/fail: pass only if the "
-    "criteria are fully met. Respond with ONLY a JSON object of the form "
-    '{"reasoning": "<brief reasoning>", "passed": <true|false>}.'
+    "criteria are fully met."
 )
 
 
-@dataclass(frozen=True)
-class Verdict:
-    passed: bool
-    reasoning: str
+class Verdict(BaseModel):
+    """The judge's structured output.
 
-
-def _parse(text: str) -> Verdict:
-    """Extract the verdict JSON, tolerating prose or code fences around it.
-
-    Decodes the first complete JSON object starting at the first ``{`` and
-    ignores any trailing text, so a brace in trailing prose can't corrupt the
-    parse (the model is asked for only the object; this is the safety net).
+    Fields are declared reasoning-then-passed so the model reasons before
+    committing to the verdict (chain-of-thought).
     """
-    start = text.find("{")
-    if start == -1:
-        raise ValueError(f"Judge returned no JSON object: {text!r}")
-    try:
-        data, _ = json.JSONDecoder().raw_decode(text[start:])
-        return Verdict(passed=bool(data["passed"]), reasoning=str(data["reasoning"]))
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise ValueError(f"Judge returned unparseable verdict: {text!r}") from exc
+
+    reasoning: str
+    passed: bool
 
 
 async def judge(
@@ -89,9 +78,9 @@ async def judge(
     """Render a pass/fail verdict on ``transcript`` against ``criteria``.
 
     ``transcript`` may be a ready string or a list of captured messages, which
-    are formatted as ``[sender]: content`` lines. ``model`` must be an Anthropic
-    model id — this minimal judge runs on Anthropic only (a non-Anthropic id
-    would fail against the Anthropic client, not silently switch providers).
+    are formatted as ``[sender]: content`` lines. ``model`` must be a modern
+    Anthropic model id (the judge runs on Anthropic only, and structured
+    outputs need Sonnet 4.6 / Opus 4.8 / Haiku 4.5 / Fable 5 or newer).
     """
     prompt = (
         f"Criteria:\n{criteria}\n\n"
@@ -99,17 +88,19 @@ async def judge(
     )
 
     client = AsyncAnthropic(api_key=api_key)
-    response = await client.messages.create(
+    response = await client.messages.parse(
         model=model,
         max_tokens=1024,
-        temperature=0.0,
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
+        output_format=Verdict,
     )
-    text = "".join(
-        block.text for block in response.content if block.type == "text"
-    ).strip()
-    verdict = _parse(text)
+    verdict = response.parsed_output
+    if verdict is None:
+        # refusal / max_tokens / pause_turn: no validated verdict was produced.
+        raise ValueError(
+            f"Judge did not complete a verdict (stop={response.stop_reason})"
+        )
     logger.info(
         "Judge verdict: passed=%s reasoning=%s", verdict.passed, verdict.reasoning
     )
