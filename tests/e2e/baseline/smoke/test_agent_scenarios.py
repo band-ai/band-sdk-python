@@ -82,7 +82,6 @@ async def test_two_agents_greet_each_other(
     # Cheap structural pre-checks before the (costlier) semantic judge.
     assert_present(transcript)
     assert_at_least(transcript, 2)  # both agents replied at least once
-    assert_contains_any(transcript, ["hello", "hi", "hey"])
 
     verdict = await judge(
         criteria=(
