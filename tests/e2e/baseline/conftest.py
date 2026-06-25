@@ -148,10 +148,15 @@ _SHORT_PROMPT = (
 )
 
 
+# TODO turn adapter creation into a factory or other generic no-glue mechanism.
 @pytest.fixture
 def langgraph_adapter(baseline_settings: BaselineSettings):
-    # TODO turn adapters creation into a factory or some other generic no glue code mechanism
-    """A cheap LangGraph agent built from settings (OpenAI-backed)."""
+    """A cheap LangGraph agent built from settings (OpenAI-backed).
+
+    Self-gates on its provider key, so a test using it skips when OPENAI_API_KEY
+    is absent — the requirement travels with the fixture.
+    """
+    require_dep(Dep.OPENAI, baseline_settings)
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import MemorySaver
 
@@ -167,10 +172,15 @@ def langgraph_adapter(baseline_settings: BaselineSettings):
     )
 
 
+# TODO turn adapter creation into a factory or other generic no-glue mechanism.
 @pytest.fixture
 def anthropic_adapter(baseline_settings: BaselineSettings):
-    # TODO turn adapters creation into a factory or some other generic no glue code mechanism
-    """A cheap Anthropic agent built from settings."""
+    """A cheap Anthropic agent built from settings.
+
+    Self-gates on its provider key, so a test using it skips when
+    ANTHROPIC_API_KEY is absent — the requirement travels with the fixture.
+    """
+    require_dep(Dep.ANTHROPIC, baseline_settings)
     from band.adapters.anthropic import AnthropicAdapter
 
     return AnthropicAdapter(

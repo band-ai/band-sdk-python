@@ -16,7 +16,6 @@ import pytest
 
 from band.core.simple_adapter import SimpleAdapter
 
-from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.toolkit.assertions import (
     assert_at_least,
     assert_contains_any,
@@ -34,7 +33,6 @@ CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]
 JudgeFn = Callable[..., Awaitable[Verdict]]
 
 
-@requires(Dep.OPENAI, Dep.ANTHROPIC)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_two_agents_greet_each_other(
     resource_manager: ResourceManager,
@@ -94,7 +92,6 @@ async def test_two_agents_greet_each_other(
     assert verdict.passed, f"{verdict.reasoning}\n{format_transcript(transcript)}"
 
 
-@requires(Dep.ANTHROPIC)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agent_recalls_earlier_facts(
     resource_manager: ResourceManager,
