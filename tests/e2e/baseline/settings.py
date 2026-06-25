@@ -47,7 +47,7 @@ class BaselineRun(BaseSettings):
         case_sensitive=False,
     )
 
-    # Reap minted agents/rooms on teardown. Set false to keep resources around
+    # Reap provisioned agents/rooms on teardown. Set false to keep resources around
     # for on-purpose debugging of a failing run.
     autoclean: bool = True  # BAND_E2E_AUTOCLEAN
     # Run the prefix-guarded orphan sweep once at session start.
@@ -80,8 +80,9 @@ class LLMModels(BaseSettings):
 
     openai_model: str = "gpt-4o-mini"  # E2E_OPENAI_MODEL (LangGraph agent)
     anthropic_model: str = "claude-3-haiku-20240307"  # E2E_ANTHROPIC_MODEL
-    # Judge model. Left blank, it falls back to ``anthropic_model`` so the judge
-    # always uses a model the account has configured (E2E_JUDGE_MODEL overrides).
+    # Judge model. MUST be an Anthropic model id — the judge runs on Anthropic
+    # only. Left blank, it falls back to ``anthropic_model`` so the judge always
+    # uses a model the account has configured (E2E_JUDGE_MODEL overrides).
     judge_model: str = ""  # E2E_JUDGE_MODEL
 
     @model_validator(mode="after")

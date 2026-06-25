@@ -11,7 +11,7 @@ quality. They are deterministic by design (no `sleep`, no silence windows).
 
 | Path | What it is |
 |------|------------|
-| `toolkit/provisioning.py` | `ResourceManager` (mint/reap agents + rooms, orphan sweep), `running_minted_agent`, `MintedAgent` |
+| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent`, `ProvisionedAgent` |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants) |
 | `toolkit/waiting.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `drain` (token-barrier) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
@@ -28,7 +28,7 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 
 | Need | Use |
 |------|-----|
-| A fresh agent + room for this test | `resource_manager.mint_agent(label)` / `mint_room(...)`, or `running_minted_agent(adapter, resource_manager)` to also run it |
+| A fresh agent + room for this test | `resource_manager.provision_agent(label)` / `provision_room(...)`, or `running_provisioned_agent(adapter, resource_manager)` to also run it |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (set `BAND_E2E_AUTOCLEAN=false` to keep for debugging) |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
 | Observe agent replies without a race | `async with reply_capture(room_id) as capture:` then send |
@@ -77,8 +77,8 @@ instead of the judge.
 @requires(Dep.ANTHROPIC)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_example(resource_manager, user_ops, reply_capture, anthropic_adapter):
-    async with running_minted_agent(anthropic_adapter, resource_manager) as (_, agent):
-        room_id = await resource_manager.mint_room(participants=[agent.id])
+    async with running_provisioned_agent(anthropic_adapter, resource_manager) as (_, agent):
+        room_id = await resource_manager.provision_room(participants=[agent.id])
         async with reply_capture(room_id) as capture:
             await user_ops.send_message(
                 room_id, "say hi", mention_id=agent.id, mention_name=agent.name

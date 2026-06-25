@@ -85,7 +85,9 @@ async def judge(
     """Render a pass/fail verdict on ``transcript`` against ``criteria``.
 
     ``transcript`` may be a ready string or a list of captured messages, which
-    are formatted as ``[sender]: content`` lines.
+    are formatted as ``[sender]: content`` lines. ``model`` must be an Anthropic
+    model id — this minimal judge runs on Anthropic only (a non-Anthropic id
+    would fail against the Anthropic client, not silently switch providers).
     """
     prompt = (
         f"Criteria:\n{criteria}\n\n"

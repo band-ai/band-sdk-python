@@ -1,6 +1,6 @@
 """Agent scenario smokes that exercise the baseline tools end to end.
 
-Each test drives real agents through the toolkit — provisioning (mint/reap),
+Each test drives real agents through the toolkit — provisioning (provision/reap),
 the user-operations driver, the event-driven waiter + token-barrier drain, and
 the LLM judge — and asserts a tolerant, behavioural outcome. These validate the
 tools, not any L-level contract.
@@ -17,14 +17,13 @@ import pytest
 from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.toolkit.assertions import (
-    assert_at_least,
     assert_contains_any,
     assert_present,
 )
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
-    running_minted_agent,
+    running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.baseline.toolkit.waiting import ReplyCapture, drain
@@ -44,13 +43,15 @@ async def test_two_agents_greet_each_other(
 ) -> None:
     async with contextlib.AsyncExitStack() as stack:
         _, a = await stack.enter_async_context(
-            running_minted_agent(langgraph_adapter, resource_manager, label="lg")
+            running_provisioned_agent(langgraph_adapter, resource_manager, label="lg")
         )
         _, b = await stack.enter_async_context(
-            running_minted_agent(anthropic_adapter, resource_manager, label="anthropic")
+            running_provisioned_agent(
+                anthropic_adapter, resource_manager, label="anthropic"
+            )
         )
 
-        room_id = await resource_manager.mint_room(
+        room_id = await resource_manager.provision_room(
             title="e2e-mutual-greeting", participants=[a.id, b.id]
         )
 
@@ -79,7 +80,10 @@ async def test_two_agents_greet_each_other(
 
     # Cheap structural pre-checks before the (costlier) semantic judge.
     assert_present(transcript)
-    assert_at_least(transcript, 2)  # both agents replied at least once
+    sender_ids = {m.sender_id for m in transcript}
+    assert {a.id, b.id} <= sender_ids, (
+        f"expected a reply from both agents; saw senders {sender_ids}"
+    )
 
     verdict = await judge(
         criteria=(
@@ -101,10 +105,10 @@ async def test_agent_recalls_earlier_facts(
     anthropic_adapter: SimpleAdapter,
 ) -> None:
     """A burst of facts, a drain to settle, then a recall — judged tolerantly."""
-    async with running_minted_agent(
+    async with running_provisioned_agent(
         anthropic_adapter, resource_manager, label="anthropic"
     ) as (_, agent):
-        room_id = await resource_manager.mint_room(
+        room_id = await resource_manager.provision_room(
             title="e2e-recall", participants=[agent.id]
         )
         mention = {"mention_id": agent.id, "mention_name": agent.name}
@@ -120,13 +124,15 @@ async def test_agent_recalls_earlier_facts(
             await drain(capture, user_ops, room_id, **mention)
 
             # Ask it to recall, then drain again so the answer is fully settled.
-            # Everything captured from here on is the agent's recall turn.
+            # Everything captured from here on is the agent's recall turn; the
+            # drain's own nonce echo is filtered out so the judge sees only the
+            # recall answer.
             settled = len(capture.messages)
             await user_ops.send_message(
                 room_id, "What is my favorite color and my dog's name?", **mention
             )
-            await drain(capture, user_ops, room_id, **mention)
-            recall = list(capture.messages)[settled:]
+            nonce = await drain(capture, user_ops, room_id, **mention)
+            recall = [m for m in capture.messages[settled:] if nonce not in m.content]
 
     # Cheap structural pre-check: the recall turn mentions at least one fact.
     assert_present(recall, what="a recall reply")

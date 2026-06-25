@@ -1,7 +1,7 @@
 """Fixtures for the baseline testing toolkit.
 
 Config comes from the concern-separated ``BaselineSettings`` (see settings.py),
-not the legacy flat ``E2ESettings``. Provisioning (mint/reap) and the other
+not the legacy flat ``E2ESettings``. Provisioning (provision/reap) and the other
 tools add their fixtures here as they are built.
 """
 
@@ -15,6 +15,7 @@ import pytest
 from band_rest import AsyncRestClient
 
 from band.client.streaming import WebSocketClient
+from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.requires import MARKER, Dep, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
@@ -63,7 +64,7 @@ def baseline_settings() -> BaselineSettings:
 
 @pytest.fixture(scope="session")
 def baseline_run_id() -> str:
-    """Token identifying this session's minted resources (for naming/sweep)."""
+    """Token identifying this session's provisioned resources (for naming/sweep)."""
     return new_run_id()
 
 
@@ -80,21 +81,13 @@ def baseline_user_client(baseline_settings: BaselineSettings) -> AsyncRestClient
 
 
 @pytest.fixture
-def user_ops(baseline_settings: BaselineSettings) -> UserOps:
-    """User-operation driver, authenticated as the test user.
+def user_ops(baseline_user_client: AsyncRestClient) -> UserOps:
+    """User-operation driver over the session-scoped user REST client.
 
-    BAND_API_KEY_USER is a hard prerequisite. The baseline gate (see
-    pytest_runtest_setup) already fails the run when it is missing, so the
-    assert here is a belt-and-suspenders guard, not a silent skip.
+    Reuses ``baseline_user_client`` (which already requires BAND_API_KEY_USER)
+    rather than spinning up a fresh client per test.
     """
-    assert baseline_settings.credentials.api_key_user, (
-        "BAND_API_KEY_USER is required for the user-operations driver"
-    )
-    client = AsyncRestClient(
-        api_key=baseline_settings.credentials.api_key_user,
-        base_url=baseline_settings.endpoints.rest_url,
-    )
-    return UserOps(client)
+    return UserOps(baseline_user_client)
 
 
 @pytest.fixture
@@ -150,7 +143,7 @@ _SHORT_PROMPT = (
 
 # TODO turn adapter creation into a factory or other generic no-glue mechanism.
 @pytest.fixture
-def langgraph_adapter(baseline_settings: BaselineSettings):
+def langgraph_adapter(baseline_settings: BaselineSettings) -> SimpleAdapter:
     """A cheap LangGraph agent built from settings (OpenAI-backed).
 
     Self-gates on its provider key, so a test using it skips when OPENAI_API_KEY
@@ -174,7 +167,7 @@ def langgraph_adapter(baseline_settings: BaselineSettings):
 
 # TODO turn adapter creation into a factory or other generic no-glue mechanism.
 @pytest.fixture
-def anthropic_adapter(baseline_settings: BaselineSettings):
+def anthropic_adapter(baseline_settings: BaselineSettings) -> SimpleAdapter:
     """A cheap Anthropic agent built from settings.
 
     Self-gates on its provider key, so a test using it skips when
@@ -207,11 +200,11 @@ async def resource_manager(
     baseline_user_client: AsyncRestClient,
     baseline_run_id: str,
 ) -> AsyncGenerator[ResourceManager, None]:
-    """Per-test mint/reap driver.
+    """Per-test provision/reap driver.
 
-    Teardown force-deletes everything minted this run, unless
+    Teardown force-deletes everything provisioned this run, unless
     ``BAND_E2E_AUTOCLEAN`` is false (kept for on-purpose debugging; surviving
-    ids are logged by ``reap_all``/``mint_*``).
+    ids are logged by ``reap_all``/``provision_*``).
     """
     resources = ResourceManager(
         user_client=baseline_user_client,
