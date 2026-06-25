@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[anthropic]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Anthropic SDK agent example.
