@@ -63,21 +63,22 @@ class ReplyCapture:
         *,
         deadline_s: float = DEFAULT_DEADLINE_S,
     ) -> list[MessageCreatedPayload]:
-        """Block until ``predicate(messages)`` holds; raise at the deadline."""
-        loop = asyncio.get_running_loop()
-        end = loop.time() + deadline_s
-        while not predicate(self.messages):
-            remaining = end - loop.time()
-            if remaining <= 0:
-                raise TimeoutError(
-                    f"Predicate not satisfied within {deadline_s:.0f}s in room "
-                    f"{self.room_id} (captured {len(self.messages)} reply/replies)"
-                )
-            self._nudge.clear()
-            try:
-                await asyncio.wait_for(self._nudge.wait(), timeout=remaining)
-            except TimeoutError:
-                continue  # loop re-checks predicate and the deadline
+        """Block until ``predicate(messages)`` holds; raise ``TimeoutError`` at
+        the deadline. The deadline is enforced by ``wait_for``; the inner loop
+        just re-checks the predicate each time a reply nudges it."""
+
+        async def await_predicate() -> None:
+            while not predicate(self.messages):
+                self._nudge.clear()
+                await self._nudge.wait()
+
+        try:
+            await asyncio.wait_for(await_predicate(), timeout=deadline_s)
+        except TimeoutError:
+            raise TimeoutError(
+                f"Predicate not satisfied within {deadline_s:.0f}s in room "
+                f"{self.room_id} (captured {len(self.messages)} reply/replies)"
+            ) from None
         return list(self.messages)
 
     async def wait_for_sender(
