@@ -7,9 +7,10 @@ never from a silence window. ``deadline_s`` is a *failure* deadline: it bounds
 how long we wait before declaring the agent stuck, and is never used as a
 success signal.
 
-Two primitives over one ``ReplyCapture.wait_until`` mechanism:
+Everything is built on one ``ReplyCapture.wait_until`` mechanism, with named
+helpers for the common predicates so tests avoid raw lambdas:
 
-- ``wait_for_reply`` — turn-boundary capture for a single request.
+- ``ReplyCapture.wait_for_sender`` / ``wait_for_count`` — turn-boundary capture.
 - ``drain`` — token-barrier: send a unique-nonce probe and wait for its echo;
   FIFO ordering proves every message before the probe was processed.
 """
@@ -24,7 +25,7 @@ from contextlib import asynccontextmanager
 
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
 
-from tests.e2e.baseline.tools.user_ops import UserOps
+from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.helpers import TrackingWebSocketClient
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,23 @@ class ReplyCapture:
                 continue  # loop re-checks predicate and the deadline
         return list(self.messages)
 
+    async def wait_for_sender(
+        self, sender_id: str, *, deadline_s: float = DEFAULT_DEADLINE_S
+    ) -> list[MessageCreatedPayload]:
+        """Block until an agent reply from ``sender_id`` arrives."""
+        return await self.wait_until(
+            lambda msgs: any(m.sender_id == sender_id for m in msgs),
+            deadline_s=deadline_s,
+        )
+
+    async def wait_for_count(
+        self, count: int, *, deadline_s: float = DEFAULT_DEADLINE_S
+    ) -> list[MessageCreatedPayload]:
+        """Block until at least ``count`` agent replies have arrived."""
+        return await self.wait_until(
+            lambda msgs: len(msgs) >= count, deadline_s=deadline_s
+        )
+
 
 @asynccontextmanager
 async def reply_capture(
@@ -95,18 +113,6 @@ async def reply_capture(
         yield capture
     finally:
         await ws.leave_chat_room_channel(room_id)
-
-
-async def wait_for_reply(
-    capture: ReplyCapture,
-    *,
-    min_messages: int = 1,
-    deadline_s: float = DEFAULT_DEADLINE_S,
-) -> list[MessageCreatedPayload]:
-    """Wait until at least ``min_messages`` agent replies have arrived."""
-    return await capture.wait_until(
-        lambda msgs: len(msgs) >= min_messages, deadline_s=deadline_s
-    )
 
 
 async def drain(

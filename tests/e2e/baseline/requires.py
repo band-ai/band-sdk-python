@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import NoReturn
 
 import pytest
 
@@ -59,6 +60,24 @@ _REGISTRY: dict[Dep, Requirement] = {
 
 def requirement_for(dep: Dep) -> Requirement:
     return _REGISTRY[dep]
+
+
+def require_dep(dep: Dep, settings: BaselineSettings) -> None:
+    """Skip or fail the current test if ``dep`` is unmet, per its disposition.
+
+    Shared by the gate hook and by fixtures that self-gate on a capability, so
+    the skip/fail policy lives in exactly one place.
+    """
+    req = _REGISTRY[dep]
+    if req.check(settings):
+        return
+    _miss(req)
+
+
+def _miss(req: Requirement) -> NoReturn:
+    if req.disposition is Disposition.FAIL:
+        pytest.fail(f"{req.reason} (required)")
+    pytest.skip(req.reason)
 
 
 def requires(*deps: Dep) -> pytest.MarkDecorator:

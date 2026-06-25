@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.requires import requires
-from tests.e2e.baseline.tools.provisioning import NAME_PREFIX, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import NAME_PREFIX, ResourceManager
 
 
 @requires()

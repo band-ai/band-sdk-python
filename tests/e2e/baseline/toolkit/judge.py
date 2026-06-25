@@ -25,14 +25,30 @@ from dataclasses import dataclass
 
 from anthropic import AsyncAnthropic
 
+from band.client.streaming import MessageCreatedPayload
+
 logger = logging.getLogger(__name__)
+
+
+def format_transcript(transcript: str | list[MessageCreatedPayload]) -> str:
+    """Accept a ready string or a list of captured messages and return text.
+
+    Messages are rendered as ``[sender]: content`` lines.
+    """
+    if isinstance(transcript, str):
+        return transcript
+    return "\n".join(
+        f"[{m.sender_name or m.sender_id}]: {m.content}" for m in transcript
+    )
+
 
 _SYSTEM = (
     "You are a meticulous, impartial test evaluator. Judge the transcript ONLY "
     "against the given criteria — not your own preferences. Reason step by step "
-    "BEFORE deciding, then commit to a strict pass/fail: pass only if the "
+    "BEFORE deciding, but keep your reasoning brief (a few sentences; do not "
+    "transcribe ids). Then commit to a strict pass/fail: pass only if the "
     "criteria are fully met. Respond with ONLY a JSON object of the form "
-    '{"reasoning": "<your step-by-step reasoning>", "passed": <true|false>}.'
+    '{"reasoning": "<brief reasoning>", "passed": <true|false>}.'
 )
 
 
@@ -56,7 +72,7 @@ def _parse(text: str) -> Verdict:
 
 async def judge(
     criteria: str,
-    transcript: str,
+    transcript: str | list[MessageCreatedPayload],
     *,
     model: str,
     api_key: str,
@@ -65,8 +81,9 @@ async def judge(
 ) -> Verdict:
     """Render a pass/fail verdict on ``transcript`` against ``criteria``.
 
-    ``evaluation_steps`` optionally supplies an ordered checklist the judge
-    should work through (G-Eval style) for criteria that benefit from one.
+    ``transcript`` may be a ready string or a list of captured messages, which
+    are formatted as ``[sender]: content`` lines. ``evaluation_steps`` optionally
+    supplies an ordered checklist the judge works through (G-Eval style).
     """
     steps_block = ""
     if evaluation_steps:
@@ -74,13 +91,14 @@ async def judge(
         steps_block = f"\n\nEvaluation steps (work through these in order):\n{numbered}"
 
     prompt = (
-        f"Criteria:\n{criteria}{steps_block}\n\nTranscript to evaluate:\n{transcript}"
+        f"Criteria:\n{criteria}{steps_block}\n\n"
+        f"Transcript to evaluate:\n{format_transcript(transcript)}"
     )
 
     client = AsyncAnthropic(api_key=api_key)
     response = await client.messages.create(
         model=model,
-        max_tokens=512,
+        max_tokens=1024,
         temperature=temperature,
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],

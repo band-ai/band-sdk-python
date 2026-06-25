@@ -25,7 +25,7 @@ from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.tools.user_ops import UserOps
+from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
 

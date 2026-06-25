@@ -9,18 +9,21 @@ from __future__ import annotations
 
 import functools
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 
 import pytest
 from band_rest import AsyncRestClient
 
 from band.client.streaming import WebSocketClient
 
-from tests.e2e.baseline.requires import MARKER, Disposition, requirement_for
+from tests.e2e.baseline.requires import MARKER, Dep, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.tools.judge import Verdict
-from tests.e2e.baseline.tools.judge import judge as _judge
-from tests.e2e.baseline.tools.provisioning import ResourceManager, new_run_id
-from tests.e2e.baseline.tools.user_ops import UserOps
+from tests.e2e.baseline.toolkit.judge import Verdict
+from tests.e2e.baseline.toolkit.judge import judge as _judge
+from tests.e2e.baseline.toolkit.provisioning import ResourceManager, new_run_id
+from tests.e2e.baseline.toolkit.user_ops import UserOps
+from tests.e2e.baseline.toolkit.waiting import ReplyCapture
+from tests.e2e.baseline.toolkit.waiting import reply_capture as _reply_capture
 from tests.e2e.helpers import TrackingWebSocketClient
 
 
@@ -50,12 +53,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     if not settings.credentials.api_key_user:
         pytest.fail("BAND_API_KEY_USER not set (E2E enabled)")
     for dep in marker.args[0]:
-        req = requirement_for(dep)
-        if req.check(settings):
-            continue
-        if req.disposition is Disposition.FAIL:
-            pytest.fail(f"{req.reason} (required)")
-        pytest.skip(req.reason)
+        require_dep(dep, settings)
 
 
 @pytest.fixture(scope="session")
@@ -105,10 +103,14 @@ def judge(
 ) -> Callable[..., Awaitable[Verdict]]:
     """LLM judge with model + api_key pre-bound; call with criteria/transcript.
 
+    Self-gates on its provider key so any test using it skips cleanly when the
+    key is absent — the requirement travels with the fixture.
+
     Usage::
 
         verdict = await judge(criteria="...", transcript="...")
     """
+    require_dep(Dep.ANTHROPIC, baseline_settings)
     return functools.partial(
         _judge,
         model=baseline_settings.llm_models.judge_model,
@@ -138,6 +140,55 @@ async def baseline_ws(
         tracking = TrackingWebSocketClient(ws)
         yield tracking
         await tracking.cleanup_channels()
+
+
+# Shared agent prompt for the demo adapters: short replies via the tool.
+_SHORT_PROMPT = (
+    "Keep responses to one short sentence. Always reply using band_send_message."
+)
+
+
+@pytest.fixture
+def langgraph_adapter(baseline_settings: BaselineSettings):
+    # TODO turn adapters creation into a factory or some other generic no glue code mechanism
+    """A cheap LangGraph agent built from settings (OpenAI-backed)."""
+    from langchain_openai import ChatOpenAI
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from band.adapters.langgraph import LangGraphAdapter
+
+    return LangGraphAdapter(
+        llm=ChatOpenAI(
+            model=baseline_settings.llm_models.openai_model,
+            api_key=baseline_settings.llm_credentials.openai_api_key,
+        ),
+        checkpointer=MemorySaver(),
+        custom_section=_SHORT_PROMPT,
+    )
+
+
+@pytest.fixture
+def anthropic_adapter(baseline_settings: BaselineSettings):
+    # TODO turn adapters creation into a factory or some other generic no glue code mechanism
+    """A cheap Anthropic agent built from settings."""
+    from band.adapters.anthropic import AnthropicAdapter
+
+    return AnthropicAdapter(
+        model=baseline_settings.llm_models.anthropic_model,
+        provider_key=baseline_settings.llm_credentials.anthropic_api_key,
+        prompt=_SHORT_PROMPT,
+    )
+
+
+@pytest.fixture
+def reply_capture(
+    baseline_ws: TrackingWebSocketClient,
+) -> Callable[[str], AbstractAsyncContextManager[ReplyCapture]]:
+    """Subscribe-before-send capture with the WS observer pre-bound.
+
+    Hides ``baseline_ws`` from tests; use as ``async with reply_capture(room_id)``.
+    """
+    return functools.partial(_reply_capture, baseline_ws)
 
 
 @pytest.fixture
