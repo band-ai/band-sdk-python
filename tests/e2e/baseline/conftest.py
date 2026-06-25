@@ -190,12 +190,16 @@ def anthropic_adapter(baseline_settings: BaselineSettings) -> SimpleAdapter:
 @pytest.fixture
 def reply_capture(
     baseline_ws: TrackingWebSocketClient,
+    baseline_settings: BaselineSettings,
 ) -> Callable[[str], AbstractAsyncContextManager[ReplyCapture]]:
-    """Subscribe-before-send capture with the WS observer pre-bound.
+    """Subscribe-before-send capture with the WS observer + E2E_TIMEOUT pre-bound.
 
     Hides ``baseline_ws`` from tests; use as ``async with reply_capture(room_id)``.
+    The capture's default wait deadline comes from E2E_TIMEOUT.
     """
-    return functools.partial(_reply_capture, baseline_ws)
+    return functools.partial(
+        _reply_capture, baseline_ws, deadline_s=baseline_settings.e2e_timeout
+    )
 
 
 @pytest.fixture

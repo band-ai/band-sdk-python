@@ -44,8 +44,9 @@ class ReplyCapture:
     so call ``wait_until`` sequentially on a capture, not from concurrent tasks.
     """
 
-    def __init__(self, room_id: str) -> None:
+    def __init__(self, room_id: str, *, deadline_s: float = DEFAULT_DEADLINE_S) -> None:
         self.room_id = room_id
+        self.deadline_s = deadline_s  # default failure deadline for waits
         self.messages: list[MessageCreatedPayload] = []
         self._nudge = asyncio.Event()
 
@@ -64,11 +65,12 @@ class ReplyCapture:
         self,
         predicate: Callable[[list[MessageCreatedPayload]], bool],
         *,
-        deadline_s: float = DEFAULT_DEADLINE_S,
+        deadline_s: float | None = None,
     ) -> list[MessageCreatedPayload]:
         """Block until ``predicate(messages)`` holds; raise ``TimeoutError`` at
-        the deadline. The deadline is enforced by ``wait_for``; the inner loop
-        just re-checks the predicate each time a reply nudges it."""
+        the deadline (defaults to ``self.deadline_s``). The deadline is enforced
+        by ``wait_for``; the inner loop re-checks the predicate on each nudge."""
+        deadline = self.deadline_s if deadline_s is None else deadline_s
 
         async def await_predicate() -> None:
             while not predicate(self.messages):
@@ -76,16 +78,16 @@ class ReplyCapture:
                 await self._nudge.wait()
 
         try:
-            await asyncio.wait_for(await_predicate(), timeout=deadline_s)
+            await asyncio.wait_for(await_predicate(), timeout=deadline)
         except TimeoutError:
             raise TimeoutError(
-                f"Predicate not satisfied within {deadline_s:.0f}s in room "
+                f"Predicate not satisfied within {deadline:.0f}s in room "
                 f"{self.room_id} (captured {len(self.messages)} reply/replies)"
             ) from None
         return list(self.messages)
 
     async def wait_for_sender(
-        self, sender_id: str, *, deadline_s: float = DEFAULT_DEADLINE_S
+        self, sender_id: str, *, deadline_s: float | None = None
     ) -> list[MessageCreatedPayload]:
         """Block until an agent reply from ``sender_id`` arrives."""
         return await self.wait_until(
@@ -96,10 +98,13 @@ class ReplyCapture:
 
 @asynccontextmanager
 async def reply_capture(
-    ws: WebSocketClient | TrackingWebSocketClient, room_id: str
+    ws: WebSocketClient | TrackingWebSocketClient,
+    room_id: str,
+    *,
+    deadline_s: float = DEFAULT_DEADLINE_S,
 ) -> AsyncIterator[ReplyCapture]:
     """Subscribe to a room before sending, yield a capture, leave on exit."""
-    capture = ReplyCapture(room_id)
+    capture = ReplyCapture(room_id, deadline_s=deadline_s)
 
     async def handler(payload: MessageCreatedPayload) -> None:
         capture._on_message(payload)
@@ -118,13 +123,14 @@ async def drain(
     *,
     mention_id: str,
     mention_name: str,
-    deadline_s: float = DEFAULT_DEADLINE_S,
+    deadline_s: float | None = None,
 ) -> str:
     """Token-barrier drain: probe the agent and wait for it to echo the nonce.
 
     Sends ``Respond with exactly: DRAIN-<nonce>`` as the last message. Because
     the room processes messages in order, an agent reply containing the nonce
-    proves every earlier message was processed. Returns the nonce.
+    proves every earlier message was processed. Returns the nonce. The deadline
+    defaults to the capture's (``deadline_s=None``).
     """
     nonce = f"DRAIN-{uuid.uuid4().hex[:8]}"
     await user_ops.send_message(

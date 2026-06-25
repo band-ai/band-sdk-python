@@ -20,7 +20,11 @@ class BandEndpoints(BaseSettings):
         env_prefix="BAND_", env_file=".env.test", extra="ignore", case_sensitive=False
     )
 
-    rest_url: str = "http://localhost:4000"  # BAND_REST_URL
+    # Reuse the existing BAND_BASE_URL; BAND_REST_URL is accepted as an alias.
+    rest_url: str = Field(
+        default="http://localhost:4000",
+        validation_alias=AliasChoices("BAND_BASE_URL", "BAND_REST_URL"),
+    )
     ws_url: str = "ws://localhost:4000/api/v1/socket/websocket"  # BAND_WS_URL
 
 
@@ -106,6 +110,10 @@ class BaselineSettings(BaseSettings):
 
     # E2E_TESTS_ENABLED — the master gate for the live baseline suite.
     e2e_tests_enabled: bool = False
+
+    # E2E_TIMEOUT — default seconds the waiter blocks before declaring an agent
+    # stuck (a failure deadline, never a success signal).
+    e2e_timeout: int = 60
 
     endpoints: BandEndpoints = Field(default_factory=BandEndpoints)
     credentials: BandCredentials = Field(default_factory=BandCredentials)
