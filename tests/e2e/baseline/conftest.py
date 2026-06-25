@@ -36,15 +36,13 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
-    """Resolve ``@requires(...)`` before a baseline test runs.
+    """Gate every baseline test, then resolve any ``@requires(...)`` extras.
 
-    Always-on gate: E2E disabled -> skip; E2E enabled but a Band key missing ->
-    fail (misconfig). Then each declared optional dependency skips or fails per
-    its registry disposition.
+    The gate is unconditional (all baseline tests are live-e2e): E2E disabled
+    -> skip; E2E enabled but a Band key missing -> fail (misconfig). A test only
+    needs ``@requires(...)`` to declare *additional* optional capabilities (e.g.
+    provider keys), which skip when absent.
     """
-    marker = item.get_closest_marker(MARKER)
-    if marker is None:
-        return
     settings = BaselineSettings()
     if not settings.e2e_tests_enabled:
         pytest.skip("E2E_TESTS_ENABLED is not true")
@@ -52,8 +50,10 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         pytest.fail("BAND_API_KEY not set (E2E enabled)")
     if not settings.credentials.api_key_user:
         pytest.fail("BAND_API_KEY_USER not set (E2E enabled)")
-    for dep in marker.args[0]:
-        require_dep(dep, settings)
+    marker = item.get_closest_marker(MARKER)
+    if marker is not None:
+        for dep in marker.args[0]:
+            require_dep(dep, settings)
 
 
 @pytest.fixture(scope="session")

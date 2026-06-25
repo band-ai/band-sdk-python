@@ -10,7 +10,7 @@ success signal.
 Everything is built on one ``ReplyCapture.wait_until`` mechanism, with named
 helpers for the common predicates so tests avoid raw lambdas:
 
-- ``ReplyCapture.wait_for_sender`` / ``wait_for_count`` — turn-boundary capture.
+- ``ReplyCapture.wait_for_sender`` — turn-boundary capture.
 - ``drain`` — token-barrier: send a unique-nonce probe and wait for its echo;
   FIFO ordering proves every message before the probe was processed.
 """
@@ -87,14 +87,6 @@ class ReplyCapture:
         return await self.wait_until(
             lambda msgs: any(m.sender_id == sender_id for m in msgs),
             deadline_s=deadline_s,
-        )
-
-    async def wait_for_count(
-        self, count: int, *, deadline_s: float = DEFAULT_DEADLINE_S
-    ) -> list[MessageCreatedPayload]:
-        """Block until at least ``count`` agent replies have arrived."""
-        return await self.wait_until(
-            lambda msgs: len(msgs) >= count, deadline_s=deadline_s
         )
 
 

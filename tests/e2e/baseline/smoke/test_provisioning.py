@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.requires import requires
 from tests.e2e.baseline.toolkit.provisioning import NAME_PREFIX, ResourceManager
 
 
-@requires()
 @pytest.mark.asyncio(loop_scope="session")
 async def test_mint_room_with_agent_then_reap(
     resource_manager: ResourceManager,

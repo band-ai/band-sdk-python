@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.requires import requires
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@requires()
 @pytest.mark.asyncio(loop_scope="session")
 async def test_user_ops_create_list_delete_room(user_ops: UserOps) -> None:
     room_id = await user_ops.create_room(title="e2e-userops-smoke")

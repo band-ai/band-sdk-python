@@ -85,15 +85,13 @@ class ResourceManager:
     def _agent_name(self, label: str) -> str:
         return f"{NAME_PREFIX}{self._run_id}-{label}"
 
-    async def mint_agent(
-        self, label: str, *, description: str | None = None
-    ) -> MintedAgent:
+    async def mint_agent(self, label: str) -> MintedAgent:
         """Register a fresh agent and return its id + own API key."""
         name = self._agent_name(label)
         response = await self._client.human_api_agents.register_my_agent(
             agent=AgentRegisterRequest(
                 name=name,
-                description=description or f"E2E baseline test agent ({label})",
+                description=f"E2E baseline test agent ({label})",
             )
         )
         agent = response.data.agent

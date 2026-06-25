@@ -7,8 +7,7 @@ Simple but effective, following the consensus of practical LLM-as-judge guides:
 - **Reasoning before the verdict (chain-of-thought).** The single biggest lever
   on judge accuracy: the model must explain its reasoning *before* committing to
   pass/fail, so ``reasoning`` precedes ``passed`` in the required output.
-- **Explicit, single-dimension criteria**, with optional ordered evaluation
-  steps (G-Eval style) for harder rubrics.
+- **Explicit, single-dimension criteria.**
 - **Temperature 0** for repeatable verdicts.
 - **Structured JSON output**, parsed defensively.
 
@@ -76,22 +75,14 @@ async def judge(
     *,
     model: str,
     api_key: str,
-    evaluation_steps: list[str] | None = None,
-    temperature: float = 0.0,
 ) -> Verdict:
     """Render a pass/fail verdict on ``transcript`` against ``criteria``.
 
     ``transcript`` may be a ready string or a list of captured messages, which
-    are formatted as ``[sender]: content`` lines. ``evaluation_steps`` optionally
-    supplies an ordered checklist the judge works through (G-Eval style).
+    are formatted as ``[sender]: content`` lines.
     """
-    steps_block = ""
-    if evaluation_steps:
-        numbered = "\n".join(f"{i}. {s}" for i, s in enumerate(evaluation_steps, 1))
-        steps_block = f"\n\nEvaluation steps (work through these in order):\n{numbered}"
-
     prompt = (
-        f"Criteria:\n{criteria}{steps_block}\n\n"
+        f"Criteria:\n{criteria}\n\n"
         f"Transcript to evaluate:\n{format_transcript(transcript)}"
     )
 
@@ -99,7 +90,7 @@ async def judge(
     response = await client.messages.create(
         model=model,
         max_tokens=1024,
-        temperature=temperature,
+        temperature=0.0,
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
