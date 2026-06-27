@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import logging
-import sys
+
+from band import configure_logging
 
 
 def setup_logging(level: int = logging.INFO) -> None:
     """Configure logging for examples."""
-    logging.basicConfig(
+    configure_logging(
         level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        stream=sys.stdout,
+        style="json",
+        root_level=level,
+        stream="stdout",
+        extra_loggers={
+            "websockets": logging.WARNING,
+            "httpx": logging.WARNING,
+        },
     )
-    # Reduce noise from libraries
-    logging.getLogger("websockets").setLevel(logging.WARNING)
-    logging.getLogger("httpx").setLevel(logging.WARNING)

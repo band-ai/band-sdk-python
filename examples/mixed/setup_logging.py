@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import logging
 
+from band import configure_logging
+
 
 def setup_logging(level: int = logging.INFO) -> None:
     """Configure concise logging for the mixed example suite."""
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    configure_logging(
+        level,
+        extra_loggers={"band_crewai_agent": level},
     )
-    logging.getLogger("band").setLevel(level)
-    logging.getLogger("band_crewai_agent").setLevel(level)
