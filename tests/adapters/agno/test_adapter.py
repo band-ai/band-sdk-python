@@ -267,6 +267,8 @@ class TestBandInstructionInjection:
 
         assert isinstance(agent.additional_context, str)
         assert "## Environment" in agent.additional_context
+        # Band-registered identity is injected so the model knows who it is.
+        assert "You are TestBot, desc." in agent.additional_context
 
 
 class TestBandEntrypointBinding:

@@ -30,7 +30,7 @@ Requires:
     - ANTHROPIC_API_KEY environment variable (for the Claude model)
 
 Run with:
-    uv run examples/agno/05_agno_db_history.py
+    uv run examples/agno/06_agno_db_history.py
 """
 
 from __future__ import annotations

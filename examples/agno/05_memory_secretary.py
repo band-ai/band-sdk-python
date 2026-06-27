@@ -27,7 +27,7 @@ Requires:
     - ANTHROPIC_API_KEY environment variable (for the Claude model)
 
 Run with:
-    uv run examples/agno/04_memory_secretary.py
+    uv run examples/agno/05_memory_secretary.py
 """
 
 from __future__ import annotations

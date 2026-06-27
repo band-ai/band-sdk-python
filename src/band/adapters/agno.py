@@ -20,7 +20,7 @@ from band.core.types import (
     PlatformMessage,
 )
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
-from band.runtime.prompts import BASE_INSTRUCTIONS, CONTACT_SECTION, MEMORY_SECTION
+from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import get_band_tool_category
 
 try:
@@ -561,13 +561,19 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         )
 
     def _band_instructions(self) -> str:
-        """Compose Band guidance gated on enabled capabilities."""
-        parts: list[str] = [BASE_INSTRUCTIONS.strip()]
-        if Capability.MEMORY in self.features.capabilities:
-            parts.append(MEMORY_SECTION.strip())
-        if Capability.CONTACTS in self.features.capabilities:
-            parts.append(CONTACT_SECTION.strip())
-        return "\n\n".join(parts)
+        """Compose the Band identity + guidance gated on enabled capabilities.
+
+        Mirrors the other adapters via :func:`render_system_prompt`: prepends
+        "You are {name}, {description}." so the model knows its Band-registered
+        identity, then the base instructions and any capability sections. The
+        developer's own Agno ``instructions`` are preserved separately — this is
+        appended to ``additional_context`` (see :meth:`_inject_band_instructions`).
+        """
+        return render_system_prompt(
+            agent_name=self.agent_name or "Agent",
+            agent_description=self.agent_description or "An AI assistant",
+            features=self.features,
+        )
 
     def _build_band_tools(
         self, tools: AgentToolsProtocol, *, include_contacts: bool

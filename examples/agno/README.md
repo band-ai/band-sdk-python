@@ -7,14 +7,17 @@ framework.
 
 Agno is model-agnostic: you build and configure your own Agno `Agent` (model,
 instructions, tools, database, and other Agno settings), then bridge it to Band with
-`AgnoAdapter`. The adapter converts Band room history into Agno messages, runs
-your agent, and replies with its text output.
+`AgnoAdapter`. The adapter converts Band room history into Agno messages and runs
+your agent, exposing the Band toolset so the agent can reply.
 
 > **Note:** The Band toolset is exposed to the agent — chat and participant
 > tools always, plus memory/contact tools when the matching capabilities are
-> enabled. If the agent doesn't post via `band_send_message`, the adapter sends
-> its final text as a fallback, so simple agents reply without extra prompting.
-> Tool executions are reported to (and rehydrated from) the room.
+> enabled. The agent must call `band_send_message` to say anything in the room;
+> if it only returns plain text, nothing is delivered (the adapter logs that it
+> stayed silent). Band guidance is injected into the agent's prompt at startup,
+> so a capable model will call the tool on its own — but a minimal agent should
+> be instructed to use `band_send_message`. Tool executions are reported to (and
+> rehydrated from) the room.
 
 ## Prerequisites
 
@@ -59,9 +62,10 @@ the same instance elsewhere.
 |------|-------------|
 | `01_basic_agent.py` | **Minimal setup** - A Claude-backed Agno agent bridged to Band via `AgnoAdapter`. |
 | `02_tool_reporting.py` | **Tool-execution reporting** - An Agno agent with its own tools; `AdapterFeatures(emit={Emit.EXECUTION})` posts tool_call/tool_result events to the room. |
-| `03_tom_and_jerry.py` | **Two agents in one process** - Tom and Jerry, each its own Agno-backed Band agent with a distinct personality, run concurrently with `asyncio.gather`. |
-| `04_memory_secretary.py` | **Band memory tools** - Enables `Capability.MEMORY` so an Agno agent can store and recall durable Band memories. |
-| `05_agno_db_history.py` | **Agno-owned history** - Uses `db`, `session_id`, and `add_history_to_context=True`; the adapter disables Band history rehydration to avoid duplicate context. |
+| `03_tom_agent.py` | **Character agent (Tom)** - An Agno-backed cat agent. Run alongside Jerry — each is its own Band agent process, so they converse through the room even when backed by different adapters. |
+| `04_jerry_agent.py` | **Character agent (Jerry)** - The mouse counterpart to Tom; run the two in separate terminals and add both to a room. |
+| `05_memory_secretary.py` | **Band memory tools** - Enables `Capability.MEMORY` so an Agno agent can store and recall durable Band memories. |
+| `06_agno_db_history.py` | **Agno-owned history** - Uses `db`, `session_id`, and `add_history_to_context=True`; the adapter disables Band history rehydration to avoid duplicate context. |
 
 ---
 
