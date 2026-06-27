@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[agno]"]
+# dependencies = ["band-sdk[agno]", "anthropic>=0.75.0"]
 #
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }

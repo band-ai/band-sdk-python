@@ -21,16 +21,62 @@ your agent, exposing the Band toolset so the agent can reply.
 
 ## Prerequisites
 
-1. **Anthropic API Key** - Set `ANTHROPIC_API_KEY` (or add it to a `.env` file)
+1. **A model provider** - Agno is model-agnostic, so you choose the provider and
+   set its API key (see [Model providers](#model-providers) below). These
+   examples use Anthropic Claude, so set `ANTHROPIC_API_KEY` (or add it to a
+   `.env` file).
 2. **Band Platform** - Create a remote agent and get credentials, and set
    `BAND_WS_URL` / `BAND_REST_URL` to the platform those credentials belong to
-3. **Dependencies** - Install with `uv sync --extra agno`
+3. **Dependencies** - Install the adapter and your provider (see
+   [Installation](#installation) below).
+
+---
+
+## Model providers
+
+Agno is model-agnostic: **you** pick the provider when you build the agent, and
+`AgnoAdapter` wraps whatever you pass — nothing in the adapter is tied to a
+specific provider. Each provider needs two things: its Python package installed
+and its API key in the environment.
+
+| Provider | Import | Package | API key |
+|----------|--------|---------|---------|
+| Anthropic (examples' default) | `from agno.models.anthropic import Claude` | `anthropic` | `ANTHROPIC_API_KEY` |
+| OpenAI | `from agno.models.openai import OpenAIChat` | `openai` | `OPENAI_API_KEY` |
+| Google | `from agno.models.google import Gemini` | `google-genai` | `GOOGLE_API_KEY` |
+| Groq | `from agno.models.groq import Groq` | `groq` | `GROQ_API_KEY` |
+
+See [Agno's model docs](https://docs.agno.com/models) for the full list.
+
+## Installation
+
+The `agno` extra installs the adapter only — it deliberately does **not** pin a
+model provider, so you add the package for the provider you chose above.
+
+**Run an example directly (recommended):** each script declares `band-sdk[agno]`
+*and* its provider (`anthropic`) in its PEP 723 metadata, so `uv` installs
+everything into an ephemeral environment automatically — no manual setup:
+
+```bash
+uv run examples/agno/01_basic_agent.py
+```
+
+**Install into your own project/environment:**
+
+```bash
+# 1. The adapter (provider-free)
+uv sync --extra agno          # or: uv pip install 'band-sdk[agno]'
+
+# 2. Your chosen provider's package
+uv pip install anthropic      # or: openai, google-genai, groq, ...
+```
 
 ---
 
 ## Quick Start
 
 ```python
+# Requires: pip install 'band-sdk[agno]' anthropic   (ANTHROPIC_API_KEY set)
 from agno.agent import Agent as AgnoAgent
 from agno.models.anthropic import Claude
 
@@ -47,6 +93,19 @@ agno_agent = AgnoAgent(
 adapter = AgnoAdapter(agno_agent)
 agent = Agent.from_config("agno_agent", adapter=adapter)
 await agent.run()
+```
+
+Agno is model-agnostic — swap the model and the rest is unchanged. For OpenAI:
+
+```python
+# Requires: pip install 'band-sdk[agno]' openai   (OPENAI_API_KEY set)
+from agno.models.openai import OpenAIChat
+
+agno_agent = AgnoAgent(
+    model=OpenAIChat(id="gpt-4o"),
+    instructions="You are a helpful assistant. Be concise and friendly.",
+)
+adapter = AgnoAdapter(agno_agent)
 ```
 
 The adapter runs against the agent instance you pass and takes ownership of it:
@@ -94,9 +153,13 @@ agno_agent:
   api_key: "your-band-api-key"
 ```
 
-Provide your Anthropic API key via environment variable or a `.env` file in the
-repository root:
+Provide your model provider's API key via environment variable or a `.env` file
+in the repository root. The examples use Anthropic Claude:
 
 ```bash
 ANTHROPIC_API_KEY=your-anthropic-api-key
 ```
+
+If you switched the model to another provider (see
+[Model providers](#model-providers)), set that provider's key instead — e.g.
+`OPENAI_API_KEY`.

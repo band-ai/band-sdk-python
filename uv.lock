@@ -539,7 +539,6 @@ agentcore-runtime = [
 ]
 agno = [
     { name = "agno" },
-    { name = "anthropic" },
 ]
 anthropic = [
     { name = "anthropic" },
@@ -682,7 +681,6 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'bridge-agentcore'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'dev'", specifier = ">=3.9,<4" },
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9,<4" },
-    { name = "anthropic", marker = "extra == 'agno'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
     { name = "band-client-rest", specifier = "==0.0.10" },
