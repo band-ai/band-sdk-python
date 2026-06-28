@@ -96,7 +96,11 @@ class ReplyCapture:
         delivery = payload.metadata.delivery_status if payload.metadata else None
         if not delivery:
             return
-        self._delivery[payload.id] = delivery
+        # Merge, don't replace: a frame may carry only the recipient that just
+        # changed, so overwriting the whole map would wipe other recipients'
+        # last-known state (and make delivery_status disagree with the
+        # append-only delivery_history below).
+        self._delivery.setdefault(payload.id, {}).update(delivery)
         for recipient_id, state in delivery.items():
             status = _parse_status((state or {}).get("status"))
             if status is None:

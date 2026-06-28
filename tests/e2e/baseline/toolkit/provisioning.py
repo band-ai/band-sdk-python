@@ -158,19 +158,16 @@ class ResourceManager:
 
         # Collect candidates across all pages FIRST, then delete — deleting while
         # paginating would shrink the list and skip agents past a page boundary.
-        # The seen-set dedups and guarantees termination even if the backend
-        # ignores `page`; the page cap bounds a best-effort sweep.
+        # Cursor pagination (the SDK's preferred path; offset `page`/`page_size`
+        # is deprecated): advance via metadata.next_cursor until has_more is
+        # false. The iteration cap bounds a best-effort sweep.
         orphans: list[str] = []
-        seen: set[str] = set()
-        for page in range(1, 21):
+        cursor: str | None = None
+        for _ in range(20):
             response = await self._client.human_api_agents.list_my_agents(
-                name=NAME_PREFIX, page_size=100, page=page
+                name=NAME_PREFIX, limit=100, cursor=cursor
             )
-            batch = [a for a in (response.data or []) if a.id not in seen]
-            if not batch:
-                break
-            seen.update(a.id for a in batch)
-            for agent in batch:
+            for agent in response.data or []:
                 if not agent.name.startswith(NAME_PREFIX):
                     continue  # name filter is a contains-match; re-check the prefix
                 if f"-{self._run_id}-" in agent.name:
@@ -185,7 +182,8 @@ class ResourceManager:
                 if inserted > cutoff:
                     continue  # too fresh — could be a concurrent run
                 orphans.append(agent.id)
-            if len(response.data or []) < 100:
+            cursor = response.metadata.next_cursor
+            if not response.metadata.has_more or not cursor:
                 break
 
         reaped = 0
