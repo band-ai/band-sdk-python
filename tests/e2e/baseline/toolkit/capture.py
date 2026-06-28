@@ -28,17 +28,39 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
+
+from band_rest import AsyncRestClient
 
 from band.client.streaming import (
     DeliveryStatus,
     MessageCreatedPayload,
     WebSocketClient,
 )
+from band.core.types import MessageType
 
+from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.observations import (
+    Errors,
+    Events,
+    Memories,
+    MemoryObservation,
+    MemoryToolCalls,
+    Replies,
+    Tasks,
+    Thoughts,
+    ToolCalls,
+)
+from tests.e2e.baseline.toolkit.provisioning import (
+    ProvisionedAgent,
+    agent_rest_client,
+)
+from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.helpers import TrackingWebSocketClient
 
 logger = logging.getLogger(__name__)
@@ -66,10 +88,21 @@ class ReplyCapture:
     so call ``wait_until`` sequentially on a capture, not from concurrent tasks.
     """
 
-    def __init__(self, room_id: str, *, deadline_s: float = DEFAULT_DEADLINE_S) -> None:
+    def __init__(
+        self,
+        room_id: str,
+        *,
+        user_ops: UserOps | None = None,
+        settings: BaselineSettings | None = None,
+        deadline_s: float = DEFAULT_DEADLINE_S,
+    ) -> None:
         self.room_id = room_id
         self.deadline_s = deadline_s  # default failure deadline for waits
-        self.messages: list[MessageCreatedPayload] = []
+        self._user_ops = user_ops
+        self._settings = settings
+        # One agent-auth REST client per agent id, reused across memory reads.
+        self._agent_clients: dict[str, AsyncRestClient] = {}
+        self.messages: Replies = Replies()
         # message_id -> {recipient_id: delivery-state dict}, fed by
         # ``message_updated`` events. The authoritative "agent finished this
         # message" signal, independent of any LLM reply text.
@@ -218,16 +251,192 @@ class ReplyCapture:
                 f"{self._delivery_error(message_id, recipient_id)}"
             ) from None
 
+    def _require_user_ops(self) -> UserOps:
+        """Return the bound ``UserOps`` or raise (durable reads need it).
+
+        The calling method's name is read from the stack frame (the single source
+        of truth) so the error names it without each caller passing a literal.
+        """
+        if self._user_ops is None:
+            caller = sys._getframe(1).f_code.co_name
+            raise RuntimeError(
+                f"ReplyCapture.{caller} needs user_ops; use the reply_capture fixture"
+            )
+        return self._user_ops
+
+    async def tool_calls(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+        include_memory: bool = False,
+    ) -> ToolCalls:
+        """Read this room's tool calls (call after the turn settles).
+
+        Reads the persisted ``tool_call`` events, so the agent must run with
+        execution reporting on, and this should follow a completion barrier such
+        as ``wait_for_processed`` (the platform marks a message ``processed``
+        only after the reply is emitted, by which point the turn's tool-call
+        events are already persisted). Pass ``sender_id`` to keep only one
+        agent's calls. Memory tools are excluded by default; pass
+        ``include_memory=True`` to keep them, or use ``memory(agent)`` for the
+        dedicated two-layer memory view.
+
+        Without ``since`` this returns *every* tool call in the room — which is
+        the turn only when the capture spans a single turn. When reusing a
+        capture across turns, pass ``since`` (a server timestamp, e.g. the
+        ``inserted_at`` of the last message before the turn) to exclude earlier
+        turns' calls.
+        """
+        return await ToolCalls.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+            include_memory=include_memory,
+        )
+
+    async def memory(
+        self,
+        agent: ProvisionedAgent,
+        *,
+        since: datetime | None = None,
+        limit: int = 100,
+        subject_id: str | None = None,
+        scope: Any | None = None,
+        system: Any | None = None,
+        type: Any | None = None,
+        segment: Any | None = None,
+        content_query: str | None = None,
+        status: Any | None = None,
+        page_size: int = 50,
+    ) -> MemoryObservation:
+        """Read both layers of ``agent``'s memory for the turn (after the barrier).
+
+        Returns a :class:`MemoryObservation` with ``.calls`` (the *call* layer:
+        which memory tools the agent invoked, from the room's ``tool_call`` events)
+        and ``.stored`` (the *store* layer: which records actually landed, from the
+        memories API via the agent's own key -- hence the ``agent`` arg).
+
+        The ``scope``/``system``/``type``/``segment``/``content_query``/``status``
+        filters narrow the store read. Needs ``user_ops`` and ``settings`` (both
+        bound by the ``reply_capture`` fixture); the agent must run with
+        ``Emit.EXECUTION`` for the call layer to be populated.
+        """
+        user_ops = self._require_user_ops()
+        if self._settings is None:
+            raise RuntimeError(
+                "ReplyCapture.memory needs settings; use the reply_capture fixture"
+            )
+        client = self._agent_clients.get(agent.id)
+        if client is None:
+            client = agent_rest_client(agent, self._settings)
+            self._agent_clients[agent.id] = client
+        # The two layers hit different clients/endpoints (room events via the
+        # observer client, the store via the agent client), so read them
+        # concurrently rather than paying both round-trips in series.
+        calls, stored = await asyncio.gather(
+            MemoryToolCalls.read(
+                user_ops, self.room_id, sender_id=agent.id, since=since, limit=limit
+            ),
+            Memories.read(
+                client,
+                subject_id=subject_id,
+                scope=scope,
+                system=system,
+                type=type,
+                segment=segment,
+                content_query=content_query,
+                status=status,
+                page_size=page_size,
+            ),
+        )
+        return MemoryObservation(calls=calls, stored=stored)
+
+    async def events(
+        self,
+        message_type: MessageType,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> Events:
+        """Read this room's emitted events of ``message_type`` (call after the turn
+        settles). Same read contract as ``tool_calls``; see ``thoughts``/``errors``/
+        ``tasks`` for the named conveniences."""
+        return await Events.read(
+            self._require_user_ops(),
+            self.room_id,
+            message_type=message_type,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+        )
+
+    async def thoughts(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> Thoughts:
+        """Read this room's ``thought`` events (call after the turn settles)."""
+        return await Thoughts.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+        )
+
+    async def errors(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> Errors:
+        """Read this room's ``error`` events (call after the turn settles)."""
+        return await Errors.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+        )
+
+    async def tasks(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> Tasks:
+        """Read this room's ``task`` events (call after the turn settles)."""
+        return await Tasks.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+        )
+
 
 @asynccontextmanager
 async def reply_capture(
     ws: WebSocketClient | TrackingWebSocketClient,
     room_id: str,
     *,
+    user_ops: UserOps | None = None,
+    settings: BaselineSettings | None = None,
     deadline_s: float = DEFAULT_DEADLINE_S,
 ) -> AsyncIterator[ReplyCapture]:
     """Subscribe to a room before sending, yield a capture, leave on exit."""
-    capture = ReplyCapture(room_id, deadline_s=deadline_s)
+    capture = ReplyCapture(
+        room_id, user_ops=user_ops, settings=settings, deadline_s=deadline_s
+    )
 
     async def handler(payload: MessageCreatedPayload) -> None:
         capture._on_message(payload)

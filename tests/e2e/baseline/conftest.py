@@ -24,8 +24,8 @@ from tests.e2e.baseline.toolkit.judge import Verdict
 from tests.e2e.baseline.toolkit.judge import judge as _judge
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager, new_run_id
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.waiting import ReplyCapture
-from tests.e2e.baseline.toolkit.waiting import reply_capture as _reply_capture
+from tests.e2e.baseline.toolkit.capture import ReplyCapture
+from tests.e2e.baseline.toolkit.capture import reply_capture as _reply_capture
 from tests.e2e.helpers import TrackingWebSocketClient
 
 
@@ -191,14 +191,21 @@ def anthropic_adapter(baseline_settings: BaselineSettings) -> SimpleAdapter:
 def reply_capture(
     baseline_ws: TrackingWebSocketClient,
     baseline_settings: BaselineSettings,
+    user_ops: UserOps,
 ) -> Callable[[str], AbstractAsyncContextManager[ReplyCapture]]:
     """Subscribe-before-send capture with the WS observer + E2E_TIMEOUT pre-bound.
 
     Hides ``baseline_ws`` from tests; use as ``async with reply_capture(room_id)``.
-    The capture's default wait deadline comes from E2E_TIMEOUT.
+    The capture's default wait deadline comes from E2E_TIMEOUT. ``user_ops`` and
+    ``settings`` are pre-bound so ``capture.tool_calls()`` / ``events()`` /
+    ``memory(agent)`` can read persisted events and agent-scoped memory.
     """
     return functools.partial(
-        _reply_capture, baseline_ws, deadline_s=baseline_settings.e2e_timeout
+        _reply_capture,
+        baseline_ws,
+        user_ops=user_ops,
+        settings=baseline_settings,
+        deadline_s=baseline_settings.e2e_timeout,
     )
 
 
