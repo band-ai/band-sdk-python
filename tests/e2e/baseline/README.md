@@ -33,6 +33,8 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
 | Observe agent replies without a race | `async with reply_capture(room_id) as capture:` then send |
 | Know the agent finished a turn / burst (and capture its reply) | `mid = await user_ops.send_message(...)` then `await capture.wait_for_processed(mid, agent_id)` |
+| Wait for a specific delivery state (e.g. observe a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |
+| Inspect the delivery lifecycle that occurred | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
 | Assert something happened (cheap) | `assertions.py` helpers |
 | Assert a fuzzy/semantic outcome | the `judge` fixture (use sparingly, see below) |
@@ -74,6 +76,43 @@ instead of the judge.
   earlier message was handled; and since `processed` is reported only after the
   reply is emitted, that reply is already in `capture.messages` once it returns.
   (No probe message is needed — `send_message` returns the id to barrier on.)
+
+## Waiting on delivery state (`DeliveryStatus`)
+
+Each message carries a per-recipient delivery state, exposed as
+`band.client.streaming.DeliveryStatus`. The backend lifecycle is:
+
+```
+DELIVERED -> PROCESSING -> PROCESSED | FAILED
+```
+
+`FAILED` is **not** terminal — the platform retries (bounded by max retries),
+so a message may cycle `FAILED -> PROCESSING` again before reaching `PROCESSED`.
+`PROCESSED` is the only success terminal.
+
+Pick the waiter for what you need:
+
+```python
+mid = await user_ops.send_message(room_id, "...", mention_id=a.id, mention_name=a.name)
+
+# Success barrier (the common case): wait until PROCESSED. Waits through any
+# transient FAILED; on timeout it reports the last status + attempt error.
+await capture.wait_for_processed(mid, a.id)
+
+# Any specific state(s): the general waiter, returns the DeliveryStatus reached.
+reached = await capture.wait_for_delivery(mid, a.id, until={DeliveryStatus.FAILED})
+reached = await capture.wait_for_delivery(
+    mid, a.id, until={DeliveryStatus.PROCESSED, DeliveryStatus.FAILED}
+)
+
+# Inspect after the fact (no waiting):
+capture.delivery_status(mid, a.id)        # current state, or None if unseen
+capture.delivery_history(mid, a.id)       # e.g. [PROCESSING, PROCESSED]
+```
+
+Note: `DELIVERED` is set at rest but is not pushed as its own WebSocket frame —
+in practice the first observed transition is `PROCESSING`. Do not wait on
+`DELIVERED` over the channel.
 
 ## A minimal test
 
