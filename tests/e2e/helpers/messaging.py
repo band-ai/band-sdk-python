@@ -48,8 +48,12 @@ class TrackingWebSocketClient:
         self,
         chat_room_id: str,
         on_message_created: Callable[[MessageCreatedPayload], Awaitable[None]],
+        on_message_updated: Callable[[MessageCreatedPayload], Awaitable[None]]
+        | None = None,
     ):
-        result = await self._ws.join_chat_room_channel(chat_room_id, on_message_created)
+        result = await self._ws.join_chat_room_channel(
+            chat_room_id, on_message_created, on_message_updated
+        )
         self._joined_rooms.add(chat_room_id)
         return result
 

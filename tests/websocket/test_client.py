@@ -18,6 +18,7 @@ from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
 from band.client.streaming import (
+    DeliveryStatus,
     MessageCreatedPayload,
     SupersedePayload,
     WebSocketDisconnectReason,
@@ -492,6 +493,118 @@ async def test_accepts_valid_message_created_payload():
     await client._handle_events(MockMessage(), {"message_created": test_callback})
     assert isinstance(received_payload, MessageCreatedPayload)
     assert received_payload.id == "msg-123"
+
+
+# A message_updated frame as observed from the real backend: same shape as
+# message_created, with per-recipient processing state under
+# metadata.delivery_status keyed by the recipient (agent) id.
+VALID_MESSAGE_UPDATED_PAYLOAD: dict = {
+    "id": "msg-123",
+    "content": "@TestBot hi",
+    "message_type": "text",
+    "metadata": {
+        "mentions": [{"id": "agent-123", "handle": "testbot", "name": "TestBot"}],
+        "status": "sent",
+        "delivery_status": {
+            "agent-123": {
+                "status": "processed",
+                "delivered_at": "2025-11-17T11:20:11.000000Z",
+                "processed_at": "2025-11-17T11:20:13.000000Z",
+                "attempts": [{"attempt_number": 1, "status": "success"}],
+            }
+        },
+    },
+    "sender_id": "user-456",
+    "sender_type": "User",
+    "chat_room_id": "room-123",
+    "inserted_at": "2025-11-17T11:20:10.284136Z",
+    "updated_at": "2025-11-17T11:20:13.000000Z",
+}
+
+
+async def test_accepts_message_updated_payload_with_delivery_status():
+    """message_updated parses into MessageCreatedPayload and exposes delivery_status."""
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    received = None
+
+    async def on_updated(payload):
+        nonlocal received
+        received = payload
+
+    class MockMessage:
+        event = "message_updated"
+        payload = VALID_MESSAGE_UPDATED_PAYLOAD
+
+    await client._handle_events(MockMessage(), {"message_updated": on_updated})
+    assert isinstance(received, MessageCreatedPayload)
+    assert received.metadata is not None
+    assert received.metadata.delivery_status == {
+        "agent-123": {
+            "status": "processed",
+            "delivered_at": "2025-11-17T11:20:11.000000Z",
+            "processed_at": "2025-11-17T11:20:13.000000Z",
+            "attempts": [{"attempt_number": 1, "status": "success"}],
+        }
+    }
+
+
+async def test_routes_message_created_and_updated_to_distinct_handlers():
+    """When both handlers are registered, each event reaches only its own one."""
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    created_calls: list[str] = []
+    updated_calls: list[str] = []
+
+    async def on_created(payload):
+        created_calls.append(payload.id)
+
+    async def on_updated(payload):
+        updated_calls.append(payload.id)
+
+    handlers = {"message_created": on_created, "message_updated": on_updated}
+
+    class CreatedMsg:
+        event = "message_created"
+        payload = VALID_MESSAGE_CREATED_PAYLOAD
+
+    class UpdatedMsg:
+        event = "message_updated"
+        payload = VALID_MESSAGE_UPDATED_PAYLOAD
+
+    await client._handle_events(CreatedMsg(), handlers)
+    await client._handle_events(UpdatedMsg(), handlers)
+
+    assert created_calls == ["msg-123"]
+    assert updated_calls == ["msg-123"]
+
+
+def test_delivery_status_enum_matches_backend_values():
+    """Drift guard: these are the recipient delivery states the backend emits
+    (thenvoi-platform chat_message.ex). The barrier relies on the exact strings."""
+    assert {s.value for s in DeliveryStatus} == {
+        "delivered",
+        "processing",
+        "processed",
+        "failed",
+    }
+
+
+async def test_ignores_message_updated_when_no_handler_registered(caplog):
+    """Back-compat: a message_updated frame is dropped (not an error) when only
+    message_created is wired up, as before the optional handler was added."""
+    client = WebSocketClient("ws://localhost", "test-key", "agent-123")
+    created_calls: list[str] = []
+
+    async def on_created(payload):
+        created_calls.append(payload.id)
+
+    class UpdatedMsg:
+        event = "message_updated"
+        payload = VALID_MESSAGE_UPDATED_PAYLOAD
+
+    with caplog.at_level(logging.WARNING):
+        await client._handle_events(UpdatedMsg(), {"message_created": on_created})
+
+    assert created_calls == []  # not misrouted to the message_created handler
 
 
 async def test_accepts_valid_room_added_payload():

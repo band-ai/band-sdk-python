@@ -1,36 +1,58 @@
 """Event-driven wait primitives for live E2E tests.
 
-Deterministic, not timing-based. The room processes messages in FIFO order
-(a single per-room process loop drains one queue), so completion is detected
-from positive signals — an agent reply, or the echo of a unique probe token —
-never from a silence window. ``deadline_s`` is a *failure* deadline: it bounds
-how long we wait before declaring the agent stuck, and is never used as a
-success signal.
+Deterministic, not timing-based. Completion is detected from the platform's own
+delivery-status signal, never from a silence window. ``deadline_s`` is a
+*failure* deadline: it bounds how long we wait before declaring the agent stuck,
+and is never used as a success signal.
 
-Everything is built on one ``ReplyCapture.wait_until`` mechanism, with named
-helpers for the common predicates so tests avoid raw lambdas:
+The surface is small — methods on ``ReplyCapture``:
 
-- ``ReplyCapture.wait_for_sender`` — turn-boundary capture.
-- ``drain`` — token-barrier: send a unique-nonce probe and wait for its echo;
-  FIFO ordering proves every message before the probe was processed.
+- ``wait_until`` — the engine: block until a predicate over captured state holds,
+  or raise ``TimeoutError`` at the deadline. Use directly for a custom condition.
+- ``wait_for_delivery`` — block until a recipient's delivery status for a message
+  reaches one of the given ``DeliveryStatus`` values; the general delivery waiter.
+- ``wait_for_processed`` — the common barrier built on ``wait_for_delivery``:
+  block until a recipient has *processed* a given message.
+- ``delivery_status`` / ``delivery_history`` — inspect the current state and the
+  observed transition sequence (e.g. ``[PROCESSING, PROCESSED]``).
+
+Why this is enough: the room processes a room's messages strictly one-at-a-time
+in FIFO order (a single per-room process loop), and the agent marks a message
+``processed`` only *after* its reply has been emitted. So waiting for the last
+message you sent to be processed (its id is returned by ``send_message``) proves
+every earlier message was handled *and* that the agent's reply is already in
+``messages`` — no probe message and no reply-text matching required.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
-from collections.abc import AsyncIterator, Callable
+from collections import defaultdict
+from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
+from typing import Any
 
-from band.client.streaming import MessageCreatedPayload, WebSocketClient
+from band.client.streaming import (
+    DeliveryStatus,
+    MessageCreatedPayload,
+    WebSocketClient,
+)
 
-from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.helpers import TrackingWebSocketClient
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DEADLINE_S = 60.0
+
+
+def _parse_status(raw: Any) -> DeliveryStatus | None:
+    """Coerce a raw delivery-status string to ``DeliveryStatus`` (``None`` if
+    missing or outside the known set)."""
+    try:
+        return DeliveryStatus(raw) if raw is not None else None
+    except ValueError:
+        return None
 
 
 class ReplyCapture:
@@ -48,6 +70,14 @@ class ReplyCapture:
         self.room_id = room_id
         self.deadline_s = deadline_s  # default failure deadline for waits
         self.messages: list[MessageCreatedPayload] = []
+        # message_id -> {recipient_id: delivery-state dict}, fed by
+        # ``message_updated`` events. The authoritative "agent finished this
+        # message" signal, independent of any LLM reply text.
+        self._delivery: dict[str, dict[str, Any]] = {}
+        # (message_id, recipient_id) -> ordered, de-duplicated status transitions
+        # observed for that pair (e.g. [PROCESSING, PROCESSED]). Lets tests assert
+        # on the real lifecycle, not just the final state.
+        self._history: dict[tuple[str, str], list[DeliveryStatus]] = defaultdict(list)
         self._nudge = asyncio.Event()
 
     def _on_message(self, payload: MessageCreatedPayload) -> None:
@@ -60,6 +90,48 @@ class ReplyCapture:
                 payload.content[:80],
             )
             self._nudge.set()
+
+    def _on_message_updated(self, payload: MessageCreatedPayload) -> None:
+        """Record per-recipient delivery state from a ``message_updated`` event."""
+        delivery = payload.metadata.delivery_status if payload.metadata else None
+        if not delivery:
+            return
+        self._delivery[payload.id] = delivery
+        for recipient_id, state in delivery.items():
+            status = _parse_status((state or {}).get("status"))
+            if status is None:
+                continue
+            history = self._history[(payload.id, recipient_id)]
+            # Record only transitions (the backend may resend the same state).
+            if not history or history[-1] is not status:
+                history.append(status)
+        self._nudge.set()
+
+    def delivery_status(
+        self, message_id: str, recipient_id: str
+    ) -> DeliveryStatus | None:
+        """This recipient's current delivery status for ``message_id``.
+
+        ``None`` until the first ``message_updated`` for the pair arrives (or if
+        the backend ever reports a value outside ``DeliveryStatus``).
+        """
+        recipient = self._delivery.get(message_id, {}).get(recipient_id) or {}
+        return _parse_status(recipient.get("status"))
+
+    def delivery_history(
+        self, message_id: str, recipient_id: str
+    ) -> list[DeliveryStatus]:
+        """Ordered, de-duplicated delivery transitions seen for the pair."""
+        return list(self._history[(message_id, recipient_id)])
+
+    def _delivery_error(self, message_id: str, recipient_id: str) -> str:
+        """Best-effort last-attempt error string, for failure diagnostics."""
+        recipient = self._delivery.get(message_id, {}).get(recipient_id) or {}
+        attempts = recipient.get("attempts") or []
+        last_error = next(
+            (a.get("error") for a in reversed(attempts) if a.get("error")), None
+        )
+        return f" (last error: {last_error})" if last_error else ""
 
     async def wait_until(
         self,
@@ -86,14 +158,61 @@ class ReplyCapture:
             ) from None
         return list(self.messages)
 
-    async def wait_for_sender(
-        self, sender_id: str, *, deadline_s: float | None = None
-    ) -> list[MessageCreatedPayload]:
-        """Block until an agent reply from ``sender_id`` arrives."""
-        return await self.wait_until(
-            lambda msgs: any(m.sender_id == sender_id for m in msgs),
+    async def wait_for_delivery(
+        self,
+        message_id: str,
+        recipient_id: str,
+        *,
+        until: Iterable[DeliveryStatus],
+        deadline_s: float | None = None,
+    ) -> DeliveryStatus:
+        """Block until ``recipient_id``'s status for ``message_id`` is one of
+        ``until``; return the status reached.
+
+        The general delivery-state waiter. ``wait_for_processed`` is the common
+        case built on it; tests can target any state (e.g. ``{FAILED}`` to
+        observe a failure, or ``{PROCESSING}`` to catch the in-flight state).
+        """
+        targets = frozenset(until)
+        await self.wait_until(
+            lambda _msgs: self.delivery_status(message_id, recipient_id) in targets,
             deadline_s=deadline_s,
         )
+        reached = self.delivery_status(message_id, recipient_id)
+        assert reached is not None  # the predicate guarantees membership
+        return reached
+
+    async def wait_for_processed(
+        self, message_id: str, recipient_id: str, *, deadline_s: float | None = None
+    ) -> None:
+        """Block until ``recipient_id`` has ``PROCESSED`` ``message_id``.
+
+        Driven by ``message_updated`` delivery-state events, not chat text — so
+        it is immune to how (or whether) the agent phrases a reply. Per-room FIFO
+        means a processed barrier message proves every earlier message was
+        processed too, and because ``PROCESSED`` is reported only after the reply
+        is emitted, that reply is already in ``messages`` once this returns.
+
+        ``PROCESSED`` is the only success terminal: ``FAILED`` is transient (the
+        platform retries), so we wait through it rather than giving up. On
+        timeout the error reports the last status seen and any attempt error, so
+        a permanently-failing message is diagnosable instead of opaque.
+        """
+        try:
+            await self.wait_for_delivery(
+                message_id,
+                recipient_id,
+                until={DeliveryStatus.PROCESSED},
+                deadline_s=deadline_s,
+            )
+        except TimeoutError:
+            last = self.delivery_status(message_id, recipient_id)
+            raise TimeoutError(
+                f"{recipient_id} did not process message {message_id} in room "
+                f"{self.room_id}; last delivery status: "
+                f"{last.value if last else 'none'}"
+                f"{self._delivery_error(message_id, recipient_id)}"
+            ) from None
 
 
 @asynccontextmanager
@@ -109,37 +228,11 @@ async def reply_capture(
     async def handler(payload: MessageCreatedPayload) -> None:
         capture._on_message(payload)
 
-    await ws.join_chat_room_channel(room_id, handler)
+    async def updated_handler(payload: MessageCreatedPayload) -> None:
+        capture._on_message_updated(payload)
+
+    await ws.join_chat_room_channel(room_id, handler, updated_handler)
     try:
         yield capture
     finally:
         await ws.leave_chat_room_channel(room_id)
-
-
-async def drain(
-    capture: ReplyCapture,
-    user_ops: UserOps,
-    room_id: str,
-    *,
-    mention_id: str,
-    mention_name: str,
-    deadline_s: float | None = None,
-) -> str:
-    """Token-barrier drain: probe the agent and wait for it to echo the nonce.
-
-    Sends ``Respond with exactly: DRAIN-<nonce>`` as the last message. Because
-    the room processes messages in order, an agent reply containing the nonce
-    proves every earlier message was processed. Returns the nonce. The deadline
-    defaults to the capture's (``deadline_s=None``).
-    """
-    nonce = f"DRAIN-{uuid.uuid4().hex[:8]}"
-    await user_ops.send_message(
-        room_id,
-        f"Respond with exactly: {nonce}",
-        mention_id=mention_id,
-        mention_name=mention_name,
-    )
-    await capture.wait_until(
-        lambda msgs: any(nonce in m.content for m in msgs), deadline_s=deadline_s
-    )
-    return nonce

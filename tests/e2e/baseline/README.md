@@ -13,7 +13,7 @@ quality. They are deterministic by design (no `sleep`, no silence windows).
 |------|------------|
 | `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent`, `ProvisionedAgent` |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants) |
-| `toolkit/waiting.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `drain` (token-barrier) |
+| `toolkit/waiting.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/assertions.py` | tolerant assertions: `assert_present`, `assert_at_least`, `assert_contains_any`, `assert_mentions` |
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
@@ -32,9 +32,8 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (set `BAND_E2E_AUTOCLEAN=false` to keep for debugging) |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
 | Observe agent replies without a race | `async with reply_capture(room_id) as capture:` then send |
-| Wait for a specific agent to reply | `await capture.wait_for_sender(agent_id)` |
+| Know the agent finished a turn / burst (and capture its reply) | `mid = await user_ops.send_message(...)` then `await capture.wait_for_processed(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
-| Know the agent finished a burst / turn | `await drain(capture, user_ops, room_id, mention_id=..., mention_name=...)` |
 | Assert something happened (cheap) | `assertions.py` helpers |
 | Assert a fuzzy/semantic outcome | the `judge` fixture (use sparingly, see below) |
 | Build a cheap agent to run | the `langgraph_adapter` / `anthropic_adapter` fixtures |
@@ -68,8 +67,13 @@ instead of the judge.
 - Waits are event-driven and deterministic. Never `sleep` or poll a fixed window.
 - `deadline_s` is a failure deadline only (raises `TimeoutError`); it is never a
   success signal.
-- `drain` is the way to know an agent is done: it relies on FIFO per-room
-  processing, so an echoed probe token proves all prior messages were handled.
+- `wait_for_processed(message_id, agent_id)` is the way to know an agent is done.
+  It reads the platform's `message_updated` delivery state — the same signal the
+  runtime itself uses — so it never depends on the agent's reply text. Per-room
+  FIFO processing means barriering on the last message you sent proves every
+  earlier message was handled; and since `processed` is reported only after the
+  reply is emitted, that reply is already in `capture.messages` once it returns.
+  (No probe message is needed — `send_message` returns the id to barrier on.)
 
 ## A minimal test
 
@@ -80,10 +84,10 @@ async def test_example(resource_manager, user_ops, reply_capture, anthropic_adap
     async with running_provisioned_agent(anthropic_adapter, resource_manager) as (_, agent):
         room_id = await resource_manager.provision_room(participants=[agent.id])
         async with reply_capture(room_id) as capture:
-            await user_ops.send_message(
+            mid = await user_ops.send_message(
                 room_id, "say hi", mention_id=agent.id, mention_name=agent.name
             )
-            await capture.wait_for_sender(agent.id)
+            await capture.wait_for_processed(mid, agent.id)
         assert_present(capture.messages)
 ```
 

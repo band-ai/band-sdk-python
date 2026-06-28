@@ -1,9 +1,9 @@
 """Agent scenario smokes that exercise the baseline tools end to end.
 
 Each test drives real agents through the toolkit — provisioning (provision/reap),
-the user-operations driver, the event-driven waiter + token-barrier drain, and
-the LLM judge — and asserts a tolerant, behavioural outcome. These validate the
-tools, not any L-level contract.
+the user-operations driver, the delivery-status processing barrier, and the LLM
+judge — and asserts a tolerant, behavioural outcome. These validate the tools,
+not any L-level contract.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.waiting import ReplyCapture, drain
+from tests.e2e.baseline.toolkit.waiting import ReplyCapture
 
 CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]
 JudgeFn = Callable[..., Awaitable[Verdict]]
@@ -56,26 +56,25 @@ async def test_two_agents_greet_each_other(
         )
 
         async with reply_capture(room_id) as capture:
-            # User asks each agent, in turn, to greet the other.
-            await user_ops.send_message(
+            # User asks each agent, in turn, to greet the other. Barrier on each
+            # trigger being processed — when that returns the greeting is already
+            # captured (processed is reported only after the reply is emitted).
+            m_a = await user_ops.send_message(
                 room_id,
                 f"please say hello to {b.name}",
                 mention_id=a.id,
                 mention_name=a.name,
             )
-            await capture.wait_for_sender(a.id)
+            await capture.wait_for_processed(m_a, a.id)
 
-            await user_ops.send_message(
+            m_b = await user_ops.send_message(
                 room_id,
                 f"please say hello to {a.name}",
                 mention_id=b.id,
                 mention_name=b.name,
             )
-            await capture.wait_for_sender(b.id)
+            await capture.wait_for_processed(m_b, b.id)
 
-            await drain(
-                capture, user_ops, room_id, mention_id=a.id, mention_name=a.name
-            )
             transcript = list(capture.messages)
 
     # Cheap structural pre-checks before the (costlier) semantic judge.
@@ -104,7 +103,7 @@ async def test_agent_recalls_earlier_facts(
     judge: JudgeFn,
     anthropic_adapter: SimpleAdapter,
 ) -> None:
-    """A burst of facts, a drain to settle, then a recall — judged tolerantly."""
+    """A burst of facts, a barrier to settle, then a recall — judged tolerantly."""
     async with running_provisioned_agent(
         anthropic_adapter, resource_manager, label="anthropic"
     ) as (_, agent):
@@ -114,28 +113,25 @@ async def test_agent_recalls_earlier_facts(
         mention = {"mention_id": agent.id, "mention_name": agent.name}
 
         async with reply_capture(room_id) as capture:
-            # Burst: tell the agent a couple of facts, then drain to settle it.
+            # Burst: tell the agent a couple of facts without waiting between
+            # them, then barrier on the last one. FIFO means once it is
+            # processed, both facts were handled.
             await user_ops.send_message(
                 room_id, "Remember: my favorite color is teal.", **mention
             )
-            await user_ops.send_message(
+            last = await user_ops.send_message(
                 room_id, "Also remember: my dog is named Pixel.", **mention
             )
-            await drain(capture, user_ops, room_id, **mention)
+            await capture.wait_for_processed(last, agent.id)
 
-            # Ask it to recall, then drain again so the answer is fully settled.
-            # Everything captured from here on is the agent's recall turn. Drop
-            # only the pure drain echo (a message that is *just* the nonce) —
-            # matching on exact content, not substring, so a reply that both
-            # recalls and happens to include the nonce is still judged.
-            settled = len(capture.messages)
-            await user_ops.send_message(
+            # Ask it to recall. Snapshot first, barrier on the question, then
+            # slice — everything captured after the snapshot is the recall turn.
+            snapshot = len(capture.messages)
+            question = await user_ops.send_message(
                 room_id, "What is my favorite color and my dog's name?", **mention
             )
-            nonce = await drain(capture, user_ops, room_id, **mention)
-            recall = [
-                m for m in capture.messages[settled:] if m.content.strip() != nonce
-            ]
+            await capture.wait_for_processed(question, agent.id)
+            recall = capture.messages[snapshot:]
 
     # Cheap structural pre-check: the recall turn mentions at least one fact.
     assert_present(recall, what="a recall reply")
