@@ -33,7 +33,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.waiting import ReplyCapture
+from tests.e2e.baseline.toolkit.capture import ReplyCapture
 
 logger = logging.getLogger(__name__)
 

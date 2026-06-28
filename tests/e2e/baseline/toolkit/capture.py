@@ -31,6 +31,7 @@ import logging
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any
 
 from band.client.streaming import (
@@ -39,6 +40,8 @@ from band.client.streaming import (
     WebSocketClient,
 )
 
+from tests.e2e.baseline.toolkit.observations import Replies, ToolCalls
+from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.helpers import TrackingWebSocketClient
 
 logger = logging.getLogger(__name__)
@@ -66,10 +69,17 @@ class ReplyCapture:
     so call ``wait_until`` sequentially on a capture, not from concurrent tasks.
     """
 
-    def __init__(self, room_id: str, *, deadline_s: float = DEFAULT_DEADLINE_S) -> None:
+    def __init__(
+        self,
+        room_id: str,
+        *,
+        user_ops: UserOps | None = None,
+        deadline_s: float = DEFAULT_DEADLINE_S,
+    ) -> None:
         self.room_id = room_id
         self.deadline_s = deadline_s  # default failure deadline for waits
-        self.messages: list[MessageCreatedPayload] = []
+        self._user_ops = user_ops
+        self.messages: Replies = Replies()
         # message_id -> {recipient_id: delivery-state dict}, fed by
         # ``message_updated`` events. The authoritative "agent finished this
         # message" signal, independent of any LLM reply text.
@@ -218,16 +228,51 @@ class ReplyCapture:
                 f"{self._delivery_error(message_id, recipient_id)}"
             ) from None
 
+    async def tool_calls(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> ToolCalls:
+        """Read this room's tool calls (call after the turn settles).
+
+        Reads the persisted ``tool_call`` events, so the agent must run with
+        execution reporting on, and this should follow a completion barrier such
+        as ``wait_for_processed`` (the platform marks a message ``processed``
+        only after the reply is emitted, by which point the turn's tool-call
+        events are already persisted). Pass ``sender_id`` to keep only one
+        agent's calls.
+
+        Without ``since`` this returns *every* tool call in the room — which is
+        the turn only when the capture spans a single turn. When reusing a
+        capture across turns, pass ``since`` (a server timestamp, e.g. the
+        ``inserted_at`` of the last message before the turn) to exclude earlier
+        turns' calls.
+        """
+        if self._user_ops is None:
+            raise RuntimeError(
+                "ReplyCapture.tool_calls needs user_ops; use the reply_capture fixture"
+            )
+        return await ToolCalls.read(
+            self._user_ops,
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+        )
+
 
 @asynccontextmanager
 async def reply_capture(
     ws: WebSocketClient | TrackingWebSocketClient,
     room_id: str,
     *,
+    user_ops: UserOps | None = None,
     deadline_s: float = DEFAULT_DEADLINE_S,
 ) -> AsyncIterator[ReplyCapture]:
     """Subscribe to a room before sending, yield a capture, leave on exit."""
-    capture = ReplyCapture(room_id, deadline_s=deadline_s)
+    capture = ReplyCapture(room_id, user_ops=user_ops, deadline_s=deadline_s)
 
     async def handler(payload: MessageCreatedPayload) -> None:
         capture._on_message(payload)

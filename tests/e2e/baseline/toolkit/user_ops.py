@@ -8,14 +8,19 @@ method yet, so it uses a direct REST call (see ``delete_room``).
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import httpx
 from band_rest import (
     AsyncRestClient,
+    ChatMessage,
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
     CreateMyChatRoomRequestChat,
     ParticipantRequest,
 )
+
+from band.core.types import MessageType
 
 
 class UserOps:
@@ -68,6 +73,33 @@ class UserOps:
             room_id
         )
         return [participant.id for participant in (response.data or [])]
+
+    async def list_messages(
+        self,
+        room_id: str,
+        *,
+        message_type: MessageType | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> list[ChatMessage]:
+        """List a room's messages/events, optionally filtered by type and time.
+
+        Returns every item the platform records for the room (text plus event
+        types like ``tool_call``/``tool_result``), so it doubles as the read
+        path for an agent's tool calls. Newest-first from the API; reversed
+        here to chronological (oldest-first) so callers read a turn in order.
+        ``None`` ``message_type`` returns all types; ``since`` (a server
+        timestamp) keeps only items after it.
+        """
+        kwargs: dict[str, object] = {"limit": limit}
+        if message_type is not None:
+            kwargs["message_type"] = message_type
+        if since is not None:
+            kwargs["since"] = since
+        response = await self._client.human_api_messages.list_my_chat_messages(
+            room_id, **kwargs
+        )
+        return list(reversed(response.data or []))
 
     async def delete_room(self, room_id: str) -> None:
         """Soft-delete a room.

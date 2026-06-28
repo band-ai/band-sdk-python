@@ -12,10 +12,11 @@ quality. They are deterministic by design (no `sleep`, no silence windows).
 | Path | What it is |
 |------|------------|
 | `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent`, `ProvisionedAgent` |
-| `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants) |
-| `toolkit/waiting.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier) |
+| `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
+| `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()` (read the agent's tool calls) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/assertions.py` | tolerant assertions: `assert_present`, `assert_at_least`, `assert_contains_any`, `assert_mentions` |
+| `toolkit/observations/` | `Replies` (captured replies + assertions) and `ToolCalls`/`ToolCall` (captured tool calls + `assert_fired`) — list subclasses that own their assertions |
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
 | `requires.py` | `@requires(Dep.X)` decorator + `Dep` enum |
 | `conftest.py` | fixtures (below) + the always-on E2E gate |
@@ -36,7 +37,9 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Wait for a specific delivery state (e.g. observe a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |
 | Inspect the delivery lifecycle that occurred | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
-| Assert something happened (cheap) | `assertions.py` helpers |
+| See which tools an agent fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (agent needs `Emit.EXECUTION`) |
+| Assert a specific tool fired | `calls.assert_fired("name", with_args={...})` (case-insensitive name, subset args) |
+| Assert something happened (cheap) | `assertions.py` helpers, or the methods on `capture.messages` (`Replies`) |
 | Assert a fuzzy/semantic outcome | the `judge` fixture (use sparingly, see below) |
 | Build a cheap agent to run | the `langgraph_adapter` / `anthropic_adapter` fixtures |
 | Gate a test on an optional dependency | `@requires(Dep.OPENAI, ...)` (the E2E + Band-key gate is automatic) |
@@ -132,10 +135,28 @@ async def test_example(resource_manager, user_ops, reply_capture, anthropic_adap
 
 Run: `E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov`
 
+## Tool-observation inspection (`tool_calls` + `assert_fired`)
+
+After a turn settles (barrier on the trigger id with `wait_for_processed`), read
+the agent's tool calls and assert what fired:
+
+```python
+mid = await user_ops.send_message(room_id, "...", mention_id=a.id, mention_name=a.name)
+await capture.wait_for_processed(mid, a.id)
+calls = await capture.tool_calls(sender_id=a.id)   # a ToolCalls (list[ToolCall])
+calls.assert_fired("get_weather", with_args={"place": "Zorath"})
+```
+
+This reads the persisted `tool_call` events (so the agent must run with
+`Emit.EXECUTION`), not a live subscription. It is race-free because the platform
+marks the trigger `processed` only after the reply is emitted, by which point the
+turn's tool-call events are already persisted. `assert_fired` is tolerant: the
+name matches case-insensitively and `with_args` is a subset/substring match, not
+exact args. Pass `sender_id` to scope to one agent, and `since` (a server
+timestamp) to scope to one turn when reusing a capture. See
+`smoke/test_tool_calls.py` and `smoke/test_isolation.py`.
+
 ## Not here yet
 
-- Trajectory / tool-observation inspection and the `tool_fired` assertion (assert
-  which tool fired, with which args) are a tracked follow-up. Do not build an ad
-  hoc version here; extend that work when it lands.
 - A full LLM-judge harness (calibration, voting/pass^k, tool-correctness) is
   later work; `judge.py` notes DeepEval as the likely path.

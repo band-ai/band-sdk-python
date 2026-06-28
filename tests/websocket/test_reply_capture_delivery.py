@@ -15,7 +15,7 @@ import asyncio
 import pytest
 
 from band.client.streaming import DeliveryStatus, MessageCreatedPayload
-from tests.e2e.baseline.toolkit.waiting import ReplyCapture
+from tests.e2e.baseline.toolkit.capture import ReplyCapture
 
 MSG = "msg-1"
 AGENT = "agent-1"
