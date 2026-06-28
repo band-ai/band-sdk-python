@@ -321,7 +321,7 @@ wheels = [
 
 [[package]]
 name = "aiopenapi3"
-version = "0.9.0"
+version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "email-validator" },
@@ -332,9 +332,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "yarl" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/54/824633c6b2c3cb32227f0286dfa41310eea7f1f91df0491fbb0d34b0034f/aiopenapi3-0.9.0.tar.gz", hash = "sha256:f4740681cf829e5c5975065ac2fdd59c14c6ae60b085e7b461999056d4405a0e", size = 68951, upload-time = "2025-11-28T08:00:54.183Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/bc/b5be54133ebc97d46e2c50dc2b788e6146bde85a3f681608cd850381ea43/aiopenapi3-0.8.1.tar.gz", hash = "sha256:ef9a84b6a45f72e3016b74621025e5b1c6cb9a3c5da5b77998ddf16e2decd4c4", size = 68670, upload-time = "2025-04-19T07:44:28.016Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/01/80/d95677b2dac09db6dbb5b7c657643e7f444e0b5a1e988ae20d919c313b6f/aiopenapi3-0.9.0-py3-none-any.whl", hash = "sha256:a35e81cb305579bd4b502b5ff856519546b3085c435d4bc65bb17704cf041d00", size = 88826, upload-time = "2025-11-28T08:00:52.886Z" },
+    { url = "https://files.pythonhosted.org/packages/17/cc/4748475c7d570c5042569ee4a0fc0a203fb3650f07e5a4f6548ff1b768a6/aiopenapi3-0.8.1-py3-none-any.whl", hash = "sha256:f1054a9f3a593f616a3ef3f01f4084049877e8e1907f82354127243c9b890c18", size = 88893, upload-time = "2025-04-19T07:44:24.611Z" },
 ]
 
 [[package]]
@@ -6193,7 +6193,7 @@ wheels = [
 
 [[package]]
 name = "parlant"
-version = "3.3.1"
+version = "3.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles", version = "25.1.0", source = { registry = "https://pypi.org/simple" } },
@@ -6247,9 +6247,9 @@ dependencies = [
     { name = "websocket-client" },
     { name = "wsproto" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/a5/24b4b03daa71f195170317f394fa866b5ac10c4406b38940f3f20d1f66db/parlant-3.3.1.tar.gz", hash = "sha256:9cd44d2c15be4485194bf7ad97a5baa987fa05b68933be302e1bb94463c2745c", size = 102162552, upload-time = "2026-04-14T15:42:47.15Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5a/a3/047bec94bf6b01812766a68b660bad68819c01adf5a75958ed54cb23f1f0/parlant-3.3.2.tar.gz", hash = "sha256:d4fa34b4f58ccfdacaf88dbe855b96f1d4e8c1ad7e2f2239946ba6c17a7ea6fc", size = 95261377, upload-time = "2026-04-28T06:29:43.471Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/70/bf75071fd76454081125d7181283d1075d9f8aef645c0820ae8eb8eb4a7b/parlant-3.3.1-py3-none-any.whl", hash = "sha256:cfc4a3176b4c7238dbce61581abed96e43ef68f907359d8c6bf0560d996b5e23", size = 93298167, upload-time = "2026-04-14T15:42:24.371Z" },
+    { url = "https://files.pythonhosted.org/packages/40/9e/5941331de0f89d11a35fd0a550c231e655a8016812b3dbb31b0798c09d2f/parlant-3.3.2-py3-none-any.whl", hash = "sha256:bac97d5bd0f605c33a37b6394e468df57aad908d0b8d4075eae457656aa6ea7a", size = 82989909, upload-time = "2026-04-28T06:29:21.035Z" },
 ]
 
 [[package]]
