@@ -22,10 +22,9 @@ class BandEndpoints(BaseSettings):
 
     # Reuse the existing BAND_BASE_URL; BAND_REST_URL is accepted as an alias.
     rest_url: str = Field(
-        default="http://localhost:4000",
         validation_alias=AliasChoices("BAND_BASE_URL", "BAND_REST_URL"),
     )
-    ws_url: str = "ws://localhost:4000/api/v1/socket/websocket"  # BAND_WS_URL
+    ws_url: str  # BAND_WS_URL
 
 
 class BandCredentials(BaseSettings):
