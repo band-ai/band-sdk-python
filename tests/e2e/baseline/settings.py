@@ -21,10 +21,14 @@ class BandEndpoints(BaseSettings):
     )
 
     # Reuse the existing BAND_BASE_URL; BAND_REST_URL is accepted as an alias.
+    # Defaults to the public production host so constructing settings never
+    # raises when the env vars are unset (e.g. the E2E-disabled CI gate, which
+    # builds settings before it can skip). Override per environment.
     rest_url: str = Field(
+        default="https://band.ai",
         validation_alias=AliasChoices("BAND_BASE_URL", "BAND_REST_URL"),
     )
-    ws_url: str  # BAND_WS_URL
+    ws_url: str = "wss://band.ai/api/v1/socket/websocket"  # BAND_WS_URL
 
 
 class BandCredentials(BaseSettings):

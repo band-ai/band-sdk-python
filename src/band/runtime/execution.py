@@ -1214,7 +1214,10 @@ class ExecutionContext:
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
 
         try:
-            if self._delivery_status_for_agent(msg.metadata) == DeliveryStatus.PROCESSED:
+            if (
+                self._delivery_status_for_agent(msg.metadata)
+                == DeliveryStatus.PROCESSED
+            ):
                 logger.info(
                     "Skipping stale /next message %s in room %s because it is already processed",
                     msg_id,
