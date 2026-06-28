@@ -349,6 +349,10 @@ E2E_TESTS_ENABLED=true uv run pytest tests/e2e/ -v -s --no-cov
 # Run E2E tests for a single adapter
 E2E_TESTS_ENABLED=true uv run pytest tests/e2e/ -k langgraph -v -s --no-cov
 
+# Run the baseline toolkit smokes (provision their own agents; only need
+# BAND_API_KEY_USER — see tests/e2e/baseline/README.md)
+E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov
+
 # Linting and formatting
 uv run ruff check .
 uv run ruff format .
@@ -380,7 +384,8 @@ resolves each in a separate fork.
 
 - `BAND_REST_URL`: REST API URL (default: https://app.band.ai)
 - `BAND_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
-- `BAND_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages
+- `BAND_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages (the only Band key the baseline toolkit needs — it provisions its own agents)
+- `BAND_API_KEY_USER_2`: Optional second user key, for baseline smokes exercising two-user interaction
 - `OPENAI_API_KEY`: OpenAI API key (for LangGraph examples)
 - `ANTHROPIC_API_KEY`: Anthropic API key (for Anthropic/Claude SDK examples)
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
@@ -388,8 +393,15 @@ resolves each in a separate fork.
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-4o-mini`)
-- `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-3-haiku-20240307`)
+- `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
+- `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
 - `E2E_TIMEOUT`: Response timeout in seconds for E2E tests (default: `30`)
+
+Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
+
+- `BAND_E2E_AUTOCLEAN`: Reap provisioned agents + rooms on teardown (default: `true`; set `false` to keep resources for debugging a failing run)
+- `BAND_E2E_ORPHAN_SWEEP`: Sweep leftover agents from crashed prior runs at session start (default: `true`)
+- `BAND_E2E_ORPHAN_MAX_AGE_MINUTES`: Only sweep agents older than this, so a concurrent run is never reaped mid-flight (default: `120`)
 
 ## Adding a New Framework Integration
 
