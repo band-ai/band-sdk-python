@@ -291,6 +291,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
 | Parlant          | `parlant`     | `ParlantAdapter`                     | | [examples](examples/parlant/)         |
 | Letta            | `letta`       | `LettaAdapter`                       | | [examples](examples/letta/)             |
+| Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
 | OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
 
@@ -387,6 +388,7 @@ Adapter emit support:
 | ------- | ----------- | ---------- | ------------- |
 | Codex | Yes | Yes | Yes |
 | Claude SDK | Yes | Yes | - |
+| Agno | Yes | Yes | - |
 | OpenCode | Yes | - | Yes |
 | Letta | Yes | - | Yes |
 | Anthropic | Yes | - | - |
@@ -707,7 +709,7 @@ uv run python examples/run_agent.py --example anthropic
 uv run python examples/run_agent.py --example codex
 ```
 
-`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
+`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, `examples/agno/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
 
 For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged services in the same room, see [examples/mixed](examples/mixed/).
 

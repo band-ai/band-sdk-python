@@ -4,7 +4,7 @@ Verifies that each adapter can:
 - Start, process a message, and stop against a real platform
 - Execute platform tools (send_message)
 
-Adapters tested: langgraph, anthropic, pydantic_ai, claude_sdk, crewai.
+Adapters tested: langgraph, anthropic, pydantic_ai, claude_sdk, crewai, agno.
 Parlant is excluded (requires separate server setup, see test_parlant.py).
 
 Run with:
@@ -24,7 +24,7 @@ from band_rest import AsyncRestClient
 from band.agent import Agent
 
 from tests.e2e.adapters.conftest import AdapterFactory
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.settings import E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     run_smoke_test,
