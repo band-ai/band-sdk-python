@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import warnings
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
@@ -22,21 +21,6 @@ logger = logging.getLogger(__name__)
 H = TypeVar("H")
 
 
-def _warn_unsupported(
-    adapter_name: str,
-    kind: str,
-    unsupported: frozenset[Emit] | frozenset[Capability],
-) -> None:
-    """Log and emit a UserWarning naming feature flags an adapter ignores."""
-    message = (
-        f"{adapter_name} does not support {kind} values: "
-        f"{', '.join(sorted(v.value for v in unsupported))} "
-        "(they will have no effect)"
-    )
-    logger.warning(message)
-    warnings.warn(message, UserWarning, stacklevel=3)
-
-
 class SimpleAdapter(Generic[H], ABC):
     """
     Simple base class for framework adapters.
@@ -46,7 +30,7 @@ class SimpleAdapter(Generic[H], ABC):
 
     Subclasses should declare SUPPORTED_EMIT and SUPPORTED_CAPABILITIES
     as class-level sets to document what they actually implement.
-    on_started() logs and emits a UserWarning for unsupported values.
+    on_started() will warn if features request unsupported values.
 
     Example:
         class MyAdapter(SimpleAdapter[list[ChatMessage]]):
@@ -128,12 +112,21 @@ class SimpleAdapter(Generic[H], ABC):
         self.agent_name = agent_name
         self.agent_description = agent_description
 
-        # Warn on unsupported feature values.
-        name = type(self).__name__
-        if unsupported_emit := self.features.emit - self.SUPPORTED_EMIT:
-            _warn_unsupported(name, "emit", unsupported_emit)
-        if unsupported_caps := self.features.capabilities - self.SUPPORTED_CAPABILITIES:
-            _warn_unsupported(name, "capability", unsupported_caps)
+        # Warn on unsupported feature values
+        unsupported_emit = self.features.emit - self.SUPPORTED_EMIT
+        if unsupported_emit:
+            logger.warning(
+                "%s does not support emit values: %s (they will have no effect)",
+                type(self).__name__,
+                ", ".join(sorted(e.value for e in unsupported_emit)),
+            )
+        unsupported_caps = self.features.capabilities - self.SUPPORTED_CAPABILITIES
+        if unsupported_caps:
+            logger.warning(
+                "%s does not support capability values: %s (they will have no effect)",
+                type(self).__name__,
+                ", ".join(sorted(c.value for c in unsupported_caps)),
+            )
 
         # Propagate agent name to converter if it supports it
         if self.history_converter and hasattr(self.history_converter, "set_agent_name"):
