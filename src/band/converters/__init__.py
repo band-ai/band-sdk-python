@@ -64,10 +64,6 @@ if TYPE_CHECKING:
     from band.converters.acp_client import (
         ACPClientHistoryConverter as ACPClientHistoryConverter,
     )
-    from band.converters.agno import (
-        AgnoHistoryConverter as AgnoHistoryConverter,
-        AgnoMessages as AgnoMessages,
-    )
     from band.converters.gemini import (
         GeminiHistoryConverter as GeminiHistoryConverter,
         GeminiMessages as GeminiMessages,
@@ -99,8 +95,6 @@ __all__ = [
     "CodexHistoryConverter",
     "ACPServerHistoryConverter",
     "ACPClientHistoryConverter",
-    "AgnoHistoryConverter",
-    "AgnoMessages",
     "GeminiHistoryConverter",
     "GeminiMessages",
     "GoogleADKHistoryConverter",
@@ -189,13 +183,6 @@ def __getattr__(name: str) -> type:
         from band.converters.codex import CodexHistoryConverter
 
         return CodexHistoryConverter
-    elif name in ("AgnoHistoryConverter", "AgnoMessages"):
-        from band.converters.agno import AgnoHistoryConverter, AgnoMessages
-
-        if name == "AgnoHistoryConverter":
-            return AgnoHistoryConverter
-        return AgnoMessages
-
     elif name in ("GeminiHistoryConverter", "GeminiMessages"):
         from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 

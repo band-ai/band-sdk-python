@@ -7,77 +7,13 @@ from AdapterFeatures to tool schema lists.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, TypeVar
+from typing import Callable, TypeVar
 
 from band.core.types import AdapterFeatures
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
-# Numeric-range JSON-Schema keywords. Some providers reject these on integer or
-# number parameters in tool/function schemas (e.g. Gemini, and Anthropic-backed
-# Agno: "For 'integer' type, property 'maximum' is not supported").
-_NUMERIC_BOUND_KEYWORDS = frozenset(
-    {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf"}
-)
-
-# JSON-Schema keywords whose values are maps of *arbitrary property names* to
-# subschemas. Their child keys are names, not keywords, so they must never be
-# stripped (a tool param literally named ``maximum`` must survive).
-_NAME_MAP_KEYWORDS = frozenset(
-    {"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"}
-)
-
-
-def sanitize_tool_schema(
-    schema: Any,
-    *,
-    drop_numeric_bounds: bool = False,
-    drop_additional_properties: bool = False,
-) -> Any:
-    """Recursively remove JSON-Schema keywords that some providers reject.
-
-    Returns a new structure; the input is left untouched. Centralizes the
-    schema scrubbing that model adapters need before handing Band tool schemas
-    to a provider that rejects otherwise-valid JSON Schema.
-
-    Args:
-        schema: A JSON-Schema dict (or any nested fragment of one).
-        drop_numeric_bounds: Drop ``minimum``/``maximum``/``exclusiveMinimum``/
-            ``exclusiveMaximum``/``multipleOf``. The bounds remain enforced
-            wherever tool-call arguments are validated against the source model.
-        drop_additional_properties: Drop ``additionalProperties`` (rejected by
-            Gemini).
-
-    Keys are stripped only where they act as schema keywords, never where they
-    are property names under ``properties``/``$defs``/etc.
-    """
-    drop: set[str] = set()
-    if drop_numeric_bounds:
-        drop |= _NUMERIC_BOUND_KEYWORDS
-    if drop_additional_properties:
-        drop.add("additionalProperties")
-    return _sanitize(schema, drop)
-
-
-def _sanitize(node: Any, drop: frozenset[str] | set[str]) -> Any:
-    if isinstance(node, list):
-        return [_sanitize(item, drop) for item in node]
-    if not isinstance(node, dict):
-        return node
-    cleaned: dict[str, Any] = {}
-    for key, value in node.items():
-        if key in drop:
-            continue
-        if key in _NAME_MAP_KEYWORDS and isinstance(value, dict):
-            # Values here are name -> subschema; keep names, scrub each subschema.
-            cleaned[key] = {
-                name: _sanitize(subschema, drop) for name, subschema in value.items()
-            }
-        else:
-            cleaned[key] = _sanitize(value, drop)
-    return cleaned
 
 
 def filter_tool_schemas(

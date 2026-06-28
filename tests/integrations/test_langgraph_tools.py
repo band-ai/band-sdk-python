@@ -8,8 +8,11 @@ import pytest
 
 from band.core.exceptions import BandToolError
 from band.core.types import AdapterFeatures, Capability
-from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
-from band.runtime.tools import get_band_tool_category, iter_tool_definitions
+from band.integrations.langgraph.langchain_tools import (
+    agent_tools_to_langchain,
+    get_langgraph_tool_category,
+)
+from band.runtime.tools import iter_tool_definitions
 
 
 def _mock_agent_tools() -> MagicMock:
@@ -93,7 +96,7 @@ class TestLangGraphToolFilters:
                 include_memory=True,
                 include_contacts=True,
             )
-            if get_band_tool_category(definition.name) is None
+            if get_langgraph_tool_category(definition.name) is None
         ]
 
         assert missing == []

@@ -28,7 +28,6 @@ from band.core.memory_types import (
     validate_subject_scope,
 )
 from band.core.protocols import AgentToolsProtocol
-from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import EventMessageType
 
 if TYPE_CHECKING:
@@ -1027,19 +1026,6 @@ if HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES:
 BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES
 CHAT_TOOL_NAMES: frozenset[str] = BASE_TOOL_NAMES - CONTACT_TOOL_NAMES
 MCP_TOOL_PREFIX: str = "mcp__band__"
-
-# AdapterFeatures category for each platform tool name. Shared across adapters
-# so include_categories filtering is consistent (chat/contacts/memory).
-_TOOL_CATEGORIES: dict[str, str] = {
-    **{name: "chat" for name in CHAT_TOOL_NAMES},
-    **{name: "contacts" for name in CONTACT_TOOL_NAMES},
-    **{name: "memory" for name in MEMORY_TOOL_NAMES},
-}
-
-
-def get_band_tool_category(name: str) -> str | None:
-    """Return the AdapterFeatures category ("chat"/"contacts"/"memory") for a tool."""
-    return _TOOL_CATEGORIES.get(name)
 
 
 def mcp_tool_names(names: frozenset[str]) -> list[str]:
@@ -2147,12 +2133,6 @@ class AgentTools(AgentToolsProtocol):
             schema = definition.input_model.model_json_schema()
             # Remove Pydantic-specific keys
             schema.pop("title", None)
-            # Pydantic Field(ge=..., le=...) renders as JSON-Schema minimum/maximum,
-            # which some providers reject on integer params (e.g. Gemini, and
-            # Anthropic-backed Agno). Dropped for every format/adapter on purpose,
-            # not just the strict providers: the bounds stay enforced at execution
-            # via model_validate, so advertising them buys nothing.
-            schema = sanitize_tool_schema(schema, drop_numeric_bounds=True)
 
             if format == "openai":
                 tools.append(

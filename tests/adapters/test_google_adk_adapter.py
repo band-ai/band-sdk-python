@@ -26,6 +26,7 @@ GoogleADKAdapter = _google_adk_mod.GoogleADKAdapter
 _get_tool_bridge_class = _google_adk_mod._get_tool_bridge_class
 _BandToolBridge = _get_tool_bridge_class()
 _sanitize_adk_agent_name = _google_adk_mod._sanitize_adk_agent_name
+_strip_additional_properties = _google_adk_mod._strip_additional_properties
 
 
 @pytest.fixture
@@ -523,6 +524,58 @@ class TestDeclarationCandidateDetection:
         decl = bridge._get_declaration()
         assert decl is not None
         assert decl.name == "smoke"
+
+
+class TestStripAdditionalProperties:
+    """Tests for _strip_additional_properties module-level function."""
+
+    def test_strips_additional_properties(self):
+        """Should strip additionalProperties from schema for Gemini compatibility."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "nested": {
+                    "type": "object",
+                    "properties": {"x": {"type": "integer"}},
+                    "additionalProperties": False,
+                },
+            },
+            "additionalProperties": False,
+            "required": ["name"],
+        }
+
+        cleaned = _strip_additional_properties(schema)
+
+        assert "additionalProperties" not in cleaned
+        assert "additionalProperties" not in cleaned["properties"]["nested"]
+        assert cleaned["properties"]["name"] == {"type": "string"}
+        assert cleaned["required"] == ["name"]
+
+    def test_handles_top_level_list(self):
+        """Should recurse into top-level list items (e.g. anyOf/oneOf schemas)."""
+        schema_list = [
+            {"type": "string", "additionalProperties": False},
+            {
+                "type": "object",
+                "properties": {"x": {"type": "integer"}},
+                "additionalProperties": False,
+            },
+        ]
+
+        cleaned = _strip_additional_properties(schema_list)
+
+        assert isinstance(cleaned, list)
+        assert len(cleaned) == 2
+        assert "additionalProperties" not in cleaned[0]
+        assert "additionalProperties" not in cleaned[1]
+        assert cleaned[1]["properties"]["x"] == {"type": "integer"}
+
+    def test_handles_non_dict_input(self):
+        """Should return non-dict/non-list input as-is."""
+        assert _strip_additional_properties("string") == "string"
+        assert _strip_additional_properties(42) == 42
+        assert _strip_additional_properties(None) is None
 
 
 class TestBuildADKTools:

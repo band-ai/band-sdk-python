@@ -25,7 +25,6 @@ except ImportError as e:
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -414,10 +413,8 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
             name = function.get("name")
             if not name:
                 continue
-            parameters = sanitize_tool_schema(
-                function.get("parameters", {"type": "object", "properties": {}}),
-                drop_numeric_bounds=True,
-                drop_additional_properties=True,
+            parameters = function.get(
+                "parameters", {"type": "object", "properties": {}}
             )
             declarations.append(
                 types.FunctionDeclaration(
@@ -430,9 +427,6 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         for input_model, _func in self._custom_tools:
             schema = input_model.model_json_schema()
             schema.pop("title", None)
-            schema = sanitize_tool_schema(
-                schema, drop_numeric_bounds=True, drop_additional_properties=True
-            )
             tool_name = get_custom_tool_name(input_model)
             declarations.append(
                 types.FunctionDeclaration(

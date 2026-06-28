@@ -126,9 +126,6 @@ agentcore_runtime = [
 google_adk = [
     "google-adk>=1.0.0,<2",
 ]
-agno = [
-    "agno>=2.6.0",
-]
 
 # dev extra includes ALL framework deps for testing EXCEPT crewai,
 # which conflicts with both parlant and pydantic-ai (see tool.uv.conflicts).
@@ -178,15 +175,11 @@ dev = [
     "google-genai>=1.43.0",
     # Include google-adk for testing
     "google-adk>=1.0.0,<2",
-    # Include Agno for testing
-    "agno>=2.6.0",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",
     # Include bridge_agentcore deps for testing
     "boto3>=1.35.0",
-    # Pretty E2E test output
-    "rich>=13.0.0",
     # Development tools
     "pre-commit>=3.0.0",
     "ruff>=0.8.0",
@@ -212,8 +205,6 @@ dev-crewai = [
     "openai>=2.0.0",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
-    # Pretty E2E test output
-    "rich>=13.0.0",
     # Development tools
     "ruff>=0.8.0",
     "pyrefly>=0.18.0",
