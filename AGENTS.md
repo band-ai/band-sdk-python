@@ -313,9 +313,14 @@ tests/
 ├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
 │   ├── adapters/   # Per-adapter smoke & tool execution tests
+│   ├── baseline/   # Reusable baseline toolkit + smokes (see baseline/README.md)
 │   └── scenarios/  # Cross-cutting scenarios (context persistence, room isolation, noisy busy room)
 └── conftest.py     # Shared fixtures
 ```
+
+Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
+— it documents the reusable baseline toolkit (provisioning, user ops, reply
+capture, judge, assertions, fixtures) so you reuse it instead of rebuilding it.
 
 ## Commands
 
