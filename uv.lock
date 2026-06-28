@@ -497,7 +497,7 @@ wheels = [
 
 [[package]]
 name = "band-sdk"
-version = "0.2.11"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "band-client-rest" },
@@ -648,6 +648,11 @@ langgraph = [
 letta = [
     { name = "letta-client" },
 ]
+logging = [
+    { name = "python-json-logger" },
+    { name = "rich", version = "14.3.4", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "rich", version = "15.0.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+]
 opencode = [
     { name = "httpx" },
 ]
@@ -762,10 +767,12 @@ requires-dist = [
     { name = "python-dotenv", marker = "extra == 'bridge'", specifier = ">=1.2.2" },
     { name = "python-dotenv", marker = "extra == 'bridge-agentcore'", specifier = ">=1.2.2" },
     { name = "python-dotenv", marker = "extra == 'dev'", specifier = ">=1.2.2" },
+    { name = "python-json-logger", marker = "extra == 'logging'", specifier = ">=3.0.0" },
     { name = "python-multipart", marker = "extra == 'a2a-gateway'", specifier = ">=0.0.22" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rich", marker = "extra == 'dev'", specifier = ">=13.0.0" },
     { name = "rich", marker = "extra == 'dev-crewai'", specifier = ">=13.0.0" },
+    { name = "rich", marker = "extra == 'logging'", specifier = ">=14.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "ruff", marker = "extra == 'dev-crewai'", specifier = ">=0.8.0" },
     { name = "slack-sdk", marker = "extra == 'dev'", specifier = ">=3.27.0" },
@@ -787,7 +794,7 @@ requires-dist = [
     { name = "werkzeug", marker = "extra == 'dev'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "dev", "dev-crewai"]
+provides-extras = ["logging", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "dev", "dev-crewai"]
 
 [[package]]
 name = "bcrypt"
@@ -7411,6 +7418,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
+name = "python-json-logger"
+version = "4.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f7/ff/3cc9165fd44106973cd7ac9facb674a65ed853494592541d339bdc9a30eb/python_json_logger-4.1.0.tar.gz", hash = "sha256:b396b9e3ed782b09ff9d6e4f1683d46c83ad0d35d2e407c09a9ebbf038f88195", size = 17573, upload-time = "2026-03-29T04:39:56.805Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/be/0631a861af4d1c875f096c07d34e9a63639560a717130e7a87cbc82b7e3f/python_json_logger-4.1.0-py3-none-any.whl", hash = "sha256:132994765cf75bf44554be9aa49b06ef2345d23661a96720262716438141b6b2", size = 15021, upload-time = "2026-03-29T04:39:55.266Z" },
 ]
 
 [[package]]

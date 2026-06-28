@@ -44,9 +44,11 @@ class TestTopLevelImports:
     """README shows `from band import Agent` and similar."""
 
     def test_agent_import(self) -> None:
-        from band import Agent
+        from band import Agent, build_logging_config, configure_logging
 
         assert Agent is not None
+        assert build_logging_config is not None
+        assert configure_logging is not None
 
     def test_adapter_features_and_capability_import(self) -> None:
         from band.core.types import AdapterFeatures, Capability

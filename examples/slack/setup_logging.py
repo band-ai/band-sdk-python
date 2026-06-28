@@ -1,15 +1,15 @@
 """Shared logging configuration for Slack examples."""
 
+from __future__ import annotations
+
 import logging
 
+from band import configure_logging
 
-def setup_logging(level=logging.INFO):
+
+def setup_logging(level: int = logging.INFO) -> None:
     """Configure logging to show band + slack-sdk logs, mute noisy deps."""
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+    configure_logging(
+        level,
+        extra_loggers={"slack_sdk": level},
     )
-    logging.getLogger("band").setLevel(level)
-    # Surface Slack SDK retries / Socket Mode connect events.
-    logging.getLogger("slack_sdk").setLevel(level)
