@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.tool_filter import sanitize_tool_schema
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.runtime.custom_tools import (
@@ -89,37 +90,6 @@ def _require_adk() -> tuple[type, type, type, Any]:
             "Install with: uv add band-sdk[google_adk]"
         ) from exc
     return ADKAgent, InMemoryRunner, BaseTool, types
-
-
-def _strip_additional_properties(
-    openai_params: dict[str, Any] | list[Any] | Any,
-) -> Any:
-    """Convert OpenAI JSON Schema parameters to Gemini format.
-
-    Gemini does not support the ``additionalProperties`` key in function
-    parameter schemas.  Passing it causes ``google.genai`` to reject the
-    declaration with a validation error.  This helper strips the key
-    recursively so the schema is compatible.
-    """
-    if isinstance(openai_params, list):
-        return [
-            _strip_additional_properties(item)
-            if isinstance(item, (dict, list))
-            else item
-            for item in openai_params
-        ]
-    if not isinstance(openai_params, dict):
-        return openai_params
-
-    cleaned: dict[str, Any] = {}
-    for key, value in openai_params.items():
-        if key == "additionalProperties":
-            continue
-        if isinstance(value, (dict, list)):
-            cleaned[key] = _strip_additional_properties(value)
-        else:
-            cleaned[key] = value
-    return cleaned
 
 
 @functools.lru_cache(maxsize=1)
@@ -193,7 +163,11 @@ def _get_tool_bridge_class() -> type:
                 self._cached_declaration = types.FunctionDeclaration(
                     name=tool_name,
                     description=tool_description,
-                    parameters=_strip_additional_properties(parameters_schema),
+                    parameters=sanitize_tool_schema(
+                        parameters_schema,
+                        drop_numeric_bounds=True,
+                        drop_additional_properties=True,
+                    ),
                 )
             except Exception as exc:
                 raise RuntimeError(

@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         ACPServer as ACPServer,
         BandACPServerAdapter as BandACPServerAdapter,
     )
+    from band.adapters.agno import AgnoAdapter as AgnoAdapter
     from band.adapters.gemini import GeminiAdapter as GeminiAdapter
     from band.adapters.google_adk import GoogleADKAdapter as GoogleADKAdapter
     from band.adapters.opencode import OpencodeAdapter as OpencodeAdapter
@@ -67,6 +68,7 @@ __all__ = [
     "ACPClientAdapter",
     "ACPServer",
     "BandACPServerAdapter",
+    "AgnoAdapter",
     "GeminiAdapter",
     "GoogleADKAdapter",
     "OpencodeAdapter",
@@ -141,6 +143,10 @@ def __getattr__(name: str) -> type:
         elif name == "ACPServer":
             return ACPServer
         return BandACPServerAdapter
+    elif name == "AgnoAdapter":
+        from band.adapters.agno import AgnoAdapter
+
+        return AgnoAdapter
     elif name == "GeminiAdapter":
         from band.adapters.gemini import GeminiAdapter
 

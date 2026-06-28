@@ -19,7 +19,7 @@ import pytest
 
 from band.core.simple_adapter import SimpleAdapter
 
-from tests.e2e.conftest import E2ESettings
+from tests.e2e.settings import E2ESettings
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,34 @@ def create_crewai_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     )
 
 
+def create_agno_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
+    """Create an Agno adapter for the cross-adapter E2E suite.
+
+    Use a strong instruction-following model via ``E2E_ANTHROPIC_MODEL``
+    (e.g. ``claude-sonnet-4-6``). Cheap/small models (e.g. Haiku) refuse the
+    suite's crafted trigger prompts as prompt-injection; Sonnet 4.6 clears
+    ``test_tool_execution_send_message[agno]`` (echo a code word) and
+    ``test_agents_in_different_rooms_isolated[agno]``.
+
+    Note: the room-isolation trigger prompts are framed as a neutral "note"
+    rather than a "secret code". A "secret code → recall it" prompt reads as a
+    credential/embedded directive and gets refused even by Sonnet 4.6, which is
+    unrelated to isolation; the neutral wording avoids that false failure. See
+    ``tests/e2e/scenarios/test_room_isolation.py``.
+    """
+    _require_anthropic_key()
+    from agno.agent import Agent as AgnoAgent
+    from agno.models.anthropic import Claude
+
+    from band.adapters.agno import AgnoAdapter
+
+    agno_agent = AgnoAgent(
+        model=Claude(id=settings.e2e_anthropic_model),
+        instructions="Keep responses short and concise.",
+    )
+    return AgnoAdapter(agno_agent)
+
+
 # =============================================================================
 # Adapter Registry
 # =============================================================================
@@ -116,6 +144,7 @@ ADAPTER_FACTORIES: dict[str, AdapterFactory] = {
     "pydantic_ai": create_pydantic_ai_adapter,
     "claude_sdk": create_claude_sdk_adapter,
     "crewai": create_crewai_adapter,
+    "agno": create_agno_adapter,
 }
 
 # Note: Parlant is excluded from the default parametrized set because it

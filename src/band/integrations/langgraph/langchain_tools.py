@@ -18,27 +18,13 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.tools import (
-    CHAT_TOOL_NAMES,
-    CONTACT_TOOL_NAMES,
-    MEMORY_TOOL_NAMES,
     format_tool_validation_error,
+    get_band_tool_category,
     get_tool_description,
     iter_tool_definitions,
 )
 
 logger = logging.getLogger(__name__)
-
-
-_TOOL_CATEGORIES: dict[str, str] = {
-    **{name: "chat" for name in CHAT_TOOL_NAMES},
-    **{name: "contacts" for name in CONTACT_TOOL_NAMES},
-    **{name: "memory" for name in MEMORY_TOOL_NAMES},
-}
-
-
-def get_langgraph_tool_category(name: str) -> str | None:
-    """Return the AdapterFeatures category for a LangGraph platform tool."""
-    return _TOOL_CATEGORIES.get(name)
 
 
 def agent_tools_to_langchain(
@@ -98,7 +84,7 @@ def agent_tools_to_langchain(
         definitions,
         features,
         get_name=lambda definition: definition.name,
-        get_category=lambda definition: get_langgraph_tool_category(definition.name),
+        get_category=lambda definition: get_band_tool_category(definition.name),
     )
 
     platform_tools: list[Any] = []
