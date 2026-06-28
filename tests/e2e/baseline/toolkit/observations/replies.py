@@ -24,28 +24,27 @@ A list subclass, so it iterates/indexes/``len``s like one. A derived subset
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from typing import ClassVar
 
 from band.client.streaming import MessageCreatedPayload
 
+from band.core.types import MessageType
 
-class Replies(list[MessageCreatedPayload]):
-    """A list of captured agent reply messages, with tolerant assertions."""
+from tests.e2e.baseline.toolkit.observations.assertions import ContentAssertions
+
+
+class Replies(ContentAssertions, list[MessageCreatedPayload]):
+    """A list of captured agent reply messages, with tolerant assertions.
+
+    ``assert_at_least`` and ``assert_contains_any`` come from
+    :class:`ContentAssertions` (shared with ``Events``); the rest are reply-specific.
+    Replies are text messages, so ``MESSAGE_TYPE`` is ``MessageType.TEXT``.
+    """
+
+    MESSAGE_TYPE: ClassVar[MessageType | None] = MessageType.TEXT
 
     def assert_present(self, *, what: str = "an agent reply") -> None:
         assert self, f"expected {what}, but no agent messages were captured"
-
-    def assert_at_least(self, n: int) -> None:
-        assert len(self) >= n, (
-            f"expected at least {n} agent reply/replies, got {len(self)}"
-        )
-
-    def assert_contains_any(self, options: Iterable[str]) -> None:
-        options = list(options)
-        haystack = "\n".join(m.content for m in self).lower()
-        assert any(option.lower() in haystack for option in options), (
-            f"expected a reply containing any of {options}, but none did:\n{haystack}"
-        )
 
     def assert_mentions(self, participant_id: str) -> None:
         for message in self:

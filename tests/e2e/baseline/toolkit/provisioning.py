@@ -47,6 +47,21 @@ class ProvisionedAgent:
     name: str
 
 
+def agent_rest_client(
+    agent: ProvisionedAgent, settings: BaselineSettings
+) -> AsyncRestClient:
+    """An agent-authenticated REST client for reads scoped to the agent itself.
+
+    Memories are agent-scoped, not room-scoped, so reading them back uses the
+    agent's *own* key (not the user/observer client the rest of the toolkit
+    uses). Built like ``conftest.baseline_user_client``: the Fern client wraps an
+    httpx pool with no public close hook, so (like the session user client) it is
+    left to be reclaimed at event-loop teardown rather than closed explicitly.
+    ``ReplyCapture`` reuses one client per agent to bound how many are opened.
+    """
+    return AsyncRestClient(api_key=agent.api_key, base_url=settings.endpoints.rest_url)
+
+
 class ResourceManager:
     """Provisions and reaps platform resources for one test run.
 

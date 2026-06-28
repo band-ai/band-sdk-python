@@ -196,13 +196,15 @@ def reply_capture(
     """Subscribe-before-send capture with the WS observer + E2E_TIMEOUT pre-bound.
 
     Hides ``baseline_ws`` from tests; use as ``async with reply_capture(room_id)``.
-    The capture's default wait deadline comes from E2E_TIMEOUT. ``user_ops`` is
-    pre-bound so ``capture.tool_calls()`` can read persisted tool-call events.
+    The capture's default wait deadline comes from E2E_TIMEOUT. ``user_ops`` and
+    ``settings`` are pre-bound so ``capture.tool_calls()`` / ``events()`` /
+    ``memory(agent)`` can read persisted events and agent-scoped memory.
     """
     return functools.partial(
         _reply_capture,
         baseline_ws,
         user_ops=user_ops,
+        settings=baseline_settings,
         deadline_s=baseline_settings.e2e_timeout,
     )
 
