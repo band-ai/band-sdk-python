@@ -1,12 +1,15 @@
 """Declarative test-dependency requirements.
 
-``@requires(Dep.OPENAI, ...)`` declares the *optional* capabilities a test
-needs; it attaches a marker resolved by a hook in conftest.py. The always-on
-gate (E2E enabled, Band keys present) is applied to every baseline test by that
-hook — it is not a dependency you pass here.
+``@requires(Dep.OPENAI, ...)`` declares the requirements a test needs (provider
+keys, a second user, ...); it attaches a marker resolved by a hook in
+conftest.py. The always-on gate (E2E enabled, BAND_API_KEY_USER present) is
+applied to every baseline test by that hook -- it is not a dependency you pass.
 
-Optional deps skip when absent (the run just can't exercise them). Add one by
-extending ``_CHECKS``.
+Validation policy: a missing requirement **fails** the test, it never skips.
+Skipping a test because a key is absent hides misconfiguration as false-green.
+The only thing that skips is the ``E2E_TESTS_ENABLED`` master switch (the
+deliberate on/off for the whole live suite). Add a requirement by extending
+``_CHECKS``.
 """
 
 from __future__ import annotations
@@ -22,13 +25,13 @@ MARKER = "requires_deps"
 
 
 class Dep(Enum):
-    """An optional capability a test can require (a model-provider key)."""
+    """A requirement a test can declare (a model-provider key)."""
 
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
 
 
-# Dep -> (is-available check, skip reason when absent).
+# Dep -> (is-available check, failure reason when absent).
 _CHECKS: dict[Dep, tuple[Callable[[BaselineSettings], bool], str]] = {
     Dep.OPENAI: (
         lambda s: bool(s.llm_credentials.openai_api_key),
@@ -42,17 +45,19 @@ _CHECKS: dict[Dep, tuple[Callable[[BaselineSettings], bool], str]] = {
 
 
 def require_dep(dep: Dep, settings: BaselineSettings) -> None:
-    """Skip the current test if ``dep``'s capability is unavailable.
+    """Fail the current test if ``dep``'s requirement is unavailable.
 
-    Shared by the gate hook and by fixtures that self-gate on a capability.
+    Missing config that a test needs is a hard failure, never a skip (a skip
+    would hide misconfiguration). Shared by the gate hook and by fixtures that
+    self-gate on a requirement.
     """
     check, reason = _CHECKS[dep]
     if not check(settings):
-        pytest.skip(reason)
+        pytest.fail(reason)
 
 
 def requires(*deps: Dep) -> pytest.MarkDecorator:
-    """Mark a test with the optional capabilities it needs."""
+    """Mark a test with the requirements it needs (each fails if absent)."""
     for dep in deps:
         if not isinstance(dep, Dep):  # guard against stray strings/typos
             raise TypeError(f"requires() takes Dep members, got {dep!r}")

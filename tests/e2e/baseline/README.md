@@ -13,10 +13,10 @@ quality. They are deterministic by design (no `sleep`, no silence windows).
 |------|------------|
 | `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent`, `ProvisionedAgent` |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
-| `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()` (read the agent's tool calls) |
+| `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)` |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/assertions.py` | tolerant assertions: `assert_present`, `assert_at_least`, `assert_contains_any`, `assert_mentions` |
-| `toolkit/observations/` | `Replies` (captured replies + assertions) and `ToolCalls`/`ToolCall` (captured tool calls + `assert_fired`) — list subclasses that own their assertions |
+| `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies), `ToolCalls`/`ToolCall` + `MemoryToolCalls` (tool calls; memory excluded by default), `Events`→`Thoughts`/`Errors`/`Tasks` (emitted events), `Memories`/`MemoryObservation` (stored memory, both layers); shared `tolerant_match` + `ContentAssertions` |
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
 | `requires.py` | `@requires(Dep.X)` decorator + `Dep` enum |
 | `conftest.py` | fixtures (below) + the always-on E2E gate |
@@ -37,12 +37,17 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Wait for a specific delivery state (e.g. observe a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |
 | Inspect the delivery lifecycle that occurred | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
-| See which tools an agent fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (agent needs `Emit.EXECUTION`) |
+| See which tools an agent fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (agent needs `Emit.EXECUTION`; memory tools excluded — pass `include_memory=True` or use `capture.memory(agent)`) |
 | Assert a specific tool fired | `calls.assert_fired("name", with_args={...})` (case-insensitive name, subset args) |
+| See which events an agent emitted | `await capture.thoughts(sender_id=agent.id)` (or `errors()`/`tasks()`/`events(MessageType.X)`; read after the barrier) |
+| Assert an event was emitted | `thoughts.assert_emitted()` / `thoughts.assert_contains_any([marker])` |
+| Observe an agent's memory (both layers) | `mem = await capture.memory(agent, content_query=marker)` after the barrier |
+| Assert a memory operation was called | `mem.calls.assert_store_called(scope=..., system=...)` |
+| Assert a memory actually landed in the store | `mem.stored.assert_stored(content=marker, system=...)` |
 | Assert something happened (cheap) | `assertions.py` helpers, or the methods on `capture.messages` (`Replies`) |
 | Assert a fuzzy/semantic outcome | the `judge` fixture (use sparingly, see below) |
 | Build a cheap agent to run | the `langgraph_adapter` / `anthropic_adapter` fixtures |
-| Gate a test on an optional dependency | `@requires(Dep.OPENAI, ...)` (the E2E + Band-key gate is automatic) |
+| Declare a test's extra requirements | `@requires(Dep.OPENAI, ...)` (a missing one **fails**, see Validation policy; the E2E + Band-key gate is automatic) |
 
 ## Fixtures (from `conftest.py`)
 
@@ -155,6 +160,55 @@ name matches case-insensitively and `with_args` is a subset/substring match, not
 exact args. Pass `sender_id` to scope to one agent, and `since` (a server
 timestamp) to scope to one turn when reusing a capture. See
 `smoke/test_tool_calls.py` and `smoke/test_isolation.py`.
+
+By default `tool_calls()` **excludes memory tools** (mirroring the SDK's own
+`BASE_TOOL_NAMES = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES` split) so generic tool
+assertions aren't polluted by memory operations. Pass `include_memory=True` to
+keep them, or use `capture.memory(agent)` for the dedicated memory view (below).
+
+## Emitted-event inspection
+
+`capture.thoughts()` / `errors()` / `tasks()` (or the generic
+`capture.events(MessageType.X)`) return an `Events` collection of the free-text
+events an agent emitted, on the same read-after-barrier contract as `tool_calls`.
+Drive them with the built-in `band_send_event` tool — the direct LLM-facing way
+to create a `thought`/`error`/`task` message (no `Emit.*` feature needed; the
+tool posts directly). Run such agents **without** `Emit.EXECUTION` when you want
+the room history to contain only the events you drove, not tool-call telemetry.
+`assert_emitted()` and `assert_contains_any([marker])` are the assertions; assert
+the **marker** (not bare presence), since adapters auto-emit a generic `error`
+event on any turn exception. See `smoke/test_events.py`.
+
+## Memory inspection
+
+Memory has two observable layers, and `capture.memory(agent)` reads both in one
+call, returning a `MemoryObservation`:
+
+- **Call layer** — `mem.calls` is a `MemoryToolCalls` (a `ToolCalls` restricted to
+  the memory tools), read from the room's `tool_call` events via the observer
+  client. Operation-named assertions read clearer than raw `assert_fired`:
+  `mem.calls.assert_store_called(scope=..., system=..., type=...)`,
+  `assert_list_called()`, etc. Needs `Emit.EXECUTION`.
+- **Store layer** — `mem.stored` is a `Memories` of records that *actually
+  landed*, read from the memories API. Filter with
+  `mem.stored.where(scope=..., system=...)` and assert with `.assert_stored(...)`
+  / `.assert_present()` / `.assert_none()`.
+
+`memory()` takes the agent handle because the store layer needs the agent's own
+key (the observer client can't see it). The names keep the altitudes distinct:
+`assert_store_called` (invoked) vs `assert_stored` (a record exists). Drive a
+store with `band_store_memory`, read after the barrier; a unique marker keeps the
+read collision-free. Memory tools are an enterprise opt-in, so the store layer
+needs an entitled org. See `smoke/test_memory.py`.
+
+## Validation policy: fail on missing requirements, never skip
+
+A test that needs a key or resource and can't find it **fails** — it does not
+skip. Skipping on missing config hides misconfiguration as a false green. The
+only legitimate skip is `E2E_TESTS_ENABLED` (the on/off switch for the whole live
+suite); `BAND_API_KEY_USER` missing while E2E is enabled **fails** (the always-on
+gate), and any further `@requires(Dep.X)` requirement **fails** when absent, with
+the env-var name as the reason.
 
 ## Not here yet
 

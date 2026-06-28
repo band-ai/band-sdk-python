@@ -14,10 +14,9 @@ different path (the messages-list API filtered to ``tool_call``): the adapter
 ``await``s each tool-call event POST before it ever emits its reply, and the
 platform only marks a message ``processed`` *after* that reply is emitted — so
 once ``wait_for_processed`` returns, every tool-call event of that turn is
-already persisted and queryable. A real-time path would instead route the
-``event_created`` WebSocket event on the chat-room channel, which the SDK client
-does not currently handle; reading the persisted events is simpler and
-sufficient for asserting what fired.
+already persisted and queryable. A real-time path would instead need to buffer
+the chat-room WebSocket notifications for non-text rows; reading the persisted
+events is simpler and sufficient for asserting what fired.
 
 Tests reach this through ``ReplyCapture.tool_calls`` (see ``capture.py``), which
 returns a :class:`ToolCalls` carrying the calls plus a fluent ``assert_fired``.
@@ -29,15 +28,40 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from enum import StrEnum
+from typing import Any, ClassVar
 
 from band_rest import ChatMessage
 
 from band.core.types import MessageType
+from band.runtime.tools import MEMORY_TOOL_NAMES
 
+from tests.e2e.baseline.toolkit.observations.matching import tolerant_match
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
+
+
+class MemoryTool(StrEnum):
+    """Canonical memory platform-tool names as named members (over raw strings).
+
+    Values are validated against the SDK's ``MEMORY_TOOL_NAMES`` at import (below),
+    so they cannot drift from that source of truth -- if a tool is renamed there,
+    importing this module fails loudly.
+    """
+
+    STORE = "band_store_memory"
+    LIST = "band_list_memories"
+    GET = "band_get_memory"
+    SUPERSEDE = "band_supersede_memory"
+    ARCHIVE = "band_archive_memory"
+
+
+if {tool.value for tool in MemoryTool} != set(MEMORY_TOOL_NAMES):
+    raise ValueError(
+        "MemoryTool drifted from band.runtime.tools.MEMORY_TOOL_NAMES: "
+        f"{set(MEMORY_TOOL_NAMES) ^ {tool.value for tool in MemoryTool}}"
+    )
 
 
 @dataclass(frozen=True)
@@ -84,7 +108,15 @@ class ToolCalls(list[ToolCall]):
     Being a list, it iterates, indexes, and ``len()``s like one. Read it once (see
     ``ToolCalls.read`` / ``ReplyCapture.tool_calls``), then assert as many times as
     needed against the same snapshot.
+
+    The general view **opts memory tools out by default** (``include_memory=False``)
+    so generic tool assertions aren't polluted by memory operations -- mirroring
+    the SDK's own ``BASE_TOOL_NAMES = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES`` split.
+    The ``TOOL_NAMES`` hook lets a subclass restrict the view to a fixed set (see
+    :class:`MemoryToolCalls`); ``None`` means "base, memory excluded".
     """
+
+    TOOL_NAMES: ClassVar[frozenset[str] | None] = None
 
     @classmethod
     async def read(
@@ -95,6 +127,7 @@ class ToolCalls(list[ToolCall]):
         sender_id: str | None = None,
         since: datetime | None = None,
         limit: int = 100,
+        include_memory: bool = False,
     ) -> ToolCalls:
         """Read a room's tool calls, oldest-first.
 
@@ -104,9 +137,12 @@ class ToolCalls(list[ToolCall]):
         ``wait_for_processed``); tests usually reach this via
         ``ReplyCapture.tool_calls``.
 
-        Without ``since`` this returns every tool call in the room (a lower bound
-        on a single turn). Pass ``since`` (a server timestamp) to exclude earlier
-        turns when reusing a capture across turns.
+        When ``TOOL_NAMES`` is set (a subclass), only those tools are kept. On the
+        base view, memory tools are excluded unless ``include_memory=True``.
+
+        Without ``since`` this returns every matching tool call in the room (a
+        lower bound on a single turn). Pass ``since`` (a server timestamp) to
+        exclude earlier turns when reusing a capture across turns.
         """
         messages = await user_ops.list_messages(
             room_id, message_type=MessageType.TOOL_CALL, since=since, limit=limit
@@ -116,9 +152,24 @@ class ToolCalls(list[ToolCall]):
             if sender_id is not None and message.sender_id != sender_id:
                 continue
             call = ToolCall.from_event(message)
-            if call is not None:
+            if call is not None and cls._in_view(call.name, include_memory):
                 calls.append(call)
         return calls
+
+    @classmethod
+    def _in_view(cls, name: str, include_memory: bool) -> bool:
+        """Whether a tool ``name`` belongs to this view (see class docstring)."""
+        if cls.TOOL_NAMES is not None:
+            # A bound view (e.g. MemoryToolCalls) is defined entirely by its
+            # TOOL_NAMES; the base-only include_memory flag does not apply to it.
+            return name in cls.TOOL_NAMES
+        return include_memory or name not in MEMORY_TOOL_NAMES
+
+    def named(self, *names: str) -> ToolCalls:
+        """Return a same-class subset of the calls matching any of ``names``
+        (case-insensitive). Re-wrapped so the assertions stay available."""
+        wanted = {name.lower() for name in names}
+        return type(self)(call for call in self if call.name.lower() in wanted)
 
     def fired(self, name: str) -> bool:
         """True if any call matches ``name`` (case-insensitive)."""
@@ -131,7 +182,7 @@ class ToolCalls(list[ToolCall]):
 
         Tolerant by design: the name matches case-insensitively, and ``with_args``
         is a *subset* check (the call may carry extra args), each value matched via
-        ``_arg_matches``. It is not an exact-args assertion; agents vary phrasing
+        ``tolerant_match``. It is not an exact-args assertion; agents vary phrasing
         and may pass additional fields. With ``with_args`` omitted, a name match
         alone satisfies the assertion.
         """
@@ -151,23 +202,65 @@ class ToolCalls(list[ToolCall]):
             )
 
     @staticmethod
-    def _arg_matches(expected: Any, actual: Any) -> bool:
-        """Tolerant single-arg match: substring for text, value-or-string else.
-
-        Strings match case-insensitively as a substring (so a paraphrased value
-        still matches); everything else matches by equality, with a string-coerced
-        fallback so an int ``2`` matches a JSON-stringified ``"2"``.
-        """
-        if isinstance(expected, str) and isinstance(actual, str):
-            return expected.lower() in actual.lower()
-        if expected == actual:
-            return True
-        return str(expected) == str(actual)
-
-    @staticmethod
     def _args_subset_matches(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
-        """True if every expected key is present in ``actual`` and its value matches."""
+        """True if every expected key is present in ``actual`` and its value
+        ``tolerant_match``es."""
         return all(
-            key in actual and ToolCalls._arg_matches(value, actual[key])
+            key in actual and tolerant_match(value, actual[key])
             for key, value in expected.items()
         )
+
+
+class MemoryToolCalls(ToolCalls):
+    """The call-layer memory view: an agent's memory tool calls for a turn.
+
+    Restricts the view to ``MEMORY_TOOL_NAMES`` and adds operation-named
+    assertions that read clearer than ``assert_fired("band_store_memory", ...)``.
+    This is the *call* layer (the agent invoked a memory tool); the *store*
+    layer (a memory record actually exists) is ``observations.memories.Memories``.
+    Hence ``assert_store_called`` here vs ``assert_stored`` there.
+    """
+
+    TOOL_NAMES: ClassVar[frozenset[str] | None] = MEMORY_TOOL_NAMES
+
+    def assert_store_called(
+        self,
+        *,
+        content: str | None = None,
+        scope: Any | None = None,
+        system: Any | None = None,
+        type: Any | None = None,
+        segment: Any | None = None,
+        subject_id: str | None = None,
+    ) -> None:
+        """Assert ``band_store_memory`` fired, optionally with the given params
+        (a tolerant subset match over the call's args, like ``assert_fired``)."""
+        with_args = {
+            key: value
+            for key, value in {
+                "content": content,
+                "scope": scope,
+                "system": system,
+                "type": type,
+                "segment": segment,
+                "subject_id": subject_id,
+            }.items()
+            if value is not None
+        }
+        self.assert_fired(MemoryTool.STORE, with_args=with_args or None)
+
+    def assert_list_called(self) -> None:
+        """Assert ``band_list_memories`` fired."""
+        self.assert_fired(MemoryTool.LIST)
+
+    def assert_get_called(self) -> None:
+        """Assert ``band_get_memory`` fired."""
+        self.assert_fired(MemoryTool.GET)
+
+    def assert_supersede_called(self) -> None:
+        """Assert ``band_supersede_memory`` fired."""
+        self.assert_fired(MemoryTool.SUPERSEDE)
+
+    def assert_archive_called(self) -> None:
+        """Assert ``band_archive_memory`` fired."""
+        self.assert_fired(MemoryTool.ARCHIVE)
