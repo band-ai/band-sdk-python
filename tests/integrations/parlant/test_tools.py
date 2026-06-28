@@ -349,12 +349,19 @@ class TestParlantToolFunctions:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should return error when no mentions provided."""
+        mock_tools.agent_id = "self"
+        mock_tools.participants = [
+            {"id": "user-1", "handle": "@alice"},
+            {"id": "self", "handle": "@self"},
+        ]
         set_session_tools(mock_context.session_id, mock_tools)
 
         send_message = parlant_tools["band_send_message"]
         result = await send_message(mock_context, "Hello", "")
 
         assert "At least one mention is required" in result.data
+        assert "@alice" in result.data
+        assert "@self" not in result.data
 
     @pytest.mark.asyncio
     async def test_send_message_translates_band_tool_error(

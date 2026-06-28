@@ -77,6 +77,50 @@ def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
     return False
 
 
+def available_mention_handles(
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> list[str]:
+    """Return room handles this agent may mention, excluding itself."""
+    return [
+        handle
+        for participant in participants
+        if (handle := _entity_field(participant, "handle"))
+        and (agent_id is None or _entity_field(participant, "id") != agent_id)
+    ]
+
+
+# Single marker for the available-handles hint. Used both to render the hint and
+# to detect it, so the producer and the idempotency guard can never drift apart.
+_AVAILABLE_HANDLES_MARKER = "Available handles:"
+
+
+def append_mention_handles_hint(error: str, handles: list[str]) -> str:
+    """Append a retryable handles hint to a tool error when handles are known.
+
+    Idempotent: an error that already carries the hint is returned unchanged, so
+    the same error can flow through multiple adapter enrichers without doubling
+    the handle list.
+    """
+    if not handles or _AVAILABLE_HANDLES_MARKER in error:
+        return error
+    return (
+        f"{error}. {_AVAILABLE_HANDLES_MARKER} {handles}. "
+        "Use participant handles from the list."
+    )
+
+
+def append_available_mention_handles(
+    error: str,
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> str:
+    """Append retryable mention handles to a tool error when available."""
+    return append_mention_handles_hint(
+        error, available_mention_handles(participants, agent_id)
+    )
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """Metadata for a built-in Band tool."""
@@ -1169,6 +1213,7 @@ class AgentTools(AgentToolsProtocol):
         participants: list[dict[str, Any]] | None = None,
         *,
         hub_room_id: str | None = None,
+        agent_id: str | None = None,
     ):
         """
         Initialize AgentTools for a specific room.
@@ -1189,12 +1234,22 @@ class AgentTools(AgentToolsProtocol):
         self.rest = rest
         self._participants = participants or []
         self._hub_room_id = hub_room_id
+        self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
+
+    @property
+    def agent_id(self) -> str | None:
+        """This agent's own ID, used to exclude itself from mention lists."""
+        return self._agent_id
 
     @property
     def participants(self) -> list[dict[str, Any]]:
         """Return a shallow copy of the cached participant list."""
         return list(self._participants)
+
+    def available_mention_handles(self) -> list[str]:
+        """Return handles this agent may @mention in the current room."""
+        return available_mention_handles(self.participants, self._agent_id)
 
     @classmethod
     def from_context(cls, ctx: "ExecutionContext") -> "AgentTools":
@@ -1214,6 +1269,7 @@ class AgentTools(AgentToolsProtocol):
             ctx.link.rest,
             ctx.participants,
             hub_room_id=getattr(ctx, "hub_room_id", None),
+            agent_id=ctx.agent_id,
         )
         tools._ctx = ctx
         return tools
@@ -1258,13 +1314,15 @@ class AgentTools(AgentToolsProtocol):
         # Validate mentions are not empty — API requires ≥1 mention.
         # Return a helpful error so the LLM can retry with proper mentions.
         if not resolved_mentions:
-            participant_names = [
-                p.get("handle") or p["name"] for p in self._participants
-            ]
+            # Build the error through the shared hint so it carries the canonical
+            # "Available handles:" marker. Adapter enrichers (CrewAI, MCP, Claude
+            # SDK) re-run the same hint on this error and rely on its idempotency
+            # to avoid listing the handles twice.
             raise BandToolError(
-                "At least one mention is required. "
-                f"Available participants: {participant_names}. "
-                "Please retry with mentions specifying who this message is for."
+                append_mention_handles_hint(
+                    "At least one mention is required",
+                    self.available_mention_handles(),
+                )
             )
 
         logger.debug("Sending message to room %s", self.room_id)
@@ -1986,10 +2044,12 @@ class AgentTools(AgentToolsProtocol):
                 participant = id_to_participant.get(identifier)
 
             if not participant:
-                available_handles = list(handle_to_participant.keys())
+                # Offer only real, mentionable handles to retry with: @-prefixed,
+                # excluding self and handle-less participants (not the raw lookup keys).
+                available_handles = self.available_mention_handles()
                 raise ValueError(
                     f"Unknown participant '{identifier}'. "
-                    f"Available handles: {available_handles}"
+                    f"{_AVAILABLE_HANDLES_MARKER} {available_handles}"
                 )
 
             resolved.append(

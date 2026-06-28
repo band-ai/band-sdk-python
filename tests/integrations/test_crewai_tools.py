@@ -333,6 +333,76 @@ class TestToolSetComposition:
         assert result["status"] == "error"
         assert tracker.replied is False
 
+    def test_send_failure_appends_available_handles(self, builder_mod):
+        """The real empty-mentions error already lists the room's handles, so the
+        CrewAI enricher must surface them once — not append a second copy."""
+        from band.core.exceptions import BandToolError
+
+        tools_obj = MagicMock()
+        tools_obj.agent_id = None
+        # The actual error AgentTools.send_message raises: it already carries the
+        # "Available handles:" hint.
+        tools_obj.send_message = AsyncMock(
+            side_effect=BandToolError(
+                "At least one mention is required. "
+                "Available handles: ['@john', '@john/weather-agent']. "
+                "Use participant handles from the list."
+            )
+        )
+        tools_obj.participants = [
+            {"id": "1", "name": "John", "handle": "@john"},
+            {"id": "2", "name": "Weather", "handle": "@john/weather-agent"},
+            {"id": "3", "name": "No Handle"},
+        ]
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_message = next(t for t in tools if t.name == "band_send_message")
+
+        result = json.loads(send_message._run(content="hello", mentions="[]"))
+
+        assert result["status"] == "error"
+        assert "@john" in result["message"]
+        assert "@john/weather-agent" in result["message"]
+        # Participants without a handle are not offered as mention options.
+        assert "No Handle" not in result["message"]
+        # The enricher is idempotent: the handle list is not duplicated.
+        assert result["message"].count("Available handles:") == 1
+
+    def test_send_failure_excludes_agent_own_handle(self, builder_mod):
+        """The agent's own handle is never offered as a retry option — an
+        agent can't @mention itself, so listing it only misleads the LLM."""
+        from band.core.exceptions import BandToolError
+
+        tools_obj = MagicMock()
+        tools_obj.agent_id = "self-2"
+        # A failure that does not already carry handles, so the enricher computes
+        # the available options itself and must exclude the agent's own handle.
+        tools_obj.send_message = AsyncMock(
+            side_effect=BandToolError("Failed to deliver message")
+        )
+        tools_obj.participants = [
+            {"id": "1", "name": "John", "handle": "@john"},
+            {"id": "self-2", "name": "Me", "handle": "@john/weather-agent"},
+        ]
+        context = builder_mod.CrewAIToolContext(room_id="room-1", tools=tools_obj)
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_message = next(t for t in tools if t.name == "band_send_message")
+
+        result = json.loads(send_message._run(content="hello", mentions="[]"))
+
+        assert result["status"] == "error"
+        assert "@john" in result["message"]
+        # The agent's own handle is excluded from the available options.
+        assert "@john/weather-agent" not in result["message"]
+
 
 # --- Reporter behavior ---
 

@@ -13,7 +13,7 @@ import json
 import logging
 import warnings
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server, tool  # type: ignore[import-not-found]
@@ -35,10 +35,14 @@ from band.runtime.tools import (
     BASE_TOOL_NAMES,
     CHAT_TOOL_NAMES,
     ToolDefinition,
+    append_mention_handles_hint,
     iter_tool_definitions,
     mcp_tool_names,
     validate_tool_arguments,
 )
+
+if TYPE_CHECKING:
+    from band.runtime.execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -226,10 +230,7 @@ def _build_builtin_sdk_tool(
                 and get_participant_handles is not None
             ):
                 available = get_participant_handles(room_id)
-                return _make_error(
-                    f"{error}. Available handles: {available}. "
-                    "Use participant handles from the list."
-                )
+                return _make_error(append_mention_handles_hint(str(error), available))
             return _make_error(str(error))
         except Exception as error:
             logger.exception("%s failed: %s", definition.name, error)
@@ -314,21 +315,21 @@ def create_band_mcp_server(agent: Any) -> Any:
     """
     from band.runtime.tools import AgentTools
 
-    def get_tools(room_id: str) -> AgentTools:
+    def _execution_for(room_id: str) -> ExecutionContext | None:
         executions = agent.runtime.executions if agent.runtime else {}
-        execution = executions.get(room_id)
+        return executions.get(room_id)
+
+    def get_tools(room_id: str) -> AgentTools:
+        execution = _execution_for(room_id)
         participants = execution.participants if execution else []
-        return AgentTools(room_id, agent.link.rest, participants)
+        agent_id = execution.agent_id if execution else None
+        return AgentTools(room_id, agent.link.rest, participants, agent_id=agent_id)
 
     def get_participant_handles(room_id: str) -> list[str]:
-        executions = agent.runtime.executions if agent.runtime else {}
-        execution = executions.get(room_id)
-        participants = execution.participants if execution else []
-        return [p.get("handle", "") for p in participants if p.get("handle")]
+        return get_tools(room_id).available_mention_handles()
 
     def tool_result_hook(tool_name: str, room_id: str, result: Any) -> None:
-        executions = agent.runtime.executions if agent.runtime else {}
-        execution = executions.get(room_id)
+        execution = _execution_for(room_id)
         if execution is None:
             return
 
@@ -345,9 +346,8 @@ def create_band_mcp_server(agent: Any) -> Any:
                 )
 
         if tool_name == "band_remove_participant" and isinstance(result, dict):
-            participant_id = result.get("id")
-            if participant_id:
-                execution.remove_participant(participant_id)
+            if participant_id := result.get("id"):
+                execution.remove_participant(str(participant_id))
 
     tool_definitions = [
         definition

@@ -49,6 +49,7 @@ from band.core.memory_types import (
     validate_memory_type_for_system,
     validate_subject_scope,
 )
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
@@ -64,7 +65,7 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import append_available_mention_handles, get_tool_description
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +263,14 @@ def _execute_tool(
             return await coro_factory(tools)
         except Exception as e:
             error_msg = str(e)
+            if tool_name == _SEND_MESSAGE_TOOL and isinstance(
+                e, (ValueError, BandToolError)
+            ):
+                error_msg = append_available_mention_handles(
+                    error_msg,
+                    tools.participants,
+                    getattr(tools, "agent_id", None),
+                )
             logger.error("%s failed in room %s: %s", tool_name, room_id, error_msg)
             await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
@@ -287,7 +296,7 @@ def _execute_tool(
 class _SendMessageInput(BaseModel):
     content: str = Field(..., description="The message content to send")
     mentions: str = Field(
-        default="[]",
+        ...,
         description='JSON array of participant handles to @mention (e.g., \'["@john", "@john/weather-agent"]\')',
     )
 

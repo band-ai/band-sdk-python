@@ -95,11 +95,10 @@ Plain text responses will NOT be delivered. Always call the tool.
 {{
   "room_id": "abc-123-def",
   "content": "Your message here",
-  "mentions": []
+  "mentions": ["@john"]
 }}
 ```
-- `mentions`: Array of participant handles, e.g. `["@john"]` or `["@john/weather-agent"]`
-- Use `[]` for no mentions
+- `mentions`: Required array of participant handles, e.g. `["@john"]` or `["@john/weather-agent"]`
 - Handles: @<username> for users, @<username>/<agent-name> for agents
 
 **mcp__band__band_lookup_peers** - Find users/agents to add
@@ -179,7 +178,7 @@ Input: [room_id: abc-123][Test User]: What's 2+2?
 Action: mcp__band__band_send_message
   room_id: "abc-123"
   content: "2 + 2 = 4"
-  mentions: []
+  mentions: ["@john"]
 ```
 
 **Asking another agent for help:**
