@@ -167,19 +167,6 @@ gemini_agent:
   agent_id: ""
   api_key: ""
 
-# =============================================================================
-# Agno Examples
-# =============================================================================
-
-# 01_basic_agent.py, 02_tool_reporting.py, 05_memory_secretary.py,
-# 06_agno_db_history.py
-agno_agent:
-  agent_id: ""
-  api_key: ""
-
-# 03_tom_agent.py - see tom_agent in Shared Agents section
-# 04_jerry_agent.py - see jerry_agent in Shared Agents section
-
 # Google ADK Examples
 # =============================================================================
 
@@ -287,13 +274,13 @@ arena_guesser_3:
 # =============================================================================
 
 # Tom the cat character agent
-# Used by: langgraph/07, claude_sdk/03, anthropic/03, pydantic_ai/03, parlant/04, crewai/05, agno/03
+# Used by: langgraph/07, claude_sdk/03, anthropic/03, pydantic_ai/03, parlant/04, crewai/05
 tom_agent:
   agent_id: ""
   api_key: ""
 
 # Jerry the mouse character agent
-# Used by: langgraph/08, claude_sdk/04, anthropic/04, pydantic_ai/04, parlant/05, crewai/06, agno/04
+# Used by: langgraph/08, claude_sdk/04, anthropic/04, pydantic_ai/04, parlant/05, crewai/06
 jerry_agent:
   agent_id: ""
   api_key: ""
