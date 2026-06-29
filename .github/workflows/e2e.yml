@@ -102,6 +102,8 @@ jobs:
       BAND_REST_URL: ${{ secrets.BAND_REST_URL }}
       BAND_WS_URL: ${{ secrets.BAND_WS_URL }}
       BAND_API_KEY_USER: ${{ secrets.BAND_API_KEY_USER }}
+      # Optional second user key, for baseline smokes exercising two-user interaction.
+      BAND_API_KEY_USER_2: ${{ secrets.BAND_API_KEY_USER_2 }}
       # Model providers (a lane simply ignores a key it has no adapter for).
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
