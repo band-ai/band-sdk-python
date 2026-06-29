@@ -23,7 +23,7 @@ from band_rest import AsyncRestClient
 from band.agent import Agent
 
 from tests.e2e.adapters.conftest import AdapterFactory
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.settings import E2ESettings, RoomAllocator, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     assert_content_contains,
@@ -47,29 +47,31 @@ class TestRoomIsolation:
         ws_client: TrackingWebSocketClient,
         adapter_entry: tuple[str, AdapterFactory],
         api_client: AsyncRestClient,
-        e2e_adapter_room: tuple[str, str, str],
-        e2e_isolation_room_b: tuple[str, str, str],
+        e2e_fresh_room_allocator: RoomAllocator,
         e2e_agent_info: tuple[str, str],
     ):
         """Agents in different rooms don't see each other's context.
 
-        Room A (adapter's dedicated room): Send "The code is <unique_a>"
-        Room B (shared isolation room): Send "The code is <unique_b>"
-        Room A: Ask "What's the code?" -> Assert unique_a, not unique_b
-        Room B: Ask "What's the code?" -> Assert unique_b, not unique_a
+        Room A: Send "Remember this note: <unique_a>"
+        Room B: Send "Remember this note: <unique_b>"
+        Room A: Ask "What was the note?" -> Assert unique_a, not unique_b
+        Room B: Ask "What was the note?" -> Assert unique_b, not unique_a
 
-        Uses unique keywords per adapter+run to avoid cross-adapter and
-        cross-run contamination in shared rooms that persist across sessions.
-        Note: Room B is shared across all adapters; stale history accumulates
-        across runs. If LLMs start confusing old codes with new ones, prune
-        the room or create a fresh agent.
+        Wording note: the payload is framed as a "note", not a "secret code".
+        Models reliably refuse to repeat back a "code" (it reads as a credential),
+        which is unrelated to isolation; a neutral noun avoids that false failure.
+
+        Uses fresh rooms per run (via e2e_fresh_room_allocator) so no stale
+        history accumulates — otherwise a reused room bloats the rehydrated
+        context into timeouts. Unique per-run keywords additionally guard against
+        any cross-run confusion.
         """
         adapter_name, factory = adapter_entry
         timeout = e2e_config.e2e_timeout
         agent_id, agent_name = e2e_agent_info
 
-        # Unique keywords per adapter AND per run to prevent stale history
-        # from confusing the LLM in rooms that persist across test sessions.
+        # Distinct keywords per room so the cross-room assertions can't pass by
+        # coincidence; per-adapter/run suffix keeps logs unambiguous.
         run_id = uuid.uuid4().hex[:6]
         code_a = f"ALPHA_{adapter_name.upper()}_{run_id}"
         code_b = f"BRAVO_{adapter_name.upper()}_{run_id}"
@@ -81,8 +83,8 @@ class TestRoomIsolation:
             code_b,
         )
 
-        room_a_id, _user_id, _user_name = e2e_adapter_room
-        room_b_id = e2e_isolation_room_b[0]
+        room_a_id, _ua, _na = await e2e_fresh_room_allocator("room-isolation-a")
+        room_b_id, _ub, _nb = await e2e_fresh_room_allocator("room-isolation-b")
         logger.info("Room A: %s, Room B: %s", room_a_id, room_b_id)
 
         # Create adapter and agent (single agent, two rooms)
@@ -105,7 +107,7 @@ class TestRoomIsolation:
                 await send_trigger_message(
                     api_client,
                     room_a_id,
-                    f"Remember: the secret code is {code_a}. Confirm you remember it.",
+                    f"Remember this note: {code_a}. Confirm you remember it.",
                     agent_name,
                     agent_id,
                 )
@@ -117,7 +119,7 @@ class TestRoomIsolation:
                 await send_trigger_message(
                     api_client,
                     room_b_id,
-                    f"Remember: the secret code is {code_b}. Confirm you remember it.",
+                    f"Remember this note: {code_b}. Confirm you remember it.",
                     agent_name,
                     agent_id,
                 )
@@ -137,7 +139,7 @@ class TestRoomIsolation:
                 await send_trigger_message(
                     api_client,
                     room_a_id,
-                    "What is the secret code? Reply with just the code word.",
+                    "What was the note? Reply with just it.",
                     agent_name,
                     agent_id,
                 )
@@ -149,7 +151,7 @@ class TestRoomIsolation:
                 await send_trigger_message(
                     api_client,
                     room_b_id,
-                    "What is the secret code? Reply with just the code word.",
+                    "What was the note? Reply with just it.",
                     agent_name,
                     agent_id,
                 )

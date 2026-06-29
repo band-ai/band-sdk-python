@@ -446,4 +446,4 @@ Those examples depend heavily on model quality and prompt interpretation. They a
 
 - [CrewAI Documentation](https://docs.crewai.com/)
 - [CrewAI GitHub](https://github.com/crewAIInc/crewAI)
-- [Band SDK Documentation](https://github.com/thenvoi/thenvoi-sdk-python)
+- [Band SDK Documentation](https://github.com/band-ai/band-sdk-python)

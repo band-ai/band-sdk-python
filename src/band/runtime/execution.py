@@ -30,6 +30,7 @@ from typing import (
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.streaming import DeliveryStatus
 from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -364,11 +365,14 @@ class ExecutionContext:
 
     def _message_processed_for_agent(self, message_id: str, metadata: Any) -> bool:
         """Check whether platform metadata says this agent processed a message."""
-        if self._delivery_status_for_agent(metadata) == "processed":
+        if self._delivery_status_for_agent(metadata) == DeliveryStatus.PROCESSED:
             return True
 
         context_metadata = self._context_message_metadata(message_id)
-        return self._delivery_status_for_agent(context_metadata) == "processed"
+        return (
+            self._delivery_status_for_agent(context_metadata)
+            == DeliveryStatus.PROCESSED
+        )
 
     def _remember_processed_message(self, message_id: str) -> None:
         """Track a processed message ID in the local LRU dedupe cache."""
@@ -1210,7 +1214,10 @@ class ExecutionContext:
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
 
         try:
-            if self._delivery_status_for_agent(msg.metadata) == "processed":
+            if (
+                self._delivery_status_for_agent(msg.metadata)
+                == DeliveryStatus.PROCESSED
+            ):
                 logger.info(
                     "Skipping stale /next message %s in room %s because it is already processed",
                     msg_id,

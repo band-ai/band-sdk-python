@@ -95,9 +95,10 @@ _MEMORY_COMMON_PATTERNS = f"""Common patterns:
 
 _MEMORY_SCOPE_GUIDANCE = f"""Prefer `scope="{MemoryStoreScope.SUBJECT.value}"` whenever the memory is about a specific person or agent, so it
 stays attached to that subject rather than leaking org-wide. Storing with `scope="{MemoryStoreScope.SUBJECT.value}"` requires a
-real `subject_id` UUID, so resolve it first via `band_lookup_peers` or the participant list.
-Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization and
-is not about any one subject.
+real `subject_id` UUID: for someone in the current room (e.g. the user you are talking to), call
+`band_get_participants` and use their `id`; for someone not in the room, use `band_lookup_peers`.
+Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization
+and is not about any one subject (e.g. cross-room memories not tied to one subject).
 """
 
 

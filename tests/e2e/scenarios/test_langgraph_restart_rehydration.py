@@ -33,7 +33,7 @@ from band_rest.types import (
 from band import Agent
 from band.adapters import LangGraphAdapter
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
-from tests.e2e.conftest import requires_e2e, requires_openai
+from tests.e2e.settings import requires_e2e, requires_openai
 
 
 logger = logging.getLogger(__name__)

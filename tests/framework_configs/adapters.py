@@ -264,6 +264,16 @@ def _opencode_factory(**kw: Any) -> Any:
     return OpencodeAdapter(**kw)
 
 
+def _agno_factory(**kw: Any) -> Any:
+    from band.adapters.agno import AgnoAdapter
+
+    # AgnoAdapter takes a developer-built Agno Agent; inject a stand-in so the
+    # adapter can be constructed without a real model/API key.
+    if "agent" not in kw:
+        kw["agent"] = MagicMock()
+    return AgnoAdapter(**kw)
+
+
 def _gemini_factory(**kw: Any) -> Any:
     from band.adapters.gemini import GeminiAdapter
 
@@ -664,6 +674,27 @@ def _build_opencode_config() -> AdapterConfig:
     )
 
 
+def _build_agno_config() -> AdapterConfig:
+    return AdapterConfig(
+        framework_id="agno",
+        display_name="Agno",
+        adapter_factory=_agno_factory,
+        # AgnoAdapter has no model/prompt of its own (the caller's Agno agent
+        # owns those); assert the adapter-level state instead.
+        expected_initial_values={
+            "agent": None,  # the run copy is built in on_started
+            # Band tools are resolved per-run via a callable factory installed in
+            # on_started, cached by contact-flag; nothing is cached before start.
+            "_band_tools_cache": {},
+        },
+        # No model/prompt kwargs to customize; nothing to assert here.
+        custom_kwargs={},
+        custom_expected={},
+        # AgnoAdapter does not expose Band custom tools (no additional_tools).
+        has_custom_tools_attr=False,
+    )
+
+
 def _build_gemini_config() -> AdapterConfig:
     from band.adapters.gemini import GeminiAdapter
 
@@ -745,6 +776,7 @@ _ADAPTER_CONFIG_BUILDERS: list[Callable[[], AdapterConfig]] = [
     _build_codex_config,
     _build_letta_config,
     _build_opencode_config,
+    _build_agno_config,
     _build_gemini_config,
     _build_google_adk_config,
 ]

@@ -1,12 +1,12 @@
 # Band Python SDK
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/thenvoi/thenvoi-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
+  <img src="https://raw.githubusercontent.com/band-ai/band-sdk-python/main/assets/band-readme-banner.png" alt="Band" width="100%">
 </p>
 
 <div align="center">
   <a href="https://pypi.org/project/band-sdk/"><img src="https://img.shields.io/pypi/v/band-sdk.svg" alt="PyPI version"></a>
-  <a href="https://github.com/thenvoi/thenvoi-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
+  <a href="https://github.com/band-ai/band-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
   <a href="https://docs.band.ai"><img src="https://img.shields.io/badge/docs-band.ai-blue" alt="Docs"></a>
   <a href="https://discord.gg/gvMYpB9eAY"><img src="https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://pypi.org/project/band-sdk/"><img src="https://img.shields.io/pypi/pyversions/band-sdk.svg" alt="Python 3.11+"></a>
@@ -88,16 +88,15 @@ Create `quickstart_agent.py`:
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
-
-logging.basicConfig(level=logging.INFO)
 
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters import LangGraphAdapter
+
+configure_logging()
 
 
 async def main() -> None:
@@ -128,9 +127,9 @@ uv run python quickstart_agent.py
 You should see the agent connect:
 
 ```
-INFO:band.adapters.langgraph:LangGraph adapter started for agent: Quickstart Helper
-INFO:band.runtime.runtime:Starting AgentRuntime for agent ########-####-####-####-############
-INFO:band.platform.link:Connected to platform
+2026-06-22 12:00:00 [INFO] band.adapters.langgraph: LangGraph adapter started for agent: Quickstart Helper
+2026-06-22 12:00:00 [INFO] band.runtime.runtime: Starting AgentRuntime for agent ########-####-####-####-############
+2026-06-22 12:00:00 [INFO] band.platform.link: Connected to platform
 ```
 
 Open Band, create a chatroom, and add `Quickstart Helper` on the participants panel (right-hand side). Then send this message:
@@ -172,6 +171,40 @@ adapter = GeminiAdapter(model="gemini-2.5-flash")
 ```
 
 Use [examples/run_agent.py](examples/run_agent.py) when you want one command that can switch between LangGraph, Pydantic AI, Anthropic, Claude SDK, Parlant, CrewAI, Codex, A2A bridge, and A2A gateway. Use the per-framework directories under [examples/](examples/) when you want the adapter-specific setup.
+
+### Logging
+
+The SDK uses standard Python loggers and does not configure process-wide handlers unless your application opts in. For readable Band logs while keeping noisy dependencies quiet:
+
+```python
+from band import configure_logging
+
+configure_logging()
+```
+
+For production JSON logs or Rich console output, install the logging extra:
+
+```bash
+uv add "band-sdk[logging]"
+```
+
+```python notest
+configure_logging(style="json", stream="stdout")
+configure_logging(style="rich")
+```
+
+The examples intentionally show different styles: `examples/langgraph` uses the standard formatter, `examples/parlant` uses Rich, and `examples/codex` emits JSON to stdout.
+
+If you need to modify the logging setup before applying it, build a fresh `dictConfig` dictionary:
+
+```python notest
+import logging.config
+
+from band import build_logging_config
+
+config = build_logging_config(style="json", static_fields={"service": "agent"})
+logging.config.dictConfig(config)
+```
 
 ### Slack (`examples/slack/`)
 
@@ -258,6 +291,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
 | Parlant          | `parlant`     | `ParlantAdapter`                     | | [examples](examples/parlant/)         |
 | Letta            | `letta`       | `LettaAdapter`                       | | [examples](examples/letta/)             |
+| Agno             | `agno`        | `AgnoAdapter`                        | | [examples](examples/agno/)              |
 | Codex            | `codex`       | `CodexAdapter`                       | [docs](docs/adapters/codex.md) | [examples](examples/codex/)             |
 | OpenCode         | `opencode`    | `OpencodeAdapter`                    | | [examples](examples/opencode/)       |
 
@@ -354,6 +388,7 @@ Adapter emit support:
 | ------- | ----------- | ---------- | ------------- |
 | Codex | Yes | Yes | Yes |
 | Claude SDK | Yes | Yes | - |
+| Agno | Yes | Yes | - |
 | OpenCode | Yes | - | Yes |
 | Letta | Yes | - | Yes |
 | Anthropic | Yes | - | - |
@@ -492,13 +527,12 @@ Create a runnable gateway script:
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 
-from band import Agent
+from band import Agent, configure_logging
 from band.adapters.a2a_gateway import A2AGatewayAdapter
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 
 
 async def main() -> None:
@@ -675,7 +709,7 @@ uv run python examples/run_agent.py --example anthropic
 uv run python examples/run_agent.py --example codex
 ```
 
-`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
+`examples/run_agent.py` supports `langgraph`, `pydantic_ai`, `anthropic`, `claude_sdk`, `parlant`, `crewai`, `codex`, `a2a`, and `a2a_gateway`, plus contact-management variants. Other supported adapters have direct example files: `examples/gemini/01_basic_agent.py`, `examples/google_adk/01_basic_agent.py`, `examples/letta/01_basic_agent.py`, `examples/agno/01_basic_agent.py`, and `examples/opencode/01_basic_agent.py`.
 
 For a multi-framework collaboration demo that puts CrewAI agents and A2A-bridged services in the same room, see [examples/mixed](examples/mixed/).
 

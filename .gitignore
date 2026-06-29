@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# E2E baseline run output (scorecards, evidence artifacts)
+artifacts/
+
 # C extensions
 *.so
 

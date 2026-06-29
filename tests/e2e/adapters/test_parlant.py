@@ -20,7 +20,7 @@ from band_rest import AsyncRestClient
 
 from band.agent import Agent
 
-from tests.e2e.conftest import E2ESettings, requires_e2e
+from tests.e2e.settings import E2ESettings, requires_e2e
 from tests.e2e.helpers import (
     TrackingWebSocketClient,
     run_smoke_test,
