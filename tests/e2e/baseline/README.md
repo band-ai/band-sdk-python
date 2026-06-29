@@ -11,6 +11,10 @@ they are deterministic by design (no `sleep`, no silence windows).
 
 Run: `E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov`
 
+**Wiring a new framework adapter into the matrix?** See
+[`ADDING_AN_ADAPTER.md`](ADDING_AN_ADAPTER.md) — the step-by-step howto for
+registering an adapter so every matrix scenario runs against it for free.
+
 ## Writing a test
 
 Every baseline test is the same shape: get a running agent, open a capture, send a
