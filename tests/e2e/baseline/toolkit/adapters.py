@@ -569,12 +569,19 @@ def _build_codex(
 ) -> SimpleAdapter[Any]:
     from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
+    # Honor CODEX_COMMAND (the same override the requirement gate validates);
+    # leave the config default unset so an absent value spawns the stock `codex`
+    # binary. Split mirrors the gate's parsing in requirements.py.
+    config_kwargs: dict[str, Any] = {
+        "model": s.backends.codex_model or s.llm_models.openai_model,
+        "cwd": s.backends.codex_cwd,
+        "custom_section": prompt or "",
+    }
+    if s.backends.codex_command.strip():
+        config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
+
     return CodexAdapter(
-        config=CodexAdapterConfig(
-            model=s.backends.codex_model or s.llm_models.openai_model,
-            cwd=s.backends.codex_cwd,
-            custom_section=prompt or "",
-        ),
+        config=CodexAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
         features=features,
     )
