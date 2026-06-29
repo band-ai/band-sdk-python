@@ -14,13 +14,12 @@ race-free.
 
 from __future__ import annotations
 
+import pytest
+
 import asyncio
 import contextlib
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timezone
 
-import pytest
 
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
@@ -38,9 +37,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.capture import ReplyCapture
-
-CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]
+from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
 
 
 def _turn_boundary(capture: ReplyCapture) -> datetime:
@@ -70,10 +67,10 @@ async def test_tool_calls_isolated_per_sender(
         baseline_settings, tools=[WEATHER_TOOL], prompt=WEATHER_PROMPT
     )
     async with contextlib.AsyncExitStack() as stack:
-        _, a = await stack.enter_async_context(
+        a = await stack.enter_async_context(
             running_provisioned_agent(lookup_agent, resource_manager, label="lookup")
         )
-        _, b = await stack.enter_async_context(
+        b = await stack.enter_async_context(
             running_provisioned_agent(weather_agent, resource_manager, label="weather")
         )
         room_id = await resource_manager.provision_room(
@@ -120,10 +117,9 @@ async def test_tool_calls_isolated_per_room(
     adapter = build_tool_agent(
         baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
     )
-    async with running_provisioned_agent(adapter, resource_manager, label="lookup") as (
-        _,
-        agent,
-    ):
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="lookup"
+    ) as agent:
         room_one = await resource_manager.provision_room(
             title="e2e-room-isolation-1", participants=[agent.id]
         )
@@ -183,10 +179,9 @@ async def test_capture_scopes_to_current_turn(
     adapter = build_tool_agent(
         baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
     )
-    async with running_provisioned_agent(adapter, resource_manager, label="lookup") as (
-        _,
-        agent,
-    ):
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="lookup"
+    ) as agent:
         room_id = await resource_manager.provision_room(
             title="e2e-turn-scope", participants=[agent.id]
         )

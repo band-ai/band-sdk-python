@@ -73,6 +73,7 @@ class LLMCredentials(BaseSettings):
 
     openai_api_key: str = ""  # OPENAI_API_KEY
     anthropic_api_key: str = ""  # ANTHROPIC_API_KEY
+    google_api_key: str = ""  # GOOGLE_API_KEY (Gemini Developer API)
 
 
 class LLMModels(BaseSettings):
@@ -94,6 +95,8 @@ class LLMModels(BaseSettings):
     # A modern, cheap model: works for the agent under test AND for the judge,
     # which needs structured-output support (claude-3-haiku-20240307 does not).
     anthropic_model: str = "claude-haiku-4-5"  # E2E_ANTHROPIC_MODEL
+    # Gemini / Google ADK agent model.
+    gemini_model: str = "gemini-2.5-flash"  # E2E_GEMINI_MODEL
     # Judge model. MUST be a modern Anthropic model id (structured outputs). Left
     # blank, it falls back to ``anthropic_model`` so the judge always uses a model
     # the account has configured (E2E_JUDGE_MODEL overrides).

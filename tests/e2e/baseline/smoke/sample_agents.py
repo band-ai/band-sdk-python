@@ -1,12 +1,11 @@
-"""Cheap agents and driving instructions for the matrix smokes.
+"""Driving instructions + matrix glue for the smoke tests.
 
-``ADAPTER_BUILDERS`` maps an adapter id to its dependency gate and a builder;
-``adapter_params`` renders it as ``pytest.param``s with the right ``@requires``
-gate, so a matrix test reads ``parametrize("adapter_id", adapter_params())``.
-Only standard tool-loop adapters are here (Anthropic, LangGraph) -- both route
-tool calls through ``execute_tool_call``, so ``band_send_event`` posts a real
-event and ``band_store_memory`` writes a real memory. Adding a framework is a
-single ``ADAPTER_BUILDERS`` entry plus a ``Dep``.
+Adapter construction and discovery live in the toolkit registry
+(``toolkit.adapters``); this module is the pytest-facing glue over it.
+``build_agent`` builds a registered adapter under the shared role-setting prompt;
+the matrix glue (``adapter_params`` / ``across_adapters`` / ``with_agents``) lives in
+``tests.e2e.baseline.agents``. Adding a framework is a single ``@adapter`` entry in
+the registry -- nothing here changes.
 
 Following ``sample_tools``/``test_tool_calls``, the agent gets a fixed
 role-setting system prompt and the *user message* carries the instruction (with
@@ -18,11 +17,8 @@ way to produce it -- so a precise instruction is the only way to comply.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable, Collection
 
-import pytest
 
-from band.adapters.anthropic import AnthropicAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, MessageType
 from band.core.memory_types import (
@@ -32,8 +28,8 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
 )
 
-from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.observations import MemoryTool
 
 # Fixed role-setter: the actionable instruction (and marker) travels in the user
@@ -44,47 +40,6 @@ TOOL_AGENT_SYSTEM_PROMPT = (
     "Do not send a chat message unless explicitly asked."
 )
 
-AgentBuilder = Callable[..., SimpleAdapter]
-
-
-def build_anthropic_agent(
-    settings: BaselineSettings, *, features: AdapterFeatures | None = None
-) -> AnthropicAdapter:
-    """An Anthropic agent under the shared role-setting system prompt."""
-    return AnthropicAdapter(
-        model=settings.llm_models.anthropic_model,
-        provider_key=settings.llm_credentials.anthropic_api_key,
-        prompt=TOOL_AGENT_SYSTEM_PROMPT,
-        features=features,
-    )
-
-
-def build_langgraph_agent(
-    settings: BaselineSettings, *, features: AdapterFeatures | None = None
-) -> SimpleAdapter:
-    """A LangGraph (OpenAI-backed) agent under the shared role-setting prompt."""
-    from langchain_openai import ChatOpenAI
-    from langgraph.checkpoint.memory import MemorySaver
-
-    from band.adapters.langgraph import LangGraphAdapter
-
-    return LangGraphAdapter(
-        llm=ChatOpenAI(
-            model=settings.llm_models.openai_model,
-            api_key=settings.llm_credentials.openai_api_key,
-        ),
-        checkpointer=MemorySaver(),
-        custom_section=TOOL_AGENT_SYSTEM_PROMPT,
-        features=features,
-    )
-
-
-# TODO: this is temporary until we create generic builders in the next PR
-ADAPTER_BUILDERS: dict[str, tuple[Dep, AgentBuilder]] = {
-    "anthropic": (Dep.ANTHROPIC, build_anthropic_agent),
-    "langgraph": (Dep.OPENAI, build_langgraph_agent),
-}
-
 
 def build_agent(
     adapter_id: str,
@@ -92,31 +47,28 @@ def build_agent(
     *,
     features: AdapterFeatures | None = None,
 ) -> SimpleAdapter:
-    """Build the agent registered under ``adapter_id``."""
-    _, builder = ADAPTER_BUILDERS[adapter_id]
-    return builder(settings, features=features)
+    """Build the registered adapter under the shared role-setting prompt.
 
-
-def adapter_params(include: Collection[str] | None = None) -> list[pytest.param]:
-    """One ``pytest.param`` per adapter, each gated by its provider key.
-
-    The ``requires(...)`` mark is resolved per-parameter by the conftest gate
-    hook (a missing key fails the cell). Pass ``include`` to restrict the matrix
-    to specific adapter ids -- e.g. the event matrix runs Anthropic-only because
-    ``gpt-5.4-mini`` is unreliable at driving ``band_send_event`` for
-    thought/error, so LangGraph event cells flake.
+    Delegates to the toolkit registry (the single place that knows how to
+    construct each framework). ``features`` flips capabilities such as memory on;
+    the steering prompt is the fixed ``TOOL_AGENT_SYSTEM_PROMPT``.
     """
-    return [
-        pytest.param(adapter_id, marks=requires(dep), id=adapter_id)
-        for adapter_id, (dep, _) in ADAPTER_BUILDERS.items()
-        if include is None or adapter_id in include
-    ]
+    return build_adapter(
+        adapter_id, settings, prompt=TOOL_AGENT_SYSTEM_PROMPT, features=features
+    )
 
 
 def memory_features() -> AdapterFeatures:
     """Features for the memory smokes: expose the memory tools, and record the
     tool call as a ``tool_call`` event so the call layer is observable."""
     return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.EXECUTION})
+
+
+# Reusable agent shapes for ``@with_agents(..., **SHAPE)``: the prompt (and
+# features) a smoke runs its agents under. Declared once here so every test shares
+# the same shape instead of re-spelling it.
+TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
+MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
 
 
 def unique_marker(prefix: str) -> str:

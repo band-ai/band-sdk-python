@@ -31,7 +31,7 @@ import logging
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -449,3 +449,9 @@ async def reply_capture(
         yield capture
     finally:
         await ws.leave_chat_room_channel(room_id)
+
+
+# Type of the ``reply_capture`` fixture: call with a room id, get a
+# ``ReplyCapture`` async context manager. Shared so smokes type their fixture
+# parameter without each redefining the same alias.
+CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]

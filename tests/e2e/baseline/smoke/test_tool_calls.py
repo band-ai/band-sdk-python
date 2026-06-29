@@ -18,10 +18,8 @@ already persisted — so the subsequent ``tool_calls`` read is race-free.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
-
 import pytest
+
 
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
@@ -40,12 +38,11 @@ from tests.e2e.baseline.toolkit.provisioning import (
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.capture import ReplyCapture
-
-CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 
 
 @requires(Dep.ANTHROPIC)
+@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_tool_fired_with_args(
     baseline_settings: BaselineSettings,
@@ -57,10 +54,9 @@ async def test_tool_fired_with_args(
     adapter = build_tool_agent(
         baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
     )
-    async with running_provisioned_agent(adapter, resource_manager, label="lookup") as (
-        _,
-        agent,
-    ):
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="lookup"
+    ) as agent:
         room_id = await resource_manager.provision_room(
             title="e2e-tool-fired", participants=[agent.id]
         )
@@ -80,6 +76,7 @@ async def test_tool_fired_with_args(
 
 
 @requires(Dep.ANTHROPIC)
+@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_capture_exposes_replies_and_tool_calls(
     baseline_settings: BaselineSettings,
@@ -91,10 +88,9 @@ async def test_capture_exposes_replies_and_tool_calls(
     adapter = build_tool_agent(
         baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
     )
-    async with running_provisioned_agent(adapter, resource_manager, label="lookup") as (
-        _,
-        agent,
-    ):
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="lookup"
+    ) as agent:
         room_id = await resource_manager.provision_room(
             title="e2e-replies-and-tools", participants=[agent.id]
         )
@@ -133,7 +129,7 @@ async def test_multiple_tools_in_one_turn(
     )
     async with running_provisioned_agent(
         adapter, resource_manager, label="multitool"
-    ) as (_, agent):
+    ) as agent:
         room_id = await resource_manager.provision_room(
             title="e2e-multi-tool", participants=[agent.id]
         )
@@ -152,6 +148,7 @@ async def test_multiple_tools_in_one_turn(
 
 
 @requires(Dep.ANTHROPIC)
+@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_with_args_tolerant_match(
     baseline_settings: BaselineSettings,
@@ -163,10 +160,9 @@ async def test_with_args_tolerant_match(
     adapter = build_tool_agent(
         baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
     )
-    async with running_provisioned_agent(adapter, resource_manager, label="lookup") as (
-        _,
-        agent,
-    ):
+    async with running_provisioned_agent(
+        adapter, resource_manager, label="lookup"
+    ) as agent:
         room_id = await resource_manager.provision_room(
             title="e2e-tolerant-args", participants=[agent.id]
         )

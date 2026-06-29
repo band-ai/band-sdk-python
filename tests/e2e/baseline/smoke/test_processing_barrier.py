@@ -18,43 +18,44 @@ Run with:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 
 import pytest
 
-from band.core.simple_adapter import SimpleAdapter
-
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.capture import ReplyCapture
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.agents import adapter_params
+from tests.e2e.baseline.smoke.sample_agents import build_agent
 
 logger = logging.getLogger(__name__)
 
-CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]
 
 # Repeat so a flaky barrier (the old echo approach managed ~1/6 here) is caught.
 ROUNDS = 4
 
 
-@pytest.mark.parametrize("adapter_name", ["anthropic", "langgraph"])
+@pytest.mark.parametrize(
+    "adapter_id", adapter_params(include={"anthropic", "langgraph"})
+)
+@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_barrier_settles_message_burst(
-    adapter_name: str,
-    request: pytest.FixtureRequest,
+    adapter_id: str,
+    baseline_settings: BaselineSettings,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    adapter: SimpleAdapter = request.getfixturevalue(f"{adapter_name}_adapter")
+    adapter = build_agent(adapter_id, baseline_settings)
     async with running_provisioned_agent(
-        adapter, resource_manager, label=adapter_name
-    ) as (_, agent):
+        adapter, resource_manager, label=adapter_id
+    ) as agent:
         room_id = await resource_manager.provision_room(
-            title=f"e2e-barrier-{adapter_name}", participants=[agent.id]
+            title=f"e2e-barrier-{adapter_id}", participants=[agent.id]
         )
         mention = {"mention_id": agent.id, "mention_name": agent.name}
 
@@ -72,5 +73,5 @@ async def test_barrier_settles_message_burst(
                 # TimeoutError (failing the test) if the barrier is unreliable.
                 await capture.wait_for_processed(last, agent.id)
                 logger.info(
-                    "%s round %d: barrier settled on %s", adapter_name, round_no, last
+                    "%s round %d: barrier settled on %s", adapter_id, round_no, last
                 )

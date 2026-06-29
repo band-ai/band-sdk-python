@@ -224,13 +224,14 @@ async def running_provisioned_agent(
     resources: ResourceManager,
     *,
     label: str = "aut",
-) -> AsyncGenerator[tuple[Agent, ProvisionedAgent], None]:
+) -> AsyncGenerator[ProvisionedAgent, None]:
     """Provision an agent and run ``adapter`` as it for the duration of the block.
 
-    Yields ``(agent, provisioned)``: the running ``Agent`` and the ``ProvisionedAgent``
-    record (id, name, api_key). Reaping is owned by the resource manager's
-    teardown (the provisioned agent is tracked at provision time), so this only manages
-    the running agent's own lifecycle.
+    Yields the ``ProvisionedAgent`` record (id, name, api_key) — the only thing
+    callers need to mention/observe the agent. The running ``Agent`` object itself
+    is managed internally (kept alive for the block) and is not exposed, since no
+    caller uses it. Reaping is owned by the resource manager's teardown (the agent
+    is tracked at provision time), so this only manages the run lifecycle.
     """
     provisioned = await resources.provision_agent(label)
     endpoints = resources.settings.endpoints
@@ -242,4 +243,4 @@ async def running_provisioned_agent(
         rest_url=endpoints.rest_url,
     )
     async with agent:
-        yield agent, provisioned
+        yield provisioned

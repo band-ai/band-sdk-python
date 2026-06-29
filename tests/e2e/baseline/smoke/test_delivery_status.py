@@ -16,28 +16,27 @@ Run with:
 
 from __future__ import annotations
 
+import pytest
+
 import logging
-from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
 from typing import Any
 
-import pytest
 
 from band.client.streaming import DeliveryStatus
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
 
+from tests.e2e.baseline.agents import Adapter, with_agents
 from tests.e2e.baseline.toolkit.provisioning import (
+    ProvisionedAgent,
     ResourceManager,
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.capture import ReplyCapture
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 
 logger = logging.getLogger(__name__)
-
-CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]
 
 
 class _FailingAdapter(SimpleAdapter[Any]):
@@ -62,28 +61,27 @@ class _FailingAdapter(SimpleAdapter[Any]):
         raise RuntimeError("intentional failure: e2e coverage of the FAILED state")
 
 
+@with_agents(Adapter.ANTHROPIC)
+@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_healthy_message_reaches_processed_via_processing(
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
-    anthropic_adapter: SimpleAdapter,
 ) -> None:
     """Success path: the observed lifecycle ends in PROCESSED and passes through
     PROCESSING, and the agent's reply is already captured once PROCESSED lands."""
-    async with running_provisioned_agent(
-        anthropic_adapter, resource_manager, label="healthy"
-    ) as (_, agent):
-        room_id = await resource_manager.provision_room(
-            title="e2e-delivery-healthy", participants=[agent.id]
+    room_id = await resource_manager.provision_room(
+        title="e2e-delivery-healthy", participants=[agent.id]
+    )
+    async with reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id, "Say hi.", mention_id=agent.id, mention_name=agent.name
         )
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id, "Say hi.", mention_id=agent.id, mention_name=agent.name
-            )
-            await capture.wait_for_processed(mid, agent.id)
-            history = capture.delivery_history(mid, agent.id)
-            replied = any(m.sender_id == agent.id for m in capture.messages)
+        await capture.wait_for_processed(mid, agent.id)
+        history = capture.delivery_history(mid, agent.id)
+        replied = any(m.sender_id == agent.id for m in capture.messages)
 
     logger.info("healthy delivery history: %s", [s.value for s in history])
     assert history, "expected at least one delivery-status transition"
@@ -93,6 +91,7 @@ async def test_healthy_message_reaches_processed_via_processing(
     assert replied, "PROCESSED reported but no agent reply was captured"
 
 
+@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_failing_agent_reaches_failed_state(
     resource_manager: ResourceManager,
@@ -103,7 +102,7 @@ async def test_failing_agent_reaches_failed_state(
     state. No provider key needed — the adapter raises before any LLM call."""
     async with running_provisioned_agent(
         _FailingAdapter(), resource_manager, label="failing"
-    ) as (_, agent):
+    ) as agent:
         room_id = await resource_manager.provision_room(
             title="e2e-delivery-failing", participants=[agent.id]
         )

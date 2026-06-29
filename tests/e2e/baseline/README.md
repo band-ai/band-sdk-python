@@ -11,7 +11,10 @@ quality. They are deterministic by design (no `sleep`, no silence windows).
 
 | Path | What it is |
 |------|------------|
-| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent`, `ProvisionedAgent` |
+| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent` (yields the running agent's `ProvisionedAgent`), `ProvisionedAgent` |
+| `toolkit/adapters.py` | adapter registry: `Adapter` enum, `@adapter` builders, `build_adapter`, `specs`, the discovery guard |
+| `agents.py` | matrix/decorator glue: `@with_agents(Adapter.X, ...)` (fixed set → `agent`/`agents`), `@across_adapters(...)` (matrix subset → `provisioned_matrix_agent`), `adapter_params` |
+| `smoke/sample_agents.py` | shared driving glue for the smokes: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_agents(..., **SHAPE)`, and the `*_instruction(...)` builders |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)` |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
@@ -29,7 +32,8 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 
 | Need | Use |
 |------|-----|
-| A fresh agent + room for this test | `resource_manager.provision_agent(label)` / `provision_room(...)`, or `running_provisioned_agent(adapter, resource_manager)` to also run it |
+| Run a specific named agent in a test | `@with_agents(Adapter.ANTHROPIC)` → inject the `agent` fixture (or `agents` for several); auto-gates and runs/reaps them |
+| A fresh agent + room, lifecycle by hand | `resource_manager.provision_agent(label)` / `provision_room(...)`, or `async with running_provisioned_agent(adapter, resource_manager) as agent:` (yields the `ProvisionedAgent`) — for bespoke adapters (custom tools) |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (set `BAND_E2E_AUTOCLEAN=false` to keep for debugging) |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
 | Observe agent replies without a race | `async with reply_capture(room_id) as capture:` then send |
@@ -46,17 +50,24 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Assert a memory actually landed in the store | `mem.stored.assert_stored(content=marker, system=...)` |
 | Assert something happened (cheap) | `assertions.py` helpers, or the methods on `capture.messages` (`Replies`) |
 | Assert a fuzzy/semantic outcome | the `judge` fixture (use sparingly, see below) |
-| Build a cheap agent to run | the `langgraph_adapter` / `anthropic_adapter` fixtures |
-| Declare a test's extra requirements | `@requires(Dep.OPENAI, ...)` (a missing one **fails**, see Validation policy; the E2E + Band-key gate is automatic) |
+| Run one scenario across every adapter | the `provisioned_matrix_agent` fixture — parametrized over the registry, yields `(adapter_id, ProvisionedAgent)` |
+| Run one/several named adapters in a test | `@with_agents(Adapter.X[, Adapter.Y])` from `agents.py` → inject `agent` (one) / `agents` (list); no magic strings, gate auto-derived |
+| Run agents under a standard prompt/features shape | spread a shape from `sample_agents.py`: `@with_agents(Adapter.X, **TOOL_AGENT)` (exact-execution prompt) or `**MEMORY_AGENT` (prompt + memory tools as `tool_call` events) — don't re-spell `prompt=`/`features=` per test |
+| Run one scenario across a subset of adapters | `@across_adapters(include={...})` / `exclude=` / `supports={Capability.MEMORY}` (from `agents.py`) drives the `provisioned_matrix_agent` fixture over the subset |
+| Declare a test's extra requirements | `@requires(Dep.OPENAI, ...)` (a missing one **fails**, see Validation policy; the E2E + Band-key gate is automatic) — note `@with_agents` applies these for you |
 
 ## Fixtures (from `conftest.py`)
 
 `baseline_settings`, `user_ops`, `resource_manager`, `reply_capture`,
-`judge`, `langgraph_adapter`, `anthropic_adapter`, `baseline_ws`. The
+`judge`, `agent`, `agents`, `provisioned_matrix_agent`, `baseline_ws`. The
 `reply_capture` and `judge` fixtures pre-bind their plumbing (the WS observer;
-the judge model + key), so tests pass only the test-specific arguments. The
-E2E + Band-key gate is applied to every baseline test automatically, so a
-gate-only test needs no decorator.
+the judge model + key), so tests pass only the test-specific arguments. `agent` /
+`agents` are driven by `@with_agents(Adapter.X, ...)` (in `agents.py`): the
+decorator auto-applies the requirement gate from the registry and the fixtures
+build (via `toolkit/adapters.py`) + provision + run + reap the agents.
+`provisioned_matrix_agent` does the same across the whole matrix. The E2E +
+Band-key gate is applied to every baseline test automatically, so a gate-only test
+needs no decorator.
 
 ## Assertion strategy: cheap checks first, judge last
 
@@ -125,17 +136,16 @@ in practice the first observed transition is `PROCESSING`. Do not wait on
 ## A minimal test
 
 ```python
-@requires(Dep.ANTHROPIC)
+@with_agents(Adapter.ANTHROPIC)              # gate auto-derived; agent built + run
 @pytest.mark.asyncio(loop_scope="session")
-async def test_example(resource_manager, user_ops, reply_capture, anthropic_adapter):
-    async with running_provisioned_agent(anthropic_adapter, resource_manager) as (_, agent):
-        room_id = await resource_manager.provision_room(participants=[agent.id])
-        async with reply_capture(room_id) as capture:
-            mid = await user_ops.send_message(
-                room_id, "say hi", mention_id=agent.id, mention_name=agent.name
-            )
-            await capture.wait_for_processed(mid, agent.id)
-        assert_present(capture.messages)
+async def test_example(agent, resource_manager, user_ops, reply_capture):
+    room_id = await resource_manager.provision_room(participants=[agent.id])
+    async with reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id, "say hi", mention_id=agent.id, mention_name=agent.name
+        )
+        await capture.wait_for_processed(mid, agent.id)
+    assert_present(capture.messages)
 ```
 
 Run: `E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov`

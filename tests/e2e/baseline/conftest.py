@@ -9,20 +9,26 @@ from __future__ import annotations
 
 import functools
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack
 
 import pytest
 from anthropic import AsyncAnthropic
 from band_rest import AsyncRestClient
 
 from band.client.streaming import WebSocketClient
-from band.core.simple_adapter import SimpleAdapter
 
-from tests.e2e.baseline.requires import MARKER, Dep, require_dep
+from tests.e2e.baseline.agents import AGENTS_MARKER, AgentsRequest
+from tests.e2e.baseline.requires import MARKER, Dep, require_dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.adapters import build_adapter, specs
 from tests.e2e.baseline.toolkit.judge import Verdict
 from tests.e2e.baseline.toolkit.judge import judge as _judge
-from tests.e2e.baseline.toolkit.provisioning import ResourceManager, new_run_id
+from tests.e2e.baseline.toolkit.provisioning import (
+    ProvisionedAgent,
+    ResourceManager,
+    new_run_id,
+    running_provisioned_agent,
+)
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
 from tests.e2e.baseline.toolkit.capture import reply_capture as _reply_capture
@@ -34,6 +40,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         f"{MARKER}(deps): declare a baseline test's optional dependencies; the "
         "E2E + Band-key gate is always applied. See requires.py.",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{AGENTS_MARKER}(request): set by @with_agents to declare the adapters a "
+        "test runs; resolved by the agent/agents fixtures. See agents.py.",
     )
 
 
@@ -145,46 +156,85 @@ _SHORT_PROMPT = (
 )
 
 
-# TODO turn adapter creation into a factory or other generic no-glue mechanism.
 @pytest.fixture
-def langgraph_adapter(baseline_settings: BaselineSettings) -> SimpleAdapter:
-    """A cheap LangGraph agent built from settings (OpenAI-backed).
+async def agents(
+    request: pytest.FixtureRequest,
+    baseline_settings: BaselineSettings,
+    resource_manager: ResourceManager,
+) -> AsyncGenerator[list[ProvisionedAgent], None]:
+    """The running agents declared by ``@with_agents(...)``, in declared order.
 
-    Self-gates on its provider key, so a test using it skips when OPENAI_API_KEY
-    is absent — the requirement travels with the fixture.
+    Builds each adapter via the registry (steered by the decorator's
+    ``prompt``/``features``, defaulting to the short prompt), runs each through
+    ``running_provisioned_agent`` (reaped by ``resource_manager`` teardown), and
+    yields the ``ProvisionedAgent`` records. Use ``agent`` for the single case.
+
+    Each slot gets an index-suffixed label so the same framework can appear more
+    than once (e.g. ``@with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC)`` for two
+    same-type agents in one room) without provisioned-name collisions.
     """
-    require_dep(Dep.OPENAI, baseline_settings)
-    from langchain_openai import ChatOpenAI
-    from langgraph.checkpoint.memory import MemorySaver
+    marker = request.node.get_closest_marker(AGENTS_MARKER)
+    if marker is None:
+        raise pytest.UsageError(
+            "the `agents`/`agent` fixture requires the @with_agents(...) decorator"
+        )
+    req: AgentsRequest = marker.args[0]
+    prompt = req.prompt if req.prompt is not None else _SHORT_PROMPT
+    async with AsyncExitStack() as stack:
+        provisioned = [
+            await stack.enter_async_context(
+                running_provisioned_agent(
+                    build_adapter(
+                        name, baseline_settings, prompt=prompt, features=req.features
+                    ),
+                    resource_manager,
+                    label=f"{name}-{slot}",
+                )
+            )
+            for slot, name in enumerate(req.adapters)
+        ]
+        yield provisioned
 
-    from band.adapters.langgraph import LangGraphAdapter
 
-    return LangGraphAdapter(
-        llm=ChatOpenAI(
-            model=baseline_settings.llm_models.openai_model,
-            api_key=baseline_settings.llm_credentials.openai_api_key,
-        ),
-        checkpointer=MemorySaver(),
-        custom_section=_SHORT_PROMPT,
-    )
-
-
-# TODO turn adapter creation into a factory or other generic no-glue mechanism.
 @pytest.fixture
-def anthropic_adapter(baseline_settings: BaselineSettings) -> SimpleAdapter:
-    """A cheap Anthropic agent built from settings.
+async def agent(agents: list[ProvisionedAgent]) -> ProvisionedAgent:
+    """The single running agent declared by ``@with_agents(OneAdapter)``."""
+    if len(agents) != 1:
+        raise pytest.UsageError(
+            f"`agent` needs exactly one adapter in @with_agents(...); got "
+            f"{len(agents)} — use `agents` for multiple."
+        )
+    return agents[0]
 
-    Self-gates on its provider key, so a test using it skips when
-    ANTHROPIC_API_KEY is absent — the requirement travels with the fixture.
+
+# The full adapter matrix as fixture params: one cell per registered adapter, each
+# carrying its ``@requires`` marks so a missing requirement fails that cell. Built
+# once at import (registration happens when ``toolkit.adapters`` is imported above).
+_MATRIX_PARAMS = [
+    pytest.param(spec.id, marks=requires(*spec.requires), id=str(spec.id))
+    for spec in specs()
+]
+
+
+@pytest.fixture(params=_MATRIX_PARAMS)
+async def provisioned_matrix_agent(
+    request: pytest.FixtureRequest,
+    baseline_settings: BaselineSettings,
+    resource_manager: ResourceManager,
+) -> AsyncGenerator[tuple[str, ProvisionedAgent], None]:
+    """Provision + run one adapter from the matrix; the cross-adapter test seam.
+
+    Parametrized across the whole registry, so an L0–L4 scenario body is written
+    once and runs against every adapter (a subset can re-parametrize with
+    ``adapter_params(...)``). Yields ``(adapter_id, ProvisionedAgent)`` — the record
+    carries the id/name to mention. Reaping is owned by ``resource_manager`` teardown.
     """
-    require_dep(Dep.ANTHROPIC, baseline_settings)
-    from band.adapters.anthropic import AnthropicAdapter
-
-    return AnthropicAdapter(
-        model=baseline_settings.llm_models.anthropic_model,
-        provider_key=baseline_settings.llm_credentials.anthropic_api_key,
-        prompt=_SHORT_PROMPT,
-    )
+    adapter_id: str = request.param
+    adapter = build_adapter(adapter_id, baseline_settings, prompt=_SHORT_PROMPT)
+    async with running_provisioned_agent(
+        adapter, resource_manager, label=adapter_id
+    ) as provisioned:
+        yield adapter_id, provisioned
 
 
 @pytest.fixture
