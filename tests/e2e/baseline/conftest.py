@@ -21,6 +21,7 @@ from tests.e2e.baseline.agents import (
     AGENTS_MARKER,
     MATRIX_MARKER,
     AgentsRequest,
+    MatrixAgent,
     MatrixBuild,
 )
 from tests.e2e.baseline.requires import MARKER, Dep, require_dep, requires
@@ -54,7 +55,7 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         f"{MATRIX_MARKER}(build): set by @across_adapters to steer per-cell "
-        "construction (prompt/features); resolved by provisioned_matrix_agent.",
+        "construction (prompt/features); resolved by matrix_agent.",
     )
 
 
@@ -227,19 +228,19 @@ _MATRIX_PARAMS = [
 
 
 @pytest.fixture(params=_MATRIX_PARAMS)
-async def provisioned_matrix_agent(
+async def matrix_agent(
     request: pytest.FixtureRequest,
     baseline_settings: BaselineSettings,
     resource_manager: ResourceManager,
-) -> AsyncGenerator[tuple[str, ProvisionedAgent], None]:
+) -> AsyncGenerator[MatrixAgent, None]:
     """Provision + run one adapter from the matrix; the cross-adapter test seam.
 
     Parametrized across the whole registry, so an L0–L4 scenario body is written
     once and runs against every adapter. ``@across_adapters(...)`` narrows the set
     and may steer construction via the ``MatrixBuild`` marker (``prompt`` /
     ``features`` — e.g. enable memory); absent that, a short default prompt and no
-    features. Yields ``(adapter_id, ProvisionedAgent)`` — the record carries the
-    id/name to mention. Reaping is owned by ``resource_manager`` teardown.
+    features. Yields a ``MatrixAgent(adapter_id, agent)`` — unpack it or use the
+    named fields. Reaping is owned by ``resource_manager`` teardown.
     """
     adapter_id: str = request.param
     marker = request.node.get_closest_marker(MATRIX_MARKER)
@@ -252,7 +253,7 @@ async def provisioned_matrix_agent(
     async with running_provisioned_agent(
         adapter, resource_manager, label=adapter_id
     ) as provisioned:
-        yield adapter_id, provisioned
+        yield MatrixAgent(adapter_id, provisioned)
 
 
 @pytest.fixture

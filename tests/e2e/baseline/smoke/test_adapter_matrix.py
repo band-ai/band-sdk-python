@@ -19,10 +19,10 @@ from band.core.simple_adapter import SimpleAdapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.assertions import assert_present
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
-from tests.e2e.baseline.agents import across_adapters, adapter_params
+from tests.e2e.baseline.agents import MatrixAgent, adapter_params
 from tests.e2e.baseline.smoke.sample_agents import build_agent
 
 
@@ -42,7 +42,7 @@ def test_build_adapter_constructs_each(
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_matrix_agent_replies(
-    provisioned_matrix_agent: tuple[str, ProvisionedAgent],
+    matrix_agent: MatrixAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -50,10 +50,10 @@ async def test_matrix_agent_replies(
     """Each adapter in the matrix processes a mention and replies.
 
     Proves the registry drives every framework end to end: provision + run the
-    agent (via the parametrized ``provisioned_matrix_agent`` fixture), mention it,
+    agent (via the parametrized ``matrix_agent`` fixture), mention it,
     barrier on the trigger being processed, then assert a reply landed.
     """
-    adapter_id, provisioned = provisioned_matrix_agent
+    adapter_id, provisioned = matrix_agent
     room_id = await resource_manager.provision_room(
         title=f"e2e-matrix-{adapter_id}", participants=[provisioned.id]
     )

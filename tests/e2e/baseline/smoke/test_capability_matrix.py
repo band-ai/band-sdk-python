@@ -23,7 +23,7 @@ import pytest
 from band.core.memory_types import MemoryListScope
 from band.core.types import Capability
 
-from tests.e2e.baseline.agents import across_adapters
+from tests.e2e.baseline.agents import MatrixAgent, across_adapters
 from tests.e2e.baseline.smoke.sample_agents import (
     TOOL_AGENT_SYSTEM_PROMPT,
     memory_features,
@@ -32,7 +32,7 @@ from tests.e2e.baseline.smoke.sample_agents import (
 )
 from tests.e2e.baseline.toolkit.assertions import assert_present
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
@@ -44,7 +44,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_store_memory_across_memory_adapters(
-    provisioned_matrix_agent: tuple[str, ProvisionedAgent],
+    matrix_agent: MatrixAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -54,7 +54,7 @@ async def test_store_memory_across_memory_adapters(
     The matrix here is *exactly* the adapters advertising ``Capability.MEMORY`` —
     selected by the filter, not a list — each built with the memory tools enabled.
     """
-    adapter_id, agent = provisioned_matrix_agent
+    adapter_id, agent = matrix_agent
     marker = unique_marker("xmem")
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-memory-{adapter_id}", participants=[agent.id]
@@ -78,7 +78,7 @@ async def test_store_memory_across_memory_adapters(
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_reply_across_non_memory_adapters(
-    provisioned_matrix_agent: tuple[str, ProvisionedAgent],
+    matrix_agent: MatrixAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -88,7 +88,7 @@ async def test_reply_across_non_memory_adapters(
     Same filter mechanism, inverted: ``without={Capability.MEMORY}`` yields exactly
     the adapters the memory test does not, with no overlap and no hard-coded ids.
     """
-    adapter_id, agent = provisioned_matrix_agent
+    adapter_id, agent = matrix_agent
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-nomemory-{adapter_id}", participants=[agent.id]
     )

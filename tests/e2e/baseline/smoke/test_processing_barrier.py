@@ -21,9 +21,9 @@ import logging
 
 import pytest
 
-from tests.e2e.baseline.agents import across_adapters
+from tests.e2e.baseline.agents import MatrixAgent, across_adapters
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
@@ -37,12 +37,12 @@ ROUNDS = 4
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_barrier_settles_message_burst(
-    provisioned_matrix_agent: tuple[str, ProvisionedAgent],
+    matrix_agent: MatrixAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    adapter_id, agent = provisioned_matrix_agent
+    adapter_id, agent = matrix_agent
     room_id = await resource_manager.provision_room(
         title=f"e2e-barrier-{adapter_id}", participants=[agent.id]
     )

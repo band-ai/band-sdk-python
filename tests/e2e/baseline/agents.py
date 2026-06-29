@@ -21,11 +21,11 @@ The decorator does two things so the test body stays clean:
 
 For the *parametrized* case — run one test across the whole adapter matrix (or a
 subset) — use ``@across_adapters(...)``, the sibling that drives the
-``provisioned_matrix_agent`` fixture::
+``matrix_agent`` fixture::
 
     @across_adapters(supports={Capability.MEMORY})
-    async def test_l2(provisioned_matrix_agent, ...):
-        adapter_id, agent = provisioned_matrix_agent
+    async def test_l2(matrix_agent, ...):
+        adapter_id, agent = matrix_agent
 
 ``Adapter`` is re-exported here so a test imports both from one place.
 """
@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import pytest
 from _pytest.mark.structures import ParameterSet
@@ -42,21 +43,36 @@ from band.core.types import AdapterFeatures, Capability
 
 from tests.e2e.baseline.requires import requires
 from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
 
 __all__ = [
     "Adapter",
     "AGENTS_MARKER",
     "MATRIX_MARKER",
     "AgentsRequest",
+    "MatrixAgent",
     "MatrixBuild",
     "across_adapters",
     "adapter_params",
     "with_agents",
 ]
 
+
+class MatrixAgent(NamedTuple):
+    """One matrix cell: the adapter id and its running provisioned agent.
+
+    A ``NamedTuple`` so it still unpacks (``adapter_id, agent = matrix_agent``)
+    while giving named fields (``matrix_agent.agent``) and a real, documented type.
+    Yielded by the ``matrix_agent`` fixture.
+    """
+
+    adapter_id: str
+    agent: ProvisionedAgent
+
+
 # Marker names the conftest fixtures resolve. Registered in conftest.
 AGENTS_MARKER = "with_agents"  # read by agent/agents fixtures
-MATRIX_MARKER = "matrix_build"  # read by provisioned_matrix_agent fixture
+MATRIX_MARKER = "matrix_build"  # read by matrix_agent fixture
 
 
 @dataclass(frozen=True)
@@ -116,7 +132,7 @@ def adapter_params(
     its complement. The ``requires(...)`` marks are resolved per-parameter by the
     conftest gate hook (a missing requirement fails the cell). Used directly to
     parametrize an ``adapter_id`` (then ``build_adapter``), or via ``across_adapters``
-    to drive the ``provisioned_matrix_agent`` fixture.
+    to drive the ``matrix_agent`` fixture.
     """
     return [
         pytest.param(spec.id, marks=requires(*spec.requires), id=str(spec.id))
@@ -135,22 +151,22 @@ def across_adapters(
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
 ) -> Callable[[Callable[..., object]], Callable[..., object]]:
-    """Run a test across the adapter matrix via the ``provisioned_matrix_agent``
+    """Run a test across the adapter matrix via the ``matrix_agent``
     fixture — the parametrized sibling of ``@with_agents``.
 
     Sugar over ``@pytest.mark.parametrize(..., indirect=True)``: the test injects one
-    running agent per cell as ``provisioned_matrix_agent`` (``(adapter_id,
-    ProvisionedAgent)``) and the per-cell ``@requires`` gate rides along. Filter the
+    running agent per cell as a ``MatrixAgent`` (``adapter_id`` + ``agent``) and
+    the per-cell ``@requires`` gate rides along. Filter the
     matrix with ``include`` / ``exclude`` (by id) or ``supports`` / ``without`` (by
     capability — complementary), and steer per-cell construction with ``prompt`` /
     ``features`` (e.g. enable memory), exactly like ``@with_agents``. The indirect
     parametrization overrides the fixture's default full-matrix params::
 
         @across_adapters(supports={Capability.MEMORY}, features=memory_features())
-        async def test_memory(provisioned_matrix_agent, ...):
-            adapter_id, agent = provisioned_matrix_agent
+        async def test_memory(matrix_agent, ...):
+            adapter_id, agent = matrix_agent
 
-    Note: a bare ``provisioned_matrix_agent`` parameter already runs the *full*
+    Note: a bare ``matrix_agent`` parameter already runs the *full*
     matrix (the fixture's default) — only reach for ``@across_adapters`` to filter
     or to set ``prompt`` / ``features``.
     """
@@ -160,9 +176,7 @@ def across_adapters(
     build = MatrixBuild(prompt=prompt, features=features)
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
-        fn = pytest.mark.parametrize(
-            "provisioned_matrix_agent", params, indirect=True
-        )(fn)
+        fn = pytest.mark.parametrize("matrix_agent", params, indirect=True)(fn)
         if prompt is not None or features is not None:
             fn = getattr(pytest.mark, MATRIX_MARKER)(build)(fn)
         return fn
