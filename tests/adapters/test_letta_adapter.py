@@ -1214,6 +1214,46 @@ class TestAutoRelayMode:
         assert tools.messages_sent[0]["content"] == "Hello there!"
 
     @pytest.mark.asyncio
+    async def test_warns_when_capability_requested_in_auto_relay(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Requesting memory/contacts with no MCP server warns (tools are inert)."""
+        from band.core.types import AdapterFeatures, Capability
+
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(mcp_server_url=None),
+            features=AdapterFeatures(capabilities=frozenset({Capability.MEMORY})),
+        )
+        mock_client = AsyncMock()
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
+        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
+            with caplog.at_level("WARNING"):
+                await adapter.on_started("TestBot", "A test bot")
+
+        assert any(
+            "auto-relay mode" in r.message and "memory" in r.message
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_capability_warning_in_auto_relay_without_features(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No capability warning when no capabilities were requested."""
+        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
+        mock_client = AsyncMock()
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
+        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
+            with caplog.at_level("WARNING"):
+                await adapter.on_started("TestBot", "A test bot")
+
+        assert not any("auto-relay mode" in r.message for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_verify_mcp_tools_is_noop_when_disabled(self) -> None:
         """Auto-relay mode skips the agents.tools.list round-trip on resume."""
         adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))

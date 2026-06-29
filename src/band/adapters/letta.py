@@ -176,6 +176,11 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.EXECUTION, Emit.TASK_EVENTS}
     )
+    # The ceiling of capabilities this adapter can expose, not a per-instance
+    # guarantee: Letta's tools come from the external Band MCP server it's pointed
+    # at (discovered in _register_mcp_server), so memory/contacts are only actually
+    # available when that server exposes them — and not at all in auto-relay mode
+    # (mcp_server_url=None). on_started warns if a capability is requested then.
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -301,6 +306,17 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             await self._register_mcp_server()
         else:
             logger.info("Letta adapter running without MCP (auto-relay mode)")
+            # The base on_started only warns about *over-requested* capabilities
+            # (not in SUPPORTED_CAPABILITIES). In auto-relay there are no platform
+            # tools at all, so any requested capability is silently inert — warn
+            # explicitly so it isn't mistaken for a working memory/contacts setup.
+            if self.features.capabilities:
+                logger.warning(
+                    "Letta is in auto-relay mode (no MCP server), so requested "
+                    "capabilities %s have no tools and will not work; set "
+                    "mcp_server_url to a Band MCP server that exposes them.",
+                    sorted(c.value for c in self.features.capabilities),
+                )
 
         logger.info(
             "Letta adapter started for agent: %s (mode=%s, mcp=%s)",
