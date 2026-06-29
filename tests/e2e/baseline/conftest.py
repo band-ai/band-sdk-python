@@ -2,7 +2,7 @@
 
 This file holds only the pytest *glue*: the marker registration, the always-on
 E2E/Band-key gate, and the CI-lane collection hook. The fixtures themselves live
-in ``_fixtures/`` (platform / agents / capture) and the lane-selection logic in
+in ``fixtures/`` (platform / agents / capture) and the lane-selection logic in
 ``lane_selection``; both are imported here so pytest registers the fixtures for
 the baseline subtree (``pytest_plugins`` is deprecated in a non-root conftest).
 The fixture re-exports are listed in ``__all__`` so they read as intentional.
@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline._fixtures.agents import (
+from tests.e2e.baseline.fixtures.agents import (
     adapter_id,
     agent,
     agents,
     matrix_agent,
 )
-from tests.e2e.baseline._fixtures.capture import judge, reply_capture
-from tests.e2e.baseline._fixtures.platform import (
+from tests.e2e.baseline.fixtures.capture import judge, reply_capture
+from tests.e2e.baseline.fixtures.platform import (
     baseline_run_id,
     baseline_settings,
     baseline_user_client,
@@ -33,7 +33,7 @@ from tests.e2e.baseline.lane_selection import apply_lane_skips
 from tests.e2e.baseline.requires import MARKER, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
 
-# Re-exported fixtures (defined in _fixtures/*; imported so pytest registers them).
+# Re-exported fixtures (defined in fixtures/*; imported so pytest registers them).
 __all__ = [
     "adapter_id",
     "agent",
