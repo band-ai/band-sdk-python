@@ -763,6 +763,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
     async def _verify_mcp_tools_attached(self, agent_id: str) -> None:
         """Verify MCP tools are attached to an existing agent, re-attach if needed."""
+        # No MCP server registered (auto-relay mode) → nothing to verify; skip the
+        # agents.tools.list round-trip entirely.
+        if not self._mcp_enabled:
+            return
         try:
             agent_tools_result = await self._client.agents.tools.list(agent_id=agent_id)
             if isinstance(agent_tools_result, list):

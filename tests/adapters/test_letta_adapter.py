@@ -1214,6 +1214,17 @@ class TestAutoRelayMode:
         assert tools.messages_sent[0]["content"] == "Hello there!"
 
     @pytest.mark.asyncio
+    async def test_verify_mcp_tools_is_noop_when_disabled(self) -> None:
+        """Auto-relay mode skips the agents.tools.list round-trip on resume."""
+        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+
+        await adapter._verify_mcp_tools_attached("agent-1")
+
+        mock_client.agents.tools.list.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_created_agent_uses_relay_preamble_when_disabled(self) -> None:
         adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
         mock_client = AsyncMock()
