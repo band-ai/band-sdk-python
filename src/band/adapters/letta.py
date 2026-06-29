@@ -55,6 +55,19 @@ If you respond without calling `band_send_message`, the user sees NOTHING.
 
 """
 
+# Preamble used when the adapter runs without an MCP server (no platform tools).
+# The agent has no band_ tools to call, so the adapter relays its plain-text reply
+# to the room (see ``_send_message`` auto-relay). The enforcement preamble above
+# would be actively wrong here — it tells the model its text is discarded — so a
+# relay-mode build uses this instead.
+_LETTA_RELAY_NOTE = """\
+## How your replies reach the chat
+
+You are in a multi-agent chat room. Reply normally in plain text — your message
+is delivered to the room for you. Keep replies concise and on-topic.
+
+"""
+
 
 @dataclass
 class LettaAdapterConfig:
@@ -91,8 +104,13 @@ class LettaAdapterConfig:
     # Letta Cloud project scoping (ignored for self-hosted)
     project: str | None = None
 
-    # MCP server configuration for tool execution
-    mcp_server_url: str = "http://localhost:8002/sse"
+    # MCP server configuration for tool execution. Set ``mcp_server_url`` to None
+    # (or "") to run in auto-relay mode: no Band MCP server is registered, the
+    # model has no platform tools, and the adapter relays its plain-text reply to
+    # the room itself. This is the only mode that works when the Letta server can't
+    # reach the Band MCP server (e.g. a self-hosted server can't reach a loopback
+    # MCP — its SSRF guard rejects non-public IPs).
+    mcp_server_url: str | None = "http://localhost:8002/sse"
     mcp_server_name: str = "band"
 
     # Operating mode: per_room creates one Letta agent per room,
@@ -222,7 +240,12 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # Shared mode: single agent ID used across all rooms
         self._shared_agent_id: str | None = None
 
-        # MCP server ID and tool IDs (populated in on_started)
+        # Whether to register a Band MCP server. When disabled (no mcp_server_url),
+        # the agent has no platform tools and the adapter relays its reply text to
+        # the room (auto-relay) — see on_started / _send_message.
+        self._mcp_enabled: bool = bool(self._config.mcp_server_url)
+
+        # MCP server ID and tool IDs (populated in on_started when MCP is enabled)
         self._mcp_server_id: str | None = None
         self._mcp_tool_ids: list[str] = []
 
@@ -232,6 +255,15 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         # Built during on_started
         self._system_prompt: str = ""
+
+    def _persona_preamble(self) -> str:
+        """The instruction-block preamble for the active mode.
+
+        With MCP, the model must call platform tools to be heard (enforcement).
+        Without MCP (auto-relay), it should reply in plain text — the enforcement
+        preamble would be actively wrong, so use the relay note instead.
+        """
+        return _LETTA_TOOL_ENFORCEMENT if self._mcp_enabled else _LETTA_RELAY_NOTE
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Build system prompt, create Letta SDK client, register MCP server."""
@@ -262,13 +294,19 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             client_kwargs["project"] = self.config.project
         self._client = AsyncLetta(**client_kwargs)
 
-        # Register MCP server with Letta
-        await self._register_mcp_server()
+        # Register the Band MCP server with Letta, unless running in auto-relay
+        # mode (no mcp_server_url) — then the agent has no platform tools and the
+        # adapter relays the model's reply to the room itself.
+        if self._mcp_enabled:
+            await self._register_mcp_server()
+        else:
+            logger.info("Letta adapter running without MCP (auto-relay mode)")
 
         logger.info(
-            "Letta adapter started for agent: %s (mode=%s)",
+            "Letta adapter started for agent: %s (mode=%s, mcp=%s)",
             agent_name,
             self.config.mode,
+            "on" if self._mcp_enabled else "off",
         )
 
     async def _register_mcp_server(self) -> None:
@@ -682,9 +720,9 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             list(self.config.memory_blocks) if self.config.memory_blocks else []
         )
 
-        # Add persona block with system prompt + tool enforcement
+        # Add persona block with system prompt + the mode-appropriate preamble.
         base_prompt = self.config.persona or self._system_prompt
-        persona_value = _LETTA_TOOL_ENFORCEMENT + base_prompt
+        persona_value = self._persona_preamble() + base_prompt
         memory_blocks.insert(0, {"label": "persona", "value": persona_value})
 
         create_kwargs: dict[str, Any] = {
@@ -765,7 +803,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     async def _update_instruction_block(self, agent_id: str, room_id: str) -> None:
         """Update (or create) a memory block with the Band system prompt."""
         base = self.config.persona or self._system_prompt
-        value = _LETTA_TOOL_ENFORCEMENT + base
+        value = self._persona_preamble() + base
 
         # Try known instruction-block labels in priority order
         for label in self._INSTRUCTION_BLOCK_LABELS:

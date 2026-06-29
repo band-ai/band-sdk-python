@@ -13,6 +13,7 @@ import pytest
 from band.adapters.letta import (
     LettaAdapter,
     LettaAdapterConfig,
+    _LETTA_RELAY_NOTE,
     _LETTA_TOOL_ENFORCEMENT,
     _RoomContext,
 )
@@ -1147,8 +1148,86 @@ class TestExtractSummary:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Summary storage
+# Auto-relay mode (no MCP server)
 # ──────────────────────────────────────────────────────────────────────
+
+
+class TestAutoRelayMode:
+    """With ``mcp_server_url=None`` the adapter registers no MCP server and relays
+    the model's plain-text reply to the room itself."""
+
+    @pytest.mark.asyncio
+    async def test_on_started_skips_mcp_registration_when_disabled(self) -> None:
+        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
+        assert adapter._mcp_enabled is False
+
+        mock_client = AsyncMock()
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+
+        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
+            await adapter.on_started("TestBot", "A test bot")
+
+        mock_client.mcp_servers.create.assert_not_called()
+        mock_client.mcp_servers.list.assert_not_called()
+        assert adapter._mcp_tool_ids == []
+
+    def test_relay_preamble_when_mcp_disabled(self) -> None:
+        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
+        assert adapter._persona_preamble() == _LETTA_RELAY_NOTE
+
+    def test_enforcement_preamble_when_mcp_enabled(self) -> None:
+        # Default config has a non-empty mcp_server_url → MCP enabled.
+        adapter = LettaAdapter()
+        assert adapter._mcp_enabled is True
+        assert adapter._persona_preamble() == _LETTA_TOOL_ENFORCEMENT
+
+    @pytest.mark.asyncio
+    async def test_reply_relayed_without_mcp(self) -> None:
+        """The model's assistant text is relayed to the room when there are no
+        platform tools (the model can't call band_send_message)."""
+        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+
+        mock_client.agents.messages.create.return_value = _make_letta_response(
+            _make_assistant_message("Hello there!")
+        )
+
+        tools = FakeAgentTools()
+        msg = make_platform_message()
+        history = LettaSessionState()
+
+        await adapter.on_message(
+            msg,
+            tools,
+            history,
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+
+        assert len(tools.messages_sent) == 1
+        assert tools.messages_sent[0]["content"] == "Hello there!"
+
+    @pytest.mark.asyncio
+    async def test_created_agent_uses_relay_preamble_when_disabled(self) -> None:
+        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test prompt"
+
+        mock_client.agents.create.return_value = _make_mock_agent("agent-1")
+
+        await adapter._create_agent()
+
+        memory_blocks = mock_client.agents.create.call_args.kwargs["memory_blocks"]
+        persona = next(b for b in memory_blocks if b["label"] == "persona")
+        assert persona["value"].startswith(_LETTA_RELAY_NOTE)
+        assert _LETTA_TOOL_ENFORCEMENT not in persona["value"]
 
 
 class TestSummaryStorage:
