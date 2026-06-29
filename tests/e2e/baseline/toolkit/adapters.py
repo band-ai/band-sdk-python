@@ -601,14 +601,17 @@ def _build_codex(
 ) -> SimpleAdapter[Any]:
     from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
-    # Honor CODEX_COMMAND (the same override the requirement gate validates);
-    # leave the config default unset so an absent value spawns the stock `codex`
-    # binary. Split mirrors the gate's parsing in requirements.py.
+    # Only override what's explicitly configured. CODEX_MODEL is left unset by
+    # default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
+    # catalogue (gpt-4o-mini isn't in it), so leaving config.model=None lets the
+    # adapter discover/select a valid Codex model. CODEX_COMMAND likewise: an absent
+    # value spawns the stock `codex` binary. Splits mirror the gates in requirements.py.
     config_kwargs: dict[str, Any] = {
-        "model": s.backends.codex_model or s.llm_models.openai_model,
         "cwd": s.backends.codex_cwd,
         "custom_section": prompt or "",
     }
+    if s.backends.codex_model.strip():
+        config_kwargs["model"] = s.backends.codex_model
     if s.backends.codex_command.strip():
         config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
 
