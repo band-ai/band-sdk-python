@@ -19,7 +19,6 @@ from tests.e2e.baseline.toolkit.adapters import (
     build_adapter,
     ci_lanes,
     discovered_agent_ids,
-    infra_adapters,
     registered_ids,
     specs,
 )
@@ -62,12 +61,10 @@ def test_every_adapter_has_a_ci_home() -> None:
 
 
 def test_ci_lanes_partition_is_complete_and_disjoint() -> None:
-    """The derived partition covers every registered adapter exactly once."""
-    in_lanes = [adapter_id for ids in ci_lanes().values() for adapter_id in ids]
-    infra = infra_adapters()
-    assert len(in_lanes) == len(set(in_lanes)), "an adapter appears in two lanes"
-    assert set(in_lanes).isdisjoint(infra)
-    assert set(in_lanes) | set(infra) == registered_ids()
+    """The derived lane partition covers every registered adapter exactly once."""
+    placed = [adapter_id for lane in ci_lanes() for adapter_id in lane.adapters]
+    assert len(placed) == len(set(placed)), "an adapter appears in two lanes"
+    assert set(placed) == registered_ids()
 
 
 def test_supports_filter_selects_memory_adapters() -> None:

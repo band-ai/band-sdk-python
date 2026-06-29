@@ -308,62 +308,54 @@ legitimate skip is `E2E_TESTS_ENABLED` (the on/off switch for the whole live sui
 `BAND_API_KEY_USER` missing while E2E is enabled **fails** (the always-on gate), and
 any `@requires(Dep.X)` requirement **fails** when absent, naming the missing env
 var/CLI/server. Consequence: no single environment turns the full adapter matrix
-green (crewai needs the `dev-crewai` lane; codex/opencode/letta need their backend) —
+green in one job (crewai needs its own venv; codex/opencode/letta need a backend) —
 a red cell means "this backend isn't wired up", which is intended. The one
-deliberate exception is **lane scoping** (`BAND_E2E_LANE`, see Dependency lanes
-below): an out-of-lane or infra adapter *skips with a reason* (it isn't in scope for
-that lane), while an **in-lane** adapter with a missing key still fails.
+deliberate exception is **lane scoping** (`BAND_E2E_LANE`, see CI lanes below): an
+*out-of-lane* adapter *skips with a reason* (it's covered by its own lane, so this
+is sharding, not hiding), while an **in-lane** adapter with a missing key/backend
+still fails.
 
-## Dependency lanes (the crewai mutual exclusion)
+## CI lanes (a lane = one CI job)
 
-`crewai` **cannot be installed in the same environment** as `pydantic-ai` or
-`parlant` — their transitive pins conflict (pydantic `<2.12` vs `>=2.12`,
-opentelemetry `<1.35` vs `>=1.37`). `pyproject.toml` declares this under
-`[tool.uv] conflicts`, so `uv` resolves two separate environments ("lanes"):
+A **lane** is a CI job: a `uv` extra to install plus, for a backend lane, the setup
+that stands its backend up. Each registered adapter belongs to exactly one lane,
+**derived from its `requires`** (`dep_lane` in `requirements.py` → the unique
+non-default lane among its deps). `ci_lanes()` (`toolkit/adapters.py`) groups every
+adapter into a `CILane(id, extra, adapters)` — so a newly-registered adapter joins
+its lane for free, and the `assert_every_adapter_has_a_ci_home()` guard fails loudly
+if one lands nowhere.
 
-| Lane | Install | Has | Lacks |
-|------|---------|-----|-------|
-| **default** | `uv sync --extra dev` | everything incl. `pydantic_ai` | `crewai`, `crewai_flow` |
-| **crewai** | `uv sync --extra dev-crewai` | `crewai`, `crewai_flow` | `pydantic_ai`, `parlant` |
+| Lane | `uv` extra | Adapters | Backend the CI job provides |
+|------|-----------|----------|------------------------------|
+| `dev` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, gemini, google_adk | provider keys (secrets) |
+| `dev-crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
+| `codex` | `dev` | codex | the `codex` CLI + login + a disposable `CODEX_CWD` |
+| `opencode` | `dev` | opencode | a running `opencode serve` (`OPENCODE_BASE_URL`) |
+| `letta` | `dev` | letta | a self-hosted `letta/letta` server + a reachable Band MCP server |
 
-**Run / switch locally** — re-sync to flip lanes (same command, different extra):
+**The knob:** `BAND_E2E_LANE=<lane id>`. When set, `lane_selection.apply_lane_skips`
+(called by the conftest hook) resolves the lane's adapters from `ci_lanes()` and
+marks **skip-with-reason** every test bound to an out-of-lane adapter — matrix cells
+*and* `@with_agents` tests. An **in-lane** adapter is left untouched, so a missing
+key/CLI/server still **fails** via its `@requires` gate (an unwired backend lane is
+red by design until its setup lands). Adapter-agnostic tests always run. **Unset**
+(the local default) runs the full matrix, fail-loud.
+
+**Run locally:**
 
 ```bash
-uv sync --extra dev            # default lane
+uv sync --extra dev            # the dev-lane venv
 BAND_E2E_LANE=dev E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
-uv sync --extra dev-crewai     # crewai lane (overwrites the env)
+uv sync --extra dev-crewai     # the crewai lane (overwrites the env)
 BAND_E2E_LANE=dev-crewai E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
 ```
 
-**How the matrix handles it — the lane is derived from the registry, never a hand
-list.** The full registry stays the single source of truth (the discovery guard
-requires all 12 adapters registered, lane-independent), but no single lane can run
-all of them. Each `Dep` is classified (`requirements.py`): a provider-key dep is
-CI-satisfiable, an infra dep needs an external backend, and a venv dep names the
-`uv` extra its adapters live in. From that, `ci_lanes()` (`toolkit/adapters.py`)
-derives `{extra: [adapters]}` purely from each adapter's `requires` — so a
-newly-registered adapter joins its lane for free.
-
-The lane knob is the **`BAND_E2E_LANE`** env var (a `uv` extra: `dev` /
-`dev-crewai`). When set, `pytest_collection_modifyitems` in `conftest.py` resolves
-the lane's adapters from the registry and marks **skip-with-reason** every test
-bound to an out-of-lane or infra adapter — matrix cells *and* `@with_agents` tests —
-so each lane's report visibly lists what it didn't run and why. An **in-lane**
-adapter is left untouched, so a missing provider key still **fails** via its
-`@requires` gate (misconfig stays loud). Adapter-agnostic tests (provisioning,
-user-ops, the registry guard) always run. Unset (the default for a local run) = no
-filtering: the full matrix runs and fails loudly on any missing requirement.
-
-A second guard, `assert_every_adapter_has_a_ci_home()`, fails loudly unless every
-registered adapter is placed in exactly one lane or marked infra — so a new adapter
-(or a new `Dep`) cannot silently miss CI.
-
-Coverage is the **union of both lanes**. CI (`.github/workflows/e2e.yml`) does not
-list adapters at all: a `lanes` job emits the partition from `ci_lanes()` and the
-`e2e` job fans one job per lane (`uv sync --extra <lane>` + `BAND_E2E_LANE=<lane>`).
-Backend adapters (codex/opencode/letta) are classified infra and skip in every lane
-until a backend is wired; folding one in is a registry change (reclassify its `Dep`
-/ add its extra), not a CI-YAML edit.
+**CI** (`.github/workflows/e2e.yml`) lists no adapters: a `lanes` job emits the
+partition from `ci_lanes()` as `[{lane, extra}, …]` and the `e2e` job fans one job
+per lane (`uv sync --extra <extra>` + `BAND_E2E_LANE=<lane>`), running each backend
+lane's setup gated on `matrix.lane`. Adding an adapter to an existing lane needs no
+YAML edit; only a brand-new backend lane adds a setup block. Coverage is the union
+of all lanes.

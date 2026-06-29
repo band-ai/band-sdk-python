@@ -6,26 +6,22 @@ name: E2E (baseline)
 # them on demand from the Actions tab.
 #
 # Lanes are DERIVED FROM THE REGISTRY, not hand-listed here. The `lanes` job
-# imports the adapter registry and emits one CI lane per `uv` extra
-# (`ci_lanes()`); the `e2e` job fans out over them. This is why adding a new
-# adapter — or even a whole new conflicting-deps venv lane — needs no edit to this
-# file: a newly-registered adapter lands in its lane automatically, and the
-# drift guard (`assert_every_adapter_has_a_ci_home`) fails the `lanes` job if any
-# adapter is left unplaced.
+# imports the adapter registry and emits one CI lane per `ci_lanes()` entry; the
+# `e2e` job fans out over them. A lane is a job: it installs the lane's `uv` extra
+# and (for a backend lane) stands its backend up. Adding an adapter to an existing
+# lane needs no edit here — only a brand-new backend lane adds a setup block.
 #
-# Why lanes exist at all:
-# - crewai 1.14.3 conflicts with parlant/pydantic-ai (pydantic + opentelemetry
-#   pins — see pyproject.toml [tool.uv] conflicts), so crewai-family adapters get
-#   their own venv (`uv sync --extra dev-crewai`), like the unit `test` /
-#   `test-crewai` split in ci.yml.
-# - The baseline matrix is fail-loud: a cell whose requirement is absent FAILS.
-#   So each lane runs the full suite but `BAND_E2E_LANE` makes out-of-lane and
-#   infra (codex/opencode/letta) adapters SKIP-with-reason; an in-lane adapter
-#   whose provider key is missing still fails (misconfig stays loud).
+# Lanes today:
+# - dev          — the provider-key adapters (anthropic/openai/google families).
+# - dev-crewai   — crewai/crewai_flow (crewai conflicts with the dev venv's deps,
+#                  so it gets its own `uv` extra; see pyproject [tool.uv] conflicts).
+# - codex        — CodexAdapter (codex CLI) + the codex-acp e2e. [wired]
+# - opencode     — OpencodeAdapter against a local `opencode serve`. [TODO: phase 2]
+# - letta        — LettaAdapter against a self-hosted letta + Band MCP. [TODO: phase 3]
 #
-# Backend adapters (codex/opencode/letta) are classified INFRA and excluded from
-# every lane until a backend is wired; folding one in is a registry change
-# (reclassify its Dep / add its extra), not a YAML edit.
+# An unwired backend lane still runs: its cell fails loudly (the @requires gate
+# reports the missing CLI/server) until its setup block lands. `fail-fast: false`
+# keeps a red backend lane from blocking the others.
 
 on:
   workflow_dispatch:
@@ -79,7 +75,7 @@ jobs:
         # Fail before any test runs if the registry or lane partition has drifted.
         assert_registry_covers_discovered()
         assert_every_adapter_has_a_ci_home()
-        include = [{"lane": extra, "extra": extra} for extra in ci_lanes()]
+        include = [{"lane": lane.id, "extra": lane.extra} for lane in ci_lanes()]
         print("lanes=" + json.dumps({"include": include}))
         PY
 
@@ -92,7 +88,7 @@ jobs:
       matrix: ${{ fromJSON(needs.lanes.outputs.lanes) }}
     env:
       E2E_TESTS_ENABLED: "true"
-      # The lane = the uv extra; the registry scopes which adapters run.
+      # The registry scopes which adapters run in this lane.
       BAND_E2E_LANE: ${{ matrix.lane }}
       # The dev-crewai venv lacks the other frameworks; tolerate missing framework
       # configs there instead of failing fast (mirrors ci.yml's crewai job).
@@ -124,8 +120,40 @@ jobs:
       with:
         python-version: '3.12'
 
+    # --- Backend setup (per lane; only the matching lane's block runs) -----------
+
+    - name: Set up Node (codex)
+      if: matrix.lane == 'codex'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install + authenticate the Codex CLI (codex)
+      if: matrix.lane == 'codex'
+      env:
+        # Codex picks a model from its own catalogue; gpt-4o-mini (the openai default)
+        # is not one of them. Confirm/adjust on first dispatch if model selection errors.
+        CODEX_MODEL: gpt-5-codex
+      run: |
+        npm install -g @openai/codex
+        printenv OPENAI_API_KEY | codex login --with-api-key
+        codex login status
+        # Codex may write to its working dir, so point it at a throwaway path
+        # outside the checkout and opt in explicitly (the requirement gate enforces this).
+        echo "CODEX_CWD=$(mktemp -d)" >> "$GITHUB_ENV"
+        echo "E2E_CODEX_CWD_IS_DISPOSABLE=true" >> "$GITHUB_ENV"
+        echo "CODEX_MODEL=${CODEX_MODEL}" >> "$GITHUB_ENV"
+
+    # -----------------------------------------------------------------------------
+
     - name: Install dependencies (${{ matrix.extra }})
       run: uv sync --extra ${{ matrix.extra }}
 
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
+
+    # The codex lane also exercises the editor-facing ACP path (codex-acp via npx).
+    # It uses the same ~/.codex login and a local MCP server — no Band platform.
+    - name: Run codex-acp e2e (codex)
+      if: matrix.lane == 'codex'
+      run: uv run pytest tests/integrations/acp/test_e2e_codex_acp.py -v --no-cov

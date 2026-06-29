@@ -2,12 +2,19 @@
 
 A ``Dep`` is a capability a test (or an adapter builder) needs: a model-provider
 key, an external CLI/server, or a dependency lane. This module owns the *facts* --
-one ``DepSpec`` per ``Dep`` (its CI kind, the pure ``settings``/environment
-predicate that decides whether it is available, the human reason when it is not,
-and the ``uv`` extra a venv-gated dep needs). It deliberately imports no pytest, so
-the toolkit (registry, builders) can reference ``Dep`` without pulling in the test
-framework. The pytest glue (the ``@requires`` marker and the ``pytest.fail`` on an
-absent requirement) lives in ``..requires``.
+one ``DepSpec`` per ``Dep`` (the pure ``settings``/environment predicate that
+decides whether it is available, the human reason when it is not, and the **CI
+lane** the dep belongs to). It deliberately imports no pytest, so the toolkit
+(registry, builders) can reference ``Dep`` without pulling in the test framework.
+The pytest glue (the ``@requires`` marker and the ``pytest.fail`` on an absent
+requirement) lives in ``..requires``.
+
+Lanes: CI can't run the whole fail-loud matrix in one job -- crewai conflicts with
+the default venv's deps, and codex/opencode/letta each need a different external
+backend. Each such dep names a **lane** (a CI job); ``LANE_EXTRAS`` maps a lane to
+the ``uv`` extra it installs. Provider-key deps stay in the shared ``dev`` lane.
+The lane partition is derived from these facts (see ``toolkit.adapters.ci_lanes``),
+never a hand-maintained list.
 
 Validation policy: a missing requirement **fails** a test, it never skips. Skipping
 on absent config hides misconfiguration as false-green. The only thing that skips
@@ -34,6 +41,21 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 
 _LETTA_CLOUD_HOST = "https://api.letta.com"
 
+# The shared default lane: every provider-key adapter runs here, in the ``dev`` extra.
+DEFAULT_LANE = "dev"
+
+# Lane -> the ``uv`` extra a lane's job installs. crewai needs its own conflicting
+# extra; the backend lanes (codex/opencode/letta) install ``dev`` and stand their
+# backend up in the CI job. The names are the contract with ``pyproject.toml``
+# ``[project.optional-dependencies]`` and ``.github/workflows/e2e.yml``.
+LANE_EXTRAS: dict[str, str] = {
+    "dev": "dev",
+    "dev-crewai": "dev-crewai",
+    "codex": "dev",
+    "opencode": "dev",
+    "letta": "dev",
+}
+
 
 class Dep(Enum):
     """A capability a test or adapter builder can require.
@@ -56,41 +78,19 @@ class Dep(Enum):
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
 
 
-class DepKind(Enum):
-    """How CI can satisfy a ``Dep`` -- the axis the lane partition is derived from.
-
-    A ``PROVIDER_KEY`` is satisfiable from a GitHub secret, so its adapters run in
-    CI directly. ``INFRA`` needs an external CLI/server/cloud not present in CI, so
-    its adapters have no lane yet (they skip with a reason until a backend is
-    wired). ``VENV`` is a dependency-lane gate: its adapters run only in the lane of
-    the ``uv`` extra named by ``DepSpec.extra``.
-    """
-
-    PROVIDER_KEY = "provider_key"
-    INFRA = "infra"
-    VENV = "venv"
-
-
-# The default CI lane's ``uv`` extra. Every adapter with no VENV requirement (i.e.
-# every provider-key / infra adapter) installs and -- when runnable -- runs here.
-DEFAULT_EXTRA = "dev"
-
-
 @dataclass(frozen=True)
 class DepSpec:
     """Everything known about one ``Dep``, in a single record.
 
-    One record per ``Dep`` is the single source of truth: there are no parallel
-    tables to keep in sync. ``available`` is a pure function of
-    settings/environment (no pytest, no side effects); ``reason`` is shown when it
-    returns False; ``extra`` is the ``uv`` lane and is only meaningful for a VENV
-    dep (it defaults to the shared lane for provider-key / infra deps).
+    One record per ``Dep`` is the single source of truth. ``available`` is a pure
+    function of settings/environment (no pytest, no side effects); ``reason`` is
+    shown when it returns False; ``lane`` is the CI lane the dep gates (default: the
+    shared ``dev`` lane -- only backend/venv deps name their own lane).
     """
 
-    kind: DepKind
     available: Callable[[BaselineSettings], bool]
     reason: str
-    extra: str = DEFAULT_EXTRA
+    lane: str = DEFAULT_LANE
 
 
 def _google_available(settings: BaselineSettings) -> bool:
@@ -139,62 +139,58 @@ def _letta_available(_settings: BaselineSettings) -> bool:
 
 # The one table: Dep -> its facts. Every Dep MUST appear (enforced by
 # ``validate_dep_tables``), so a newly-added Dep cannot silently escape the lane
-# partition or the gate. A VENV dep MUST set ``extra`` (its uv lane); the extra
-# name is the contract with ``pyproject.toml`` ``[project.optional-dependencies]``.
+# partition or the gate. A dep that gates its own lane sets ``lane=`` to a key in
+# ``LANE_EXTRAS``.
 _DEPS: dict[Dep, DepSpec] = {
     Dep.OPENAI: DepSpec(
-        DepKind.PROVIDER_KEY,
         lambda s: bool(s.llm_credentials.openai_api_key),
         "OPENAI_API_KEY not set",
     ),
     Dep.ANTHROPIC: DepSpec(
-        DepKind.PROVIDER_KEY,
         lambda s: bool(s.llm_credentials.anthropic_api_key),
         "ANTHROPIC_API_KEY not set",
     ),
     Dep.GOOGLE: DepSpec(
-        DepKind.PROVIDER_KEY,
         _google_available,
         "GOOGLE_API_KEY/GEMINI_API_KEY or Vertex AI env "
         "(GOOGLE_GENAI_USE_VERTEXAI + GOOGLE_CLOUD_PROJECT) not set",
     ),
     Dep.CODEX_CLI: DepSpec(
-        DepKind.INFRA, _codex_cli_available, "Codex CLI not found on PATH"
+        _codex_cli_available, "Codex CLI not found on PATH", lane="codex"
     ),
     Dep.CODEX_CWD: DepSpec(
-        DepKind.INFRA,
         _codex_cwd_available,
         "CODEX_CWD must be an existing disposable dir outside the repo "
         "with E2E_CODEX_CWD_IS_DISPOSABLE=true",
+        lane="codex",
     ),
     Dep.OPENCODE_SERVER: DepSpec(
-        DepKind.INFRA,
         lambda _s: bool(os.environ.get("OPENCODE_BASE_URL")),
         "OPENCODE_BASE_URL not set (a running OpenCode server is required)",
+        lane="opencode",
     ),
     Dep.LETTA_CLOUD: DepSpec(
-        DepKind.INFRA,
         _letta_available,
         "LETTA_API_KEY + MCP_SERVER_URL (cloud) or a self-hosted LETTA_BASE_URL "
         "not set",
+        lane="letta",
     ),
     Dep.CREWAI: DepSpec(
-        DepKind.VENV,
         lambda _s: importlib.util.find_spec("crewai") is not None,
         "crewai is not importable (install the dev-crewai lane)",
-        extra="dev-crewai",
+        lane="dev-crewai",
     ),
 }
 
 
-def dep_kind(dep: Dep) -> DepKind:
-    """The ``DepKind`` of ``dep`` (raises ``KeyError`` if unspecified)."""
-    return _DEPS[dep].kind
+def dep_lane(dep: Dep) -> str:
+    """The CI lane ``dep`` gates: its own lane, else the shared default lane."""
+    return _DEPS[dep].lane
 
 
-def dep_extra(dep: Dep) -> str:
-    """The ``uv`` extra ``dep`` needs: its VENV extra, else the default lane's."""
-    return _DEPS[dep].extra
+def lane_extra(lane: str) -> str:
+    """The ``uv`` extra a lane installs (raises ``KeyError`` for an unknown lane)."""
+    return LANE_EXTRAS[lane]
 
 
 def requirement_reason(dep: Dep, settings: BaselineSettings) -> str | None:
@@ -204,22 +200,18 @@ def requirement_reason(dep: Dep, settings: BaselineSettings) -> str | None:
 
 
 def validate_dep_tables() -> None:
-    """Fail loudly on a ``Dep`` that is unspecified or mis-specified.
+    """Fail loudly on a ``Dep`` that is unspecified or names an unknown lane.
 
-    Every ``Dep`` must have a ``DepSpec``, and a VENV dep must name a non-default
-    ``extra`` (its own uv lane). A new member that skips either surfaces here
+    Every ``Dep`` must have a ``DepSpec``, and every dep's ``lane`` must be a known
+    lane (in ``LANE_EXTRAS``). A new member that skips either surfaces here
     (mirroring the adapter discovery guard) rather than silently falling through
     the lane partition.
     """
     missing = [dep for dep in Dep if dep not in _DEPS]
-    venv_in_default = [
-        dep
-        for dep, spec in _DEPS.items()
-        if spec.kind is DepKind.VENV and spec.extra == DEFAULT_EXTRA
-    ]
-    if missing or venv_in_default:
+    unknown_lane = [dep for dep, spec in _DEPS.items() if spec.lane not in LANE_EXTRAS]
+    if missing or unknown_lane:
         raise AssertionError(
             "Dep table is invalid:\n"
             f"  Dep members without a DepSpec: {missing}\n"
-            f"  VENV dep left in the default extra (set extra=): {venv_in_default}"
+            f"  Dep with a lane not in LANE_EXTRAS: {unknown_lane}"
         )

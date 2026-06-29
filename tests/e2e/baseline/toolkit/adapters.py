@@ -59,11 +59,10 @@ from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.requirements import (
-    DEFAULT_EXTRA,
+    DEFAULT_LANE,
     Dep,
-    DepKind,
-    dep_extra,
-    dep_kind,
+    dep_lane,
+    lane_extra,
     validate_dep_tables,
 )
 
@@ -220,74 +219,74 @@ def assert_registry_covers_discovered() -> None:
 # CI lane partition: derived from each adapter's requirements
 # =============================================================================
 #
-# CI cannot run one venv green across the whole fail-loud matrix (crewai conflicts
-# with the default lane's deps; codex/opencode/letta need external backends). The
-# partition is *derived* from each spec's ``requires`` -- never a hand-maintained
-# list -- so a newly-registered adapter lands in its lane for free and the guard
-# below fails loudly if it lands nowhere.
+# CI cannot run one job green across the whole fail-loud matrix (crewai conflicts
+# with the default venv's deps; codex/opencode/letta each need a different external
+# backend). Each adapter belongs to a *lane* -- a CI job -- derived from its
+# ``requires`` (the unique non-default ``dep_lane``), never a hand-maintained list,
+# so a newly-registered adapter lands in its lane for free and the guard below
+# fails loudly if it lands nowhere. A lane installs one ``uv`` extra (``lane_extra``)
+# and the workflow stands up that lane's backend.
 
 
-def adapter_extra(spec: AdapterSpec) -> str:
-    """The single ``uv`` extra an adapter's venv needs.
+@dataclass(frozen=True)
+class CILane:
+    """A CI lane (one job): its id, the ``uv`` extra it installs, and its adapters."""
 
-    An adapter has at most one VENV requirement (the lanes are mutually-exclusive
-    extras), so its extra is that dep's extra, else the default lane's. Two distinct
-    VENV deps would be unsatisfiable in one venv and is a configuration error.
+    id: str
+    extra: str
+    adapters: tuple[Adapter, ...]
+
+
+def adapter_lane(spec: AdapterSpec) -> str:
+    """The CI lane an adapter runs in: the unique non-default lane among its deps.
+
+    An adapter has at most one lane-defining requirement (lanes are mutually
+    exclusive -- a different venv or a different backend), so its lane is that
+    dep's lane, else the shared default lane. Two distinct non-default lanes would
+    be unsatisfiable in one job and is a configuration error.
     """
-    venv_extras = {
-        dep_extra(dep) for dep in spec.requires if dep_kind(dep) is DepKind.VENV
-    }
-    if len(venv_extras) > 1:
+    lanes = {dep_lane(dep) for dep in spec.requires} - {DEFAULT_LANE}
+    if len(lanes) > 1:
         raise ValueError(
-            f"adapter {spec.id!r} requires conflicting venv extras "
-            f"{sorted(venv_extras)}; an adapter can live in only one lane"
+            f"adapter {spec.id!r} requires conflicting lanes {sorted(lanes)}; "
+            "an adapter can live in only one lane"
         )
-    return next(iter(venv_extras), DEFAULT_EXTRA)
+    return next(iter(lanes), DEFAULT_LANE)
 
 
-def is_infra_adapter(spec: AdapterSpec) -> bool:
-    """True if any requirement is an external backend (no CI lane yet)."""
-    return any(dep_kind(dep) is DepKind.INFRA for dep in spec.requires)
+def ci_lanes() -> list[CILane]:
+    """Every registered adapter grouped into its CI lane (stable id order).
 
-
-def ci_lanes() -> dict[str, list[Adapter]]:
-    """Map each ``uv`` extra -> the CI-auto-runnable adapters that live in it.
-
-    CI-auto-runnable = no INFRA requirement (every non-VENV dep is a provider key a
-    secret can satisfy); infra adapters are excluded (see ``infra_adapters``). The
-    ``DEFAULT_EXTRA`` key is always present (even if empty) so the default lane has
-    a well-defined set. Stable id order within each lane. This is what the CI
-    workflow consumes to fan one job per lane.
+    The default lane is always present. This is what the CI workflow consumes to
+    fan one job per lane (each job installs ``lane.extra`` and provisions its
+    backend). An unwired backend lane still appears -- its cells fail loudly until
+    the workflow stands the backend up.
     """
-    lanes: dict[str, list[Adapter]] = {DEFAULT_EXTRA: []}
+    by_lane: dict[str, list[Adapter]] = {DEFAULT_LANE: []}
     for spec in specs():  # stable id order
-        if not is_infra_adapter(spec):
-            lanes.setdefault(adapter_extra(spec), []).append(spec.id)
-    return lanes
-
-
-def infra_adapters() -> list[Adapter]:
-    """Adapters gated on an external backend (in no CI lane until one is wired)."""
-    return [spec.id for spec in specs() if is_infra_adapter(spec)]
+        by_lane.setdefault(adapter_lane(spec), []).append(spec.id)
+    return [
+        CILane(id=lane, extra=lane_extra(lane), adapters=tuple(ids))
+        for lane, ids in sorted(by_lane.items())
+    ]
 
 
 def assert_every_adapter_has_a_ci_home() -> None:
-    """Fail loudly unless every registered adapter is placed for CI.
+    """Fail loudly unless every registered adapter is placed in exactly one CI lane.
 
     Partner to ``assert_registry_covers_discovered``: that guard ensures a new
-    adapter is *registered*; this one ensures it is *placed* -- ``ci_lanes()`` and
-    ``infra_adapters()`` together cover the whole registry. Building those also
-    validates the Dep table and surfaces a mis-specified adapter early (an
-    unspecified ``Dep`` raises in ``dep_kind``; two VENV deps raise in
-    ``adapter_extra``), so a new adapter cannot silently vanish from CI.
+    adapter is *registered*; this one ensures it is *placed*. Building ``ci_lanes()``
+    also validates the Dep table and surfaces a mis-specified adapter early (an
+    unspecified ``Dep`` raises in ``dep_lane``; two distinct lanes raise in
+    ``adapter_lane``), so a new adapter cannot silently vanish from CI.
     """
     validate_dep_tables()
-    placed = {a for ids in ci_lanes().values() for a in ids} | set(infra_adapters())
+    placed = {a for lane in ci_lanes() for a in lane.adapters}
     unplaced = {spec.id for spec in specs()} - placed
     if unplaced:
         raise AssertionError(
-            "adapters not placed in any CI lane or infra (ci_lanes/infra_adapters "
-            f"must cover the registry): {sorted(str(a) for a in unplaced)}"
+            "adapters not placed in any CI lane (ci_lanes must cover the "
+            f"registry): {sorted(str(a) for a in unplaced)}"
         )
 
 

@@ -131,13 +131,13 @@ File: `tests/e2e/baseline/toolkit/requirements.py` (pytest-free — that's delib
 so the registry can reference `Dep` without importing pytest).
 
 1. Add a `Dep` enum member.
-2. Add a `_DEPS[Dep.X] = DepSpec(...)` entry — one record holding the dep's `kind`
-   (`PROVIDER_KEY` / `INFRA` / `VENV`, which drives the CI lane partition), its
+2. Add a `_DEPS[Dep.X] = DepSpec(...)` entry — one record holding the dep's
    `available` predicate (a pure function of `settings`/`os.environ` returning
    `bool`), the `reason` shown when the cell **fails** (name the exact env var /
-   CLI / server), and — for a `VENV` dep only — the `uv` `extra` its adapters run
-   in. See `_codex_cli_available`, `_letta_available` for CLI-on-PATH and
-   server-URL predicates.
+   CLI / server), and — only if the dep gates its own CI lane (a different venv or
+   an external backend) — `lane=` (a key in `LANE_EXTRAS`). A provider-key dep
+   needs no `lane` (it rides the shared `dev` lane). See `_codex_cli_available`,
+   `_letta_available` for CLI-on-PATH and server-URL predicates.
 
 ```python notest
 class Dep(Enum):
@@ -147,7 +147,6 @@ class Dep(Enum):
 _DEPS = {
     ...
     Dep.MYPROVIDER: DepSpec(
-        DepKind.PROVIDER_KEY,
         lambda s: bool(s.llm_credentials.myprovider_api_key),
         "MYPROVIDER_API_KEY not set",
     ),
