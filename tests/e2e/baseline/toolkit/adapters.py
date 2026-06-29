@@ -58,7 +58,14 @@ from band.runtime.custom_tools import CustomToolDef
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.requirements import Dep
+from tests.e2e.baseline.toolkit.requirements import (
+    DEFAULT_EXTRA,
+    Dep,
+    DepKind,
+    dep_extra,
+    dep_kind,
+    validate_dep_tables,
+)
 
 
 class Adapter(StrEnum):
@@ -162,7 +169,9 @@ def _reject_tools(adapter: Adapter, tools: list[ToolSpec] | None) -> None:
 # another protocol rather than running an LLM agent (a2a/a2a_gateway/acp/slack);
 # parlant needs a running Parlant server + per-agent setup. Everything else under
 # ``band.adapters`` must be registered above.
-NON_AGENT_ADAPTERS: frozenset[str] = frozenset({"a2a", "a2a_gateway", "acp", "slack", "parlant"})
+NON_AGENT_ADAPTERS: frozenset[str] = frozenset(
+    {"a2a", "a2a_gateway", "acp", "slack", "parlant"}
+)
 
 
 def discovered_agent_ids() -> set[str]:
@@ -204,6 +213,81 @@ def assert_registry_covers_discovered() -> None:
             f"  discovered, missing an @adapter builder: {sorted(discovered - registered)}\n"
             f"  enum/registry with no module (stale or should be NON_AGENT_ADAPTERS): "
             f"{sorted((enum_values | registered) - discovered)}"
+        )
+
+
+# =============================================================================
+# CI lane partition: derived from each adapter's requirements
+# =============================================================================
+#
+# CI cannot run one venv green across the whole fail-loud matrix (crewai conflicts
+# with the default lane's deps; codex/opencode/letta need external backends). The
+# partition is *derived* from each spec's ``requires`` -- never a hand-maintained
+# list -- so a newly-registered adapter lands in its lane for free and the guard
+# below fails loudly if it lands nowhere.
+
+
+def adapter_extra(spec: AdapterSpec) -> str:
+    """The single ``uv`` extra an adapter's venv needs.
+
+    An adapter has at most one VENV requirement (the lanes are mutually-exclusive
+    extras), so its extra is that dep's extra, else the default lane's. Two distinct
+    VENV deps would be unsatisfiable in one venv and is a configuration error.
+    """
+    venv_extras = {
+        dep_extra(dep) for dep in spec.requires if dep_kind(dep) is DepKind.VENV
+    }
+    if len(venv_extras) > 1:
+        raise ValueError(
+            f"adapter {spec.id!r} requires conflicting venv extras "
+            f"{sorted(venv_extras)}; an adapter can live in only one lane"
+        )
+    return next(iter(venv_extras), DEFAULT_EXTRA)
+
+
+def is_infra_adapter(spec: AdapterSpec) -> bool:
+    """True if any requirement is an external backend (no CI lane yet)."""
+    return any(dep_kind(dep) is DepKind.INFRA for dep in spec.requires)
+
+
+def ci_lanes() -> dict[str, list[Adapter]]:
+    """Map each ``uv`` extra -> the CI-auto-runnable adapters that live in it.
+
+    CI-auto-runnable = no INFRA requirement (every non-VENV dep is a provider key a
+    secret can satisfy); infra adapters are excluded (see ``infra_adapters``). The
+    ``DEFAULT_EXTRA`` key is always present (even if empty) so the default lane has
+    a well-defined set. Stable id order within each lane. This is what the CI
+    workflow consumes to fan one job per lane.
+    """
+    lanes: dict[str, list[Adapter]] = {DEFAULT_EXTRA: []}
+    for spec in specs():  # stable id order
+        if not is_infra_adapter(spec):
+            lanes.setdefault(adapter_extra(spec), []).append(spec.id)
+    return lanes
+
+
+def infra_adapters() -> list[Adapter]:
+    """Adapters gated on an external backend (in no CI lane until one is wired)."""
+    return [spec.id for spec in specs() if is_infra_adapter(spec)]
+
+
+def assert_every_adapter_has_a_ci_home() -> None:
+    """Fail loudly unless every registered adapter is placed for CI.
+
+    Partner to ``assert_registry_covers_discovered``: that guard ensures a new
+    adapter is *registered*; this one ensures it is *placed* -- ``ci_lanes()`` and
+    ``infra_adapters()`` together cover the whole registry. Building those also
+    validates the Dep table and surfaces a mis-specified adapter early (an
+    unspecified ``Dep`` raises in ``dep_kind``; two VENV deps raise in
+    ``adapter_extra``), so a new adapter cannot silently vanish from CI.
+    """
+    validate_dep_tables()
+    placed = {a for ids in ci_lanes().values() for a in ids} | set(infra_adapters())
+    unplaced = {spec.id for spec in specs()} - placed
+    if unplaced:
+        raise AssertionError(
+            "adapters not placed in any CI lane or infra (ci_lanes/infra_adapters "
+            f"must cover the registry): {sorted(str(a) for a in unplaced)}"
         )
 
 
@@ -469,7 +553,9 @@ def _build_crewai_flow(
             return {"decision": "direct_response", "content": content, "mentions": []}
 
     return CrewAIFlowAdapter(
-        flow_factory=_E2EFlow, additional_tools=_custom_tool_defs(tools), features=features
+        flow_factory=_E2EFlow,
+        additional_tools=_custom_tool_defs(tools),
+        features=features,
     )
 
 

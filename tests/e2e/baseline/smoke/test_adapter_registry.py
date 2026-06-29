@@ -14,9 +14,12 @@ from tests.e2e.baseline.requires import Dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
     NON_AGENT_ADAPTERS,
+    assert_every_adapter_has_a_ci_home,
     assert_registry_covers_discovered,
     build_adapter,
+    ci_lanes,
     discovered_agent_ids,
+    infra_adapters,
     registered_ids,
     specs,
 )
@@ -47,6 +50,24 @@ def test_every_spec_requires_dep_members() -> None:
     for spec in specs():
         assert spec.requires, f"{spec.id} declares no requirements"
         assert all(isinstance(dep, Dep) for dep in spec.requires), spec.id
+
+
+def test_every_adapter_has_a_ci_home() -> None:
+    """Every registered adapter is placed for CI: in exactly one lane or infra.
+
+    Partner to the discovery guard — the loud failure that forces a new adapter (or
+    a new ``Dep``) to be classified into the CI lane partition rather than silently
+    missing CI."""
+    assert_every_adapter_has_a_ci_home()
+
+
+def test_ci_lanes_partition_is_complete_and_disjoint() -> None:
+    """The derived partition covers every registered adapter exactly once."""
+    in_lanes = [adapter_id for ids in ci_lanes().values() for adapter_id in ids]
+    infra = infra_adapters()
+    assert len(in_lanes) == len(set(in_lanes)), "an adapter appears in two lanes"
+    assert set(in_lanes).isdisjoint(infra)
+    assert set(in_lanes) | set(infra) == registered_ids()
 
 
 def test_supports_filter_selects_memory_adapters() -> None:

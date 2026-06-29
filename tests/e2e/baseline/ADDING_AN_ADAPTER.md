@@ -50,7 +50,7 @@ File: `tests/e2e/baseline/toolkit/adapters.py`
 The member **value must equal the module name** under `band.adapters` (the guard
 keys on this three-way: enum ⇔ registry ⇔ discovered module).
 
-```python
+```python notest
 class Adapter(StrEnum):
     ...
     MYFRAMEWORK = "myframework"   # == src/band/adapters/myframework.py
@@ -63,7 +63,7 @@ Same file, in the builder section at the bottom. The builder turns
 **ready-to-run** adapter instance. It is the seam that hides each framework's
 heterogeneous constructor.
 
-```python
+```python notest
 @adapter(Adapter.MYFRAMEWORK, requires=[Dep.OPENAI], supports=_LLM_TOOL_LOOP)
 def _build_myframework(
     s: BaselineSettings,
@@ -131,20 +131,23 @@ File: `tests/e2e/baseline/toolkit/requirements.py` (pytest-free — that's delib
 so the registry can reference `Dep` without importing pytest).
 
 1. Add a `Dep` enum member.
-2. Add a `_CHECKS[Dep.X] = (predicate, reason)` entry. The predicate is a pure
-   function of `settings`/`os.environ` returning `bool`; the reason is the
-   human-readable string shown when the cell **fails** (name the exact env var /
-   CLI / server). See `_codex_cli_available`, `_letta_available` for examples of
-   CLI-on-PATH and server-URL checks.
+2. Add a `_DEPS[Dep.X] = DepSpec(...)` entry — one record holding the dep's `kind`
+   (`PROVIDER_KEY` / `INFRA` / `VENV`, which drives the CI lane partition), its
+   `available` predicate (a pure function of `settings`/`os.environ` returning
+   `bool`), the `reason` shown when the cell **fails** (name the exact env var /
+   CLI / server), and — for a `VENV` dep only — the `uv` `extra` its adapters run
+   in. See `_codex_cli_available`, `_letta_available` for CLI-on-PATH and
+   server-URL predicates.
 
-```python
+```python notest
 class Dep(Enum):
     ...
     MYPROVIDER = "myprovider"
 
-_CHECKS = {
+_DEPS = {
     ...
-    Dep.MYPROVIDER: (
+    Dep.MYPROVIDER: DepSpec(
+        DepKind.PROVIDER_KEY,
         lambda s: bool(s.llm_credentials.myprovider_api_key),
         "MYPROVIDER_API_KEY not set",
     ),
@@ -219,7 +222,7 @@ by contrast, always means a missing enum member or builder.
 - [ ] **Step 2** — `@adapter(...)` builder with lazy import, `requires=`, `supports=`,
       mapped `prompt`, threaded `features`, and `tools` handled (forward or reject).
 - [ ] **Step 3** — `test_adapter_registry.py` green (guard satisfied).
-- [ ] **Step 4** *(only if new config)* — new `Dep` + `_CHECKS` entry; new
+- [ ] **Step 4** *(only if new config)* — new `Dep` + `_DEPS` entry; new
       credential/model field in `settings.py`; env vars documented in `CLAUDE.md`.
 - [ ] **Step 5** — custom tools forwarded or `_reject_tools(...)`.
 - [ ] **Step 6** — adapter (and capability) matrix smoke green with the backend present.

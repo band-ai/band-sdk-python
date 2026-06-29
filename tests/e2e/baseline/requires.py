@@ -10,9 +10,9 @@ Skipping a test because a key/CLI/server is absent hides misconfiguration as
 false-green. The only thing that skips is the ``E2E_TESTS_ENABLED`` master switch
 (the deliberate on/off for the whole live suite).
 
-The ``Dep`` enum and its availability checks live in the pytest-free
-``toolkit.requirements`` module (so the adapter registry can reference ``Dep``
-without importing pytest); add a requirement by extending ``_CHECKS`` there.
+The ``Dep`` enum and its facts live in the pytest-free ``toolkit.requirements``
+module (so the adapter registry can reference ``Dep`` without importing pytest);
+add a requirement by adding a ``Dep`` member and a ``_DEPS`` entry there.
 """
 
 from __future__ import annotations

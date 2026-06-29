@@ -26,7 +26,12 @@ from tests.e2e.baseline.agents import (
 )
 from tests.e2e.baseline.requires import MARKER, Dep, require_dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.adapters import build_adapter, specs
+from tests.e2e.baseline.toolkit.adapters import (
+    build_adapter,
+    ci_lanes,
+    infra_adapters,
+    specs,
+)
 from tests.e2e.baseline.toolkit.judge import Verdict
 from tests.e2e.baseline.toolkit.judge import judge as _judge
 from tests.e2e.baseline.toolkit.provisioning import (
@@ -81,23 +86,6 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             require_dep(dep, settings)
 
 
-def _selected_adapter_ids() -> frozenset[str] | None:
-    """The lane's allowed adapter ids from ``BAND_E2E_ADAPTERS`` (comma-separated).
-
-    Returns the id set, or ``None`` when the env var is unset — meaning *no*
-    filtering: the full matrix runs and fails loudly on any missing requirement,
-    as a local run should. This is the single knob a CI lane uses to run only the
-    adapters it has the venv + keys/backend for (e.g. the crewai lane sets
-    ``crewai,crewai_flow``): it *deselects* the rest at collection so their
-    fail-loud requirement never turns the lane red. Adding a backend lane later is
-    just another value of this var plus the infra those adapters need.
-    """
-    raw = os.environ.get("BAND_E2E_ADAPTERS")
-    if raw is None:
-        return None
-    return frozenset(part.strip() for part in raw.split(",") if part.strip())
-
-
 def _item_target_adapters(item: pytest.Item) -> frozenset[str]:
     """The adapter ids an item is bound to (empty = adapter-agnostic, always kept).
 
@@ -116,30 +104,61 @@ def _item_target_adapters(item: pytest.Item) -> frozenset[str]:
     return frozenset()
 
 
+def _lane_skip_reason(
+    targets: frozenset[str],
+    lane: str,
+    lane_of: dict[str, str],
+    infra: frozenset[str],
+) -> str | None:
+    """Why ``targets`` can't run in ``lane`` (skip reason), or ``None`` if in-lane.
+
+    Skip — never fail — for the two deliberate out-of-scope cases: an infra adapter
+    (external backend not wired in CI) or an adapter belonging to a different lane's
+    venv. An *in-lane* adapter is left untouched so its ``@requires`` gate still
+    *fails* on a missing provider key (misconfig stays loud). ``lane_of`` maps each
+    CI-runnable adapter to its lane (from ``ci_lanes``).
+    """
+    infra_hit = sorted(targets & infra)
+    if infra_hit:
+        return f"{infra_hit} need an external backend; no CI lane runs them yet"
+    out_of_lane = sorted(t for t in targets if lane_of.get(t) != lane)
+    if out_of_lane:
+        elsewhere = sorted({lane_of.get(t, "?") for t in out_of_lane})
+        return f"{out_of_lane} run in lane(s) {elsewhere}, not active lane {lane!r}"
+    return None
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Restrict the run to ``BAND_E2E_ADAPTERS`` when set (the CI-lane knob).
+    """Scope the run to ``BAND_E2E_LANE`` (a ``uv`` extra), resolved via the registry.
 
-    Deselects every test bound to an adapter outside the selected set — both
-    matrix cells and ``@with_agents`` tests — so a lane runs only the adapters it
-    has the venv + keys/backend for. Adapter-agnostic tests are always kept. Unset
-    leaves collection untouched (full matrix, fail-loud).
+    The lane's adapter set is *derived* (``ci_lanes`` / ``infra_adapters``), never a
+    hand list — so a newly-registered adapter joins its lane with no change here.
+    Every test bound to an out-of-lane or infra adapter is marked **skip-with-reason**
+    (visible in the lane's report); in-lane tests are untouched, so a missing
+    provider key still fails via the ``@requires`` gate. Adapter-agnostic tests
+    always run. Unset ``BAND_E2E_LANE`` leaves collection untouched (full matrix,
+    fail-loud) — the correct local default.
     """
-    selected = _selected_adapter_ids()
-    if selected is None:
+    lane = os.environ.get("BAND_E2E_LANE")
+    if lane is None:
         return
-    kept: list[pytest.Item] = []
-    deselected: list[pytest.Item] = []
+    lanes = ci_lanes()
+    if lane not in lanes:
+        raise pytest.UsageError(
+            f"BAND_E2E_LANE={lane!r} is not a known CI lane; registry lanes are "
+            f"{sorted(lanes)}"
+        )
+    lane_of = {str(a): extra for extra, ids in lanes.items() for a in ids}
+    infra = frozenset(str(a) for a in infra_adapters())
     for item in items:
         targets = _item_target_adapters(item)
-        if not targets or targets <= selected:
-            kept.append(item)
-        else:
-            deselected.append(item)
-    if deselected:
-        config.hook.pytest_deselected(items=deselected)
-        items[:] = kept
+        if not targets:
+            continue
+        reason = _lane_skip_reason(targets, lane, lane_of, infra)
+        if reason is not None:
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 @pytest.fixture(scope="session")

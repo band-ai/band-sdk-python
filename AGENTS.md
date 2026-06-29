@@ -399,6 +399,10 @@ resolves each in a separate fork.
 - `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
 - `E2E_TIMEOUT`: Response timeout in seconds for E2E tests (default: `60`)
 
+Baseline lane scoping (see `tests/e2e/baseline/README.md`):
+
+- `BAND_E2E_LANE`: The `uv` extra to scope the run to (`dev` / `dev-crewai`). Resolves the lane's adapters from the registry (`ci_lanes()`); out-of-lane and infra (codex/opencode/letta) adapters skip-with-reason while in-lane adapters keep fail-loud. Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry.
+
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
 - `BAND_E2E_AUTOCLEAN`: Reap provisioned agents + rooms on teardown (default: `true`; set `false` to keep resources for debugging a failing run)
