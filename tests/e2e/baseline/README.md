@@ -330,16 +330,26 @@ uv sync --extra dev            # default lane
 E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
 uv sync --extra dev-crewai     # crewai lane (overwrites the env)
-E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -k crewai -v -s --no-cov
+BAND_E2E_ADAPTERS=crewai,crewai_flow E2E_TESTS_ENABLED=true \
+  uv run pytest tests/e2e/baseline/ -v -s --no-cov
 ```
 
 **How the matrix handles it** — the full registry stays the source of truth (the
-discovery guard still requires all 12 adapters registered, lane-independent), but
-no single lane can run all of them. Coverage is the **union of both lanes**: CI runs
-the suite twice (`--extra dev` and `--extra dev-crewai`), and an adapter absent from
-the current lane is covered by the other. Within a lane, a cross-lane adapter's
-matrix cell is reported as a failure-with-reason (its framework isn't importable
-here) rather than hidden — so the gap is visible, and the other lane is where it
-goes green. To keep a single local run clean, scope it: `-k crewai` in the crewai
-lane, or `@across_adapters(exclude={Adapter.CREWAI, Adapter.CREWAI_FLOW})` /
-`include={...}` to target the lane you're in.
+discovery guard requires all 12 adapters registered, lane-independent), but no
+single lane can run all of them. The lane knob is the **`BAND_E2E_ADAPTERS`** env
+var (comma-separated adapter ids): when set, `pytest_collection_modifyitems` in
+`conftest.py` **deselects** every test bound to an adapter outside the set — matrix
+cells *and* `@with_agents` tests — so a lane runs only the adapters it has the venv
++ keys for, and out-of-lane adapters never turn it red. Adapter-agnostic tests
+(provisioning, user-ops, the registry guard) always run. Unset (the default for a
+local run) = no filtering: the full matrix runs and **fails loudly** on any missing
+requirement.
+
+Coverage is the **union of both lanes**. CI (`.github/workflows/e2e.yml`) runs the
+suite twice:
+
+- `--extra dev` + `BAND_E2E_ADAPTERS=anthropic,claude_sdk,agno,langgraph,pydantic_ai,gemini,google_adk`
+- `--extra dev-crewai` + `BAND_E2E_ADAPTERS=crewai,crewai_flow`
+
+Backend adapters (codex/opencode/letta) join later as another lane that provisions
+their backend and lists their ids in `BAND_E2E_ADAPTERS`.

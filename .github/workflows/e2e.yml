@@ -1,0 +1,116 @@
+name: E2E (baseline)
+
+# Manually triggered live end-to-end run of the baseline toolkit suite. These
+# tests provision real agents against a real Band platform and call real model
+# providers, so they are not run on every PR (cost + external state); trigger
+# them on demand from the Actions tab.
+#
+# Why two jobs (and not one)?
+# - crewai 1.14.3 conflicts with parlant/pydantic-ai (pydantic + opentelemetry
+#   pins — see pyproject.toml [tool.uv] conflicts), so it needs its own venv,
+#   exactly like the unit `test` / `test-crewai` split in ci.yml.
+# - The baseline matrix is fail-loud: a cell whose requirement (provider key /
+#   CLI / server) is absent FAILS, it does not skip. So a lane must run ONLY the
+#   adapters it can satisfy. The BAND_E2E_ADAPTERS env var is that knob: it
+#   deselects every test bound to an adapter outside the listed set (matrix cells
+#   AND @with_agents tests). Unset would run the full matrix and fail-loud.
+#
+# Backend adapters (codex / opencode / letta) need an external CLI / server /
+# cloud account and are intentionally left out of the lanes below. Folding them
+# in later is "just another lane": a job that provisions the backend and sets
+# BAND_E2E_ADAPTERS to those ids.
+
+on:
+  workflow_dispatch:
+
+# Serialize E2E runs: they share one live platform, so avoid two runs racing
+# (and reaping) each other's provisioned agents/rooms.
+concurrency:
+  group: e2e-baseline
+  cancel-in-progress: false
+
+jobs:
+
+  e2e-default:
+    name: e2e (default providers)
+    runs-on: ubuntu-latest
+    env:
+      E2E_TESTS_ENABLED: "true"
+      # Key-only adapters: everything that needs just a provider API key (no CLI
+      # /server). crewai/crewai_flow run in the crewai job; codex/opencode/letta
+      # need a backend and are excluded for now.
+      BAND_E2E_ADAPTERS: "anthropic,claude_sdk,agno,langgraph,pydantic_ai,gemini,google_adk"
+      # Band platform (the live target + the driver/observer user key).
+      BAND_REST_URL: ${{ secrets.BAND_REST_URL }}
+      BAND_WS_URL: ${{ secrets.BAND_WS_URL }}
+      BAND_API_KEY_USER: ${{ secrets.BAND_API_KEY_USER }}
+      # Model providers.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Configure git to use HTTPS for GitHub
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: uv sync --extra dev
+
+    - name: Run baseline E2E (default providers)
+      run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
+
+
+  e2e-crewai:
+    name: e2e (crewai lane)
+    runs-on: ubuntu-latest
+    env:
+      E2E_TESTS_ENABLED: "true"
+      # Only the crewai adapters; everything else is deselected at collection.
+      BAND_E2E_ADAPTERS: "crewai,crewai_flow"
+      # The dev-crewai venv lacks langgraph/parlant/pydantic-ai/etc.; tolerate
+      # missing framework configs instead of failing fast (mirrors ci.yml).
+      BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+      BAND_REST_URL: ${{ secrets.BAND_REST_URL }}
+      BAND_WS_URL: ${{ secrets.BAND_WS_URL }}
+      BAND_API_KEY_USER: ${{ secrets.BAND_API_KEY_USER }}
+      # crewai needs OPENAI; the LLM judge (used by some scenarios) needs ANTHROPIC.
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Configure git to use HTTPS for GitHub
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
+    - name: Install crewai dependencies
+      run: uv sync --extra dev-crewai
+
+    - name: Run baseline E2E (crewai lane)
+      run: uv run pytest tests/e2e/baseline/ -v -s --no-cov

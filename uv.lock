@@ -611,6 +611,7 @@ dev = [
     { name = "werkzeug" },
 ]
 dev-crewai = [
+    { name = "anthropic" },
     { name = "crewai" },
     { name = "httpx" },
     { name = "nest-asyncio" },
@@ -688,6 +689,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9,<4" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
+    { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0" },
     { name = "band-client-rest", specifier = "==0.0.10" },
     { name = "beautifulsoup4", marker = "extra == 'dev'", specifier = ">=4.12.0" },
     { name = "beautifulsoup4", marker = "extra == 'langgraph'", specifier = ">=4.12.0" },
