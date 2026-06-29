@@ -61,6 +61,7 @@ from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.requirements import (
     DEFAULT_LANE,
     Dep,
+    Lane,
     dep_lane,
     lane_extra,
     validate_dep_tables,
@@ -232,12 +233,12 @@ def assert_registry_covers_discovered() -> None:
 class CILane:
     """A CI lane (one job): its id, the ``uv`` extra it installs, and its adapters."""
 
-    id: str
+    id: Lane
     extra: str
     adapters: tuple[Adapter, ...]
 
 
-def adapter_lane(spec: AdapterSpec) -> str:
+def adapter_lane(spec: AdapterSpec) -> Lane:
     """The CI lane an adapter runs in: the unique non-default lane among its deps.
 
     An adapter has at most one lane-defining requirement (lanes are mutually
@@ -262,7 +263,7 @@ def ci_lanes() -> list[CILane]:
     backend). An unwired backend lane still appears -- its cells fail loudly until
     the workflow stands the backend up.
     """
-    by_lane: dict[str, list[Adapter]] = {DEFAULT_LANE: []}
+    by_lane: dict[Lane, list[Adapter]] = {DEFAULT_LANE: []}
     for spec in specs():  # stable id order
         by_lane.setdefault(adapter_lane(spec), []).append(spec.id)
     return [
@@ -566,14 +567,12 @@ def _build_codex(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    import os
-
     from band.adapters.codex import CodexAdapter, CodexAdapterConfig
 
     return CodexAdapter(
         config=CodexAdapterConfig(
-            model=os.environ.get("CODEX_MODEL", s.llm_models.openai_model),
-            cwd=os.environ["CODEX_CWD"],
+            model=s.backends.codex_model or s.llm_models.openai_model,
+            cwd=s.backends.codex_cwd,
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
@@ -589,15 +588,13 @@ def _build_opencode(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    import os
-
     from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 
     return OpencodeAdapter(
         config=OpencodeAdapterConfig(
-            base_url=os.environ["OPENCODE_BASE_URL"],
-            provider_id=os.environ.get("OPENCODE_PROVIDER_ID", "opencode"),
-            model_id=os.environ.get("OPENCODE_MODEL_ID", "minimax-m2.5-free"),
+            base_url=s.backends.opencode_base_url,
+            provider_id=s.backends.opencode_provider_id,
+            model_id=s.backends.opencode_model_id,
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
@@ -613,8 +610,6 @@ def _build_letta(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    import os
-
     from band.adapters.letta import LettaAdapter, LettaAdapterConfig
 
     _reject_tools(Adapter.LETTA, tools)
@@ -622,12 +617,11 @@ def _build_letta(
     # Only override mcp_server_url when set, so the config default applies for a
     # self-hosted server that doesn't need an externally-reachable MCP endpoint.
     config_kwargs: dict[str, Any] = {
-        "base_url": os.environ.get("LETTA_BASE_URL", "https://api.letta.com"),
-        "provider_key": os.environ.get("LETTA_API_KEY"),
-        "model": os.environ.get("LETTA_MODEL", "openai/gpt-4o-mini"),
+        "base_url": s.backends.letta_base_url,
+        "provider_key": s.backends.letta_api_key or None,
+        "model": s.backends.letta_model,
         "custom_section": prompt or "",
     }
-    mcp_server_url = os.environ.get("MCP_SERVER_URL")
-    if mcp_server_url:
-        config_kwargs["mcp_server_url"] = mcp_server_url
+    if s.backends.mcp_server_url:
+        config_kwargs["mcp_server_url"] = s.backends.mcp_server_url
     return LettaAdapter(config=LettaAdapterConfig(**config_kwargs), features=features)

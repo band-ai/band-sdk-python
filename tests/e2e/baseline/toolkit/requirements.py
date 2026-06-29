@@ -25,11 +25,10 @@ in ``..requires``; this module just reports availability.
 from __future__ import annotations
 
 import importlib.util
-import os
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -41,19 +40,35 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 
 _LETTA_CLOUD_HOST = "https://api.letta.com"
 
-# The shared default lane: every provider-key adapter runs here, in the ``dev`` extra.
-DEFAULT_LANE = "dev"
+
+class Lane(StrEnum):
+    """Typed handle for a CI lane (one e2e job).
+
+    Each member's *value* is the lane id used in ``BAND_E2E_LANE`` and the workflow
+    matrix. Like ``Adapter``, it exists so lanes are referenced by a typed handle,
+    never a magic string.
+    """
+
+    DEV = "dev"
+    DEV_CREWAI = "dev-crewai"
+    CODEX = "codex"
+    OPENCODE = "opencode"
+    LETTA = "letta"
+
+
+# The shared default lane: every provider-key adapter runs here.
+DEFAULT_LANE = Lane.DEV
 
 # Lane -> the ``uv`` extra a lane's job installs. crewai needs its own conflicting
 # extra; the backend lanes (codex/opencode/letta) install ``dev`` and stand their
-# backend up in the CI job. The names are the contract with ``pyproject.toml``
-# ``[project.optional-dependencies]`` and ``.github/workflows/e2e.yml``.
-LANE_EXTRAS: dict[str, str] = {
-    "dev": "dev",
-    "dev-crewai": "dev-crewai",
-    "codex": "dev",
-    "opencode": "dev",
-    "letta": "dev",
+# backend up in the CI job. The extra names are the contract with ``pyproject.toml``
+# ``[project.optional-dependencies]``.
+LANE_EXTRAS: dict[Lane, str] = {
+    Lane.DEV: "dev",
+    Lane.DEV_CREWAI: "dev-crewai",
+    Lane.CODEX: "dev",
+    Lane.OPENCODE: "dev",
+    Lane.LETTA: "dev",
 }
 
 
@@ -90,34 +105,35 @@ class DepSpec:
 
     available: Callable[[BaselineSettings], bool]
     reason: str
-    lane: str = DEFAULT_LANE
+    lane: Lane = DEFAULT_LANE
 
 
 def _google_available(settings: BaselineSettings) -> bool:
     """Gemini Developer API key present, or Vertex AI fully configured."""
-    if settings.llm_credentials.google_api_key or os.environ.get("GEMINI_API_KEY"):
+    creds = settings.llm_credentials
+    if creds.google_api_key or creds.gemini_api_key:
         return True
-    return os.environ.get("GOOGLE_GENAI_USE_VERTEXAI") == "true" and bool(
-        os.environ.get("GOOGLE_CLOUD_PROJECT")
+    return creds.google_genai_use_vertexai == "true" and bool(
+        creds.google_cloud_project
     )
 
 
-def _codex_cli_available(_settings: BaselineSettings) -> bool:
+def _codex_cli_available(settings: BaselineSettings) -> bool:
     """The Codex CLI (or the binary named by ``CODEX_COMMAND``) is on PATH."""
-    command = os.environ.get("CODEX_COMMAND", "")
+    command = settings.backends.codex_command
     binary = command.split()[0] if command.strip() else "codex"
     return shutil.which(binary) is not None
 
 
-def _codex_cwd_available(_settings: BaselineSettings) -> bool:
+def _codex_cwd_available(settings: BaselineSettings) -> bool:
     """``CODEX_CWD`` is an existing, explicitly-disposable dir outside the repo.
 
     Codex can write to its working directory, so the E2E run must point it at a
     throwaway path and opt in via ``E2E_CODEX_CWD_IS_DISPOSABLE`` -- never the SDK
     checkout.
     """
-    cwd = os.environ.get("CODEX_CWD")
-    if not cwd or os.environ.get("E2E_CODEX_CWD_IS_DISPOSABLE") != "true":
+    cwd = settings.backends.codex_cwd
+    if not cwd or not settings.backends.codex_cwd_is_disposable:
         return False
     path = Path(cwd).expanduser().resolve()
     if not path.is_dir():
@@ -125,15 +141,16 @@ def _codex_cwd_available(_settings: BaselineSettings) -> bool:
     return path != _REPO_ROOT and _REPO_ROOT not in path.parents
 
 
-def _letta_available(_settings: BaselineSettings) -> bool:
+def _letta_available(settings: BaselineSettings) -> bool:
     """Letta Cloud key present, or a self-hosted (non-cloud) ``LETTA_BASE_URL``."""
-    base_url = os.environ.get("LETTA_BASE_URL", _LETTA_CLOUD_HOST).rstrip("/")
+    backends = settings.backends
+    base_url = backends.letta_base_url.rstrip("/")
     if base_url != _LETTA_CLOUD_HOST:
         return True  # self-hosted server needs no cloud key
-    if not os.environ.get("LETTA_API_KEY") or not os.environ.get("MCP_SERVER_URL"):
+    if not backends.letta_api_key or not backends.mcp_server_url:
         return False
     # Letta Cloud reaches the MCP server itself, so it must be publicly routable.
-    host = urlparse(os.environ["MCP_SERVER_URL"]).hostname
+    host = urlparse(backends.mcp_server_url).hostname
     return host not in {"localhost", "127.0.0.1", "0.0.0.0"}
 
 
@@ -156,39 +173,39 @@ _DEPS: dict[Dep, DepSpec] = {
         "(GOOGLE_GENAI_USE_VERTEXAI + GOOGLE_CLOUD_PROJECT) not set",
     ),
     Dep.CODEX_CLI: DepSpec(
-        _codex_cli_available, "Codex CLI not found on PATH", lane="codex"
+        _codex_cli_available, "Codex CLI not found on PATH", lane=Lane.CODEX
     ),
     Dep.CODEX_CWD: DepSpec(
         _codex_cwd_available,
         "CODEX_CWD must be an existing disposable dir outside the repo "
         "with E2E_CODEX_CWD_IS_DISPOSABLE=true",
-        lane="codex",
+        lane=Lane.CODEX,
     ),
     Dep.OPENCODE_SERVER: DepSpec(
-        lambda _s: bool(os.environ.get("OPENCODE_BASE_URL")),
+        lambda s: bool(s.backends.opencode_base_url),
         "OPENCODE_BASE_URL not set (a running OpenCode server is required)",
-        lane="opencode",
+        lane=Lane.OPENCODE,
     ),
     Dep.LETTA_CLOUD: DepSpec(
         _letta_available,
         "LETTA_API_KEY + MCP_SERVER_URL (cloud) or a self-hosted LETTA_BASE_URL "
         "not set",
-        lane="letta",
+        lane=Lane.LETTA,
     ),
     Dep.CREWAI: DepSpec(
         lambda _s: importlib.util.find_spec("crewai") is not None,
         "crewai is not importable (install the dev-crewai lane)",
-        lane="dev-crewai",
+        lane=Lane.DEV_CREWAI,
     ),
 }
 
 
-def dep_lane(dep: Dep) -> str:
+def dep_lane(dep: Dep) -> Lane:
     """The CI lane ``dep`` gates: its own lane, else the shared default lane."""
     return _DEPS[dep].lane
 
 
-def lane_extra(lane: str) -> str:
+def lane_extra(lane: Lane) -> str:
     """The ``uv`` extra a lane installs (raises ``KeyError`` for an unknown lane)."""
     return LANE_EXTRAS[lane]
 

@@ -65,7 +65,7 @@ class BaselineRun(BaseSettings):
 
 
 class LLMCredentials(BaseSettings):
-    """Model-provider API keys (standard provider env-var names, no prefix)."""
+    """Model-provider API keys / config (standard provider env-var names, no prefix)."""
 
     model_config = SettingsConfigDict(
         env_file=".env.test", extra="ignore", case_sensitive=False
@@ -74,6 +74,42 @@ class LLMCredentials(BaseSettings):
     openai_api_key: str = ""  # OPENAI_API_KEY
     anthropic_api_key: str = ""  # ANTHROPIC_API_KEY
     google_api_key: str = ""  # GOOGLE_API_KEY (Gemini Developer API)
+    gemini_api_key: str = ""  # GEMINI_API_KEY (alternative Gemini key var)
+    # Vertex AI config (an alternative to a Gemini Developer key).
+    google_genai_use_vertexai: str = ""  # GOOGLE_GENAI_USE_VERTEXAI ("true"/"")
+    google_cloud_project: str = ""  # GOOGLE_CLOUD_PROJECT
+
+
+class Backends(BaseSettings):
+    """Config for the external-backend adapters (codex / opencode / letta).
+
+    Reads each backend's standard env vars (no shared prefix). Defaults that the
+    matrix relies on live here -- the single source -- not scattered through the
+    adapter builders or the requirement predicates.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env.test", extra="ignore", case_sensitive=False
+    )
+
+    # Codex CLI (stdio app-server).
+    codex_command: str = ""  # CODEX_COMMAND (override the `codex` binary + args)
+    codex_cwd: str = ""  # CODEX_CWD (a disposable working dir outside the repo)
+    codex_cwd_is_disposable: bool = Field(
+        default=False, validation_alias="E2E_CODEX_CWD_IS_DISPOSABLE"
+    )
+    codex_model: str = ""  # CODEX_MODEL (else falls back to the OpenAI model)
+
+    # OpenCode server.
+    opencode_base_url: str = ""  # OPENCODE_BASE_URL (a running `opencode serve`)
+    opencode_provider_id: str = "opencode"  # OPENCODE_PROVIDER_ID
+    opencode_model_id: str = "minimax-m2.5-free"  # OPENCODE_MODEL_ID
+
+    # Letta (Cloud or self-hosted) + the Band MCP server it calls for tools.
+    letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
+    letta_api_key: str = ""  # LETTA_API_KEY (Letta Cloud)
+    letta_model: str = "openai/gpt-4o-mini"  # LETTA_MODEL
+    mcp_server_url: str = ""  # MCP_SERVER_URL (the Band MCP server Letta reaches)
 
 
 class LLMModels(BaseSettings):
@@ -126,3 +162,4 @@ class BaselineSettings(BaseSettings):
     run: BaselineRun = Field(default_factory=BaselineRun)
     llm_credentials: LLMCredentials = Field(default_factory=LLMCredentials)
     llm_models: LLMModels = Field(default_factory=LLMModels)
+    backends: Backends = Field(default_factory=Backends)

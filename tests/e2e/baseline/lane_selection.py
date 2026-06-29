@@ -74,7 +74,7 @@ def apply_lane_skips(config: pytest.Config, items: list[pytest.Item]) -> None:
     if lane not in known:
         raise pytest.UsageError(
             f"BAND_E2E_LANE={lane!r} is not a known CI lane; registry lanes are "
-            f"{sorted(known)}"
+            f"{sorted(str(lane_id) for lane_id in known)}"
         )
     lane_of = {str(a): cl.id for cl in lanes for a in cl.adapters}
     for item in items:
