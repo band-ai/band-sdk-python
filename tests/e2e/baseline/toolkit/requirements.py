@@ -35,9 +35,10 @@ from pathlib import Path
 
 from tests.e2e.baseline.settings import BaselineSettings
 
-# Repo root, used to reject a Codex working directory that lives inside the SDK
-# checkout (a destructive-agent guard). settings.py is at tests/e2e/baseline/.
-_REPO_ROOT = Path(__file__).resolve().parents[4]
+# Repo root (this file is at tests/e2e/baseline/toolkit/). Used to reject a Codex
+# working directory inside the SDK checkout, and shared with the rest of the
+# toolkit (e.g. locating the e2e workflow) so the depth assumption lives once.
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 _LETTA_CLOUD_HOST = "https://api.letta.com"
 
@@ -135,7 +136,7 @@ def _codex_cwd_available(settings: BaselineSettings) -> bool:
     path = Path(cwd).expanduser().resolve()
     if not path.is_dir():
         return False
-    return path != _REPO_ROOT and _REPO_ROOT not in path.parents
+    return path != REPO_ROOT and REPO_ROOT not in path.parents
 
 
 def _letta_available(settings: BaselineSettings) -> bool:
@@ -145,9 +146,10 @@ def _letta_available(settings: BaselineSettings) -> bool:
     Letta server: a self-hosted base_url needs no key, Letta Cloud needs its key.
     """
     backends = settings.backends
-    base_url = backends.letta_base_url.rstrip("/")
-    if base_url != _LETTA_CLOUD_HOST:
-        return True  # self-hosted server needs no cloud key
+    base_url = backends.letta_base_url.strip().rstrip("/")
+    if base_url and base_url != _LETTA_CLOUD_HOST:
+        return True  # a real self-hosted server needs no cloud key
+    # Unset/blank base_url defaults to (or means) Letta Cloud, which needs a key.
     return bool(backends.letta_api_key)
 
 

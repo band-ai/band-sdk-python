@@ -62,6 +62,7 @@ from tests.e2e.baseline.toolkit.tools import ToolSpec
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.requirements import (
     DEFAULT_LANE,
+    REPO_ROOT,
     Dep,
     Lane,
     dep_lane,
@@ -293,10 +294,10 @@ def assert_every_adapter_has_a_ci_home() -> None:
         )
 
 
-# The e2e workflow, relative to this file (tests/e2e/baseline/toolkit/adapters.py).
-_E2E_WORKFLOW = Path(__file__).resolve().parents[4] / ".github/workflows/e2e.yml"
-# A `matrix.lane == 'x'` / `!= 'x'` gate literal in the workflow.
-_LANE_GATE_RE = re.compile(r"matrix\.lane\s*[!=]=\s*'([^']+)'")
+# The e2e workflow (REPO_ROOT is the single source of the checkout-depth assumption).
+_E2E_WORKFLOW = REPO_ROOT / ".github/workflows/e2e.yml"
+# A `matrix.lane == 'x'` / `!= "x"` gate literal in the workflow (either quote style).
+_LANE_GATE_RE = re.compile(r"""matrix\.lane\s*[!=]=\s*["']([^"']+)["']""")
 
 
 def workflow_lane_gate_ids(workflow_path: Path = _E2E_WORKFLOW) -> set[str]:
@@ -668,7 +669,7 @@ def _build_letta(
             provider_key=s.backends.letta_api_key or None,
             model=s.backends.letta_model,
             custom_section=prompt or "",
-            mcp_server_url=s.backends.mcp_server_url or None,
+            mcp_server_url=s.backends.mcp_server_url.strip() or None,
         ),
         features=features,
     )
