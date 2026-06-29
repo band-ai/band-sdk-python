@@ -170,7 +170,9 @@ class TestACPRuntime:
     async def test_set_permission_handler_delegates_to_client(self) -> None:
         runtime = ACPRuntime(command=["codex"])
         runtime._client = ACPCollectingClient()
-        handler = AsyncMock(return_value={"outcome": {"outcome": "allowed"}})
+        handler = AsyncMock(
+            return_value={"outcome": {"outcome": "selected", "optionId": "p-once"}}
+        )
 
         runtime.set_permission_handler("sess-1", handler)
         runtime.reset_session("sess-2")
