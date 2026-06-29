@@ -23,7 +23,8 @@ from pydantic import BaseModel
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Emit
-from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
+from band.runtime.custom_tools import get_custom_tool_name
+from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 from tests.e2e.baseline.settings import BaselineSettings
 
@@ -57,8 +58,8 @@ def _weather(args: WeatherInput) -> str:
 LOOKUP = get_custom_tool_name(LookupInput)
 WEATHER = get_custom_tool_name(WeatherInput)
 
-LOOKUP_TOOL: CustomToolDef = (LookupInput, _lookup)
-WEATHER_TOOL: CustomToolDef = (WeatherInput, _weather)
+LOOKUP_TOOL = ToolSpec(LookupInput, _lookup)
+WEATHER_TOOL = ToolSpec(WeatherInput, _weather)
 
 LOOKUP_PROMPT = (
     f"You have a tool `{LOOKUP}` that returns the secret access code for a key. "
@@ -87,7 +88,7 @@ EXECUTION_REPORTING = {"features": AdapterFeatures(emit={Emit.EXECUTION})}
 def build_tool_agent(
     settings: BaselineSettings,
     *,
-    tools: list[CustomToolDef],
+    tools: list[ToolSpec],
     prompt: str,
 ) -> SimpleAdapter:
     """An Anthropic agent exposing ``tools`` with execution reporting enabled.
@@ -99,6 +100,6 @@ def build_tool_agent(
         model=settings.llm_models.anthropic_model,
         provider_key=settings.llm_credentials.anthropic_api_key,
         prompt=prompt,
-        additional_tools=tools,
+        additional_tools=[t.as_custom_tool_def() for t in tools],
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )

@@ -24,8 +24,8 @@ subset) — use ``@across_adapters(...)``, the sibling that drives the
 ``matrix_agent`` fixture::
 
     @across_adapters(supports={Capability.MEMORY})
-    async def test_l2(matrix_agent, ...):
-        adapter_id, agent = matrix_agent
+    async def test_l2(adapter_id, matrix_agent, ...):
+        ...  # adapter_id: str, matrix_agent: ProvisionedAgent (request what you use)
 
 ``Adapter`` is re-exported here so a test imports both from one place.
 """
@@ -42,7 +42,7 @@ from band.core.types import AdapterFeatures, Capability
 
 from tests.e2e.baseline.requires import requires
 from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
-from band.runtime.custom_tools import CustomToolDef
+from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 __all__ = [
     "Adapter",
@@ -68,7 +68,7 @@ class AgentsRequest:
     adapters: tuple[Adapter, ...]
     prompt: str | None
     features: AdapterFeatures | None
-    tools: list[CustomToolDef] | None
+    tools: list[ToolSpec] | None
 
 
 @dataclass(frozen=True)
@@ -77,14 +77,14 @@ class MatrixBuild:
 
     prompt: str | None
     features: AdapterFeatures | None
-    tools: list[CustomToolDef] | None
+    tools: list[ToolSpec] | None
 
 
 def with_agents(
     *adapters: Adapter,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> Callable[[Callable[..., object]], Callable[..., object]]:
     """Declare the adapters a test runs; inject them via ``agent`` / ``agents``.
 
@@ -109,9 +109,9 @@ def with_agents(
 
 
 def adapter_params(
-    include: Collection[str] | None = None,
+    include: Collection[Adapter] | None = None,
     *,
-    exclude: Collection[str] | None = None,
+    exclude: Collection[Adapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
 ) -> list[ParameterSet]:
@@ -134,14 +134,14 @@ def adapter_params(
 
 
 def across_adapters(
-    include: Collection[str] | None = None,
+    include: Collection[Adapter] | None = None,
     *,
-    exclude: Collection[str] | None = None,
+    exclude: Collection[Adapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> Callable[[Callable[..., object]], Callable[..., object]]:
     """Run a test across the adapter matrix via the ``matrix_agent``
     fixture — the parametrized sibling of ``@with_agents``.
@@ -170,7 +170,7 @@ def across_adapters(
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
         fn = pytest.mark.parametrize("adapter_id", params, indirect=True)(fn)
-        if prompt is not None or features is not None:
+        if prompt is not None or features is not None or tools is not None:
             fn = getattr(pytest.mark, MATRIX_MARKER)(build)(fn)
         return fn
 

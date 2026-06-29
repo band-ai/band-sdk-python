@@ -46,8 +46,9 @@ gate, no construction, no lifecycle, no cleanup.
 | two of the **same** adapter | `@with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC)` | `agents` |
 | the **same scenario across every adapter** | request the matrix fixtures (no decorator needed for the full set) | `matrix_agent` + `adapter_id` |
 | a **subset** of adapters | `@across_adapters(include={...} / exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY})` | `matrix_agent` + `adapter_id` |
-| custom tools on a stock adapter | `@with_agents(Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=..., **EXECUTION_REPORTING)` | `agent` |
-| a **bespoke** build (different tools per agent in one room, or an unsupported framework) | `build_tool_agent(...)` + `async with running_provisioned_agent(...) as agent:` | the `ProvisionedAgent` |
+| custom tools (any tool-capable framework) | `@with_agents(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
+| custom tools across the matrix | `@across_adapters(include={Adapter.ANTHROPIC, Adapter.PYDANTIC_AI, Adapter.AGNO}, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` | `matrix_agent` + `adapter_id` |
+| a **bespoke** build (different tools per agent in one room) | `build_tool_agent(...)` + `async with running_provisioned_agent(...) as agent:` | the `ProvisionedAgent` |
 
 - **Reference adapters by the typed `Adapter` enum, never a string.**
 - **Steer construction with a shape, don't re-spell args:** `@with_agents(Adapter.X, **TOOL_AGENT)`
@@ -55,11 +56,12 @@ gate, no construction, no lifecycle, no cleanup.
   surfaced as `tool_call` events). `@across_adapters(..., **MEMORY_AGENT)` works too.
 - `matrix_agent` is the cell's running `ProvisionedAgent`; `adapter_id` is its id —
   request whichever you use (no `adapter_id, agent = …` unpacking).
-- **Custom tools:** pass `tools=[CustomToolDef, ...]` to `@with_agents` /
-  `@across_adapters` (forwarded as `additional_tools`); add `**EXECUTION_REPORTING`
-  to make the calls observable via `capture.tool_calls`. Adapters that can't take
-  band `CustomToolDef` (agno, letta, pydantic-ai) **reject** `tools` with a clear
-  error rather than silently drop them.
+- **Custom tools:** define a tool once as a `ToolSpec` (input model + handler) and
+  pass `tools=[LOOKUP_TOOL]` to `@with_agents` / `@across_adapters`; the builders
+  translate it to each framework's native form (band `CustomToolDef`, a pydantic-ai
+  `RunContext` callable, an agno tool). Add `**EXECUTION_REPORTING` to observe the
+  calls via `capture.tool_calls`. Only letta can't accept a local tool (MCP) and
+  **rejects** `tools` with a clear error rather than silently dropping it.
 
 ### Driving and observing a turn
 
@@ -110,6 +112,11 @@ These three are why the toolkit is shaped the way it is — keep them when exten
   reason, never silently** — a missing key/CLI/server fails (never skips), an
   unregistered adapter fails the discovery guard, and an adapter that can't honor
   `tools` rejects rather than dropping them. No special cases a reader has to memorize.
+- **Single source of truth** — each fact lives in exactly one place and is referenced,
+  never re-spelled: adapter ids are the typed `Adapter` enum (no magic strings —
+  `include`/`exclude` take `Adapter` members), a custom tool is one `ToolSpec`, and
+  prompt/feature bundles are shapes (`**TOOL_AGENT` / `**MEMORY_AGENT` /
+  `**EXECUTION_REPORTING`). Change the fact once; every test follows.
 - **Simplicity** — the test is the *scenario*, not the scaffolding. Provisioning,
   gating, running, reaping, and cleanup live in fixtures/decorators, so a test body
   is just "send this, expect that". If a test grows plumbing, the plumbing belongs in
@@ -125,10 +132,11 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | Path | What it is |
 |------|------------|
 | `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent` (yields the running agent's `ProvisionedAgent`), `ProvisionedAgent` |
-| `toolkit/adapters.py` | adapter registry: `Adapter` enum, `@adapter` builders, `build_adapter`, `specs`, the discovery guard |
+| `toolkit/adapters.py` | adapter registry: `Adapter` enum (the **one** source of adapter ids), `@adapter` builders, `build_adapter`, `specs`, the discovery guard |
+| `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
 | `agents.py` | matrix/decorator glue: `@with_agents(Adapter.X, ...)` (fixed set → `agent`/`agents`), `@across_adapters(include/exclude/supports/without, prompt=, features=)` (matrix/subset → `matrix_agent` + `adapter_id`), `adapter_params` |
 | `smoke/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_agents(..., **SHAPE)`, `build_agent`, and the `*_instruction(...)` builders |
-| `smoke/sample_tools.py` | `build_tool_agent(...)` + sample custom tools/prompts (`LOOKUP_TOOL`, `WEATHER_TOOL`, …) for bespoke custom-tool agents |
+| `smoke/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, the `EXECUTION_REPORTING` shape, and `build_tool_agent(...)` (bespoke per-agent-differing builds) |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
@@ -302,3 +310,36 @@ any `@requires(Dep.X)` requirement **fails** when absent, naming the missing env
 var/CLI/server. Consequence: no single environment turns the full adapter matrix
 green (crewai needs the `dev-crewai` lane; codex/opencode/letta need their backend) —
 a red cell means "this backend isn't wired up", which is intended.
+
+## Dependency lanes (the crewai mutual exclusion)
+
+`crewai` **cannot be installed in the same environment** as `pydantic-ai` or
+`parlant` — their transitive pins conflict (pydantic `<2.12` vs `>=2.12`,
+opentelemetry `<1.35` vs `>=1.37`). `pyproject.toml` declares this under
+`[tool.uv] conflicts`, so `uv` resolves two separate environments ("lanes"):
+
+| Lane | Install | Has | Lacks |
+|------|---------|-----|-------|
+| **default** | `uv sync --extra dev` | everything incl. `pydantic_ai` | `crewai`, `crewai_flow` |
+| **crewai** | `uv sync --extra dev-crewai` | `crewai`, `crewai_flow` | `pydantic_ai`, `parlant` |
+
+**Run / switch locally** — re-sync to flip lanes (same command, different extra):
+
+```bash
+uv sync --extra dev            # default lane
+E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov
+
+uv sync --extra dev-crewai     # crewai lane (overwrites the env)
+E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -k crewai -v -s --no-cov
+```
+
+**How the matrix handles it** — the full registry stays the source of truth (the
+discovery guard still requires all 12 adapters registered, lane-independent), but
+no single lane can run all of them. Coverage is the **union of both lanes**: CI runs
+the suite twice (`--extra dev` and `--extra dev-crewai`), and an adapter absent from
+the current lane is covered by the other. Within a lane, a cross-lane adapter's
+matrix cell is reported as a failure-with-reason (its framework isn't importable
+here) rather than hidden — so the gap is visible, and the other lane is where it
+goes green. To keep a single local run clean, scope it: `-k crewai` in the crewai
+lane, or `@across_adapters(exclude={Adapter.CREWAI, Adapter.CREWAI_FLOW})` /
+`include={...}` to target the lane you're in.

@@ -2,7 +2,7 @@
 
 These prove the registry is self-consistent and that a newly-added adapter cannot
 be silently skipped: the folder scan over ``src/band/adapters/`` (minus the
-documented DENY bridges) must equal the registered set exactly. They construct
+documented NON_AGENT_ADAPTERS bridges) must equal the registered set exactly. They construct
 nothing, so they run in any lane.
 """
 
@@ -13,7 +13,7 @@ import pytest
 from tests.e2e.baseline.requires import Dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
-    DENY,
+    NON_AGENT_ADAPTERS,
     assert_registry_covers_discovered,
     build_adapter,
     discovered_agent_ids,
@@ -30,8 +30,8 @@ def test_registry_covers_discovered_adapters() -> None:
 
 def test_deny_list_is_disjoint_from_registry() -> None:
     """The excluded bridges/parlant are never registered as matrix adapters."""
-    assert DENY.isdisjoint(registered_ids())
-    assert DENY.isdisjoint(discovered_agent_ids())
+    assert NON_AGENT_ADAPTERS.isdisjoint(registered_ids())
+    assert NON_AGENT_ADAPTERS.isdisjoint(discovered_agent_ids())
 
 
 def test_build_adapter_rejects_unknown_id(

@@ -8,6 +8,7 @@ tools add their fixtures here as they are built.
 from __future__ import annotations
 
 import functools
+import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 
@@ -78,6 +79,67 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         # requires() always wraps deps in a tuple; guard the raw-marker case.
         for dep in marker.args[0] if marker.args else ():
             require_dep(dep, settings)
+
+
+def _selected_adapter_ids() -> frozenset[str] | None:
+    """The lane's allowed adapter ids from ``BAND_E2E_ADAPTERS`` (comma-separated).
+
+    Returns the id set, or ``None`` when the env var is unset — meaning *no*
+    filtering: the full matrix runs and fails loudly on any missing requirement,
+    as a local run should. This is the single knob a CI lane uses to run only the
+    adapters it has the venv + keys/backend for (e.g. the crewai lane sets
+    ``crewai,crewai_flow``): it *deselects* the rest at collection so their
+    fail-loud requirement never turns the lane red. Adding a backend lane later is
+    just another value of this var plus the infra those adapters need.
+    """
+    raw = os.environ.get("BAND_E2E_ADAPTERS")
+    if raw is None:
+        return None
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _item_target_adapters(item: pytest.Item) -> frozenset[str]:
+    """The adapter ids an item is bound to (empty = adapter-agnostic, always kept).
+
+    A matrix cell carries its id as the ``adapter_id`` callspec param; a
+    ``@with_agents`` test carries its adapters on the AGENTS_MARKER. Tests with
+    neither (provisioning, user-ops, the registry guard) target no adapter and run
+    in every lane.
+    """
+    callspec = getattr(item, "callspec", None)
+    if callspec is not None and "adapter_id" in callspec.params:
+        return frozenset({str(callspec.params["adapter_id"])})
+    marker = item.get_closest_marker(AGENTS_MARKER)
+    if marker is not None:
+        request: AgentsRequest = marker.args[0]
+        return frozenset(str(adapter) for adapter in request.adapters)
+    return frozenset()
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config, items: list[pytest.Item]
+) -> None:
+    """Restrict the run to ``BAND_E2E_ADAPTERS`` when set (the CI-lane knob).
+
+    Deselects every test bound to an adapter outside the selected set — both
+    matrix cells and ``@with_agents`` tests — so a lane runs only the adapters it
+    has the venv + keys/backend for. Adapter-agnostic tests are always kept. Unset
+    leaves collection untouched (full matrix, fail-loud).
+    """
+    selected = _selected_adapter_ids()
+    if selected is None:
+        return
+    kept: list[pytest.Item] = []
+    deselected: list[pytest.Item] = []
+    for item in items:
+        targets = _item_target_adapters(item)
+        if not targets or targets <= selected:
+            kept.append(item)
+        else:
+            deselected.append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = kept
 
 
 @pytest.fixture(scope="session")

@@ -21,7 +21,7 @@ import logging
 
 import pytest
 
-from tests.e2e.baseline.agents import across_adapters
+from tests.e2e.baseline.agents import Adapter, across_adapters
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 ROUNDS = 4
 
 
-@across_adapters(include={"anthropic", "langgraph"})
+@across_adapters(include={Adapter.ANTHROPIC, Adapter.LANGGRAPH})
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_barrier_settles_message_burst(

@@ -321,6 +321,8 @@ tests/
 Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
 — it documents the reusable baseline toolkit (provisioning, user ops, reply
 capture, judge, assertions, fixtures) so you reuse it instead of rebuilding it.
+To wire a new framework adapter into the matrix, follow
+`tests/e2e/baseline/ADDING_AN_ADAPTER.md`.
 
 ## Commands
 
@@ -395,7 +397,7 @@ resolves each in a separate fork.
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-4o-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
 - `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
-- `E2E_TIMEOUT`: Response timeout in seconds for E2E tests (default: `30`)
+- `E2E_TIMEOUT`: Response timeout in seconds for E2E tests (default: `60`)
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 

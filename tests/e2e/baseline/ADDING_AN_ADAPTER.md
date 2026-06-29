@@ -29,20 +29,17 @@ Everything below is the register path.
 
 ---
 
-## `NON_AGENT_ADAPTERS` — TBD
+## `NON_AGENT_ADAPTERS` — excluding a bridge
 
-> **Not yet implemented — to be developed later.**
->
-> The "deny" path above refers to a `NON_AGENT_ADAPTERS` set that will hold the
-> module names the matrix deliberately excludes (protocol bridges like
-> a2a/a2a_gateway/acp/slack, and frameworks needing bespoke live setup like
-> parlant). Today this list exists in `toolkit/adapters.py` under the name `DENY`;
-> the plan is to rename/formalize it as `NON_AGENT_ADAPTERS` with clearer semantics
-> (why each module is excluded, and how the discovery guard reports it).
->
-> Until that lands, add a non-agent module to the existing `DENY` set. This section
-> will be filled in with the final API, the exclusion rationale per module, and any
-> categorization (bridge vs. live-server-required) once the work is done.
+Some `band.adapters` modules are **not** LLM-agent adapters: protocol bridges
+(`a2a`, `a2a_gateway`, `acp`, `slack`) expose Band to another protocol rather than
+running the tool loop, and `parlant` needs a bespoke live server. They live in the
+`NON_AGENT_ADAPTERS` frozenset in `toolkit/adapters.py`; `discovered_agent_ids()`
+subtracts them from the folder scan, so the guard neither expects a builder nor an
+enum member for them.
+
+To exclude a new non-agent module, add its module name to `NON_AGENT_ADAPTERS` —
+one edit, and the discovery guard stops demanding registration for it.
 
 ---
 
@@ -73,7 +70,7 @@ def _build_myframework(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     # Lazy-import the framework INSIDE the builder so importing this module
     # (which triggers registration) never pulls in an absent optional dep.
@@ -83,7 +80,7 @@ def _build_myframework(
         model=s.llm_models.openai_model,
         prompt=prompt,            # map to whatever arg your framework uses:
                                   # prompt / custom_section / system_prompt / instructions
-        additional_tools=tools,   # or call _reject_tools(...) — see Step 5
+        additional_tools=_custom_tool_defs(tools),  # translate ToolSpec -> CustomToolDef; or _reject_tools(...) — see Step 5
         features=features,
     )
 ```
@@ -180,10 +177,13 @@ The matrix can pass `tools=[CustomToolDef, ...]` (from `@with_agents(..., tools=
 
 - If your framework accepts band `CustomToolDef`s, forward them as
   `additional_tools=tools`.
-- If it **can't** (it owns its own tool list, uses native callables, or exposes
-  tools via MCP — like agno / pydantic-ai / letta), call
-  `_reject_tools(Adapter.MYFRAMEWORK, tools)` at the top of the builder. This
-  **fails loudly** when a test asks for tools your adapter can't honor, instead of
+- If your framework takes tools in a different form, translate the `ToolSpec`:
+  agno uses `t.as_callable()` (a plain callable), pydantic-ai uses
+  `t.as_callable(ctx_annotation=RunContext)` (a `RunContext`-first callable).
+- If it genuinely **can't** accept a locally-defined tool (only letta today —
+  its tools live on an MCP server), call `_reject_tools(Adapter.MYFRAMEWORK, tools)`
+  at the top of the builder. This **fails loudly** when a test asks for tools your
+  adapter can't honor, instead of
   silently dropping them (which would be a false green).
 
 ---

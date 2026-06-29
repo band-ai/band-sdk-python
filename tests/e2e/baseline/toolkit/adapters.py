@@ -15,11 +15,12 @@ and a decorated builder::
         MYFRAMEWORK = "myframework"
 
     @adapter(Adapter.MYFRAMEWORK, requires=[Dep.OPENAI], supports=[Capability.MEMORY])
-    def _build_myframework(settings, *, prompt, features):
+    def _build_myframework(settings, *, prompt, features, tools=None):
         from band.adapters.myframework import MyframeworkAdapter
         return MyframeworkAdapter(
             model=settings.llm_models.openai_model,
             custom_section=prompt,
+            additional_tools=_custom_tool_defs(tools),
             features=features,
         )
 
@@ -54,6 +55,7 @@ import band.adapters
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.custom_tools import CustomToolDef
+from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.requirements import Dep
@@ -133,14 +135,17 @@ def spec_for(name: Adapter) -> AdapterSpec:
     return _REGISTRY[name]
 
 
-def _reject_tools(adapter: Adapter, tools: list[CustomToolDef] | None) -> None:
+def _custom_tool_defs(tools: list[ToolSpec] | None) -> list[CustomToolDef] | None:
+    """ToolSpecs as band ``CustomToolDef``s for the tool-loop adapters (or None)."""
+    return [t.as_custom_tool_def() for t in tools] if tools else None
+
+
+def _reject_tools(adapter: Adapter, tools: list[ToolSpec] | None) -> None:
     """Fail loudly when custom tools are asked of an adapter that can't take them.
 
-    Agno owns its agent's tool list (a per-run factory), Letta exposes tools via
-    its MCP server, and pydantic-ai takes native callables (not band
-    ``CustomToolDef`` tuples) — so none accept baseline custom tools here.
-    Consistent with the toolkit's fail-loudly rule, reject rather than silently
-    drop the tools a test requested (which would be a false green).
+    Letta exposes tools via its MCP server, so it can't take a locally-defined
+    ``ToolSpec``. Consistent with the toolkit's fail-loudly rule, reject rather
+    than silently drop the tools a test requested (which would be a false green).
     """
     if tools:
         raise ValueError(
@@ -157,11 +162,11 @@ def _reject_tools(adapter: Adapter, tools: list[CustomToolDef] | None) -> None:
 # another protocol rather than running an LLM agent (a2a/a2a_gateway/acp/slack);
 # parlant needs a running Parlant server + per-agent setup. Everything else under
 # ``band.adapters`` must be registered above.
-DENY: frozenset[str] = frozenset({"a2a", "a2a_gateway", "acp", "slack", "parlant"})
+NON_AGENT_ADAPTERS: frozenset[str] = frozenset({"a2a", "a2a_gateway", "acp", "slack", "parlant"})
 
 
 def discovered_agent_ids() -> set[str]:
-    """The LLM-agent adapter ids present in ``src/band/adapters/`` (minus DENY).
+    """The LLM-agent adapter ids present in ``src/band/adapters/`` (minus NON_AGENT_ADAPTERS).
 
     Scans module *names* only (``pkgutil`` does not import them), so an adapter
     whose optional dependency is absent is still discovered and never breaks
@@ -172,7 +177,7 @@ def discovered_agent_ids() -> set[str]:
         for module in pkgutil.iter_modules(band.adapters.__path__)
         if not module.name.startswith("_")
     }
-    return names - DENY
+    return names - NON_AGENT_ADAPTERS
 
 
 def registered_ids() -> set[str]:
@@ -183,9 +188,9 @@ def assert_registry_covers_discovered() -> None:
     """Fail loudly on any drift between enum, registry, and discovered modules.
 
     Three sources must agree exactly: the ``Adapter`` enum, the ``@adapter``
-    registry, and the agent modules under ``src/band/adapters/`` (minus DENY).
+    registry, and the agent modules under ``src/band/adapters/`` (minus NON_AGENT_ADAPTERS).
     A new framework with no enum member / no builder, or a stale entry (an enum
-    member or builder with no module, or a module that should be in DENY) all
+    member or builder with no module, or a module that should be in NON_AGENT_ADAPTERS) all
     surface here rather than being silently skipped.
     """
     enum_values = {member.value for member in Adapter}
@@ -197,7 +202,7 @@ def assert_registry_covers_discovered() -> None:
             "src/band/adapters/ must match):\n"
             f"  discovered, missing an Adapter member: {sorted(discovered - enum_values)}\n"
             f"  discovered, missing an @adapter builder: {sorted(discovered - registered)}\n"
-            f"  enum/registry with no module (stale or should be DENY): "
+            f"  enum/registry with no module (stale or should be NON_AGENT_ADAPTERS): "
             f"{sorted((enum_values | registered) - discovered)}"
         )
 
@@ -209,8 +214,8 @@ def assert_registry_covers_discovered() -> None:
 
 def specs(
     *,
-    include: Collection[str] | None = None,
-    exclude: Collection[str] | None = None,
+    include: Collection[Adapter] | None = None,
+    exclude: Collection[Adapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
 ) -> list[AdapterSpec]:
@@ -242,7 +247,7 @@ def build_adapter(
     *,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     """Construct the adapter registered under ``adapter_id``.
 
@@ -276,7 +281,7 @@ def _build_anthropic(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.anthropic import AnthropicAdapter
 
@@ -284,7 +289,7 @@ def _build_anthropic(
         model=s.llm_models.anthropic_model,
         provider_key=s.llm_credentials.anthropic_api_key or None,
         prompt=prompt,
-        additional_tools=tools,
+        additional_tools=_custom_tool_defs(tools),
         features=features,
     )
 
@@ -295,14 +300,14 @@ def _build_claude_sdk(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.claude_sdk import ClaudeSDKAdapter
 
     return ClaudeSDKAdapter(
         model=s.llm_models.anthropic_model,
         custom_section=prompt,
-        additional_tools=tools,
+        additional_tools=_custom_tool_defs(tools),
         features=features,
     )
 
@@ -313,7 +318,7 @@ def _build_langgraph(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import MemorySaver
@@ -327,7 +332,7 @@ def _build_langgraph(
         ),
         checkpointer=MemorySaver(),
         custom_section=prompt or "",
-        additional_tools=tools,
+        additional_tools=_custom_tool_defs(tools),
         features=features,
     )
 
@@ -338,14 +343,20 @@ def _build_pydantic_ai(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
+    from pydantic_ai import RunContext
+
     from band.adapters.pydantic_ai import PydanticAIAdapter
 
-    _reject_tools(Adapter.PYDANTIC_AI, tools)
+    # pydantic-ai takes native callables with a RunContext-first signature.
+    native = (
+        [t.as_callable(ctx_annotation=RunContext) for t in tools] if tools else None
+    )
     return PydanticAIAdapter(
         model=f"openai:{s.llm_models.openai_model}",
         custom_section=prompt,
+        additional_tools=native,
         features=features,
     )
 
@@ -356,7 +367,7 @@ def _build_gemini(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.gemini import GeminiAdapter
 
@@ -364,7 +375,7 @@ def _build_gemini(
         model=s.llm_models.gemini_model,
         provider_key=s.llm_credentials.google_api_key or None,
         prompt=prompt,
-        additional_tools=tools,
+        additional_tools=_custom_tool_defs(tools),
         features=features,
     )
 
@@ -375,7 +386,7 @@ def _build_google_adk(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.google_adk import GoogleADKAdapter
 
@@ -383,7 +394,7 @@ def _build_google_adk(
     return GoogleADKAdapter(
         model=s.llm_models.gemini_model,
         custom_section=prompt,
-        additional_tools=tools,
+        additional_tools=_custom_tool_defs(tools),
         features=features,
     )
 
@@ -394,7 +405,7 @@ def _build_crewai(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.crewai import CrewAIAdapter
 
@@ -404,7 +415,7 @@ def _build_crewai(
         goal="Help users with simple tasks for testing.",
         backstory="A test agent for E2E validation.",
         custom_section=prompt,
-        additional_tools=tools,
+        additional_tools=_custom_tool_defs(tools),
         features=features,
     )
 
@@ -415,7 +426,7 @@ def _build_agno(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     # Agno bridges a user-built agent, so steering goes into its instructions.
     # Use the Anthropic model: small models refuse the suite's crafted prompts as
@@ -425,9 +436,15 @@ def _build_agno(
 
     from band.adapters.agno import AgnoAdapter
 
-    _reject_tools(Adapter.AGNO, tools)
+    # agno tools are plain callables on the agent; the band adapter captures them
+    # and re-offers them alongside the platform tools each run.
+    native = [t.as_callable() for t in tools] if tools else None
     return AgnoAdapter(
-        AgnoAgent(model=Claude(id=s.llm_models.anthropic_model), instructions=prompt),
+        AgnoAgent(
+            model=Claude(id=s.llm_models.anthropic_model),
+            instructions=prompt,
+            tools=native,
+        ),
         features=features,
     )
 
@@ -438,7 +455,7 @@ def _build_crewai_flow(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     # CrewAI Flow returns a terminal result rather than running the Band tool loop,
     # so it takes a flow_factory (not a model/prompt) and advertises no platform
@@ -452,7 +469,7 @@ def _build_crewai_flow(
             return {"decision": "direct_response", "content": content, "mentions": []}
 
     return CrewAIFlowAdapter(
-        flow_factory=_E2EFlow, additional_tools=tools, features=features
+        flow_factory=_E2EFlow, additional_tools=_custom_tool_defs(tools), features=features
     )
 
 
@@ -462,7 +479,7 @@ def _build_codex(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     import os
 
@@ -474,7 +491,7 @@ def _build_codex(
             cwd=os.environ["CODEX_CWD"],
             custom_section=prompt or "",
         ),
-        additional_tools=tools,
+        additional_tools=_custom_tool_defs(tools),
         features=features,
     )
 
@@ -485,7 +502,7 @@ def _build_opencode(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     import os
 
@@ -498,7 +515,7 @@ def _build_opencode(
             model_id=os.environ.get("OPENCODE_MODEL_ID", "minimax-m2.5-free"),
             custom_section=prompt or "",
         ),
-        additional_tools=tools,
+        additional_tools=_custom_tool_defs(tools),
         features=features,
     )
 
@@ -509,7 +526,7 @@ def _build_letta(
     *,
     prompt: str | None,
     features: AdapterFeatures | None,
-    tools: list[CustomToolDef] | None = None,
+    tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
     import os
 
