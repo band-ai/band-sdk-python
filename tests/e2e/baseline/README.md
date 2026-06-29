@@ -20,7 +20,7 @@ registering an adapter so every matrix scenario runs against it for free.
 Every baseline test is the same shape: get a running agent, open a capture, send a
 user message, barrier on it, assert. The toolkit supplies all of it.
 
-```python
+```python notest
 @with_agents(Adapter.ANTHROPIC)                  # 1. agent: built + gated + run + reaped
 @pytest.mark.asyncio(loop_scope="session")
 async def test_greets(agent, resource_manager, user_ops, reply_capture):
@@ -231,7 +231,7 @@ DELIVERED -> PROCESSING -> PROCESSED | FAILED
 message may cycle `FAILED -> PROCESSING` again before reaching `PROCESSED`.
 `PROCESSED` is the only success terminal.
 
-```python
+```python notest
 mid = await user_ops.send_message(room_id, "...", mention_id=a.id, mention_name=a.name)
 
 # Success barrier (the common case): wait until PROCESSED. Waits through any
@@ -254,7 +254,7 @@ practice the first observed transition is `PROCESSING`. Do not wait on `DELIVERE
 After a turn settles (barrier on the trigger id with `wait_for_processed`), read the
 agent's tool calls and assert what fired:
 
-```python
+```python notest
 mid = await user_ops.send_message(room_id, "...", mention_id=a.id, mention_name=a.name)
 await capture.wait_for_processed(mid, a.id)
 calls = await capture.tool_calls(sender_id=a.id)   # a ToolCalls (list[ToolCall])
