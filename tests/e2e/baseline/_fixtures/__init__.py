@@ -5,3 +5,5 @@ non-root conftest); instead ``conftest.py`` imports their fixtures so pytest
 registers them, scoped to the baseline subtree. Cross-module fixture
 dependencies resolve by name.
 """
+
+from __future__ import annotations
