@@ -10,11 +10,13 @@ The pytest glue (the ``@requires`` marker and the ``pytest.fail`` on an absent
 requirement) lives in ``..requires``.
 
 Lanes: CI can't run the whole fail-loud matrix in one job -- crewai conflicts with
-the default venv's deps, and codex/opencode/letta each need a different external
-backend. Each such dep names a **lane** (a CI job); ``LANE_EXTRAS`` maps a lane to
-the ``uv`` extra it installs. Provider-key deps stay in the shared ``dev`` lane.
-The lane partition is derived from these facts (see ``toolkit.adapters.ci_lanes``),
-never a hand-maintained list.
+the default venv's deps, and the external-backend adapters (codex/opencode/letta)
+need backends stood up that the plain ``dev`` job doesn't provide. So a dep names a
+**lane** (a CI job): crewai gets its own venv lane, and the backend deps share one
+``backends`` lane (they all install the ``dev`` extra and their setups co-run in
+that job). ``LANE_EXTRAS`` maps a lane to the ``uv`` extra it installs; provider-key
+deps stay in the shared ``dev`` lane. The lane partition is derived from these facts
+(see ``toolkit.adapters.ci_lanes``), never a hand-maintained list.
 
 Validation policy: a missing requirement **fails** a test, it never skips. Skipping
 on absent config hides misconfiguration as false-green. The only thing that skips
@@ -30,7 +32,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from pathlib import Path
-from urllib.parse import urlparse
 
 from tests.e2e.baseline.settings import BaselineSettings
 
@@ -51,24 +52,20 @@ class Lane(StrEnum):
 
     DEV = "dev"
     DEV_CREWAI = "dev-crewai"
-    CODEX = "codex"
-    OPENCODE = "opencode"
-    LETTA = "letta"
+    BACKENDS = "backends"
 
 
 # The shared default lane: every provider-key adapter runs here.
 DEFAULT_LANE = Lane.DEV
 
 # Lane -> the ``uv`` extra a lane's job installs. crewai needs its own conflicting
-# extra; the backend lanes (codex/opencode/letta) install ``dev`` and stand their
-# backend up in the CI job. The extra names are the contract with ``pyproject.toml``
-# ``[project.optional-dependencies]``.
+# extra; the ``backends`` lane installs ``dev`` and stands up the codex CLI, the
+# OpenCode server, and the Letta server in one CI job. The extra names are the
+# contract with ``pyproject.toml`` ``[project.optional-dependencies]``.
 LANE_EXTRAS: dict[Lane, str] = {
     Lane.DEV: "dev",
     Lane.DEV_CREWAI: "dev-crewai",
-    Lane.CODEX: "dev",
-    Lane.OPENCODE: "dev",
-    Lane.LETTA: "dev",
+    Lane.BACKENDS: "dev",
 }
 
 
@@ -89,7 +86,7 @@ class Dep(Enum):
     CODEX_CLI = "codex_cli"  # the `codex` CLI reachable on PATH
     CODEX_CWD = "codex_cwd"  # an explicit, disposable working dir outside the repo
     OPENCODE_SERVER = "opencode_server"  # OPENCODE_BASE_URL of a running server
-    LETTA_CLOUD = "letta_cloud"  # Letta Cloud key (or a self-hosted base_url)
+    LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
 
 
@@ -142,16 +139,16 @@ def _codex_cwd_available(settings: BaselineSettings) -> bool:
 
 
 def _letta_available(settings: BaselineSettings) -> bool:
-    """Letta Cloud key present, or a self-hosted (non-cloud) ``LETTA_BASE_URL``."""
+    """A self-hosted (non-cloud) ``LETTA_BASE_URL``, or a Letta Cloud API key.
+
+    Auto-relay mode (no Band MCP server) means availability needs only a reachable
+    Letta server: a self-hosted base_url needs no key, Letta Cloud needs its key.
+    """
     backends = settings.backends
     base_url = backends.letta_base_url.rstrip("/")
     if base_url != _LETTA_CLOUD_HOST:
         return True  # self-hosted server needs no cloud key
-    if not backends.letta_api_key or not backends.mcp_server_url:
-        return False
-    # Letta Cloud reaches the MCP server itself, so it must be publicly routable.
-    host = urlparse(backends.mcp_server_url).hostname
-    return host not in {"localhost", "127.0.0.1", "0.0.0.0"}
+    return bool(backends.letta_api_key)
 
 
 # The one table: Dep -> its facts. Every Dep MUST appear (enforced by
@@ -173,24 +170,23 @@ _DEPS: dict[Dep, DepSpec] = {
         "(GOOGLE_GENAI_USE_VERTEXAI + GOOGLE_CLOUD_PROJECT) not set",
     ),
     Dep.CODEX_CLI: DepSpec(
-        _codex_cli_available, "Codex CLI not found on PATH", lane=Lane.CODEX
+        _codex_cli_available, "Codex CLI not found on PATH", lane=Lane.BACKENDS
     ),
     Dep.CODEX_CWD: DepSpec(
         _codex_cwd_available,
         "CODEX_CWD must be an existing disposable dir outside the repo "
         "with E2E_CODEX_CWD_IS_DISPOSABLE=true",
-        lane=Lane.CODEX,
+        lane=Lane.BACKENDS,
     ),
     Dep.OPENCODE_SERVER: DepSpec(
         lambda s: bool(s.backends.opencode_base_url),
         "OPENCODE_BASE_URL not set (a running OpenCode server is required)",
-        lane=Lane.OPENCODE,
+        lane=Lane.BACKENDS,
     ),
-    Dep.LETTA_CLOUD: DepSpec(
+    Dep.LETTA: DepSpec(
         _letta_available,
-        "LETTA_API_KEY + MCP_SERVER_URL (cloud) or a self-hosted LETTA_BASE_URL "
-        "not set",
-        lane=Lane.LETTA,
+        "a self-hosted LETTA_BASE_URL or a Letta Cloud LETTA_API_KEY not set",
+        lane=Lane.BACKENDS,
     ),
     Dep.CREWAI: DepSpec(
         lambda _s: importlib.util.find_spec("crewai") is not None,

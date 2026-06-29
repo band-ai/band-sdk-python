@@ -45,9 +45,11 @@ module (which triggers registration) never pulls in an absent dependency.
 from __future__ import annotations
 
 import pkgutil
+import re
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 import band.adapters
@@ -221,12 +223,12 @@ def assert_registry_covers_discovered() -> None:
 # =============================================================================
 #
 # CI cannot run one job green across the whole fail-loud matrix (crewai conflicts
-# with the default venv's deps; codex/opencode/letta each need a different external
-# backend). Each adapter belongs to a *lane* -- a CI job -- derived from its
-# ``requires`` (the unique non-default ``dep_lane``), never a hand-maintained list,
-# so a newly-registered adapter lands in its lane for free and the guard below
-# fails loudly if it lands nowhere. A lane installs one ``uv`` extra (``lane_extra``)
-# and the workflow stands up that lane's backend.
+# with the default venv's deps; the external-backend adapters need backends the
+# plain ``dev`` job doesn't stand up). Each adapter belongs to a *lane* -- a CI job
+# -- derived from its ``requires`` (the unique non-default ``dep_lane``), never a
+# hand-maintained list, so a newly-registered adapter lands in its lane for free and
+# the guard below fails loudly if it lands nowhere. A lane installs one ``uv`` extra
+# (``lane_extra``); the ``backends`` lane stands up codex/opencode/letta together.
 
 
 @dataclass(frozen=True)
@@ -288,6 +290,36 @@ def assert_every_adapter_has_a_ci_home() -> None:
         raise AssertionError(
             "adapters not placed in any CI lane (ci_lanes must cover the "
             f"registry): {sorted(str(a) for a in unplaced)}"
+        )
+
+
+# The e2e workflow, relative to this file (tests/e2e/baseline/toolkit/adapters.py).
+_E2E_WORKFLOW = Path(__file__).resolve().parents[4] / ".github/workflows/e2e.yml"
+# A `matrix.lane == 'x'` / `!= 'x'` gate literal in the workflow.
+_LANE_GATE_RE = re.compile(r"matrix\.lane\s*[!=]=\s*'([^']+)'")
+
+
+def workflow_lane_gate_ids(workflow_path: Path = _E2E_WORKFLOW) -> set[str]:
+    """The lane ids referenced by ``matrix.lane`` gates in the e2e workflow."""
+    return set(_LANE_GATE_RE.findall(workflow_path.read_text(encoding="utf-8")))
+
+
+def assert_workflow_lane_gates_known(workflow_path: Path = _E2E_WORKFLOW) -> None:
+    """Fail loudly if a workflow ``matrix.lane`` gate names a lane the registry
+    doesn't emit.
+
+    Lanes are derived from the registry (``ci_lanes``), so a backend setup step
+    gated on a renamed/removed lane id is never true and would *silently* never
+    run. This guard ties the workflow's lane gates back to the registry so that
+    drift fails loudly (in the unit suite and the workflow's ``lanes`` job) instead.
+    """
+    known = {str(cl.id) for cl in ci_lanes()}
+    unknown = workflow_lane_gate_ids(workflow_path) - known
+    if unknown:
+        raise AssertionError(
+            "e2e.yml has matrix.lane gate(s) for lane id(s) the registry does not "
+            f"emit (the gated step would never run): {sorted(unknown)}; known "
+            f"lanes: {sorted(known)}"
         )
 
 
@@ -609,7 +641,7 @@ def _build_opencode(
     )
 
 
-@adapter(Adapter.LETTA, requires=[Dep.LETTA_CLOUD])
+@adapter(Adapter.LETTA, requires=[Dep.LETTA])
 def _build_letta(
     s: BaselineSettings,
     *,
@@ -621,14 +653,19 @@ def _build_letta(
 
     _reject_tools(Adapter.LETTA, tools)
 
-    # Only override mcp_server_url when set, so the config default applies for a
-    # self-hosted server that doesn't need an externally-reachable MCP endpoint.
-    config_kwargs: dict[str, Any] = {
-        "base_url": s.backends.letta_base_url,
-        "provider_key": s.backends.letta_api_key or None,
-        "model": s.backends.letta_model,
-        "custom_section": prompt or "",
-    }
-    if s.backends.mcp_server_url:
-        config_kwargs["mcp_server_url"] = s.backends.mcp_server_url
-    return LettaAdapter(config=LettaAdapterConfig(**config_kwargs), features=features)
+    # Auto-relay mode: pass mcp_server_url=None (unless one is explicitly set) so the
+    # adapter registers no Band MCP server and relays the model's reply to the room
+    # itself. A self-hosted Letta server can't reach an in-process MCP bound to a
+    # loopback/private IP (its SSRF guard rejects non-public IPs), so this is the
+    # path that's actually e2e-runnable; setting MCP_SERVER_URL opts into a real
+    # publicly-reachable Band MCP endpoint instead.
+    return LettaAdapter(
+        config=LettaAdapterConfig(
+            base_url=s.backends.letta_base_url,
+            provider_key=s.backends.letta_api_key or None,
+            model=s.backends.letta_model,
+            custom_section=prompt or "",
+            mcp_server_url=s.backends.mcp_server_url or None,
+        ),
+        features=features,
+    )

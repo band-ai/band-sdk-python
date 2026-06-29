@@ -184,6 +184,8 @@ dev = [
     "google-adk>=1.0.0,<2",
     # Include Agno for testing
     "agno>=2.6.0",
+    # Include letta-client for testing
+    "letta-client>=0.1.0",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",

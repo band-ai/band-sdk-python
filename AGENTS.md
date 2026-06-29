@@ -401,7 +401,7 @@ resolves each in a separate fork.
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + a backend) to scope the run to — `dev`, `dev-crewai`, `codex`, `opencode`, or `letta`. Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry.
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional backend setup) to scope the run to — `dev`, `dev-crewai`, or `backends` (the external-backend adapters codex/opencode/letta share one job). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry.
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 

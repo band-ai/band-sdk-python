@@ -107,11 +107,16 @@ class Backends(BaseSettings):
     # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
     opencode_model_id: str = "mimo-v2.5-free"  # OPENCODE_MODEL_ID
 
-    # Letta (Cloud or self-hosted) + the Band MCP server it calls for tools.
+    # Letta (Cloud or self-hosted). The lane runs Letta in auto-relay mode (no
+    # Band MCP server): a self-hosted Letta server can't reach an in-process MCP
+    # bound to a private/loopback IP (its SSRF guard rejects non-public IPs and
+    # stdio MCP isn't registrable via the API), so the adapter relays the model's
+    # reply to the room itself. MCP_SERVER_URL stays as an opt-in escape hatch for
+    # a deployment that does expose a publicly-reachable Band MCP endpoint.
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
     letta_api_key: str = ""  # LETTA_API_KEY (Letta Cloud)
     letta_model: str = "openai/gpt-4o-mini"  # LETTA_MODEL
-    mcp_server_url: str = ""  # MCP_SERVER_URL (the Band MCP server Letta reaches)
+    mcp_server_url: str = ""  # MCP_SERVER_URL (optional; empty = auto-relay mode)
 
 
 class LLMModels(BaseSettings):

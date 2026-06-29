@@ -8,19 +8,20 @@ name: E2E (baseline)
 # Lanes are DERIVED FROM THE REGISTRY, not hand-listed here. The `lanes` job
 # imports the adapter registry and emits one CI lane per `ci_lanes()` entry; the
 # `e2e` job fans out over them. A lane is a job: it installs the lane's `uv` extra
-# and (for a backend lane) stands its backend up. Adding an adapter to an existing
-# lane needs no edit here — only a brand-new backend lane adds a setup block.
+# and (for the backends lane) stands its backends up. Adding an adapter to an
+# existing lane needs no edit here.
 #
 # Lanes today:
 # - dev          — the provider-key adapters (anthropic/openai/google families).
 # - dev-crewai   — crewai/crewai_flow (crewai conflicts with the dev venv's deps,
 #                  so it gets its own `uv` extra; see pyproject [tool.uv] conflicts).
-# - codex        — CodexAdapter (codex CLI) + the codex-acp e2e. [wired]
-# - opencode     — OpencodeAdapter against a local `opencode serve` (Zen free model). [wired]
-# - letta        — LettaAdapter against a self-hosted letta + Band MCP. [TODO: phase 3]
+# - backends     — the external-backend adapters in one job (they all use the `dev`
+#                  extra): CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
+#                  (local `opencode serve`, Zen free model), and LettaAdapter (self-hosted
+#                  letta Docker, auto-relay — no Band MCP; see settings.py / _build_letta).
 #
-# An unwired backend lane still runs: its cell fails loudly (the @requires gate
-# reports the missing CLI/server) until its setup block lands. `fail-fast: false`
+# An unwired backend still fails loudly (the @requires gate reports the missing
+# CLI/server) until its setup block lands. `fail-fast: false`
 # keeps a red backend lane from blocking the others.
 
 on:
@@ -70,11 +71,15 @@ jobs:
         from tests.e2e.baseline.toolkit.adapters import (
             assert_every_adapter_has_a_ci_home,
             assert_registry_covers_discovered,
+            assert_workflow_lane_gates_known,
             ci_lanes,
         )
         # Fail before any test runs if the registry or lane partition has drifted.
         assert_registry_covers_discovered()
         assert_every_adapter_has_a_ci_home()
+        # Fail if a `matrix.lane ==` gate below names a lane the registry no longer
+        # emits (its step would silently never run).
+        assert_workflow_lane_gates_known()
         include = [{"lane": lane.id, "extra": lane.extra} for lane in ci_lanes()]
         print("lanes=" + json.dumps({"include": include}))
         PY
@@ -120,16 +125,16 @@ jobs:
       with:
         python-version: '3.12'
 
-    # --- Backend setup (per lane; only the matching lane's block runs) -----------
+    # --- Backend setup (only the `backends` lane runs these; they co-run in it) ---
 
     - name: Set up Node (codex, opencode)
-      if: matrix.lane == 'codex' || matrix.lane == 'opencode'
+      if: matrix.lane == 'backends'
       uses: actions/setup-node@v4
       with:
         node-version: '20'
 
     - name: Install + authenticate the Codex CLI (codex)
-      if: matrix.lane == 'codex'
+      if: matrix.lane == 'backends'
       env:
         # Codex picks a model from its own catalogue; gpt-4o-mini (the openai default)
         # is not one of them. Confirm/adjust on first dispatch if model selection errors.
@@ -145,7 +150,7 @@ jobs:
         echo "CODEX_MODEL=${CODEX_MODEL}" >> "$GITHUB_ENV"
 
     - name: Install + start the OpenCode server (opencode)
-      if: matrix.lane == 'opencode'
+      if: matrix.lane == 'backends'
       env:
         # The OpenCode Zen provider key; an unsecured localhost server reads it via
         # the {env:...} substitution in the config below. Free-tier account, so the
@@ -177,6 +182,26 @@ jobs:
         # Free Zen models are slower than the 60s default; give the turn room.
         echo "E2E_TIMEOUT=120" >> "$GITHUB_ENV"
 
+    - name: Start the self-hosted Letta server (letta)
+      if: matrix.lane == 'backends'
+      run: |
+        # Auto-relay mode: the adapter registers NO Band MCP server (a self-hosted
+        # Letta rejects a loopback/private-IP MCP URL via its SSRF guard, and stdio
+        # MCP isn't registrable via its API), so the adapter relays the model's
+        # reply to the room itself. That means no MCP server, no --network host, no
+        # tunnel — just a plain Letta server reachable on :8283. Letta uses
+        # OPENAI_API_KEY for its model (the openai/gpt-4o-mini default); no new secret.
+        docker run -d --name letta -p 8283:8283 \
+          -e OPENAI_API_KEY="${OPENAI_API_KEY}" letta/letta:latest
+        for _ in $(seq 1 60); do
+          curl -fsS http://localhost:8283/v1/health/ && break
+          sleep 2
+        done
+        # Self-hosted base_url makes the Letta requirement available with no cloud key.
+        echo "LETTA_BASE_URL=http://localhost:8283" >> "$GITHUB_ENV"
+        # Letta runs server-side; give the turn a little more room than the default.
+        echo "E2E_TIMEOUT=120" >> "$GITHUB_ENV"
+
     # -----------------------------------------------------------------------------
 
     - name: Install dependencies (${{ matrix.extra }})
@@ -185,8 +210,8 @@ jobs:
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
-    # The codex lane also exercises the editor-facing ACP path (codex-acp via npx).
+    # The backends lane also exercises the editor-facing ACP path (codex-acp via npx).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.
     - name: Run codex-acp e2e (codex)
-      if: matrix.lane == 'codex'
+      if: matrix.lane == 'backends'
       run: uv run pytest tests/integrations/acp/test_e2e_codex_acp.py -v --no-cov

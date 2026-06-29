@@ -329,9 +329,13 @@ if one lands nowhere.
 |------|-----------|----------|------------------------------|
 | `dev` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, gemini, google_adk | provider keys (secrets) |
 | `dev-crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
-| `codex` | `dev` | codex | the `codex` CLI + login + a disposable `CODEX_CWD` |
-| `opencode` | `dev` | opencode | a running `opencode serve` (`OPENCODE_BASE_URL`) |
-| `letta` | `dev` | letta | a self-hosted `letta/letta` server + a reachable Band MCP server |
+| `backends` | `dev` | codex, opencode, letta | the external-backend adapters in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`), and a self-hosted `letta/letta` server (Docker, auto-relay — no Band MCP) |
+
+The backend adapters share one lane because they all install the `dev` extra and
+differ only in the backend their job stands up — folding them keeps the reliable
+`dev` lane uncoupled from those flaky external backends while avoiding a job per
+backend. The cost is that within `backends` one backend failing to come up can
+redden the other two's cells; the per-adapter test report still shows which.
 
 **The knob:** `BAND_E2E_LANE=<lane id>`. When set, `lane_selection.apply_lane_skips`
 (called by the conftest hook) resolves the lane's adapters from `ci_lanes()` and
@@ -355,7 +359,30 @@ BAND_E2E_LANE=dev-crewai E2E_TESTS_ENABLED=true \
 
 **CI** (`.github/workflows/e2e.yml`) lists no adapters: a `lanes` job emits the
 partition from `ci_lanes()` as `[{lane, extra}, …]` and the `e2e` job fans one job
-per lane (`uv sync --extra <extra>` + `BAND_E2E_LANE=<lane>`), running each backend
-lane's setup gated on `matrix.lane`. Adding an adapter to an existing lane needs no
-YAML edit; only a brand-new backend lane adds a setup block. Coverage is the union
-of all lanes.
+per lane (`uv sync --extra <extra>` + `BAND_E2E_LANE=<lane>`), running the `backends`
+lane's setup steps gated on `matrix.lane == 'backends'`. Adding an adapter to an
+existing lane needs no YAML edit; a brand-new backend adds one setup step to the
+`backends` job. Coverage is the union of all lanes.
+
+## Letta runs in auto-relay mode
+
+Letta is **a normal matrix cell** — built by the registry like every other adapter
+(`build_adapter`) and run through `matrix_agent`/`agents`, with no Letta-only run
+path and no fixture special-case.
+
+The one Letta-specific fact is *how it replies*. Letta is server-side and its model
+normally talks only through MCP tools — but a self-hosted Letta server **cannot
+reach an in-process Band MCP server**: its SSRF guard rejects any MCP URL on a
+private/loopback IP (`Non-public IP not allowed`), and the one local transport it
+would accept (stdio) isn't registrable via its REST API. So the lane builds the
+adapter in **auto-relay mode** (`mcp_server_url=None`): no MCP server is registered,
+and `LettaAdapter` relays the model's plain-text reply to the room itself via its
+runtime tools. Setup is therefore trivial — a plain `docker run -p 8283:8283
+letta/letta`, no `--network host`, no tunnel.
+
+This validates the **reply** path end to end (live platform + live Letta server +
+live model → reply delivered); the MCP tool-execution path is covered by the mocked
+adapter unit tests (`tests/adapters/test_letta_adapter.py`). Letta advertises no
+capabilities, so it is excluded from the memory and custom-tool matrices. To run a
+Letta deployment that *does* expose a publicly-reachable Band MCP endpoint, set
+`MCP_SERVER_URL` (the adapter then registers it and uses the tool path).
