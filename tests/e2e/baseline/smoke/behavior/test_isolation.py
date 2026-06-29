@@ -27,7 +27,7 @@ import pytest
 from tests.e2e.baseline.agents import Adapter, with_agents
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.smoke.sample_tools import (
+from tests.e2e.baseline.smoke.samples.sample_tools import (
     EXECUTION_REPORTING,
     LOOKUP,
     LOOKUP_PROMPT,

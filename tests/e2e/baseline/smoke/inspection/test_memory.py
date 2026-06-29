@@ -29,7 +29,7 @@ from band.core.memory_types import (
 )
 
 from tests.e2e.baseline.agents import Adapter, with_agents
-from tests.e2e.baseline.smoke.sample_agents import (
+from tests.e2e.baseline.smoke.samples.sample_agents import (
     MEMORY_AGENT,
     archive_memory_instruction,
     recall_memory_instruction,

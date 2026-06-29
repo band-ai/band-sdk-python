@@ -16,7 +16,7 @@ import pytest
 from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.smoke.sample_agents import build_agent
+from tests.e2e.baseline.smoke.samples.sample_agents import build_agent
 from tests.e2e.baseline.toolkit.assertions import assert_present
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager

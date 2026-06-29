@@ -17,7 +17,7 @@ Both tests are bound to ``@with_agents(Adapter.LETTA)``, so they run in the
 Run with:
 
     E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run pytest \\
-        tests/e2e/baseline/smoke/test_letta.py -v -s --no-cov
+        tests/e2e/baseline/smoke/adapters/test_letta.py -v -s --no-cov
 """
 
 from __future__ import annotations

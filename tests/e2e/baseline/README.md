@@ -135,8 +135,8 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `toolkit/adapters.py` | adapter registry: `Adapter` enum (the **one** source of adapter ids), `@adapter` builders, `build_adapter`, `specs`, the discovery guard |
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
 | `agents.py` | matrix/decorator glue: `@with_agents(Adapter.X, ...)` (fixed set → `agent`/`agents`), `@across_adapters(include/exclude/supports/without, prompt=, features=)` (matrix/subset → `matrix_agent` + `adapter_id`), `adapter_params` |
-| `smoke/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_agents(..., **SHAPE)`, `build_agent`, and the `*_instruction(...)` builders |
-| `smoke/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, the `EXECUTION_REPORTING` shape, and `build_tool_agent(...)` (bespoke per-agent-differing builds) |
+| `smoke/samples/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_agents(..., **SHAPE)`, `build_agent`, and the `*_instruction(...)` builders |
+| `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, the `EXECUTION_REPORTING` shape, and `build_tool_agent(...)` (bespoke per-agent-differing builds) |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
 | `toolkit/requirements.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
@@ -146,7 +146,13 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
 | `requires.py` | `@requires(Dep.X)` decorator (the pytest glue; re-exports `Dep` from `toolkit/requirements.py`, where the enum and its facts actually live) |
 | `conftest.py` | fixtures (below) + the always-on E2E gate |
-| `smoke/` | proof tests that exercise the tools end to end — read these as worked examples |
+| `guards/` | harness self-tests (not "smoke"): `test_adapter_registry.py` (the static discovery/lane guard — constructs nothing, needs no keys), `test_provisioning.py`, `test_user_ops.py` |
+| `smoke/` | proof tests that exercise the tools end to end — read these as worked examples — grouped by subject (below) |
+| `smoke/samples/` | shared driving glue (not tests): `sample_agents.py`, `sample_tools.py` |
+| `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` |
+| `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_agent_scenarios.py` |
+| `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py` |
+| `smoke/adapters/` | adapter-specific showcases: `test_letta.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
@@ -268,8 +274,8 @@ race-free: the platform marks the trigger `processed` only after the reply is
 emitted, by which point the turn's tool-call events are already persisted.
 `assert_fired` is tolerant — name matches case-insensitively and `with_args` is a
 subset/substring match. Pass `sender_id` to scope to one agent and `since` (a server
-timestamp) to scope to one turn when reusing a capture. See `smoke/test_tool_calls.py`
-and `smoke/test_isolation.py`.
+timestamp) to scope to one turn when reusing a capture. See `smoke/inspection/test_tool_calls.py`
+and `smoke/behavior/test_isolation.py`.
 
 By default `tool_calls()` **excludes memory tools** (mirroring the SDK's
 `BASE_TOOL_NAMES = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES` split). Pass
@@ -282,7 +288,7 @@ return an `Events` collection on the same read-after-barrier contract as `tool_c
 Drive them with the built-in `band_send_event` tool (no `Emit.*` feature needed; the
 tool posts directly). `assert_emitted()` and `assert_contains_any([marker])` are the
 assertions; assert the **marker** (not bare presence), since adapters auto-emit a
-generic `error` event on any turn exception. See `smoke/test_events.py`.
+generic `error` event on any turn exception. See `smoke/inspection/test_events.py`.
 
 ## Memory inspection
 
@@ -299,7 +305,7 @@ generic `error` event on any turn exception. See `smoke/test_events.py`.
 `memory()` takes the agent handle because the store layer needs the agent's own key.
 Drive a store with `band_store_memory`, read after the barrier; a unique marker keeps
 the read collision-free. Memory tools are an enterprise opt-in (entitled org). See
-`smoke/test_memory.py`.
+`smoke/inspection/test_memory.py`.
 
 ## Validation policy: fail on missing requirements, never skip
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.agents import Adapter, across_adapters, with_agents
-from tests.e2e.baseline.smoke.sample_tools import (
+from tests.e2e.baseline.smoke.samples.sample_tools import (
     ACCESS_CODES,
     EXECUTION_REPORTING,
     LOOKUP,

@@ -110,7 +110,7 @@ Rules for the builder — each exists for a reason, don't skip them:
 
 ```bash
 E2E_TESTS_ENABLED=true uv run pytest \
-  tests/e2e/baseline/smoke/test_adapter_registry.py -v -s --no-cov
+  tests/e2e/baseline/guards/test_adapter_registry.py -v -s --no-cov
 ```
 
 `test_registry_covers_discovered_adapters` going green means enum ⇔ registry ⇔
@@ -197,14 +197,14 @@ scoped to your adapter:
 
 ```bash
 E2E_TESTS_ENABLED=true uv run pytest \
-  tests/e2e/baseline/smoke/test_adapter_matrix.py -k myframework -v -s --no-cov
+  tests/e2e/baseline/smoke/matrix/test_adapter_matrix.py -k myframework -v -s --no-cov
 ```
 
 Then the capability matrix if you declared `supports`:
 
 ```bash
 E2E_TESTS_ENABLED=true uv run pytest \
-  tests/e2e/baseline/smoke/test_capability_matrix.py -k myframework -v -s --no-cov
+  tests/e2e/baseline/smoke/matrix/test_capability_matrix.py -k myframework -v -s --no-cov
 ```
 
 A cell that's **red because its key/CLI/server is absent** is intended — no single
@@ -244,7 +244,7 @@ adapter should conform to the generic builder contract instead.
 | `toolkit/requirements.py` | only for a brand-new `Dep` + availability check |
 | `settings.py` | only for a new credential or model id field |
 | `CLAUDE.md` (root) | document any new env vars |
-| `smoke/test_adapter_registry.py` | nothing — it's the guard that grades your work |
+| `guards/test_adapter_registry.py` | nothing — it's the guard that grades your work |
 
 See `tests/e2e/baseline/README.md` for how tests *use* the matrix once you've
 registered the adapter.

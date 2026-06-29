@@ -18,7 +18,7 @@ barrier returns).
 Run with:
 
     E2E_TESTS_ENABLED=true uv run pytest \\
-        tests/e2e/baseline/smoke/test_processing_barrier.py -v -s --no-cov
+        tests/e2e/baseline/smoke/behavior/test_processing_barrier.py -v -s --no-cov
 """
 
 from __future__ import annotations

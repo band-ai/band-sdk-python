@@ -11,7 +11,7 @@ history and retry logic against the real payload shape) this covers every
 Run with:
 
     E2E_TESTS_ENABLED=true uv run pytest \
-        tests/e2e/baseline/smoke/test_delivery_status.py -v -s --no-cov
+        tests/e2e/baseline/smoke/behavior/test_delivery_status.py -v -s --no-cov
 """
 
 from __future__ import annotations

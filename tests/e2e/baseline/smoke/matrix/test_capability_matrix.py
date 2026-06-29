@@ -24,7 +24,7 @@ from band.core.memory_types import MemoryListScope
 from band.core.types import Capability
 
 from tests.e2e.baseline.agents import across_adapters
-from tests.e2e.baseline.smoke.sample_agents import (
+from tests.e2e.baseline.smoke.samples.sample_agents import (
     MEMORY_AGENT,
     store_memory_instruction,
     unique_marker,
