@@ -72,7 +72,9 @@ class ToolSpec:
             {"ctx": ctx_annotation} if ctx_annotation is not None else {}
         )
         for fname, field in fields.items():
-            annotations[fname] = field.annotation if field.annotation is not None else Any
+            annotations[fname] = (
+                field.annotation if field.annotation is not None else Any
+            )
         annotations["return"] = str
         tool.__annotations__ = annotations
         tool.__doc__ = self.description

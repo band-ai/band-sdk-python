@@ -193,7 +193,9 @@ async def test_custom_tool_fires_across_frameworks(
     calls.assert_fired(LOOKUP, with_args={"key": "alpha"})
 
 
-@with_agents(Adapter.CREWAI, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)
+@with_agents(
+    Adapter.CREWAI, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
+)
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_crewai_tool_fires(
