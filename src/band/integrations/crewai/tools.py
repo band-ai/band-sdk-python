@@ -165,7 +165,7 @@ class EmitExecutionReporter:
             return
         try:
             await tools.send_event(
-                content=json.dumps({"tool": tool_name, "input": input_data}),
+                content=json.dumps({"name": tool_name, "args": input_data}),
                 message_type="tool_call",
             )
         except Exception as e:
@@ -181,9 +181,10 @@ class EmitExecutionReporter:
         if Emit.EXECUTION not in self._features.emit:
             return
         try:
-            key = "error" if is_error else "result"
             await tools.send_event(
-                content=json.dumps({"tool": tool_name, key: result}),
+                content=json.dumps(
+                    {"name": tool_name, "output": result, "is_error": is_error}
+                ),
                 message_type="tool_result",
             )
         except Exception as e:

@@ -437,6 +437,59 @@ class TestEmitExecutionReporter:
         assert tools.send_event.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_emits_canonical_event_schema(self, builder_mod):
+        """The emitted payloads must use the canonical name/args/output schema.
+
+        Every framework's tool_call / tool_result events are read back through
+        the shared ``parse_tool_call`` / ``parse_tool_result`` (and the E2E
+        observer), which key off ``name`` / ``args`` / ``output``. crewai once
+        emitted ``tool`` / ``input`` / ``result`` instead, so its tool events
+        were silently dropped on read. Pin the schema here so a count-only
+        assertion can't let that drift back in.
+        """
+        from band.core.types import AdapterFeatures, Emit
+
+        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
+        reporter = builder_mod.EmitExecutionReporter(features)
+        tools = MagicMock()
+        tools.send_event = AsyncMock()
+
+        await reporter.report_call(tools, "lookup", {"key": "alpha"})
+        await reporter.report_result(tools, "lookup", "SECRET-123")
+
+        call_kwargs, result_kwargs = (c.kwargs for c in tools.send_event.call_args_list)
+
+        assert call_kwargs["message_type"] == "tool_call"
+        assert json.loads(call_kwargs["content"]) == {
+            "name": "lookup",
+            "args": {"key": "alpha"},
+        }
+
+        assert result_kwargs["message_type"] == "tool_result"
+        assert json.loads(result_kwargs["content"]) == {
+            "name": "lookup",
+            "output": "SECRET-123",
+            "is_error": False,
+        }
+
+    @pytest.mark.asyncio
+    async def test_error_result_sets_is_error(self, builder_mod):
+        from band.core.types import AdapterFeatures, Emit
+
+        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
+        reporter = builder_mod.EmitExecutionReporter(features)
+        tools = MagicMock()
+        tools.send_event = AsyncMock()
+
+        await reporter.report_result(tools, "lookup", "boom", is_error=True)
+
+        assert json.loads(tools.send_event.call_args.kwargs["content"]) == {
+            "name": "lookup",
+            "output": "boom",
+            "is_error": True,
+        }
+
+    @pytest.mark.asyncio
     async def test_send_event_failure_does_not_propagate(self, builder_mod):
         from band.core.types import AdapterFeatures, Emit
 
