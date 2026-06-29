@@ -139,11 +139,12 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, the `EXECUTION_REPORTING` shape, and `build_tool_agent(...)` (bespoke per-agent-differing builds) |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
+| `toolkit/requirements.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/assertions.py` | tolerant assertions: `assert_present`, `assert_at_least`, `assert_contains_any`, `assert_mentions` |
 | `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
-| `requires.py` | `@requires(Dep.X)` decorator + `Dep` enum |
+| `requires.py` | `@requires(Dep.X)` decorator (the pytest glue; re-exports `Dep` from `toolkit/requirements.py`, where the enum and its facts actually live) |
 | `conftest.py` | fixtures (below) + the always-on E2E gate |
 | `smoke/` | proof tests that exercise the tools end to end — read these as worked examples |
 
