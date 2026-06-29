@@ -26,6 +26,11 @@ name: E2E (baseline)
 
 on:
   workflow_dispatch:
+  # TEMP HACK: trigger E2E on push to this branch so CI can be exercised without
+  # a manual dispatch. Remove before merging.
+  push:
+    branches:
+      - int-915-4-adapter-discovery-generic-provisioning-matrix-for-the
 
 # Serialize E2E runs: they share one live platform, so avoid two runs racing
 # (and reaping) each other's provisioned agents/rooms.
@@ -98,16 +103,19 @@ jobs:
       # The dev-crewai venv lacks the other frameworks; tolerate missing framework
       # configs there instead of failing fast (mirrors ci.yml's crewai job).
       BAND_ALLOW_MISSING_FRAMEWORKS: ${{ matrix.extra == 'dev-crewai' && '1' || '0' }}
+      # Secrets carry an E2E_ prefix in GitHub (so they're clearly scoped to this
+      # workflow), but the code reads the unprefixed names — the mapping happens
+      # here: the env var keeps its code-expected name, the secret is prefixed.
       # Band platform (the live target + the driver/observer user key).
-      BAND_REST_URL: ${{ secrets.BAND_REST_URL }}
-      BAND_WS_URL: ${{ secrets.BAND_WS_URL }}
-      BAND_API_KEY_USER: ${{ secrets.BAND_API_KEY_USER }}
+      BAND_REST_URL: ${{ secrets.E2E_BAND_REST_URL }}
+      BAND_WS_URL: ${{ secrets.E2E_BAND_WS_URL }}
+      BAND_API_KEY_USER: ${{ secrets.E2E_BAND_API_KEY_USER }}
       # Optional second user key, for baseline smokes exercising two-user interaction.
-      BAND_API_KEY_USER_2: ${{ secrets.BAND_API_KEY_USER_2 }}
+      BAND_API_KEY_USER_2: ${{ secrets.E2E_BAND_API_KEY_USER_2 }}
       # Model providers (a lane simply ignores a key it has no adapter for).
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.E2E_GOOGLE_API_KEY }}
 
     steps:
     - name: Checkout code
@@ -157,7 +165,7 @@ jobs:
         # The OpenCode Zen provider key; an unsecured localhost server reads it via
         # the {env:...} substitution in the config below. Free-tier account, so the
         # config pins free models (incl. the small/title model) to avoid paid calls.
-        OPENCODE_ZEN_API_KEY: ${{ secrets.OPENCODE_ZEN_API_KEY }}
+        OPENCODE_ZEN_API_KEY: ${{ secrets.E2E_OPENCODE_ZEN_API_KEY }}
       run: |
         npm install -g opencode-ai
         mkdir -p ~/.config/opencode
