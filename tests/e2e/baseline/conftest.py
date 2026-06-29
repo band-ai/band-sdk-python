@@ -195,7 +195,11 @@ async def agents(
             await stack.enter_async_context(
                 running_provisioned_agent(
                     build_adapter(
-                        name, baseline_settings, prompt=prompt, features=req.features
+                        name,
+                        baseline_settings,
+                        prompt=prompt,
+                        features=req.features,
+                        tools=req.tools,
                     ),
                     resource_manager,
                     label=f"{name}-{slot}",
@@ -257,8 +261,9 @@ async def matrix_agent(
     build: MatrixBuild | None = marker.args[0] if marker else None
     prompt = build.prompt if build and build.prompt is not None else _SHORT_PROMPT
     features = build.features if build else None
+    tools = build.tools if build else None
     adapter = build_adapter(
-        adapter_id, baseline_settings, prompt=prompt, features=features
+        adapter_id, baseline_settings, prompt=prompt, features=features, tools=tools
     )
     async with running_provisioned_agent(
         adapter, resource_manager, label=adapter_id

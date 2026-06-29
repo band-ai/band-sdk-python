@@ -42,6 +42,7 @@ from band.core.types import AdapterFeatures, Capability
 
 from tests.e2e.baseline.requires import requires
 from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
+from band.runtime.custom_tools import CustomToolDef
 
 __all__ = [
     "Adapter",
@@ -67,6 +68,7 @@ class AgentsRequest:
     adapters: tuple[Adapter, ...]
     prompt: str | None
     features: AdapterFeatures | None
+    tools: list[CustomToolDef] | None
 
 
 @dataclass(frozen=True)
@@ -75,12 +77,14 @@ class MatrixBuild:
 
     prompt: str | None
     features: AdapterFeatures | None
+    tools: list[CustomToolDef] | None
 
 
 def with_agents(
     *adapters: Adapter,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
+    tools: list[CustomToolDef] | None = None,
 ) -> Callable[[Callable[..., object]], Callable[..., object]]:
     """Declare the adapters a test runs; inject them via ``agent`` / ``agents``.
 
@@ -93,7 +97,9 @@ def with_agents(
         raise ValueError("with_agents() needs at least one Adapter")
     # Union of requirements across the chosen adapters, order-preserved.
     deps = tuple(dict.fromkeys(dep for a in adapters for dep in spec_for(a).requires))
-    request = AgentsRequest(adapters=adapters, prompt=prompt, features=features)
+    request = AgentsRequest(
+        adapters=adapters, prompt=prompt, features=features, tools=tools
+    )
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
         fn = requires(*deps)(fn)
@@ -135,6 +141,7 @@ def across_adapters(
     without: Collection[Capability] | None = None,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
+    tools: list[CustomToolDef] | None = None,
 ) -> Callable[[Callable[..., object]], Callable[..., object]]:
     """Run a test across the adapter matrix via the ``matrix_agent``
     fixture — the parametrized sibling of ``@with_agents``.
@@ -159,7 +166,7 @@ def across_adapters(
     params = adapter_params(
         include=include, exclude=exclude, supports=supports, without=without
     )
-    build = MatrixBuild(prompt=prompt, features=features)
+    build = MatrixBuild(prompt=prompt, features=features, tools=tools)
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
         fn = pytest.mark.parametrize("adapter_id", params, indirect=True)(fn)

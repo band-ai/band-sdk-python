@@ -78,6 +78,12 @@ LOOKUP_AND_WEATHER_PROMPT = (
 )
 
 
+# Shape for @with_agents: surface each tool call as a ``tool_call`` event so
+# ``capture.tool_calls`` can read it. Spread it: ``@with_agents(Adapter.ANTHROPIC,
+# tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)``.
+EXECUTION_REPORTING = {"features": AdapterFeatures(emit={Emit.EXECUTION})}
+
+
 def build_tool_agent(
     settings: BaselineSettings,
     *,

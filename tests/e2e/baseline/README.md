@@ -42,7 +42,8 @@ gate, no construction, no lifecycle, no cleanup.
 | two of the **same** adapter | `@with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC)` | `agents` |
 | the **same scenario across every adapter** | request the matrix fixtures (no decorator needed for the full set) | `matrix_agent` + `adapter_id` |
 | a **subset** of adapters | `@across_adapters(include={...} / exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY})` | `matrix_agent` + `adapter_id` |
-| a **bespoke** adapter (custom tools) | `build_tool_agent(...)` + `async with running_provisioned_agent(...) as agent:` | the `ProvisionedAgent` |
+| custom tools on a stock adapter | `@with_agents(Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=..., **EXECUTION_REPORTING)` | `agent` |
+| a **bespoke** build (different tools per agent in one room, or an unsupported framework) | `build_tool_agent(...)` + `async with running_provisioned_agent(...) as agent:` | the `ProvisionedAgent` |
 
 - **Reference adapters by the typed `Adapter` enum, never a string.**
 - **Steer construction with a shape, don't re-spell args:** `@with_agents(Adapter.X, **TOOL_AGENT)`
@@ -50,6 +51,11 @@ gate, no construction, no lifecycle, no cleanup.
   surfaced as `tool_call` events). `@across_adapters(..., **MEMORY_AGENT)` works too.
 - `matrix_agent` is the cell's running `ProvisionedAgent`; `adapter_id` is its id —
   request whichever you use (no `adapter_id, agent = …` unpacking).
+- **Custom tools:** pass `tools=[CustomToolDef, ...]` to `@with_agents` /
+  `@across_adapters` (forwarded as `additional_tools`); add `**EXECUTION_REPORTING`
+  to make the calls observable via `capture.tool_calls`. Adapters that can't take
+  band `CustomToolDef` (agno, letta, pydantic-ai) **reject** `tools` with a clear
+  error rather than silently drop them.
 
 ### Driving and observing a turn
 
@@ -89,6 +95,26 @@ gate, no construction, no lifecycle, no cleanup.
   only when no structural check can express the outcome.
 - ❌ skipping on missing config — a missing key/CLI/server **fails** with the reason
   (see Validation policy). Only `E2E_TESTS_ENABLED` skips.
+
+## Design values: consistency, simplicity, ease
+
+These three are why the toolkit is shaped the way it is — keep them when extending it.
+
+- **Consistency** — one way to do each thing, applied uniformly. Agents come from
+  `@with_agents` / `@across_adapters`; waits go through the delivery barrier;
+  assertions are tolerant. The same rule holds everywhere: **fail loudly with a
+  reason, never silently** — a missing key/CLI/server fails (never skips), an
+  unregistered adapter fails the discovery guard, and an adapter that can't honor
+  `tools` rejects rather than dropping them. No special cases a reader has to memorize.
+- **Simplicity** — the test is the *scenario*, not the scaffolding. Provisioning,
+  gating, running, reaping, and cleanup live in fixtures/decorators, so a test body
+  is just "send this, expect that". If a test grows plumbing, the plumbing belongs in
+  the toolkit.
+- **Ease of use** — the common path is the short path: a decorator + a fixture, typed
+  `Adapter` handles (no magic strings), reusable shapes (`**TOOL_AGENT` /
+  `**MEMORY_AGENT` / `**EXECUTION_REPORTING`) instead of re-spelled args, and
+  `messages.snapshot()/since()` instead of manual indexing. A coding agent should be
+  able to write a correct test from the table above without inventing anything.
 
 ## Layout: what is where
 
@@ -272,8 +298,3 @@ any `@requires(Dep.X)` requirement **fails** when absent, naming the missing env
 var/CLI/server. Consequence: no single environment turns the full adapter matrix
 green (crewai needs the `dev-crewai` lane; codex/opencode/letta need their backend) —
 a red cell means "this backend isn't wired up", which is intended.
-
-## Not here yet
-
-- A full LLM-judge harness (calibration, voting/pass^k, tool-correctness) is later
-  work; `judge.py` notes DeepEval as the likely path.

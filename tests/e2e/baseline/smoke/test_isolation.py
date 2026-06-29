@@ -1,29 +1,34 @@
-"""Isolation smokes: tool trajectories don't mix across senders or rooms.
+"""Isolation smokes: tool trajectories don\'t mix across senders or rooms.
 
 The tool-call read is scoped two ways and both are shown here:
-- ``sender_id`` keeps one agent's calls out of another's (same room).
-- reading per room keeps one room's calls out of another's (same agent).
+- ``sender_id`` keeps one agent\'s calls out of another\'s (same room).
+- reading per room keeps one room\'s calls out of another\'s (same agent).
 
 Uses the opaque tools from ``sample_tools`` so each agent must actually call its
-tool (and with a distinguishing arg), which is what makes the cross-checks
-meaningful. Turn completion uses the delivery-status barrier
-(``wait_for_processed``) on the id each ``send_message`` returns: once that id is
-processed, the turn's ``tool_call`` events are persisted and the read is
+tool (and with a distinguishing arg). Turn completion uses the delivery-status
+barrier (``wait_for_processed``) on the id each ``send_message`` returns: once that
+id is processed, the turn\'s ``tool_call`` events are persisted and the read is
 race-free.
+
+The single-agent cases use ``@with_agents(Adapter.ANTHROPIC, tools=[...], ...)``.
+``test_tool_calls_isolated_per_sender`` keeps a bespoke build: it needs two agents
+with *different* tools in one room, which a single uniform ``@with_agents`` set
+cannot express.
 """
 
 from __future__ import annotations
-
-import pytest
 
 import asyncio
 import contextlib
 from datetime import datetime, timezone
 
+import pytest
 
+from tests.e2e.baseline.agents import Adapter, with_agents
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.sample_tools import (
+    EXECUTION_REPORTING,
     LOOKUP,
     LOOKUP_PROMPT,
     LOOKUP_TOOL,
@@ -32,18 +37,19 @@ from tests.e2e.baseline.smoke.sample_tools import (
     WEATHER_TOOL,
     build_tool_agent,
 )
+from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
 from tests.e2e.baseline.toolkit.provisioning import (
+    ProvisionedAgent,
     ResourceManager,
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
 
 
 def _turn_boundary(capture: ReplyCapture) -> datetime:
     """Server timestamp of the latest captured message — a between-turns boundary.
 
-    Used as ``since`` for the next turn's ``tool_calls`` read. Naive timestamps are
+    Used as ``since`` for the next turn\'s ``tool_calls`` read. Naive timestamps are
     treated as UTC (the platform stores UTC), matching the orphan-sweep coercion.
     """
     stamp = datetime.fromisoformat(capture.messages[-1].inserted_at)
@@ -59,7 +65,11 @@ async def test_tool_calls_isolated_per_sender(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """Two agents share a room; each sender sees only its own tool calls."""
+    """Two agents share a room; each sender sees only its own tool calls.
+
+    Bespoke (not ``@with_agents``): the two agents need *different* tools, which one
+    uniform decorator set cannot express — so build each explicitly.
+    """
     lookup_agent = build_tool_agent(
         baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
     )
@@ -104,57 +114,53 @@ async def test_tool_calls_isolated_per_sender(
     assert not b_calls.fired(LOOKUP), "weather agent's tool calls leaked a lookup call"
 
 
-@requires(Dep.ANTHROPIC)
+@with_agents(
+    Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
+)
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_tool_calls_isolated_per_room(
-    baseline_settings: BaselineSettings,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
     """One agent in two rooms; each room sees only its own tool call."""
-    adapter = build_tool_agent(
-        baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
+    room_one = await resource_manager.provision_room(
+        title="e2e-room-isolation-1", participants=[agent.id]
     )
-    async with running_provisioned_agent(
-        adapter, resource_manager, label="lookup"
-    ) as agent:
-        room_one = await resource_manager.provision_room(
-            title="e2e-room-isolation-1", participants=[agent.id]
+    room_two = await resource_manager.provision_room(
+        title="e2e-room-isolation-2", participants=[agent.id]
+    )
+    # Subscribe to both rooms before sending, so neither turn can be missed.
+    async with (
+        reply_capture(room_one) as cap_one,
+        reply_capture(room_two) as cap_two,
+    ):
+        # The two captures are independent (separate nudges), so both rooms can run
+        # concurrently: send both, settle both, read both.
+        m_one, m_two = await asyncio.gather(
+            user_ops.send_message(
+                room_one,
+                "look up the access code for key 'alpha'",
+                mention_id=agent.id,
+                mention_name=agent.name,
+            ),
+            user_ops.send_message(
+                room_two,
+                "look up the access code for key 'beta'",
+                mention_id=agent.id,
+                mention_name=agent.name,
+            ),
         )
-        room_two = await resource_manager.provision_room(
-            title="e2e-room-isolation-2", participants=[agent.id]
+        await asyncio.gather(
+            cap_one.wait_for_processed(m_one, agent.id),
+            cap_two.wait_for_processed(m_two, agent.id),
         )
-        # Subscribe to both rooms before sending, so neither turn can be missed.
-        async with (
-            reply_capture(room_one) as cap_one,
-            reply_capture(room_two) as cap_two,
-        ):
-            # The two captures are independent (separate nudges), so both rooms
-            # can run concurrently: send both, settle both, read both.
-            m_one, m_two = await asyncio.gather(
-                user_ops.send_message(
-                    room_one,
-                    "look up the access code for key 'alpha'",
-                    mention_id=agent.id,
-                    mention_name=agent.name,
-                ),
-                user_ops.send_message(
-                    room_two,
-                    "look up the access code for key 'beta'",
-                    mention_id=agent.id,
-                    mention_name=agent.name,
-                ),
-            )
-            await asyncio.gather(
-                cap_one.wait_for_processed(m_one, agent.id),
-                cap_two.wait_for_processed(m_two, agent.id),
-            )
-            calls_one, calls_two = await asyncio.gather(
-                cap_one.tool_calls(sender_id=agent.id),
-                cap_two.tool_calls(sender_id=agent.id),
-            )
+        calls_one, calls_two = await asyncio.gather(
+            cap_one.tool_calls(sender_id=agent.id),
+            cap_two.tool_calls(sender_id=agent.id),
+        )
 
     calls_one.assert_fired(LOOKUP, with_args={"key": "alpha"})
     assert not any(c.args.get("key") == "beta" for c in calls_one), (
@@ -166,53 +172,49 @@ async def test_tool_calls_isolated_per_room(
     )
 
 
-@requires(Dep.ANTHROPIC)
+@with_agents(
+    Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
+)
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_capture_scopes_to_current_turn(
-    baseline_settings: BaselineSettings,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
     """Reusing one capture across turns: the wait and the read scope to the new turn."""
-    adapter = build_tool_agent(
-        baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
+    room_id = await resource_manager.provision_room(
+        title="e2e-turn-scope", participants=[agent.id]
     )
-    async with running_provisioned_agent(
-        adapter, resource_manager, label="lookup"
-    ) as agent:
-        room_id = await resource_manager.provision_room(
-            title="e2e-turn-scope", participants=[agent.id]
+    async with reply_capture(room_id) as capture:
+        # Turn 1.
+        m_one = await user_ops.send_message(
+            room_id,
+            "look up the access code for key 'alpha'",
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        async with reply_capture(room_id) as capture:
-            # Turn 1.
-            m_one = await user_ops.send_message(
-                room_id,
-                "look up the access code for key 'alpha'",
-                mention_id=agent.id,
-                mention_name=agent.name,
-            )
-            await capture.wait_for_processed(m_one, agent.id)
-            # Boundary between turns (server timestamp of turn 1's reply). Turn 1's
-            # call is verified by the unscoped read at the end.
-            boundary = _turn_boundary(capture)
+        await capture.wait_for_processed(m_one, agent.id)
+        # Boundary between turns (server timestamp of turn 1's reply). Turn 1's call
+        # is verified by the unscoped read at the end.
+        boundary = _turn_boundary(capture)
 
-            # Turn 2, same capture reused. Barriering on turn 2's own id scopes the
-            # wait to the new turn — it can't return on turn 1's reply.
-            m_two = await user_ops.send_message(
-                room_id,
-                "now look up the access code for key 'beta'",
-                mention_id=agent.id,
-                mention_name=agent.name,
-            )
-            await capture.wait_for_processed(m_two, agent.id)
-            # Contrast a scoped read against an unscoped one to prove `since`
-            # (not some other effect) is what excludes turn 1.
-            turn_two, all_calls = await asyncio.gather(
-                capture.tool_calls(sender_id=agent.id, since=boundary),
-                capture.tool_calls(sender_id=agent.id),
-            )
+        # Turn 2, same capture reused. Barriering on turn 2's own id scopes the wait
+        # to the new turn — it can't return on turn 1's reply.
+        m_two = await user_ops.send_message(
+            room_id,
+            "now look up the access code for key 'beta'",
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await capture.wait_for_processed(m_two, agent.id)
+        # Contrast a scoped read against an unscoped one to prove `since` (not some
+        # other effect) is what excludes turn 1.
+        turn_two, all_calls = await asyncio.gather(
+            capture.tool_calls(sender_id=agent.id, since=boundary),
+            capture.tool_calls(sender_id=agent.id),
+        )
 
     # Unscoped, the room still holds BOTH turns' calls — so turn 1's is present...
     all_calls.assert_fired(LOOKUP, with_args={"key": "alpha"})

@@ -53,6 +53,7 @@ import band.adapters
 
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
+from band.runtime.custom_tools import CustomToolDef
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.requirements import Dep
@@ -130,6 +131,22 @@ def adapter(
 def spec_for(name: Adapter) -> AdapterSpec:
     """The registered spec for ``name`` (raises ``KeyError`` if unregistered)."""
     return _REGISTRY[name]
+
+
+def _reject_tools(adapter: Adapter, tools: list[CustomToolDef] | None) -> None:
+    """Fail loudly when custom tools are asked of an adapter that can't take them.
+
+    Agno owns its agent's tool list (a per-run factory), Letta exposes tools via
+    its MCP server, and pydantic-ai takes native callables (not band
+    ``CustomToolDef`` tuples) — so none accept baseline custom tools here.
+    Consistent with the toolkit's fail-loudly rule, reject rather than silently
+    drop the tools a test requested (which would be a false green).
+    """
+    if tools:
+        raise ValueError(
+            f"the {adapter.value} adapter does not support custom tools "
+            "(additional_tools); configure them on the framework directly"
+        )
 
 
 # =============================================================================
@@ -225,6 +242,7 @@ def build_adapter(
     *,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     """Construct the adapter registered under ``adapter_id``.
 
@@ -237,7 +255,7 @@ def build_adapter(
         raise ValueError(
             f"unknown adapter {adapter_id!r}; registered: {sorted(_REGISTRY)}"
         )
-    return spec.build(settings, prompt=prompt, features=features)
+    return spec.build(settings, prompt=prompt, features=features, tools=tools)
 
 
 # =============================================================================
@@ -254,7 +272,11 @@ _LLM_TOOL_LOOP = (Capability.MEMORY, Capability.CONTACTS)
 
 @adapter(Adapter.ANTHROPIC, requires=[Dep.ANTHROPIC], supports=_LLM_TOOL_LOOP)
 def _build_anthropic(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.anthropic import AnthropicAdapter
 
@@ -262,26 +284,36 @@ def _build_anthropic(
         model=s.llm_models.anthropic_model,
         provider_key=s.llm_credentials.anthropic_api_key or None,
         prompt=prompt,
+        additional_tools=tools,
         features=features,
     )
 
 
 @adapter(Adapter.CLAUDE_SDK, requires=[Dep.ANTHROPIC], supports=_LLM_TOOL_LOOP)
 def _build_claude_sdk(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.claude_sdk import ClaudeSDKAdapter
 
     return ClaudeSDKAdapter(
         model=s.llm_models.anthropic_model,
         custom_section=prompt,
+        additional_tools=tools,
         features=features,
     )
 
 
 @adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_LLM_TOOL_LOOP)
 def _build_langgraph(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     from langchain_openai import ChatOpenAI
     from langgraph.checkpoint.memory import MemorySaver
@@ -295,16 +327,22 @@ def _build_langgraph(
         ),
         checkpointer=MemorySaver(),
         custom_section=prompt or "",
+        additional_tools=tools,
         features=features,
     )
 
 
 @adapter(Adapter.PYDANTIC_AI, requires=[Dep.OPENAI], supports=_LLM_TOOL_LOOP)
 def _build_pydantic_ai(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.pydantic_ai import PydanticAIAdapter
 
+    _reject_tools(Adapter.PYDANTIC_AI, tools)
     return PydanticAIAdapter(
         model=f"openai:{s.llm_models.openai_model}",
         custom_section=prompt,
@@ -314,7 +352,11 @@ def _build_pydantic_ai(
 
 @adapter(Adapter.GEMINI, requires=[Dep.GOOGLE], supports=_LLM_TOOL_LOOP)
 def _build_gemini(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.gemini import GeminiAdapter
 
@@ -322,13 +364,18 @@ def _build_gemini(
         model=s.llm_models.gemini_model,
         provider_key=s.llm_credentials.google_api_key or None,
         prompt=prompt,
+        additional_tools=tools,
         features=features,
     )
 
 
 @adapter(Adapter.GOOGLE_ADK, requires=[Dep.GOOGLE], supports=_LLM_TOOL_LOOP)
 def _build_google_adk(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.google_adk import GoogleADKAdapter
 
@@ -336,13 +383,18 @@ def _build_google_adk(
     return GoogleADKAdapter(
         model=s.llm_models.gemini_model,
         custom_section=prompt,
+        additional_tools=tools,
         features=features,
     )
 
 
 @adapter(Adapter.CREWAI, requires=[Dep.OPENAI, Dep.CREWAI], supports=_LLM_TOOL_LOOP)
 def _build_crewai(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     from band.adapters.crewai import CrewAIAdapter
 
@@ -352,13 +404,18 @@ def _build_crewai(
         goal="Help users with simple tasks for testing.",
         backstory="A test agent for E2E validation.",
         custom_section=prompt,
+        additional_tools=tools,
         features=features,
     )
 
 
 @adapter(Adapter.AGNO, requires=[Dep.ANTHROPIC], supports=_LLM_TOOL_LOOP)
 def _build_agno(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     # Agno bridges a user-built agent, so steering goes into its instructions.
     # Use the Anthropic model: small models refuse the suite's crafted prompts as
@@ -368,6 +425,7 @@ def _build_agno(
 
     from band.adapters.agno import AgnoAdapter
 
+    _reject_tools(Adapter.AGNO, tools)
     return AgnoAdapter(
         AgnoAgent(model=Claude(id=s.llm_models.anthropic_model), instructions=prompt),
         features=features,
@@ -376,7 +434,11 @@ def _build_agno(
 
 @adapter(Adapter.CREWAI_FLOW, requires=[Dep.CREWAI])
 def _build_crewai_flow(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     # CrewAI Flow returns a terminal result rather than running the Band tool loop,
     # so it takes a flow_factory (not a model/prompt) and advertises no platform
@@ -389,12 +451,18 @@ def _build_crewai_flow(
             content = message.get("content", "") if isinstance(message, dict) else ""
             return {"decision": "direct_response", "content": content, "mentions": []}
 
-    return CrewAIFlowAdapter(flow_factory=_E2EFlow, features=features)
+    return CrewAIFlowAdapter(
+        flow_factory=_E2EFlow, additional_tools=tools, features=features
+    )
 
 
 @adapter(Adapter.CODEX, requires=[Dep.CODEX_CLI, Dep.CODEX_CWD])
 def _build_codex(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     import os
 
@@ -406,13 +474,18 @@ def _build_codex(
             cwd=os.environ["CODEX_CWD"],
             custom_section=prompt or "",
         ),
+        additional_tools=tools,
         features=features,
     )
 
 
 @adapter(Adapter.OPENCODE, requires=[Dep.OPENCODE_SERVER])
 def _build_opencode(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     import os
 
@@ -425,17 +498,24 @@ def _build_opencode(
             model_id=os.environ.get("OPENCODE_MODEL_ID", "minimax-m2.5-free"),
             custom_section=prompt or "",
         ),
+        additional_tools=tools,
         features=features,
     )
 
 
 @adapter(Adapter.LETTA, requires=[Dep.LETTA_CLOUD])
 def _build_letta(
-    s: BaselineSettings, *, prompt: str | None, features: AdapterFeatures | None
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[CustomToolDef] | None = None,
 ) -> SimpleAdapter[Any]:
     import os
 
     from band.adapters.letta import LettaAdapter, LettaAdapterConfig
+
+    _reject_tools(Adapter.LETTA, tools)
 
     # Only override mcp_server_url when set, so the config default applies for a
     # self-hosted server that doesn't need an externally-reachable MCP endpoint.
