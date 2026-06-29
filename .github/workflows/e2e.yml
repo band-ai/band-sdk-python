@@ -32,11 +32,13 @@ on:
     branches:
       - int-915-4-adapter-discovery-generic-provisioning-matrix-for-the
 
-# Serialize E2E runs: they share one live platform, so avoid two runs racing
-# (and reaping) each other's provisioned agents/rooms.
+# Serialize E2E runs: they share one live platform, so never let two race (and
+# reap each other's provisioned agents/rooms). Newest wins — a fresh run cancels
+# an in-flight one rather than queuing behind it, so a quick succession of pushes
+# only burns the live platform on the latest commit.
 concurrency:
   group: e2e-baseline
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
 
