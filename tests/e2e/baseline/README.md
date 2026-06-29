@@ -13,7 +13,7 @@ quality. They are deterministic by design (no `sleep`, no silence windows).
 |------|------------|
 | `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent` (yields the running agent's `ProvisionedAgent`), `ProvisionedAgent` |
 | `toolkit/adapters.py` | adapter registry: `Adapter` enum, `@adapter` builders, `build_adapter`, `specs`, the discovery guard |
-| `agents.py` | matrix/decorator glue: `@with_agents(Adapter.X, ...)` (fixed set → `agent`/`agents`), `@across_adapters(...)` (matrix subset → `matrix_agent`), `adapter_params` |
+| `agents.py` | matrix/decorator glue: `@with_agents(Adapter.X, ...)` (fixed set → `agent`/`agents`), `@across_adapters(include/exclude/supports/without, prompt=, features=)` (matrix/subset → `matrix_agent` + `adapter_id`), `adapter_params` |
 | `smoke/sample_agents.py` | shared driving glue for the smokes: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_agents(..., **SHAPE)`, and the `*_instruction(...)` builders |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)` |
@@ -41,6 +41,7 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Wait for a specific delivery state (e.g. observe a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |
 | Inspect the delivery lifecycle that occurred | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
+| Scope a read to a later turn (one reused capture) | `mark = capture.messages.snapshot()` before sending, then `capture.messages.since(mark)` after the barrier |
 | See which tools an agent fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (agent needs `Emit.EXECUTION`; memory tools excluded — pass `include_memory=True` or use `capture.memory(agent)`) |
 | Assert a specific tool fired | `calls.assert_fired("name", with_args={...})` (case-insensitive name, subset args) |
 | See which events an agent emitted | `await capture.thoughts(sender_id=agent.id)` (or `errors()`/`tasks()`/`events(MessageType.X)`; read after the barrier) |
@@ -50,22 +51,22 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Assert a memory actually landed in the store | `mem.stored.assert_stored(content=marker, system=...)` |
 | Assert something happened (cheap) | `assertions.py` helpers, or the methods on `capture.messages` (`Replies`) |
 | Assert a fuzzy/semantic outcome | the `judge` fixture (use sparingly, see below) |
-| Run one scenario across every adapter | the `matrix_agent` fixture — parametrized over the registry, yields a `MatrixAgent(adapter_id, agent)` |
+| Run one scenario across every adapter | request `matrix_agent` (the cell's running `ProvisionedAgent`) and/or `adapter_id` (its id) — both parametrized over the full registry by default |
 | Run one/several named adapters in a test | `@with_agents(Adapter.X[, Adapter.Y])` from `agents.py` → inject `agent` (one) / `agents` (list); no magic strings, gate auto-derived |
 | Run agents under a standard prompt/features shape | spread a shape from `sample_agents.py`: `@with_agents(Adapter.X, **TOOL_AGENT)` (exact-execution prompt) or `**MEMORY_AGENT` (prompt + memory tools as `tool_call` events) — don't re-spell `prompt=`/`features=` per test |
-| Run one scenario across a subset of adapters | `@across_adapters(include={...})` / `exclude=` / `supports={Capability.MEMORY}` (from `agents.py`) drives the `matrix_agent` fixture over the subset |
+| Run one scenario across a subset of adapters | `@across_adapters(include=/exclude= by id, or supports=/without={Capability.MEMORY} by capability)` overrides the `matrix_agent`/`adapter_id` matrix; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer per-cell construction |
 | Declare a test's extra requirements | `@requires(Dep.OPENAI, ...)` (a missing one **fails**, see Validation policy; the E2E + Band-key gate is automatic) — note `@with_agents` applies these for you |
 
 ## Fixtures (from `conftest.py`)
 
 `baseline_settings`, `user_ops`, `resource_manager`, `reply_capture`,
-`judge`, `agent`, `agents`, `matrix_agent`, `baseline_ws`. The
+`judge`, `agent`, `agents`, `adapter_id`, `matrix_agent`, `baseline_ws`. The
 `reply_capture` and `judge` fixtures pre-bind their plumbing (the WS observer;
 the judge model + key), so tests pass only the test-specific arguments. `agent` /
 `agents` are driven by `@with_agents(Adapter.X, ...)` (in `agents.py`): the
 decorator auto-applies the requirement gate from the registry and the fixtures
 build (via `toolkit/adapters.py`) + provision + run + reap the agents.
-`matrix_agent` does the same across the whole matrix. The E2E +
+`matrix_agent` (the cell's `ProvisionedAgent`) + `adapter_id` (its id) do the same across the whole matrix, parametrized by default and narrowed by `@across_adapters`. The E2E +
 Band-key gate is applied to every baseline test automatically, so a gate-only test
 needs no decorator.
 

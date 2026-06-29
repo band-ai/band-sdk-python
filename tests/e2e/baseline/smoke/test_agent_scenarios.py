@@ -113,14 +113,14 @@ async def test_agent_recalls_earlier_facts(
         )
         await capture.wait_for_processed(last, agent.id)
 
-        # Ask it to recall. Snapshot first, barrier on the question, then
-        # slice — everything captured after the snapshot is the recall turn.
-        snapshot = len(capture.messages)
+        # Snapshot the buffer, barrier on the question, then read what arrived
+        # after — everything since the mark is the recall turn.
+        mark = capture.messages.snapshot()
         question = await user_ops.send_message(
             room_id, "What is my favorite color and my dog's name?", **mention
         )
         await capture.wait_for_processed(question, agent.id)
-        recall = capture.messages[snapshot:]
+        recall = capture.messages.since(mark)
 
     # Cheap structural pre-check: the recall turn mentions at least one fact.
     assert_present(recall, what="a recall reply")

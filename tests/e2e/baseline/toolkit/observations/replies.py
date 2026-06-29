@@ -55,3 +55,20 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
         raise AssertionError(
             f"expected a reply mentioning {participant_id} (by metadata), but none did"
         )
+
+    def snapshot(self) -> int:
+        """A cursor at the current end of the buffer, for ``since`` after a turn.
+
+        ``mark = capture.messages.snapshot()`` before sending, then
+        ``capture.messages.since(mark)`` reads only what arrived afterwards — no
+        manual ``len(...)`` / slice index.
+        """
+        return len(self)
+
+    def since(self, cursor: int) -> "Replies":
+        """The replies captured after ``cursor`` (from ``snapshot``), as a ``Replies``.
+
+        Re-wraps the slice so the tolerant assertion methods survive (a bare slice
+        of a ``list`` subclass is a plain ``list``).
+        """
+        return Replies(self[cursor:])

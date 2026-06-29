@@ -11,7 +11,7 @@ it is immune to whatever the agent says (or whether it replies at all).
 
 Run with:
 
-    E2E_TESTS_ENABLED=true uv run pytest \
+    E2E_TESTS_ENABLED=true uv run pytest \\
         tests/e2e/baseline/smoke/test_processing_barrier.py -v -s --no-cov
 """
 
@@ -21,9 +21,9 @@ import logging
 
 import pytest
 
-from tests.e2e.baseline.agents import MatrixAgent, across_adapters
+from tests.e2e.baseline.agents import across_adapters
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 logger = logging.getLogger(__name__)
@@ -37,16 +37,16 @@ ROUNDS = 4
 @pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_barrier_settles_message_burst(
-    matrix_agent: MatrixAgent,
+    adapter_id: str,
+    matrix_agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    adapter_id, agent = matrix_agent
     room_id = await resource_manager.provision_room(
-        title=f"e2e-barrier-{adapter_id}", participants=[agent.id]
+        title=f"e2e-barrier-{adapter_id}", participants=[matrix_agent.id]
     )
-    mention = {"mention_id": agent.id, "mention_name": agent.name}
+    mention = {"mention_id": matrix_agent.id, "mention_name": matrix_agent.name}
 
     async with reply_capture(room_id) as capture:
         for round_no in range(ROUNDS):
@@ -60,7 +60,7 @@ async def test_barrier_settles_message_burst(
             )
             # Must resolve from delivery state, not reply text. Raises
             # TimeoutError (failing the test) if the barrier is unreliable.
-            await capture.wait_for_processed(last, agent.id)
+            await capture.wait_for_processed(last, matrix_agent.id)
             logger.info(
                 "%s round %d: barrier settled on %s", adapter_id, round_no, last
             )

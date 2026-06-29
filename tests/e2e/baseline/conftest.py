@@ -21,7 +21,6 @@ from tests.e2e.baseline.agents import (
     AGENTS_MARKER,
     MATRIX_MARKER,
     AgentsRequest,
-    MatrixAgent,
     MatrixBuild,
 )
 from tests.e2e.baseline.requires import MARKER, Dep, require_dep, requires
@@ -228,21 +227,32 @@ _MATRIX_PARAMS = [
 
 
 @pytest.fixture(params=_MATRIX_PARAMS)
+def adapter_id(request: pytest.FixtureRequest) -> str:
+    """The current matrix cell's adapter id.
+
+    Parametrized across the whole registry by default (each cell carrying its
+    ``@requires`` gate), so requesting this — or ``matrix_agent``, which depends on
+    it — fans a test across the matrix. ``@across_adapters(...)`` overrides the set;
+    construction-only tests parametrize it directly.
+    """
+    return request.param
+
+
+@pytest.fixture
 async def matrix_agent(
     request: pytest.FixtureRequest,
+    adapter_id: str,
     baseline_settings: BaselineSettings,
     resource_manager: ResourceManager,
-) -> AsyncGenerator[MatrixAgent, None]:
-    """Provision + run one adapter from the matrix; the cross-adapter test seam.
+) -> AsyncGenerator[ProvisionedAgent, None]:
+    """The running provisioned agent for the current matrix cell.
 
-    Parametrized across the whole registry, so an L0–L4 scenario body is written
-    once and runs against every adapter. ``@across_adapters(...)`` narrows the set
-    and may steer construction via the ``MatrixBuild`` marker (``prompt`` /
-    ``features`` — e.g. enable memory); absent that, a short default prompt and no
-    features. Yields a ``MatrixAgent(adapter_id, agent)`` — unpack it or use the
-    named fields. Reaping is owned by ``resource_manager`` teardown.
+    Built from ``adapter_id`` via the registry and run for the test; request
+    ``adapter_id`` alongside it when a test also needs the id. ``@across_adapters``
+    may steer construction via the ``MatrixBuild`` marker (``prompt`` / ``features``
+    — e.g. enable memory), else a short default prompt and no features. Reaping is
+    owned by ``resource_manager`` teardown.
     """
-    adapter_id: str = request.param
     marker = request.node.get_closest_marker(MATRIX_MARKER)
     build: MatrixBuild | None = marker.args[0] if marker else None
     prompt = build.prompt if build and build.prompt is not None else _SHORT_PROMPT
@@ -253,7 +263,7 @@ async def matrix_agent(
     async with running_provisioned_agent(
         adapter, resource_manager, label=adapter_id
     ) as provisioned:
-        yield MatrixAgent(adapter_id, provisioned)
+        yield provisioned
 
 
 @pytest.fixture
