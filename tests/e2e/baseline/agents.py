@@ -46,14 +46,17 @@ from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
 __all__ = [
     "Adapter",
     "AGENTS_MARKER",
+    "MATRIX_MARKER",
     "AgentsRequest",
+    "MatrixBuild",
     "across_adapters",
     "adapter_params",
     "with_agents",
 ]
 
-# Marker name the agent/agents fixtures resolve. Registered in conftest.
-AGENTS_MARKER = "with_agents"
+# Marker names the conftest fixtures resolve. Registered in conftest.
+AGENTS_MARKER = "with_agents"  # read by agent/agents fixtures
+MATRIX_MARKER = "matrix_build"  # read by provisioned_matrix_agent fixture
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,14 @@ class AgentsRequest:
     """What ``@with_agents`` asks the fixtures to provision (carried on the marker)."""
 
     adapters: tuple[Adapter, ...]
+    prompt: str | None
+    features: AdapterFeatures | None
+
+
+@dataclass(frozen=True)
+class MatrixBuild:
+    """How ``@across_adapters`` steers per-cell construction (carried on the marker)."""
+
     prompt: str | None
     features: AdapterFeatures | None
 
@@ -95,19 +106,23 @@ def adapter_params(
     *,
     exclude: Collection[str] | None = None,
     supports: Collection[Capability] | None = None,
+    without: Collection[Capability] | None = None,
 ) -> list[ParameterSet]:
     """One ``pytest.param`` per registered adapter, each gated by its requirements.
 
     Pick all adapters or a subset by what a test checks: no args = the full matrix;
     ``include={...}`` / ``exclude={...}`` slice by id; ``supports={Capability.MEMORY}``
-    keeps only adapters advertising that capability. The ``requires(...)`` marks are
-    resolved per-parameter by the conftest gate hook (a missing requirement fails the
-    cell). Used directly to parametrize an ``adapter_id`` (then ``build_adapter``),
-    or via ``across_adapters`` to drive the ``provisioned_matrix_agent`` fixture.
+    keeps only adapters advertising that capability and ``without={Capability.MEMORY}``
+    its complement. The ``requires(...)`` marks are resolved per-parameter by the
+    conftest gate hook (a missing requirement fails the cell). Used directly to
+    parametrize an ``adapter_id`` (then ``build_adapter``), or via ``across_adapters``
+    to drive the ``provisioned_matrix_agent`` fixture.
     """
     return [
         pytest.param(spec.id, marks=requires(*spec.requires), id=str(spec.id))
-        for spec in specs(include=include, exclude=exclude, supports=supports)
+        for spec in specs(
+            include=include, exclude=exclude, supports=supports, without=without
+        )
     ]
 
 
@@ -116,22 +131,40 @@ def across_adapters(
     *,
     exclude: Collection[str] | None = None,
     supports: Collection[Capability] | None = None,
-) -> pytest.MarkDecorator:
+    without: Collection[Capability] | None = None,
+    prompt: str | None = None,
+    features: AdapterFeatures | None = None,
+) -> Callable[[Callable[..., object]], Callable[..., object]]:
     """Run a test across the adapter matrix via the ``provisioned_matrix_agent``
     fixture — the parametrized sibling of ``@with_agents``.
 
     Sugar over ``@pytest.mark.parametrize(..., indirect=True)``: the test injects one
     running agent per cell as ``provisioned_matrix_agent`` (``(adapter_id,
-    ProvisionedAgent)``) and the per-cell ``@requires`` gate rides along. No args =
-    the full matrix; narrow with ``include`` / ``exclude`` / ``supports`` (the
-    indirect parametrization overrides the fixture's default full-matrix params)::
+    ProvisionedAgent)``) and the per-cell ``@requires`` gate rides along. Filter the
+    matrix with ``include`` / ``exclude`` (by id) or ``supports`` / ``without`` (by
+    capability — complementary), and steer per-cell construction with ``prompt`` /
+    ``features`` (e.g. enable memory), exactly like ``@with_agents``. The indirect
+    parametrization overrides the fixture's default full-matrix params::
 
-        @across_adapters(exclude={"crewai", "crewai_flow"})
-        async def test_l0(provisioned_matrix_agent, resource_manager, ...):
+        @across_adapters(supports={Capability.MEMORY}, features=memory_features())
+        async def test_memory(provisioned_matrix_agent, ...):
             adapter_id, agent = provisioned_matrix_agent
+
+    Note: a bare ``provisioned_matrix_agent`` parameter already runs the *full*
+    matrix (the fixture's default) — only reach for ``@across_adapters`` to filter
+    or to set ``prompt`` / ``features``.
     """
-    return pytest.mark.parametrize(
-        "provisioned_matrix_agent",
-        adapter_params(include=include, exclude=exclude, supports=supports),
-        indirect=True,
+    params = adapter_params(
+        include=include, exclude=exclude, supports=supports, without=without
     )
+    build = MatrixBuild(prompt=prompt, features=features)
+
+    def decorate(fn: Callable[..., object]) -> Callable[..., object]:
+        fn = pytest.mark.parametrize(
+            "provisioned_matrix_agent", params, indirect=True
+        )(fn)
+        if prompt is not None or features is not None:
+            fn = getattr(pytest.mark, MATRIX_MARKER)(build)(fn)
+        return fn
+
+    return decorate

@@ -22,7 +22,7 @@ from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
-from tests.e2e.baseline.agents import adapter_params
+from tests.e2e.baseline.agents import across_adapters, adapter_params
 from tests.e2e.baseline.smoke.sample_agents import build_agent
 
 

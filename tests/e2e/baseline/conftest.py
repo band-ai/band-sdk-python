@@ -17,7 +17,12 @@ from band_rest import AsyncRestClient
 
 from band.client.streaming import WebSocketClient
 
-from tests.e2e.baseline.agents import AGENTS_MARKER, AgentsRequest
+from tests.e2e.baseline.agents import (
+    AGENTS_MARKER,
+    MATRIX_MARKER,
+    AgentsRequest,
+    MatrixBuild,
+)
 from tests.e2e.baseline.requires import MARKER, Dep, require_dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import build_adapter, specs
@@ -45,6 +50,11 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         f"{AGENTS_MARKER}(request): set by @with_agents to declare the adapters a "
         "test runs; resolved by the agent/agents fixtures. See agents.py.",
+    )
+    config.addinivalue_line(
+        "markers",
+        f"{MATRIX_MARKER}(build): set by @across_adapters to steer per-cell "
+        "construction (prompt/features); resolved by provisioned_matrix_agent.",
     )
 
 
@@ -225,12 +235,20 @@ async def provisioned_matrix_agent(
     """Provision + run one adapter from the matrix; the cross-adapter test seam.
 
     Parametrized across the whole registry, so an L0–L4 scenario body is written
-    once and runs against every adapter (a subset can re-parametrize with
-    ``adapter_params(...)``). Yields ``(adapter_id, ProvisionedAgent)`` — the record
-    carries the id/name to mention. Reaping is owned by ``resource_manager`` teardown.
+    once and runs against every adapter. ``@across_adapters(...)`` narrows the set
+    and may steer construction via the ``MatrixBuild`` marker (``prompt`` /
+    ``features`` — e.g. enable memory); absent that, a short default prompt and no
+    features. Yields ``(adapter_id, ProvisionedAgent)`` — the record carries the
+    id/name to mention. Reaping is owned by ``resource_manager`` teardown.
     """
     adapter_id: str = request.param
-    adapter = build_adapter(adapter_id, baseline_settings, prompt=_SHORT_PROMPT)
+    marker = request.node.get_closest_marker(MATRIX_MARKER)
+    build: MatrixBuild | None = marker.args[0] if marker else None
+    prompt = build.prompt if build and build.prompt is not None else _SHORT_PROMPT
+    features = build.features if build else None
+    adapter = build_adapter(
+        adapter_id, baseline_settings, prompt=prompt, features=features
+    )
     async with running_provisioned_agent(
         adapter, resource_manager, label=adapter_id
     ) as provisioned:

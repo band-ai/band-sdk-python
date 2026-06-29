@@ -195,20 +195,26 @@ def specs(
     include: Collection[str] | None = None,
     exclude: Collection[str] | None = None,
     supports: Collection[Capability] | None = None,
+    without: Collection[Capability] | None = None,
 ) -> list[AdapterSpec]:
     """The registered specs, optionally narrowed.
 
     ``include`` keeps only those ids; ``exclude`` drops those ids; ``supports``
     keeps only adapters advertising *all* the given capabilities (e.g.
-    ``supports={Capability.MEMORY}`` for the memory matrix). Stable id order.
+    ``supports={Capability.MEMORY}``); ``without`` keeps only adapters advertising
+    *none* of them (the complement, e.g. ``without={Capability.MEMORY}`` for the
+    non-memory adapters). ``supports`` and ``without`` are disjoint complementary
+    filters. Stable id order.
     """
     wanted = frozenset(supports or ())
+    unwanted = frozenset(without or ())
     chosen = [
         spec
         for adapter_id, spec in sorted(_REGISTRY.items())
         if (include is None or adapter_id in include)
         and (exclude is None or adapter_id not in exclude)
         and wanted.issubset(spec.supports)
+        and spec.supports.isdisjoint(unwanted)
     ]
     return chosen
 
