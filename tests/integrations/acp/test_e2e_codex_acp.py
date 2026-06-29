@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -39,8 +40,23 @@ from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
 
-# Skip entire module if npx is not available
+# These are real E2E tests: each spawns `npx @zed-industries/codex-acp` as a
+# live subprocess (Node + network), so they are opt-in like the rest of the e2e
+# suite. Gated on E2E_TESTS_ENABLED so a plain `uv run pytest` skips them — they
+# are slow and their subprocess/fd pressure was starving nearby server tests
+# (e.g. tests/runtime/test_mcp_server.py) into spurious timeouts. Also requires
+# npx on PATH when enabled.
+_E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 pytestmark = [
+    pytest.mark.skipif(
+        not _E2E_ENABLED,
+        reason="codex-acp E2E tests are opt-in; set E2E_TESTS_ENABLED=true to run",
+    ),
     pytest.mark.skipif(
         shutil.which("npx") is None,
         reason="npx not available",
