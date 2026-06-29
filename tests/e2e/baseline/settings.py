@@ -102,8 +102,10 @@ class Backends(BaseSettings):
 
     # OpenCode server.
     opencode_base_url: str = ""  # OPENCODE_BASE_URL (a running `opencode serve`)
-    opencode_provider_id: str = "opencode"  # OPENCODE_PROVIDER_ID
-    opencode_model_id: str = "minimax-m2.5-free"  # OPENCODE_MODEL_ID
+    opencode_provider_id: str = "opencode"  # OPENCODE_PROVIDER_ID (the Zen provider)
+    # A current OpenCode Zen *free* model (the catalogue shifts; confirm against the
+    # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
+    opencode_model_id: str = "mimo-v2.5-free"  # OPENCODE_MODEL_ID
 
     # Letta (Cloud or self-hosted) + the Band MCP server it calls for tools.
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL

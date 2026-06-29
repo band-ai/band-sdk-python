@@ -51,7 +51,7 @@ def _lane_skip_reason(
     """
     out_of_lane = sorted(t for t in targets if lane_of.get(t) != lane)
     if out_of_lane:
-        elsewhere = sorted({lane_of.get(t, "?") for t in out_of_lane})
+        elsewhere = sorted(str(lane_of.get(t, "?")) for t in out_of_lane)
         return f"{out_of_lane} run in lane(s) {elsewhere}, not active lane {lane!r}"
     return None
 

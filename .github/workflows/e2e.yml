@@ -16,7 +16,7 @@ name: E2E (baseline)
 # - dev-crewai   — crewai/crewai_flow (crewai conflicts with the dev venv's deps,
 #                  so it gets its own `uv` extra; see pyproject [tool.uv] conflicts).
 # - codex        — CodexAdapter (codex CLI) + the codex-acp e2e. [wired]
-# - opencode     — OpencodeAdapter against a local `opencode serve`. [TODO: phase 2]
+# - opencode     — OpencodeAdapter against a local `opencode serve` (Zen free model). [wired]
 # - letta        — LettaAdapter against a self-hosted letta + Band MCP. [TODO: phase 3]
 #
 # An unwired backend lane still runs: its cell fails loudly (the @requires gate
@@ -122,8 +122,8 @@ jobs:
 
     # --- Backend setup (per lane; only the matching lane's block runs) -----------
 
-    - name: Set up Node (codex)
-      if: matrix.lane == 'codex'
+    - name: Set up Node (codex, opencode)
+      if: matrix.lane == 'codex' || matrix.lane == 'opencode'
       uses: actions/setup-node@v4
       with:
         node-version: '20'
@@ -143,6 +143,39 @@ jobs:
         echo "CODEX_CWD=$(mktemp -d)" >> "$GITHUB_ENV"
         echo "E2E_CODEX_CWD_IS_DISPOSABLE=true" >> "$GITHUB_ENV"
         echo "CODEX_MODEL=${CODEX_MODEL}" >> "$GITHUB_ENV"
+
+    - name: Install + start the OpenCode server (opencode)
+      if: matrix.lane == 'opencode'
+      env:
+        # The OpenCode Zen provider key; an unsecured localhost server reads it via
+        # the {env:...} substitution in the config below. Free-tier account, so the
+        # config pins free models (incl. the small/title model) to avoid paid calls.
+        OPENCODE_ZEN_API_KEY: ${{ secrets.OPENCODE_ZEN_API_KEY }}
+      run: |
+        npm install -g opencode-ai
+        mkdir -p ~/.config/opencode
+        cat > ~/.config/opencode/opencode.json <<'JSON'
+        {
+          "$schema": "https://opencode.ai/config.json",
+          "small_model": "opencode/mimo-v2.5-free",
+          "provider": {
+            "opencode": { "options": { "apiKey": "{env:OPENCODE_ZEN_API_KEY}" } }
+          }
+        }
+        JSON
+        # Serve from an empty throwaway dir: opencode is a coding agent with
+        # shell/read/grep tools, so in the repo checkout a weak free model wanders
+        # into the source instead of replying. An empty cwd keeps it on task.
+        workdir="$(mktemp -d)"
+        ( cd "$workdir" && nohup opencode serve --hostname 127.0.0.1 --port 4096 \
+            >/tmp/opencode-serve.log 2>&1 & )
+        for _ in $(seq 1 30); do
+          curl -fsS http://127.0.0.1:4096/global/health && break
+          sleep 2
+        done
+        echo "OPENCODE_BASE_URL=http://127.0.0.1:4096" >> "$GITHUB_ENV"
+        # Free Zen models are slower than the 60s default; give the turn room.
+        echo "E2E_TIMEOUT=120" >> "$GITHUB_ENV"
 
     # -----------------------------------------------------------------------------
 
