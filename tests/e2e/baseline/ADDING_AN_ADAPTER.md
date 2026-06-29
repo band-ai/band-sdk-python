@@ -23,9 +23,26 @@ in a room), or a **bridge** that exposes Band to another protocol (a2a, acp, sla
 | It is… | Do this |
 |---|---|
 | an LLM-agent adapter | **Register it** — Steps 1–3 below (and 4 if it needs new config). |
-| a protocol bridge / needs a live server with bespoke setup (like `parlant`) | **Deny it** — add its module name to `DENY` in `toolkit/adapters.py`. One edit, done. |
+| a protocol bridge / needs a live server with bespoke setup (like `parlant`) | **Deny it** — add its module name to `NON_AGENT_ADAPTERS` in `toolkit/adapters.py`. One edit, done. |
 
 Everything below is the register path.
+
+---
+
+## `NON_AGENT_ADAPTERS` — TBD
+
+> **Not yet implemented — to be developed later.**
+>
+> The "deny" path above refers to a `NON_AGENT_ADAPTERS` set that will hold the
+> module names the matrix deliberately excludes (protocol bridges like
+> a2a/a2a_gateway/acp/slack, and frameworks needing bespoke live setup like
+> parlant). Today this list exists in `toolkit/adapters.py` under the name `DENY`;
+> the plan is to rename/formalize it as `NON_AGENT_ADAPTERS` with clearer semantics
+> (why each module is excluded, and how the discovery guard reports it).
+>
+> Until that lands, add a non-agent module to the existing `DENY` set. This section
+> will be filled in with the final API, the exclusion rationale per module, and any
+> categorization (bridge vs. live-server-required) once the work is done.
 
 ---
 
@@ -221,7 +238,7 @@ adapter should conform to the generic builder contract instead.
 
 | File | Your edit |
 |---|---|
-| `toolkit/adapters.py` | **always** — enum member + `@adapter` builder (or `DENY` entry for a bridge) |
+| `toolkit/adapters.py` | **always** — enum member + `@adapter` builder (or `NON_AGENT_ADAPTERS` entry for a bridge) |
 | `toolkit/requirements.py` | only for a brand-new `Dep` + availability check |
 | `settings.py` | only for a new credential or model id field |
 | `CLAUDE.md` (root) | document any new env vars |
