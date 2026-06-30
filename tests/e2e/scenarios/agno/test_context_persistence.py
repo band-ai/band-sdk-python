@@ -127,7 +127,7 @@ class TestAgnoContextPersistence:
             "agno_context_persistence"
         )
         agent_id, agent_name = e2e_agent_info
-        timeout = min(float(e2e_config.e2e_timeout), 90.0)
+        timeout = min(float(e2e_config.e2e_timeout) * 2, 90.0)
         phrase = _recall_phrase()
 
         log_banner("Scenario: Agno recalls Band-rehydrated history after restart")

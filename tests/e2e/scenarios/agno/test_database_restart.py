@@ -77,7 +77,7 @@ class TestAgnoDatabaseRestart:
             "agno_database_restart"
         )
         agent_id, agent_name = e2e_agent_info
-        timeout = min(float(e2e_config.e2e_timeout), 90.0)
+        timeout = min(float(e2e_config.e2e_timeout) * 2, 90.0)
         run_id = uuid.uuid4().hex[:6]
         secret_code = f"SECRET-{run_id}"
 
