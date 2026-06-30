@@ -139,7 +139,7 @@ class LLMModels(BaseSettings):
     # LangGraph/OpenAI agent model. Honors the documented E2E_LLM_MODEL (and
     # accepts E2E_OPENAI_MODEL as an alias).
     openai_model: str = Field(
-        default="gpt-4o-mini",
+        default="gpt-5.4-mini",
         validation_alias=AliasChoices("E2E_LLM_MODEL", "E2E_OPENAI_MODEL"),
     )
     # A modern, cheap model: works for the agent under test AND for the judge,
