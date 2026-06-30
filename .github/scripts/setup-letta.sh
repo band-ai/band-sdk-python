@@ -20,7 +20,7 @@
 set -euo pipefail
 
 NETWORK=band-e2e
-BAND_MCP_IMAGE="ghcr.io/band/band-mcp:latest"
+BAND_MCP_IMAGE="ghcr.io/band-ai/band-mcp:latest"
 
 # Authenticate to GHCR for the private band-mcp image. Skipped when no token is
 # present (a local run where the image is already pulled).
@@ -56,5 +56,13 @@ if [ "$ready" != true ]; then
   exit 1
 fi
 
-echo "LETTA_BASE_URL=http://localhost:8283" >> "$GITHUB_ENV"
-echo "MCP_SERVER_URL=http://band-mcp:8002/sse" >> "$GITHUB_ENV"
+# Always print the discovered URLs (so a local run can read them); also append to
+# $GITHUB_ENV when running under Actions so later steps inherit them.
+LETTA_BASE_URL="http://localhost:8283"
+MCP_SERVER_URL="http://band-mcp:8002/sse"
+echo "LETTA_BASE_URL=$LETTA_BASE_URL"
+echo "MCP_SERVER_URL=$MCP_SERVER_URL"
+if [ -n "${GITHUB_ENV:-}" ]; then
+  echo "LETTA_BASE_URL=$LETTA_BASE_URL" >> "$GITHUB_ENV"
+  echo "MCP_SERVER_URL=$MCP_SERVER_URL" >> "$GITHUB_ENV"
+fi
