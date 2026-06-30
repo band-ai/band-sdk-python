@@ -66,7 +66,7 @@ class TestAgnoThoughts:
         # reasoning_content empty so no thought is emitted.
         room_id, _user_id, _user_name = await e2e_fresh_room_allocator("agno_thoughts")
         agent_id, agent_name = e2e_agent_info
-        timeout = min(float(e2e_config.e2e_timeout) * 2, 90.0)
+        timeout = min(float(e2e_config.e2e_timeout), 90.0)
 
         log_banner("Scenario 3: Agno thought emission")
         log_step(1, f"starting reasoning agent {agent_name}")

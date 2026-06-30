@@ -13,9 +13,17 @@ set -euo pipefail
 # openai/gpt-4o-mini default); no new secret.
 docker run -d --name letta -p 8283:8283 \
   -e OPENAI_API_KEY="${OPENAI_API_KEY}" letta/letta:latest
+ready=false
 for _ in $(seq 1 60); do
-  curl -fsS http://localhost:8283/v1/health/ && break
+  if curl -fsS http://localhost:8283/v1/health/; then ready=true; break; fi
   sleep 2
 done
+# Fail loudly here if the server never came up — otherwise the step would go green
+# with a dead server and the lane would fail later with an opaque connection error.
+if [ "$ready" != true ]; then
+  echo "Letta server did not become healthy on :8283" >&2
+  docker logs letta 2>&1 | tail -50 || true
+  exit 1
+fi
 # Self-hosted base_url makes the Letta requirement available with no cloud key.
 echo "LETTA_BASE_URL=http://localhost:8283" >> "$GITHUB_ENV"

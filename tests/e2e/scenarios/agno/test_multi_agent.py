@@ -90,7 +90,7 @@ class TestAgnoMultiAgent:
         agent_b_id, agent_b_name = e2e_agent_info_2
         run_id = uuid.uuid4().hex[:6]
         # Long wait: A must invite B, B must run + reply, A must relay + remove.
-        flow_timeout = min(float(e2e_config.e2e_timeout) * 3, 100.0)
+        flow_timeout = min(float(e2e_config.e2e_timeout), 100.0)
 
         log_banner(f"Scenario 1: assistant invites calculator (run {run_id})")
         log_step(
@@ -196,7 +196,7 @@ class TestAgnoMultiAgent:
         agent_a_id, agent_a_name = e2e_agent_info
         agent_b_id, agent_b_name = e2e_agent_info_2
         run_id = uuid.uuid4().hex[:6]
-        turn_timeout = min(float(e2e_config.e2e_timeout) * 3, 100.0)
+        turn_timeout = min(float(e2e_config.e2e_timeout), 100.0)
 
         log_banner(f"Scenario 2: restart={restart_target} (run {run_id})")
 

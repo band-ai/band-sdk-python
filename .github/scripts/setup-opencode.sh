@@ -27,8 +27,17 @@ JSON
 workdir="$(mktemp -d)"
 ( cd "$workdir" && nohup opencode serve --hostname 127.0.0.1 --port 4096 \
     >/tmp/opencode-serve.log 2>&1 & )
+ready=false
 for _ in $(seq 1 30); do
-  curl -fsS http://127.0.0.1:4096/global/health && break
+  if curl -fsS http://127.0.0.1:4096/global/health; then ready=true; break; fi
   sleep 2
 done
+# Fail loudly if the server never came up (covers a server that died on launch —
+# the backgrounded subshell's exit status doesn't surface that). Otherwise the step
+# would go green with a dead server and the lane would fail opaquely at test time.
+if [ "$ready" != true ]; then
+  echo "OpenCode server did not become healthy on :4096" >&2
+  cat /tmp/opencode-serve.log 2>/dev/null | tail -50 || true
+  exit 1
+fi
 echo "OPENCODE_BASE_URL=http://127.0.0.1:4096" >> "$GITHUB_ENV"
