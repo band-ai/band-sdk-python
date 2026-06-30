@@ -292,8 +292,8 @@ class TestToolSetComposition:
         tools_obj.lookup_peers.assert_awaited_once_with(2, 25)
 
     def test_send_message_marks_reply_tracker(self, builder_mod):
-        """A successful band_send_message flips the per-turn ReplyTracker so
-        the adapter can treat a later empty final answer as benign."""
+        """A successful band_send_message flips both ReplyTracker markers so the
+        adapter can treat a later empty final answer as benign."""
         tools_obj = MagicMock()
         tools_obj.send_message = AsyncMock(return_value={"status": "sent"})
         tracker = builder_mod.ReplyTracker()
@@ -312,9 +312,33 @@ class TestToolSetComposition:
         assert result["status"] == "success"
         tools_obj.send_message.assert_awaited_once()
         assert tracker.replied is True
+        assert tracker.tool_executed is True
+
+    def test_non_reply_tool_marks_tool_executed_only(self, builder_mod):
+        """A successful non-reply tool flips tool_executed but NOT replied, so a
+        tool-only turn (e.g. a memory store the user told the agent not to follow
+        with a message) is recognized as productive work, not a silent failure."""
+        tools_obj = MagicMock()
+        tools_obj.lookup_peers = AsyncMock(return_value={"peers": []})
+        tracker = builder_mod.ReplyTracker()
+        context = builder_mod.CrewAIToolContext(
+            room_id="room-1", tools=tools_obj, reply_tracker=tracker
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        lookup_peers = next(t for t in tools if t.name == "band_lookup_peers")
+
+        result = json.loads(lookup_peers._run())
+
+        assert result["status"] == "success"
+        assert tracker.tool_executed is True
+        assert tracker.replied is False
 
     def test_reply_tracker_not_marked_on_send_failure(self, builder_mod):
-        """A failed send must NOT mark the tracker — the turn produced no reply."""
+        """A failed send must NOT mark either tracker — the turn produced nothing."""
         tools_obj = MagicMock()
         tools_obj.send_message = AsyncMock(side_effect=RuntimeError("boom"))
         tracker = builder_mod.ReplyTracker()
@@ -332,6 +356,7 @@ class TestToolSetComposition:
 
         assert result["status"] == "error"
         assert tracker.replied is False
+        assert tracker.tool_executed is False
 
     def test_send_failure_appends_available_handles(self, builder_mod):
         """The real empty-mentions error already lists the room's handles, so the

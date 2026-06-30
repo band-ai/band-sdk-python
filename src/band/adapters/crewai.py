@@ -419,21 +419,23 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         except Exception as e:
             # CrewAI raises ValueError("Invalid response from LLM call - None or
             # empty.") when its ReAct loop yields an empty final answer. In this
-            # adapter the agent replies via the band_send_message tool, so an
-            # empty final answer AFTER a successful reply is benign noise — the
-            # user already got their response. Match that specific ValueError
-            # narrowly so genuine failures after a reply (downstream errors,
-            # later-processing bugs, a second tool call throwing) still surface
-            # as error events and propagate.
+            # adapter the agent acts via tools (band_send_message to reply,
+            # band_store_memory, etc.), so an empty final answer AFTER the agent
+            # already did productive work is benign noise — a reply went out, or a
+            # tool-only turn (e.g. a memory store the user told it not to follow
+            # with a message) completed and there is simply nothing left to say.
+            # Match that specific ValueError narrowly so genuine no-response
+            # failures (the LLM returned empty without doing anything) still
+            # surface as error events and propagate.
             if (
                 reply_tracker is not None
-                and reply_tracker.replied
+                and (reply_tracker.replied or reply_tracker.tool_executed)
                 and isinstance(e, ValueError)
                 and "Invalid response from LLM call" in str(e)
             ):
                 logger.warning(
-                    "Room %s: CrewAI returned an empty final answer after a reply "
-                    "was already delivered; treating as non-fatal: %s",
+                    "Room %s: CrewAI returned an empty final answer after the agent "
+                    "already did productive work this turn; treating as non-fatal: %s",
                     room_id,
                     e,
                 )

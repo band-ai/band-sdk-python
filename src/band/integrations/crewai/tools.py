@@ -98,14 +98,17 @@ _SEND_MESSAGE_TOOL = "band_send_message"
 
 @dataclass
 class ReplyTracker:
-    """Mutable per-turn marker shared (by reference) with the tool wrappers.
+    """Mutable per-turn markers shared (by reference) with the tool wrappers.
 
-    Set to ``True`` once ``band_send_message`` succeeds so an adapter can tell
-    a benign "empty final answer" from CrewAI (the reply already went out via the
-    tool) apart from a genuine no-response failure.
+    ``replied`` flips once ``band_send_message`` succeeds; ``tool_executed`` flips
+    once *any* tool succeeds. Together they let an adapter tell a benign "empty
+    final answer" from CrewAI — emitted after the agent already did its work, via
+    a reply or any other tool (e.g. a memory store on a turn instructed not to
+    message) — apart from a genuine no-response failure where nothing happened.
     """
 
     replied: bool = False
+    tool_executed: bool = False
 
 
 @dataclass(frozen=True)
@@ -278,13 +281,19 @@ def _execute_tool(
 
     result = run_async(_execute(), fallback_loop=fallback_loop)
 
-    # Record that the agent delivered a user-facing reply this turn so the
-    # adapter can treat CrewAI's "empty final answer" ValueError as benign
-    # (the reply already went out) instead of a genuine no-response failure.
-    if tool_name == _SEND_MESSAGE_TOOL and context.reply_tracker is not None:
+    # Record that the agent did productive work this turn so the adapter can treat
+    # CrewAI's "empty final answer" ValueError as benign (the work already
+    # happened) instead of a genuine no-response failure. ``replied`` is the
+    # stricter signal (a user-facing reply went out via band_send_message);
+    # ``tool_executed`` covers any successful tool, so a tool-only turn (e.g. a
+    # memory store the user told the agent not to follow with a message) is also
+    # benign when the final answer comes back empty.
+    if context.reply_tracker is not None:
         try:
             if json.loads(result).get("status") == "success":
-                context.reply_tracker.replied = True
+                context.reply_tracker.tool_executed = True
+                if tool_name == _SEND_MESSAGE_TOOL:
+                    context.reply_tracker.replied = True
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass
 

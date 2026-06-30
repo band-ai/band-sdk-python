@@ -550,6 +550,51 @@ class TestErrorHandling:
         mock_tools.send_event.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_suppresses_empty_final_answer_after_tool_only_turn(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """An empty final answer after a tool-only turn (no reply) is non-fatal.
+
+        When the user instructs the agent to run a tool and NOT send a message
+        (e.g. "store this memory, don't reply"), the agent does its work and has
+        nothing left to say — CrewAI then raises ValueError("Invalid response
+        from LLM call - None or empty.") on its forced final-answer step. Because
+        a tool already executed successfully this turn, that empty answer is
+        benign: no error event, no re-raise.
+        """
+        import importlib
+
+        module = importlib.import_module("band.adapters.crewai")
+
+        async def _kickoff(_messages):
+            # Simulate a non-reply tool (e.g. band_store_memory) having succeeded
+            # earlier this turn — tool_executed flips, replied does not.
+            tracker = module._reply_tracker_var.get()
+            if tracker is not None:
+                tracker.tool_executed = True
+            raise ValueError("Invalid response from LLM call - None or empty.")
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        # Must NOT raise — the tool work already happened.
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        # No error event posted to the room.
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "error",
         [
