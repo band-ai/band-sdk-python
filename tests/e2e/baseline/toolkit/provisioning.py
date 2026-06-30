@@ -11,6 +11,7 @@ recognise its own resources by prefix and never touch a non-test agent.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import AsyncGenerator
@@ -125,8 +126,14 @@ class ResourceManager:
         """Create a room as the user; optionally add participants. Returns id."""
         room_id = await self._user_ops.create_room(title=title)
         self._provisioned_room_ids.append(room_id)
-        for participant_id in participants or []:
-            await self._user_ops.add_participant(room_id, participant_id)
+        # Independent REST adds to the same room — run concurrently so setup
+        # latency doesn't scale linearly with participant count.
+        await asyncio.gather(
+            *(
+                self._user_ops.add_participant(room_id, pid)
+                for pid in participants or []
+            )
+        )
         logger.info("Provisioned room %s", room_id)
         return room_id
 

@@ -151,7 +151,7 @@ def _custom_tool_defs(tools: list[ToolSpec] | None) -> list[CustomToolDef] | Non
     return [t.as_custom_tool_def() for t in tools] if tools else None
 
 
-def _reject_tools(adapter: Adapter, tools: list[ToolSpec] | None) -> None:
+def _reject_tools(adapter_id: Adapter, tools: list[ToolSpec] | None) -> None:
     """Fail loudly when custom tools are asked of an adapter that can't take them.
 
     Letta exposes tools via its MCP server, so it can't take a locally-defined
@@ -160,7 +160,7 @@ def _reject_tools(adapter: Adapter, tools: list[ToolSpec] | None) -> None:
     """
     if tools:
         raise ValueError(
-            f"the {adapter.value} adapter does not support custom tools "
+            f"the {adapter_id.value} adapter does not support custom tools "
             "(additional_tools); configure them on the framework directly"
         )
 

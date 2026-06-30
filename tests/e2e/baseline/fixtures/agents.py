@@ -13,10 +13,10 @@ from tests.e2e.baseline.agents import (
     MATRIX_MARKER,
     AgentsRequest,
     MatrixBuild,
+    adapter_params,
 )
-from tests.e2e.baseline.requires import requires
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.adapters import build_adapter, specs
+from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
     ResourceManager,
@@ -92,10 +92,7 @@ async def agent(agents: list[ProvisionedAgent]) -> ProvisionedAgent:
 # The full adapter matrix as fixture params: one cell per registered adapter, each
 # carrying its ``@requires`` marks so a missing requirement fails that cell. Built
 # once at import (registration happens when ``toolkit.adapters`` is imported above).
-_MATRIX_PARAMS = [
-    pytest.param(spec.id, marks=requires(*spec.requires), id=str(spec.id))
-    for spec in specs()
-]
+_MATRIX_PARAMS = adapter_params()
 
 
 @pytest.fixture(params=_MATRIX_PARAMS)
