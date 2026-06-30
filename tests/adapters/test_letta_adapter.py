@@ -313,7 +313,7 @@ class TestLettaAdapterOnMessagePerRoom:
         assert "conversation_id" not in call_kwargs
 
     @pytest.mark.asyncio
-    async def test_fallback_relay_when_no_send_message(
+    async def test_auto_relay_when_no_send_message(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
         adapter, mock_client = adapter_with_client
@@ -339,12 +339,12 @@ class TestLettaAdapterOnMessagePerRoom:
             room_id="room-1",
         )
 
-        # Fallback relay should have sent the assistant text
+        # Auto-relay should have sent the message
         assert len(tools.messages_sent) == 1
         assert tools.messages_sent[0]["content"] == "I'll help you!"
 
     @pytest.mark.asyncio
-    async def test_skip_fallback_relay_when_send_message_used(
+    async def test_skip_auto_relay_when_send_message_used(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
         adapter, mock_client = adapter_with_client
@@ -371,7 +371,7 @@ class TestLettaAdapterOnMessagePerRoom:
             room_id="room-1",
         )
 
-        # No fallback relay — agent used send_message via MCP
+        # No auto-relay — agent used send_message via MCP
         assert len(tools.messages_sent) == 0
 
     @pytest.mark.asyncio
@@ -1144,6 +1144,11 @@ class TestExtractSummary:
     def test_multiple_parts(self) -> None:
         parts = ["First part.", "Second part."]
         assert "First part." == LettaAdapter._extract_summary(parts)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Summary storage
+# ──────────────────────────────────────────────────────────────────────
 
 
 class TestSummaryStorage:

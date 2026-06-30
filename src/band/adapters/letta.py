@@ -91,10 +91,7 @@ class LettaAdapterConfig:
     # Letta Cloud project scoping (ignored for self-hosted)
     project: str | None = None
 
-    # band-mcp endpoint the Letta server calls for tool execution. Letta's SSRF
-    # guard rejects loopback, so when Letta runs elsewhere (e.g. a container) point
-    # this at a routable host it can reach — a Docker service name like
-    # ``http://band-mcp:8002/sse`` (see examples/letta/docker-compose.yml).
+    # MCP server configuration for tool execution
     mcp_server_url: str = "http://localhost:8002/sse"
     mcp_server_name: str = "band"
 
@@ -161,10 +158,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
         {Emit.EXECUTION, Emit.TASK_EVENTS}
     )
-    # The ceiling of capabilities this adapter can expose, not a per-instance
-    # guarantee: Letta's tools come from the band-mcp server it's pointed at
-    # (discovered in _register_mcp_server), so memory/contacts are only actually
-    # available when that server exposes them.
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -269,6 +262,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             client_kwargs["project"] = self.config.project
         self._client = AsyncLetta(**client_kwargs)
 
+        # Register MCP server with Letta
         await self._register_mcp_server()
 
         logger.info(
@@ -476,7 +470,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         With MCP tools, the Letta server calls the MCP server directly.
         The adapter only observes tool_call_message / tool_return_message
-        events in the response for execution reporting and fallback-relay detection.
+        events in the response for execution reporting and auto-relay detection.
 
         Returns the list of assistant text parts collected during the turn.
         """
@@ -551,20 +545,20 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                             message_type="tool_result",
                         )
 
-        # If the agent already called band_send_message via MCP tools, the message
-        # is on the platform — nothing more to do. Otherwise fall back to relaying
-        # the assistant_message text so the user still sees a response (Letta models
-        # sometimes reply in plain text despite the tool-use enforcement).
+        # If the agent already called band_send_message via MCP tools,
+        # the message is on the platform — no auto-relay needed.  Otherwise
+        # fall back to relaying the assistant_message text so the user still
+        # sees a response.
         if used_send_message:
             logger.debug(
-                "Room %s: Agent used band_send_message, no fallback relay needed",
+                "Room %s: Agent used band_send_message, skipping auto-relay",
                 room_id,
             )
         elif final_text_parts:
             final_text = "\n\n".join(final_text_parts)
             mentions = [reply_to_sender_id] if reply_to_sender_id else None
             logger.info(
-                "Room %s: Falling back to relaying assistant text "
+                "Room %s: Auto-relaying assistant text "
                 "(agent did not use send_message)",
                 room_id,
             )
