@@ -128,6 +128,16 @@ own venv, server, or isolation — e.g. provider rate-limit flakiness), don't in
 it here — follow **"Adding a CI lane"** in `README.md`: add the `Lane` + `Extra` and
 point a `Dep` at it in `requirements.py`, then `requires=[that Dep]` here.
 
+Verify where your adapter landed (the registry is the source of truth):
+
+```bash
+uv run python -c "from tests.e2e.baseline.toolkit.adapters import ci_lanes; \
+print({a: l.id for l in ci_lanes() for a in l.adapters})"
+```
+
+The `test_ci_lanes_partition_is_complete_and_disjoint` guard also enforces that
+every adapter lands in exactly one lane.
+
 ## Step 3 — Run the discovery guard (it should now pass)
 
 ```bash

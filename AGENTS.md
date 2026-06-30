@@ -502,6 +502,41 @@ Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anth
 - All `async def main()` functions must have `-> None` return type hint
 - Always include `from __future__ import annotations` as first import
 
+## Documentation Testing (markdown snippets)
+
+Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown-docs`
+— so `python` snippets in the docs must stay correct and runnable, not rot:
+
+```bash
+# What CI runs (ci.yml):
+uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+# One file, verbose, while iterating:
+uv run pytest --markdown-docs path/to/FILE.md --no-cov -v
+```
+
+Fence conventions (the language tag after the opening ```` ``` ````):
+
+- ` ```python ` — **executed**. The block is a test: top-level `assert`s are the
+  checks; any unhandled exception fails CI.
+- ` ```python notest ` — **not executed** (collected out). Use only for illustrative
+  pseudo-code, placeholder names (`MyframeworkAdapter`, `MYPROVIDER`), or snippets
+  that genuinely need a live platform/LLM.
+- ` ```python fixture:<name> ` — executed with the named pytest fixture injected into
+  the block's namespace (precedent: `fixture:client`, `fixture:agent_config_path`).
+  The fixture is resolved from the nearest `conftest.py`.
+
+**Prefer runnable over `notest`.** If a snippet only needs importable symbols (types,
+enums, helpers), drop `notest` and add a small `assert` so a rename breaks the doc.
+Reach for `fixture:` when it needs a constructed object (a client, a config path).
+
+**Gotcha — snippets under `tests/e2e/**` skip in CI.** That tree's conftest skips
+every collected item (code fences included) unless `E2E_TESTS_ENABLED=true`, and the
+CI markdown-docs step does **not** set it. So a `python` block in an E2E doc silently
+*skips* in CI and protects nothing — worse than honest `notest`. Keep E2E-doc snippets
+`notest`; if you want a runnable check of E2E-adjacent symbols (e.g. "these registry
+helpers still exist"), put it in a doc **outside** `tests/e2e/**` or in a real unit
+test, where the markdown-docs run actually executes it.
+
 ## Coding Standards
 
 - Always use type hints for function parameters and return types
