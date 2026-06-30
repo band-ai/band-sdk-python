@@ -18,12 +18,17 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.agents import AGENTS_MARKER, AgentsRequest
-from tests.e2e.baseline.toolkit.adapters import ci_lanes
+from tests.e2e.baseline.toolkit.adapters import CILane, ci_lanes
 
 # Opt-out for a deliberate local-only multi-framework test (e.g. a cross-framework
 # interaction you only ever run in the full local matrix). Such a test is
 # unschedulable under per-lane CI partitioning by design, so it must say so.
 MIXED_LANE_MARKER = "mixed_lane"
+
+
+def _lane_of(lanes: list[CILane]) -> dict[str, str]:
+    """Flatten the registry's lane partition to an adapter-id -> lane-id map."""
+    return {str(adapter): str(cl.id) for cl in lanes for adapter in cl.adapters}
 
 
 def _item_target_adapters(item: pytest.Item) -> frozenset[str]:
@@ -84,7 +89,7 @@ def apply_lane_skips(lane: str, items: list[pytest.Item]) -> None:
             f"BAND_E2E_LANE={lane!r} is not a known CI lane; registry lanes are "
             f"{sorted(str(lane_id) for lane_id in known)}"
         )
-    lane_of = {str(a): cl.id for cl in lanes for a in cl.adapters}
+    lane_of = _lane_of(lanes)
     for item in items:
         targets = _item_target_adapters(item)
         if not targets:
@@ -106,7 +111,7 @@ def assert_no_unschedulable_mixed_lane(items: list[pytest.Item]) -> None:
     unless it opts out with ``@pytest.mark.mixed_lane`` to declare itself
     local-only. Matrix cells target a single adapter and never trip this.
     """
-    lane_of = {str(a): cl.id for cl in ci_lanes() for a in cl.adapters}
+    lane_of = _lane_of(ci_lanes())
     offenders: list[str] = []
     for item in items:
         if item.get_closest_marker(MIXED_LANE_MARKER) is not None:
