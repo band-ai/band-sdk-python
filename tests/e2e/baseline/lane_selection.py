@@ -5,6 +5,12 @@ conftest hook stays a one-line delegate. ``apply_lane_skips`` resolves the activ
 lane's adapter set from the registry (never a hand-list) and marks every test
 bound to an out-of-lane or infra adapter skip-with-reason; in-lane tests are left
 untouched so a missing provider key still fails via the ``@requires`` gate.
+
+``assert_no_unschedulable_mixed_lane`` guards the complementary hole: a
+``@with_agents`` test whose adapters span more than one CI lane can never run in
+*any* lane (each lane skips it for the out-of-lane members), so it is silently
+false-green everywhere. That violates fail-loud, so collection fails for it —
+regardless of ``BAND_E2E_LANE`` — unless it opts out with ``@pytest.mark.mixed_lane``.
 """
 
 from __future__ import annotations
@@ -15,6 +21,11 @@ import pytest
 
 from tests.e2e.baseline.agents import AGENTS_MARKER, AgentsRequest
 from tests.e2e.baseline.toolkit.adapters import ci_lanes
+
+# Opt-out for a deliberate local-only multi-framework test (e.g. a cross-framework
+# interaction you only ever run in the full local matrix). Such a test is
+# unschedulable under per-lane CI partitioning by design, so it must say so.
+MIXED_LANE_MARKER = "mixed_lane"
 
 
 def _item_target_adapters(item: pytest.Item) -> frozenset[str]:
@@ -84,3 +95,35 @@ def apply_lane_skips(config: pytest.Config, items: list[pytest.Item]) -> None:
         reason = _lane_skip_reason(targets, lane, lane_of)
         if reason is not None:
             item.add_marker(pytest.mark.skip(reason=reason))
+
+
+def assert_no_unschedulable_mixed_lane(items: list[pytest.Item]) -> None:
+    """Fail collection for any ``@with_agents`` test that spans more than one lane.
+
+    Lanes partition the matrix into separate CI jobs (a venv or a backend), and
+    ``apply_lane_skips`` skips a test for every out-of-lane adapter it targets. A
+    test whose adapters live in *different* lanes is therefore skipped in **every**
+    lane — it never runs in CI yet shows green, the exact false-confidence the
+    fail-loud policy exists to prevent. Such a test is a configuration error, so we
+    fail at collection (in any run, lane-scoped or not — catching it before CI),
+    unless it opts out with ``@pytest.mark.mixed_lane`` to declare itself
+    local-only. Matrix cells target a single adapter and never trip this.
+    """
+    lane_of = {str(a): cl.id for cl in ci_lanes() for a in cl.adapters}
+    offenders: list[str] = []
+    for item in items:
+        if item.get_closest_marker(MIXED_LANE_MARKER) is not None:
+            continue
+        targets = _item_target_adapters(item)
+        spanned = {lane_of[t] for t in targets if t in lane_of}
+        if len(spanned) > 1:
+            lanes = ", ".join(sorted(str(lane_id) for lane_id in spanned))
+            offenders.append(f"{item.nodeid} targets adapters across lanes {{{lanes}}}")
+    if offenders:
+        joined = "\n  ".join(offenders)
+        raise pytest.UsageError(
+            "@with_agents test(s) span multiple CI lanes, so they skip in every "
+            "lane and never run in CI (false green). Restrict each to one lane's "
+            "adapters, or mark it @pytest.mark.mixed_lane if it is deliberately "
+            f"local-only:\n  {joined}"
+        )

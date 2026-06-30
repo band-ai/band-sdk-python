@@ -29,7 +29,11 @@ from tests.e2e.baseline.fixtures.platform import (
     user_ops,
 )
 from tests.e2e.baseline.agents import AGENTS_MARKER, MATRIX_MARKER
-from tests.e2e.baseline.lane_selection import apply_lane_skips
+from tests.e2e.baseline.lane_selection import (
+    MIXED_LANE_MARKER,
+    apply_lane_skips,
+    assert_no_unschedulable_mixed_lane,
+)
 from tests.e2e.baseline.requires import MARKER, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
 
@@ -67,6 +71,11 @@ def pytest_configure(config: pytest.Config) -> None:
         f"{MATRIX_MARKER}(build): set by @across_adapters to steer per-cell "
         "construction (prompt/features); resolved by matrix_agent.",
     )
+    config.addinivalue_line(
+        "markers",
+        f"{MIXED_LANE_MARKER}: opt a @with_agents test out of the mixed-lane guard; "
+        "declares it deliberately local-only (unschedulable under CI lane scoping).",
+    )
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
@@ -77,7 +86,8 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     toolkit drives the platform as the user and provisions its own agents (with
     per-agent generated keys), so a pre-existing static BAND_API_KEY is not
     required. A test only needs ``@requires(...)`` to declare *additional*
-    optional capabilities (e.g. provider keys), which skip when absent.
+    optional capabilities (e.g. provider keys), which fail with the requirement
+    reason when absent.
     """
     settings = BaselineSettings()
     if not settings.e2e_tests_enabled:
@@ -94,5 +104,11 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Scope the run to ``BAND_E2E_LANE`` (see ``lane_selection``)."""
+    """Guard unschedulable mixed-lane tests, then scope to ``BAND_E2E_LANE``.
+
+    The guard runs in every collection (lane-scoped or not) so a structurally
+    unschedulable ``@with_agents`` test fails before it ever reaches CI; lane
+    scoping then applies the ``BAND_E2E_LANE`` skips (see ``lane_selection``).
+    """
+    assert_no_unschedulable_mixed_lane(items)
     apply_lane_skips(config, items)

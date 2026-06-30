@@ -26,10 +26,12 @@ from tests.e2e.baseline.toolkit.provisioning import (
 __all__ = ["adapter_id", "agent", "agents", "matrix_agent"]
 
 
-# Shared agent prompt for the demo adapters: short replies via the tool.
-_SHORT_PROMPT = (
-    "Keep responses to one short sentence. Always reply using band_send_message."
-)
+# Shared agent prompt for the demo adapters: short replies, transport-neutral.
+# Deliberately names no delivery mechanism — MCP/native adapters get
+# band_send_message from BASE_INSTRUCTIONS, while relay adapters (e.g. Letta in
+# auto-relay mode) deliver plain text themselves; a tool-specific nudge here would
+# contradict the relay contract.
+_SHORT_PROMPT = "Keep responses to one short sentence. Reply directly in the chat."
 
 
 @pytest.fixture

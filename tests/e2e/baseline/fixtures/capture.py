@@ -28,9 +28,10 @@ async def judge(
 ) -> AsyncGenerator[Callable[..., Awaitable[Verdict]], None]:
     """LLM judge with the client + model pre-bound; call with criteria/transcript.
 
-    Self-gates on its provider key so any test using it skips cleanly when the
-    key is absent — the requirement travels with the fixture. The Anthropic
-    client is built once here (and closed on teardown) rather than per verdict.
+    Self-gates on its provider key so any test using it fails with the
+    requirement reason when the key is absent — the requirement travels with the
+    fixture. The Anthropic client is built once here (and closed on teardown)
+    rather than per verdict.
 
     Usage::
 
