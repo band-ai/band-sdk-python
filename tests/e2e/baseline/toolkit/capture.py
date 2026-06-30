@@ -311,7 +311,6 @@ class ReplyCapture:
         segment: Any | None = None,
         content_query: str | None = None,
         status: Any | None = None,
-        page_size: int = 50,
     ) -> MemoryObservation:
         """Read both layers of ``agent``'s memory for the turn (after the barrier).
 
@@ -321,9 +320,10 @@ class ReplyCapture:
         memories API via the agent's own key -- hence the ``agent`` arg).
 
         The ``scope``/``system``/``type``/``segment``/``content_query``/``status``
-        filters narrow the store read. Needs ``user_ops`` and ``settings`` (both
-        bound by the ``reply_capture`` fixture); the agent must run with
-        ``Emit.EXECUTION`` for the call layer to be populated.
+        filters narrow the store read. ``limit`` caps both layers (call events and
+        stored records). Needs ``user_ops`` and ``settings`` (both bound by the
+        ``reply_capture`` fixture); the agent must run with ``Emit.EXECUTION`` for
+        the call layer to be populated.
         """
         user_ops = self._require_user_ops()
         if self._settings is None:
@@ -350,7 +350,7 @@ class ReplyCapture:
                 segment=segment,
                 content_query=content_query,
                 status=status,
-                page_size=page_size,
+                limit=limit,
             ),
         )
         return MemoryObservation(calls=calls, stored=stored)

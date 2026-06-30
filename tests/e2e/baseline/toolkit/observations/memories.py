@@ -55,16 +55,18 @@ class Memories(list[AgentMemory]):
         segment: Any | None = None,
         content_query: str | None = None,
         status: Any | None = None,
-        page_size: int = 50,
+        limit: int = 100,
     ) -> Memories:
         """Read the agent's accessible memories via the agent-auth client.
 
         All filters are server-side (the ``list_agent_memories`` query). Omits
         unset filters rather than sending ``null`` (the OMIT-vs-null convention).
         Enum values are coerced to their string form for the wire. ``subject_id``
-        is required by the API for a subject-scoped query.
+        is required by the API for a subject-scoped query. ``limit`` caps how many
+        records are returned (the first N), named to match the sibling readers
+        (``Events.read``/``ToolCalls.read``); it maps to the API's ``page_size``.
         """
-        kwargs: dict[str, Any] = {"page_size": page_size}
+        kwargs: dict[str, Any] = {"page_size": limit}
         for key, value in {
             "subject_id": subject_id,
             "scope": scope,
