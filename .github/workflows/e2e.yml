@@ -131,10 +131,9 @@ jobs:
       matrix: ${{ fromJSON(needs.lanes.outputs.lanes) }}
     env:
       E2E_TESTS_ENABLED: "true"
-      # All lanes get the longer turn budget: agent frameworks vary widely in
-      # cold-start + round-trip latency (crewai crew construction, self-hosted
-      # backends, free/slow models), and the 60s default flakes on the slow end.
-      E2E_TIMEOUT: "120"
+      # Turn budget (E2E_TIMEOUT) is not set here: it defaults to 120s in the e2e
+      # settings, and slow frameworks add headroom per-test via
+      # @pytest.mark.timeout(extra=...). See tests/e2e/conftest.py.
       # The registry scopes which adapters run in this lane.
       BAND_E2E_LANE: ${{ matrix.lane }}
       # The dev-crewai venv lacks the other frameworks; tolerate missing framework
