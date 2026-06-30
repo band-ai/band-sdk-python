@@ -192,8 +192,14 @@ jobs:
     - name: Install dependencies (${{ matrix.extra }})
       run: uv sync --extra ${{ matrix.extra }}
 
+    # Retry the genuine reply-latency flakes (a slow/missing agent turn usually
+    # passes on a rerun), but NOT the google lane: its failures are the Google
+    # free-tier quota (429), which every rerun also hits — reruns there just burn
+    # another full turn budget per attempt for a guaranteed fail.
     - name: Run baseline E2E (lane ${{ matrix.lane }})
-      run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
+      run: >-
+        uv run pytest tests/e2e/baseline/ -v -s --no-cov
+        --reruns ${{ matrix.lane == 'google' && '0' || '2' }} --reruns-delay 5
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp via npx).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.

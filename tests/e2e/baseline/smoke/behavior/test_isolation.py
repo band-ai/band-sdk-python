@@ -52,6 +52,13 @@ def _turn_boundary(capture: ReplyCapture) -> datetime:
     Used as ``since`` for the next turn\'s ``tool_calls`` read. Naive timestamps are
     treated as UTC (the platform stores UTC), matching the orphan-sweep coercion.
     """
+    # The caller has awaited ``wait_for_processed``, so the reply should be buffered;
+    # assert it plainly rather than letting an empty buffer surface as an opaque
+    # ``IndexError`` (e.g. when a reply is slow/missing or arrives after PROCESSED).
+    assert capture.messages, (
+        "expected the prior turn's reply to be captured before the turn boundary, "
+        "but no agent messages were captured"
+    )
     stamp = datetime.fromisoformat(capture.messages[-1].inserted_at)
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
