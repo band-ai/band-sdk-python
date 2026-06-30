@@ -65,7 +65,11 @@ from band.runtime.custom_tools import (
     execute_custom_tool,
     get_custom_tool_name,
 )
-from band.runtime.tools import append_available_mention_handles, get_tool_description
+from band.runtime.tools import (
+    READ_ONLY_TOOL_NAMES,
+    append_available_mention_handles,
+    get_tool_description,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -285,10 +289,12 @@ def _execute_tool(
     # CrewAI's "empty final answer" ValueError as benign (the work already
     # happened) instead of a genuine no-response failure. ``replied`` is the
     # stricter signal (a user-facing reply went out via band_send_message);
-    # ``tool_executed`` covers any successful tool, so a tool-only turn (e.g. a
-    # memory store the user told the agent not to follow with a message) is also
-    # benign when the final answer comes back empty.
-    if context.reply_tracker is not None:
+    # ``tool_executed`` covers any successful *terminal* tool, so a tool-only turn
+    # (e.g. a memory store the user told the agent not to follow with a message)
+    # is also benign when the final answer comes back empty. Read-only tools
+    # (lookups/listings) are excluded: fetching state is not a terminal action,
+    # so an empty answer after only a lookup is a genuine no-response failure.
+    if context.reply_tracker is not None and tool_name not in READ_ONLY_TOOL_NAMES:
         try:
             if json.loads(result).get("status") == "success":
                 context.reply_tracker.tool_executed = True

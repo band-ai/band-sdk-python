@@ -314,10 +314,35 @@ class TestToolSetComposition:
         assert tracker.replied is True
         assert tracker.tool_executed is True
 
-    def test_non_reply_tool_marks_tool_executed_only(self, builder_mod):
-        """A successful non-reply tool flips tool_executed but NOT replied, so a
-        tool-only turn (e.g. a memory store the user told the agent not to follow
-        with a message) is recognized as productive work, not a silent failure."""
+    def test_terminal_non_reply_tool_marks_tool_executed_only(self, builder_mod):
+        """A successful *terminal* non-reply tool flips tool_executed but NOT
+        replied, so a tool-only turn (e.g. a memory store the user told the agent
+        not to follow with a message) is recognized as productive work, not a
+        silent failure. band_send_event stands in for any side-effecting tool."""
+        tools_obj = MagicMock()
+        tools_obj.send_event = AsyncMock(return_value=None)
+        tracker = builder_mod.ReplyTracker()
+        context = builder_mod.CrewAIToolContext(
+            room_id="room-1", tools=tools_obj, reply_tracker=tracker
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_event = next(t for t in tools if t.name == "band_send_event")
+
+        result = json.loads(send_event._run(content="thinking", message_type="task"))
+
+        assert result["status"] == "success"
+        assert tracker.tool_executed is True
+        assert tracker.replied is False
+
+    def test_read_only_tool_does_not_mark_tool_executed(self, builder_mod):
+        """A successful read-only tool (lookup/listing) must NOT flip either
+        marker. Fetching state is not a terminal action, so a turn that runs only
+        a lookup and then yields an empty final answer is a genuine no-response
+        failure the adapter must still surface — not benign noise."""
         tools_obj = MagicMock()
         tools_obj.lookup_peers = AsyncMock(return_value={"peers": []})
         tracker = builder_mod.ReplyTracker()
@@ -334,7 +359,7 @@ class TestToolSetComposition:
         result = json.loads(lookup_peers._run())
 
         assert result["status"] == "success"
-        assert tracker.tool_executed is True
+        assert tracker.tool_executed is False
         assert tracker.replied is False
 
     def test_reply_tracker_not_marked_on_send_failure(self, builder_mod):

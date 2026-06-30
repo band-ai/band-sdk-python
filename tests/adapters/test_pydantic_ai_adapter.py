@@ -8,7 +8,7 @@ stream event handling, execution reporting, and custom tools.
 """
 
 from datetime import datetime, timezone
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -777,15 +777,27 @@ class TestExecutionReporting:
         assert "room-123" in adapter._message_history
 
 
-def make_raising_stream(error: BaseException, *, tool_result: bool) -> AsyncIterator:
-    """Async run stream that optionally fires a tool-result event, then raises."""
+def make_raising_stream(
+    error: BaseException,
+    *,
+    tool_result: bool,
+    tool_name: str = "band_send_message",
+    tool_content: Any = None,
+) -> AsyncIterator:
+    """Async run stream that optionally fires a tool-result event, then raises.
+
+    ``tool_name``/``tool_content`` let a test pick a read-only tool or an error
+    result to verify those do not count as terminal productive work.
+    """
 
     async def stream():
         if tool_result:
             event = MagicMock(spec=FunctionToolResultEvent)
             event.result = MagicMock()
-            event.result.tool_name = "band_send_message"
-            event.result.content = {"id": "msg_1"}
+            event.result.tool_name = tool_name
+            event.result.content = (
+                {"id": "msg_1"} if tool_content is None else tool_content
+            )
             event.tool_call_id = "call_1"
             yield event
         raise error
@@ -871,6 +883,70 @@ class TestEmptyFinalAnswer:
             return_value=make_raising_stream(
                 UnexpectedModelBehavior("Received empty model response"),
                 tool_result=True,
+            )
+        )
+
+        with pytest.raises(UnexpectedModelBehavior):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+    @pytest.mark.asyncio
+    async def test_empty_output_after_read_only_tool_propagates(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """A read-only lookup is not terminal work — output-validation exhaustion
+        after only a lookup is a genuine no-response failure and must propagate."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                UnexpectedModelBehavior(
+                    "Exceeded maximum retries (1) for output validation"
+                ),
+                tool_result=True,
+                tool_name="band_lookup_peers",
+                tool_content=[{"id": "peer_1"}],
+            )
+        )
+
+        with pytest.raises(UnexpectedModelBehavior):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+    @pytest.mark.asyncio
+    async def test_empty_output_after_failed_band_tool_propagates(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """A band tool that returned an "Error ..." string did no work — exhausting
+        output validation afterward is a genuine failure and must propagate."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                UnexpectedModelBehavior(
+                    "Exceeded maximum retries (1) for output validation"
+                ),
+                tool_result=True,
+                tool_name="band_send_message",
+                tool_content="Error sending message: no mentions",
             )
         )
 

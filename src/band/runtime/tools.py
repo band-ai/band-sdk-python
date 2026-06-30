@@ -972,6 +972,23 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Read-only / informational agent tools - explicitly listed (not derived by a
+# name heuristic) because misclassifying a write tool as read-only would weaken
+# the benign-empty-answer suppression in the crewai/pydantic-ai adapters. These
+# tools only *fetch* state; running one is not a terminal action and does not
+# constitute a reply, so a turn that runs only these and then yields an empty
+# final answer is a genuine no-response failure, not benign noise.
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "band_get_participants",
+        "band_lookup_peers",
+        "band_list_contacts",
+        "band_list_contact_requests",
+        "band_list_memories",
+        "band_get_memory",
+    }
+)
+
 # Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
 # ``surface="human"`` side of the registry. Used by iter_tool_definitions()
 # to apply the ``include_memory`` filter uniformly across both surfaces.
@@ -1010,6 +1027,10 @@ if MEMORY_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown memory tools: {MEMORY_TOOL_NAMES - ALL_TOOL_NAMES}")
 if CONTACT_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown contact tools: {CONTACT_TOOL_NAMES - ALL_TOOL_NAMES}")
+if READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES:
+    raise ValueError(
+        f"Unknown read-only tools: {READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES}"
+    )
 
 # Human-surface registry membership is validated against TOOL_DEFINITIONS
 # (not TOOL_MODELS, which stays agent-only for back-compat).

@@ -36,7 +36,11 @@ from band.converters.pydantic_ai import (
     PydanticAIMessages,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import (
+    ALL_TOOL_NAMES,
+    READ_ONLY_TOOL_NAMES,
+    get_tool_description,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,31 @@ def _is_output_validation_exhausted(exc: UnexpectedModelBehavior) -> bool:
     response", which propagates even after tool work.
     """
     return "output validation" in str(exc).lower()
+
+
+def _is_productive_tool_result(tool_name: str | None, content: Any) -> bool:
+    """Whether a finished tool call counts as terminal productive work.
+
+    Used to decide if pydantic-ai's exhausted-output-validation error is benign
+    (the agent already did its work) or a genuine no-response failure. Two kinds
+    of results do *not* count:
+
+    * Read-only tools (lookups/listings) — fetching state is not a terminal
+      action, so an empty final answer after only a lookup is a real failure.
+    * Failed band platform tools — their wrappers catch exceptions and return a
+      string starting with ``"Error "`` (the model "saw" a result, but no work
+      happened). Detected only for known band tools so the convention isn't
+      assumed of custom user tools, which are treated as productive when run.
+    """
+    if tool_name in READ_ONLY_TOOL_NAMES:
+        return False
+    if (
+        tool_name in ALL_TOOL_NAMES
+        and isinstance(content, str)
+        and content.startswith("Error ")
+    ):
+        return False
+    return True
 
 
 # A response made up only of these (or with no parts at all) serializes to
@@ -562,8 +591,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             user_message[:80],
         )
 
-        # Run agent with streaming to capture tool events. Track whether any tool
-        # succeeded so we can tell a productive turn from a genuine no-op below.
+        # Run agent with streaming to capture tool events. Track whether a
+        # terminal, successful tool ran (excludes read-only lookups and failed
+        # band tools) so we can tell a productive turn from a genuine no-op below.
         tool_executed = False
         try:
             async for event in self._agent.run_stream_events(
@@ -587,7 +617,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         except Exception as e:
                             logger.warning("Failed to send tool_call event: %s", e)
                 elif isinstance(event, FunctionToolResultEvent):
-                    tool_executed = True
+                    if _is_productive_tool_result(
+                        event.result.tool_name, event.result.content
+                    ):
+                        tool_executed = True
                     if Emit.EXECUTION in self.features.emit:
                         try:
                             await tools.send_event(
@@ -625,7 +658,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # genuinely empty final response, so output-validation retries are
             # exhausted and this raises. The work already went out, so the empty
             # final answer is benign — mirror the crewai adapter and swallow it.
-            # Genuine no-response failures (no tool ran) still propagate.
+            # Genuine no-response failures (no terminal tool ran — only read-only
+            # lookups or failed tools) still propagate.
             if tool_executed and _is_output_validation_exhausted(e):
                 logger.warning(
                     "Room %s: Pydantic AI exhausted output-validation retries after "
