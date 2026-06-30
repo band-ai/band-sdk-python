@@ -180,6 +180,7 @@ async def test_tool_calls_isolated_per_room(
 @with_agents(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
+@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
 @pytest.mark.asyncio(loop_scope="session")
 async def test_capture_scopes_to_current_turn(
     agent: ProvisionedAgent,

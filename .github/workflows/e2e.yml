@@ -192,12 +192,10 @@ jobs:
     - name: Install dependencies (${{ matrix.extra }})
       run: uv sync --extra ${{ matrix.extra }}
 
-    # Retry the genuine reply-latency flakes: a slow/missing agent turn usually
-    # passes on a rerun.
+    # Flaky reply-latency tests opt into reruns per-test via @pytest.mark.flaky;
+    # the run itself stays plain so only those tests are retried, not the lane.
     - name: Run baseline E2E (lane ${{ matrix.lane }})
-      run: >-
-        uv run pytest tests/e2e/baseline/ -v -s --no-cov
-        --reruns 2 --reruns-delay 5
+      run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
     # The backends lane also exercises the editor-facing ACP path (codex-acp via npx).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.

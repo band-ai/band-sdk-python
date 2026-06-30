@@ -36,6 +36,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @across_adapters(supports={Capability.MEMORY}, **MEMORY_AGENT)
+@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
 @pytest.mark.asyncio(loop_scope="session")
 async def test_store_memory_across_memory_adapters(
     adapter_id: str,
@@ -69,6 +70,7 @@ async def test_store_memory_across_memory_adapters(
 
 
 @across_adapters(without={Capability.MEMORY})
+@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
 @pytest.mark.asyncio(loop_scope="session")
 async def test_reply_across_non_memory_adapters(
     adapter_id: str,
