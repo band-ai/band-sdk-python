@@ -49,16 +49,10 @@ on:
           - google
           - backends
           - letta
-  # TEMP HACK: trigger E2E on push to this branch so CI can be exercised without
-  # a manual dispatch. Remove before merging.
-  push:
-    branches:
-      - int-915-4-adapter-discovery-generic-provisioning-matrix-for-the
 
 # Serialize E2E runs: they share one live platform, so never let two race (and
-# reap each other's provisioned agents/rooms). Newest wins — a fresh run cancels
-# an in-flight one rather than queuing behind it, so a quick succession of pushes
-# only burns the live platform on the latest commit.
+# reap each other's provisioned agents/rooms). Newest wins — a fresh dispatch
+# cancels an in-flight run rather than queuing behind it.
 concurrency:
   group: e2e-baseline
   cancel-in-progress: true
@@ -85,8 +79,7 @@ jobs:
     - name: Emit lane matrix from the registry
       id: gen
       env:
-        # workflow_dispatch sets this; push (and the dispatch default) leaves it
-        # empty, which means the full matrix.
+        # The dispatch `lane` input; defaults to 'all' (the full matrix).
         SELECTED_LANE: ${{ github.event.inputs.lane || 'all' }}
       run: |
         uv run python - <<'PY' >> "$GITHUB_OUTPUT"
