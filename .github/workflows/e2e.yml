@@ -142,6 +142,9 @@ jobs:
       BAND_API_KEY_USER: ${{ secrets.E2E_BAND_API_KEY_USER }}
       # Optional second user key, for baseline smokes exercising two-user interaction.
       BAND_API_KEY_USER_2: ${{ secrets.E2E_BAND_API_KEY_USER_2 }}
+      # The agent the Letta lane runs as: band-mcp authenticates as this agent and
+      # the adapter under test must share that identity (see setup-letta.sh).
+      BAND_API_KEY: ${{ secrets.E2E_BAND_API_KEY }}
       # Model providers (a lane simply ignores a key it has no adapter for).
       ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
@@ -177,8 +180,12 @@ jobs:
         OPENCODE_ZEN_API_KEY: ${{ secrets.E2E_OPENCODE_ZEN_API_KEY }}
       run: .github/scripts/setup-opencode.sh
 
-    - name: Start the self-hosted Letta server (letta)
+    - name: Start the Letta + band-mcp stack (letta)
       if: matrix.lane == 'letta'
+      env:
+        # GHCR pull token for the private band-mcp image (the band-mcp package
+        # grants this repo read access, so the built-in token suffices).
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: .github/scripts/setup-letta.sh
 
     # -----------------------------------------------------------------------------

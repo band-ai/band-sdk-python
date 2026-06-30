@@ -404,25 +404,27 @@ Lanes live in the registry, not the workflow YAML. To add one:
    guard suite on every PR rather than silently never running / never being
    selectable.
 
-## Letta runs in auto-relay mode
+## Letta runs against a band-mcp server
 
 Letta is **a normal matrix cell** — built by the registry like every other adapter
-(`build_adapter`) and run through `matrix_agent`/`agents`, with no Letta-only run
-path and no fixture special-case.
+(`build_adapter`) and run through `matrix_agent`/`agents`.
 
-The one Letta-specific fact is *how it replies*. Letta is server-side and its model
-normally talks only through MCP tools — but a self-hosted Letta server **cannot
-reach an in-process Band MCP server**: its SSRF guard rejects any MCP URL on a
-private/loopback IP (`Non-public IP not allowed`), and the one local transport it
-would accept (stdio) isn't registrable via its REST API. So the lane builds the
-adapter in **auto-relay mode** (`mcp_server_url=None`): no MCP server is registered,
-and `LettaAdapter` relays the model's plain-text reply to the room itself via its
-runtime tools. Setup is therefore trivial — a plain `docker run -p 8283:8283
-letta/letta`, no `--network host`, no tunnel.
+Two Letta-specific facts shape the lane (see `.github/scripts/setup-letta.sh`,
+mirroring `examples/letta/docker-compose.yml`):
 
-This validates the **reply** path end to end (live platform + live Letta server +
-live model → reply delivered); the MCP tool-execution path is covered by the mocked
-adapter unit tests (`tests/adapters/test_letta_adapter.py`). Letta advertises no
-capabilities, so it is excluded from the memory and custom-tool matrices. To run a
-Letta deployment that *does* expose a publicly-reachable Band MCP endpoint, set
-`MCP_SERVER_URL` (the adapter then registers it and uses the tool path).
+- **It needs a band-mcp server.** Letta is server-side and talks to the platform
+  only through MCP tools, so the lane runs a `band-mcp` container alongside the
+  Letta server on a shared Docker network. Letta reaches it by service name
+  (`http://band-mcp:8002/sse`) — a routable host, since Letta's SSRF guard rejects
+  any loopback MCP URL (`Non-public IP not allowed`). The adapter just registers
+  that URL with Letta (`MCP_SERVER_URL`).
+- **It runs as a fixed agent.** band-mcp authenticates as one agent
+  (`BAND_API_KEY`), and the agent under test must share that identity — otherwise
+  replies would come from a different agent than the test drives. So the `agent`
+  fixture runs Letta as that **static** agent (id resolved from the key) instead
+  of provisioning a fresh one; it is not reaped. Every other adapter still
+  provisions dynamically.
+
+This validates the full path end to end: live platform + live Letta server + live
+model → tool call → band-mcp → reply delivered. Letta advertises no capabilities,
+so it is excluded from the memory and custom-tool matrices.

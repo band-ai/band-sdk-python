@@ -5,11 +5,11 @@ adapter through one scenario): they demonstrate the toolkit against the ``letta`
 CI lane and exercise what is specific to Letta — its server-side stateful per-room
 agent and per-room isolation.
 
-The lane runs Letta in **auto-relay mode** (no Band MCP server): a self-hosted
-Letta server can't reach an in-process MCP bound to a private/loopback IP (its
-SSRF guard rejects non-public IPs, and stdio MCP isn't registrable via the API),
-so the adapter relays the model's plain-text reply to the room itself. The MCP
-tool-execution path is covered by the mocked adapter unit tests instead.
+The lane runs a self-hosted Letta server plus a **band-mcp** server on a shared
+Docker network (see ``.github/scripts/setup-letta.sh``); Letta calls band-mcp to
+execute platform tools. band-mcp authenticates as a fixed agent (``BAND_API_KEY``),
+so the agent under test is that same static identity rather than a freshly
+provisioned one (wired by the ``agent`` fixture).
 
 Both tests are bound to ``@with_agents(Adapter.LETTA)``, so they run in the
 ``letta`` lane (and the full local matrix) and skip-with-reason elsewhere.

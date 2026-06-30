@@ -696,19 +696,19 @@ def _build_letta(
 
     _reject_tools(Adapter.LETTA, tools)
 
-    # Auto-relay mode: pass mcp_server_url=None (unless one is explicitly set) so the
-    # adapter registers no Band MCP server and relays the model's reply to the room
-    # itself. A self-hosted Letta server can't reach an in-process MCP bound to a
-    # loopback/private IP (its SSRF guard rejects non-public IPs), so this is the
-    # path that's actually e2e-runnable; setting MCP_SERVER_URL opts into a real
-    # publicly-reachable Band MCP endpoint instead.
+    # The Letta server executes platform tools by calling a band-mcp endpoint we
+    # register with it. The lane runs band-mcp as a container on Letta's Docker
+    # network and exports MCP_SERVER_URL (http://band-mcp:8002/sse) — a routable
+    # host, since Letta's SSRF guard rejects loopback. See examples/letta and
+    # .github/scripts/setup-letta.sh.
     return LettaAdapter(
         config=LettaAdapterConfig(
             base_url=s.backends.letta_base_url,
             provider_key=s.backends.letta_api_key or None,
             model=s.backends.letta_model,
             custom_section=prompt or "",
-            mcp_server_url=s.backends.mcp_server_url.strip() or None,
+            mcp_server_url=s.backends.mcp_server_url.strip()
+            or "http://band-mcp:8002/sse",
         ),
         features=features,
     )
