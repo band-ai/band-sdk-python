@@ -22,6 +22,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -29,6 +30,7 @@ from pydantic_ai.messages import (
 
 from band.adapters.pydantic_ai import (
     PydanticAIAdapter,
+    _drop_non_replayable_messages,
     _is_replayable_history_message,
 )
 from band.core.types import AdapterFeatures, Capability, PlatformMessage
@@ -147,6 +149,23 @@ class TestInitialization:
         with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
             adapter._create_agent()
             assert MockAgent.call_args.kwargs["output_type"] is str
+
+    def test_create_agent_registers_content_null_history_processor(self):
+        """The agent must sanitize content:null responses on every request.
+
+        Registering the drop as a history processor (not just the post-run
+        storage filter) is what closes the mid-run gap: the model can emit an
+        empty/thinking-only response within a single turn, and pydantic-ai would
+        otherwise replay it to the provider as assistant content:null.
+        """
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        adapter.agent_name = "TestBot"
+
+        with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
+            adapter._create_agent()
+            assert MockAgent.call_args.kwargs["history_processors"] == [
+                _drop_non_replayable_messages
+            ]
 
 
 class TestOnStarted:
@@ -480,6 +499,51 @@ class TestHistoryManagement:
         )
 
         assert _is_replayable_history_message(response) is True
+
+    def test_history_processor_strips_content_null_responses(self):
+        """The processor drops empty/thinking-only responses, keeps real content.
+
+        This runs before every model request (mid-run included), so an empty or
+        thinking-only response the model emits within a turn is never replayed as
+        assistant content:null — which providers reject.
+        """
+        user_request = ModelRequest(parts=[UserPromptPart(content="Q1")])
+        tool_call = ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="band_send_message",
+                    args={"content": "hi", "mentions": ["Alice"]},
+                    tool_call_id="call_1",
+                )
+            ]
+        )
+        tool_return = ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name="band_send_message",
+                    content={"id": "msg_1"},
+                    tool_call_id="call_1",
+                )
+            ]
+        )
+        empty_response = ModelResponse(parts=[])
+        thinking_only = ModelResponse(parts=[ThinkingPart(content="hmm")])
+        text_response = ModelResponse(parts=[TextPart(content="done")])
+
+        processed = _drop_non_replayable_messages(
+            [
+                user_request,
+                tool_call,
+                tool_return,
+                empty_response,
+                thinking_only,
+                text_response,
+            ]
+        )
+
+        assert processed == [user_request, tool_call, tool_return, text_response]
+        assert empty_response not in processed
+        assert thinking_only not in processed
 
     @pytest.mark.asyncio
     async def test_ensures_history_exists_for_non_bootstrap(

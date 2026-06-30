@@ -19,6 +19,7 @@ from pydantic_ai import (
     RunContext,
 )
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     ThinkingPart,
@@ -57,6 +58,20 @@ def _is_replayable_history_message(message: Any) -> bool:
             for part in message.parts
         )
     return True
+
+
+def _drop_non_replayable_messages(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """Pydantic AI history processor: strip responses that replay as content:null.
+
+    Runs before *every* model request — including the extra requests pydantic-ai
+    makes mid-run after tool returns. The model can emit an empty or thinking-only
+    response within a single turn; replaying it to the provider sends an assistant
+    message with ``content: null`` and no tool calls, which providers reject (e.g.
+    OpenAI 400 "Invalid value for 'content': expected a string, got null"). The
+    storage filter only sanitizes history persisted *between* turns, so this closes
+    the within-run gap.
+    """
+    return [m for m in messages if _is_replayable_history_message(m)]
 
 
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
@@ -176,6 +191,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             system_prompt=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
+            # Strip content:null responses on every request, including mid-run
+            # ones the storage filter can't reach (see the function docstring).
+            history_processors=[_drop_non_replayable_messages],
         )
 
         # Register platform tools dynamically from centralized definitions
