@@ -94,7 +94,8 @@ Rules for the builder — each exists for a reason, don't skip them:
 - **`requires=[...]`** — the `Dep` members your adapter needs (provider key, CLI,
   server, dependency lane). A missing one **fails** that matrix cell with the
   reason; it never silently skips. Every spec must declare at least one requirement
-  (`test_every_spec_requires_dep_members` enforces it).
+  (`test_every_spec_requires_dep_members` enforces it). **`requires` also decides
+  your CI lane** — see "Which CI lane your adapter lands in" below.
 - **`supports=[...]`** — the platform `Capability`s your adapter can expose
   (`Capability.MEMORY`, `Capability.CONTACTS`). Most tool-loop adapters use the
   `_LLM_TOOL_LOOP` shorthand (`= (MEMORY, CONTACTS)`). This only declares what
@@ -105,6 +106,27 @@ Rules for the builder — each exists for a reason, don't skip them:
 - **Map `prompt`** to whichever constructor argument steers your framework's system
   prompt. The matrix passes one generic `prompt`; you route it.
 - **Thread `features` through** so tests can flip memory/contacts/execution-emission.
+
+### Which CI lane your adapter lands in
+
+You **don't set a lane on the adapter** — it's derived from `requires`. Each `Dep`
+names a lane (`dep_lane` in `requirements.py`); your adapter runs in the unique
+non-default lane among its deps, else the shared `core` lane. So `requires` is the
+one and only place you express lane association:
+
+| `requires` includes… | Lane | `uv` extra |
+|---|---|---|
+| only a provider key (`Dep.OPENAI` / `Dep.ANTHROPIC`) | `core` | `dev` |
+| `Dep.GOOGLE` | `google` | `dev` |
+| `Dep.LETTA` | `letta` | `dev` |
+| `Dep.CODEX_CLI` / `Dep.OPENCODE_SERVER` | `backends` | `dev` |
+| `Dep.CREWAI` | `crewai` | `dev-crewai` |
+
+An adapter belongs to exactly one lane: two deps naming different non-default lanes
+is an error (`adapter_lane` raises). If your adapter needs a **brand-new** lane (its
+own venv, server, or isolation — e.g. provider rate-limit flakiness), don't invent
+it here — follow **"Adding a CI lane"** in `README.md`: add the `Lane` + `Extra` and
+point a `Dep` at it in `requirements.py`, then `requires=[that Dep]` here.
 
 ## Step 3 — Run the discovery guard (it should now pass)
 
@@ -220,8 +242,9 @@ by contrast, always means a missing enum member or builder.
 ## Checklist
 
 - [ ] **Step 1** — `Adapter.<NAME> = "<module_name>"` (value == module file name).
-- [ ] **Step 2** — `@adapter(...)` builder with lazy import, `requires=`, `supports=`,
-      mapped `prompt`, threaded `features`, and `tools` handled (forward or reject).
+- [ ] **Step 2** — `@adapter(...)` builder with lazy import, `requires=` (also sets
+      the CI lane), `supports=`, mapped `prompt`, threaded `features`, and `tools`
+      handled (forward or reject).
 - [ ] **Step 3** — `test_adapter_registry.py` green (guard satisfied).
 - [ ] **Step 4** *(only if new config)* — new `Dep` + `_DEPS` entry; new
       credential/model field in `settings.py`; env vars documented in `CLAUDE.md`.
