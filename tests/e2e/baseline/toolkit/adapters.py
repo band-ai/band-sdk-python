@@ -64,6 +64,7 @@ from tests.e2e.baseline.toolkit.requirements import (
     DEFAULT_LANE,
     REPO_ROOT,
     Dep,
+    Extra,
     Lane,
     dep_lane,
     lane_extra,
@@ -237,7 +238,7 @@ class CILane:
     """A CI lane (one job): its id, the ``uv`` extra it installs, and its adapters."""
 
     id: Lane
-    extra: str
+    extra: Extra
     adapters: tuple[Adapter, ...]
 
 

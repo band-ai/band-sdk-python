@@ -134,10 +134,12 @@ so the registry can reference `Dep` without importing pytest).
 2. Add a `_DEPS[Dep.X] = DepSpec(...)` entry — one record holding the dep's
    `available` predicate (a pure function of `settings`/`os.environ` returning
    `bool`), the `reason` shown when the cell **fails** (name the exact env var /
-   CLI / server), and — only if the dep gates its own CI lane (a different venv or
-   an external backend) — `lane=` (a key in `LANE_EXTRAS`). A provider-key dep
-   needs no `lane` (it rides the shared `dev` lane). See `_codex_cli_available`,
-   `_letta_available` for CLI-on-PATH and server-URL predicates.
+   CLI / server), and — only if the dep gates its own CI lane (a different venv,
+   an external backend, or isolation) — `lane=` (a `Lane` member, mapped to its
+   `uv` extra in `LANE_EXTRAS`). A provider-key dep with no isolation need rides
+   the shared `core` lane (`DEFAULT_LANE`), so it needs no `lane`. See
+   `_codex_cli_available`, `_letta_available` for CLI-on-PATH and server-URL
+   predicates.
 
 ```python notest
 class Dep(Enum):
@@ -208,8 +210,8 @@ E2E_TESTS_ENABLED=true uv run pytest \
 ```
 
 A cell that's **red because its key/CLI/server is absent** is intended — no single
-environment turns the whole matrix green (crewai needs the `dev-crewai` lane;
-codex/opencode/letta need their backends). "Red" there means "this backend isn't
+environment turns the whole matrix green (the `crewai` lane needs the `dev-crewai`
+extra; codex/opencode/letta need their backends). "Red" there means "this backend isn't
 wired up in this environment", not "the wiring is wrong". A red *discovery guard*,
 by contrast, always means a missing enum member or builder.
 

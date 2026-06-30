@@ -12,11 +12,11 @@ so the adapter relays the model's plain-text reply to the room itself. The MCP
 tool-execution path is covered by the mocked adapter unit tests instead.
 
 Both tests are bound to ``@with_agents(Adapter.LETTA)``, so they run in the
-``backends`` lane (and the full local matrix) and skip-with-reason elsewhere.
+``letta`` lane (and the full local matrix) and skip-with-reason elsewhere.
 
 Run with:
 
-    E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run pytest \\
+    E2E_TESTS_ENABLED=true BAND_E2E_LANE=letta uv run pytest \\
         tests/e2e/baseline/smoke/adapters/test_letta.py -v -s --no-cov
 """
 

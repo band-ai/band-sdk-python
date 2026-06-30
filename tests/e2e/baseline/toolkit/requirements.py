@@ -48,25 +48,49 @@ class Lane(StrEnum):
 
     Each member's *value* is the lane id used in ``BAND_E2E_LANE`` and the workflow
     matrix. Like ``Adapter``, it exists so lanes are referenced by a typed handle,
-    never a magic string.
+    never a magic string. Lane ids are content-based (what the lane runs); they are
+    decoupled from the ``uv`` extra a lane installs (see ``LANE_EXTRAS``).
+    """
+
+    CORE = "core"
+    CREWAI = "crewai"
+    BACKENDS = "backends"
+    GOOGLE = "google"
+    LETTA = "letta"
+
+
+# The shared default lane: every provider-key adapter with no special isolation
+# need runs here (anthropic/openai-family frameworks).
+DEFAULT_LANE = Lane.CORE
+
+
+class Extra(StrEnum):
+    """A ``uv`` extra a lane installs (``uv sync --extra <value>``).
+
+    Each member's *value* is an extra name declared in ``pyproject.toml``
+    ``[project.optional-dependencies]`` -- the contract is that contract. Typed so
+    ``LANE_EXTRAS`` references extras by handle rather than a bare magic string.
     """
 
     DEV = "dev"
     DEV_CREWAI = "dev-crewai"
-    BACKENDS = "backends"
 
 
-# The shared default lane: every provider-key adapter runs here.
-DEFAULT_LANE = Lane.DEV
-
-# Lane -> the ``uv`` extra a lane's job installs. crewai needs its own conflicting
-# extra; the ``backends`` lane installs ``dev`` and stands up the codex CLI, the
-# OpenCode server, and the Letta server in one CI job. The extra names are the
-# contract with ``pyproject.toml`` ``[project.optional-dependencies]``.
-LANE_EXTRAS: dict[Lane, str] = {
-    Lane.DEV: "dev",
-    Lane.DEV_CREWAI: "dev-crewai",
-    Lane.BACKENDS: "dev",
+# Lane -> the ``uv`` extra a lane's job installs. Lane id and extra are separate:
+# several lanes share the ``dev`` extra but are split out for isolation (their own
+# server/CLI, or rate-limit flakiness). crewai is the one lane that *needs* its own
+# conflicting extra (see pyproject [tool.uv] conflicts).
+LANE_EXTRAS: dict[Lane, Extra] = {
+    Lane.CORE: Extra.DEV,
+    Lane.CREWAI: Extra.DEV_CREWAI,
+    Lane.BACKENDS: Extra.DEV,
+    # The Google adapters (gemini/google_adk) share the ``dev`` extra but run in
+    # their own lane so their free-tier rate-limit flakiness is isolated from the
+    # rest of the provider-key adapters (and can be run/keyed separately).
+    Lane.GOOGLE: Extra.DEV,
+    # Letta runs the ``dev`` extra but stands up its own self-hosted server, so it
+    # gets its own lane (split out of ``backends``, which keeps codex + opencode).
+    Lane.LETTA: Extra.DEV,
 }
 
 
@@ -170,6 +194,7 @@ _DEPS: dict[Dep, DepSpec] = {
         _google_available,
         "GOOGLE_API_KEY/GEMINI_API_KEY or Vertex AI env "
         "(GOOGLE_GENAI_USE_VERTEXAI + GOOGLE_CLOUD_PROJECT) not set",
+        lane=Lane.GOOGLE,
     ),
     Dep.CODEX_CLI: DepSpec(
         _codex_cli_available, "Codex CLI not found on PATH", lane=Lane.BACKENDS
@@ -188,12 +213,12 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.LETTA: DepSpec(
         _letta_available,
         "a self-hosted LETTA_BASE_URL or a Letta Cloud LETTA_API_KEY not set",
-        lane=Lane.BACKENDS,
+        lane=Lane.LETTA,
     ),
     Dep.CREWAI: DepSpec(
         lambda _s: importlib.util.find_spec("crewai") is not None,
         "crewai is not importable (install the dev-crewai lane)",
-        lane=Lane.DEV_CREWAI,
+        lane=Lane.CREWAI,
     ),
 }
 
@@ -203,7 +228,7 @@ def dep_lane(dep: Dep) -> Lane:
     return _DEPS[dep].lane
 
 
-def lane_extra(lane: Lane) -> str:
+def lane_extra(lane: Lane) -> Extra:
     """The ``uv`` extra a lane installs (raises ``KeyError`` for an unknown lane)."""
     return LANE_EXTRAS[lane]
 

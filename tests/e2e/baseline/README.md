@@ -324,52 +324,78 @@ still fails.
 
 ## CI lanes (a lane = one CI job)
 
-A **lane** is a CI job: a `uv` extra to install plus, for a backend lane, the setup
-that stands its backend up. Each registered adapter belongs to exactly one lane,
+A **lane** is a CI job: a `uv` extra to install plus, for a lane with a server/CLI,
+the setup that stands it up. Each registered adapter belongs to exactly one lane,
 **derived from its `requires`** (`dep_lane` in `requirements.py` → the unique
 non-default lane among its deps). `ci_lanes()` (`toolkit/adapters.py`) groups every
 adapter into a `CILane(id, extra, adapters)` — so a newly-registered adapter joins
 its lane for free, and the `assert_every_adapter_has_a_ci_home()` guard fails loudly
 if one lands nowhere.
 
+Lane ids are **content-based** (what the lane runs) and **decoupled from the `uv`
+extra** a lane installs (`Lane` → `Extra` via `LANE_EXTRAS`): several lanes share
+the `dev` extra but are split out for isolation.
+
 | Lane | `uv` extra | Adapters | Backend the CI job provides |
 |------|-----------|----------|------------------------------|
-| `dev` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, gemini, google_adk | provider keys (secrets) |
-| `dev-crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
-| `backends` | `dev` | codex, opencode, letta | the external-backend adapters in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`), and a self-hosted `letta/letta` server (Docker, auto-relay — no Band MCP) |
+| `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai | provider keys (secrets) |
+| `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
+| `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
+| `backends` | `dev` | codex, opencode | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), and a running `opencode serve` (`OPENCODE_BASE_URL`) |
+| `letta` | `dev` | letta | a self-hosted `letta/letta` server (Docker, auto-relay — no Band MCP) |
 
-The backend adapters share one lane because they all install the `dev` extra and
-differ only in the backend their job stands up — folding them keeps the reliable
-`dev` lane uncoupled from those flaky external backends while avoiding a job per
-backend. The cost is that within `backends` one backend failing to come up can
-redden the other two's cells; the per-adapter test report still shows which.
+`backends` folds codex + opencode into one job (both install `dev`, differ only in
+the backend their job stands up) so a job-per-backend isn't needed; the cost is that
+one backend failing to come up can redden the other's cells (the per-adapter report
+still shows which). `google` and `letta` get their own lanes because their failure
+modes (Google rate limits; the self-hosted Letta server) are best isolated.
 
 **The knob:** `BAND_E2E_LANE=<lane id>`. When set, `lane_selection.apply_lane_skips`
 (called by the conftest hook) resolves the lane's adapters from `ci_lanes()` and
 marks **skip-with-reason** every test bound to an out-of-lane adapter — matrix cells
 *and* `@with_agents` tests. An **in-lane** adapter is left untouched, so a missing
-key/CLI/server still **fails** via its `@requires` gate (an unwired backend lane is
-red by design until its setup lands). Adapter-agnostic tests always run. **Unset**
-(the local default) runs the full matrix, fail-loud.
+key/CLI/server still **fails** via its `@requires` gate (an unwired lane is red by
+design until its setup lands). Adapter-agnostic tests always run. **Unset** (the
+local default) runs the full matrix, fail-loud.
 
 **Run locally:**
 
 ```bash
-uv sync --extra dev            # the dev-lane venv
-BAND_E2E_LANE=dev E2E_TESTS_ENABLED=true \
+uv sync --extra dev            # the core/google/backends/letta venv
+BAND_E2E_LANE=core E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
 uv sync --extra dev-crewai     # the crewai lane (overwrites the env)
-BAND_E2E_LANE=dev-crewai E2E_TESTS_ENABLED=true \
+BAND_E2E_LANE=crewai E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
 ```
 
 **CI** (`.github/workflows/e2e.yml`) lists no adapters: a `lanes` job emits the
 partition from `ci_lanes()` as `[{lane, extra}, …]` and the `e2e` job fans one job
-per lane (`uv sync --extra <extra>` + `BAND_E2E_LANE=<lane>`), running the `backends`
-lane's setup steps gated on `matrix.lane == 'backends'`. Adding an adapter to an
-existing lane needs no YAML edit; a brand-new backend adds one setup step to the
-`backends` job. Coverage is the union of all lanes.
+per lane (`uv sync --extra <extra>` + `BAND_E2E_LANE=<lane>`), running each lane's
+setup steps gated on its `matrix.lane` id. Manual dispatch also takes a `lane` input
+(a dropdown, default `all`) validated against the registry, to run one lane on demand.
+Adding an adapter to an existing lane needs no YAML edit. Coverage is the union of
+all lanes.
+
+### Adding a CI lane
+
+Lanes live in the registry, not the workflow YAML. To add one:
+
+1. **`toolkit/requirements.py`** — add a `Lane` member (a content-based id) and map
+   it to its `uv` extra in `LANE_EXTRAS` (add an `Extra` member first if it's a new
+   extra — and declare that extra in `pyproject.toml [project.optional-dependencies]`).
+2. **`toolkit/requirements.py`** — point a `Dep` at the lane via `lane=Lane.<NEW>` in
+   `_DEPS` (provider-key deps with no isolation need ride `DEFAULT_LANE`). The
+   adapters whose `requires` include that dep now resolve into the new lane; the
+   guards (`assert_every_adapter_has_a_ci_home`, the partition test) keep it honest.
+3. **`.github/workflows/e2e.yml`** — only if the lane needs a server/CLI: add a setup
+   step gated on its `matrix.lane` id (see the codex/opencode/letta steps). Add the
+   lane id to the `lane` dispatch-input `options` so it's selectable. Update the
+   header comment's lane list.
+4. **Validate:** `assert_workflow_lane_gates_known()` ties every `matrix.lane ==`
+   gate back to the registry, so a typo'd/stale lane id fails loudly in the `lanes`
+   job (and the guard suite) rather than silently never running.
 
 ## Letta runs in auto-relay mode
 

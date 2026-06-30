@@ -8,24 +8,47 @@ name: E2E (baseline)
 # Lanes are DERIVED FROM THE REGISTRY, not hand-listed here. The `lanes` job
 # imports the adapter registry and emits one CI lane per `ci_lanes()` entry; the
 # `e2e` job fans out over them. A lane is a job: it installs the lane's `uv` extra
-# and (for the backends lane) stands its backends up. Adding an adapter to an
-# existing lane needs no edit here.
+# and (for lanes with a server/CLI) stands that backend up. Adding an adapter to
+# an existing lane needs no edit here.
 #
+# HOW TO ADD A LANE: lanes live in the registry, not this file. Add a `Lane`
+# member + its `uv` extra in tests/e2e/baseline/toolkit/requirements.py, point a
+# `Dep` at it, and (only if the lane needs a server/CLI) add a setup step below
+# gated to that lane id, plus the matching dropdown option in the `lane` input.
+# Full checklist: tests/e2e/baseline/README.md ("Adding a CI lane").
+#
+# Lane ids are content-based and decoupled from the `uv` extra each installs.
 # Lanes today:
-# - dev          — the provider-key adapters (anthropic/openai/google families).
-# - dev-crewai   — crewai/crewai_flow (crewai conflicts with the dev venv's deps,
-#                  so it gets its own `uv` extra; see pyproject [tool.uv] conflicts).
-# - backends     — the external-backend adapters in one job (they all use the `dev`
-#                  extra): CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
-#                  (local `opencode serve`, Zen free model), and LettaAdapter (self-hosted
-#                  letta Docker, auto-relay — no Band MCP; see settings.py / _build_letta).
+# - core         — provider-key adapters with no special isolation, on the `dev`
+#                  extra (agno, anthropic, claude_sdk, langgraph, pydantic_ai).
+# - crewai       — crewai/crewai_flow (crewai conflicts with the dev venv's deps,
+#                  so it gets its own `dev-crewai` extra; see pyproject [tool.uv]).
+# - google       — gemini/google_adk (own lane so free-tier rate-limit flakiness is
+#                  isolated from core; shares the `dev` extra).
+# - backends     — the CLI/server coding agents in one job (on the `dev` extra):
+#                  CodexAdapter (codex CLI) + the codex-acp e2e, and OpencodeAdapter
+#                  (local `opencode serve`, Zen free model).
+# - letta        — LettaAdapter (self-hosted letta Docker, auto-relay — no Band MCP;
+#                  see settings.py / _build_letta); own lane, shares the `dev` extra.
 #
 # An unwired backend still fails loudly (the @requires gate reports the missing
 # CLI/server) until its setup block lands. `fail-fast: false`
-# keeps a red backend lane from blocking the others.
+# keeps a red lane from blocking the others.
 
 on:
   workflow_dispatch:
+    inputs:
+      lane:
+        description: "Lane to run (all = full matrix). Validated against the registry."
+        type: choice
+        default: all
+        options:
+          - all
+          - core
+          - crewai
+          - google
+          - backends
+          - letta
   # TEMP HACK: trigger E2E on push to this branch so CI can be exercised without
   # a manual dispatch. Remove before merging.
   push:
@@ -72,9 +95,14 @@ jobs:
 
     - name: Emit lane matrix from the registry
       id: gen
+      env:
+        # workflow_dispatch sets this; push (and the dispatch default) leaves it
+        # empty, which means the full matrix.
+        SELECTED_LANE: ${{ github.event.inputs.lane || 'all' }}
       run: |
         uv run python - <<'PY' >> "$GITHUB_OUTPUT"
         import json
+        import os
         from tests.e2e.baseline.toolkit.adapters import (
             assert_every_adapter_has_a_ci_home,
             assert_registry_covers_discovered,
@@ -87,7 +115,21 @@ jobs:
         # Fail if a `matrix.lane ==` gate below names a lane the registry no longer
         # emits (its step would silently never run).
         assert_workflow_lane_gates_known()
-        include = [{"lane": lane.id, "extra": lane.extra} for lane in ci_lanes()]
+        lanes = list(ci_lanes())
+        # The registry stays authoritative: a chosen lane must be one it emits, so
+        # a stale dropdown option fails loudly here instead of running nothing.
+        selected = os.environ.get("SELECTED_LANE") or "all"
+        known = {lane.id for lane in lanes}
+        if selected != "all" and selected not in known:
+            raise SystemExit(
+                f"Requested lane {selected!r} is not one the registry emits "
+                f"(known: {sorted(known)}). Pick 'all' or a known lane."
+            )
+        include = [
+            {"lane": lane.id, "extra": lane.extra}
+            for lane in lanes
+            if selected == "all" or lane.id == selected
+        ]
         print("lanes=" + json.dumps({"include": include}))
         PY
 
@@ -141,7 +183,8 @@ jobs:
       with:
         python-version: '3.12'
 
-    # --- Backend setup (only the `backends` lane runs these; they co-run in it) ---
+    # --- Backend setup: each step is gated to the lane whose server/CLI it stands
+    # up (the `backends` lane co-runs codex + opencode; letta is its own lane). ---
 
     - name: Set up Node (codex, opencode)
       if: matrix.lane == 'backends'
@@ -197,7 +240,7 @@ jobs:
         echo "OPENCODE_BASE_URL=http://127.0.0.1:4096" >> "$GITHUB_ENV"
 
     - name: Start the self-hosted Letta server (letta)
-      if: matrix.lane == 'backends'
+      if: matrix.lane == 'letta'
       run: |
         # Auto-relay mode: the adapter registers NO Band MCP server (a self-hosted
         # Letta rejects a loopback/private-IP MCP URL via its SSRF guard, and stdio
