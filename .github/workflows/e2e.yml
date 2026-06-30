@@ -74,19 +74,8 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v6
 
-    - name: Configure git to use HTTPS for GitHub
-      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-        cache-dependency-glob: "**/pyproject.toml"
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.12'
+    - name: Set up E2E environment
+      uses: ./.github/actions/setup-e2e
 
     # The registry import is framework-free (band.adapters is lazy) and pytest-free,
     # so the default extra is enough to resolve the lane partition.
@@ -169,19 +158,8 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v6
 
-    - name: Configure git to use HTTPS for GitHub
-      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
-
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        enable-cache: true
-        cache-dependency-glob: "**/pyproject.toml"
-
-    - name: Set up Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.12'
+    - name: Set up E2E environment
+      uses: ./.github/actions/setup-e2e
 
     # --- Backend setup: each step is gated to the lane whose server/CLI it stands
     # up (the `backends` lane co-runs codex + opencode; letta is its own lane). ---
