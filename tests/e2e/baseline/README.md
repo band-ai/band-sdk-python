@@ -389,10 +389,13 @@ Lanes live in the registry, not the workflow YAML. To add one:
    `_DEPS` (provider-key deps with no isolation need ride `DEFAULT_LANE`). The
    adapters whose `requires` include that dep now resolve into the new lane; the
    guards (`assert_every_adapter_has_a_ci_home`, the partition test) keep it honest.
-3. **`.github/workflows/e2e.yml`** — only if the lane needs a server/CLI: add a setup
-   step gated on its `matrix.lane` id (see the codex/opencode/letta steps). Add the
-   lane id to the `lane` dispatch-input `options` so it's selectable. Update the
-   header comment's lane list.
+3. **`.github/workflows/e2e.yml`** — only if the lane needs a server/CLI: add a
+   `.github/scripts/setup-<backend>.sh` (export any discovered config via
+   `$GITHUB_ENV`; see the codex/opencode/letta scripts) and a step that runs it
+   gated on its `matrix.lane` id. Add the lane id to the `lane` dispatch-input
+   `options` so it's selectable, and update the header comment's lane list. (The
+   common env setup — git/uv/python — is the shared `./.github/actions/setup-e2e`
+   composite, so a new lane doesn't repeat it.)
 4. **Validate:** `assert_workflow_lane_gates_known()` ties every `matrix.lane ==`
    gate back to the registry, so a typo'd/stale lane id fails loudly in the `lanes`
    job (and the guard suite) rather than silently never running.

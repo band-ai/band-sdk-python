@@ -170,70 +170,23 @@ jobs:
       with:
         node-version: '20'
 
+    # Each setup script installs its backend and exports the env it discovered
+    # (CODEX_CWD / OPENCODE_BASE_URL / LETTA_BASE_URL) via $GITHUB_ENV. See
+    # .github/scripts/ for the inline detail.
     - name: Install + authenticate the Codex CLI (codex)
       if: matrix.lane == 'backends'
-      env:
-        # Codex picks a model from its own catalogue; gpt-4o-mini (the openai default)
-        # is not one of them. Confirm/adjust on first dispatch if model selection errors.
-        CODEX_MODEL: gpt-5-codex
-      run: |
-        npm install -g @openai/codex
-        printenv OPENAI_API_KEY | codex login --with-api-key
-        codex login status
-        # Codex may write to its working dir, so point it at a throwaway path
-        # outside the checkout and opt in explicitly (the requirement gate enforces this).
-        echo "CODEX_CWD=$(mktemp -d)" >> "$GITHUB_ENV"
-        echo "E2E_CODEX_CWD_IS_DISPOSABLE=true" >> "$GITHUB_ENV"
-        echo "CODEX_MODEL=${CODEX_MODEL}" >> "$GITHUB_ENV"
+      run: .github/scripts/setup-codex.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'
       env:
-        # The OpenCode Zen provider key; an unsecured localhost server reads it via
-        # the {env:...} substitution in the config below. Free-tier account, so the
-        # config pins free models (incl. the small/title model) to avoid paid calls.
+        # The OpenCode Zen provider key the server reads via {env:...} substitution.
         OPENCODE_ZEN_API_KEY: ${{ secrets.E2E_OPENCODE_ZEN_API_KEY }}
-      run: |
-        npm install -g opencode-ai
-        mkdir -p ~/.config/opencode
-        cat > ~/.config/opencode/opencode.json <<'JSON'
-        {
-          "$schema": "https://opencode.ai/config.json",
-          "small_model": "opencode/mimo-v2.5-free",
-          "provider": {
-            "opencode": { "options": { "apiKey": "{env:OPENCODE_ZEN_API_KEY}" } }
-          }
-        }
-        JSON
-        # Serve from an empty throwaway dir: opencode is a coding agent with
-        # shell/read/grep tools, so in the repo checkout a weak free model wanders
-        # into the source instead of replying. An empty cwd keeps it on task.
-        workdir="$(mktemp -d)"
-        ( cd "$workdir" && nohup opencode serve --hostname 127.0.0.1 --port 4096 \
-            >/tmp/opencode-serve.log 2>&1 & )
-        for _ in $(seq 1 30); do
-          curl -fsS http://127.0.0.1:4096/global/health && break
-          sleep 2
-        done
-        echo "OPENCODE_BASE_URL=http://127.0.0.1:4096" >> "$GITHUB_ENV"
+      run: .github/scripts/setup-opencode.sh
 
     - name: Start the self-hosted Letta server (letta)
       if: matrix.lane == 'letta'
-      run: |
-        # Auto-relay mode: the adapter registers NO Band MCP server (a self-hosted
-        # Letta rejects a loopback/private-IP MCP URL via its SSRF guard, and stdio
-        # MCP isn't registrable via its API), so the adapter relays the model's
-        # reply to the room itself. That means no MCP server, no --network host, no
-        # tunnel — just a plain Letta server reachable on :8283. Letta uses
-        # OPENAI_API_KEY for its model (the openai/gpt-4o-mini default); no new secret.
-        docker run -d --name letta -p 8283:8283 \
-          -e OPENAI_API_KEY="${OPENAI_API_KEY}" letta/letta:latest
-        for _ in $(seq 1 60); do
-          curl -fsS http://localhost:8283/v1/health/ && break
-          sleep 2
-        done
-        # Self-hosted base_url makes the Letta requirement available with no cloud key.
-        echo "LETTA_BASE_URL=http://localhost:8283" >> "$GITHUB_ENV"
+      run: .github/scripts/setup-letta.sh
 
     # -----------------------------------------------------------------------------
 
