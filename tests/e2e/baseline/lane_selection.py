@@ -15,8 +15,6 @@ regardless of ``BAND_E2E_LANE`` — unless it opts out with ``@pytest.mark.mixed
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from tests.e2e.baseline.agents import AGENTS_MARKER, AgentsRequest
@@ -67,18 +65,17 @@ def _lane_skip_reason(
     return None
 
 
-def apply_lane_skips(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Scope the run to ``BAND_E2E_LANE`` (a CI lane id), resolved via the registry.
+def apply_lane_skips(lane: str, items: list[pytest.Item]) -> None:
+    """Scope the run to ``lane`` (a CI lane id, from ``settings.run.lane``).
 
     The lane's adapter set is *derived* (``ci_lanes``), never a hand list — so a
     newly-registered adapter joins its lane with no change here. Every test bound to
     an out-of-lane adapter is marked **skip-with-reason** (visible in the lane's
     report); in-lane tests are untouched, so a missing key/backend still fails via
-    the ``@requires`` gate. Adapter-agnostic tests always run. Unset ``BAND_E2E_LANE``
+    the ``@requires`` gate. Adapter-agnostic tests always run. An empty ``lane``
     leaves collection untouched (full matrix, fail-loud) — the correct local default.
     """
-    lane = os.environ.get("BAND_E2E_LANE")
-    if lane is None:
+    if not lane:
         return
     lanes = ci_lanes()
     known = {cl.id for cl in lanes}

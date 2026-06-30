@@ -47,7 +47,7 @@ class BandCredentials(BaseSettings):
 
 
 class BaselineRun(BaseSettings):
-    """Run-level provisioning and cleanup policy."""
+    """Run-level scoping, provisioning, and cleanup policy."""
 
     model_config = SettingsConfigDict(
         env_prefix="BAND_E2E_",
@@ -56,6 +56,11 @@ class BaselineRun(BaseSettings):
         case_sensitive=False,
     )
 
+    # CI-lane scoping: restrict collection to one lane's adapters (a CI job is a
+    # uv extra + optional backend setup). Adapters outside the lane skip-with-
+    # reason; in-lane adapters stay fail-loud. Empty = full matrix, the local
+    # default.
+    lane: str = ""  # BAND_E2E_LANE
     # Reap provisioned agents/rooms on teardown. Set false to keep resources around
     # for on-purpose debugging of a failing run.
     autoclean: bool = True  # BAND_E2E_AUTOCLEAN

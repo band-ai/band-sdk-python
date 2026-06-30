@@ -101,9 +101,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             require_dep(dep, settings)
 
 
-def pytest_collection_modifyitems(
-    config: pytest.Config, items: list[pytest.Item]
-) -> None:
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Guard unschedulable mixed-lane tests, then scope to ``BAND_E2E_LANE``.
 
     The guard runs in every collection (lane-scoped or not) so a structurally
@@ -111,4 +109,4 @@ def pytest_collection_modifyitems(
     scoping then applies the ``BAND_E2E_LANE`` skips (see ``lane_selection``).
     """
     assert_no_unschedulable_mixed_lane(items)
-    apply_lane_skips(config, items)
+    apply_lane_skips(BaselineSettings().run.lane, items)
