@@ -13,6 +13,7 @@ Run with:
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -27,12 +28,9 @@ from tests.e2e.helpers import (
     run_tool_execution_test,
 )
 
-try:
-    import parlant.sdk as p
-
-    HAS_PARLANT = True
-except ImportError:
-    HAS_PARLANT = False
+# The server lifecycle now lives in ``running_parlant_server`` (imported inside the
+# fixture, after this gate), so no module-level ``parlant`` import is needed here.
+HAS_PARLANT = importlib.util.find_spec("parlant.sdk") is not None
 
 requires_parlant = pytest.mark.skipif(not HAS_PARLANT, reason="parlant not installed")
 
@@ -54,11 +52,17 @@ class TestParlantE2E:
     ) -> AsyncGenerator[Agent, None]:
         """Create a Parlant adapter with an in-process server and start the agent.
 
-        Yields a running Agent inside its async context manager.
+        Yields a running Agent inside its async context manager. The server lifecycle
+        goes through ``running_parlant_server``, which defaults to the OpenAI NLP
+        service (authenticates with ``OPENAI_API_KEY``) on fresh ephemeral ports and
+        tears the server down without hanging on Parlant's serve-forever
+        ``__aexit__`` — see that helper for the mechanism.
         """
         from band.adapters.parlant import ParlantAdapter
 
-        async with p.Server() as server:
+        from tests.e2e.baseline.toolkit.parlant_server import running_parlant_server
+
+        async with running_parlant_server() as server:
             parlant_agent = await server.create_agent(
                 name="E2E Test Agent",
                 description="A test agent for E2E validation. Keep responses short.",
