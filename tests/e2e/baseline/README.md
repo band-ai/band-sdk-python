@@ -30,7 +30,7 @@ async def test_greets(agent, resource_manager, user_ops, reply_capture):
             room_id, "say hi", mention_id=agent.id, mention_name=agent.name
         )
         await capture.wait_for_processed(mid, agent.id)                       # 5. barrier
-    assert_present(capture.messages)                                          # 6. assert
+    capture.messages.assert_present()                                         # 6. assert
 ```
 
 `@with_agents` / `@across_adapters` auto-apply the `@requires` provider-key gate
@@ -80,8 +80,8 @@ gate, no construction, no lifecycle, no cleanup.
 - Reuse the fixtures for everything — provisioning, the user driver, capture, waits,
   assertions. Your test is the scenario, not the scaffolding.
 - Wait event-driven: `wait_for_processed` / `wait_for_delivery` / `wait_until`.
-- Assert cheaply and tolerantly: `assertions.py` / the `Replies` methods first; the
-  `judge` only for genuinely semantic outcomes.
+- Assert cheaply and tolerantly: the `Replies`/`Events`/`Memories` assertion
+  methods first; the `judge` only for genuinely semantic outcomes.
 - Use the `Adapter` enum, the `**TOOL_AGENT` / `**MEMORY_AGENT` shapes, and
   `capture.messages.snapshot()` / `.since()`.
 - Add a new adapter to the matrix with one `@adapter` builder + one `Adapter` member
@@ -191,10 +191,10 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | See which tools fired (with args) | `calls = await capture.tool_calls(sender_id=agent.id)` after the barrier (needs `Emit.EXECUTION`; memory tools excluded — `include_memory=True` or `capture.memory(agent)`) |
 | Assert a specific tool fired | `calls.assert_fired("name", with_args={...})` (case-insensitive, subset args) |
 | See which events an agent emitted | `await capture.thoughts(sender_id=agent.id)` (or `errors()`/`tasks()`/`events(MessageType.X)`) |
-| Assert an event was emitted | `thoughts.assert_emitted()` / `thoughts.assert_contains_any([marker])` |
+| Assert an event was emitted | `thoughts.assert_present()` / `thoughts.assert_contains_any([marker])` |
 | Observe an agent's memory (both layers) | `mem = await capture.memory(agent, content_query=marker)` after the barrier |
 | Assert a memory op was called / a record landed | `mem.calls.assert_store_called(...)` / `mem.stored.assert_stored(content=marker, ...)` |
-| Assert something happened (cheap) | `assertions.py` helpers, or the `Replies` methods on `capture.messages` |
+| Assert something happened (cheap) | the `Replies` assertion methods on `capture.messages` |
 | Assert a fuzzy/semantic outcome | the `judge` fixture (sparingly — see Assertion strategy) |
 | Declare extra requirements explicitly | `@requires(Dep.OPENAI, ...)` (missing one **fails**) — but `@with_agents`/`@across_adapters` already do this for the agents they build |
 
@@ -203,8 +203,10 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 Prefer the cheapest assertion that proves the point. The LLM judge costs tokens,
 adds latency, and is itself non-deterministic, so do not reach for it by reflex.
 
-1. Structural facts -> `assertions.py` (`assert_present`, `assert_at_least`,
-   `assert_contains_any`, `assert_mentions`). Free, instant, deterministic.
+1. Structural facts -> the tolerant assertion methods on `capture.messages`
+   (`Replies`): `assert_present`, `assert_at_least`, `assert_contains_any`,
+   `assert_mentions` (and the matching ones on `Events`/`Memories`). Free,
+   instant, deterministic.
 2. Only when the outcome is genuinely semantic (paraphrase-proof "did it greet?",
    "did it recall both facts?") -> the `judge` fixture.
 
@@ -285,7 +287,7 @@ By default `tool_calls()` **excludes memory tools** (mirroring the SDK's
 `capture.thoughts()` / `errors()` / `tasks()` (or generic `capture.events(MessageType.X)`)
 return an `Events` collection on the same read-after-barrier contract as `tool_calls`.
 Drive them with the built-in `band_send_event` tool (no `Emit.*` feature needed; the
-tool posts directly). `assert_emitted()` and `assert_contains_any([marker])` are the
+tool posts directly). `assert_present()` and `assert_contains_any([marker])` are the
 assertions; assert the **marker** (not bare presence), since adapters auto-emit a
 generic `error` event on any turn exception. See `smoke/inspection/test_events.py`.
 

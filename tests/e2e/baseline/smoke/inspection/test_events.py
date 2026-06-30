@@ -62,7 +62,7 @@ async def test_event_emitted(
         await capture.wait_for_processed(mid, agent.id)
         events = await capture.events(event_type, sender_id=agent.id)
 
-    events.assert_emitted()
+    events.assert_present()
     events.assert_contains_any([marker])
 
 
