@@ -52,7 +52,17 @@ class ToolSpec:
         the arg is omitted.
         """
         ns: dict[str, Any] = {"_handler": self.handler, "_model": self.model}
-        params: list[str] = ["ctx"] if ctx_annotation is not None else []
+        params: list[str] = []
+        if ctx_annotation is not None:
+            # The pydantic-ai path injects a leading ``ctx`` param; a model field
+            # also named ``ctx`` would shadow it (duplicate-argument SyntaxError and
+            # a RunContext/field mix-up). Fail loud with a clear message instead.
+            if "ctx" in self.model.model_fields:
+                raise ValueError(
+                    f"{self.name}: model field 'ctx' collides with the injected "
+                    "pydantic-ai context parameter; rename the field."
+                )
+            params.append("ctx")
         # Emit required params before optional ones, regardless of the model's field
         # order: a synthesized ``def`` cannot place a defaulted parameter before a
         # non-defaulted one (SyntaxError), and pydantic does not guarantee

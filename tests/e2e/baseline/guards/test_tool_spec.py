@@ -11,6 +11,7 @@ lane.
 
 from __future__ import annotations
 
+import pytest
 from pydantic import BaseModel, Field
 
 from tests.e2e.baseline.toolkit.tools import ToolSpec
@@ -81,3 +82,20 @@ def test_optional_field_before_required_synthesizes_valid_signature() -> None:
     # And with the pydantic-ai ctx param prepended.
     ctx_tool = ToolSpec(_OptionalBeforeRequired, echo).as_callable(ctx_annotation=object)
     assert ctx_tool(None, req="hi", opt=3) == "req=hi opt=3"
+
+
+class _CtxField(BaseModel):
+    """ctx-field tool"""
+
+    ctx: str
+
+
+def test_ctx_field_collision_raises_clear_error() -> None:
+    """A model field named ``ctx`` would shadow the injected pydantic-ai context
+    param; fail loud rather than emit a duplicate-argument SyntaxError."""
+    spec = ToolSpec(_CtxField, lambda args: args.ctx)
+    # agno path (no ctx injected) is fine — the field is a normal param.
+    assert spec.as_callable()(ctx="hi") == "hi"
+    # pydantic-ai path injects ``ctx`` → collision → clear error.
+    with pytest.raises(ValueError, match="collides with the injected"):
+        spec.as_callable(ctx_annotation=object)

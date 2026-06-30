@@ -12,21 +12,18 @@ use (it passes no ``tool_choice`` to the model), so whether a given tool fires i
 the model's free choice. Making the tool the only way to answer is therefore the
 only way to assert "tool X fired" deterministically without a production change.
 
-``build_tool_agent`` wires any of these into an Anthropic agent with execution
-reporting on, which is what makes the tool calls observable.
+Wire any of these into a test with ``@with_agents(Adapter.X, tools=[LOOKUP_TOOL],
+prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)`` (or ``build_adapter(...)`` for a
+bespoke per-agent build); ``EXECUTION_REPORTING`` is what surfaces tool calls.
 """
 
 from __future__ import annotations
 
 from pydantic import BaseModel
 
-from band.adapters.anthropic import AnthropicAdapter
-from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Emit
 from band.runtime.custom_tools import get_custom_tool_name
 from tests.e2e.baseline.toolkit.tools import ToolSpec
-
-from tests.e2e.baseline.settings import BaselineSettings
 
 # Secret values the model cannot guess; it must call the tool to obtain them.
 ACCESS_CODES = {"alpha": "ZX417", "beta": "QM920", "gamma": "TR365"}
@@ -79,27 +76,7 @@ LOOKUP_AND_WEATHER_PROMPT = (
 )
 
 
-# Shape for @with_agents: surface each tool call as a ``tool_call`` event so
-# ``capture.tool_calls`` can read it. Spread it: ``@with_agents(Adapter.ANTHROPIC,
-# tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)``.
+# Shape for @with_agents / build_adapter: surface each tool call as a ``tool_call``
+# event so ``capture.tool_calls`` can read it. Spread it: ``@with_agents(
+# Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)``.
 EXECUTION_REPORTING = {"features": AdapterFeatures(emit={Emit.EXECUTION})}
-
-
-def build_tool_agent(
-    settings: BaselineSettings,
-    *,
-    tools: list[ToolSpec],
-    prompt: str,
-) -> SimpleAdapter:
-    """An Anthropic agent exposing ``tools`` with execution reporting enabled.
-
-    ``Emit.EXECUTION`` is what makes each tool call surface as a ``tool_call``
-    event, so the tool calls are observable via ``ReplyCapture.tool_calls``.
-    """
-    return AnthropicAdapter(
-        model=settings.llm_models.anthropic_model,
-        provider_key=settings.llm_credentials.anthropic_api_key,
-        prompt=prompt,
-        additional_tools=[t.as_custom_tool_def() for t in tools],
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
-    )

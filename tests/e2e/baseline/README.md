@@ -48,7 +48,7 @@ gate, no construction, no lifecycle, no cleanup.
 | a **subset** of adapters | `@across_adapters(include={...} / exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY})` | `matrix_agent` + `adapter_id` |
 | custom tools (any tool-capable framework) | `@with_agents(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
 | custom tools across the matrix | `@across_adapters(include={Adapter.ANTHROPIC, Adapter.PYDANTIC_AI, Adapter.AGNO}, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` | `matrix_agent` + `adapter_id` |
-| a **bespoke** build (different tools per agent in one room) | `build_tool_agent(...)` + `async with running_provisioned_agent(...) as agent:` | the `ProvisionedAgent` |
+| a **bespoke** build (different tools per agent in one room) | `build_adapter(Adapter.X, settings, tools=[...], prompt=..., **EXECUTION_REPORTING)` + `async with running_provisioned_agent(...) as agent:` | the `ProvisionedAgent` |
 
 - **Reference adapters by the typed `Adapter` enum, never a string.**
 - **Steer construction with a shape, don't re-spell args:** `@with_agents(Adapter.X, **TOOL_AGENT)`
@@ -136,7 +136,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
 | `agents.py` | matrix/decorator glue: `@with_agents(Adapter.X, ...)` (fixed set → `agent`/`agents`), `@across_adapters(include/exclude/supports/without, prompt=, features=)` (matrix/subset → `matrix_agent` + `adapter_id`), `adapter_params` |
 | `smoke/samples/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_agents(..., **SHAPE)`, `build_agent`, and the `*_instruction(...)` builders |
-| `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, the `EXECUTION_REPORTING` shape, and `build_tool_agent(...)` (bespoke per-agent-differing builds) |
+| `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, and the `EXECUTION_REPORTING` shape |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
 | `toolkit/requirements.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
@@ -179,7 +179,7 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Run a standard prompt/features shape | `@with_agents(Adapter.X, **TOOL_AGENT)` / `**MEMORY_AGENT` — don't re-spell `prompt=`/`features=` |
 | Run the same scenario across every adapter | request `matrix_agent` and/or `adapter_id` (parametrized over the full registry) |
 | Run a scenario across a subset | `@across_adapters(include=/exclude= by id, or supports=/without={Capability.MEMORY} by capability)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
-| A bespoke adapter (custom tools) | `build_tool_agent(...)` + `async with running_provisioned_agent(adapter, resource_manager) as agent:` |
+| A bespoke adapter (custom tools) | `build_adapter(Adapter.X, settings, tools=[...], **EXECUTION_REPORTING)` + `async with running_provisioned_agent(adapter, resource_manager) as agent:` |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging) |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
 | Observe replies without a race | `async with reply_capture(room_id) as capture:` then send |

@@ -35,8 +35,8 @@ from tests.e2e.baseline.smoke.samples.sample_tools import (
     WEATHER,
     WEATHER_PROMPT,
     WEATHER_TOOL,
-    build_tool_agent,
 )
+from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
@@ -74,13 +74,22 @@ async def test_tool_calls_isolated_per_sender(
     """Two agents share a room; each sender sees only its own tool calls.
 
     Bespoke (not ``@with_agents``): the two agents need *different* tools, which one
-    uniform decorator set cannot express — so build each explicitly.
+    uniform decorator set cannot express — so build each explicitly via the registry
+    (``build_adapter``) and run them with ``running_provisioned_agent``.
     """
-    lookup_agent = build_tool_agent(
-        baseline_settings, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT
+    lookup_agent = build_adapter(
+        Adapter.ANTHROPIC,
+        baseline_settings,
+        tools=[LOOKUP_TOOL],
+        prompt=LOOKUP_PROMPT,
+        **EXECUTION_REPORTING,
     )
-    weather_agent = build_tool_agent(
-        baseline_settings, tools=[WEATHER_TOOL], prompt=WEATHER_PROMPT
+    weather_agent = build_adapter(
+        Adapter.ANTHROPIC,
+        baseline_settings,
+        tools=[WEATHER_TOOL],
+        prompt=WEATHER_PROMPT,
+        **EXECUTION_REPORTING,
     )
     async with contextlib.AsyncExitStack() as stack:
         a = await stack.enter_async_context(
