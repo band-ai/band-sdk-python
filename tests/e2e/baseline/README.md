@@ -398,8 +398,11 @@ Lanes live in the registry, not the workflow YAML. To add one:
    common env setup — git/uv/python — is the shared `./.github/actions/setup-e2e`
    composite, so a new lane doesn't repeat it.)
 4. **Validate:** `assert_workflow_lane_gates_known()` ties every `matrix.lane ==`
-   gate back to the registry, so a typo'd/stale lane id fails loudly in the `lanes`
-   job (and the guard suite) rather than silently never running.
+   gate back to the registry, and `assert_workflow_lane_options_match_registry()`
+   ties the dispatch `lane` dropdown to it — so a typo'd/stale gate, or a dropdown
+   that's missing the new lane (or still lists a removed one), fails loudly in the
+   guard suite on every PR rather than silently never running / never being
+   selectable.
 
 ## Letta runs in auto-relay mode
 

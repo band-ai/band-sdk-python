@@ -14,8 +14,9 @@ name: E2E (baseline)
 # HOW TO ADD A LANE: lanes live in the registry, not this file. Add a `Lane`
 # member + its `uv` extra in tests/e2e/baseline/toolkit/requirements.py, point a
 # `Dep` at it, and (only if the lane needs a server/CLI) add a setup step below
-# gated to that lane id, plus the matching dropdown option in the `lane` input.
-# Full checklist: tests/e2e/baseline/README.md ("Adding a CI lane").
+# gated to that lane id, plus the matching dropdown option in the `lane` input
+# below (a guard test ties that option list back to the registry, so a missing or
+# stale one fails the unit suite). Full checklist: tests/e2e/baseline/README.md.
 #
 # Lane ids are content-based and decoupled from the `uv` extra each installs.
 # Lanes today:

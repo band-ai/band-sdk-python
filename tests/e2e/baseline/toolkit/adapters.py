@@ -52,6 +52,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 import band.adapters
 
 from band.core.simple_adapter import SimpleAdapter
@@ -322,6 +324,42 @@ def assert_workflow_lane_gates_known(workflow_path: Path = _E2E_WORKFLOW) -> Non
             "e2e.yml has matrix.lane gate(s) for lane id(s) the registry does not "
             f"emit (the gated step would never run): {sorted(unknown)}; known "
             f"lanes: {sorted(known)}"
+        )
+
+
+def workflow_lane_options(workflow_path: Path = _E2E_WORKFLOW) -> set[str]:
+    """The ``workflow_dispatch`` ``lane`` dropdown options in the e2e workflow.
+
+    GitHub ``choice`` inputs require a *static* options list, so this dropdown is
+    the one lane list that can't be derived from the registry at runtime — it is
+    hand-maintained and kept honest by ``assert_workflow_lane_options_match_registry``.
+    """
+    doc = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+    # PyYAML parses the bare ``on:`` key as the boolean ``True``, not the string.
+    trigger = doc[True]["workflow_dispatch"]
+    return set(trigger["inputs"]["lane"]["options"])
+
+
+def assert_workflow_lane_options_match_registry(
+    workflow_path: Path = _E2E_WORKFLOW,
+) -> None:
+    """Fail loudly if the ``lane`` dropdown drifts from the registry's lanes.
+
+    The dropdown must list exactly ``{registry lanes} | {"all"}``. A registry lane
+    *missing* from it can never be dispatch-selected (only ``all`` reaches it); a
+    *stale* option that's no longer a lane runs nothing. Unlike the runtime
+    ``selected not in known`` check (which only fires when someone picks the bad
+    option), this runs in the unit suite, so drift fails on every PR.
+    """
+    expected = {str(cl.id) for cl in ci_lanes()} | {"all"}
+    options = workflow_lane_options(workflow_path)
+    missing = expected - options
+    stale = options - expected
+    if missing or stale:
+        raise AssertionError(
+            "e2e.yml workflow_dispatch `lane` options drifted from the registry — "
+            f"add to the dropdown: {sorted(missing)}; remove (no such lane): "
+            f"{sorted(stale)}. Options must be {{registry lanes}} | {{'all'}}."
         )
 
 
