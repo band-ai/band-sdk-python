@@ -17,6 +17,7 @@ from pydantic_ai import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     RunContext,
+    UnexpectedModelBehavior,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -547,58 +548,80 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             user_message[:80],
         )
 
-        # Run agent with streaming to capture tool events
-        async for event in self._agent.run_stream_events(
-            user_message,
-            deps=tools,
-            message_history=self._message_history[room_id],
-        ):
-            if isinstance(event, FunctionToolCallEvent):
-                if Emit.EXECUTION in self.features.emit:
-                    try:
-                        await tools.send_event(
-                            content=json.dumps(
-                                {
-                                    "name": event.part.tool_name,
-                                    "args": event.part.args,
-                                    "tool_call_id": event.part.tool_call_id,
-                                }
-                            ),
-                            message_type="tool_call",
+        # Run agent with streaming to capture tool events. Track whether any tool
+        # succeeded so we can tell a productive turn from a genuine no-op below.
+        tool_executed = False
+        try:
+            async for event in self._agent.run_stream_events(
+                user_message,
+                deps=tools,
+                message_history=self._message_history[room_id],
+            ):
+                if isinstance(event, FunctionToolCallEvent):
+                    if Emit.EXECUTION in self.features.emit:
+                        try:
+                            await tools.send_event(
+                                content=json.dumps(
+                                    {
+                                        "name": event.part.tool_name,
+                                        "args": event.part.args,
+                                        "tool_call_id": event.part.tool_call_id,
+                                    }
+                                ),
+                                message_type="tool_call",
+                            )
+                        except Exception as e:
+                            logger.warning("Failed to send tool_call event: %s", e)
+                elif isinstance(event, FunctionToolResultEvent):
+                    tool_executed = True
+                    if Emit.EXECUTION in self.features.emit:
+                        try:
+                            await tools.send_event(
+                                content=json.dumps(
+                                    {
+                                        "name": event.result.tool_name,
+                                        "output": str(event.result.content),
+                                        "tool_call_id": event.tool_call_id,
+                                    }
+                                ),
+                                message_type="tool_result",
+                            )
+                        except Exception as e:
+                            logger.warning("Failed to send tool_result event: %s", e)
+                elif isinstance(event, AgentRunResultEvent):
+                    # Keep native run history, but drop responses that replay as
+                    # content:null (e.g. thinking-only) — providers reject them next request.
+                    run_messages = list(event.result.all_messages())
+                    self._message_history[room_id] = [
+                        message
+                        for message in run_messages
+                        if _is_replayable_history_message(message)
+                    ]
+                    dropped = len(run_messages) - len(self._message_history[room_id])
+                    if dropped:
+                        logger.debug(
+                            "Room %s: dropped %s content:null response(s) from history",
+                            room_id,
+                            dropped,
                         )
-                    except Exception as e:
-                        logger.warning("Failed to send tool_call event: %s", e)
-            elif isinstance(event, FunctionToolResultEvent):
-                if Emit.EXECUTION in self.features.emit:
-                    try:
-                        await tools.send_event(
-                            content=json.dumps(
-                                {
-                                    "name": event.result.tool_name,
-                                    "output": str(event.result.content),
-                                    "tool_call_id": event.tool_call_id,
-                                }
-                            ),
-                            message_type="tool_result",
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to send tool_result event: %s", e)
-            elif isinstance(event, AgentRunResultEvent):
-                # Keep native run history, but drop responses that replay as
-                # content:null (e.g. thinking-only) — providers reject them next request.
-                run_messages = list(event.result.all_messages())
-                self._message_history[room_id] = [
-                    message
-                    for message in run_messages
-                    if _is_replayable_history_message(message)
-                ]
-                dropped = len(run_messages) - len(self._message_history[room_id])
-                if dropped:
-                    logger.debug(
-                        "Room %s: dropped %s content:null response(s) from history",
-                        room_id,
-                        dropped,
-                    )
+        except UnexpectedModelBehavior as e:
+            # pydantic-ai forces a final str output (output_type=str). After the
+            # agent has already acted via tools this turn (a band_send_message
+            # reply, a band_store_memory, ...) gpt-5.4-mini sometimes returns a
+            # genuinely empty final response, so output-validation retries are
+            # exhausted and this raises. The work already went out, so the empty
+            # final answer is benign — mirror the crewai adapter and swallow it.
+            # Genuine no-response failures (no tool ran) still propagate.
+            if tool_executed and "output validation" in str(e):
+                logger.warning(
+                    "Room %s: Pydantic AI exhausted output-validation retries after "
+                    "the agent already did productive work this turn; treating as "
+                    "non-fatal: %s",
+                    room_id,
+                    e,
+                )
+                return
+            raise
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",

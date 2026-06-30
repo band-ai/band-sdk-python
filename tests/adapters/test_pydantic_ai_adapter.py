@@ -16,6 +16,7 @@ from pydantic_ai import (
     AgentRunResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    UnexpectedModelBehavior,
 )
 from pydantic_ai.messages import (
     BuiltinToolCallPart,
@@ -774,6 +775,115 @@ class TestExecutionReporting:
 
         # History should still be updated
         assert "room-123" in adapter._message_history
+
+
+def make_raising_stream(error: BaseException, *, tool_result: bool) -> AsyncIterator:
+    """Async run stream that optionally fires a tool-result event, then raises."""
+
+    async def stream():
+        if tool_result:
+            event = MagicMock(spec=FunctionToolResultEvent)
+            event.result = MagicMock()
+            event.result.tool_name = "band_send_message"
+            event.result.content = {"id": "msg_1"}
+            event.tool_call_id = "call_1"
+            yield event
+        raise error
+
+    return stream()
+
+
+class TestEmptyFinalAnswer:
+    """gpt-5.4-mini can return an empty final answer after the agent already
+    replied/acted via tools, exhausting pydantic-ai's output_type=str validation
+    retries. That is benign — the work already went out — so it must not fail the
+    message, but a genuine no-work failure must still surface.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_output_after_tool_is_benign(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """Output-validation exhaustion after a tool ran is swallowed."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                UnexpectedModelBehavior(
+                    "Exceeded maximum retries (1) for output validation"
+                ),
+                tool_result=True,
+            )
+        )
+
+        # Must not raise: the reply already went out via the tool this turn.
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_output_without_tool_propagates(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """Same error with no tool executed is a real failure — propagate."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                UnexpectedModelBehavior(
+                    "Exceeded maximum retries (1) for output validation"
+                ),
+                tool_result=False,
+            )
+        )
+
+        with pytest.raises(UnexpectedModelBehavior):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+    @pytest.mark.asyncio
+    async def test_unrelated_model_error_propagates_even_after_tool(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """The swallow is narrow: other model errors still surface after a tool."""
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                UnexpectedModelBehavior("Received empty model response"),
+                tool_result=True,
+            )
+        )
+
+        with pytest.raises(UnexpectedModelBehavior):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
 
 
 class TestCustomTools:
