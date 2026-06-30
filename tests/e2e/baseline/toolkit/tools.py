@@ -53,7 +53,15 @@ class ToolSpec:
         """
         ns: dict[str, Any] = {"_handler": self.handler, "_model": self.model}
         params: list[str] = ["ctx"] if ctx_annotation is not None else []
-        for fname, field in self.model.model_fields.items():
+        # Emit required params before optional ones, regardless of the model's field
+        # order: a synthesized ``def`` cannot place a defaulted parameter before a
+        # non-defaulted one (SyntaxError), and pydantic does not guarantee
+        # required-first declaration order.
+        fields = sorted(
+            self.model.model_fields.items(),
+            key=lambda item: not item[1].is_required(),
+        )
+        for fname, field in fields:
             if field.is_required():
                 params.append(fname)
             else:

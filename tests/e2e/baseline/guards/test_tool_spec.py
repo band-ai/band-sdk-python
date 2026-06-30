@@ -59,3 +59,25 @@ def test_factory_default_is_not_shared_across_calls() -> None:
 def test_ctx_param_is_prepended_when_requested() -> None:
     tool = ToolSpec(_Input, _echo).as_callable(ctx_annotation=object)
     assert tool(None, query="hi") == "q=hi tags=[] limit=5 note=None"
+
+
+class _OptionalBeforeRequired(BaseModel):
+    """opt-before-required tool"""
+
+    opt: int = 0  # optional declared first
+    req: str  # required declared after
+
+
+def test_optional_field_before_required_synthesizes_valid_signature() -> None:
+    """Field order must not produce ``def f(opt=_d, req):`` — a defaulted param
+    before a non-defaulted one is a SyntaxError. ``as_callable`` orders required
+    params first regardless of the model's declaration order."""
+
+    def echo(args: _OptionalBeforeRequired) -> str:
+        return f"req={args.req} opt={args.opt}"
+
+    tool = ToolSpec(_OptionalBeforeRequired, echo).as_callable()
+    assert tool(req="hi") == "req=hi opt=0"
+    # And with the pydantic-ai ctx param prepended.
+    ctx_tool = ToolSpec(_OptionalBeforeRequired, echo).as_callable(ctx_annotation=object)
+    assert ctx_tool(None, req="hi", opt=3) == "req=hi opt=3"

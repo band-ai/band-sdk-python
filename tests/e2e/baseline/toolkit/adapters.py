@@ -107,9 +107,11 @@ class AdapterSpec:
     """A registered adapter: its id, requirements, capabilities, and builder.
 
     ``e2e_pending`` marks an adapter that is registered (so it still defines its CI
-    lane via ``ci_lanes``) but has no live E2E coverage yet: it is excluded from the
-    matrix and ``@with_agents`` resolution so its lane runs no cells. Use it to
-    stand up a lane ahead of its tests.
+    lane via ``ci_lanes``) but has no live E2E coverage yet: ``specs()`` excludes it
+    by default, so the matrix (``adapter_params``) runs no cells for it. It does NOT
+    gate ``@with_agents`` (that resolves any registered adapter) — a pending adapter
+    simply has no ``@with_agents`` tests written for it. Use it to stand up a lane
+    ahead of its tests.
     """
 
     id: Adapter
@@ -701,15 +703,15 @@ def _build_opencode(
 
 
 # Letta is registered so the `letta` CI lane is still defined (ci_lanes), but
-# e2e_pending=True keeps it OUT of the matrix and @with_agents — it runs no cells.
-# Letta executes platform tools only by calling a band-mcp server, and standing one
-# up reachable from the Letta server (its SSRF guard rejects loopback) isn't wired
-# yet, so the live smokes are deferred.
+# e2e_pending=True drops it from specs()/adapter_params(), so the matrix runs no
+# cells for it. (e2e_pending does not gate @with_agents — there simply are no
+# @with_agents(Adapter.LETTA) tests.) Letta executes platform tools only by calling
+# a band-mcp server, and standing one up reachable from the Letta server (its SSRF
+# guard rejects loopback) isn't wired yet, so the live smokes are deferred.
 #
-# TODO: re-add Letta to the matrix once a reachable band-mcp + the Letta smokes
-# land — flip e2e_pending to False below (or drop the kwarg). That alone puts Letta
-# back in adapter_params()/specs(), so the matrix scenarios and any
-# @with_agents(Adapter.LETTA) tests run it again; nothing else here changes.
+# TODO: cover Letta live once a reachable band-mcp + the Letta smokes land — flip
+# e2e_pending to False below (or drop the kwarg) to return it to the matrix, and
+# add the smokes; nothing else here changes.
 @adapter(Adapter.LETTA, requires=[Dep.LETTA], e2e_pending=True)
 def _build_letta(
     s: BaselineSettings,
