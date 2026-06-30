@@ -6,6 +6,11 @@
 # later steps via $GITHUB_ENV.
 set -euo pipefail
 
+# Fail with a clear message if the key is missing: `printenv OPENAI_API_KEY` takes
+# the name as an argument (not a shell expansion), so `set -u` wouldn't catch an
+# unset key — the login would just fail opaquely with no output.
+: "${OPENAI_API_KEY:?OPENAI_API_KEY is required for codex login}"
+
 # Codex picks a model from its own catalogue; gpt-4o-mini (the openai default) is
 # not one of them. Confirm/adjust on first dispatch if model selection errors.
 CODEX_MODEL="${CODEX_MODEL:-gpt-5-codex}"
