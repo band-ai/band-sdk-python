@@ -46,12 +46,17 @@ def select_allow_option_id(options: object) -> str | None:
     for option in options:
         if isinstance(option, dict):
             kind = option.get("kind")
-            option_id = option.get("optionId") or option.get("option_id")
+            # Coalesce the camelCase (wire/JSON) and snake_case spellings on
+            # *absence*, not falsiness — an explicit (if empty) id must not fall
+            # through to the alias and get dropped.
+            option_id = option.get("optionId")
+            if option_id is None:
+                option_id = option.get("option_id")
         else:
             kind = getattr(option, "kind", None)
-            option_id = getattr(option, "option_id", None) or getattr(
-                option, "optionId", None
-            )
+            option_id = getattr(option, "option_id", None)
+            if option_id is None:
+                option_id = getattr(option, "optionId", None)
         if option_id is not None:
             candidates.append((kind, str(option_id)))
     for preferred in _ALLOW_OPTION_KINDS:

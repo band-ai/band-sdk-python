@@ -41,6 +41,20 @@ from band.runtime.tools import get_tool_description
 logger = logging.getLogger(__name__)
 
 
+def _is_output_validation_exhausted(exc: UnexpectedModelBehavior) -> bool:
+    """Whether ``exc`` is pydantic-ai's "exhausted output-validation retries".
+
+    pydantic-ai exposes no structured code for this — it only carries the cause in
+    the ``UnexpectedModelBehavior`` message (e.g. "Exceeded maximum retries (N) for
+    output validation"), so we match that text. The coupling to pydantic-ai's
+    wording is deliberate and **fail-safe**: if a future release rewords it, a
+    benign post-tool turn propagates as an error (never the reverse), and the
+    dependency is version-pinned. Must stay distinct from "Received empty model
+    response", which propagates even after tool work.
+    """
+    return "output validation" in str(exc).lower()
+
+
 # A response made up only of these (or with no parts at all) serializes to
 # content:null, which providers reject when it's replayed as history.
 _NON_REPLAYABLE_RESPONSE_PARTS = (ThinkingPart,)
@@ -612,7 +626,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # exhausted and this raises. The work already went out, so the empty
             # final answer is benign — mirror the crewai adapter and swallow it.
             # Genuine no-response failures (no tool ran) still propagate.
-            if tool_executed and "output validation" in str(e):
+            if tool_executed and _is_output_validation_exhausted(e):
                 logger.warning(
                     "Room %s: Pydantic AI exhausted output-validation retries after "
                     "the agent already did productive work this turn; treating as "
