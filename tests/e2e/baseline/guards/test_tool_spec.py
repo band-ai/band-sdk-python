@@ -80,7 +80,9 @@ def test_optional_field_before_required_synthesizes_valid_signature() -> None:
     tool = ToolSpec(_OptionalBeforeRequired, echo).as_callable()
     assert tool(req="hi") == "req=hi opt=0"
     # And with the pydantic-ai ctx param prepended.
-    ctx_tool = ToolSpec(_OptionalBeforeRequired, echo).as_callable(ctx_annotation=object)
+    ctx_tool = ToolSpec(_OptionalBeforeRequired, echo).as_callable(
+        ctx_annotation=object
+    )
     assert ctx_tool(None, req="hi", opt=3) == "req=hi opt=3"
 
 
