@@ -343,13 +343,13 @@ the `dev` extra but are split out for isolation.
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
 | `backends` | `dev` | codex, opencode | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), and a running `opencode serve` (`OPENCODE_BASE_URL`) |
-| `letta` | `dev` | letta | a self-hosted `letta/letta` server (Docker, auto-relay — no Band MCP) |
+| `letta` | `dev` | letta | none yet — Letta is `e2e_pending` (no live tests; see "Letta is out of scope" below) |
 
 `backends` folds codex + opencode into one job (both install `dev`, differ only in
 the backend their job stands up) so a job-per-backend isn't needed; the cost is that
 one backend failing to come up can redden the other's cells (the per-adapter report
-still shows which). `google` and `letta` get their own lanes because their failure
-modes (Google rate limits; the self-hosted Letta server) are best isolated.
+still shows which). `google` gets its own lane so Google free-tier rate-limit
+flakiness is isolated; `letta` stands alone for the live-server backend it will need.
 
 **The knob:** `BAND_E2E_LANE=<lane id>`. When set, `lane_selection.apply_lane_skips`
 (called by the conftest hook) resolves the lane's adapters from `ci_lanes()` and
@@ -369,15 +369,6 @@ BAND_E2E_LANE=core E2E_TESTS_ENABLED=true \
 uv sync --extra dev-crewai     # the crewai lane (overwrites the env)
 BAND_E2E_LANE=crewai E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
-```
-
-The **letta** lane needs its stack (a Letta server + a band-mcp container) up
-first — the same one CI builds. Run it with one command, which brings the stack
-up from `.env.test`, runs the smokes, and tears it down on exit:
-
-```bash
-docker login ghcr.io                       # one-time: the band-mcp image is private
-.github/scripts/letta-lane-local.sh        # [pass extra pytest args, e.g. -k recall]
 ```
 
 **CI** (`.github/workflows/e2e.yml`) lists no adapters: a `lanes` job emits the
@@ -401,7 +392,7 @@ Lanes live in the registry, not the workflow YAML. To add one:
    guards (`assert_every_adapter_has_a_ci_home`, the partition test) keep it honest.
 3. **`.github/workflows/e2e.yml`** — only if the lane needs a server/CLI: add a
    `.github/scripts/setup-<backend>.sh` (export any discovered config via
-   `$GITHUB_ENV`; see the codex/opencode/letta scripts) and a step that runs it
+   `$GITHUB_ENV`; see the codex/opencode scripts) and a step that runs it
    gated on its `matrix.lane` id. Add the lane id to the `lane` dispatch-input
    `options` so it's selectable, and update the header comment's lane list. (The
    common env setup — git/uv/python — is the shared `./.github/actions/setup-e2e`
@@ -413,27 +404,20 @@ Lanes live in the registry, not the workflow YAML. To add one:
    guard suite on every PR rather than silently never running / never being
    selectable.
 
-## Letta runs against a band-mcp server
+## Letta is out of scope (this PR)
 
-Letta is **a normal matrix cell** — built by the registry like every other adapter
-(`build_adapter`) and run through `matrix_agent`/`agents`.
+Letta has **no live E2E here** — its smokes are deferred to a follow-up. Letta is
+server-side and executes platform tools only by calling a band-mcp server, and
+standing one up reachable from the Letta server (its SSRF guard rejects a loopback
+MCP URL) isn't wired yet.
 
-Two Letta-specific facts shape the lane (see `.github/scripts/setup-letta.sh`,
-mirroring `examples/letta/docker-compose.yml`):
+So the Letta adapter is registered **`e2e_pending`** (`toolkit/adapters.py`): it
+still *defines* the `letta` CI lane via `ci_lanes()`, but `specs()`/`adapter_params()`
+exclude it, so it is **not a matrix cell** and no `@with_agents(Adapter.LETTA)`
+tests run. The `letta` lane therefore runs only the adapter-agnostic baseline tests
+plus one placeholder (`smoke/adapters/test_letta.py`), and needs no backend setup.
 
-- **It needs a band-mcp server.** Letta is server-side and talks to the platform
-  only through MCP tools, so the lane runs a `band-mcp` container alongside the
-  Letta server on a shared Docker network. Letta reaches it by service name
-  (`http://band-mcp:8002/sse`) — a routable host, since Letta's SSRF guard rejects
-  any loopback MCP URL (`Non-public IP not allowed`). The adapter just registers
-  that URL with Letta (`MCP_SERVER_URL`).
-- **It runs as a fixed agent.** band-mcp authenticates as one agent
-  (`BAND_API_KEY`), and the agent under test must share that identity — otherwise
-  replies would come from a different agent than the test drives. So the `agent`
-  fixture runs Letta as that **static** agent (id resolved from the key) instead
-  of provisioning a fresh one; it is not reaped. Every other adapter still
-  provisions dynamically.
-
-This validates the full path end to end: live platform + live Letta server + live
-model → tool call → band-mcp → reply delivered. Letta advertises no capabilities,
-so it is excluded from the memory and custom-tool matrices.
+**To re-enable Letta** once band-mcp reachability is solved: flip `e2e_pending` to
+`False` (or drop the kwarg) on the `@adapter(Adapter.LETTA, …)` registration — that
+alone returns Letta to the matrix — then add the live smokes and the lane's band-mcp
+setup. The builder is kept valid for that day.

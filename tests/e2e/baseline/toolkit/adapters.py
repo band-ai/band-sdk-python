@@ -104,12 +104,19 @@ AdapterBuilder = Callable[..., SimpleAdapter[Any]]
 
 @dataclass(frozen=True)
 class AdapterSpec:
-    """A registered adapter: its id, requirements, capabilities, and builder."""
+    """A registered adapter: its id, requirements, capabilities, and builder.
+
+    ``e2e_pending`` marks an adapter that is registered (so it still defines its CI
+    lane via ``ci_lanes``) but has no live E2E coverage yet: it is excluded from the
+    matrix and ``@with_agents`` resolution so its lane runs no cells. Use it to
+    stand up a lane ahead of its tests.
+    """
 
     id: Adapter
     requires: tuple[Dep, ...]
     supports: frozenset[Capability]
     build: AdapterBuilder = field(compare=False)
+    e2e_pending: bool = False
 
 
 # Keyed by the adapter's string id (== ``Adapter`` value; ``Adapter`` is a str
@@ -122,11 +129,14 @@ def adapter(
     *,
     requires: Iterable[Dep] = (),
     supports: Iterable[Capability] = (),
+    e2e_pending: bool = False,
 ) -> Callable[[AdapterBuilder], AdapterBuilder]:
     """Register ``name``'s builder in the matrix registry.
 
     The decorated function keeps its identity (it is returned unchanged) so it can
     also be called directly. Registering a duplicate is a programming error.
+    ``e2e_pending=True`` keeps the adapter's CI lane defined but runs no cells for
+    it (no live E2E yet).
     """
 
     def register(build: AdapterBuilder) -> AdapterBuilder:
@@ -137,6 +147,7 @@ def adapter(
             requires=tuple(requires),
             supports=frozenset(supports),
             build=build,
+            e2e_pending=e2e_pending,
         )
         return build
 
@@ -269,8 +280,10 @@ def ci_lanes() -> list[CILane]:
     backend). An unwired backend lane still appears -- its cells fail loudly until
     the workflow stands the backend up.
     """
+    # include_pending: a pending adapter still defines its lane (the CI job exists)
+    # even though the matrix runs no cells for it.
     by_lane: dict[Lane, list[Adapter]] = {DEFAULT_LANE: []}
-    for spec in specs():  # stable id order
+    for spec in specs(include_pending=True):  # stable id order
         by_lane.setdefault(adapter_lane(spec), []).append(spec.id)
     return [
         CILane(id=lane, extra=lane_extra(lane), adapters=tuple(ids))
@@ -289,7 +302,7 @@ def assert_every_adapter_has_a_ci_home() -> None:
     """
     validate_dep_tables()
     placed = {a for lane in ci_lanes() for a in lane.adapters}
-    unplaced = {spec.id for spec in specs()} - placed
+    unplaced = {spec.id for spec in specs(include_pending=True)} - placed
     if unplaced:
         raise AssertionError(
             "adapters not placed in any CI lane (ci_lanes must cover the "
@@ -374,6 +387,7 @@ def specs(
     exclude: Collection[Adapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
+    include_pending: bool = False,
 ) -> list[AdapterSpec]:
     """The registered specs, optionally narrowed.
 
@@ -382,7 +396,8 @@ def specs(
     ``supports={Capability.MEMORY}``); ``without`` keeps only adapters advertising
     *none* of them (the complement, e.g. ``without={Capability.MEMORY}`` for the
     non-memory adapters). ``supports`` and ``without`` are disjoint complementary
-    filters. Stable id order.
+    filters. ``e2e_pending`` adapters are excluded unless ``include_pending`` (they
+    define a CI lane but run no cells). Stable id order.
     """
     wanted = frozenset(supports or ())
     unwanted = frozenset(without or ())
@@ -391,6 +406,7 @@ def specs(
         for adapter_id, spec in sorted(_REGISTRY.items())
         if (include is None or adapter_id in include)
         and (exclude is None or adapter_id not in exclude)
+        and (include_pending or not spec.e2e_pending)
         and wanted.issubset(spec.supports)
         and spec.supports.isdisjoint(unwanted)
     ]
@@ -684,7 +700,17 @@ def _build_opencode(
     )
 
 
-@adapter(Adapter.LETTA, requires=[Dep.LETTA])
+# Letta is registered so the `letta` CI lane is still defined (ci_lanes), but
+# e2e_pending=True keeps it OUT of the matrix and @with_agents — it runs no cells.
+# Letta executes platform tools only by calling a band-mcp server, and standing one
+# up reachable from the Letta server (its SSRF guard rejects loopback) isn't wired
+# yet, so the live smokes are deferred.
+#
+# TODO: re-add Letta to the matrix once a reachable band-mcp + the Letta smokes
+# land — flip e2e_pending to False below (or drop the kwarg). That alone puts Letta
+# back in adapter_params()/specs(), so the matrix scenarios and any
+# @with_agents(Adapter.LETTA) tests run it again; nothing else here changes.
+@adapter(Adapter.LETTA, requires=[Dep.LETTA], e2e_pending=True)
 def _build_letta(
     s: BaselineSettings,
     *,
@@ -696,19 +722,12 @@ def _build_letta(
 
     _reject_tools(Adapter.LETTA, tools)
 
-    # The Letta server executes platform tools by calling a band-mcp endpoint we
-    # register with it. The lane runs band-mcp as a container on Letta's Docker
-    # network and exports MCP_SERVER_URL (http://band-mcp:8002/sse) — a routable
-    # host, since Letta's SSRF guard rejects loopback. See examples/letta and
-    # .github/scripts/setup-letta.sh.
     return LettaAdapter(
         config=LettaAdapterConfig(
             base_url=s.backends.letta_base_url,
             provider_key=s.backends.letta_api_key or None,
             model=s.backends.letta_model,
             custom_section=prompt or "",
-            mcp_server_url=s.backends.mcp_server_url.strip()
-            or "http://band-mcp:8002/sse",
         ),
         features=features,
     )

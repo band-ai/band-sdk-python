@@ -120,24 +120,6 @@ class ResourceManager:
         logger.info("Provisioned agent %s (%s)", agent.id, name)
         return ProvisionedAgent(id=agent.id, api_key=credentials.api_key, name=name)
 
-    async def static_agent(self, agent_key: str) -> ProvisionedAgent:
-        """Wrap a pre-existing agent (identified by its own key) for the run.
-
-        Used where the agent's identity is fixed out-of-band — the Letta lane runs
-        band-mcp authenticated as a specific agent (``BAND_API_KEY``), so the agent
-        under test must be that same identity, not a freshly provisioned one. The
-        id/name are resolved from the agent's own identity endpoint. NOT tracked
-        for reaping: a static agent outlives the run.
-        """
-        client = AsyncRestClient(
-            api_key=agent_key, base_url=self._settings.endpoints.rest_url
-        )
-        identity = await client.agent_api_identity.get_agent_me()
-        data = identity.data
-        name = getattr(data, "name", None) or getattr(data, "handle", None) or data.id
-        logger.info("Using static agent %s (%s)", data.id, name)
-        return ProvisionedAgent(id=data.id, api_key=agent_key, name=name)
-
     async def provision_room(
         self, *, title: str | None = None, participants: list[str] | None = None
     ) -> str:
@@ -249,7 +231,6 @@ async def running_provisioned_agent(
     resources: ResourceManager,
     *,
     label: str = "aut",
-    static_agent: ProvisionedAgent | None = None,
 ) -> AsyncGenerator[ProvisionedAgent, None]:
     """Provision an agent and run ``adapter`` as it for the duration of the block.
 
@@ -258,11 +239,8 @@ async def running_provisioned_agent(
     is managed internally (kept alive for the block) and is not exposed, since no
     caller uses it. Reaping is owned by the resource manager's teardown (the agent
     is tracked at provision time), so this only manages the run lifecycle.
-
-    Pass ``static_agent`` to run the adapter as a pre-existing agent instead of
-    provisioning a fresh one (the Letta lane, where band-mcp pins the identity).
     """
-    provisioned = static_agent or await resources.provision_agent(label)
+    provisioned = await resources.provision_agent(label)
     endpoints = resources.settings.endpoints
     agent = Agent.create(
         adapter=adapter,

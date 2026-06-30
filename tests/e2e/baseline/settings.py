@@ -114,15 +114,14 @@ class Backends(BaseSettings):
     # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
     opencode_model_id: str = "mimo-v2.5-free"  # OPENCODE_MODEL_ID
 
-    # Letta (Cloud or self-hosted). The lane runs a self-hosted Letta server plus a
-    # band-mcp server on a shared Docker network (see setup-letta.sh); Letta calls
-    # band-mcp to execute platform tools. MCP_SERVER_URL is the band-mcp endpoint
-    # the adapter registers with Letta — a routable host (the Docker service name),
-    # never loopback, which Letta's SSRF guard rejects.
+    # Letta (Cloud or self-hosted). Letta executes platform tools via a band-mcp
+    # server it calls (MCP_SERVER_URL). Letta has no live E2E here yet (the adapter
+    # is registered e2e_pending) — these fields back the registered builder and the
+    # Dep.LETTA requirement, ready for when the Letta smokes land.
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
     letta_api_key: str = ""  # LETTA_API_KEY (Letta Cloud)
     letta_model: str = "openai/gpt-4o-mini"  # LETTA_MODEL
-    mcp_server_url: str = ""  # MCP_SERVER_URL (band-mcp SSE; lane sets the service URL)
+    mcp_server_url: str = ""  # MCP_SERVER_URL (band-mcp SSE endpoint)
 
 
 class LLMModels(BaseSettings):

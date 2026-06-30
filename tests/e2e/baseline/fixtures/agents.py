@@ -16,7 +16,7 @@ from tests.e2e.baseline.agents import (
     adapter_params,
 )
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.adapters import Adapter, build_adapter
+from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
     ResourceManager,
@@ -28,28 +28,6 @@ __all__ = ["adapter_id", "agent", "agents", "matrix_agent"]
 
 # Shared agent prompt for the demo adapters: short replies, transport-neutral.
 _SHORT_PROMPT = "Keep responses to one short sentence. Reply directly in the chat."
-
-
-async def _static_agent_for(
-    name: Adapter,
-    resource_manager: ResourceManager,
-    settings: BaselineSettings,
-) -> ProvisionedAgent | None:
-    """The pre-existing agent an adapter must run as, or None to provision fresh.
-
-    Letta executes platform tools through a band-mcp server authenticated as a
-    specific agent (``BAND_API_KEY``); the agent under test must be that same
-    identity, so the Letta lane reuses it instead of provisioning a fresh agent.
-    """
-    if name != Adapter.LETTA:
-        return None
-    key = settings.credentials.api_key
-    if not key:
-        raise pytest.UsageError(
-            "Letta E2E needs BAND_API_KEY set to the agent band-mcp authenticates "
-            "as (the agent under test and band-mcp must share one identity)."
-        )
-    return await resource_manager.static_agent(key)
 
 
 @pytest.fixture
@@ -77,28 +55,22 @@ async def agents(
     req: AgentsRequest = marker.args[0]
     prompt = req.prompt if req.prompt is not None else _SHORT_PROMPT
     async with AsyncExitStack() as stack:
-        provisioned: list[ProvisionedAgent] = []
-        for slot, name in enumerate(req.adapters):
-            adapter = build_adapter(
-                name,
-                baseline_settings,
-                prompt=prompt,
-                features=req.features,
-                tools=req.tools,
-            )
-            static = await _static_agent_for(
-                name, resource_manager, baseline_settings
-            )
-            provisioned.append(
-                await stack.enter_async_context(
-                    running_provisioned_agent(
-                        adapter,
-                        resource_manager,
-                        label=f"{name}-{slot}",
-                        static_agent=static,
-                    )
+        provisioned = [
+            await stack.enter_async_context(
+                running_provisioned_agent(
+                    build_adapter(
+                        name,
+                        baseline_settings,
+                        prompt=prompt,
+                        features=req.features,
+                        tools=req.tools,
+                    ),
+                    resource_manager,
+                    label=f"{name}-{slot}",
                 )
             )
+            for slot, name in enumerate(req.adapters)
+        ]
         yield provisioned
 
 
@@ -154,8 +126,7 @@ async def matrix_agent(
     adapter = build_adapter(
         adapter_id, baseline_settings, prompt=prompt, features=features, tools=tools
     )
-    static = await _static_agent_for(adapter_id, resource_manager, baseline_settings)
     async with running_provisioned_agent(
-        adapter, resource_manager, label=adapter_id, static_agent=static
+        adapter, resource_manager, label=adapter_id
     ) as provisioned:
         yield provisioned
