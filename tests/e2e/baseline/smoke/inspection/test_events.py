@@ -37,7 +37,6 @@ EVENT_TYPES = [MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]
 
 @with_agents(Adapter.ANTHROPIC, **TOOL_AGENT)
 @pytest.mark.parametrize("event_type", EVENT_TYPES, ids=lambda mt: mt.value)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_event_emitted(
     event_type: MessageType,
@@ -68,7 +67,6 @@ async def test_event_emitted(
 
 
 @with_agents(Adapter.ANTHROPIC, **TOOL_AGENT)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_event_subclasses_one_turn(
     agent: ProvisionedAgent,
@@ -109,7 +107,6 @@ async def test_event_subclasses_one_turn(
 
 
 @with_agents(Adapter.ANTHROPIC, **TOOL_AGENT)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_multiple_thoughts_assert_at_least(
     agent: ProvisionedAgent,
@@ -139,7 +136,6 @@ async def test_multiple_thoughts_assert_at_least(
 
 
 @with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC, **TOOL_AGENT)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_event_sender_isolation(
     agents: list[ProvisionedAgent],

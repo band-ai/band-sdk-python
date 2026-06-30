@@ -36,7 +36,6 @@ def test_build_adapter_constructs_each(
     assert isinstance(adapter, SimpleAdapter)
 
 
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_matrix_agent_replies(
     adapter_id: str,

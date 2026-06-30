@@ -36,7 +36,6 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 @with_agents(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_tool_fired_with_args(
     agent: ProvisionedAgent,
@@ -64,7 +63,6 @@ async def test_tool_fired_with_args(
 @with_agents(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_capture_exposes_replies_and_tool_calls(
     agent: ProvisionedAgent,
@@ -100,7 +98,6 @@ async def test_capture_exposes_replies_and_tool_calls(
     prompt=LOOKUP_AND_WEATHER_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_multiple_tools_in_one_turn(
     agent: ProvisionedAgent,
@@ -129,7 +126,6 @@ async def test_multiple_tools_in_one_turn(
 @with_agents(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_with_args_tolerant_match(
     agent: ProvisionedAgent,
@@ -162,7 +158,6 @@ async def test_with_args_tolerant_match(
     prompt=LOOKUP_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_custom_tool_fires_across_frameworks(
     adapter_id: str,
@@ -196,7 +191,10 @@ async def test_custom_tool_fires_across_frameworks(
 @with_agents(
     Adapter.CREWAI, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.timeout(120)
+# crewai's crew construction + first kickoff cold-start can push the turn past the
+# base budget; grant +120s on top of it so a slow-but-healthy run isn't killed by
+# pytest-timeout before the wait's own diagnostic can fire.
+@pytest.mark.timeout(extra=120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_crewai_tool_fires(
     agent: ProvisionedAgent,

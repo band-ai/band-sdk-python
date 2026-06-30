@@ -62,7 +62,6 @@ class _FailingAdapter(SimpleAdapter[Any]):
 
 
 @with_agents(Adapter.ANTHROPIC)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_healthy_message_reaches_processed_via_processing(
     agent: ProvisionedAgent,
@@ -91,7 +90,6 @@ async def test_healthy_message_reaches_processed_via_processing(
     assert replied, "PROCESSED reported but no agent reply was captured"
 
 
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_failing_agent_reaches_failed_state(
     resource_manager: ResourceManager,

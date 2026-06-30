@@ -44,7 +44,6 @@ _CONVERSATIONAL = (
 
 
 @with_agents(Adapter.LETTA, prompt=_CONVERSATIONAL)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_letta_recalls_across_turns(
     agent: ProvisionedAgent,
@@ -93,7 +92,6 @@ async def test_letta_recalls_across_turns(
 
 
 @with_agents(Adapter.LETTA, prompt=_CONVERSATIONAL)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_letta_rooms_are_isolated(
     agent: ProvisionedAgent,

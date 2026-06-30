@@ -57,7 +57,6 @@ def _turn_boundary(capture: ReplyCapture) -> datetime:
 
 
 @requires(Dep.ANTHROPIC)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_tool_calls_isolated_per_sender(
     baseline_settings: BaselineSettings,
@@ -117,7 +116,6 @@ async def test_tool_calls_isolated_per_sender(
 @with_agents(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_tool_calls_isolated_per_room(
     agent: ProvisionedAgent,
@@ -175,7 +173,6 @@ async def test_tool_calls_isolated_per_room(
 @with_agents(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_capture_scopes_to_current_turn(
     agent: ProvisionedAgent,

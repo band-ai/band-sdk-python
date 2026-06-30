@@ -161,8 +161,10 @@ class BaselineSettings(BaseSettings):
     e2e_tests_enabled: bool = False
 
     # E2E_TIMEOUT — default seconds the waiter blocks before declaring an agent
-    # stuck (a failure deadline, never a success signal).
-    e2e_timeout: int = 60
+    # stuck (a failure deadline, never a success signal). Frameworks vary widely
+    # in cold-start + round-trip latency (crewai crew construction, self-hosted
+    # backends, free/slow models), so the budget is generous by default.
+    e2e_timeout: int = 120
 
     endpoints: BandEndpoints = Field(default_factory=BandEndpoints)
     credentials: BandCredentials = Field(default_factory=BandCredentials)

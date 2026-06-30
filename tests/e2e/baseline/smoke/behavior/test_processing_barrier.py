@@ -42,7 +42,6 @@ ROUNDS = 4
 
 
 @across_adapters(include={Adapter.ANTHROPIC, Adapter.LANGGRAPH, Adapter.LETTA})
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_barrier_settles_message_burst(
     adapter_id: str,

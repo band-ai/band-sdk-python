@@ -31,7 +31,6 @@ JudgeFn = Callable[..., Awaitable[Verdict]]
 
 
 @with_agents(Adapter.LANGGRAPH, Adapter.ANTHROPIC)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_two_agents_greet_each_other(
     agents: list[ProvisionedAgent],
@@ -86,7 +85,6 @@ async def test_two_agents_greet_each_other(
 
 
 @with_agents(Adapter.ANTHROPIC)
-@pytest.mark.timeout(120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agent_recalls_earlier_facts(
     agent: ProvisionedAgent,
