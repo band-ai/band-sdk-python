@@ -13,7 +13,6 @@ import pytest
 from band.adapters.letta import (
     LettaAdapter,
     LettaAdapterConfig,
-    _LETTA_RELAY_NOTE,
     _LETTA_TOOL_ENFORCEMENT,
     _RoomContext,
 )
@@ -314,7 +313,7 @@ class TestLettaAdapterOnMessagePerRoom:
         assert "conversation_id" not in call_kwargs
 
     @pytest.mark.asyncio
-    async def test_auto_relay_when_no_send_message(
+    async def test_fallback_relay_when_no_send_message(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
         adapter, mock_client = adapter_with_client
@@ -340,12 +339,12 @@ class TestLettaAdapterOnMessagePerRoom:
             room_id="room-1",
         )
 
-        # Auto-relay should have sent the message
+        # Fallback relay should have sent the assistant text
         assert len(tools.messages_sent) == 1
         assert tools.messages_sent[0]["content"] == "I'll help you!"
 
     @pytest.mark.asyncio
-    async def test_skip_auto_relay_when_send_message_used(
+    async def test_skip_fallback_relay_when_send_message_used(
         self, adapter_with_client: tuple[LettaAdapter, AsyncMock]
     ) -> None:
         adapter, mock_client = adapter_with_client
@@ -372,7 +371,7 @@ class TestLettaAdapterOnMessagePerRoom:
             room_id="room-1",
         )
 
-        # No auto-relay — agent used send_message via MCP
+        # No fallback relay — agent used send_message via MCP
         assert len(tools.messages_sent) == 0
 
     @pytest.mark.asyncio
@@ -1145,223 +1144,6 @@ class TestExtractSummary:
     def test_multiple_parts(self) -> None:
         parts = ["First part.", "Second part."]
         assert "First part." == LettaAdapter._extract_summary(parts)
-
-
-# ──────────────────────────────────────────────────────────────────────
-# Auto-relay mode (no MCP server)
-# ──────────────────────────────────────────────────────────────────────
-
-
-class TestAutoRelayMode:
-    """With ``mcp_server_url=None`` the adapter registers no MCP server and relays
-    the model's plain-text reply to the room itself."""
-
-    @pytest.mark.asyncio
-    async def test_on_started_skips_mcp_registration_when_disabled(self) -> None:
-        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
-        assert adapter._mcp_enabled is False
-
-        mock_client = AsyncMock()
-        mock_letta_module = MagicMock()
-        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
-
-        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
-            await adapter.on_started("TestBot", "A test bot")
-
-        mock_client.mcp_servers.create.assert_not_called()
-        mock_client.mcp_servers.list.assert_not_called()
-        assert adapter._mcp_tool_ids == []
-
-    def test_relay_preamble_when_mcp_disabled(self) -> None:
-        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
-        assert adapter._persona_preamble() == _LETTA_RELAY_NOTE
-
-    def test_enforcement_preamble_when_mcp_enabled(self) -> None:
-        # Default config has a non-empty mcp_server_url → MCP enabled.
-        adapter = LettaAdapter()
-        assert adapter._mcp_enabled is True
-        assert adapter._persona_preamble() == _LETTA_TOOL_ENFORCEMENT
-
-    @pytest.mark.asyncio
-    async def test_reply_relayed_without_mcp(self) -> None:
-        """The model's assistant text is relayed to the room when there are no
-        platform tools (the model can't call band_send_message)."""
-        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
-        mock_client = AsyncMock()
-        adapter._client = mock_client
-        adapter._system_prompt = "Test"
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
-
-        mock_client.agents.messages.create.return_value = _make_letta_response(
-            _make_assistant_message("Hello there!")
-        )
-
-        tools = FakeAgentTools()
-        msg = make_platform_message()
-        history = LettaSessionState()
-
-        await adapter.on_message(
-            msg,
-            tools,
-            history,
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-1",
-        )
-
-        assert len(tools.messages_sent) == 1
-        assert tools.messages_sent[0]["content"] == "Hello there!"
-
-    @pytest.mark.asyncio
-    async def test_warns_when_capability_requested_in_auto_relay(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """Requesting memory/contacts with no MCP server warns (tools are inert)."""
-        from band.core.types import AdapterFeatures, Capability
-
-        adapter = LettaAdapter(
-            config=LettaAdapterConfig(mcp_server_url=None),
-            features=AdapterFeatures(capabilities=frozenset({Capability.MEMORY})),
-        )
-        mock_client = AsyncMock()
-        mock_letta_module = MagicMock()
-        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
-
-        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
-            with caplog.at_level("WARNING"):
-                await adapter.on_started("TestBot", "A test bot")
-
-        assert any(
-            "auto-relay mode" in r.message and "memory" in r.message
-            for r in caplog.records
-        )
-
-    @pytest.mark.asyncio
-    async def test_no_capability_warning_in_auto_relay_without_features(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """No capability warning when no capabilities were requested."""
-        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
-        mock_client = AsyncMock()
-        mock_letta_module = MagicMock()
-        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
-
-        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
-            with caplog.at_level("WARNING"):
-                await adapter.on_started("TestBot", "A test bot")
-
-        assert not any("auto-relay mode" in r.message for r in caplog.records)
-
-    @pytest.mark.asyncio
-    async def test_verify_mcp_tools_is_noop_when_disabled(self) -> None:
-        """Auto-relay mode skips the agents.tools.list round-trip on resume."""
-        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
-        mock_client = AsyncMock()
-        adapter._client = mock_client
-
-        await adapter._verify_mcp_tools_attached("agent-1")
-
-        mock_client.agents.tools.list.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_created_agent_uses_relay_preamble_when_disabled(self) -> None:
-        adapter = LettaAdapter(config=LettaAdapterConfig(mcp_server_url=None))
-        mock_client = AsyncMock()
-        adapter._client = mock_client
-        adapter._system_prompt = "Test prompt"
-
-        mock_client.agents.create.return_value = _make_mock_agent("agent-1")
-
-        await adapter._create_agent()
-
-        memory_blocks = mock_client.agents.create.call_args.kwargs["memory_blocks"]
-        persona = next(b for b in memory_blocks if b["label"] == "persona")
-        assert persona["value"].startswith(_LETTA_RELAY_NOTE)
-        assert _LETTA_TOOL_ENFORCEMENT not in persona["value"]
-
-    # Phrases the SDK base instructions emit that are true ONLY when Band MCP
-    # tools exist. In relay mode they contradict the relay note, so the rendered
-    # system prompt must contain none of them.
-    _TOOL_LOOP_PHRASES = [
-        "band_send_message",
-        "Plain text output is not delivered",
-        "band_lookup_peers",
-        "band_add_participant",
-        "band_store_memory",
-    ]
-
-    async def _start_relay_adapter(self, **config_kwargs: Any) -> LettaAdapter:
-        """Drive on_started so _system_prompt is the REAL render, not a stub."""
-        from band.core.types import AdapterFeatures, Capability
-
-        adapter = LettaAdapter(
-            config=LettaAdapterConfig(mcp_server_url=None, **config_kwargs),
-            features=AdapterFeatures(capabilities=frozenset({Capability.MEMORY})),
-        )
-        mock_client = AsyncMock()
-        mock_letta_module = MagicMock()
-        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
-        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
-            await adapter.on_started("Relaybot", "a relay test agent")
-        return adapter
-
-    @pytest.mark.asyncio
-    async def test_system_prompt_has_no_tool_loop_in_relay_mode(self) -> None:
-        """The rendered system prompt drops Band tool-loop + capability sections
-        in relay mode, so it never contradicts the plain-text relay note."""
-        adapter = await self._start_relay_adapter(
-            custom_section="Focus on being helpful."
-        )
-
-        for phrase in self._TOOL_LOOP_PHRASES:
-            assert phrase not in adapter._system_prompt, phrase
-        # Developer custom section still flows through.
-        assert "Focus on being helpful." in adapter._system_prompt
-
-    @pytest.mark.asyncio
-    async def test_created_persona_block_has_no_tool_loop_in_relay_mode(self) -> None:
-        """End-to-end create path: persona block carries the relay note and none
-        of the contradictory tool-loop instructions."""
-        adapter = await self._start_relay_adapter()
-        adapter._client.agents.create.return_value = _make_mock_agent("agent-1")
-
-        await adapter._create_agent()
-
-        memory_blocks = adapter._client.agents.create.call_args.kwargs["memory_blocks"]
-        persona = next(b for b in memory_blocks if b["label"] == "persona")
-        assert persona["value"].startswith(_LETTA_RELAY_NOTE)
-        for phrase in self._TOOL_LOOP_PHRASES:
-            assert phrase not in persona["value"], phrase
-
-    @pytest.mark.asyncio
-    async def test_resumed_instruction_block_has_no_tool_loop_in_relay_mode(
-        self,
-    ) -> None:
-        """Resume path (_update_instruction_block) is also clean in relay mode."""
-        adapter = await self._start_relay_adapter()
-
-        await adapter._update_instruction_block("agent-1", "room-1")
-
-        block_value = adapter._client.agents.blocks.update.call_args.kwargs["value"]
-        assert block_value.startswith(_LETTA_RELAY_NOTE)
-        for phrase in self._TOOL_LOOP_PHRASES:
-            assert phrase not in block_value, phrase
-
-    @pytest.mark.asyncio
-    async def test_mcp_mode_keeps_tool_loop_instructions(self) -> None:
-        """Regression guard: MCP mode is unchanged — base instructions stay."""
-        adapter = LettaAdapter()  # default config → MCP enabled
-        assert adapter._mcp_enabled is True
-        mock_client = AsyncMock()
-        mock_letta_module = MagicMock()
-        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
-        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
-            with patch.object(adapter, "_register_mcp_server", AsyncMock()):
-                await adapter.on_started("Toolbot", "a tool-using agent")
-
-        assert "band_send_message" in adapter._system_prompt
-        assert "Plain text output is not delivered" in adapter._system_prompt
 
 
 class TestSummaryStorage:
