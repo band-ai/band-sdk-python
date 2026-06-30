@@ -13,7 +13,7 @@ services:
 
   # band-mcp server — provides Band platform tools to Letta via MCP.
   band-mcp:
-    image: ghcr.io/band-ai/band-mcp:latest
+    image: ghcr.io/band/band-mcp:latest
     restart: unless-stopped
     ports:
       - "8002:8002"
