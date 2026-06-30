@@ -17,7 +17,6 @@ from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import build_agent
-from tests.e2e.baseline.toolkit.assertions import assert_present
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -62,4 +61,4 @@ async def test_matrix_agent_replies(
             mention_name=matrix_agent.name,
         )
         await capture.wait_for_processed(trigger, matrix_agent.id)
-    assert_present(capture.messages, what=f"a reply from {adapter_id}")
+    capture.messages.assert_present(what=f"a reply from {adapter_id}")

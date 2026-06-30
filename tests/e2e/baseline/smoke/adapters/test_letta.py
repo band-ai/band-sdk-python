@@ -27,9 +27,9 @@ from collections.abc import Awaitable, Callable
 import pytest
 
 from tests.e2e.baseline.agents import Adapter, with_agents
-from tests.e2e.baseline.toolkit.assertions import assert_contains_any, assert_present
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
+from tests.e2e.baseline.toolkit.observations import Replies
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -78,8 +78,8 @@ async def test_letta_recalls_across_turns(
         recall = capture.messages.since(mark)
 
     # Cheap structural pre-check before the (costlier) semantic judge.
-    assert_present(recall, what="a recall reply")
-    assert_contains_any(recall, ["teal"])
+    recall.assert_present(what="a recall reply")
+    recall.assert_contains_any(["teal"])
 
     verdict = await judge(
         criteria=(
@@ -129,9 +129,9 @@ async def test_letta_rooms_are_isolated(
             **mention,
         )
         await cap_b.wait_for_processed(m_b, agent.id)
-        b_replies = list(cap_b.messages)
+        b_replies = Replies(cap_b.messages)
 
-    assert_present(b_replies, what="a reply in room B")
+    b_replies.assert_present(what="a reply in room B")
     assert not any("BLUEFOX" in m.content for m in b_replies), (
         "room B's Letta agent leaked room A's secret — per_room isolation broken"
     )

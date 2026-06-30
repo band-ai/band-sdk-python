@@ -29,7 +29,6 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     store_memory_instruction,
     unique_marker,
 )
-from tests.e2e.baseline.toolkit.assertions import assert_present
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -96,4 +95,4 @@ async def test_reply_across_non_memory_adapters(
         )
         await capture.wait_for_processed(trigger, matrix_agent.id)
 
-    assert_present(capture.messages, what=f"a reply from {adapter_id}")
+    capture.messages.assert_present(what=f"a reply from {adapter_id}")

@@ -18,11 +18,8 @@ from collections.abc import Awaitable, Callable
 
 
 from tests.e2e.baseline.agents import Adapter, with_agents
-from tests.e2e.baseline.toolkit.assertions import (
-    assert_contains_any,
-    assert_present,
-)
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
+from tests.e2e.baseline.toolkit.observations import Replies
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -64,10 +61,10 @@ async def test_two_agents_greet_each_other(
         )
         await capture.wait_for_processed(m_b, b.id)
 
-        transcript = list(capture.messages)
+        transcript = Replies(capture.messages)
 
     # Cheap structural pre-checks before the (costlier) semantic judge.
-    assert_present(transcript)
+    transcript.assert_present()
     sender_ids = {m.sender_id for m in transcript}
     assert {a.id, b.id} <= sender_ids, (
         f"expected a reply from both agents; saw senders {sender_ids}"
@@ -121,8 +118,8 @@ async def test_agent_recalls_earlier_facts(
         recall = capture.messages.since(mark)
 
     # Cheap structural pre-check: the recall turn mentions at least one fact.
-    assert_present(recall, what="a recall reply")
-    assert_contains_any(recall, ["teal", "Pixel"])
+    recall.assert_present(what="a recall reply")
+    recall.assert_contains_any(["teal", "Pixel"])
 
     verdict = await judge(
         criteria=(
