@@ -5,14 +5,13 @@ from __future__ import annotations
 
 import functools
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
 
 import pytest
 from anthropic import AsyncAnthropic
 
 from tests.e2e.baseline.requires import Dep, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.capture import ReplyCapture
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.capture import reply_capture as _reply_capture
 from tests.e2e.baseline.toolkit.judge import Verdict
 from tests.e2e.baseline.toolkit.judge import judge as _judge
@@ -51,7 +50,7 @@ def reply_capture(
     baseline_ws: TrackingWebSocketClient,
     baseline_settings: BaselineSettings,
     user_ops: UserOps,
-) -> Callable[[str], AbstractAsyncContextManager[ReplyCapture]]:
+) -> CaptureFactory:
     """Subscribe-before-send capture with the WS observer + E2E_TIMEOUT pre-bound.
 
     Hides ``baseline_ws`` from tests; use as ``async with reply_capture(room_id)``.
