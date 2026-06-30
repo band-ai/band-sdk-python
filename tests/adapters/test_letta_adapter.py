@@ -1280,6 +1280,89 @@ class TestAutoRelayMode:
         assert persona["value"].startswith(_LETTA_RELAY_NOTE)
         assert _LETTA_TOOL_ENFORCEMENT not in persona["value"]
 
+    # Phrases the SDK base instructions emit that are true ONLY when Band MCP
+    # tools exist. In relay mode they contradict the relay note, so the rendered
+    # system prompt must contain none of them.
+    _TOOL_LOOP_PHRASES = [
+        "band_send_message",
+        "Plain text output is not delivered",
+        "band_lookup_peers",
+        "band_add_participant",
+        "band_store_memory",
+    ]
+
+    async def _start_relay_adapter(self, **config_kwargs: Any) -> LettaAdapter:
+        """Drive on_started so _system_prompt is the REAL render, not a stub."""
+        from band.core.types import AdapterFeatures, Capability
+
+        adapter = LettaAdapter(
+            config=LettaAdapterConfig(mcp_server_url=None, **config_kwargs),
+            features=AdapterFeatures(capabilities=frozenset({Capability.MEMORY})),
+        )
+        mock_client = AsyncMock()
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
+            await adapter.on_started("Relaybot", "a relay test agent")
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_has_no_tool_loop_in_relay_mode(self) -> None:
+        """The rendered system prompt drops Band tool-loop + capability sections
+        in relay mode, so it never contradicts the plain-text relay note."""
+        adapter = await self._start_relay_adapter(
+            custom_section="Focus on being helpful."
+        )
+
+        for phrase in self._TOOL_LOOP_PHRASES:
+            assert phrase not in adapter._system_prompt, phrase
+        # Developer custom section still flows through.
+        assert "Focus on being helpful." in adapter._system_prompt
+
+    @pytest.mark.asyncio
+    async def test_created_persona_block_has_no_tool_loop_in_relay_mode(self) -> None:
+        """End-to-end create path: persona block carries the relay note and none
+        of the contradictory tool-loop instructions."""
+        adapter = await self._start_relay_adapter()
+        adapter._client.agents.create.return_value = _make_mock_agent("agent-1")
+
+        await adapter._create_agent()
+
+        memory_blocks = adapter._client.agents.create.call_args.kwargs["memory_blocks"]
+        persona = next(b for b in memory_blocks if b["label"] == "persona")
+        assert persona["value"].startswith(_LETTA_RELAY_NOTE)
+        for phrase in self._TOOL_LOOP_PHRASES:
+            assert phrase not in persona["value"], phrase
+
+    @pytest.mark.asyncio
+    async def test_resumed_instruction_block_has_no_tool_loop_in_relay_mode(
+        self,
+    ) -> None:
+        """Resume path (_update_instruction_block) is also clean in relay mode."""
+        adapter = await self._start_relay_adapter()
+
+        await adapter._update_instruction_block("agent-1", "room-1")
+
+        block_value = adapter._client.agents.blocks.update.call_args.kwargs["value"]
+        assert block_value.startswith(_LETTA_RELAY_NOTE)
+        for phrase in self._TOOL_LOOP_PHRASES:
+            assert phrase not in block_value, phrase
+
+    @pytest.mark.asyncio
+    async def test_mcp_mode_keeps_tool_loop_instructions(self) -> None:
+        """Regression guard: MCP mode is unchanged — base instructions stay."""
+        adapter = LettaAdapter()  # default config → MCP enabled
+        assert adapter._mcp_enabled is True
+        mock_client = AsyncMock()
+        mock_letta_module = MagicMock()
+        mock_letta_module.AsyncLetta = MagicMock(return_value=mock_client)
+        with patch.dict("sys.modules", {"letta_client": mock_letta_module}):
+            with patch.object(adapter, "_register_mcp_server", AsyncMock()):
+                await adapter.on_started("Toolbot", "a tool-using agent")
+
+        assert "band_send_message" in adapter._system_prompt
+        assert "Plain text output is not delivered" in adapter._system_prompt
+
 
 class TestSummaryStorage:
     @pytest.mark.asyncio
