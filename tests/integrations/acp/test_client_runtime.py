@@ -26,7 +26,9 @@ class TestSelectAllowOptionId:
         assert select_allow_option_id(options) == "once"
 
     def test_no_allow_option_returns_none(self) -> None:
-        assert select_allow_option_id([{"kind": "reject_once", "optionId": "no"}]) is None
+        assert (
+            select_allow_option_id([{"kind": "reject_once", "optionId": "no"}]) is None
+        )
 
     def test_present_but_empty_option_id_is_not_dropped(self) -> None:
         """An explicit (if empty) optionId must not fall through to the snake_case
