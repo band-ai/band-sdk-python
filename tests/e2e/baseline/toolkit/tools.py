@@ -55,13 +55,18 @@ class ToolSpec:
         # Build a function with *real* named parameters (not *args/**kwargs): agno
         # reads inspect.signature, pydantic-ai reads the actual code object, so the
         # parameters must be real for both to derive the tool's arg schema.
+        #
         ns: dict[str, Any] = {"_handler": self.handler, "_model": model}
         sig: list[str] = ["ctx"] if ctx_annotation is not None else []
         for fname, field in fields.items():
             if field.is_required():
                 sig.append(fname)
             else:
-                ns[f"_default_{fname}"] = field.get_default()
+                # call_default_factory=True so a ``default_factory`` field yields
+                # its produced value (e.g. ``[]``), not ``None`` — otherwise we'd
+                # bake ``None`` into the signature and fail the model's validation
+                # when the arg is omitted.
+                ns[f"_default_{fname}"] = field.get_default(call_default_factory=True)
                 sig.append(f"{fname}=_default_{fname}")
         construct = ", ".join(f"{fname}={fname}" for fname in fields)
         src = f"def {self.name}({', '.join(sig)}):\n    return _handler(_model({construct}))\n"
