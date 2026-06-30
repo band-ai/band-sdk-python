@@ -371,6 +371,15 @@ BAND_E2E_LANE=crewai E2E_TESTS_ENABLED=true \
   uv run pytest tests/e2e/baseline/ -v -s --no-cov
 ```
 
+The **letta** lane needs its stack (a Letta server + a band-mcp container) up
+first — the same one CI builds. Run it with one command, which brings the stack
+up from `.env.test`, runs the smokes, and tears it down on exit:
+
+```bash
+docker login ghcr.io                       # one-time: the band-mcp image is private
+.github/scripts/letta-lane-local.sh        # [pass extra pytest args, e.g. -k recall]
+```
+
 **CI** (`.github/workflows/e2e.yml`) lists no adapters: a `lanes` job emits the
 partition from `ci_lanes()` as `[{lane, extra}, …]` and the `e2e` job fans one job
 per lane (`uv sync --extra <extra>` + `BAND_E2E_LANE=<lane>`), running each lane's
