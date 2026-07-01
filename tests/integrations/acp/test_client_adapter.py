@@ -648,11 +648,15 @@ class TestACPClientAdapterPermissionHandler:
             tool_call.tool_call_id = "tc-perm-1"
 
             result = await adapter_with_mocks._runtime._client.request_permission(
-                options={},
+                options=[
+                    {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"}
+                ],
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
-            assert result == {"outcome": {"outcome": "allowed"}}
+            assert result == {
+                "outcome": {"outcome": "selected", "optionId": "allow-once"}
+            }
 
         adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
@@ -678,10 +682,10 @@ class TestACPClientAdapterPermissionHandler:
         assert perm_events[0]["message_type"] == "tool_call"
 
     @pytest.mark.asyncio
-    async def test_permission_handler_returns_allowed(
+    async def test_permission_handler_selects_allow_option(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """Should auto-allow permission requests."""
+        """Should auto-approve by selecting an offered allow option (not "allowed")."""
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
@@ -693,7 +697,10 @@ class TestACPClientAdapterPermissionHandler:
             tool_call.tool_call_id = "tc-read"
 
             result = await adapter_with_mocks._runtime._client.request_permission(
-                options={},
+                options=[
+                    {"optionId": "p-once", "name": "Allow once", "kind": "allow_once"},
+                    {"optionId": "p-rej", "name": "Reject", "kind": "reject_once"},
+                ],
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
@@ -711,7 +718,47 @@ class TestACPClientAdapterPermissionHandler:
             room_id="room-123",
         )
 
-        assert captured_result == {"outcome": {"outcome": "allowed"}}
+        assert captured_result == {
+            "outcome": {"outcome": "selected", "optionId": "p-once"}
+        }
+
+    @pytest.mark.asyncio
+    async def test_permission_handler_cancels_without_allow_option(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """Should cancel (not guess) when the agent offers no allow option."""
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        captured_result = {}
+
+        async def mock_prompt(**kwargs):
+            tool_call = MagicMock()
+            tool_call.title = "rm_rf"
+            tool_call.tool_call_id = "tc-danger"
+
+            result = await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "p-rej", "name": "Reject", "kind": "reject_once"},
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+            captured_result.update(result)
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert captured_result == {"outcome": {"outcome": "cancelled"}}
 
     @pytest.mark.asyncio
     async def test_permission_handler_uses_name_fallback(

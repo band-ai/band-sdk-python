@@ -126,6 +126,27 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             features=features,
         )
 
+        # Accept the SDK's portable custom-tool form: convert any CustomToolDef
+        # (InputModel, handler) tuples in additional_tools to LangChain tools — the
+        # same shape every other adapter takes — while passing ready-made LangChain
+        # tools through untouched. Done once here so both the simple and advanced
+        # patterns get a uniform tool list, and a tool written once works across
+        # adapters (LangChain would otherwise reject a bare tuple).
+        if additional_tools:
+            from band.integrations.langgraph.langchain_tools import (
+                custom_tool_defs_to_langchain,
+            )
+
+            normalized: list[Any] = []
+            for item in additional_tools:
+                if isinstance(
+                    item, tuple
+                ):  # a band CustomToolDef (InputModel, handler)
+                    normalized.extend(custom_tool_defs_to_langchain([item]))
+                else:  # already a LangChain tool / callable
+                    normalized.append(item)
+            additional_tools = normalized
+
         uses_simple_pattern = (
             llm is not None and graph_factory is None and graph is None
         )

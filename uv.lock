@@ -587,6 +587,7 @@ dev = [
     { name = "langchain-openai" },
     { name = "langchain-text-splitters" },
     { name = "langgraph" },
+    { name = "letta-client" },
     { name = "mcp", version = "1.27.0", source = { registry = "https://pypi.org/simple" } },
     { name = "openai" },
     { name = "parlant" },
@@ -611,6 +612,7 @@ dev = [
     { name = "werkzeug" },
 ]
 dev-crewai = [
+    { name = "anthropic" },
     { name = "crewai" },
     { name = "httpx" },
     { name = "nest-asyncio" },
@@ -688,6 +690,7 @@ requires-dist = [
     { name = "aiohttp", marker = "extra == 'slack'", specifier = ">=3.9,<4" },
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.75.0" },
     { name = "anthropic", marker = "extra == 'dev'", specifier = ">=0.75.0" },
+    { name = "anthropic", marker = "extra == 'dev-crewai'", specifier = ">=0.75.0" },
     { name = "band-client-rest", specifier = "==0.0.10" },
     { name = "beautifulsoup4", marker = "extra == 'dev'", specifier = ">=4.12.0" },
     { name = "beautifulsoup4", marker = "extra == 'langgraph'", specifier = ">=4.12.0" },
@@ -727,6 +730,7 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'a2a-gateway-demo'", specifier = ">=1.0.0" },
     { name = "langgraph", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
+    { name = "letta-client", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "letta-client", marker = "extra == 'letta'", specifier = ">=0.1.0" },
     { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.25.0" },
     { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.25.0" },

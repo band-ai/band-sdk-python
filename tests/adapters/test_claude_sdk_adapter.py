@@ -254,7 +254,9 @@ class TestOnMessage:
 
             assert adapter._session_context["room-123"] == prior_context
             call_args = mock_client.query.call_args[0][0]
-            assert "[Previous conversation context:]" in call_args
+            # History is framed as the agent's own memory (authoritative), not a
+            # passive quote, so the model recalls facts from it under the coding preset.
+            assert "memory of this room" in call_args
             assert prior_context in call_args
 
     @pytest.mark.asyncio

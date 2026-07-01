@@ -25,6 +25,8 @@ from dotenv import load_dotenv
 from pydantic import ValidationError
 from thenvoi_testing.settings import BaseTestSettings
 
+from tests.e2e._constants import DEFAULT_E2E_TIMEOUT_S
+
 # Load .env.test into os.environ so LLM libraries (langchain, anthropic, etc.)
 # can pick up OPENAI_API_KEY, ANTHROPIC_API_KEY, and other keys.
 _ENV_TEST_PATH = Path(__file__).parent.parent.parent / ".env.test"
@@ -64,7 +66,7 @@ class E2ESettings(BaseTestSettings):
     # E2E-specific settings (override via environment variables)
     e2e_llm_model: str = "gpt-5.4-mini"
     e2e_anthropic_model: str = "claude-haiku-4-5-20251001"
-    e2e_timeout: int = 30
+    e2e_timeout: int = DEFAULT_E2E_TIMEOUT_S
     e2e_tests_enabled: bool = False
 
 

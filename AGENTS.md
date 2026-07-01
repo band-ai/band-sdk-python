@@ -314,13 +314,15 @@ tests/
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
 │   ├── adapters/   # Per-adapter smoke & tool execution tests
 │   ├── baseline/   # Reusable baseline toolkit + smokes (see baseline/README.md)
-│   └── scenarios/  # Cross-cutting scenarios (context persistence, room isolation, noisy busy room)
+│   └── scenarios/  # Legacy scenarios (langgraph restart smoke, agno-specific); cross-cutting matrix scenarios now live in baseline/smoke/matrix/
 └── conftest.py     # Shared fixtures
 ```
 
 Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
 — it documents the reusable baseline toolkit (provisioning, user ops, reply
 capture, judge, assertions, fixtures) so you reuse it instead of rebuilding it.
+To wire a new framework adapter into the matrix, follow
+`tests/e2e/baseline/ADDING_AN_ADAPTER.md`.
 
 ## Commands
 
@@ -392,10 +394,14 @@ resolves each in a separate fork.
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
-- `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-4o-mini`)
+- `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
 - `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
-- `E2E_TIMEOUT`: Response timeout in seconds for E2E tests (default: `30`)
+- `E2E_TIMEOUT`: Per-turn response timeout in seconds for E2E tests (default: `120`; a slow test can add headroom with `@pytest.mark.timeout(extra=n)`)
+
+Baseline lane scoping (see `tests/e2e/baseline/README.md`):
+
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters, `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -495,6 +501,41 @@ Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anth
 - Never hardcode UUIDs in docstrings - reference `agent_config.yaml` instead
 - All `async def main()` functions must have `-> None` return type hint
 - Always include `from __future__ import annotations` as first import
+
+## Documentation Testing (markdown snippets)
+
+Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown-docs`
+— so `python` snippets in the docs must stay correct and runnable, not rot:
+
+```bash
+# What CI runs (ci.yml):
+uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+# One file, verbose, while iterating:
+uv run pytest --markdown-docs path/to/FILE.md --no-cov -v
+```
+
+Fence conventions (the language tag after the opening ```` ``` ````):
+
+- ` ```python ` — **executed**. The block is a test: top-level `assert`s are the
+  checks; any unhandled exception fails CI.
+- ` ```python notest ` — **not executed** (collected out). Use only for illustrative
+  pseudo-code, placeholder names (`MyframeworkAdapter`, `MYPROVIDER`), or snippets
+  that genuinely need a live platform/LLM.
+- ` ```python fixture:<name> ` — executed with the named pytest fixture injected into
+  the block's namespace (precedent: `fixture:client`, `fixture:agent_config_path`).
+  The fixture is resolved from the nearest `conftest.py`.
+
+**Prefer runnable over `notest`.** If a snippet only needs importable symbols (types,
+enums, helpers), drop `notest` and add a small `assert` so a rename breaks the doc.
+Reach for `fixture:` when it needs a constructed object (a client, a config path).
+
+**Gotcha — snippets under `tests/e2e/**` skip in CI.** That tree's conftest skips
+every collected item (code fences included) unless `E2E_TESTS_ENABLED=true`, and the
+CI markdown-docs step does **not** set it. So a `python` block in an E2E doc silently
+*skips* in CI and protects nothing — worse than honest `notest`. Keep E2E-doc snippets
+`notest`; if you want a runnable check of E2E-adjacent symbols (e.g. "these registry
+helpers still exist"), put it in a doc **outside** `tests/e2e/**` or in a real unit
+test, where the markdown-docs run actually executes it.
 
 ## Coding Standards
 

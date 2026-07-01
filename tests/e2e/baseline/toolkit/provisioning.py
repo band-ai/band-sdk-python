@@ -11,13 +11,14 @@ recognise its own resources by prefix and never touch a non-test agent.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from band_rest import AgentRegisterRequest, AsyncRestClient
 
@@ -26,6 +27,12 @@ from band.core.simple_adapter import SimpleAdapter
 
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+if TYPE_CHECKING:
+    # Annotation-only (PEP 563): kept out of runtime imports so this module never
+    # pulls the framework/registry graph and can't form an import cycle.
+    from band.core.types import AdapterFeatures
+    from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +47,19 @@ def new_run_id() -> str:
 
 @dataclass(frozen=True)
 class ProvisionedAgent:
-    """A freshly registered agent and its own credentials."""
+    """A freshly registered agent and its own credentials.
+
+    ``adapter_id`` records which registered adapter this identity was built from
+    when it comes from the matrix (``@per_adapter``) or a ``@with_adapters`` slot,
+    so a test reads ``agent.adapter_id`` instead of threading a separate fixture.
+    ``None`` for identities provisioned directly (e.g. a bystander), which have no
+    adapter behind them.
+    """
 
     id: str
     api_key: str
     name: str
+    adapter_id: str | None = None
 
 
 def agent_rest_client(
@@ -83,6 +98,26 @@ class ResourceManager:
         self._user_ops = UserOps(user_client)
         self._provisioned_agent_ids: list[str] = []
         self._provisioned_room_ids: list[str] = []
+        self._running_agent_ids: set[str] = set()
+
+    @contextmanager
+    def track_running(self, agent_id: str) -> Iterator[None]:
+        """Mark ``agent_id`` running for the block; raise if it already is.
+
+        Guards the reboot/rejoin footgun: running one identity twice concurrently
+        (overlapping/nested runs) instead of sequentially. Releases in ``finally``,
+        so a run that fails *during startup* never wedges the id and blocks a retry.
+        """
+        if agent_id in self._running_agent_ids:
+            raise RuntimeError(
+                f"agent {agent_id} is already running — overlapping runs of one "
+                "identity are unsupported; run reboot/rejoin sequences sequentially"
+            )
+        self._running_agent_ids.add(agent_id)
+        try:
+            yield
+        finally:
+            self._running_agent_ids.discard(agent_id)
 
     @property
     def settings(self) -> BaselineSettings:
@@ -125,8 +160,14 @@ class ResourceManager:
         """Create a room as the user; optionally add participants. Returns id."""
         room_id = await self._user_ops.create_room(title=title)
         self._provisioned_room_ids.append(room_id)
-        for participant_id in participants or []:
-            await self._user_ops.add_participant(room_id, participant_id)
+        # Independent REST adds to the same room — run concurrently so setup
+        # latency doesn't scale linearly with participant count.
+        await asyncio.gather(
+            *(
+                self._user_ops.add_participant(room_id, pid)
+                for pid in participants or []
+            )
+        )
         logger.info("Provisioned room %s", room_id)
         return room_id
 
@@ -219,21 +260,24 @@ class ResourceManager:
 
 
 @asynccontextmanager
-async def running_provisioned_agent(
+async def running_agent(
+    provisioned: ProvisionedAgent,
     adapter: SimpleAdapter[Any],
-    resources: ResourceManager,
-    *,
-    label: str = "aut",
-) -> AsyncGenerator[tuple[Agent, ProvisionedAgent], None]:
-    """Provision an agent and run ``adapter`` as it for the duration of the block.
+    settings: BaselineSettings,
+) -> AsyncGenerator[ProvisionedAgent, None]:
+    """Run ``adapter`` as an *already-provisioned* identity for the block.
 
-    Yields ``(agent, provisioned)``: the running ``Agent`` and the ``ProvisionedAgent``
-    record (id, name, api_key). Reaping is owned by the resource manager's
-    teardown (the provisioned agent is tracked at provision time), so this only manages
-    the running agent's own lifecycle.
+    The run half of ``running_provisioned_agent`` (which adds provisioning): this
+    owns only the run lifecycle, leaving provision + reap to the resource manager.
+    Yields the same ``provisioned`` back for symmetry with its sibling.
+
+    Enter it twice against one ``provisioned`` identity — each time with a *fresh*
+    adapter — to exercise a stop→rejoin: the second run starts with no in-memory
+    adapter state, so anything the agent then recalls must have come from the
+    platform rehydrating the room's history on bootstrap (``/context``), which is
+    exactly what a rejoin scenario asserts.
     """
-    provisioned = await resources.provision_agent(label)
-    endpoints = resources.settings.endpoints
+    endpoints = settings.endpoints
     agent = Agent.create(
         adapter=adapter,
         agent_id=provisioned.id,
@@ -242,4 +286,122 @@ async def running_provisioned_agent(
         rest_url=endpoints.rest_url,
     )
     async with agent:
-        yield agent, provisioned
+        yield provisioned
+
+
+@asynccontextmanager
+async def running_provisioned_agent(
+    adapter: SimpleAdapter[Any],
+    resources: ResourceManager,
+    *,
+    label: str = "aut",
+) -> AsyncGenerator[ProvisionedAgent, None]:
+    """Provision an agent and run ``adapter`` as it for the duration of the block.
+
+    Yields the ``ProvisionedAgent`` record (id, name, api_key) — the only thing
+    callers need to mention/observe the agent. The running ``Agent`` object itself
+    is managed internally (kept alive for the block, via ``running_agent``) and is
+    not exposed, since no caller uses it. Reaping is owned by the resource manager's
+    teardown (the agent is tracked at provision time), so this only manages the run
+    lifecycle. (Matrix / group agents come from ``AdapterCell``, which stamps
+    ``adapter_id`` itself; this bespoke primitive leaves it unset.)
+    """
+    provisioned = await resources.provision_agent(label)
+    async with running_agent(provisioned, adapter, resources.settings) as running:
+        yield running
+
+
+@dataclass(frozen=True)
+class AdapterCell:
+    """The adapter under test for one matrix cell — build / provision / run it yourself.
+
+    The ``@per_adapter`` counterpart to the managed ``agent`` fixture: request ``cell``
+    when a test owns the agent's lifecycle (construction checks, and reboot / restart /
+    rehydration scenarios that stop and re-run under one identity). ``agent`` is just
+    sugar over :meth:`running`.
+
+    Steering placed on the decorator (``@per_adapter(prompt=…, features=…, tools=…)``)
+    is carried here as the cell's defaults, so a test sets it once on the decorator; a
+    method argument overrides the default when given (``None`` means "use the default").
+    """
+
+    adapter_id: str
+    settings: BaselineSettings
+    resources: ResourceManager
+    prompt: str | None = None
+    features: AdapterFeatures | None = None
+    tools: list[ToolSpec] | None = None
+
+    def build(
+        self,
+        *,
+        prompt: str | None = None,
+        features: AdapterFeatures | None = None,
+        tools: list[ToolSpec] | None = None,
+    ) -> SimpleAdapter[Any]:
+        """Construct (do not run) this cell's adapter; arguments override cell defaults.
+
+        ``build_adapter`` is imported lazily so this module never pulls the adapter
+        registry (and its optional framework deps) at import time.
+        """
+        # Overrides use None-means-"cell default" (not a sentinel): no test needs to
+        # clear a default back to "no prompt", so the sentinel would be dead machinery.
+        from tests.e2e.baseline.toolkit.adapters import build_adapter
+
+        return build_adapter(
+            self.adapter_id,
+            self.settings,
+            prompt=self.prompt if prompt is None else prompt,
+            features=self.features if features is None else features,
+            tools=self.tools if tools is None else tools,
+        )
+
+    async def provision(self, *, label: str | None = None) -> ProvisionedAgent:
+        """Register an identity for this cell (tracked + reaped by the manager); no run.
+
+        ``label`` defaults to the adapter id (a readable provisioned name). Pass a
+        distinct label to register more than one identity of the same cell in a single
+        test, else the generated names collide.
+        """
+        provisioned = await self.resources.provision_agent(label or self.adapter_id)
+        return replace(provisioned, adapter_id=self.adapter_id)
+
+    @asynccontextmanager
+    async def run_as(
+        self,
+        identity: ProvisionedAgent,
+        *,
+        prompt: str | None = None,
+        features: AdapterFeatures | None = None,
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncGenerator[ProvisionedAgent, None]:
+        """Run a *fresh* adapter under an existing ``identity`` for the block.
+
+        Enter twice against one identity to exercise a stop→reboot: the second run
+        starts with no in-memory state, so a correct recall proves platform
+        rehydration. Guarded (via ``track_running``) against overlapping runs of the
+        same identity.
+        """
+        adapter = self.build(prompt=prompt, features=features, tools=tools)
+        with self.resources.track_running(identity.id):
+            async with running_agent(identity, adapter, self.settings):
+                yield identity
+
+    @asynccontextmanager
+    async def running(
+        self,
+        *,
+        label: str | None = None,
+        prompt: str | None = None,
+        features: AdapterFeatures | None = None,
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncGenerator[ProvisionedAgent, None]:
+        """Provision an identity and run this cell's adapter as it for the block.
+
+        Provision + :meth:`run_as` in one step — what the ``agent`` fixture uses.
+        """
+        identity = await self.provision(label=label)
+        async with self.run_as(
+            identity, prompt=prompt, features=features, tools=tools
+        ) as running:
+            yield running

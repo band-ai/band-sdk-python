@@ -625,12 +625,13 @@ class TestRuntimeTools:
             "tool_result",
         ]
         assert json.loads(tool_events[0]["content"]) == {
-            "tool": "echo",
-            "input": {"message": "hello"},
+            "name": "echo",
+            "args": {"message": "hello"},
         }
         assert json.loads(tool_events[1]["content"]) == {
-            "tool": "echo",
-            "result": "Echo: hello",
+            "name": "echo",
+            "output": "Echo: hello",
+            "is_error": False,
         }
 
     @pytest.mark.asyncio

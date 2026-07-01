@@ -86,7 +86,7 @@ def _require_env(name: str) -> str:
 
 def _make_adapter() -> LangGraphAdapter:
     return LangGraphAdapter(
-        llm=ChatOpenAI(model=os.environ.get("E2E_LLM_MODEL", "gpt-4o-mini")),
+        llm=ChatOpenAI(model=os.environ.get("E2E_LLM_MODEL", "gpt-5.4-mini")),
         checkpointer=InMemorySaver(),
         custom_section=(
             "Keep responses short. Always reply by calling band_send_message. "

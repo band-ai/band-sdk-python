@@ -1,0 +1,201 @@
+name: E2E (baseline)
+
+# Manually triggered live end-to-end run of the baseline toolkit suite. These
+# tests provision real agents against a real Band platform and call real model
+# providers, so they are not run on every PR (cost + external state); trigger
+# them on demand from the Actions tab.
+#
+# Lanes are DERIVED FROM THE REGISTRY, not hand-listed here. The `lanes` job
+# imports the adapter registry and emits one CI lane per `ci_lanes()` entry; the
+# `e2e` job fans out over them. A lane is a job: it installs the lane's `uv` extra
+# and (for lanes with a server/CLI) stands that backend up. Adding an adapter to
+# an existing lane needs no edit here.
+#
+# HOW TO ADD A LANE: lanes live in the registry, not this file. Add a `Lane`
+# member + its `uv` extra in tests/e2e/baseline/toolkit/requirements.py, point a
+# `Dep` at it, and (only if the lane needs a server/CLI) add a setup step below
+# gated to that lane id, plus the matching dropdown option in the `lane` input
+# below (a guard test ties that option list back to the registry, so a missing or
+# stale one fails the unit suite). Full checklist: tests/e2e/baseline/README.md.
+#
+# Lane ids are content-based and decoupled from the `uv` extra each installs.
+# Lanes today:
+# - core         — provider-key adapters with no special isolation, on the `dev`
+#                  extra (agno, anthropic, claude_sdk, langgraph, pydantic_ai).
+# - crewai       — crewai/crewai_flow (crewai conflicts with the dev venv's deps,
+#                  so it gets its own `dev-crewai` extra; see pyproject [tool.uv]).
+# - google       — gemini/google_adk (own lane so free-tier rate-limit flakiness is
+#                  isolated from core; shares the `dev` extra).
+# - backends     — the CLI/server coding agents in one job (on the `dev` extra):
+#                  CodexAdapter (codex CLI) + the codex-acp e2e, and OpencodeAdapter
+#                  (local `opencode serve`, Zen free model).
+# - letta        — LettaAdapter; e2e_pending (no live tests yet — needs a reachable
+#                  band-mcp), so the lane runs no Letta cells. Own lane (shares the
+#                  `dev` extra) kept defined for the follow-up; see toolkit/adapters.py.
+#
+# An unwired backend still fails loudly (the @requires gate reports the missing
+# CLI/server) until its setup block lands. `fail-fast: false`
+# keeps a red lane from blocking the others.
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "Lane to run (all = full matrix). Validated against the registry."
+        type: choice
+        default: all
+        options:
+          - all
+          - core
+          - crewai
+          - google
+          - backends
+          - letta
+
+# Serialize E2E runs: they share one live platform, so never let two race (and
+# reap each other's provisioned agents/rooms). Newest wins — a fresh dispatch
+# cancels an in-flight run rather than queuing behind it.
+concurrency:
+  group: e2e-baseline
+  cancel-in-progress: true
+
+jobs:
+
+  lanes:
+    name: resolve lanes
+    runs-on: ubuntu-latest
+    outputs:
+      lanes: ${{ steps.gen.outputs.lanes }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up E2E environment
+      uses: ./.github/actions/setup-e2e
+
+    # The registry import is framework-free (band.adapters is lazy) and pytest-free,
+    # so the default extra is enough to resolve the lane partition.
+    - name: Install dependencies
+      run: uv sync --extra dev
+
+    - name: Emit lane matrix from the registry
+      id: gen
+      env:
+        # The dispatch `lane` input; defaults to 'all' (the full matrix).
+        SELECTED_LANE: ${{ github.event.inputs.lane || 'all' }}
+      run: |
+        uv run python - <<'PY' >> "$GITHUB_OUTPUT"
+        import json
+        import os
+        from tests.e2e.baseline.toolkit.adapters import (
+            assert_registry_covers_discovered,
+        )
+        from tests.e2e.baseline.toolkit.ci_lanes import (
+            assert_every_adapter_has_a_ci_home,
+            assert_workflow_lane_gates_known,
+            ci_lanes,
+        )
+        # Fail before any test runs if the registry or lane partition has drifted.
+        assert_registry_covers_discovered()
+        assert_every_adapter_has_a_ci_home()
+        # Fail if a `matrix.lane ==` gate below names a lane the registry no longer
+        # emits (its step would silently never run).
+        assert_workflow_lane_gates_known()
+        lanes = list(ci_lanes())
+        # The registry stays authoritative: a chosen lane must be one it emits, so
+        # a stale dropdown option fails loudly here instead of running nothing.
+        selected = os.environ.get("SELECTED_LANE") or "all"
+        known = {lane.id for lane in lanes}
+        if selected != "all" and selected not in known:
+            raise SystemExit(
+                f"Requested lane {selected!r} is not one the registry emits "
+                f"(known: {sorted(known)}). Pick 'all' or a known lane."
+            )
+        include = [
+            {"lane": lane.id, "extra": lane.extra}
+            for lane in lanes
+            if selected == "all" or lane.id == selected
+        ]
+        print("lanes=" + json.dumps({"include": include}))
+        PY
+
+  e2e:
+    name: e2e (${{ matrix.lane }})
+    needs: lanes
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.lanes.outputs.lanes) }}
+    env:
+      E2E_TESTS_ENABLED: "true"
+      # Turn budget (E2E_TIMEOUT) is not set here: it defaults to 120s in the e2e
+      # settings, and slow frameworks add headroom per-test via
+      # @pytest.mark.timeout(extra=...). See tests/e2e/conftest.py.
+      # The registry scopes which adapters run in this lane.
+      BAND_E2E_LANE: ${{ matrix.lane }}
+      # The dev-crewai venv lacks the other frameworks; tolerate missing framework
+      # configs there instead of failing fast (mirrors ci.yml's crewai job).
+      BAND_ALLOW_MISSING_FRAMEWORKS: ${{ matrix.extra == 'dev-crewai' && '1' || '0' }}
+      # Secrets carry an E2E_ prefix in GitHub (so they're clearly scoped to this
+      # workflow), but the code reads the unprefixed names — the mapping happens
+      # here: the env var keeps its code-expected name, the secret is prefixed.
+      # Band platform (the live target + the driver/observer user key).
+      BAND_REST_URL: ${{ secrets.E2E_BAND_REST_URL }}
+      BAND_WS_URL: ${{ secrets.E2E_BAND_WS_URL }}
+      BAND_API_KEY_USER: ${{ secrets.E2E_BAND_API_KEY_USER }}
+      # Optional second user key, for baseline smokes exercising two-user interaction.
+      BAND_API_KEY_USER_2: ${{ secrets.E2E_BAND_API_KEY_USER_2 }}
+      # Model providers (a lane simply ignores a key it has no adapter for).
+      ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
+      GOOGLE_API_KEY: ${{ secrets.E2E_GOOGLE_API_KEY }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up E2E environment
+      uses: ./.github/actions/setup-e2e
+
+    # --- Backend setup: each step is gated to the lane whose server/CLI it stands
+    # up (the `backends` lane co-runs codex + opencode; letta is its own lane). ---
+
+    - name: Set up Node (codex, opencode)
+      if: matrix.lane == 'backends'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    # Each setup script installs its backend and exports the env it discovered
+    # (CODEX_CWD / OPENCODE_BASE_URL / LETTA_BASE_URL) via $GITHUB_ENV. See
+    # .github/scripts/ for the inline detail.
+    - name: Install + authenticate the Codex CLI (codex)
+      if: matrix.lane == 'backends'
+      run: .github/scripts/setup-codex.sh
+
+    - name: Install + start the OpenCode server (opencode)
+      if: matrix.lane == 'backends'
+      env:
+        # The OpenCode Zen provider key the server reads via {env:...} substitution.
+        OPENCODE_ZEN_API_KEY: ${{ secrets.E2E_OPENCODE_ZEN_API_KEY }}
+      run: .github/scripts/setup-opencode.sh
+
+    # The `letta` lane currently runs no Letta tests (Letta is registered
+    # e2e_pending — see tests/e2e/baseline/toolkit/adapters.py), so it needs no
+    # backend setup. Wiring a reachable band-mcp + the Letta smokes is a follow-up.
+
+    # -----------------------------------------------------------------------------
+
+    - name: Install dependencies (${{ matrix.extra }})
+      run: uv sync --extra ${{ matrix.extra }}
+
+    # Flaky reply-latency tests opt into reruns per-test via @pytest.mark.flaky;
+    # the run itself stays plain so only those tests are retried, not the lane.
+    - name: Run baseline E2E (lane ${{ matrix.lane }})
+      run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
+
+    # The backends lane also exercises the editor-facing ACP path (codex-acp via npx).
+    # It uses the same ~/.codex login and a local MCP server — no Band platform.
+    - name: Run codex-acp e2e (codex)
+      if: matrix.lane == 'backends'
+      run: uv run pytest tests/integrations/acp/test_e2e_codex_acp.py -v --no-cov

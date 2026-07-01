@@ -113,13 +113,17 @@ class TestBuildParser:
 
         assert args.api_key == "cli-key"
 
-    def test_default_rest_url(self):
+    def test_default_rest_url(self, monkeypatch):
+        # The default is os.environ.get("BAND_REST_URL", DEFAULT_REST_URL), so
+        # clear the env to assert the built-in default rather than an ambient one.
+        monkeypatch.delenv("BAND_REST_URL", raising=False)
         parser = build_parser()
         args = parser.parse_args([])
 
         assert args.rest_url == "https://app.band.ai/"
 
-    def test_default_auth_mode(self):
+    def test_default_auth_mode(self, monkeypatch):
+        monkeypatch.delenv("BAND_AUTH_MODE", raising=False)
         parser = build_parser()
         args = parser.parse_args([])
 

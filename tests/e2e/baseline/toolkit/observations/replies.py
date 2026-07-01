@@ -16,6 +16,8 @@ and those make suites brittle.
   case-insensitive); any-of, not all-of, so paraphrasing doesn't break it.
 - ``assert_mentions`` — some reply mentions a participant, checked via message
   metadata (not by parsing ``@`` text).
+- ``mentioning`` — the subset of replies that mention a participant (by metadata),
+  for chaining into a further assertion (e.g. content) on just those replies.
 
 A list subclass, so it iterates/indexes/``len``s like one. A derived subset
 (slice or filter) is a plain ``list``, so re-wrap it to keep the methods:
@@ -46,12 +48,40 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
     def assert_present(self, *, what: str = "an agent reply") -> None:
         assert self, f"expected {what}, but no agent messages were captured"
 
-    def assert_mentions(self, participant_id: str) -> None:
-        for message in self:
-            if message.metadata and any(
+    def mentioning(self, participant_id: str) -> "Replies":
+        """The subset of replies that mention ``participant_id`` (by metadata).
+
+        Re-wraps the filter so the tolerant assertion methods survive (a bare
+        filter over a ``list`` subclass is a plain ``list``).
+        """
+        return Replies(
+            message
+            for message in self
+            if message.metadata is not None
+            and any(
                 mention.id == participant_id for mention in message.metadata.mentions
-            ):
-                return
-        raise AssertionError(
-            f"expected a reply mentioning {participant_id} (by metadata), but none did"
+            )
         )
+
+    def assert_mentions(self, participant_id: str) -> None:
+        if not self.mentioning(participant_id):
+            raise AssertionError(
+                f"expected a reply mentioning {participant_id} (by metadata), but none did"
+            )
+
+    def snapshot(self) -> int:
+        """A cursor at the current end of the buffer, for ``since`` after a turn.
+
+        ``mark = capture.messages.snapshot()`` before sending, then
+        ``capture.messages.since(mark)`` reads only what arrived afterwards — no
+        manual ``len(...)`` / slice index.
+        """
+        return len(self)
+
+    def since(self, cursor: int) -> "Replies":
+        """The replies captured after ``cursor`` (from ``snapshot``), as a ``Replies``.
+
+        Re-wraps the slice so the tolerant assertion methods survive (a bare slice
+        of a ``list`` subclass is a plain ``list``).
+        """
+        return Replies(self[cursor:])

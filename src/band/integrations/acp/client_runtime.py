@@ -23,6 +23,58 @@ ACP_STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 PermissionHandler = Callable[..., Awaitable[dict[str, object]]]
 MCPTransportKind = Literal["http", "sse"]
 
+# ACP grants a tool-call permission by *selecting one of the options the agent
+# offered* (each carries an ``optionId`` and a ``kind``); the on-wire response is
+# ``{"outcome": {"outcome": "selected", "optionId": ...}}`` or
+# ``{"outcome": {"outcome": "cancelled"}}`` (see ``acp.schema`` AllowedOutcome /
+# DeniedOutcome). There is no ``"allowed"`` literal — emitting one makes a
+# spec-strict agent (e.g. codex-acp) fail to parse the response and abort the turn.
+_ALLOW_OPTION_KINDS = ("allow_once", "allow_always")
+
+
+def select_allow_option_id(options: object) -> str | None:
+    """The ``optionId`` of an allow option offered in a permission request, else None.
+
+    Prefers the least-privilege ``allow_once`` over ``allow_always``. Returns None
+    when the agent offered no allow option, so the caller cancels rather than
+    guessing (selecting a reject option would silently deny). Accepts the ACP
+    ``PermissionOption`` objects or plain dicts.
+    """
+    if not isinstance(options, (list, tuple)):
+        return None
+    candidates: list[tuple[object, str]] = []
+    for option in options:
+        if isinstance(option, dict):
+            kind = option.get("kind")
+            # Coalesce the camelCase (wire/JSON) and snake_case spellings on
+            # *absence*, not falsiness — an explicit (if empty) id must not fall
+            # through to the alias and get dropped.
+            option_id = option.get("optionId")
+            if option_id is None:
+                option_id = option.get("option_id")
+        else:
+            kind = getattr(option, "kind", None)
+            option_id = getattr(option, "option_id", None)
+            if option_id is None:
+                option_id = getattr(option, "optionId", None)
+        if option_id is not None:
+            candidates.append((kind, str(option_id)))
+    for preferred in _ALLOW_OPTION_KINDS:
+        for kind, option_id in candidates:
+            if kind == preferred:
+                return option_id
+    return None
+
+
+def allow_permission(option_id: str) -> dict[str, object]:
+    """An ACP ``RequestPermissionResponse`` selecting (granting) ``option_id``."""
+    return {"outcome": {"outcome": "selected", "optionId": option_id}}
+
+
+def cancel_permission() -> dict[str, object]:
+    """An ACP ``RequestPermissionResponse`` cancelling the request."""
+    return {"outcome": {"outcome": "cancelled"}}
+
 
 class ACPConnectionProtocol(Protocol):
     """Protocol for the ACP agent connection returned by spawn_agent_process."""
@@ -127,7 +179,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             )
 
         logger.debug("Auto-cancelling permission request for session %s", session_id)
-        return {"outcome": {"outcome": "cancelled"}}
+        return cancel_permission()
 
     def set_permission_handler(
         self,

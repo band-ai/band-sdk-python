@@ -184,6 +184,8 @@ dev = [
     "google-adk>=1.0.0,<2",
     # Include Agno for testing
     "agno>=2.6.0",
+    # Include letta-client for testing
+    "letta-client>=0.1.0",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",
@@ -216,6 +218,9 @@ dev-crewai = [
     "openai>=2.0.0",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
+    # Anthropic client: the baseline E2E conftest imports it at module load and
+    # the LLM judge needs it. A thin client (pydantic <3), so no crewai conflict.
+    "anthropic>=0.75.0",
     # Pretty E2E test output
     "rich>=13.0.0",
     # Development tools
