@@ -86,7 +86,7 @@ They are **not** two ways to do one thing; they are different *topologies*. You 
 | **Runs** | once **per** selected adapter (parametrized) | **once**, all adapters together |
 | **Agents per run** | one (`agent`), or a `cell` you drive | many, in one room (`agents`) |
 | **Select by** | *filters* — `supports=`, `exclude=`, "every memory adapter" | *explicit ids* — you name the room's participants |
-| **CI lanes** | lane-safe (each cell runs in its home lane) | can span lanes → the mixed-lane guard exists for exactly this |
+| **CI lanes** | lane-safe (each cell runs in its home lane); a `peer=` folds a second framework in | can span lanes → the schedulability guard catches an unschedulable span |
 | **Use for** | "run this scenario across frameworks" | "these specific agents interact" |
 
 You cannot express a multi-agent-in-one-room test with `@per_adapter` (it fans them into
@@ -104,6 +104,7 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
 | the **same scenario across every adapter** | `@per_adapter()` (the full matrix, explicitly) | `agent` (id via `agent.adapter_id`) |
 | a **subset** of adapters | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True)` | `agent` |
 | to **drive the lifecycle yourself** (build-only, reboot, rehydration) | `@per_adapter()` | `cell` — an `AdapterCell` (see **AdapterCell** below) |
+| a **fanned cell A + one different-framework peer B** (cross-framework) | `@per_adapter(exclude={Adapter.X}, peer=Adapter.X)` | `cell` (A) + `peer` (B, an `AdapterCell` you drive); peer deps fold into the cell's `@requires` |
 | custom tools (any tool-capable framework) | `@with_adapters(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
 | custom tools across the matrix | `@per_adapter(Adapter.ANTHROPIC, Adapter.PYDANTIC_AI, Adapter.AGNO, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` | `agent` |
 
@@ -121,6 +122,12 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
   `RunContext` callable, an agno tool). Add `**EXECUTION_REPORTING` to observe the
   calls via `capture.tool_calls`. Only letta can't accept a local tool (MCP) and
   **rejects** `tools` with a clear error rather than silently dropping it.
+- **Cross-framework peer:** `@per_adapter(exclude={Adapter.X}, peer=Adapter.X)` fans A
+  across the matrix and hands each cell a *different-framework* peer B via the `peer`
+  fixture (an `AdapterCell` the test drives — provision + `run_as`). The peer's
+  `@requires` fold into the cell's single gate mark, and the peer is visible to lane
+  scheduling (so A + B must be lane-hostable together — see **CI lanes** below). The
+  `peer` fixture fails loud if the peer equals the cell (same framework, not cross).
 
 ### Driving and observing a turn
 
@@ -488,13 +495,22 @@ one backend failing to come up can redden the other's cells (the per-adapter rep
 still shows which). `google` gets its own lane so Google free-tier rate-limit
 flakiness is isolated; `letta` stands alone for the live-server backend it will need.
 
-**The knob:** `BAND_E2E_LANE=<lane id>`. When set, `lane_selection.apply_lane_skips`
-(called by the conftest hook) resolves the lane's adapters from `ci_lanes()` and
-marks **skip-with-reason** every test bound to an out-of-lane adapter — matrix cells
-*and* `@with_adapters` tests. An **in-lane** adapter is left untouched, so a missing
-key/CLI/server still **fails** via its `@requires` gate (an unwired lane is red by
-design until its setup lands). Adapter-agnostic tests always run. **Unset** (the
-local default) runs the full matrix, fail-loud.
+**The knob:** `BAND_E2E_LANE=<lane id>`. Scheduling is *derived*: a test's lane is the
+home lane of **all** the frameworks it touches — a matrix cell's adapter (plus its
+`peer=`, if any), or a `@with_adapters` group's set. When `BAND_E2E_LANE` is set,
+`lane_selection.apply_lane_skips` (called by the conftest hook) marks
+**skip-with-reason** every test whose (single) home lane isn't the active one. An
+**in-lane** adapter is left untouched, so a missing key/CLI/server still **fails** via
+its `@requires` gate (an unwired lane is red by design until its setup lands).
+Adapter-agnostic tests always run. **Unset** (the local default) runs the full matrix,
+fail-loud.
+
+A test whose frameworks span **more than one** home lane can be hosted by no single
+job, so `assert_every_item_is_schedulable` (the same hook) **fails collection** for it
+— the fail-loud guard against a test that would silently skip in every lane (false
+green). The escape hatch is `@lane(Lane.X)` (from `agents`): it pins such a test to one
+explicit lane whose `uv` extra hosts all its frameworks. A single-framework cell never
+trips this; a same-lane `peer=` (e.g. two core frameworks) is schedulable as-is.
 
 **Run locally:**
 

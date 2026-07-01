@@ -7,9 +7,10 @@ fixtures in a way that can't work or that bypasses the one-vocabulary rule:
 * ``agents`` is group-only, ``cell`` is fan-only;
 * a test picks exactly one topology (not both decorators) and one provisioning mode
   (not both ``agent`` and ``cell``);
+* ``peer`` needs ``@per_adapter(peer=...)`` and vice versa;
 * nobody hand-rolls a matrix by parametrizing ``adapter_id`` without ``@per_adapter``.
 
-Sibling of ``lane_selection.assert_no_unschedulable_mixed_lane``; both run from the
+Sibling of ``lane_selection.assert_every_item_is_schedulable``; both run from the
 baseline ``pytest_collection_modifyitems`` hook.
 """
 
@@ -22,46 +23,69 @@ from tests.e2e.baseline.agents import WITH_ADAPTERS_MARKER, PER_ADAPTER_MARKER
 
 def _wiring_error(item: pytest.Item) -> str | None:
     """The wiring violation on ``item`` (a one-line reason), or ``None`` if wired right."""
-    each = item.get_closest_marker(PER_ADAPTER_MARKER) is not None
+    per_marker = item.get_closest_marker(PER_ADAPTER_MARKER)
+    each = per_marker is not None
     group = item.get_closest_marker(WITH_ADAPTERS_MARKER) is not None
     fixtures = set(getattr(item, "fixturenames", ()))
 
     wants_agent = "agent" in fixtures
     wants_agents = "agents" in fixtures
     wants_cell = "cell" in fixtures
+    wants_peer = "peer" in fixtures
+    wants_adapter_id = "adapter_id" in fixtures
+    wants_any = wants_agent or wants_agents or wants_cell
+    peer_declared = each and getattr(per_marker.args[0], "peer", None) is not None
 
-    # Order is load-bearing: most-fundamental violation first, so (e.g.) a both-decorators
-    # test reports "pick one topology" rather than a downstream fixture-pairing message.
-    if each and group:
-        return "has both @per_adapter and @with_adapters — pick one topology"
-    if wants_agent and wants_cell:
-        return "requests both `agent` and `cell` — pick one provisioning mode"
-    if wants_cell:
-        if group:
-            return (
-                "requests `cell` under @with_adapters (fan-only) — use `agent`/`agents`"
-            )
-        if not each:
-            return "requests `cell` without @per_adapter"
-    if wants_agents and each:
-        return (
-            "requests `agents` under @per_adapter (a cell is one adapter) — use `agent`"
-        )
-    if (wants_agent or wants_agents) and not (each or group):
-        return (
-            "requests `agent`/`agents` with no @per_adapter / @with_adapters decorator"
-        )
-    # `adapter_id` is @per_adapter's internal parametrize target: requesting or
-    # hand-parametrizing it without the decorator is a hand-rolled matrix. Keyed on the
-    # fixture closure (not just callspec params) so a plain `def test(adapter_id)` — no
-    # decorator, no parametrize — is caught here rather than only at fixture setup.
-    if "adapter_id" in fixtures and not each:
-        return "uses `adapter_id` without @per_adapter — use the decorator, not a hand-rolled matrix"
-    # A topology decorator that injects no agent/agents/cell provisions nothing — almost
-    # certainly a mistake (the decorator gates + parametrizes but the test uses no agent).
-    if (each or group) and not (wants_agent or wants_agents or wants_cell):
-        return "declares @per_adapter/@with_adapters but requests none of agent/agents/cell"
-    return None
+    # First matching rule wins, so order is load-bearing: the most-fundamental violation
+    # comes first (a both-decorators test should report "pick one topology", not a
+    # downstream fixture-pairing message). Notes on the subtler pairings:
+    #  * `peer` and @per_adapter(peer=...) are two halves of one declaration — each needs
+    #    the other, so a half-wired cross-framework test fails here, not at fixture setup.
+    #  * `adapter_id` is @per_adapter's internal parametrize target; requesting it without
+    #    the decorator is a hand-rolled matrix. Keyed on the fixture closure, so a plain
+    #    `def test(adapter_id)` is caught at collection, not only at fixture setup.
+    #  * a topology decorator that injects no agent/agents/cell provisions nothing.
+    rules: list[tuple[bool, str]] = [
+        (
+            each and group,
+            "has both @per_adapter and @with_adapters — pick one topology",
+        ),
+        (
+            wants_agent and wants_cell,
+            "requests both `agent` and `cell` — pick one provisioning mode",
+        ),
+        (
+            wants_cell and group,
+            "requests `cell` under @with_adapters (fan-only) — use `agent`/`agents`",
+        ),
+        (wants_cell and not each, "requests `cell` without @per_adapter"),
+        (
+            wants_agents and each,
+            "requests `agents` under @per_adapter (a cell is one adapter) — use `agent`",
+        ),
+        (wants_peer and not each, "requests `peer` without @per_adapter(peer=...)"),
+        (
+            wants_peer and not peer_declared,
+            "requests `peer` but @per_adapter declares no peer=",
+        ),
+        (
+            peer_declared and not wants_peer,
+            "declares @per_adapter(peer=...) but does not request the `peer` fixture",
+        ),
+        (
+            (wants_agent or wants_agents) and not (each or group),
+            "requests `agent`/`agents` with no @per_adapter / @with_adapters decorator",
+        ),
+        (
+            wants_adapter_id and not each,
+            "uses `adapter_id` without @per_adapter — use the decorator, not a hand-rolled matrix",
+        ),
+        (
+            (each or group) and not wants_any,
+            "declares @per_adapter/@with_adapters but requests none of agent/agents/cell",
+        ),
+    ]
+    return next((message for matched, message in rules if matched), None)
 
 
 def assert_agent_fixtures_wired(items: list[pytest.Item]) -> None:

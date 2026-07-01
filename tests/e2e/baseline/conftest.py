@@ -17,6 +17,7 @@ from tests.e2e.baseline.fixtures.agents import (
     agent,
     agents,
     cell,
+    peer,
 )
 from tests.e2e.baseline.fixtures.capture import judge, reply_capture
 from tests.e2e.baseline.fixtures.platform import (
@@ -28,12 +29,15 @@ from tests.e2e.baseline.fixtures.platform import (
     resource_manager,
     user_ops,
 )
-from tests.e2e.baseline.agents import WITH_ADAPTERS_MARKER, PER_ADAPTER_MARKER
+from tests.e2e.baseline.agents import (
+    LANE_MARKER,
+    WITH_ADAPTERS_MARKER,
+    PER_ADAPTER_MARKER,
+)
 from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
 from tests.e2e.baseline.lane_selection import (
-    MIXED_LANE_MARKER,
     apply_lane_skips,
-    assert_no_unschedulable_mixed_lane,
+    assert_every_item_is_schedulable,
 )
 from tests.e2e.baseline.requires import MARKER, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
@@ -50,6 +54,7 @@ __all__ = [
     "cell",
     "judge",
     "orphan_sweep",
+    "peer",
     "reply_capture",
     "resource_manager",
     "user_ops",
@@ -70,12 +75,12 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
         f"{PER_ADAPTER_MARKER}(build): set by @per_adapter to steer per-cell construction "
-        "(prompt/features/tools); resolved by the cell/agent fixtures.",
+        "(prompt/features/tools/peer); resolved by the cell/agent/peer fixtures.",
     )
     config.addinivalue_line(
         "markers",
-        f"{MIXED_LANE_MARKER}: opt a @with_adapters test out of the mixed-lane guard; "
-        "declares it deliberately local-only (unschedulable under CI lane scoping).",
+        f"{LANE_MARKER}(lane): set by @lane(Lane.X) to assign a cross-lane test to one "
+        "explicit CI lane, overriding derived home-lane scheduling. See lane_selection.",
     )
 
 
@@ -103,12 +108,13 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Guard unschedulable mixed-lane tests, then scope to ``BAND_E2E_LANE``.
+    """Guard wiring + schedulability, then scope to ``BAND_E2E_LANE``.
 
-    The guard runs in every collection (lane-scoped or not) so a structurally
-    unschedulable ``@with_adapters`` test fails before it ever reaches CI; lane
-    scoping then applies the ``BAND_E2E_LANE`` skips (see ``lane_selection``).
+    Both guards run in every collection (lane-scoped or not) so a mis-wired or
+    unschedulable test fails before it ever reaches CI; lane scoping then applies the
+    ``BAND_E2E_LANE`` skips (see ``lane_selection``). Order is load-bearing: guard
+    before skip, so an unschedulable test is a loud error rather than a silent skip.
     """
     assert_agent_fixtures_wired(items)
-    assert_no_unschedulable_mixed_lane(items)
+    assert_every_item_is_schedulable(items)
     apply_lane_skips(BaselineSettings().run.lane, items)

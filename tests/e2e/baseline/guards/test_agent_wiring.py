@@ -29,15 +29,21 @@ class _FakeItem:
         *,
         each: bool = False,
         group: bool = False,
+        peer_declared: bool = False,
         fixturenames: tuple[str, ...] = (),
     ) -> None:
         self.nodeid = nodeid
         self.fixturenames = fixturenames
         self._markers: dict[str, SimpleNamespace] = {}
-        if each:
-            self._markers[PER_ADAPTER_MARKER] = SimpleNamespace(
-                args=(SimpleNamespace(),)
+        # `peer_declared` implies @per_adapter; the payload carries a peer= only then, so
+        # the guard's `getattr(payload, "peer", None)` distinguishes declared from not.
+        if each or peer_declared:
+            payload = (
+                SimpleNamespace(peer="langgraph")
+                if peer_declared
+                else SimpleNamespace()
             )
+            self._markers[PER_ADAPTER_MARKER] = SimpleNamespace(args=(payload,))
         if group:
             self._markers[WITH_ADAPTERS_MARKER] = SimpleNamespace(
                 args=(SimpleNamespace(),)
@@ -64,9 +70,19 @@ def _reason(item: _FakeItem) -> str:
         _FakeItem(each=True, fixturenames=("cell", "adapter_id")),
         _FakeItem(group=True, fixturenames=("agent",)),
         _FakeItem(group=True, fixturenames=("agents",)),
+        _FakeItem(
+            peer_declared=True, fixturenames=("cell", "peer", "adapter_id")
+        ),  # cross-framework peer
         _FakeItem(fixturenames=("resource_manager",)),  # adapter-agnostic test
     ],
-    ids=["each+agent", "each+cell", "group+agent", "group+agents", "agnostic"],
+    ids=[
+        "each+agent",
+        "each+cell",
+        "group+agent",
+        "group+agents",
+        "each+cell+peer",
+        "agnostic",
+    ],
 )
 def test_valid_wiring_is_allowed(item: _FakeItem) -> None:
     assert_agent_fixtures_wired([item])  # no raise
@@ -103,6 +119,26 @@ def test_one_topology_per_test() -> None:
 
 def test_agent_requires_a_decorator() -> None:
     assert "no @per_adapter" in _reason(_FakeItem(fixturenames=("agent",)))
+
+
+def test_peer_requires_per_adapter() -> None:
+    assert "without @per_adapter(peer=...)" in _reason(
+        _FakeItem(fixturenames=("peer",))
+    )
+
+
+def test_peer_fixture_requires_peer_declaration() -> None:
+    # @per_adapter present but no peer= declared, yet the `peer` fixture is requested.
+    assert "declares no peer=" in _reason(
+        _FakeItem(each=True, fixturenames=("cell", "peer", "adapter_id"))
+    )
+
+
+def test_peer_declaration_requires_peer_fixture() -> None:
+    # peer= declared but the `peer` fixture is never requested — the peer would go unused.
+    assert "does not request the `peer` fixture" in _reason(
+        _FakeItem(peer_declared=True, fixturenames=("cell", "adapter_id"))
+    )
 
 
 def test_no_hand_rolled_matrix() -> None:

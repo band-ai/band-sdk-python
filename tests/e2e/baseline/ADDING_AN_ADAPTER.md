@@ -136,6 +136,13 @@ own venv, server, or isolation — e.g. provider rate-limit flakiness), don't in
 it here — follow **"Adding a CI lane"** in `README.md`: add the `Lane` + `Extra` and
 point a `Dep` at it in `requirements.py`, then `requires=[that Dep]` here.
 
+A *test's* lane, by contrast, is derived from **all** the frameworks it touches — a
+matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set. A
+test whose frameworks all share one home lane runs there; one spanning several fails
+collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)`. So
+a new adapter joins the matrix in its own lane automatically, and only a deliberate
+cross-framework test has to think about lanes at all.
+
 Verify where your adapter landed (the registry is the source of truth):
 
 ```bash

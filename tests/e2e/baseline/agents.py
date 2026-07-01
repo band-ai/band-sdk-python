@@ -39,26 +39,43 @@ from _pytest.mark.structures import ParameterSet
 from band.core.types import AdapterFeatures, Capability
 
 from tests.e2e.baseline.requires import requires
-from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
+from tests.e2e.baseline.toolkit.adapters import Adapter, Lane, spec_for, specs
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 __all__ = [
     "WITH_ADAPTERS_MARKER",
     "PER_ADAPTER_MARKER",
+    "LANE_MARKER",
     "Adapter",
+    "Lane",
     "WithAdapters",
     "PerAdapter",
     "adapter_params",
     "per_adapter",
     "with_adapters",
+    "lane",
 ]
 
 
 # Marker names the conftest fixtures resolve. Registered in conftest.
 WITH_ADAPTERS_MARKER = "with_adapters"  # read by the agent / agents fixtures
 PER_ADAPTER_MARKER = (
-    "per_adapter"  # read by the cell / agent fixtures (per-cell steering)
+    "per_adapter"  # read by the cell / agent / peer fixtures (per-cell steering)
 )
+# An explicit CI-lane assignment (carries a Lane), read by the schedulability guard
+# and lane scoping in lane_selection. The override for a multi-framework test whose
+# frameworks would otherwise span more than one home lane (unschedulable by default).
+LANE_MARKER = "assigned_lane"
+
+
+def lane(lane_id: Lane) -> pytest.MarkDecorator:
+    """Assign a test to an explicit CI lane, overriding derived home-lane scheduling.
+
+    Only needed for a multi-framework test whose frameworks live in different home
+    lanes (which is otherwise a collection error): it names the one lane — whose
+    ``uv`` extra must host all the frameworks — the test runs in.
+    """
+    return getattr(pytest.mark, LANE_MARKER)(lane_id)
 
 
 @dataclass(frozen=True)
@@ -78,6 +95,7 @@ class PerAdapter:
     prompt: str | None
     features: AdapterFeatures | None
     tools: list[ToolSpec] | None
+    peer: Adapter | None = None
 
 
 def with_adapters(
@@ -115,25 +133,36 @@ def adapter_params(
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
+    lane: Lane | None = None,
+    peer: Adapter | None = None,
 ) -> list[ParameterSet]:
     """One ``pytest.param`` per registered adapter (narrowed by the filters), each gated
     by its requirements.
 
     No args = the full matrix; ``include`` / ``exclude`` slice by id; ``supports`` /
     ``without`` by capability (complementary); ``runs_tool_loop=True`` keeps the
-    custom-tool-capable adapters. Each param carries its adapter's ``@requires`` marks;
-    the conftest's ``pytest_runtest_setup`` gate resolves them when that cell runs (a
-    missing requirement fails the cell). This is the parameter source ``@per_adapter``
-    feeds to the ``adapter_id`` fixture.
+    custom-tool-capable adapters; ``lane`` keeps only a single home lane's adapters.
+    Each param carries **one** ``@requires`` mark — the deduped union of the cell's own
+    requirements and, when a ``peer`` framework rides along, the peer's. It must be a
+    *single* mark: the gate reads it with ``get_closest_marker`` (first mark only), so a
+    second stacked mark would be silently dropped. The conftest's ``pytest_runtest_setup``
+    gate resolves it when that cell runs (a missing requirement fails the cell). This is
+    the parameter source ``@per_adapter`` feeds to the ``adapter_id`` fixture.
     """
+    peer_deps = spec_for(peer).requires if peer is not None else ()
     return [
-        pytest.param(spec.id, marks=requires(*spec.requires), id=str(spec.id))
+        pytest.param(
+            spec.id,
+            marks=requires(*dict.fromkeys((*spec.requires, *peer_deps))),
+            id=str(spec.id),
+        )
         for spec in specs(
             include=include,
             exclude=exclude,
             supports=supports,
             without=without,
             runs_tool_loop=runs_tool_loop,
+            lane=lane,
         )
     ]
 
@@ -144,6 +173,8 @@ def per_adapter(
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
+    lane: Lane | None = None,
+    peer: Adapter | None = None,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
     tools: list[ToolSpec] | None = None,
@@ -151,25 +182,34 @@ def per_adapter(
     """Fan a test across the adapter matrix — one invocation per selected adapter.
 
     Positional ``*adapters`` is the include set; ``exclude`` / ``supports`` / ``without`` /
-    ``runs_tool_loop`` narrow it (all compose). Bare ``@per_adapter()`` is the full
-    matrix, explicitly. Steer per-cell construction with ``prompt`` / ``features`` /
-    ``tools`` — the ``cell`` / ``agent`` fixtures carry these as defaults::
+    ``runs_tool_loop`` / ``lane`` narrow it (all compose; ``lane`` keeps one home lane's
+    adapters). Bare ``@per_adapter()`` is the full matrix, explicitly. Steer per-cell
+    construction with ``prompt`` / ``features`` / ``tools`` — the ``cell`` / ``agent`` /
+    ``peer`` fixtures carry these as defaults::
 
         @per_adapter()                                   # full matrix
         @per_adapter(exclude={Adapter.CREWAI})           # all but crewai
         @per_adapter(Adapter.ANTHROPIC, Adapter.AGNO)    # only these
         @per_adapter(supports={Capability.MEMORY})       # by capability
+        @per_adapter(lane=Lane.CORE, peer=Adapter.LANGGRAPH)  # each cell + a foreign peer
 
-    Request ``agent`` (managed, running) or ``cell`` (drive it yourself); the per-cell
-    ``@requires`` gate rides on the parameters.
+    ``peer`` names a second, different-framework agent the test drives itself (request
+    the ``peer`` fixture for its cell); its requirements fold into each cell's single
+    ``@requires`` mark so the peer's key is gated too. Request ``agent`` (managed,
+    running) or ``cell`` (drive it yourself); the per-cell ``@requires`` gate rides on
+    the parameters.
     """
     include = frozenset(adapters) or None
+    if peer is not None and peer not in {s.id for s in specs(include_pending=True)}:
+        raise ValueError(f"@per_adapter(peer={peer!r}) is not a registered adapter")
     params = adapter_params(
         include=include,
         exclude=exclude,
         supports=supports,
         without=without,
         runs_tool_loop=runs_tool_loop,
+        lane=lane,
+        peer=peer,
     )
     # Fail loud rather than let an empty parametrize skip silently (a mis-specified
     # filter or registry drift). A bare @per_adapter() is never empty.
@@ -178,9 +218,10 @@ def per_adapter(
             "@per_adapter selected no adapters "
             f"(include={sorted(map(str, include)) if include else None}, "
             f"exclude={exclude}, supports={supports}, without={without}, "
-            f"runs_tool_loop={runs_tool_loop}); widen the filter or fix the registry drift"
+            f"runs_tool_loop={runs_tool_loop}, lane={lane}); widen the filter or fix "
+            "the registry drift"
         )
-    build = PerAdapter(prompt=prompt, features=features, tools=tools)
+    build = PerAdapter(prompt=prompt, features=features, tools=tools, peer=peer)
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
         fn = pytest.mark.parametrize("adapter_id", params, indirect=True)(fn)

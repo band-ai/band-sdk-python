@@ -35,7 +35,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
 )
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
-__all__ = ["adapter_id", "agent", "agents", "cell"]
+__all__ = ["adapter_id", "agent", "agents", "cell", "peer"]
 
 
 # The demo adapters reply tersely and in-chat unless a test steers otherwise; this is the
@@ -123,6 +123,44 @@ def cell(
     each: PerAdapter = marker.args[0]
     return _make_cell(
         adapter_id,
+        baseline_settings,
+        resource_manager,
+        prompt=each.prompt,
+        features=each.features,
+        tools=each.tools,
+    )
+
+
+@pytest.fixture
+def peer(
+    request: pytest.FixtureRequest,
+    adapter_id: str,
+    baseline_settings: BaselineSettings,
+    resource_manager: ResourceManager,
+) -> AdapterCell:
+    """The foreign-framework peer ``AdapterCell`` declared by ``@per_adapter(peer=...)``.
+
+    A second, *different-framework* agent the test drives itself (provision + run_as),
+    for cross-framework scenarios (e.g. A rehydrates a message B authored). Built like
+    ``cell`` — inheriting the decorator's ``prompt`` / ``features`` / ``tools`` — but for
+    the declared peer adapter. Fails loud if the peer equals the current cell (that would
+    be same-framework, not cross): exclude the peer from the fan, or pick another.
+    """
+    marker = request.node.get_closest_marker(PER_ADAPTER_MARKER)
+    if marker is None:
+        raise pytest.UsageError("the `peer` fixture requires @per_adapter(peer=...).")
+    each: PerAdapter = marker.args[0]
+    if each.peer is None:
+        raise pytest.UsageError(
+            "the `peer` fixture requires @per_adapter(peer=...); no peer= was declared."
+        )
+    if str(each.peer) == adapter_id:
+        raise pytest.UsageError(
+            f"peer {str(each.peer)!r} equals the cell adapter {adapter_id!r} — a peer must "
+            "be a different framework; exclude it from the fan or pick another."
+        )
+    return _make_cell(
+        each.peer,
         baseline_settings,
         resource_manager,
         prompt=each.prompt,

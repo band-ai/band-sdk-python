@@ -404,6 +404,7 @@ def specs(
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
+    lane: Lane | None = None,
     include_pending: bool = False,
 ) -> list[AdapterSpec]:
     """The registered specs, optionally narrowed.
@@ -414,9 +415,10 @@ def specs(
     *none* of them (the complement, e.g. ``without={Capability.MEMORY}`` for the
     non-memory adapters). ``supports`` and ``without`` are disjoint complementary
     filters. ``runs_tool_loop=True`` keeps only the custom-tool-capable adapters
-    (``False`` the complement); see ``AdapterSpec.runs_tool_loop``. ``e2e_pending``
-    adapters are excluded unless ``include_pending`` (they define a CI lane but run
-    no cells). Stable id order.
+    (``False`` the complement); see ``AdapterSpec.runs_tool_loop``. ``lane`` keeps
+    only adapters whose derived home lane is ``lane`` (see ``adapter_lane``).
+    ``e2e_pending`` adapters are excluded unless ``include_pending`` (they define a
+    CI lane but run no cells). Stable id order.
     """
     wanted = frozenset(supports or ())
     unwanted = frozenset(without or ())
@@ -429,6 +431,7 @@ def specs(
         and wanted.issubset(spec.supports)
         and spec.supports.isdisjoint(unwanted)
         and (runs_tool_loop is None or spec.runs_tool_loop == runs_tool_loop)
+        and (lane is None or adapter_lane(spec) == lane)
     ]
     return chosen
 
