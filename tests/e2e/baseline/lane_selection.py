@@ -78,59 +78,63 @@ def _home_lanes(item: pytest.Item, lane_of: dict[str, str]) -> frozenset[str]:
     return frozenset(lane_of[f] for f in item_frameworks(item) if f in lane_of)
 
 
-def apply_lane_skips(lane: str, items: list[pytest.Item]) -> None:
-    """Scope the run to ``lane`` (a CI lane id, from ``settings.run.lane``).
-
-    One derived rule. An explicit ``@lane(L)`` runs iff ``L`` is active. Otherwise a
-    test whose frameworks share one home lane runs there and is **skip-with-reason**'d
-    in every other lane (a single-adapter cell behaves exactly as before —
-    ``ci_lanes`` groups by ``adapter_lane``, so its home lane is its adapter's lane).
-    Adapter-agnostic tests always run. A test spanning more than one home lane with no
-    override is defensively skipped here, but ``assert_every_item_is_schedulable`` has
-    already failed collection for it. An empty ``lane`` leaves collection untouched
-    (full matrix, fail-loud) — the correct local default.
-    """
-    if not lane:
-        return
-    lanes = ci_lanes()
+def _require_known_lane(lane: str, lanes: list[CILane]) -> None:
+    """Raise ``UsageError`` unless ``lane`` is a CI lane the registry emits."""
     known = {str(cl.id) for cl in lanes}
     if lane not in known:
         raise pytest.UsageError(
             f"BAND_E2E_LANE={lane!r} is not a known CI lane; registry lanes are "
             f"{sorted(known)}"
         )
+
+
+def _lane_skip_reason(
+    item: pytest.Item, lane: str, lane_of: dict[str, str]
+) -> str | None:
+    """Why ``item`` is skipped in ``lane`` (a one-line reason), or ``None`` to run it.
+
+    The single scheduling rule as a pure decision (no side effects), most-specific first:
+
+    * an explicit ``@lane(L)`` runs iff ``L`` is active;
+    * an adapter-agnostic test (no frameworks) runs in every lane;
+    * a test whose frameworks share one home lane runs there — single-adapter cells
+      included, since ``ci_lanes`` groups by ``adapter_lane``;
+    * otherwise it spans >1 home lane with no override — unschedulable, so it is skipped
+      here too (``assert_every_item_is_schedulable`` has already failed collection for
+      it; this just never lets it run in an arbitrary lane).
+    """
+    override = _override_lane(item)
+    if override is not None:
+        if override == lane:
+            return None
+        return f"assigned to lane {override!r} (@lane), not active lane {lane!r}"
+    homes = _home_lanes(item, lane_of)
+    if not homes:
+        return None
+    if len(homes) == 1:
+        (home,) = homes
+        if home == lane:
+            return None
+        return f"runs in lane {home!r}, not active lane {lane!r}"
+    return f"spans lanes {sorted(homes)} with no @lane override (unschedulable)"
+
+
+def apply_lane_skips(lane: str, items: list[pytest.Item]) -> None:
+    """Scope the run to ``lane`` by skip-marking every item ``_lane_skip_reason`` rejects.
+
+    Thin orchestrator: validate the active lane, then map the pure per-item decision onto
+    a skip marker. An empty ``lane`` leaves collection untouched (full matrix, fail-loud)
+    — the correct local default.
+    """
+    if not lane:
+        return
+    lanes = ci_lanes()
+    _require_known_lane(lane, lanes)
     lane_of = _lane_of(lanes)
     for item in items:
-        override = _override_lane(item)
-        if override is not None:
-            if override != lane:
-                item.add_marker(
-                    pytest.mark.skip(
-                        reason=f"assigned to lane {override!r} (@lane), not active "
-                        f"lane {lane!r}"
-                    )
-                )
-            continue
-        homes = _home_lanes(item, lane_of)
-        if not homes:
-            continue  # adapter-agnostic — runs in every lane
-        if len(homes) == 1:
-            (home,) = tuple(homes)
-            if home != lane:
-                item.add_marker(
-                    pytest.mark.skip(
-                        reason=f"runs in lane {home!r}, not active lane {lane!r}"
-                    )
-                )
-            continue
-        # Spans >1 home lane with no @lane override: unschedulable (the guard below
-        # fails collection for this). Never silently run it in an arbitrary lane.
-        item.add_marker(
-            pytest.mark.skip(
-                reason=f"spans lanes {sorted(homes)} with no @lane override "
-                "(unschedulable)"
-            )
-        )
+        reason = _lane_skip_reason(item, lane, lane_of)
+        if reason is not None:
+            item.add_marker(pytest.mark.skip(reason=reason))
 
 
 def assert_every_item_is_schedulable(items: list[pytest.Item]) -> None:
