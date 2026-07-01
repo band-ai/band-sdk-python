@@ -35,11 +35,12 @@ from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
 )
+from band.runtime.custom_tools import is_marked_terminal
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
-    READ_ONLY_TOOL_NAMES,
     get_tool_description,
+    is_terminal_success,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,31 +58,6 @@ def _is_output_validation_exhausted(exc: UnexpectedModelBehavior) -> bool:
     response", which propagates even after tool work.
     """
     return "output validation" in str(exc).lower()
-
-
-def _is_productive_tool_result(tool_name: str | None, content: Any) -> bool:
-    """Whether a finished tool call counts as terminal productive work.
-
-    Used to decide if pydantic-ai's exhausted-output-validation error is benign
-    (the agent already did its work) or a genuine no-response failure. Two kinds
-    of results do *not* count:
-
-    * Read-only tools (lookups/listings) — fetching state is not a terminal
-      action, so an empty final answer after only a lookup is a real failure.
-    * Failed band platform tools — their wrappers catch exceptions and return a
-      string starting with ``"Error "`` (the model "saw" a result, but no work
-      happened). Detected only for known band tools so the convention isn't
-      assumed of custom user tools, which are treated as productive when run.
-    """
-    if tool_name in READ_ONLY_TOOL_NAMES:
-        return False
-    if (
-        tool_name in ALL_TOOL_NAMES
-        and isinstance(content, str)
-        and content.startswith("Error ")
-    ):
-        return False
-    return True
 
 
 # A response made up only of these (or with no parts at all) serializes to
@@ -207,6 +183,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self._message_history: dict[str, list] = {}
         # Custom tools (PydanticAI-compatible functions)
         self._custom_tools: list[Callable[..., Any]] = additional_tools or []
+        # Custom tools that opt in as terminal actions (band_terminal=True on the
+        # function). Only these let an empty final response be treated as benign;
+        # an undeclared custom tool does not (fail-loud — see is_terminal_success).
+        self._custom_terminal_names: frozenset[str] = frozenset(
+            fn.__name__ for fn in self._custom_tools if is_marked_terminal(fn)
+        )
 
     # --- Adapted from BandPydanticAgent._on_started ---
     async def on_started(self, agent_name: str, agent_description: str) -> None:
@@ -617,8 +599,21 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         except Exception as e:
                             logger.warning("Failed to send tool_call event: %s", e)
                 elif isinstance(event, FunctionToolResultEvent):
-                    if _is_productive_tool_result(
-                        event.result.tool_name, event.result.content
+                    # A band tool wrapper returns an "Error ..." string on failure;
+                    # custom tools have no such convention, so only band tools are
+                    # checked for it. Custom tools count as terminal only if they
+                    # opted in (band_terminal); undeclared customs fail loud.
+                    result_name = event.result.tool_name
+                    result_content = event.result.content
+                    succeeded = not (
+                        result_name in ALL_TOOL_NAMES
+                        and isinstance(result_content, str)
+                        and result_content.startswith("Error ")
+                    )
+                    if is_terminal_success(
+                        result_name,
+                        succeeded=succeeded,
+                        custom_terminal=result_name in self._custom_terminal_names,
                     ):
                         tool_executed = True
                     if Emit.EXECUTION in self.features.emit:
@@ -667,6 +662,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     "non-fatal: %s",
                     room_id,
                     e,
+                )
+                # No AgentRunResultEvent fired, so this turn's messages were never
+                # captured into _message_history — and history reloads from the
+                # platform only on bootstrap. Preserve at least this turn's user
+                # message (the reply already went out via a tool) so the next
+                # same-session turn isn't amnesiac. Mirrors the crewai adapter,
+                # which records the user turn before kickoff.
+                self._message_history[room_id].append(
+                    ModelRequest(parts=[UserPromptPart(content=user_message)])
                 )
                 return
             raise

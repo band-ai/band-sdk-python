@@ -47,6 +47,18 @@ def custom_tool_to_mcp_schema(
     return mcp_schema
 
 
+def is_marked_terminal(tool: Any) -> bool:
+    """Whether a custom tool opts in as a *terminal* action.
+
+    A custom tool declares itself terminal by setting ``band_terminal = True`` on
+    its marker object — the tool's input model (crewai adapter) or the tool
+    function itself (pydantic-ai adapter). Terminal custom tools let an empty final
+    model response be treated as benign (the tool completed the turn); undeclared
+    custom tools do not (fail-loud — see ``runtime.tools.is_terminal_success``).
+    """
+    return bool(getattr(tool, "band_terminal", False))
+
+
 def get_custom_tool_name(input_model: type[BaseModel]) -> str:
     """
     Derive tool name from input model class name.

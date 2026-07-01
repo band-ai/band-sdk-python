@@ -1021,6 +1021,39 @@ HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 # Derived from TOOL_MODELS — single source of truth
 ALL_TOOL_NAMES: frozenset[str] = frozenset(TOOL_MODELS.keys())
 
+
+def is_terminal_success(
+    tool_name: str | None,
+    *,
+    succeeded: bool,
+    custom_terminal: bool = False,
+) -> bool:
+    """Whether a finished tool call counts as terminal productive work.
+
+    Single source of truth shared by the crewai / pydantic-ai adapters to decide
+    whether an empty final model response is *benign* (the agent already did its
+    work this turn) or a genuine no-response failure. Terminal work is:
+
+    * a Band tool that is not read-only and did not fail, or
+    * a custom tool the caller declares terminal (``custom_terminal=True``).
+
+    Read-only Band tools (lookups/listings, ``READ_ONLY_TOOL_NAMES``) never count —
+    fetching state is not a terminal action. Custom tools are **not** terminal by
+    default: the SDK cannot know whether a bare custom tool is a lookup or a
+    side-effecting action, so it fails loud — an empty final after only an
+    undeclared custom tool surfaces as a no-response error rather than being
+    silently swallowed. A custom tool that genuinely completes the turn opts in
+    (see ``runtime.custom_tools.is_marked_terminal``).
+    """
+    if not succeeded:
+        return False
+    if tool_name in READ_ONLY_TOOL_NAMES:
+        return False
+    if tool_name in ALL_TOOL_NAMES:
+        return True
+    return custom_terminal
+
+
 # Fail fast on typos — catch at import time, not in a test run.
 # Use explicit checks instead of ``assert`` so they are not stripped by -O.
 if MEMORY_TOOL_NAMES - ALL_TOOL_NAMES:

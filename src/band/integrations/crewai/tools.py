@@ -64,11 +64,12 @@ from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
     get_custom_tool_name,
+    is_marked_terminal,
 )
 from band.runtime.tools import (
-    READ_ONLY_TOOL_NAMES,
     append_available_mention_handles,
     get_tool_description,
+    is_terminal_success,
 )
 
 logger = logging.getLogger(__name__)
@@ -249,6 +250,7 @@ def _execute_tool(
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
+    custom_terminal: bool = False,
 ) -> str:
     """Execute a tool with common error handling and reporting.
 
@@ -289,15 +291,20 @@ def _execute_tool(
     # CrewAI's "empty final answer" ValueError as benign (the work already
     # happened) instead of a genuine no-response failure. ``replied`` is the
     # stricter signal (a user-facing reply went out via band_send_message);
-    # ``tool_executed`` covers any successful *terminal* tool, so a tool-only turn
-    # (e.g. a memory store the user told the agent not to follow with a message)
-    # is also benign when the final answer comes back empty. Read-only tools
-    # (lookups/listings) are excluded: fetching state is not a terminal action,
-    # so an empty answer after only a lookup is a genuine no-response failure.
-    if context.reply_tracker is not None and tool_name not in READ_ONLY_TOOL_NAMES:
+    # ``tool_executed`` covers any successful *terminal* tool — a non-read-only
+    # band tool, or a custom tool that opted in via ``band_terminal`` — so a
+    # tool-only turn (e.g. a memory store the user told the agent not to follow
+    # with a message) is also benign. Read-only band tools and undeclared custom
+    # tools do NOT count: an empty answer after only those is a genuine
+    # no-response failure (fail-loud). ``is_terminal_success`` is the single
+    # source of truth, shared with the pydantic-ai adapter.
+    if context.reply_tracker is not None:
         try:
             if json.loads(result).get("status") == "success":
-                context.reply_tracker.tool_executed = True
+                if is_terminal_success(
+                    tool_name, succeeded=True, custom_terminal=custom_terminal
+                ):
+                    context.reply_tracker.tool_executed = True
                 if tool_name == _SEND_MESSAGE_TOOL:
                     context.reply_tracker.replied = True
         except (json.JSONDecodeError, AttributeError, TypeError):
@@ -994,13 +1001,19 @@ def _make_custom_tools(
 
     crewai_tools: list[BaseTool] = []
 
-    def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
+    def _exec(
+        tool_name: str,
+        factory: Callable[[AgentToolsProtocol], Any],
+        *,
+        custom_terminal: bool = False,
+    ) -> str:
         return _execute_tool(
             tool_name=tool_name,
             coro_factory=factory,
             get_context=get_context,
             reporter=reporter,
             fallback_loop=fallback_loop,
+            custom_terminal=custom_terminal,
         )
 
     for input_model, func in custom_tools:
@@ -1015,6 +1028,9 @@ def _make_custom_tools(
         ) -> BaseTool:
             _tool_name = tool_name_param
             _tool_desc = tool_desc_param
+            # Only a custom tool that opts in (band_terminal=True) lets an empty
+            # final answer be treated as benign; undeclared customs fail loud.
+            _terminal = is_marked_terminal(handler)
 
             class CustomCrewAITool(BaseTool):
                 name: str = _tool_name  # type: ignore[misc]
@@ -1045,7 +1061,7 @@ def _make_custom_tools(
                             )
                             return json.dumps({"status": "error", "message": error_msg})
 
-                    return _exec(_tool_name, execute)
+                    return _exec(_tool_name, execute, custom_terminal=_terminal)
 
             return CustomCrewAITool()
 
