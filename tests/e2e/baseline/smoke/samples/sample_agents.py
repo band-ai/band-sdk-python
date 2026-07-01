@@ -52,6 +52,28 @@ TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
 MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
 
 
+# Reply-oriented driving glue shared by the context-recall and rehydration
+# scenarios: a prompt that answers in chat (acknowledge on "remember", state the
+# value on "recall"), plus the two user messages that state and later ask for a
+# note. Kept here (not inline in one test) so every recall/rehydration test drives
+# the model the same way — a fair, single-source comparison across the matrix.
+# Wording note: a neutral "note", not a "secret code" — models refuse to echo a
+# credential-shaped value, an unrelated false failure.
+REPLY_PROMPT = (
+    "You are a helpful assistant in a chat room. Reply directly with one short "
+    "sentence. When asked to remember something, acknowledge it; when later asked "
+    "what it was, state it exactly."
+)
+REMEMBER = "Please remember this note: {note}. Confirm you remember it."
+RECALL = "What was the note I asked you to remember? Reply with just it."
+
+
+def liveness_probe(marker: str) -> str:
+    """User message forcing a one-word reply that echoes ``marker`` verbatim — the
+    tolerant liveness check after churn (a flood, a peer's reboot)."""
+    return f"Reply with just the word {marker} and nothing else."
+
+
 def unique_marker(prefix: str) -> str:
     """A high-entropy token to assert verbatim in event/memory content."""
     return f"{prefix}-{uuid.uuid4().hex[:8]}"

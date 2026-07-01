@@ -522,6 +522,12 @@ def _build_langgraph(
             model=s.llm_models.openai_model,
             api_key=s.llm_credentials.openai_api_key or None,
         ),
+        # Deliberately an in-memory checkpointer: it is rebuilt fresh on every
+        # cell.run_as, so no LangGraph state survives a reboot in-process. That is
+        # what keeps the rehydration scenarios honest for this cell — recall after a
+        # reboot can only come from platform /context, not the checkpointer. Swapping
+        # in a persistent checkpointer keyed by room_id would silently move langgraph
+        # into the codex/opencode "backend session resume" class and invalidate that.
         checkpointer=MemorySaver(),
         custom_section=prompt or "",
         additional_tools=_custom_tool_defs(tools),

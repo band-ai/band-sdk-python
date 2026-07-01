@@ -20,7 +20,11 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.agents import per_adapter
-from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
+from tests.e2e.baseline.smoke.samples.sample_agents import (
+    RECALL,
+    REMEMBER,
+    unique_marker,
+)
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -56,7 +60,7 @@ async def test_rooms_keep_isolated_context(
     async with reply_capture(room_a) as cap_a:
         mid = await user_ops.send_message(
             room_a,
-            f"Please remember this note: {note_a}. Confirm you remember it.",
+            REMEMBER.format(note=note_a),
             mention_id=agent.id,
             mention_name=agent.name,
         )
@@ -64,7 +68,7 @@ async def test_rooms_keep_isolated_context(
     async with reply_capture(room_b) as cap_b:
         mid = await user_ops.send_message(
             room_b,
-            f"Please remember this note: {note_b}. Confirm you remember it.",
+            REMEMBER.format(note=note_b),
             mention_id=agent.id,
             mention_name=agent.name,
         )
@@ -75,7 +79,7 @@ async def test_rooms_keep_isolated_context(
     async with reply_capture(room_a) as cap_a:
         mid = await user_ops.send_message(
             room_a,
-            "What was the note? Reply with just it.",
+            RECALL,
             mention_id=agent.id,
             mention_name=agent.name,
         )
@@ -86,7 +90,7 @@ async def test_rooms_keep_isolated_context(
     async with reply_capture(room_b) as cap_b:
         mid = await user_ops.send_message(
             room_b,
-            "What was the note? Reply with just it.",
+            RECALL,
             mention_id=agent.id,
             mention_name=agent.name,
         )

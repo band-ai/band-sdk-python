@@ -25,7 +25,12 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.agents import per_adapter
-from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
+from tests.e2e.baseline.smoke.samples.sample_agents import (
+    RECALL,
+    REMEMBER,
+    REPLY_PROMPT,
+    unique_marker,
+)
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
@@ -33,17 +38,6 @@ from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-
-# A reply-oriented prompt shared by both variants so the comparison is fair: the
-# agent answers in chat, acknowledging when told to remember and stating the value
-# when later asked. (The default matrix prompt is tool-oriented.)
-REPLY_PROMPT = (
-    "You are a helpful assistant in a chat room. Reply directly with one short "
-    "sentence. When asked to remember something, acknowledge it; when later asked "
-    "what it was, state it exactly."
-)
-REMEMBER = "Please remember this note: {note}. Confirm you remember it."
-RECALL = "What was the note I asked you to remember? Reply with just it."
 
 
 @per_adapter(prompt=REPLY_PROMPT)

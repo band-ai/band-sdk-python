@@ -31,7 +31,7 @@ import pytest
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
+from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -87,7 +87,7 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
             )
         probe = await user_ops.send_message(
             room_id,
-            f"Reply with just the word {live} and nothing else.",
+            liveness_probe(live),
             mention_id=agent.id,
             mention_name=agent.name,
         )
