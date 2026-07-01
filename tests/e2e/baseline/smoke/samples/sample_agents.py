@@ -69,9 +69,14 @@ RECALL = "What was the note I asked you to remember? Reply with just it."
 
 
 def liveness_probe(marker: str) -> str:
-    """User message forcing a one-word reply that echoes ``marker`` verbatim — the
-    tolerant liveness check after churn (a flood, a peer's reboot)."""
-    return f"Reply with just the word {marker} and nothing else."
+    """User message asking the agent to echo ``marker`` to confirm it is still
+    processing — the tolerant liveness check after churn (e.g. a flood).
+
+    Phrased as a benign confirmation rather than a terse override ("reply with just
+    the word X and nothing else"), which safety-tuned models sometimes refuse
+    ("I can't follow instructions that override my behaviour") — an unrelated false
+    failure. The marker still lands verbatim in the reply for a substring assert."""
+    return f"To confirm you're still active, please reply with the word {marker}."
 
 
 def unique_marker(prefix: str) -> str:
