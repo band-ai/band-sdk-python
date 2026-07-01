@@ -16,7 +16,7 @@ from tests.e2e.baseline.fixtures.agents import (
     adapter_id,
     agent,
     agents,
-    matrix_agent,
+    cell,
 )
 from tests.e2e.baseline.fixtures.capture import judge, reply_capture
 from tests.e2e.baseline.fixtures.platform import (
@@ -28,7 +28,8 @@ from tests.e2e.baseline.fixtures.platform import (
     resource_manager,
     user_ops,
 )
-from tests.e2e.baseline.agents import AGENTS_MARKER, MATRIX_MARKER
+from tests.e2e.baseline.agents import WITH_ADAPTERS_MARKER, PER_ADAPTER_MARKER
+from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
 from tests.e2e.baseline.lane_selection import (
     MIXED_LANE_MARKER,
     apply_lane_skips,
@@ -46,8 +47,8 @@ __all__ = [
     "baseline_settings",
     "baseline_user_client",
     "baseline_ws",
+    "cell",
     "judge",
-    "matrix_agent",
     "orphan_sweep",
     "reply_capture",
     "resource_manager",
@@ -63,17 +64,17 @@ def pytest_configure(config: pytest.Config) -> None:
     )
     config.addinivalue_line(
         "markers",
-        f"{AGENTS_MARKER}(request): set by @with_agents to declare the adapters a "
+        f"{WITH_ADAPTERS_MARKER}(request): set by @with_adapters to declare the adapters a "
         "test runs; resolved by the agent/agents fixtures. See agents.py.",
     )
     config.addinivalue_line(
         "markers",
-        f"{MATRIX_MARKER}(build): set by @across_adapters to steer per-cell "
-        "construction (prompt/features); resolved by matrix_agent.",
+        f"{PER_ADAPTER_MARKER}(build): set by @per_adapter to steer per-cell construction "
+        "(prompt/features/tools); resolved by the cell/agent fixtures.",
     )
     config.addinivalue_line(
         "markers",
-        f"{MIXED_LANE_MARKER}: opt a @with_agents test out of the mixed-lane guard; "
+        f"{MIXED_LANE_MARKER}: opt a @with_adapters test out of the mixed-lane guard; "
         "declares it deliberately local-only (unschedulable under CI lane scoping).",
     )
 
@@ -105,8 +106,9 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Guard unschedulable mixed-lane tests, then scope to ``BAND_E2E_LANE``.
 
     The guard runs in every collection (lane-scoped or not) so a structurally
-    unschedulable ``@with_agents`` test fails before it ever reaches CI; lane
+    unschedulable ``@with_adapters`` test fails before it ever reaches CI; lane
     scoping then applies the ``BAND_E2E_LANE`` skips (see ``lane_selection``).
     """
+    assert_agent_fixtures_wired(items)
     assert_no_unschedulable_mixed_lane(items)
     apply_lane_skips(BaselineSettings().run.lane, items)

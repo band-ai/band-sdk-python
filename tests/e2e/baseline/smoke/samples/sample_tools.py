@@ -12,7 +12,7 @@ use (it passes no ``tool_choice`` to the model), so whether a given tool fires i
 the model's free choice. Making the tool the only way to answer is therefore the
 only way to assert "tool X fired" deterministically without a production change.
 
-Wire any of these into a test with ``@with_agents(Adapter.X, tools=[LOOKUP_TOOL],
+Wire any of these into a test with ``@with_adapters(Adapter.X, tools=[LOOKUP_TOOL],
 prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)`` (or ``build_adapter(...)`` for a
 bespoke per-agent build); ``EXECUTION_REPORTING`` is what surfaces tool calls.
 """
@@ -76,7 +76,7 @@ LOOKUP_AND_WEATHER_PROMPT = (
 )
 
 
-# Shape for @with_agents / build_adapter: surface each tool call as a ``tool_call``
-# event so ``capture.tool_calls`` can read it. Spread it: ``@with_agents(
+# Shape for @with_adapters / build_adapter: surface each tool call as a ``tool_call``
+# event so ``capture.tool_calls`` can read it. Spread it: ``@with_adapters(
 # Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)``.
 EXECUTION_REPORTING = {"features": AdapterFeatures(emit={Emit.EXECUTION})}

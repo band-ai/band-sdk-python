@@ -13,8 +13,8 @@ prior context reaches the model:
 
 Replaces the now-removed legacy ``tests/e2e/scenarios/test_context_persistence.py``
 (the rejoin case), on the baseline toolkit; the in-session case is the simpler
-sibling. The rejoin lifecycle uses ``running_agent`` — the run half factored out
-of ``running_provisioned_agent`` — entered twice against one provisioned identity.
+sibling. The rejoin lifecycle uses ``cell.run_as`` — a fresh adapter run under one
+provisioned identity — entered twice for the stop→rejoin.
 
 Wording note: a neutral "note", not a "secret code" (models refuse to echo a
 credential-shaped value — an unrelated false failure).
@@ -24,15 +24,13 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import across_adapters
-from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
-from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
+    AdapterCell,
     ProvisionedAgent,
     ResourceManager,
-    running_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -48,13 +46,12 @@ REMEMBER = "Please remember this note: {note}. Confirm you remember it."
 RECALL = "What was the note I asked you to remember? Reply with just it."
 
 
-@across_adapters(prompt=REPLY_PROMPT)
+@per_adapter(prompt=REPLY_PROMPT)
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(extra=120)  # two turns (state, then recall)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_within_session(
-    adapter_id: str,
-    matrix_agent: ProvisionedAgent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -62,74 +59,74 @@ async def test_recalls_within_session(
     """Turn 2 recalls a note stated in turn 1 (in-session history conversion)."""
     note = unique_marker("note")
     room_id = await resource_manager.provision_room(
-        title=f"e2e-recall-session-{adapter_id}", participants=[matrix_agent.id]
+        title=f"e2e-recall-session-{agent.adapter_id}", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
         mid = await user_ops.send_message(
             room_id,
             REMEMBER.format(note=note),
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, matrix_agent.id)
+        await capture.wait_for_processed(mid, agent.id)
 
         mark = capture.messages.snapshot()
         mid = await user_ops.send_message(
             room_id,
             RECALL,
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, matrix_agent.id)
+        await capture.wait_for_processed(mid, agent.id)
         capture.messages.since(mark).assert_contains_any([note])
 
 
+@per_adapter(prompt=REPLY_PROMPT)
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(extra=180)  # two agent startups (state, then rejoin)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_after_rejoin(
-    adapter_id: str,
+    cell: AdapterCell,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
-    baseline_settings: BaselineSettings,
 ) -> None:
     """A fresh adapter under the same identity recalls via platform rehydration.
 
-    Requests the parametrized ``adapter_id`` fixture (not ``matrix_agent``) so the
-    test owns the agent lifecycle: it provisions the identity once, then runs a
-    fresh adapter twice via ``running_agent`` — a stop→rejoin. The per-cell
-    ``@requires`` gate rides on the ``adapter_id`` params.
+    Requests ``cell`` so the test owns the agent lifecycle: it provisions the identity
+    once, then runs a fresh adapter twice via ``cell.run_as`` — a stop→rejoin. The
+    second run starts with no in-memory adapter state, so a correct recall can only
+    have come from the platform rehydrating the room on bootstrap. The prompt set on
+    ``@per_adapter`` is carried by the cell, so each run needs no per-call steering.
+    The per-cell ``@requires`` gate rides on the parametrization.
     """
     note = unique_marker("note")
-    agent = await resource_manager.provision_agent(f"rejoin-{adapter_id}")
+    identity = await cell.provision(label=f"rejoin-{cell.adapter_id}")
     room_id = await resource_manager.provision_room(
-        title=f"e2e-recall-rejoin-{adapter_id}", participants=[agent.id]
+        title=f"e2e-recall-rejoin-{cell.adapter_id}", participants=[identity.id]
     )
 
     # Run 1: state the note, then stop the agent (exit the run context).
-    adapter = build_adapter(adapter_id, baseline_settings, prompt=REPLY_PROMPT)
-    async with running_agent(agent, adapter, baseline_settings):
+    async with cell.run_as(identity):
         async with reply_capture(room_id) as capture:
             mid = await user_ops.send_message(
                 room_id,
                 REMEMBER.format(note=note),
-                mention_id=agent.id,
-                mention_name=agent.name,
+                mention_id=identity.id,
+                mention_name=identity.name,
             )
-            await capture.wait_for_processed(mid, agent.id)
+            await capture.wait_for_processed(mid, identity.id)
 
     # Run 2: a brand-new adapter under the SAME identity — no in-memory history,
     # so a correct recall proves the platform rehydrated the room on bootstrap.
-    adapter = build_adapter(adapter_id, baseline_settings, prompt=REPLY_PROMPT)
-    async with running_agent(agent, adapter, baseline_settings):
+    async with cell.run_as(identity):
         async with reply_capture(room_id) as capture:
             mark = capture.messages.snapshot()  # scope to the recall turn
             mid = await user_ops.send_message(
                 room_id,
                 RECALL,
-                mention_id=agent.id,
-                mention_name=agent.name,
+                mention_id=identity.id,
+                mention_name=identity.name,
             )
-            await capture.wait_for_processed(mid, agent.id)
+            await capture.wait_for_processed(mid, identity.id)
             capture.messages.since(mark).assert_contains_any([note])

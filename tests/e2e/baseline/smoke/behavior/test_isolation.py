@@ -10,9 +10,9 @@ barrier (``wait_for_processed``) on the id each ``send_message`` returns: once t
 id is processed, the turn\'s ``tool_call`` events are persisted and the read is
 race-free.
 
-The single-agent cases use ``@with_agents(Adapter.ANTHROPIC, tools=[...], ...)``.
+The single-agent cases use ``@with_adapters(Adapter.ANTHROPIC, tools=[...], ...)``.
 ``test_tool_calls_isolated_per_sender`` keeps a bespoke build: it needs two agents
-with *different* tools in one room, which a single uniform ``@with_agents`` set
+with *different* tools in one room, which a single uniform ``@with_adapters`` set
 cannot express.
 """
 
@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_tools import (
@@ -73,7 +73,7 @@ async def test_tool_calls_isolated_per_sender(
 ) -> None:
     """Two agents share a room; each sender sees only its own tool calls.
 
-    Bespoke (not ``@with_agents``): the two agents need *different* tools, which one
+    Bespoke (not ``@with_adapters``): the two agents need *different* tools, which one
     uniform decorator set cannot express — so build each explicitly via the registry
     (``build_adapter``) and run them with ``running_provisioned_agent``.
     """
@@ -129,7 +129,7 @@ async def test_tool_calls_isolated_per_sender(
     assert not b_calls.fired(LOOKUP), "weather agent's tool calls leaked a lookup call"
 
 
-@with_agents(
+@with_adapters(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
 @pytest.mark.asyncio(loop_scope="session")
@@ -186,7 +186,7 @@ async def test_tool_calls_isolated_per_room(
     )
 
 
-@with_agents(
+@with_adapters(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
 @pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it

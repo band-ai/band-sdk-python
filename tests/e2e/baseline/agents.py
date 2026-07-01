@@ -1,33 +1,31 @@
-"""``@with_agents`` — declare the running agents a test needs, by typed handle.
+"""``@per_adapter`` / ``@with_adapters`` — declare the agents a test runs, by typed handle.
 
-A test that wants one or more *specific* adapters (rather than the whole matrix)
-declares them on the test::
+Two topologies, one vocabulary:
 
-    @with_agents(Adapter.LANGGRAPH, Adapter.ANTHROPIC)
-    async def test_greet(agents, user_ops, reply_capture):
-        a, b = agents          # ProvisionedAgent each, already running
+* ``@per_adapter(...)`` **fans** a test across the adapter matrix (or a filtered subset):
+  one invocation per selected adapter. Request ``agent`` (a managed, running
+  ``ProvisionedAgent``) or ``cell`` (an ``AdapterCell`` you drive yourself, for
+  construction / reboot / rehydration lifecycles); the cell id is ``agent.adapter_id`` /
+  ``cell.adapter_id``::
 
-    @with_agents(Adapter.ANTHROPIC)
-    async def test_recall(agent, ...):
-        room = await rm.provision_room(participants=[agent.id])
+      @per_adapter(supports={Capability.MEMORY}, features=memory_features())
+      async def test_recall(agent): ...          # once per memory-capable adapter
 
-The decorator does two things so the test body stays clean:
+      @per_adapter()                             # the full matrix, explicitly
+      def test_build(cell):
+          assert isinstance(cell.build(), SimpleAdapter)
 
-* **auto-gates** — it reads each adapter's requirements from the registry and
-  applies ``@requires(...)`` for their union, so the test declares no provider
-  keys itself (the gate travels with the adapter choice);
-* **carries the choice** — it stamps a marker the ``agent`` / ``agents`` fixtures
-  (in conftest) read to build + provision + run + reap each agent.
+* ``@with_adapters(...)`` **groups** a fixed set of named adapters into one invocation
+  (one room): request ``agents`` (list) or ``agent`` (the single case)::
 
-For the *parametrized* case — run one test across the whole adapter matrix (or a
-subset) — use ``@across_adapters(...)``, the sibling that drives the
-``matrix_agent`` fixture::
+      @with_adapters(Adapter.LANGGRAPH, Adapter.ANTHROPIC)
+      async def test_collab(agents):
+          a, b = agents
 
-    @across_adapters(supports={Capability.MEMORY})
-    async def test_l2(adapter_id, matrix_agent, ...):
-        ...  # adapter_id: str, matrix_agent: ProvisionedAgent (request what you use)
-
-``Adapter`` is re-exported here so a test imports both from one place.
+Both auto-gate: each reads its adapters' requirements from the registry and applies
+``@requires(...)`` for the union, so a test declares no provider keys itself (the gate
+travels with the adapter choice). ``Adapter`` is re-exported here so a test imports both
+decorators and the handle from one place.
 """
 
 from __future__ import annotations
@@ -45,25 +43,27 @@ from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for, specs
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 __all__ = [
+    "WITH_ADAPTERS_MARKER",
+    "PER_ADAPTER_MARKER",
     "Adapter",
-    "AGENTS_MARKER",
-    "MATRIX_MARKER",
-    "AgentsRequest",
-    "MatrixBuild",
-    "across_adapters",
+    "WithAdapters",
+    "PerAdapter",
     "adapter_params",
-    "with_agents",
+    "per_adapter",
+    "with_adapters",
 ]
 
 
 # Marker names the conftest fixtures resolve. Registered in conftest.
-AGENTS_MARKER = "with_agents"  # read by agent/agents fixtures
-MATRIX_MARKER = "matrix_build"  # read by matrix_agent fixture
+WITH_ADAPTERS_MARKER = "with_adapters"  # read by the agent / agents fixtures
+PER_ADAPTER_MARKER = (
+    "per_adapter"  # read by the cell / agent fixtures (per-cell steering)
+)
 
 
 @dataclass(frozen=True)
-class AgentsRequest:
-    """What ``@with_agents`` asks the fixtures to provision (carried on the marker)."""
+class WithAdapters:
+    """What ``@with_adapters`` asks the fixtures to provision (carried on the marker)."""
 
     adapters: tuple[Adapter, ...]
     prompt: str | None
@@ -72,38 +72,38 @@ class AgentsRequest:
 
 
 @dataclass(frozen=True)
-class MatrixBuild:
-    """How ``@across_adapters`` steers per-cell construction (carried on the marker)."""
+class PerAdapter:
+    """Per-cell construction steering for ``@per_adapter`` (carried on the marker)."""
 
     prompt: str | None
     features: AdapterFeatures | None
     tools: list[ToolSpec] | None
 
 
-def with_agents(
+def with_adapters(
     *adapters: Adapter,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
     tools: list[ToolSpec] | None = None,
 ) -> Callable[[Callable[..., object]], Callable[..., object]]:
-    """Declare the adapters a test runs; inject them via ``agent`` / ``agents``.
+    """Declare a fixed set of adapters to run together in one room.
 
-    Applies the union of the adapters' registry requirements as ``@requires`` (so
-    the test needs no explicit gate) and records the request on a marker. Pass
-    ``prompt`` / ``features`` to steer construction (e.g. enable memory) for all
-    of them.
+    Injects them via ``agent`` (single) / ``agents`` (list). Applies the union of the
+    adapters' registry requirements as ``@requires`` (so the test needs no explicit gate)
+    and records the request on a marker. Pass ``prompt`` / ``features`` / ``tools`` to
+    steer construction for all of them.
     """
     if not adapters:
-        raise ValueError("with_agents() needs at least one Adapter")
+        raise ValueError("with_adapters() needs at least one Adapter")
     # Union of requirements across the chosen adapters, order-preserved.
     deps = tuple(dict.fromkeys(dep for a in adapters for dep in spec_for(a).requires))
-    request = AgentsRequest(
+    request = WithAdapters(
         adapters=adapters, prompt=prompt, features=features, tools=tools
     )
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
         fn = requires(*deps)(fn)
-        return getattr(pytest.mark, AGENTS_MARKER)(request)(fn)
+        return getattr(pytest.mark, WITH_ADAPTERS_MARKER)(request)(fn)
 
     return decorate
 
@@ -116,17 +116,15 @@ def adapter_params(
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
 ) -> list[ParameterSet]:
-    """One ``pytest.param`` per registered adapter, each gated by its requirements.
+    """One ``pytest.param`` per registered adapter (narrowed by the filters), each gated
+    by its requirements.
 
-    Pick all adapters or a subset by what a test checks: no args = the full matrix;
-    ``include={...}`` / ``exclude={...}`` slice by id; ``supports={Capability.MEMORY}``
-    keeps only adapters advertising that capability and ``without={Capability.MEMORY}``
-    its complement; ``runs_tool_loop=True`` keeps only the custom-tool-capable
-    adapters. The ``requires(...)`` marks are resolved per-parameter by the
-    conftest gate hook (a missing requirement fails the cell). Used directly to
-    parametrize an ``adapter_id`` (then ``build_adapter`` — e.g. a rejoin scenario
-    that runs its own agent lifecycle), or via ``across_adapters`` to drive the
-    ``matrix_agent`` fixture.
+    No args = the full matrix; ``include`` / ``exclude`` slice by id; ``supports`` /
+    ``without`` by capability (complementary); ``runs_tool_loop=True`` keeps the
+    custom-tool-capable adapters. Each param carries its adapter's ``@requires`` marks;
+    the conftest's ``pytest_runtest_setup`` gate resolves them when that cell runs (a
+    missing requirement fails the cell). This is the parameter source ``@per_adapter``
+    feeds to the ``adapter_id`` fixture.
     """
     return [
         pytest.param(spec.id, marks=requires(*spec.requires), id=str(spec.id))
@@ -140,9 +138,8 @@ def adapter_params(
     ]
 
 
-def across_adapters(
-    include: Collection[Adapter] | None = None,
-    *,
+def per_adapter(
+    *adapters: Adapter,
     exclude: Collection[Adapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
@@ -151,27 +148,22 @@ def across_adapters(
     features: AdapterFeatures | None = None,
     tools: list[ToolSpec] | None = None,
 ) -> Callable[[Callable[..., object]], Callable[..., object]]:
-    """Run a test across the adapter matrix via the ``matrix_agent``
-    fixture — the parametrized sibling of ``@with_agents``.
+    """Fan a test across the adapter matrix — one invocation per selected adapter.
 
-    Sugar over ``@pytest.mark.parametrize(..., indirect=True)``: the test injects one
-    running agent per cell as ``matrix_agent`` (a ProvisionedAgent), with the
-    cell's id available as the ``adapter_id`` fixture; the per-cell ``@requires``
-    gate rides along. Filter the
-    matrix with ``include`` / ``exclude`` (by id), ``supports`` / ``without`` (by
-    capability — complementary), or ``runs_tool_loop=True`` (the custom-tool-capable
-    subset), and steer per-cell construction with ``prompt`` / ``features`` (e.g.
-    enable memory), exactly like ``@with_agents``. The indirect parametrization
-    overrides the fixture's default full-matrix params::
+    Positional ``*adapters`` is the include set; ``exclude`` / ``supports`` / ``without`` /
+    ``runs_tool_loop`` narrow it (all compose). Bare ``@per_adapter()`` is the full
+    matrix, explicitly. Steer per-cell construction with ``prompt`` / ``features`` /
+    ``tools`` — the ``cell`` / ``agent`` fixtures carry these as defaults::
 
-        @across_adapters(supports={Capability.MEMORY}, features=memory_features())
-        async def test_memory(matrix_agent, ...):
-            ...  # matrix_agent is the running ProvisionedAgent
+        @per_adapter()                                   # full matrix
+        @per_adapter(exclude={Adapter.CREWAI})           # all but crewai
+        @per_adapter(Adapter.ANTHROPIC, Adapter.AGNO)    # only these
+        @per_adapter(supports={Capability.MEMORY})       # by capability
 
-    Note: a bare ``matrix_agent`` / ``adapter_id`` parameter already runs the
-    *full* matrix (the fixture default) — only reach for ``@across_adapters`` to
-    filter or to set ``prompt`` / ``features``.
+    Request ``agent`` (managed, running) or ``cell`` (drive it yourself); the per-cell
+    ``@requires`` gate rides on the parameters.
     """
+    include = frozenset(adapters) or None
     params = adapter_params(
         include=include,
         exclude=exclude,
@@ -179,12 +171,24 @@ def across_adapters(
         without=without,
         runs_tool_loop=runs_tool_loop,
     )
-    build = MatrixBuild(prompt=prompt, features=features, tools=tools)
+    # Fail loud rather than let an empty parametrize skip silently (a mis-specified
+    # filter or registry drift). A bare @per_adapter() is never empty.
+    if not params:
+        raise ValueError(
+            "@per_adapter selected no adapters "
+            f"(include={sorted(map(str, include)) if include else None}, "
+            f"exclude={exclude}, supports={supports}, without={without}, "
+            f"runs_tool_loop={runs_tool_loop}); widen the filter or fix the registry drift"
+        )
+    build = PerAdapter(prompt=prompt, features=features, tools=tools)
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
         fn = pytest.mark.parametrize("adapter_id", params, indirect=True)(fn)
-        if prompt is not None or features is not None or tools is not None:
-            fn = getattr(pytest.mark, MATRIX_MARKER)(build)(fn)
-        return fn
+        # `agent` / `cell` reach `adapter_id` only dynamically (getfixturevalue), which
+        # the static fixture closure can't see — so indirect parametrize alone errors at
+        # collection ("function uses no fixture 'adapter_id'"). usefixtures pins the
+        # parametrized name into the closure for every @per_adapter test.
+        fn = pytest.mark.usefixtures("adapter_id")(fn)
+        return getattr(pytest.mark, PER_ADAPTER_MARKER)(build)(fn)
 
     return decorate

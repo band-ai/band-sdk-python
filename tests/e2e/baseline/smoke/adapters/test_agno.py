@@ -8,7 +8,7 @@ the registry's Agno builder is translated into a plain Python callable on the
 platform tools on each run. These prove that path fires end to end against a live
 platform.
 
-Bound to ``@with_agents(Adapter.AGNO)``, so they run in the ``core`` lane (and the
+Bound to ``@with_adapters(Adapter.AGNO)``, so they run in the ``core`` lane (and the
 full local matrix) and skip-with-reason elsewhere.
 
 Run with:
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.smoke.samples.sample_tools import (
     ACCESS_CODES,
     EXECUTION_REPORTING,
@@ -36,7 +36,7 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@with_agents(
+@with_adapters(
     Adapter.AGNO, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
 @pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
@@ -70,7 +70,7 @@ async def test_agno_executes_native_tool(
     capture.messages.assert_contains_any([ACCESS_CODES["alpha"]])
 
 
-@with_agents(
+@with_adapters(
     Adapter.AGNO,
     tools=[LOOKUP_TOOL, WEATHER_TOOL],
     prompt=LOOKUP_AND_WEATHER_PROMPT,

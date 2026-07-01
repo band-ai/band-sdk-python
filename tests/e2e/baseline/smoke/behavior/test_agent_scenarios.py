@@ -5,7 +5,7 @@ the user-operations driver, the delivery-status processing barrier, and the LLM
 judge — and asserts a tolerant, behavioural outcome. These validate the tools,
 not any L-level contract.
 
-The agents are injected by ``@with_agents(...)``: the decorator auto-applies the
+The agents are injected by ``@with_adapters(...)``: the decorator auto-applies the
 requirement gate (from the registry) and the ``agent`` / ``agents`` fixtures build,
 provision, run and reap them — so the body has no construction or lifecycle glue.
 """
@@ -17,7 +17,7 @@ import pytest
 from collections.abc import Awaitable, Callable
 
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.toolkit.judge import Verdict, format_transcript
 from tests.e2e.baseline.toolkit.observations import Replies
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
@@ -27,7 +27,7 @@ from tests.e2e.baseline.toolkit.capture import CaptureFactory
 JudgeFn = Callable[..., Awaitable[Verdict]]
 
 
-@with_agents(Adapter.LANGGRAPH, Adapter.ANTHROPIC)
+@with_adapters(Adapter.LANGGRAPH, Adapter.ANTHROPIC)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_two_agents_greet_each_other(
     agents: list[ProvisionedAgent],
@@ -81,7 +81,7 @@ async def test_two_agents_greet_each_other(
     assert verdict.passed, f"{verdict.reasoning}\n{format_transcript(transcript)}"
 
 
-@with_agents(Adapter.ANTHROPIC)
+@with_adapters(Adapter.ANTHROPIC)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agent_recalls_earlier_facts(
     agent: ProvisionedAgent,

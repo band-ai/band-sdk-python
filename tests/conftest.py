@@ -52,6 +52,10 @@ from band.runtime.types import PlatformMessage
 # ordering triggered ruff E402 because a non-import comment sat between imports.
 from thenvoi_testing.markers import pytest_ignore_collect_in_ci as _ignore_collect_in_ci
 
+# Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
+# can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
+pytest_plugins = ["pytester"]
+
 
 def pytest_ignore_collect(collection_path):
     """Skip integration tests in CI; defer to pytest otherwise.

@@ -9,7 +9,7 @@ generic ``error`` event on any turn exception.
 Anthropic-only: gpt-5.4-mini (LangGraph) is unreliable at *choosing* to call
 ``band_send_event`` (~50% even after a tool-only-channel system prompt + few-shot
 examples). The observation readers are adapter-agnostic, so one reliable driver
-suffices. The agents are injected by ``@with_agents`` under the exact-execution
+suffices. The agents are injected by ``@with_adapters`` under the exact-execution
 prompt so the only action they take is the requested tool call.
 """
 
@@ -20,7 +20,7 @@ import pytest
 
 from band.core.types import MessageType
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     TOOL_AGENT,
     emit_event_instruction,
@@ -35,7 +35,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 EVENT_TYPES = [MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]
 
 
-@with_agents(Adapter.ANTHROPIC, **TOOL_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **TOOL_AGENT)
 @pytest.mark.parametrize("event_type", EVENT_TYPES, ids=lambda mt: mt.value)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_event_emitted(
@@ -66,7 +66,7 @@ async def test_event_emitted(
     events.assert_contains_any([marker])
 
 
-@with_agents(Adapter.ANTHROPIC, **TOOL_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **TOOL_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_event_subclasses_one_turn(
     agent: ProvisionedAgent,
@@ -106,7 +106,7 @@ async def test_event_subclasses_one_turn(
     errors.assert_contains_any([error])
 
 
-@with_agents(Adapter.ANTHROPIC, **TOOL_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **TOOL_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_multiple_thoughts_assert_at_least(
     agent: ProvisionedAgent,
@@ -135,7 +135,7 @@ async def test_multiple_thoughts_assert_at_least(
     thoughts.assert_contains_any([second])
 
 
-@with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC, **TOOL_AGENT)
+@with_adapters(Adapter.ANTHROPIC, Adapter.ANTHROPIC, **TOOL_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_event_sender_isolation(
     agents: list[ProvisionedAgent],

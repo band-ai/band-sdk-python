@@ -16,7 +16,7 @@ agno) so they all install in one venv and the run is lane-schedulable:
 
 Design notes (why this shape, not a bespoke build):
 
-- **One uniform prompt, roles via the user message.** ``@with_agents`` builds
+- **One uniform prompt, roles via the user message.** ``@with_adapters`` builds
   every agent with the same prompt/tools, so the *role* (coordinator vs.
   specialist) is set by the runtime-injected user message — exactly how the
   greeting smoke injects peer names. This keeps the test on the lane-safe
@@ -42,7 +42,7 @@ import asyncio
 
 import pytest
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_tools import (
     ACCESS_CODES,
@@ -65,7 +65,7 @@ PANEL = (Adapter.ANTHROPIC, Adapter.PYDANTIC_AI, Adapter.AGNO)
 
 # A dual-mode prompt: the same text serves a specialist (answer with the matching
 # tool) and a coordinator (delegate, don't answer). Which branch applies is set by
-# the user message each agent receives, so one uniform ``@with_agents`` prompt
+# the user message each agent receives, so one uniform ``@with_adapters`` prompt
 # covers every role.
 COLLAB_PROMPT = (
     "You are one agent in a shared multi-agent room. You have two tools for values "
@@ -91,7 +91,7 @@ FORECAST_FRAGMENT = "triple sunrise"
 assert FORECAST_FRAGMENT in FORECASTS[PANEL_PLACE.lower()]
 
 
-@with_agents(
+@with_adapters(
     *PANEL,
     tools=[LOOKUP_TOOL, WEATHER_TOOL],
     prompt=COLLAB_PROMPT,
@@ -173,7 +173,7 @@ async def test_coordinator_delegates_to_two_specialists(
     capture.messages.assert_contains_any([FORECAST_FRAGMENT])
 
 
-@with_agents(
+@with_adapters(
     Adapter.ANTHROPIC,
     Adapter.PYDANTIC_AI,
     tools=[LOOKUP_TOOL],
@@ -240,7 +240,7 @@ async def test_coordinator_recruits_specialist_mid_conversation(
     capture.messages.assert_contains_any([ACCESS_CODES[RECRUIT_KEY]])
 
 
-@with_agents(
+@with_adapters(
     *PANEL,
     tools=[LOOKUP_TOOL, WEATHER_TOOL],
     prompt=COLLAB_PROMPT,

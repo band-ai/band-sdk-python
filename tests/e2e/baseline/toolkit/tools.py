@@ -3,7 +3,7 @@
 Define a custom tool **once** as a ``ToolSpec`` (an input model + a handler); the
 adapter builders translate it to whatever the framework needs — band
 ``CustomToolDef`` for the tool-loop adapters, or a native callable for pydantic-ai
-and agno. So a test passes the *same* tool to ``@with_agents`` / ``@across_adapters``
+and agno. So a test passes the *same* tool to ``@with_adapters`` / ``@per_adapter``
 regardless of adapter, instead of hand-writing a different tool per framework.
 
 The tool *name* (used to register it and asserted via ``ToolCalls.assert_fired``) is

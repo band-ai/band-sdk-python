@@ -7,7 +7,7 @@ bound to an out-of-lane or infra adapter skip-with-reason; in-lane tests are lef
 untouched so a missing provider key still fails via the ``@requires`` gate.
 
 ``assert_no_unschedulable_mixed_lane`` guards the complementary hole: a
-``@with_agents`` test whose adapters span more than one CI lane can never run in
+``@with_adapters`` test whose adapters span more than one CI lane can never run in
 *any* lane (each lane skips it for the out-of-lane members), so it is silently
 false-green everywhere. That violates fail-loud, so collection fails for it —
 regardless of ``BAND_E2E_LANE`` — unless it opts out with ``@pytest.mark.mixed_lane``.
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import AGENTS_MARKER, AgentsRequest
+from tests.e2e.baseline.agents import WITH_ADAPTERS_MARKER, WithAdapters
 from tests.e2e.baseline.toolkit.adapters import CILane, ci_lanes
 
 # Opt-out for a deliberate local-only multi-framework test (e.g. a cross-framework
@@ -35,16 +35,16 @@ def _item_target_adapters(item: pytest.Item) -> frozenset[str]:
     """The adapter ids an item is bound to (empty = adapter-agnostic, always kept).
 
     A matrix cell carries its id as the ``adapter_id`` callspec param; a
-    ``@with_agents`` test carries its adapters on the AGENTS_MARKER. Tests with
+    ``@with_adapters`` test carries its adapters on the WITH_ADAPTERS_MARKER. Tests with
     neither (provisioning, user-ops, the registry guard) target no adapter and run
     in every lane.
     """
     callspec = getattr(item, "callspec", None)
     if callspec is not None and "adapter_id" in callspec.params:
         return frozenset({str(callspec.params["adapter_id"])})
-    marker = item.get_closest_marker(AGENTS_MARKER)
+    marker = item.get_closest_marker(WITH_ADAPTERS_MARKER)
     if marker is not None:
-        request: AgentsRequest = marker.args[0]
+        request: WithAdapters = marker.args[0]
         return frozenset(str(adapter) for adapter in request.adapters)
     return frozenset()
 
@@ -100,7 +100,7 @@ def apply_lane_skips(lane: str, items: list[pytest.Item]) -> None:
 
 
 def assert_no_unschedulable_mixed_lane(items: list[pytest.Item]) -> None:
-    """Fail collection for any ``@with_agents`` test that spans more than one lane.
+    """Fail collection for any ``@with_adapters`` test that spans more than one lane.
 
     Lanes partition the matrix into separate CI jobs (a venv or a backend), and
     ``apply_lane_skips`` skips a test for every out-of-lane adapter it targets. A
@@ -124,7 +124,7 @@ def assert_no_unschedulable_mixed_lane(items: list[pytest.Item]) -> None:
     if offenders:
         joined = "\n  ".join(offenders)
         raise pytest.UsageError(
-            "@with_agents test(s) span multiple CI lanes, so they skip in every "
+            "@with_adapters test(s) span multiple CI lanes, so they skip in every "
             "lane and never run in CI (false green). Restrict each to one lane's "
             "adapters, or mark it @pytest.mark.mixed_lane if it is deliberately "
             f"local-only:\n  {joined}"

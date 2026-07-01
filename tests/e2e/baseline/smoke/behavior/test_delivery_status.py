@@ -27,7 +27,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import PlatformMessage
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
     ResourceManager,
@@ -61,7 +61,7 @@ class _FailingAdapter(SimpleAdapter[Any]):
         raise RuntimeError("intentional failure: e2e coverage of the FAILED state")
 
 
-@with_agents(Adapter.ANTHROPIC)
+@with_adapters(Adapter.ANTHROPIC)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_healthy_message_reaches_processed_via_processing(
     agent: ProvisionedAgent,

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -36,12 +37,12 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
+@per_adapter()
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(extra=300)  # seed + several noise inferences + probe + recall
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recall_and_ignore_crosstalk_in_busy_room(
-    adapter_id: str,
-    matrix_agent: ProvisionedAgent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -54,10 +55,10 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
 
     # A bystander to address the noise to — provisioned (a valid mention target)
     # but never run, so it needs no provider key and simply never replies.
-    bystander = await resource_manager.provision_agent(f"bystander-{adapter_id}")
+    bystander = await resource_manager.provision_agent(f"bystander-{agent.adapter_id}")
     room_id = await resource_manager.provision_room(
-        title=f"e2e-noisy-{adapter_id}",
-        participants=[matrix_agent.id, bystander.id],
+        title=f"e2e-noisy-{agent.adapter_id}",
+        participants=[agent.id, bystander.id],
     )
     # The agent processes the room one message at a time, so the probe answer only
     # arrives after it has chewed through every noise message — budget several
@@ -69,10 +70,10 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
         mid = await user_ops.send_message(
             room_id,
             f"Please note for later — the project id is {needle}. Just acknowledge.",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, matrix_agent.id)
+        await capture.wait_for_processed(mid, agent.id)
 
         # Phase 2: flood with chatter addressed to the BYSTANDER, each carrying a
         # decoy, then a liveness probe addressed to our agent (sent last).
@@ -87,8 +88,8 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
         probe = await user_ops.send_message(
             room_id,
             f"Reply with just the word {live} and nothing else.",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
         # Barrier on delivery state, not reply text: per-room FIFO means the probe
         # is PROCESSED only after every earlier (decoy) message was, and the reply
@@ -96,9 +97,7 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
         # agent wrongly made is already buffered, with no WS-ordering race (the
         # reason the toolkit prefers this over text matching). Only our agent
         # replies (the bystander never runs), so no sender filtering is needed.
-        await capture.wait_for_processed(
-            probe, matrix_agent.id, deadline_s=flood_deadline
-        )
+        await capture.wait_for_processed(probe, agent.id, deadline_s=flood_deadline)
 
         flood_replies = capture.messages.since(flood_mark)
         # Liveness: it answered its own probe.
@@ -111,10 +110,10 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
         mid = await user_ops.send_message(
             room_id,
             "What is the project id? Reply with just it.",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, matrix_agent.id)
+        await capture.wait_for_processed(mid, agent.id)
         recall = capture.messages.since(recall_mark)
         recall.assert_contains_any([needle])
         recall.assert_contains_none(decoys)

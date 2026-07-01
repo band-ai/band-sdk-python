@@ -28,7 +28,7 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
 )
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     MEMORY_AGENT,
     archive_memory_instruction,
@@ -45,7 +45,7 @@ from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@with_agents(Adapter.ANTHROPIC, **MEMORY_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_memory_stored(
     agent: ProvisionedAgent,
@@ -87,7 +87,7 @@ async def test_memory_stored(
     )
 
 
-@with_agents(Adapter.ANTHROPIC, **MEMORY_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_memory_subject_scope(
     agent: ProvisionedAgent,
@@ -128,7 +128,7 @@ async def test_memory_subject_scope(
     mem.stored.where(subject_id=agent.id).assert_present()
 
 
-@with_agents(Adapter.ANTHROPIC, **MEMORY_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_memory_excluded_from_general_tool_view(
     agent: ProvisionedAgent,
@@ -166,7 +166,7 @@ async def test_memory_excluded_from_general_tool_view(
     mem.calls.assert_store_called(content=marker)
 
 
-@with_agents(Adapter.ANTHROPIC, **MEMORY_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_memory_lifecycle_supersede(
     agent: ProvisionedAgent,
@@ -204,7 +204,7 @@ async def test_memory_lifecycle_supersede(
     mem.stored.where(status=MemoryStatus.ACTIVE).assert_none()
 
 
-@with_agents(Adapter.ANTHROPIC, **MEMORY_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_memory_lifecycle_archive(
     agent: ProvisionedAgent,
@@ -238,7 +238,7 @@ async def test_memory_lifecycle_archive(
     mem.stored.where(status=MemoryStatus.ACTIVE).assert_none()
 
 
-@with_agents(Adapter.ANTHROPIC, **MEMORY_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_memory_recall(
     agent: ProvisionedAgent,
@@ -269,7 +269,7 @@ async def test_memory_recall(
     mem.stored.assert_stored(content=marker)
 
 
-@with_agents(Adapter.ANTHROPIC, **MEMORY_AGENT)
+@with_adapters(Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_memory_store_layer_filtering(
     agent: ProvisionedAgent,
@@ -305,7 +305,7 @@ async def test_memory_store_layer_filtering(
     )
 
 
-@with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC, **MEMORY_AGENT)
+@with_adapters(Adapter.ANTHROPIC, Adapter.ANTHROPIC, **MEMORY_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_memory_visible_cross_agent_cross_room(
     agents: list[ProvisionedAgent],

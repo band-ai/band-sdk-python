@@ -3,7 +3,7 @@
 Each drives a deterministic tool use and asserts, by inspecting the agent's tool
 calls, what fired and with which args. The tools are opaque (see ``sample_tools``)
 so the agent must call them rather than answer from its own knowledge, which is
-what makes "did it fire" reliable. Agents run via ``@with_agents`` with the tools
+what makes "did it fire" reliable. Agents run via ``@with_adapters`` with the tools
 attached and ``**EXECUTION_REPORTING`` so each tool call surfaces as a ``tool_call``
 event, read back via ``ReplyCapture.tool_calls`` and checked with
 ``ToolCalls.assert_fired``.
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.smoke.samples.sample_tools import (
     ACCESS_CODES,
     EXECUTION_REPORTING,
@@ -33,7 +33,7 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@with_agents(
+@with_adapters(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
 @pytest.mark.asyncio(loop_scope="session")
@@ -60,7 +60,7 @@ async def test_tool_fired_with_args(
     calls.assert_fired(LOOKUP, with_args={"key": "alpha"})
 
 
-@with_agents(
+@with_adapters(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
 @pytest.mark.asyncio(loop_scope="session")
@@ -92,7 +92,7 @@ async def test_capture_exposes_replies_and_tool_calls(
     calls.assert_fired(LOOKUP, with_args={"key": "beta"})
 
 
-@with_agents(
+@with_adapters(
     Adapter.ANTHROPIC,
     tools=[LOOKUP_TOOL, WEATHER_TOOL],
     prompt=LOOKUP_AND_WEATHER_PROMPT,
@@ -123,7 +123,7 @@ async def test_multiple_tools_in_one_turn(
     calls.assert_fired(WEATHER, with_args={"place": "Zorath"})
 
 
-@with_agents(
+@with_adapters(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
 @pytest.mark.asyncio(loop_scope="session")

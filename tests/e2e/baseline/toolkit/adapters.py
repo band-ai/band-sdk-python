@@ -109,8 +109,8 @@ class AdapterSpec:
     ``e2e_pending`` marks an adapter that is registered (so it still defines its CI
     lane via ``ci_lanes``) but has no live E2E coverage yet: ``specs()`` excludes it
     by default, so the matrix (``adapter_params``) runs no cells for it. It does NOT
-    gate ``@with_agents`` (that resolves any registered adapter) — a pending adapter
-    simply has no ``@with_agents`` tests written for it. Use it to stand up a lane
+    gate ``@with_adapters`` (that resolves any registered adapter) — a pending adapter
+    simply has no ``@with_adapters`` tests written for it. Use it to stand up a lane
     ahead of its tests.
 
     ``runs_tool_loop`` marks an adapter that runs an LLM tool loop able to invoke a
@@ -722,8 +722,8 @@ def _build_opencode(
 
 # Letta is registered so the `letta` CI lane is still defined (ci_lanes), but
 # e2e_pending=True drops it from specs()/adapter_params(), so the matrix runs no
-# cells for it. (e2e_pending does not gate @with_agents — there simply are no
-# @with_agents(Adapter.LETTA) tests.) Letta executes platform tools only by calling
+# cells for it. (e2e_pending does not gate @with_adapters — there simply are no
+# @with_adapters(Adapter.LETTA) tests.) Letta executes platform tools only by calling
 # a band-mcp server, and standing one up reachable from the Letta server (its SSRF
 # guard rejects loopback) isn't wired yet, so the live smokes are deferred.
 #

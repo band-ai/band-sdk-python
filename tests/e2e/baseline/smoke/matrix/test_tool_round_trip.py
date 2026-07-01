@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import across_adapters
+from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_tools import (
     ACCESS_CODES,
     EXECUTION_REPORTING,
@@ -38,7 +38,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 KEY = "alpha"  # ACCESS_CODES["alpha"] -> a code the model cannot guess
 
 
-@across_adapters(
+@per_adapter(
     runs_tool_loop=True,
     tools=[LOOKUP_TOOL],
     prompt=LOOKUP_PROMPT,
@@ -50,25 +50,24 @@ KEY = "alpha"  # ACCESS_CODES["alpha"] -> a code the model cannot guess
 @pytest.mark.timeout(extra=120)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_custom_tool_round_trips(
-    adapter_id: str,
-    matrix_agent: ProvisionedAgent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
     """The tool fires with the right arg AND its opaque result lands in the reply."""
     room_id = await resource_manager.provision_room(
-        title=f"e2e-tool-roundtrip-{adapter_id}", participants=[matrix_agent.id]
+        title=f"e2e-tool-roundtrip-{agent.adapter_id}", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
         mid = await user_ops.send_message(
             room_id,
             f"look up the access code for key '{KEY}' and tell me the code",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, matrix_agent.id)
-        calls = await capture.tool_calls(sender_id=matrix_agent.id)
+        await capture.wait_for_processed(mid, agent.id)
+        calls = await capture.tool_calls(sender_id=agent.id)
 
     # The call half: the opaque tool fired with the requested key.
     calls.assert_fired(LOOKUP, with_args={"key": KEY})

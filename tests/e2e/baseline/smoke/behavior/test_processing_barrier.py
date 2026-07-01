@@ -29,7 +29,7 @@ import pytest
 
 from band.client.streaming import DeliveryStatus
 
-from tests.e2e.baseline.agents import Adapter, across_adapters
+from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -41,19 +41,18 @@ logger = logging.getLogger(__name__)
 ROUNDS = 4
 
 
-@across_adapters(include={Adapter.ANTHROPIC, Adapter.LANGGRAPH, Adapter.LETTA})
+@per_adapter(Adapter.ANTHROPIC, Adapter.LANGGRAPH, Adapter.LETTA)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_barrier_settles_message_burst(
-    adapter_id: str,
-    matrix_agent: ProvisionedAgent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
     room_id = await resource_manager.provision_room(
-        title=f"e2e-barrier-{adapter_id}", participants=[matrix_agent.id]
+        title=f"e2e-barrier-{agent.adapter_id}", participants=[agent.id]
     )
-    mention = {"mention_id": matrix_agent.id, "mention_name": matrix_agent.name}
+    mention = {"mention_id": agent.id, "mention_name": agent.name}
 
     async with reply_capture(room_id) as capture:
         for round_no in range(ROUNDS):
@@ -71,20 +70,19 @@ async def test_barrier_settles_message_burst(
             )
             # Resolves from delivery state, not reply text. Raises TimeoutError
             # (failing the test) if the barrier is unreliable.
-            await capture.wait_for_processed(last, matrix_agent.id)
+            await capture.wait_for_processed(last, agent.id)
             # FIFO transitivity: a processed ``last`` proves the earlier message
             # was processed too — the property that makes waiting on a single id
             # valid. (Checked from already-observed state; no extra wait.)
             assert (
-                capture.delivery_status(first, matrix_agent.id)
-                == DeliveryStatus.PROCESSED
+                capture.delivery_status(first, agent.id) == DeliveryStatus.PROCESSED
             ), (
-                f"{adapter_id} round {round_no}: {last} processed but earlier {first} "
-                f"is {capture.delivery_status(first, matrix_agent.id)} — FIFO broken"
+                f"{agent.adapter_id} round {round_no}: {last} processed but earlier {first} "
+                f"is {capture.delivery_status(first, agent.id)} — FIFO broken"
             )
             # Reply-before-processed: PROCESSED is stamped only after the reply is
             # emitted, so a reply for this round is already buffered.
             capture.messages.since(mark).assert_present()
             logger.info(
-                "%s round %d: barrier settled on %s", adapter_id, round_no, last
+                "%s round %d: barrier settled on %s", agent.adapter_id, round_no, last
             )

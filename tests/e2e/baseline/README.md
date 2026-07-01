@@ -28,8 +28,8 @@ already does it (or nearly does):
   `ToolCalls`, `Memories`) — reach for `assert_contains_any` / `assert_contains_none`
   / `assert_fired` / `assert_stored` before writing a raw `assert`. Add a method
   there only if it's a genuinely new, reusable check.
-- **Never hardcode an adapter list.** Use the `Adapter` enum with `@with_agents`,
-  or a registry selector with `@across_adapters` — the matrix follows the registry.
+- **Never hardcode an adapter list.** Use the `Adapter` enum with `@with_adapters`,
+  or a registry selector with `@per_adapter` — the matrix follows the registry.
 
 When you do add something reusable, put it in the shared module (a `ToolSpec` in
 `sample_tools`, an instruction in `sample_agents`, an assertion on the collection)
@@ -47,7 +47,7 @@ Every baseline test is the same shape: get a running agent, open a capture, send
 user message, barrier on it, assert. The toolkit supplies all of it.
 
 ```python notest
-@with_agents(Adapter.ANTHROPIC)                  # 1. agent: built + gated + run + reaped
+@with_adapters(Adapter.ANTHROPIC)                  # 1. agent: built + gated + run + reaped
 @pytest.mark.asyncio(loop_scope="session")
 async def test_greets(agent, resource_manager, user_ops, reply_capture):
     room_id = await resource_manager.provision_room(participants=[agent.id])   # 2. room
@@ -59,31 +59,64 @@ async def test_greets(agent, resource_manager, user_ops, reply_capture):
     capture.messages.assert_present()                                         # 6. assert
 ```
 
-`@with_agents` / `@across_adapters` auto-apply the `@requires` provider-key gate
+`@with_adapters` / `@per_adapter` auto-apply the `@requires` provider-key gate
 from the registry, and the agent/room are reaped on teardown — so the body has no
 gate, no construction, no lifecycle, no cleanup.
+
+Every test declares its topology **on the test**, with one of two decorators:
+
+- **`@per_adapter(...)`** *fans* — one invocation per selected adapter. Bare
+  `@per_adapter()` is the full matrix, explicitly. Request `agent` (a managed,
+  running `ProvisionedAgent`; its id is `agent.adapter_id`) or `cell` (an
+  `AdapterCell` you drive yourself, for construction / reboot / rehydration).
+- **`@with_adapters(...)`** *groups* — a fixed set of named adapters in one room, one
+  invocation. Request `agent` (the single case) or `agents` (the list).
+
+A matrix test **must** carry `@per_adapter` — there is no "bare fixture = full
+matrix" path. Requesting an agent fixture with the wrong (or no) decorator is a
+collection-time error (see **Wiring fences** below).
+
+### `@per_adapter` vs `@with_adapters` — the two roles
+
+They are **not** two ways to do one thing; they are different *topologies*. You pass
+`Adapter` handles to both (hence both read as `*_adapters`), but the axis differs:
+
+| | `@per_adapter` (fan) | `@with_adapters` (group) |
+|---|---|---|
+| **Runs** | once **per** selected adapter (parametrized) | **once**, all adapters together |
+| **Agents per run** | one (`agent`), or a `cell` you drive | many, in one room (`agents`) |
+| **Select by** | *filters* — `supports=`, `exclude=`, "every memory adapter" | *explicit ids* — you name the room's participants |
+| **CI lanes** | lane-safe (each cell runs in its home lane) | can span lanes → the mixed-lane guard exists for exactly this |
+| **Use for** | "run this scenario across frameworks" | "these specific agents interact" |
+
+You cannot express a multi-agent-in-one-room test with `@per_adapter` (it fans them into
+separate runs), nor "across the whole matrix" with `@with_adapters` (a fixed list, one
+room). What they *share* — `@requires` gating, `AdapterCell` construction, and
+`prompt`/`features`/`tools` steering — is reused, not duplicated.
 
 ### Choosing how to get your agent(s)
 
 | Your test needs… | Use | Inject |
 |---|---|---|
-| one named adapter | `@with_agents(Adapter.ANTHROPIC)` | `agent` — a `ProvisionedAgent` |
-| several named adapters in one room | `@with_agents(Adapter.LANGGRAPH, Adapter.ANTHROPIC)` | `agents` — list; `a, b = agents` |
-| two of the **same** adapter | `@with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC)` | `agents` |
-| the **same scenario across every adapter** | request the matrix fixtures (no decorator needed for the full set) | `matrix_agent` + `adapter_id` |
-| a **subset** of adapters | `@across_adapters(include={...} / exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True)` | `matrix_agent` + `adapter_id` |
-| custom tools (any tool-capable framework) | `@with_agents(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
-| custom tools across the matrix | `@across_adapters(include={Adapter.ANTHROPIC, Adapter.PYDANTIC_AI, Adapter.AGNO}, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` | `matrix_agent` + `adapter_id` |
-| a **bespoke** build (different tools per agent in one room) | `build_adapter(Adapter.X, settings, tools=[...], prompt=..., **EXECUTION_REPORTING)` + `async with running_provisioned_agent(...) as agent:` | the `ProvisionedAgent` |
+| one named adapter | `@with_adapters(Adapter.ANTHROPIC)` | `agent` — a `ProvisionedAgent` |
+| several named adapters in one room | `@with_adapters(Adapter.LANGGRAPH, Adapter.ANTHROPIC)` | `agents` — list; `a, b = agents` |
+| two of the **same** adapter | `@with_adapters(Adapter.ANTHROPIC, Adapter.ANTHROPIC)` | `agents` |
+| the **same scenario across every adapter** | `@per_adapter()` (the full matrix, explicitly) | `agent` (id via `agent.adapter_id`) |
+| a **subset** of adapters | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True)` | `agent` |
+| to **drive the lifecycle yourself** (build-only, reboot, rehydration) | `@per_adapter()` | `cell` — an `AdapterCell` (see **AdapterCell** below) |
+| custom tools (any tool-capable framework) | `@with_adapters(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
+| custom tools across the matrix | `@per_adapter(Adapter.ANTHROPIC, Adapter.PYDANTIC_AI, Adapter.AGNO, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` | `agent` |
 
 - **Reference adapters by the typed `Adapter` enum, never a string.**
-- **Steer construction with a shape, don't re-spell args:** `@with_agents(Adapter.X, **TOOL_AGENT)`
+- **Steer construction with a shape, don't re-spell args:** `@with_adapters(Adapter.X, **TOOL_AGENT)`
   (exact-tool-execution prompt) or `**MEMORY_AGENT` (that prompt + memory tools
-  surfaced as `tool_call` events). `@across_adapters(..., **MEMORY_AGENT)` works too.
-- `matrix_agent` is the cell's running `ProvisionedAgent`; `adapter_id` is its id —
-  request whichever you use (no `adapter_id, agent = …` unpacking).
+  surfaced as `tool_call` events). `@per_adapter(..., **MEMORY_AGENT)` works too —
+  the steering (`prompt` / `features` / `tools`) rides on the decorator and is
+  carried per-cell as the `agent` / `cell` defaults.
+- `agent` is the cell's (or slot's) running `ProvisionedAgent`; read its id off
+  `agent.adapter_id` (no separate `adapter_id` fixture to request, no unpacking).
 - **Custom tools:** define a tool once as a `ToolSpec` (input model + handler) and
-  pass `tools=[LOOKUP_TOOL]` to `@with_agents` / `@across_adapters`; the builders
+  pass `tools=[LOOKUP_TOOL]` to `@with_adapters` / `@per_adapter`; the builders
   translate it to each framework's native form (band `CustomToolDef`, a pydantic-ai
   `RunContext` callable, an agno tool). Add `**EXECUTION_REPORTING` to observe the
   calls via `capture.tool_calls`. Only letta can't accept a local tool (MCP) and
@@ -119,7 +152,9 @@ gate, no construction, no lifecycle, no cleanup.
   where a fixture or registry builder exists.
 - ❌ `len(capture.messages)` + slice — use `snapshot()` / `since()`.
 - ❌ magic-string adapter ids — use `Adapter.X`.
-- ❌ a separate `@requires` when `@with_agents` / `@across_adapters` already gate it.
+- ❌ a separate `@requires` when `@with_adapters` / `@per_adapter` already gate it.
+- ❌ a hand-rolled `@pytest.mark.parametrize("adapter_id", …)` matrix — use
+  `@per_adapter` (the wiring guard blocks the hand-rolled form).
 - ❌ exact-count / strict-ordering / mandatory-silence / literal-transcript
   assertions — agents are non-deterministic; assert *behaviour held* (a floor, a
   substring, a metadata fact, the injected marker).
@@ -133,7 +168,7 @@ gate, no construction, no lifecycle, no cleanup.
 These three are why the toolkit is shaped the way it is — keep them when extending it.
 
 - **Consistency** — one way to do each thing, applied uniformly. Agents come from
-  `@with_agents` / `@across_adapters`; waits go through the delivery barrier;
+  `@with_adapters` / `@per_adapter`; waits go through the delivery barrier;
   assertions are tolerant. The same rule holds everywhere: **fail loudly with a
   reason, never silently** — a missing key/CLI/server fails (never skips), an
   unregistered adapter fails the discovery guard, and an adapter that can't honor
@@ -157,11 +192,13 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 
 | Path | What it is |
 |------|------------|
-| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_agent` (run an already-provisioned identity — enter twice against one identity for a rejoin), `running_provisioned_agent` (provision + run, composes `running_agent`), `ProvisionedAgent` |
+| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep, `track_running` reboot-race guard), `AdapterCell` (build / provision / running / run_as — the per-cell lifecycle object behind `agent`/`cell`), `running_agent` (run an already-provisioned identity — enter twice against one identity for a rejoin), `running_provisioned_agent` (provision + run, composes `running_agent`), `ProvisionedAgent` (`.adapter_id` records the cell/slot it came from) |
 | `toolkit/adapters.py` | adapter registry: `Adapter` enum (the **one** source of adapter ids), `@adapter` builders, `build_adapter`, `specs`, the discovery guard |
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
-| `agents.py` | matrix/decorator glue: `@with_agents(Adapter.X, ...)` (fixed set → `agent`/`agents`), `@across_adapters(include/exclude/supports/without, prompt=, features=)` (matrix/subset → `matrix_agent` + `adapter_id`), `adapter_params` |
-| `smoke/samples/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_agents(..., **SHAPE)`, `build_agent`, and the `*_instruction(...)` builders |
+| `agents.py` | topology decorators: `@with_adapters(Adapter.X, ...)` (fixed set / one room → `agent`/`agents`), `@per_adapter(*adapters, exclude/supports/without/runs_tool_loop, prompt=, features=, tools=)` (fan across the matrix/subset → `agent`/`cell`); `adapter_params` is the internal parameter source `@per_adapter` feeds to the `adapter_id` fixture |
+| `smoke/samples/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_adapters(..., **SHAPE)` / `@per_adapter(..., **SHAPE)`, and the `*_instruction(...)` builders |
+| `fixtures/agents.py` | the agent fixtures: `agent` (single running `ProvisionedAgent`), `agents` (the `@with_adapters` group), `cell` (an `AdapterCell` to drive yourself), `adapter_id` (internal `@per_adapter` parametrize target) |
+| `agent_wiring.py` | `assert_agent_fixtures_wired` — the collection-time guard that rejects mis-wired decorator/fixture pairings (see **Wiring fences**) |
 | `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, and the `EXECUTION_REPORTING` shape |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
@@ -177,7 +214,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_agent_scenarios.py` |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py` |
-| `smoke/adapters/` | adapter-specific showcases: `test_letta.py` |
+| `smoke/adapters/` | adapter-specific showcases: `test_agno.py`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
@@ -185,27 +222,100 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 ## Fixtures (from `conftest.py`)
 
 `baseline_settings`, `user_ops`, `resource_manager`, `reply_capture`, `judge`,
-`agent`, `agents`, `adapter_id`, `matrix_agent`, `baseline_ws`.
+`agent`, `agents`, `cell`, `adapter_id`, `baseline_ws`.
 
 - `reply_capture` and `judge` pre-bind their plumbing (the WS observer; the judge
   model + key), so tests pass only the test-specific arguments.
-- `agent` / `agents` are driven by `@with_agents(Adapter.X, ...)`: the decorator
-  auto-applies the requirement gate and the fixtures build (via the registry) +
-  provision + run + reap the agents.
-- `adapter_id` (the cell's id) + `matrix_agent` (its running `ProvisionedAgent`) are
-  parametrized over the full registry by default and narrowed by `@across_adapters`.
+- `agent` is the single running `ProvisionedAgent` — sourced from `@per_adapter`
+  (the current cell) **or** `@with_adapters(OneAdapter)`. Its id is `agent.adapter_id`.
+- `agents` is the running group declared by `@with_adapters(A, B, …)`, in declared
+  order; each carries its own `.adapter_id`.
+- `cell` is the `@per_adapter` cell's `AdapterCell` — request it (instead of `agent`)
+  when the test drives its own lifecycle (a build-only check, or a reboot /
+  rehydration scenario). See **AdapterCell** below.
+- All three build/provision/run through the registry and are reaped on teardown; the
+  decorator also auto-applies the requirement gate.
+- The old per-cell agent fixture is **gone**, and so is the old "bare fixture
+  request = full matrix" path — a full-matrix test is now written `@per_adapter()`
+  and reads `agent` / `agent.adapter_id`.
+- `adapter_id` is the internal parametrize target `@per_adapter` fans over; it is
+  normalized to `str`. Live tests read `agent.adapter_id`, manual tests
+  `cell.adapter_id` — you rarely request `adapter_id` directly.
 - The E2E + Band-key gate is applied to every baseline test automatically, so a
   gate-only test needs no decorator.
+
+## AdapterCell: driving the lifecycle yourself
+
+Under `@per_adapter()`, request **`cell`** (an `AdapterCell`) instead of `agent`
+when the test owns the agent's start/stop — a no-provision construction check, or a
+reboot / restart / rehydration scenario. `agent` is just sugar over `cell.running()`;
+the decorator's `prompt` / `features` / `tools` steering is carried on the cell as
+defaults (a method argument overrides).
+
+| Method | Does | Provisions? | Runs? |
+|---|---|---|---|
+| `cell.build()` | constructs the adapter without running it | no | no |
+| `await cell.provision(label=…)` | registers a tracked+reaped identity (`ProvisionedAgent`) | yes | no |
+| `async with cell.run_as(identity)` | runs a *fresh* adapter under an existing identity | no | yes |
+| `async with cell.running(label=…)` | provision **and** run in one step (what `agent` uses) | yes | yes |
+
+Build-only (cheap, sync test):
+
+```python notest
+@per_adapter()
+def test_build(cell):
+    assert isinstance(cell.build(), SimpleAdapter)   # no network, no provisioning
+```
+
+Reboot / rehydration — provision once, enter `run_as` **twice** (stop → fresh run
+under the same identity), so a correct recall in run 2 can only have come from the
+platform rehydrating the room, not in-memory adapter state:
+
+```python notest
+@per_adapter(prompt=REPLY_PROMPT)
+async def test_recalls_after_rejoin(cell, resource_manager, user_ops, reply_capture):
+    identity = await cell.provision(f"rejoin-{cell.adapter_id}")
+    room_id = await resource_manager.provision_room(participants=[identity.id])
+
+    async with cell.run_as(identity):          # run 1: state a note, then stop
+        async with reply_capture(room_id) as capture:
+            mid = await user_ops.send_message(room_id, REMEMBER, mention_id=identity.id, mention_name=identity.name)
+            await capture.wait_for_processed(mid, identity.id)
+
+    async with cell.run_as(identity):          # run 2: fresh adapter, same identity
+        async with reply_capture(room_id) as capture:
+            mark = capture.messages.snapshot()
+            mid = await user_ops.send_message(room_id, RECALL, mention_id=identity.id, mention_name=identity.name)
+            await capture.wait_for_processed(mid, identity.id)
+            capture.messages.since(mark).assert_contains_any([note])
+```
+
+## Wiring fences (fail at collection, before any live agent)
+
+The topology is guarded two ways so a mis-wired test never false-greens:
+
+- **`assert_agent_fixtures_wired`** (`agent_wiring.py`, run from the collection hook)
+  raises a `UsageError` for any of: `cell` requested without `@per_adapter`;
+  `agent`/`agents` requested with no decorator; `agents` under `@per_adapter` (a
+  cell is one adapter — use `agent`); `cell` under `@with_adapters` (fan-only);
+  both decorators on one test; `agent` and `cell` both requested; a hand-rolled
+  `parametrize("adapter_id")` with no `@per_adapter`.
+- **`@per_adapter` raises at import** if its filters select **no** adapters (an
+  empty `parametrize` would skip silently — fail-loud forbids that). A bare
+  `@per_adapter()` is never empty.
+- **`ResourceManager.track_running`** raises if one identity is already running,
+  blocking overlapping/nested runs of a single identity (the classic reboot bug);
+  the id is released in `finally`, so a failed startup never wedges it.
 
 ## "I want to..." -> use this (do not reinvent)
 
 | Need | Use |
 |------|-----|
-| Run a specific named agent | `@with_agents(Adapter.ANTHROPIC)` → `agent` (or `agents` for several); auto-gates + runs + reaps |
-| Run a standard prompt/features shape | `@with_agents(Adapter.X, **TOOL_AGENT)` / `**MEMORY_AGENT` — don't re-spell `prompt=`/`features=` |
-| Run the same scenario across every adapter | request `matrix_agent` and/or `adapter_id` (parametrized over the full registry) |
-| Run a scenario across a subset | `@across_adapters(include=/exclude= by id, supports=/without={Capability.MEMORY} by capability, or runs_tool_loop=True for the custom-tool subgroup)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
-| A bespoke adapter (custom tools) | `build_adapter(Adapter.X, settings, tools=[...], **EXECUTION_REPORTING)` + `async with running_provisioned_agent(adapter, resource_manager) as agent:` |
+| Run a specific named agent | `@with_adapters(Adapter.ANTHROPIC)` → `agent` (or `agents` for several); auto-gates + runs + reaps |
+| Run a standard prompt/features shape | `@with_adapters(Adapter.X, **TOOL_AGENT)` / `**MEMORY_AGENT` — don't re-spell `prompt=`/`features=` |
+| Run the same scenario across every adapter | `@per_adapter()` → `agent` (id via `agent.adapter_id`) |
+| Run a scenario across a subset | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude= by id, supports=/without={Capability.MEMORY} by capability, or runs_tool_loop=True for the custom-tool subgroup)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
+| Drive the agent lifecycle myself (build-only / reboot / rehydration) | `@per_adapter()` → `cell` (`cell.build()` / `cell.provision()` / `cell.run_as()` — see **AdapterCell**) |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging) |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
 | Observe replies without a race | `async with reply_capture(room_id) as capture:` then send |
@@ -222,7 +332,7 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Assert a memory op was called / a record landed | `mem.calls.assert_store_called(...)` / `mem.stored.assert_stored(content=marker, ...)` |
 | Assert something happened (cheap) | the `Replies` assertion methods on `capture.messages` |
 | Assert a fuzzy/semantic outcome | the `judge` fixture (sparingly — see Assertion strategy) |
-| Declare extra requirements explicitly | `@requires(Dep.OPENAI, ...)` (missing one **fails**) — but `@with_agents`/`@across_adapters` already do this for the agents they build |
+| Declare extra requirements explicitly | `@requires(Dep.OPENAI, ...)` (missing one **fails**) — but `@with_adapters`/`@per_adapter` already do this for the agents they build |
 
 ## Assertion strategy: cheap checks first, judge last
 
@@ -381,7 +491,7 @@ flakiness is isolated; `letta` stands alone for the live-server backend it will 
 **The knob:** `BAND_E2E_LANE=<lane id>`. When set, `lane_selection.apply_lane_skips`
 (called by the conftest hook) resolves the lane's adapters from `ci_lanes()` and
 marks **skip-with-reason** every test bound to an out-of-lane adapter — matrix cells
-*and* `@with_agents` tests. An **in-lane** adapter is left untouched, so a missing
+*and* `@with_adapters` tests. An **in-lane** adapter is left untouched, so a missing
 key/CLI/server still **fails** via its `@requires` gate (an unwired lane is red by
 design until its setup lands). Adapter-agnostic tests always run. **Unset** (the
 local default) runs the full matrix, fail-loud.
@@ -440,7 +550,7 @@ MCP URL) isn't wired yet.
 
 So the Letta adapter is registered **`e2e_pending`** (`toolkit/adapters.py`): it
 still *defines* the `letta` CI lane via `ci_lanes()`, but `specs()`/`adapter_params()`
-exclude it, so it is **not a matrix cell** and no `@with_agents(Adapter.LETTA)`
+exclude it, so it is **not a matrix cell** and no `@with_adapters(Adapter.LETTA)`
 tests run. The `letta` lane therefore runs only the adapter-agnostic baseline tests
 plus one placeholder (`smoke/adapters/test_letta.py`), and needs no backend setup.
 

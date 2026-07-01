@@ -6,7 +6,7 @@ their own CI job). These are CrewAI-focused: ``CrewAIAdapter`` wraps a single
 role/goal/backstory crew agent, and ``CrewAIFlowAdapter`` wraps a CrewAI Flow —
 both re-offer the platform tools (and any custom tools) through their own runners.
 
-Bound to ``@with_agents(Adapter.CREWAI / Adapter.CREWAI_FLOW)``, so they run in the
+Bound to ``@with_adapters(Adapter.CREWAI / Adapter.CREWAI_FLOW)``, so they run in the
 ``crewai`` lane and skip-with-reason elsewhere. Locally they fail-loud unless the
 ``dev-crewai`` venv is active (``crewai`` not importable is the intended
 "not wired up" signal under the matrix's fail-loud policy).
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import Adapter, with_agents
+from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.smoke.samples.sample_tools import (
     ACCESS_CODES,
     EXECUTION_REPORTING,
@@ -34,7 +34,7 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@with_agents(
+@with_adapters(
     Adapter.CREWAI, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
 @pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
@@ -67,7 +67,7 @@ async def test_crewai_executes_custom_tool(
     capture.messages.assert_contains_any([ACCESS_CODES["gamma"]])
 
 
-@with_agents(Adapter.CREWAI_FLOW)
+@with_adapters(Adapter.CREWAI_FLOW)
 @pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
 @pytest.mark.asyncio(loop_scope="session")
 async def test_crewai_flow_replies(

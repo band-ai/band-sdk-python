@@ -1,33 +1,170 @@
-"""Agent-provisioning fixtures: the ``@with_agents`` set (``agents``/``agent``)
-and the matrix cell (``adapter_id``/``matrix_agent``)."""
+"""Agent fixtures for the two topologies.
+
+* ``@per_adapter`` (fan) → ``adapter_id`` (the cell id), ``cell`` (an ``AdapterCell`` to
+  drive yourself), and ``agent`` (a managed, running ``ProvisionedAgent`` — sugar over
+  ``cell.running()``).
+* ``@with_adapters`` (group) → ``agent`` (single) / ``agents`` (list), each a running
+  ``ProvisionedAgent``.
+
+Every path is explicit: requesting any of these without the matching decorator is a
+``UsageError`` (belt-and-suspenders behind the collection-time wiring guard). Both
+topologies build through ``AdapterCell`` so construction + run wiring lives in one place.
+"""
 
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 
 import pytest
 
+from band.core.types import AdapterFeatures
+
 from tests.e2e.baseline.agents import (
-    AGENTS_MARKER,
-    MATRIX_MARKER,
-    AgentsRequest,
-    MatrixBuild,
-    adapter_params,
+    WITH_ADAPTERS_MARKER,
+    PER_ADAPTER_MARKER,
+    Adapter,
+    WithAdapters,
+    PerAdapter,
 )
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.provisioning import (
+    AdapterCell,
     ProvisionedAgent,
     ResourceManager,
-    running_provisioned_agent,
 )
+from tests.e2e.baseline.toolkit.tools import ToolSpec
 
-__all__ = ["adapter_id", "agent", "agents", "matrix_agent"]
+__all__ = ["adapter_id", "agent", "agents", "cell"]
 
 
-# Shared agent prompt for the demo adapters: short replies, transport-neutral.
+# The demo adapters reply tersely and in-chat unless a test steers otherwise; this is the
+# fixture-layer default prompt, applied when a decorator sets no prompt of its own.
 _SHORT_PROMPT = "Keep responses to one short sentence. Reply directly in the chat."
+
+
+def _make_cell(
+    adapter_id: str | Adapter,
+    settings: BaselineSettings,
+    resources: ResourceManager,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None,
+) -> AdapterCell:
+    """Build an ``AdapterCell`` with the decorator's steering, defaulting the prompt."""
+    return AdapterCell(
+        adapter_id=str(adapter_id),
+        settings=settings,
+        resources=resources,
+        prompt=prompt if prompt is not None else _SHORT_PROMPT,
+        features=features,
+        tools=tools,
+    )
+
+
+@asynccontextmanager
+async def _running_group_member(
+    name: str | Adapter,
+    slot: int,
+    req: WithAdapters,
+    settings: BaselineSettings,
+    resources: ResourceManager,
+) -> AsyncGenerator[ProvisionedAgent, None]:
+    """Run one ``@with_adapters`` member: a cell built from the request's steering,
+    slot-labelled so the same framework can repeat in a room without name collisions.
+
+    The single shared path for both ``agent`` (the one-adapter case) and ``agents`` (the
+    group), so the two never drift.
+    """
+    cell = _make_cell(
+        name,
+        settings,
+        resources,
+        prompt=req.prompt,
+        features=req.features,
+        tools=req.tools,
+    )
+    async with cell.running(label=f"{name}-{slot}") as running:
+        yield running
+
+
+@pytest.fixture
+def adapter_id(request: pytest.FixtureRequest) -> str:
+    """The current ``@per_adapter`` cell's adapter id (normalized to ``str``).
+
+    Only resolvable under ``@per_adapter``, which parametrizes it indirectly. Requesting
+    it (or any matrix fixture) without the decorator is a usage error.
+    """
+    if not hasattr(request, "param"):
+        raise pytest.UsageError(
+            "`adapter_id` is set by @per_adapter(...); a test cannot request the matrix "
+            "fixtures without that decorator."
+        )
+    return str(request.param)
+
+
+@pytest.fixture
+def cell(
+    request: pytest.FixtureRequest,
+    adapter_id: str,
+    baseline_settings: BaselineSettings,
+    resource_manager: ResourceManager,
+) -> AdapterCell:
+    """The ``AdapterCell`` for the current cell — build / provision / run it yourself.
+
+    Reach for it (instead of ``agent``) when the test owns the lifecycle: a no-provision
+    construction check, or a reboot / rehydration scenario. Carries the decorator's
+    ``prompt`` / ``features`` / ``tools`` as defaults.
+    """
+    marker = request.node.get_closest_marker(PER_ADAPTER_MARKER)
+    if marker is None:
+        raise pytest.UsageError("the `cell` fixture requires @per_adapter(...).")
+    each: PerAdapter = marker.args[0]
+    return _make_cell(
+        adapter_id,
+        baseline_settings,
+        resource_manager,
+        prompt=each.prompt,
+        features=each.features,
+        tools=each.tools,
+    )
+
+
+@pytest.fixture
+async def agent(
+    request: pytest.FixtureRequest,
+    baseline_settings: BaselineSettings,
+    resource_manager: ResourceManager,
+) -> AsyncGenerator[ProvisionedAgent, None]:
+    """The single running agent — for ``@per_adapter`` (the cell) or ``@with_adapters(One)``.
+
+    Provisioned, run for the test, and reaped by the resource manager. Use ``agents`` for a
+    ``@with_adapters`` group, or ``cell`` when a test drives its own lifecycle.
+    """
+    if request.node.get_closest_marker(PER_ADAPTER_MARKER) is not None:
+        # Sugar over the cell (sync fixture; pulled dynamically since `agent` doesn't
+        # statically depend on it) — the decorator steering already lives on the cell.
+        running_cell: AdapterCell = request.getfixturevalue("cell")
+        async with running_cell.running() as running:
+            yield running
+        return
+
+    marker = request.node.get_closest_marker(WITH_ADAPTERS_MARKER)
+    if marker is None:
+        raise pytest.UsageError(
+            "`agent` requires @per_adapter(...) or @with_adapters(OneAdapter)."
+        )
+    req: WithAdapters = marker.args[0]
+    if len(req.adapters) != 1:
+        raise pytest.UsageError(
+            f"`agent` needs exactly one adapter in @with_adapters(...); got "
+            f"{len(req.adapters)} — use `agents` for multiple."
+        )
+    async with _running_group_member(
+        req.adapters[0], 0, req, baseline_settings, resource_manager
+    ) as running:
+        yield running
 
 
 @pytest.fixture
@@ -36,97 +173,25 @@ async def agents(
     baseline_settings: BaselineSettings,
     resource_manager: ResourceManager,
 ) -> AsyncGenerator[list[ProvisionedAgent], None]:
-    """The running agents declared by ``@with_agents(...)``, in declared order.
+    """The running agents declared by ``@with_adapters(...)``, in declared order.
 
-    Builds each adapter via the registry (steered by the decorator's
-    ``prompt``/``features``, defaulting to the short prompt), runs each through
-    ``running_provisioned_agent`` (reaped by ``resource_manager`` teardown), and
-    yields the ``ProvisionedAgent`` records. Use ``agent`` for the single case.
-
-    Each slot gets an index-suffixed label so the same framework can appear more
-    than once (e.g. ``@with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC)`` for two
-    same-type agents in one room) without provisioned-name collisions.
+    Each slot gets an index-suffixed label so the same framework can appear more than once
+    (e.g. two Anthropic agents in one room) without provisioned-name collisions.
     """
-    marker = request.node.get_closest_marker(AGENTS_MARKER)
+    marker = request.node.get_closest_marker(WITH_ADAPTERS_MARKER)
     if marker is None:
         raise pytest.UsageError(
-            "the `agents`/`agent` fixture requires the @with_agents(...) decorator"
+            "the `agents` fixture requires @with_adapters(...); use `agent`/`cell` under "
+            "@per_adapter."
         )
-    req: AgentsRequest = marker.args[0]
-    prompt = req.prompt if req.prompt is not None else _SHORT_PROMPT
+    req: WithAdapters = marker.args[0]
     async with AsyncExitStack() as stack:
         provisioned = [
             await stack.enter_async_context(
-                running_provisioned_agent(
-                    build_adapter(
-                        name,
-                        baseline_settings,
-                        prompt=prompt,
-                        features=req.features,
-                        tools=req.tools,
-                    ),
-                    resource_manager,
-                    label=f"{name}-{slot}",
+                _running_group_member(
+                    name, slot, req, baseline_settings, resource_manager
                 )
             )
             for slot, name in enumerate(req.adapters)
         ]
-        yield provisioned
-
-
-@pytest.fixture
-async def agent(agents: list[ProvisionedAgent]) -> ProvisionedAgent:
-    """The single running agent declared by ``@with_agents(OneAdapter)``."""
-    if len(agents) != 1:
-        raise pytest.UsageError(
-            f"`agent` needs exactly one adapter in @with_agents(...); got "
-            f"{len(agents)} — use `agents` for multiple."
-        )
-    return agents[0]
-
-
-# The full adapter matrix as fixture params: one cell per registered adapter, each
-# carrying its ``@requires`` marks so a missing requirement fails that cell. Built
-# once at import (registration happens when ``toolkit.adapters`` is imported above).
-_MATRIX_PARAMS = adapter_params()
-
-
-@pytest.fixture(params=_MATRIX_PARAMS)
-def adapter_id(request: pytest.FixtureRequest) -> str:
-    """The current matrix cell's adapter id.
-
-    Parametrized across the whole registry by default (each cell carrying its
-    ``@requires`` gate), so requesting this — or ``matrix_agent``, which depends on
-    it — fans a test across the matrix. ``@across_adapters(...)`` overrides the set;
-    construction-only tests parametrize it directly.
-    """
-    return request.param
-
-
-@pytest.fixture
-async def matrix_agent(
-    request: pytest.FixtureRequest,
-    adapter_id: str,
-    baseline_settings: BaselineSettings,
-    resource_manager: ResourceManager,
-) -> AsyncGenerator[ProvisionedAgent, None]:
-    """The running provisioned agent for the current matrix cell.
-
-    Built from ``adapter_id`` via the registry and run for the test; request
-    ``adapter_id`` alongside it when a test also needs the id. ``@across_adapters``
-    may steer construction via the ``MatrixBuild`` marker (``prompt`` / ``features``
-    — e.g. enable memory), else a short default prompt and no features. Reaping is
-    owned by ``resource_manager`` teardown.
-    """
-    marker = request.node.get_closest_marker(MATRIX_MARKER)
-    build: MatrixBuild | None = marker.args[0] if marker else None
-    prompt = build.prompt if build and build.prompt is not None else _SHORT_PROMPT
-    features = build.features if build else None
-    tools = build.tools if build else None
-    adapter = build_adapter(
-        adapter_id, baseline_settings, prompt=prompt, features=features, tools=tools
-    )
-    async with running_provisioned_agent(
-        adapter, resource_manager, label=adapter_id
-    ) as provisioned:
         yield provisioned

@@ -1,11 +1,12 @@
 """Driving instructions + matrix glue for the smoke tests.
 
 Adapter construction and discovery live in the toolkit registry
-(``toolkit.adapters``); this module is the pytest-facing glue over it.
-``build_agent`` builds a registered adapter under the shared role-setting prompt;
-the matrix glue (``adapter_params`` / ``across_adapters`` / ``with_agents``) lives in
-``tests.e2e.baseline.agents``. Adding a framework is a single ``@adapter`` entry in
-the registry -- nothing here changes.
+(``toolkit.adapters``); this module is the pytest-facing glue over it: the shared
+role-setting prompt, ``memory_features()``, and the reusable agent *shapes*
+(``TOOL_AGENT`` / ``MEMORY_AGENT``) passed as ``@per_adapter(..., **SHAPE)`` /
+``@with_adapters(..., **SHAPE)``. The decorators themselves (``per_adapter`` /
+``with_adapters`` / ``adapter_params``) live in ``tests.e2e.baseline.agents``. Adding a
+framework is a single ``@adapter`` entry in the registry -- nothing here changes.
 
 Following ``sample_tools``/``test_tool_calls``, the agent gets a fixed
 role-setting system prompt and the *user message* carries the instruction (with
@@ -19,7 +20,6 @@ from __future__ import annotations
 import uuid
 
 
-from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, MessageType
 from band.core.memory_types import (
     MemorySegment,
@@ -28,8 +28,6 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
 )
 
-from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.adapters import build_adapter
 from tests.e2e.baseline.toolkit.observations import MemoryTool
 
 # Fixed role-setter: the actionable instruction (and marker) travels in the user
@@ -41,30 +39,13 @@ TOOL_AGENT_SYSTEM_PROMPT = (
 )
 
 
-def build_agent(
-    adapter_id: str,
-    settings: BaselineSettings,
-    *,
-    features: AdapterFeatures | None = None,
-) -> SimpleAdapter:
-    """Build the registered adapter under the shared role-setting prompt.
-
-    Delegates to the toolkit registry (the single place that knows how to
-    construct each framework). ``features`` flips capabilities such as memory on;
-    the steering prompt is the fixed ``TOOL_AGENT_SYSTEM_PROMPT``.
-    """
-    return build_adapter(
-        adapter_id, settings, prompt=TOOL_AGENT_SYSTEM_PROMPT, features=features
-    )
-
-
 def memory_features() -> AdapterFeatures:
     """Features for the memory smokes: expose the memory tools, and record the
     tool call as a ``tool_call`` event so the call layer is observable."""
     return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.EXECUTION})
 
 
-# Reusable agent shapes for ``@with_agents(..., **SHAPE)``: the prompt (and
+# Reusable agent shapes for ``@with_adapters(..., **SHAPE)``: the prompt (and
 # features) a smoke runs its agents under. Declared once here so every test shares
 # the same shape instead of re-spelling it.
 TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}

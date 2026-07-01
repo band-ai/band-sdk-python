@@ -6,10 +6,10 @@ other room's — proving every framework keeps per-room conversation state and t
 platform scopes ``/context`` per room, with no cross-room leakage.
 
 Replaces the now-removed legacy ``tests/e2e/scenarios/test_room_isolation.py``, on
-the baseline toolkit: the agent comes from the ``matrix_agent`` fixture (full matrix,
-gated + reaped), rooms/driving/capture from the toolkit, and the leak check is the
-tolerant ``assert_contains_none`` (the dual of ``assert_contains_any``) rather than
-a bespoke helper.
+the baseline toolkit: the agent comes from ``@per_adapter`` (full matrix, gated +
+reaped), rooms/driving/capture from the toolkit, and the leak check is the tolerant
+``assert_contains_none`` (the dual of ``assert_contains_any``) rather than a bespoke
+helper.
 
 Wording note: the payload is a neutral "note", not a "secret code" — models
 reliably refuse to repeat a credential-shaped value, an unrelated false failure.
@@ -19,18 +19,19 @@ from __future__ import annotations
 
 import pytest
 
+from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
+@per_adapter()
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(extra=180)  # four sequential turns (two rooms × state + recall)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_rooms_keep_isolated_context(
-    adapter_id: str,
-    matrix_agent: ProvisionedAgent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -45,10 +46,10 @@ async def test_rooms_keep_isolated_context(
     note_a = unique_marker("alpha")
     note_b = unique_marker("bravo")
     room_a = await resource_manager.provision_room(
-        title=f"e2e-isolation-a-{adapter_id}", participants=[matrix_agent.id]
+        title=f"e2e-isolation-a-{agent.adapter_id}", participants=[agent.id]
     )
     room_b = await resource_manager.provision_room(
-        title=f"e2e-isolation-b-{adapter_id}", participants=[matrix_agent.id]
+        title=f"e2e-isolation-b-{agent.adapter_id}", participants=[agent.id]
     )
 
     # Phase 1: state a different note in each room.
@@ -56,18 +57,18 @@ async def test_rooms_keep_isolated_context(
         mid = await user_ops.send_message(
             room_a,
             f"Please remember this note: {note_a}. Confirm you remember it.",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await cap_a.wait_for_processed(mid, matrix_agent.id)
+        await cap_a.wait_for_processed(mid, agent.id)
     async with reply_capture(room_b) as cap_b:
         mid = await user_ops.send_message(
             room_b,
             f"Please remember this note: {note_b}. Confirm you remember it.",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await cap_b.wait_for_processed(mid, matrix_agent.id)
+        await cap_b.wait_for_processed(mid, agent.id)
 
     # Phase 2: each room recalls only its own note, never the other's. A fresh
     # capture per room scopes the assertion to the recall reply alone.
@@ -75,10 +76,10 @@ async def test_rooms_keep_isolated_context(
         mid = await user_ops.send_message(
             room_a,
             "What was the note? Reply with just it.",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await cap_a.wait_for_processed(mid, matrix_agent.id)
+        await cap_a.wait_for_processed(mid, agent.id)
         cap_a.messages.assert_contains_any([note_a])
         cap_a.messages.assert_contains_none([note_b])
 
@@ -86,9 +87,9 @@ async def test_rooms_keep_isolated_context(
         mid = await user_ops.send_message(
             room_b,
             "What was the note? Reply with just it.",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await cap_b.wait_for_processed(mid, matrix_agent.id)
+        await cap_b.wait_for_processed(mid, agent.id)
         cap_b.messages.assert_contains_any([note_b])
         cap_b.messages.assert_contains_none([note_a])

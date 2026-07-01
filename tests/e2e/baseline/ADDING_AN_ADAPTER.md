@@ -4,9 +4,9 @@ You just added `src/band/adapters/<framework>.py` (a `SimpleAdapter` subclass) a
 its converter. This guide is the **manual** part: registering it so the baseline
 matrix (`tests/e2e/baseline/`) builds, gates, runs, and reaps it automatically.
 
-Once registered, every existing matrix scenario (`matrix_agent` / `@across_adapters`)
-and the smokes run against your adapter for free — you write **no per-adapter test**
-to get baseline coverage.
+Once registered, every existing matrix scenario (`@per_adapter`) and the smokes run
+against your adapter for free — you write **no per-adapter test** to get baseline
+coverage.
 
 > The discovery guard (`test_adapter_registry.py`) **fails loudly** the moment a new
 > non-bridge module appears under `src/band/adapters/` without a matching enum member
@@ -99,14 +99,14 @@ Rules for the builder — each exists for a reason, don't skip them:
 - **`supports=[...]`** — the platform `Capability`s your adapter can expose
   (`Capability.MEMORY`, `Capability.CONTACTS`). Most tool-loop adapters use the
   `_LLM_TOOL_LOOP` shorthand (`= (MEMORY, CONTACTS)`). This only declares what
-  capability-scoped matrices (`@across_adapters(supports={Capability.MEMORY})`) can
+  capability-scoped matrices (`@per_adapter(supports={Capability.MEMORY})`) can
   *select* — it does **not** turn the capability on. The test enables it by passing
   matching `features`. If your adapter doesn't do the tool loop (e.g. a terminal
   flow), omit `supports` so it advertises nothing.
 - **`runs_tool_loop=`** (default `True`) — whether your adapter runs an LLM tool
   loop that can execute a translated local `ToolSpec` and emit observable
   `tool_call` events. It's the axis the custom-tool matrix selects on
-  (`@across_adapters(runs_tool_loop=True)`), decoupled from `supports` on purpose:
+  (`@per_adapter(runs_tool_loop=True)`), decoupled from `supports` on purpose:
   an external coding-agent backend could run custom tools yet advertise no platform
   capabilities. Set `runs_tool_loop=False` if your adapter returns a terminal result
   or delegates tools to an external process / MCP server (as crewai_flow, codex,
@@ -217,7 +217,7 @@ next developer/agent knows the knob exists.
 
 ## Step 5 — Custom tools: accept or reject (no silent drop)
 
-The matrix can pass `tools=[CustomToolDef, ...]` (from `@with_agents(..., tools=[...])`).
+The matrix can pass `tools=[CustomToolDef, ...]` (from `@with_adapters(..., tools=[...])`).
 
 - If your framework accepts band `CustomToolDef`s, forward them as
   `additional_tools=tools`.
@@ -274,7 +274,7 @@ by contrast, always means a missing enum member or builder.
 ## What you do NOT touch
 
 The matrix machinery is generic — leave it alone. You do **not** edit `agents.py`
-(`@with_agents` / `@across_adapters`), `conftest.py` fixtures, `capture.py`,
+(`@with_adapters` / `@per_adapter`), `conftest.py` fixtures, `capture.py`,
 `provisioning.py`, or any existing scenario/smoke. Registering in `adapters.py`
 (+ optional `requirements.py`/`settings.py`) is the entire surface. If you find
 yourself editing a scenario to special-case your adapter, that's a smell — the

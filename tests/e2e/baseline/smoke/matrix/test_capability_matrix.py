@@ -1,4 +1,4 @@
-"""Capability-filtered matrix smokes — demonstrate ``@across_adapters`` filtering.
+"""Capability-filtered matrix smokes — demonstrate ``@per_adapter`` filtering.
 
 Two complementary scenarios driven entirely by capability filters, with no
 hard-coded adapter lists:
@@ -23,7 +23,7 @@ import pytest
 from band.core.memory_types import MemoryListScope
 from band.core.types import Capability
 
-from tests.e2e.baseline.agents import across_adapters
+from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     MEMORY_AGENT,
     recall_memory_instruction,
@@ -35,12 +35,11 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@across_adapters(supports={Capability.MEMORY}, **MEMORY_AGENT)
+@per_adapter(supports={Capability.MEMORY}, **MEMORY_AGENT)
 @pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
 @pytest.mark.asyncio(loop_scope="session")
 async def test_store_memory_across_memory_adapters(
-    adapter_id: str,
-    matrix_agent: ProvisionedAgent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -52,30 +51,29 @@ async def test_store_memory_across_memory_adapters(
     """
     marker = unique_marker("xmem")
     room_id = await resource_manager.provision_room(
-        title=f"e2e-cap-memory-{adapter_id}", participants=[matrix_agent.id]
+        title=f"e2e-cap-memory-{agent.adapter_id}", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
         mid = await user_ops.send_message(
             room_id,
             store_memory_instruction(marker),
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, matrix_agent.id)
+        await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
-            matrix_agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
         )
 
     mem.stored.assert_stored(content=marker)
 
 
-@across_adapters(supports={Capability.MEMORY}, **MEMORY_AGENT)
+@per_adapter(supports={Capability.MEMORY}, **MEMORY_AGENT)
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(extra=120)  # store -> list -> get is a multi-tool turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recall_memory_across_memory_adapters(
-    adapter_id: str,
-    matrix_agent: ProvisionedAgent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -91,18 +89,18 @@ async def test_recall_memory_across_memory_adapters(
     """
     marker = unique_marker("rmem")
     room_id = await resource_manager.provision_room(
-        title=f"e2e-cap-recall-{adapter_id}", participants=[matrix_agent.id]
+        title=f"e2e-cap-recall-{agent.adapter_id}", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
         mid = await user_ops.send_message(
             room_id,
             recall_memory_instruction(marker),
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, matrix_agent.id)
+        await capture.wait_for_processed(mid, agent.id)
         mem = await capture.memory(
-            matrix_agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+            agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
         )
 
     # Write side: the record landed in the store.
@@ -112,12 +110,11 @@ async def test_recall_memory_across_memory_adapters(
     mem.calls.assert_get_called()
 
 
-@across_adapters(without={Capability.MEMORY})
+@per_adapter(without={Capability.MEMORY})
 @pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
 @pytest.mark.asyncio(loop_scope="session")
 async def test_reply_across_non_memory_adapters(
-    adapter_id: str,
-    matrix_agent: ProvisionedAgent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
@@ -128,15 +125,15 @@ async def test_reply_across_non_memory_adapters(
     the adapters the memory test does not, with no overlap and no hard-coded ids.
     """
     room_id = await resource_manager.provision_room(
-        title=f"e2e-cap-nomemory-{adapter_id}", participants=[matrix_agent.id]
+        title=f"e2e-cap-nomemory-{agent.adapter_id}", participants=[agent.id]
     )
     async with reply_capture(room_id) as capture:
         trigger = await user_ops.send_message(
             room_id,
             "Please reply with a short greeting.",
-            mention_id=matrix_agent.id,
-            mention_name=matrix_agent.name,
+            mention_id=agent.id,
+            mention_name=agent.name,
         )
-        await capture.wait_for_processed(trigger, matrix_agent.id)
+        await capture.wait_for_processed(trigger, agent.id)
 
-    capture.messages.assert_present(what=f"a reply from {adapter_id}")
+    capture.messages.assert_present(what=f"a reply from {agent.adapter_id}")

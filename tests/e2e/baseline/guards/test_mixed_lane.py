@@ -1,4 +1,4 @@
-"""Guard smoke: a ``@with_agents`` test spanning >1 CI lane fails collection.
+"""Guard smoke: a ``@with_adapters`` test spanning >1 CI lane fails collection.
 
 Such a test is skipped in *every* lane (each lane drops it for its out-of-lane
 adapters), so it never runs in CI yet shows green — the false-confidence the
@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.e2e.baseline.agents import AGENTS_MARKER, AgentsRequest
+from tests.e2e.baseline.agents import WITH_ADAPTERS_MARKER, WithAdapters
 from tests.e2e.baseline.lane_selection import (
     MIXED_LANE_MARKER,
     assert_no_unschedulable_mixed_lane,
@@ -54,8 +54,8 @@ class _FakeItem:
         self.nodeid = nodeid
         self._markers: dict[str, SimpleNamespace] = {}
         if agents is not None:
-            req = AgentsRequest(adapters=agents, prompt=None, features=None, tools=None)
-            self._markers[AGENTS_MARKER] = SimpleNamespace(args=(req,))
+            req = WithAdapters(adapters=agents, prompt=None, features=None, tools=None)
+            self._markers[WITH_ADAPTERS_MARKER] = SimpleNamespace(args=(req,))
         if mixed_lane:
             self._markers[MIXED_LANE_MARKER] = SimpleNamespace(args=())
         if adapter_id is not None:
@@ -65,8 +65,8 @@ class _FakeItem:
         return self._markers.get(name)
 
 
-def test_cross_lane_with_agents_fails_collection() -> None:
-    """A @with_agents test spanning two lanes raises a UsageError naming the lanes."""
+def test_cross_lane_with_adapters_fails_collection() -> None:
+    """A @with_adapters test spanning two lanes raises a UsageError naming the lanes."""
     a, b = _two_adapters_in_different_lanes()
     item = _FakeItem("tests/e2e/baseline/x.py::test_cross", agents=(a, b))
     with pytest.raises(pytest.UsageError) as excinfo:
@@ -85,7 +85,7 @@ def test_mixed_lane_marker_opts_out() -> None:
     assert_no_unschedulable_mixed_lane([item])  # no raise
 
 
-def test_same_lane_with_agents_is_allowed() -> None:
+def test_same_lane_with_adapters_is_allowed() -> None:
     """Two adapters in one lane are schedulable, so the guard stays silent."""
     pair = _two_adapters_in_same_lane()
     if pair is None:
