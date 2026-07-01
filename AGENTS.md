@@ -394,7 +394,7 @@ resolves each in a separate fork.
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
-- `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-4o-mini`)
+- `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
 - `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
 - `E2E_TIMEOUT`: Per-turn response timeout in seconds for E2E tests (default: `120`; a slow test can add headroom with `@pytest.mark.timeout(extra=n)`)

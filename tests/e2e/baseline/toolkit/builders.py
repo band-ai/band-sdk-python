@@ -253,7 +253,7 @@ def _build_codex(
 
     # Only override what's explicitly configured. CODEX_MODEL is left unset by
     # default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
-    # catalogue (gpt-4o-mini isn't in it), so leaving config.model=None lets the
+    # catalogue (the OpenAI chat model isn't in it), so leaving config.model=None lets the
     # adapter discover/select a valid Codex model. CODEX_COMMAND likewise: an absent
     # value spawns the stock `codex` binary. Splits mirror the gates in requirements.py.
     config_kwargs: dict[str, Any] = {

@@ -120,7 +120,7 @@ class Backends(BaseSettings):
     # Dep.LETTA requirement, ready for when the Letta smokes land.
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
     letta_api_key: str = ""  # LETTA_API_KEY (Letta Cloud)
-    letta_model: str = "openai/gpt-4o-mini"  # LETTA_MODEL
+    letta_model: str = "openai/gpt-5.4-mini"  # LETTA_MODEL
     mcp_server_url: str = ""  # MCP_SERVER_URL (band-mcp SSE endpoint)
 
 
