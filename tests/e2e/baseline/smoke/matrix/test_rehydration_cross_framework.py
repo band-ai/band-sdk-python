@@ -42,7 +42,6 @@ import pytest
 from tests.e2e.baseline.agents import Adapter, Lane, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import REPLY_PROMPT, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.observations.replies import Replies
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
@@ -106,13 +105,9 @@ async def test_rehydrates_foreign_peer_message(
             # Setup precondition (fail loud): B's marker-bearing message must actually
             # mention A — else it never reaches A's context and a later recall miss would
             # look like a rehydration bug rather than a setup failure.
-            mentions_a = Replies(
-                m
-                for m in capture.messages.since(probe)
-                if m.metadata
-                and any(mention.id == recaller.id for mention in m.metadata.mentions)
+            capture.messages.since(probe).mentioning(recaller.id).assert_contains_any(
+                [marker]
             )
-            mentions_a.assert_contains_any([marker])
 
     # A boots fresh under its own identity — no in-memory history — and is asked what the
     # other participant told it. A correct recall can only come from the platform
