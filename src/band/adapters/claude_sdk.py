@@ -69,6 +69,7 @@ from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
+    MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     iter_tool_definitions,
     mcp_tool_names,
@@ -682,10 +683,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                     )
 
                     elif isinstance(block, ToolUseBlock):
+                        # Bare name for the cross-adapter tool_call record (the SDK
+                        # namespaces our tools mcp__band__*; see _semantic_tool_name).
+                        tool_name = self._semantic_tool_name(block.name)
                         logger.info(
                             "Room %s: Tool call: %s with %s...",
                             room_id,
-                            block.name,
+                            tool_name,
                             str(block.input)[:100],
                         )
                         if Emit.EXECUTION in self.features.emit:
@@ -693,7 +697,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "name": block.name,
+                                            "name": tool_name,
                                             "args": block.input,
                                             "tool_call_id": block.id,
                                         }
@@ -800,6 +804,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     # Chat-based approval flow
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _semantic_tool_name(sdk_tool_name: str) -> str:
+        """The bare tool name for platform/user-facing records.
+
+        claude_sdk exposes band + custom tools through an in-process MCP server, so
+        the Claude Agent SDK namespaces them as ``mcp__band__<tool>``. The platform
+        ``tool_call`` event and the approval UX are cross-adapter, semantic records
+        where every other adapter uses the bare name, so strip our own server's
+        prefix (``MCP_TOOL_PREFIX``). Any external MCP server's tools stay namespaced.
+        """
+        return sdk_tool_name.removeprefix(MCP_TOOL_PREFIX)
+
     def _make_can_use_tool(self, room_id: str) -> CanUseTool:
         """Return a room-bound ``can_use_tool`` callback for the Claude SDK."""
 
@@ -808,6 +824,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             tool_input: dict[str, Any],
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
+            # The SDK passes the MCP-namespaced name; use the bare name everywhere
+            # this approval surfaces to the user (summary, notifications, logs).
+            tool_name = self._semantic_tool_name(tool_name)
             summary = self._approval_summary(tool_name, tool_input)
             # Capture the sender now so it doesn't get overwritten by
             # messages arriving while we wait for a decision.
