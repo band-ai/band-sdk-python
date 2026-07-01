@@ -146,7 +146,7 @@ cross-framework test has to think about lanes at all.
 Verify where your adapter landed (the registry is the source of truth):
 
 ```bash
-uv run python -c "from tests.e2e.baseline.toolkit.adapters import ci_lanes; \
+uv run python -c "from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes; \
 print({a: l.id for l in ci_lanes() for a in l.adapters})"
 ```
 

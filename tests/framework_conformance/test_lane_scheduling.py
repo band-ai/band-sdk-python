@@ -39,10 +39,10 @@ from tests.e2e.baseline.requires import MARKER as REQUIRES_MARKER
 from tests.e2e.baseline.toolkit.adapters import (
     _custom_tool_defs,
     adapter_lane,
-    ci_lanes,
     spec_for,
     specs,
 )
+from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
 
 
 class _FakeItem:

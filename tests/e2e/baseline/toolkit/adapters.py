@@ -7,13 +7,15 @@ whole matrix.
 
 Adding a framework
 ------------------
-Two edits, both here: add an ``Adapter`` enum member (value == the module name)
-and a decorated builder::
+Two edits: add an ``Adapter`` enum member here (value == the module name) and a
+decorated builder in ``builders`` (imported at the bottom of this module for its
+registration side-effect)::
 
     class Adapter(StrEnum):
         ...
         MYFRAMEWORK = "myframework"
 
+    # in builders.py:
     @adapter(Adapter.MYFRAMEWORK, requires=[Dep.OPENAI], supports=[Capability.MEMORY])
     def _build_myframework(settings, *, prompt, features, tools=None):
         from band.adapters.myframework import MyframeworkAdapter
@@ -38,21 +40,21 @@ matching ``features`` to actually turn a capability on.
 
 Gating policy: each entry declares its requirements as ``Dep`` members; an absent
 requirement **fails** the cell with the env-var/CLI/server reason (never skips).
-Heavy/optional framework imports live **inside** each builder so importing this
-module (which triggers registration) never pulls in an absent dependency.
+Heavy/optional framework imports live **inside** each builder so importing the
+builders module (which registration triggers) never pulls in an absent dependency.
+
+The CI-lane partition + workflow-drift guards that build on this registry live in
+``ci_lanes`` (``adapter_lane`` stays here because ``specs``'s ``lane=`` filter needs
+it, and ``ci_lanes`` imports it).
 """
 
 from __future__ import annotations
 
 import pkgutil
-import re
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
-
-import yaml
 
 import band.adapters
 
@@ -64,13 +66,9 @@ from tests.e2e.baseline.toolkit.tools import ToolSpec
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.requirements import (
     DEFAULT_LANE,
-    REPO_ROOT,
     Dep,
-    Extra,
     Lane,
     dep_lane,
-    lane_extra,
-    validate_dep_tables,
 )
 
 
@@ -249,35 +247,15 @@ def assert_registry_covers_discovered() -> None:
         )
 
 
-# =============================================================================
-# CI lane partition: derived from each adapter's requirements
-# =============================================================================
-#
-# CI cannot run one job green across the whole fail-loud matrix (crewai conflicts
-# with the default venv's deps; the external-backend adapters need backends the
-# plain ``dev`` job doesn't stand up). Each adapter belongs to a *lane* -- a CI job
-# -- derived from its ``requires`` (the unique non-default ``dep_lane``), never a
-# hand-maintained list, so a newly-registered adapter lands in its lane for free and
-# the guard below fails loudly if it lands nowhere. A lane installs one ``uv`` extra
-# (``lane_extra``); the ``backends`` lane stands up codex/opencode/letta together.
-
-
-@dataclass(frozen=True)
-class CILane:
-    """A CI lane (one job): its id, the ``uv`` extra it installs, and its adapters."""
-
-    id: Lane
-    extra: Extra
-    adapters: tuple[Adapter, ...]
-
-
 def adapter_lane(spec: AdapterSpec) -> Lane:
     """The CI lane an adapter runs in: the unique non-default lane among its deps.
 
     An adapter has at most one lane-defining requirement (lanes are mutually
     exclusive -- a different venv or a different backend), so its lane is that
     dep's lane, else the shared default lane. Two distinct non-default lanes would
-    be unsatisfiable in one job and is a configuration error.
+    be unsatisfiable in one job and is a configuration error. The lane partition
+    that consumes this (``ci_lanes`` + workflow-drift guards) lives in ``ci_lanes``;
+    this stays here because ``specs``'s ``lane=`` filter needs it.
     """
     lanes = {dep_lane(dep) for dep in spec.requires} - {DEFAULT_LANE}
     if len(lanes) > 1:
@@ -286,110 +264,6 @@ def adapter_lane(spec: AdapterSpec) -> Lane:
             "an adapter can live in only one lane"
         )
     return next(iter(lanes), DEFAULT_LANE)
-
-
-def ci_lanes() -> list[CILane]:
-    """Every registered adapter grouped into its CI lane (stable id order).
-
-    The default lane is always present. This is what the CI workflow consumes to
-    fan one job per lane (each job installs ``lane.extra`` and provisions its
-    backend). An unwired backend lane still appears -- its cells fail loudly until
-    the workflow stands the backend up.
-    """
-    # include_pending: a pending adapter still defines its lane (the CI job exists)
-    # even though the matrix runs no cells for it.
-    by_lane: dict[Lane, list[Adapter]] = {DEFAULT_LANE: []}
-    for spec in specs(include_pending=True):  # stable id order
-        by_lane.setdefault(adapter_lane(spec), []).append(spec.id)
-    return [
-        CILane(id=lane, extra=lane_extra(lane), adapters=tuple(ids))
-        for lane, ids in sorted(by_lane.items())
-    ]
-
-
-def assert_every_adapter_has_a_ci_home() -> None:
-    """Fail loudly unless every registered adapter is placed in exactly one CI lane.
-
-    Partner to ``assert_registry_covers_discovered``: that guard ensures a new
-    adapter is *registered*; this one ensures it is *placed*. Building ``ci_lanes()``
-    also validates the Dep table and surfaces a mis-specified adapter early (an
-    unspecified ``Dep`` raises in ``dep_lane``; two distinct lanes raise in
-    ``adapter_lane``), so a new adapter cannot silently vanish from CI.
-    """
-    validate_dep_tables()
-    placed = {a for lane in ci_lanes() for a in lane.adapters}
-    unplaced = {spec.id for spec in specs(include_pending=True)} - placed
-    if unplaced:
-        raise AssertionError(
-            "adapters not placed in any CI lane (ci_lanes must cover the "
-            f"registry): {sorted(str(a) for a in unplaced)}"
-        )
-
-
-# The e2e workflow (REPO_ROOT is the single source of the checkout-depth assumption).
-_E2E_WORKFLOW = REPO_ROOT / ".github/workflows/e2e.yml"
-# A `matrix.lane == 'x'` / `!= "x"` gate literal in the workflow (either quote style).
-_LANE_GATE_RE = re.compile(r"""matrix\.lane\s*[!=]=\s*["']([^"']+)["']""")
-
-
-def workflow_lane_gate_ids(workflow_path: Path = _E2E_WORKFLOW) -> set[str]:
-    """The lane ids referenced by ``matrix.lane`` gates in the e2e workflow."""
-    return set(_LANE_GATE_RE.findall(workflow_path.read_text(encoding="utf-8")))
-
-
-def assert_workflow_lane_gates_known(workflow_path: Path = _E2E_WORKFLOW) -> None:
-    """Fail loudly if a workflow ``matrix.lane`` gate names a lane the registry
-    doesn't emit.
-
-    Lanes are derived from the registry (``ci_lanes``), so a backend setup step
-    gated on a renamed/removed lane id is never true and would *silently* never
-    run. This guard ties the workflow's lane gates back to the registry so that
-    drift fails loudly (in the unit suite and the workflow's ``lanes`` job) instead.
-    """
-    known = {str(cl.id) for cl in ci_lanes()}
-    unknown = workflow_lane_gate_ids(workflow_path) - known
-    if unknown:
-        raise AssertionError(
-            "e2e.yml has matrix.lane gate(s) for lane id(s) the registry does not "
-            f"emit (the gated step would never run): {sorted(unknown)}; known "
-            f"lanes: {sorted(known)}"
-        )
-
-
-def workflow_lane_options(workflow_path: Path = _E2E_WORKFLOW) -> set[str]:
-    """The ``workflow_dispatch`` ``lane`` dropdown options in the e2e workflow.
-
-    GitHub ``choice`` inputs require a *static* options list, so this dropdown is
-    the one lane list that can't be derived from the registry at runtime — it is
-    hand-maintained and kept honest by ``assert_workflow_lane_options_match_registry``.
-    """
-    doc = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
-    # PyYAML parses the bare ``on:`` key as the boolean ``True``, not the string.
-    trigger = doc[True]["workflow_dispatch"]
-    return set(trigger["inputs"]["lane"]["options"])
-
-
-def assert_workflow_lane_options_match_registry(
-    workflow_path: Path = _E2E_WORKFLOW,
-) -> None:
-    """Fail loudly if the ``lane`` dropdown drifts from the registry's lanes.
-
-    The dropdown must list exactly ``{registry lanes} | {"all"}``. A registry lane
-    *missing* from it can never be dispatch-selected (only ``all`` reaches it); a
-    *stale* option that's no longer a lane runs nothing. Unlike the runtime
-    ``selected not in known`` check (which only fires when someone picks the bad
-    option), this runs in the unit suite, so drift fails on every PR.
-    """
-    expected = {str(cl.id) for cl in ci_lanes()} | {"all"}
-    options = workflow_lane_options(workflow_path)
-    missing = expected - options
-    stale = options - expected
-    if missing or stale:
-        raise AssertionError(
-            "e2e.yml workflow_dispatch `lane` options drifted from the registry — "
-            f"add to the dropdown: {sorted(missing)}; remove (no such lane): "
-            f"{sorted(stale)}. Options must be {{registry lanes}} | {{'all'}}."
-        )
 
 
 # =============================================================================
@@ -458,305 +332,10 @@ def build_adapter(
     return spec.build(settings, prompt=prompt, features=features, tools=tools)
 
 
-# =============================================================================
-# The matrix: one self-registering builder per LLM-agent adapter
-# =============================================================================
-#
-# Each builder lazy-imports its framework and maps the generic ``prompt`` to the
-# constructor argument that framework uses (prompt / custom_section / system_prompt
-# / the agent's own instructions). ``supports`` lists the platform capabilities the
-# adapter advertises for capability-scoped matrices.
-
-_LLM_TOOL_LOOP = (Capability.MEMORY, Capability.CONTACTS)
-
-
-@adapter(Adapter.ANTHROPIC, requires=[Dep.ANTHROPIC], supports=_LLM_TOOL_LOOP)
-def _build_anthropic(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from band.adapters.anthropic import AnthropicAdapter
-
-    return AnthropicAdapter(
-        model=s.llm_models.anthropic_model,
-        provider_key=s.llm_credentials.anthropic_api_key or None,
-        prompt=prompt,
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-@adapter(Adapter.CLAUDE_SDK, requires=[Dep.ANTHROPIC], supports=_LLM_TOOL_LOOP)
-def _build_claude_sdk(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from band.adapters.claude_sdk import ClaudeSDKAdapter
-
-    return ClaudeSDKAdapter(
-        model=s.llm_models.anthropic_model,
-        custom_section=prompt,
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-@adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_LLM_TOOL_LOOP)
-def _build_langgraph(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from langchain_openai import ChatOpenAI
-    from langgraph.checkpoint.memory import MemorySaver
-
-    from band.adapters.langgraph import LangGraphAdapter
-
-    return LangGraphAdapter(
-        llm=ChatOpenAI(
-            model=s.llm_models.openai_model,
-            api_key=s.llm_credentials.openai_api_key or None,
-        ),
-        # Deliberately an in-memory checkpointer: it is rebuilt fresh on every
-        # cell.run_as, so no LangGraph state survives a reboot in-process. That is
-        # what keeps the rehydration scenarios honest for this cell — recall after a
-        # reboot can only come from platform /context, not the checkpointer. Swapping
-        # in a persistent checkpointer keyed by room_id would silently move langgraph
-        # into the codex/opencode "backend session resume" class and invalidate that.
-        checkpointer=MemorySaver(),
-        custom_section=prompt or "",
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-@adapter(Adapter.PYDANTIC_AI, requires=[Dep.OPENAI], supports=_LLM_TOOL_LOOP)
-def _build_pydantic_ai(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from pydantic_ai import RunContext
-
-    from band.adapters.pydantic_ai import PydanticAIAdapter
-
-    # pydantic-ai takes native callables with a RunContext-first signature.
-    native = (
-        [t.as_callable(ctx_annotation=RunContext) for t in tools] if tools else None
-    )
-    return PydanticAIAdapter(
-        model=f"openai:{s.llm_models.openai_model}",
-        custom_section=prompt,
-        additional_tools=native,
-        features=features,
-    )
-
-
-@adapter(Adapter.GEMINI, requires=[Dep.GOOGLE], supports=_LLM_TOOL_LOOP)
-def _build_gemini(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from band.adapters.gemini import GeminiAdapter
-
-    return GeminiAdapter(
-        model=s.llm_models.gemini_model,
-        provider_key=s.llm_credentials.google_api_key or None,
-        prompt=prompt,
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-@adapter(Adapter.GOOGLE_ADK, requires=[Dep.GOOGLE], supports=_LLM_TOOL_LOOP)
-def _build_google_adk(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from band.adapters.google_adk import GoogleADKAdapter
-
-    # google-adk reads the provider key / Vertex config from the environment.
-    return GoogleADKAdapter(
-        model=s.llm_models.gemini_model,
-        custom_section=prompt,
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-@adapter(Adapter.CREWAI, requires=[Dep.OPENAI, Dep.CREWAI], supports=_LLM_TOOL_LOOP)
-def _build_crewai(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from band.adapters.crewai import CrewAIAdapter
-
-    return CrewAIAdapter(
-        model=s.llm_models.openai_model,
-        role="Test Assistant",
-        goal="Help users with simple tasks for testing.",
-        backstory="A test agent for E2E validation.",
-        custom_section=prompt,
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-@adapter(Adapter.AGNO, requires=[Dep.ANTHROPIC], supports=_LLM_TOOL_LOOP)
-def _build_agno(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    # Agno bridges a user-built agent, so steering goes into its instructions.
-    # Use the Anthropic model: small models refuse the suite's crafted prompts as
-    # injection, so the matrix relies on E2E_ANTHROPIC_MODEL being a capable model.
-    from agno.agent import Agent as AgnoAgent
-    from agno.models.anthropic import Claude
-
-    from band.adapters.agno import AgnoAdapter
-
-    # agno tools are plain callables on the agent; the band adapter captures them
-    # and re-offers them alongside the platform tools each run.
-    native = [t.as_callable() for t in tools] if tools else None
-    return AgnoAdapter(
-        AgnoAgent(
-            model=Claude(id=s.llm_models.anthropic_model),
-            instructions=prompt,
-            tools=native,
-        ),
-        features=features,
-    )
-
-
-@adapter(Adapter.CREWAI_FLOW, requires=[Dep.CREWAI], runs_tool_loop=False)
-def _build_crewai_flow(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    # CrewAI Flow returns a terminal result rather than running the Band tool loop,
-    # so it takes a flow_factory (not a model/prompt) and advertises no platform
-    # capabilities. The minimal flow echoes back so the reply path is observable.
-    from band.adapters.crewai_flow import CrewAIFlowAdapter
-
-    class _E2EFlow:
-        async def kickoff_async(self, inputs: dict[str, Any]) -> dict[str, Any]:
-            message = inputs.get("message", {})
-            content = message.get("content", "") if isinstance(message, dict) else ""
-            return {"decision": "direct_response", "content": content, "mentions": []}
-
-    return CrewAIFlowAdapter(
-        flow_factory=_E2EFlow,
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-@adapter(Adapter.CODEX, requires=[Dep.CODEX_CLI, Dep.CODEX_CWD], runs_tool_loop=False)
-def _build_codex(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from band.adapters.codex import CodexAdapter, CodexAdapterConfig
-
-    # Only override what's explicitly configured. CODEX_MODEL is left unset by
-    # default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
-    # catalogue (gpt-4o-mini isn't in it), so leaving config.model=None lets the
-    # adapter discover/select a valid Codex model. CODEX_COMMAND likewise: an absent
-    # value spawns the stock `codex` binary. Splits mirror the gates in requirements.py.
-    config_kwargs: dict[str, Any] = {
-        "cwd": s.backends.codex_cwd,
-        "custom_section": prompt or "",
-    }
-    if s.backends.codex_model.strip():
-        config_kwargs["model"] = s.backends.codex_model
-    if s.backends.codex_command.strip():
-        config_kwargs["codex_command"] = tuple(s.backends.codex_command.split())
-
-    return CodexAdapter(
-        config=CodexAdapterConfig(**config_kwargs),
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-@adapter(Adapter.OPENCODE, requires=[Dep.OPENCODE_SERVER], runs_tool_loop=False)
-def _build_opencode(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-
-    return OpencodeAdapter(
-        config=OpencodeAdapterConfig(
-            base_url=s.backends.opencode_base_url,
-            provider_id=s.backends.opencode_provider_id,
-            model_id=s.backends.opencode_model_id,
-            custom_section=prompt or "",
-        ),
-        additional_tools=_custom_tool_defs(tools),
-        features=features,
-    )
-
-
-# Letta is registered so the `letta` CI lane is still defined (ci_lanes), but
-# e2e_pending=True drops it from specs()/adapter_params(), so the matrix runs no
-# cells for it. (e2e_pending does not gate @with_adapters — there simply are no
-# @with_adapters(Adapter.LETTA) tests.) Letta executes platform tools only by calling
-# a band-mcp server, and standing one up reachable from the Letta server (its SSRF
-# guard rejects loopback) isn't wired yet, so the live smokes are deferred.
-#
-# TODO: cover Letta live once a reachable band-mcp + the Letta smokes land — flip
-# e2e_pending to False below (or drop the kwarg) to return it to the matrix, and
-# add the smokes; nothing else here changes.
-@adapter(Adapter.LETTA, requires=[Dep.LETTA], e2e_pending=True, runs_tool_loop=False)
-def _build_letta(
-    s: BaselineSettings,
-    *,
-    prompt: str | None,
-    features: AdapterFeatures | None,
-    tools: list[ToolSpec] | None = None,
-) -> SimpleAdapter[Any]:
-    from band.adapters.letta import LettaAdapter, LettaAdapterConfig
-
-    _reject_tools(Adapter.LETTA, tools)
-
-    return LettaAdapter(
-        config=LettaAdapterConfig(
-            base_url=s.backends.letta_base_url,
-            provider_key=s.backends.letta_api_key or None,
-            model=s.backends.letta_model,
-            custom_section=prompt or "",
-        ),
-        features=features,
-    )
+# Import the builders for their ``@adapter`` registration side-effect. Deferred to
+# the bottom so every name the builders import from this module (``adapter``,
+# ``Adapter``, ``_custom_tool_defs``, ``_reject_tools``) is already defined — this is
+# what keeps the ``adapters`` <-> ``builders`` cycle resolvable. Nothing here uses the
+# module object; the import exists only to populate ``_REGISTRY`` before ``specs`` /
+# ``build_adapter`` are called.
+from tests.e2e.baseline.toolkit import builders as _builders  # noqa: E402,F401

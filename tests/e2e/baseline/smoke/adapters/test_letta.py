@@ -9,7 +9,8 @@ smokes land in a follow-up.
 
 from __future__ import annotations
 
-from tests.e2e.baseline.toolkit.adapters import Adapter, ci_lanes, spec_for
+from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for
+from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
 
 
 def test_letta_lane_pending_placeholder() -> None:

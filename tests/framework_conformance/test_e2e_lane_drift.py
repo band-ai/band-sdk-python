@@ -11,7 +11,7 @@ fails loudly on every PR, not only on a manual workflow dispatch.
 
 from __future__ import annotations
 
-from tests.e2e.baseline.toolkit.adapters import (
+from tests.e2e.baseline.toolkit.ci_lanes import (
     assert_workflow_lane_gates_known,
     assert_workflow_lane_options_match_registry,
     ci_lanes,

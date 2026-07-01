@@ -16,7 +16,7 @@ need backends stood up that the plain ``dev`` job doesn't provide. So a dep name
 ``backends`` lane (they all install the ``dev`` extra and their setups co-run in
 that job). ``LANE_EXTRAS`` maps a lane to the ``uv`` extra it installs; provider-key
 deps stay in the shared ``dev`` lane. The lane partition is derived from these facts
-(see ``toolkit.adapters.ci_lanes``), never a hand-maintained list.
+(see ``toolkit.ci_lanes.ci_lanes``), never a hand-maintained list.
 
 Validation policy: a missing requirement **fails** a test, it never skips. Skipping
 on absent config hides misconfiguration as false-green. The only thing that skips

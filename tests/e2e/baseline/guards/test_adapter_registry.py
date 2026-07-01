@@ -14,13 +14,15 @@ from tests.e2e.baseline.requires import Dep
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.adapters import (
     NON_AGENT_ADAPTERS,
-    assert_every_adapter_has_a_ci_home,
     assert_registry_covers_discovered,
     build_adapter,
-    ci_lanes,
     discovered_agent_ids,
     registered_ids,
     specs,
+)
+from tests.e2e.baseline.toolkit.ci_lanes import (
+    assert_every_adapter_has_a_ci_home,
+    ci_lanes,
 )
 
 

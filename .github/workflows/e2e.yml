@@ -88,8 +88,10 @@ jobs:
         import json
         import os
         from tests.e2e.baseline.toolkit.adapters import (
-            assert_every_adapter_has_a_ci_home,
             assert_registry_covers_discovered,
+        )
+        from tests.e2e.baseline.toolkit.ci_lanes import (
+            assert_every_adapter_has_a_ci_home,
             assert_workflow_lane_gates_known,
             ci_lanes,
         )

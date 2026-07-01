@@ -31,7 +31,7 @@ from tests.e2e.baseline.agents import (
     PerAdapter,
     WithAdapters,
 )
-from tests.e2e.baseline.toolkit.adapters import CILane, ci_lanes
+from tests.e2e.baseline.toolkit.ci_lanes import CILane, ci_lanes
 
 
 def _lane_of(lanes: list[CILane]) -> dict[str, str]:
