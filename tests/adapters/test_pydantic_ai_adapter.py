@@ -841,9 +841,9 @@ class TestEmptyFinalAnswer:
             room_id="room-123",
         )
 
-        # Regression: the swallowed turn's user message is preserved in history, so
-        # the next same-session turn isn't amnesiac (no AgentRunResultEvent fired, so
-        # the normal all_messages() capture was skipped).
+        # Regression (fallback path): with the run mocked, capture_run_messages records
+        # nothing, so the swallow falls back to preserving at least the user prompt so
+        # the next same-session turn isn't amnesiac.
         from pydantic_ai.messages import ModelRequest, UserPromptPart
 
         preserved = adapter._message_history["room-123"]
@@ -853,6 +853,61 @@ class TestEmptyFinalAnswer:
             isinstance(part, UserPromptPart) and "Hello, agent!" in str(part.content)
             for part in preserved[-1].parts
         )
+
+    @pytest.mark.asyncio
+    async def test_empty_output_preserves_full_captured_turn(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """The swallow persists the whole captured turn — not just the user prompt —
+        so a later 'what did you just say?' has the agent's reply in context."""
+        from contextlib import contextmanager
+
+        from pydantic_ai.messages import (
+            ModelRequest,
+            ModelResponse,
+            TextPart,
+            UserPromptPart,
+        )
+
+        adapter = PydanticAIAdapter(model="openai:gpt-5.4")
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                UnexpectedModelBehavior(
+                    "Exceeded maximum retries (1) for output validation"
+                ),
+                tool_result=True,
+            )
+        )
+
+        # pydantic-ai populates capture_run_messages during a real run; simulate a
+        # run that captured the full turn (user prompt + the agent's response).
+        full_turn = [
+            ModelRequest(parts=[UserPromptPart(content="[Alice]: hi")]),
+            ModelResponse(parts=[TextPart(content="replied via tool")]),
+        ]
+
+        @contextmanager
+        def fake_capture():
+            yield full_turn
+
+        with patch("band.adapters.pydantic_ai.capture_run_messages", fake_capture):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-xyz",
+            )
+
+        preserved = adapter._message_history["room-xyz"]
+        # The full turn is kept — crucially the assistant response, not only the user.
+        assert preserved == full_turn
+        assert any(isinstance(message, ModelResponse) for message in preserved)
 
     @pytest.mark.asyncio
     async def test_empty_output_without_tool_propagates(

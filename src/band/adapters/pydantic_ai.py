@@ -18,6 +18,7 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     RunContext,
     UnexpectedModelBehavior,
+    capture_run_messages,
 )
 from pydantic_ai.messages import (
     ModelMessage,
@@ -577,6 +578,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # terminal, successful tool ran (excludes read-only lookups and failed
         # band tools) so we can tell a productive turn from a genuine no-op below.
         tool_executed = False
+        # Capture the run's messages so a benign empty-final response — which raises
+        # before the AgentRunResultEvent that normally records history — can still
+        # persist the *full* turn (user prompt + the agent's tool calls/results), not
+        # just the user prompt. This is pydantic-ai's documented hook for a run that
+        # may raise; entered manually so the streaming loop below stays unindented.
+        capture_cm = capture_run_messages()
+        captured = capture_cm.__enter__()
         try:
             async for event in self._agent.run_stream_events(
                 user_message,
@@ -663,17 +671,25 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     room_id,
                     e,
                 )
-                # No AgentRunResultEvent fired, so this turn's messages were never
-                # captured into _message_history — and history reloads from the
-                # platform only on bootstrap. Preserve at least this turn's user
-                # message (the reply already went out via a tool) so the next
-                # same-session turn isn't amnesiac. Mirrors the crewai adapter,
-                # which records the user turn before kickoff.
-                self._message_history[room_id].append(
-                    ModelRequest(parts=[UserPromptPart(content=user_message)])
-                )
+                # No AgentRunResultEvent fired, so history was never recorded this
+                # turn — and it reloads from the platform only on bootstrap. Persist
+                # the full turn from the captured run messages (user prompt + the
+                # agent's tool calls/results, replay-filtered) so a later "what did
+                # you just say?" has context; fall back to just the user prompt if
+                # nothing was captured.
+                replayable = [
+                    message
+                    for message in captured
+                    if _is_replayable_history_message(message)
+                ]
+                self._message_history[room_id] = replayable or [
+                    *self._message_history[room_id],
+                    ModelRequest(parts=[UserPromptPart(content=user_message)]),
+                ]
                 return
             raise
+        finally:
+            capture_cm.__exit__(None, None, None)
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",
