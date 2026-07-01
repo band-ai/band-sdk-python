@@ -71,7 +71,7 @@ gate, no construction, no lifecycle, no cleanup.
 | several named adapters in one room | `@with_agents(Adapter.LANGGRAPH, Adapter.ANTHROPIC)` | `agents` — list; `a, b = agents` |
 | two of the **same** adapter | `@with_agents(Adapter.ANTHROPIC, Adapter.ANTHROPIC)` | `agents` |
 | the **same scenario across every adapter** | request the matrix fixtures (no decorator needed for the full set) | `matrix_agent` + `adapter_id` |
-| a **subset** of adapters | `@across_adapters(include={...} / exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY})` | `matrix_agent` + `adapter_id` |
+| a **subset** of adapters | `@across_adapters(include={...} / exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True)` | `matrix_agent` + `adapter_id` |
 | custom tools (any tool-capable framework) | `@with_agents(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
 | custom tools across the matrix | `@across_adapters(include={Adapter.ANTHROPIC, Adapter.PYDANTIC_AI, Adapter.AGNO}, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` | `matrix_agent` + `adapter_id` |
 | a **bespoke** build (different tools per agent in one room) | `build_adapter(Adapter.X, settings, tools=[...], prompt=..., **EXECUTION_REPORTING)` + `async with running_provisioned_agent(...) as agent:` | the `ProvisionedAgent` |
@@ -157,7 +157,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 
 | Path | What it is |
 |------|------------|
-| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent` (yields the running agent's `ProvisionedAgent`), `ProvisionedAgent` |
+| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_agent` (run an already-provisioned identity — enter twice against one identity for a rejoin), `running_provisioned_agent` (provision + run, composes `running_agent`), `ProvisionedAgent` |
 | `toolkit/adapters.py` | adapter registry: `Adapter` enum (the **one** source of adapter ids), `@adapter` builders, `build_adapter`, `specs`, the discovery guard |
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
 | `agents.py` | matrix/decorator glue: `@with_agents(Adapter.X, ...)` (fixed set → `agent`/`agents`), `@across_adapters(include/exclude/supports/without, prompt=, features=)` (matrix/subset → `matrix_agent` + `adapter_id`), `adapter_params` |
@@ -174,7 +174,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `guards/` | harness self-tests (not "smoke"): `test_adapter_registry.py` (the static discovery/lane guard — constructs nothing, needs no keys), `test_provisioning.py`, `test_user_ops.py` |
 | `smoke/` | proof tests that exercise the tools end to end — read these as worked examples — grouped by subject (below) |
 | `smoke/samples/` | shared driving glue (not tests): `sample_agents.py`, `sample_tools.py` |
-| `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` |
+| `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_agent_scenarios.py` |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py` |
 | `smoke/adapters/` | adapter-specific showcases: `test_letta.py` |
@@ -204,7 +204,7 @@ The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 | Run a specific named agent | `@with_agents(Adapter.ANTHROPIC)` → `agent` (or `agents` for several); auto-gates + runs + reaps |
 | Run a standard prompt/features shape | `@with_agents(Adapter.X, **TOOL_AGENT)` / `**MEMORY_AGENT` — don't re-spell `prompt=`/`features=` |
 | Run the same scenario across every adapter | request `matrix_agent` and/or `adapter_id` (parametrized over the full registry) |
-| Run a scenario across a subset | `@across_adapters(include=/exclude= by id, or supports=/without={Capability.MEMORY} by capability)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
+| Run a scenario across a subset | `@across_adapters(include=/exclude= by id, supports=/without={Capability.MEMORY} by capability, or runs_tool_loop=True for the custom-tool subgroup)`; add `prompt=`/`features=` (or `**MEMORY_AGENT`) to steer |
 | A bespoke adapter (custom tools) | `build_adapter(Adapter.X, settings, tools=[...], **EXECUTION_REPORTING)` + `async with running_provisioned_agent(adapter, resource_manager) as agent:` |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging) |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
@@ -231,6 +231,7 @@ adds latency, and is itself non-deterministic, so do not reach for it by reflex.
 
 1. Structural facts -> the tolerant assertion methods on `capture.messages`
    (`Replies`): `assert_present`, `assert_at_least`, `assert_contains_any`,
+   `assert_contains_none` (the tolerant negative — no forbidden value present),
    `assert_mentions` (and the matching ones on `Events`/`Memories`). Free,
    instant, deterministic.
 2. Only when the outcome is genuinely semantic (paraphrase-proof "did it greet?",

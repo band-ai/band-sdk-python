@@ -103,6 +103,14 @@ Rules for the builder — each exists for a reason, don't skip them:
   *select* — it does **not** turn the capability on. The test enables it by passing
   matching `features`. If your adapter doesn't do the tool loop (e.g. a terminal
   flow), omit `supports` so it advertises nothing.
+- **`runs_tool_loop=`** (default `True`) — whether your adapter runs an LLM tool
+  loop that can execute a translated local `ToolSpec` and emit observable
+  `tool_call` events. It's the axis the custom-tool matrix selects on
+  (`@across_adapters(runs_tool_loop=True)`), decoupled from `supports` on purpose:
+  an external coding-agent backend could run custom tools yet advertise no platform
+  capabilities. Set `runs_tool_loop=False` if your adapter returns a terminal result
+  or delegates tools to an external process / MCP server (as crewai_flow, codex,
+  opencode, letta do); the registry guard partitions on it.
 - **Map `prompt`** to whichever constructor argument steers your framework's system
   prompt. The matrix passes one generic `prompt`; you route it.
 - **Thread `features` through** so tests can flip memory/contacts/execution-emission.
@@ -253,8 +261,9 @@ by contrast, always means a missing enum member or builder.
 
 - [ ] **Step 1** — `Adapter.<NAME> = "<module_name>"` (value == module file name).
 - [ ] **Step 2** — `@adapter(...)` builder with lazy import, `requires=` (also sets
-      the CI lane), `supports=`, mapped `prompt`, threaded `features`, and `tools`
-      handled (forward or reject).
+      the CI lane), `supports=`, `runs_tool_loop=` (default `True`; `False` for a
+      terminal/external-backend adapter), mapped `prompt`, threaded `features`, and
+      `tools` handled (forward or reject).
 - [ ] **Step 3** — `test_adapter_registry.py` green (guard satisfied).
 - [ ] **Step 4** *(only if new config)* — new `Dep` + `_DEPS` entry; new
       credential/model field in `settings.py`; env vars documented in `CLAUDE.md`.

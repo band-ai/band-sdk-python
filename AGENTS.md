@@ -314,7 +314,7 @@ tests/
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
 │   ├── adapters/   # Per-adapter smoke & tool execution tests
 │   ├── baseline/   # Reusable baseline toolkit + smokes (see baseline/README.md)
-│   └── scenarios/  # Cross-cutting scenarios (context persistence, room isolation, noisy busy room)
+│   └── scenarios/  # Legacy scenarios (langgraph restart smoke, agno-specific); cross-cutting matrix scenarios now live in baseline/smoke/matrix/
 └── conftest.py     # Shared fixtures
 ```
 
