@@ -18,10 +18,11 @@ The surface is small — methods on ``ReplyCapture``:
 
 Why this is enough: the room processes a room's messages strictly one-at-a-time
 in FIFO order (a single per-room process loop), and the agent marks a message
-``processed`` only *after* its reply has been emitted. So waiting for the last
-message you sent to be processed (its id is returned by ``send_message``) proves
-every earlier message was handled *and* that the agent's reply is already in
-``messages`` — no probe message and no reply-text matching required.
+``processed`` when its handler completes. So waiting for the last message you sent
+to be processed (its id is returned by ``send_message``) proves every earlier
+message was handled — no probe message and no reply-text matching required. Note:
+``processed`` does **not** imply a reply was emitted — replies are optional (the LLM
+may not call ``band_send_message``), so never infer reply presence from the barrier.
 """
 
 from __future__ import annotations

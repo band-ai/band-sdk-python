@@ -12,8 +12,10 @@ wait times out (it managed ~1/6 under this shape).
 
 Beyond "the barrier settled", the test asserts the contract that makes waiting on
 a single id valid: FIFO transitivity (``last`` processed ⟹ the earlier message is
-processed too) and reply-before-processed (the reply is already buffered once the
-barrier returns).
+processed too). It deliberately does *not* assert a reply was produced — PROCESSED
+is stamped when the handler completes, not when a reply is emitted, and a reply is
+optional (the LLM may not call ``band_send_message`` for a bare "remember"
+statement, especially with no memory tools enabled).
 
 Run with:
 
@@ -56,9 +58,6 @@ async def test_barrier_settles_message_burst(
 
     async with reply_capture(room_id) as capture:
         for round_no in range(ROUNDS):
-            # Cursor at the buffer's end so we can read just this round's replies
-            # after the barrier (the capture is reused across rounds).
-            mark = capture.messages.snapshot()
             # Burst sent back-to-back without waiting, so both land in the room's
             # FIFO queue before either is processed — the barrier on ``last`` then
             # has to settle against ``first`` still in flight.
@@ -80,9 +79,6 @@ async def test_barrier_settles_message_burst(
                 f"{agent.adapter_id} round {round_no}: {last} processed but earlier {first} "
                 f"is {capture.delivery_status(first, agent.id)} — FIFO broken"
             )
-            # Reply-before-processed: PROCESSED is stamped only after the reply is
-            # emitted, so a reply for this round is already buffered.
-            capture.messages.since(mark).assert_present()
             logger.info(
                 "%s round %d: barrier settled on %s", agent.adapter_id, round_no, last
             )
