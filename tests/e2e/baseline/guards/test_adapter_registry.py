@@ -74,3 +74,25 @@ def test_supports_filter_selects_memory_adapters() -> None:
     memory_ids = {spec.id for spec in specs(supports={Capability.MEMORY})}
     assert memory_ids <= registered_ids()
     assert "anthropic" in memory_ids  # a known memory-tool-loop adapter
+
+
+def test_runs_tool_loop_filter_selects_custom_tool_subset() -> None:
+    """``runs_tool_loop`` selects the custom-tool matrix and partitions the registry.
+
+    Pins today's intent: the tool-loop subset is non-empty, is a proper slice of
+    the matrix, and excludes the adapters that don't run an observable local-tool
+    loop (terminal crewai_flow; the external-backend codex/opencode). ``True`` and
+    ``False`` partition the whole registry (pending included) exactly once, so a
+    newly-registered adapter lands in one side by its flag — never neither/both.
+    """
+    tool_ids = {spec.id for spec in specs(runs_tool_loop=True)}
+    assert tool_ids, "no custom-tool-capable adapter registered"
+    assert tool_ids <= registered_ids()
+    assert "anthropic" in tool_ids  # a known tool-loop adapter
+    assert {"crewai_flow", "codex", "opencode"}.isdisjoint(tool_ids)
+
+    loop = {spec.id for spec in specs(runs_tool_loop=True, include_pending=True)}
+    no_loop = {spec.id for spec in specs(runs_tool_loop=False, include_pending=True)}
+    assert loop.isdisjoint(no_loop)
+    assert loop | no_loop == registered_ids()
+    assert "letta" in no_loop  # tools live on its MCP server, not a local loop

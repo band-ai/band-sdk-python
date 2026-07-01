@@ -9,6 +9,32 @@ assertions.** A baseline test should contain the *scenario*, never the plumbing.
 These tools validate platform behaviour and integration, not LLM output quality;
 they are deterministic by design (no `sleep`, no silence windows).
 
+**Search before you build — do not reinvent the wheel.** Before writing a new
+test, helper, tool, prompt, or assertion, grep the existing suite for one that
+already does it (or nearly does):
+
+- **A scenario like yours may already exist.** `grep -rl` the `smoke/` tree for
+  the behaviour; if a test covers it for one adapter or a hardcoded subset,
+  *parametrize/extend it* (or flip a registry selector — `runs_tool_loop=True`,
+  `supports={Capability.MEMORY}`) instead of adding a parallel test. A matrix test
+  supersedes a hardcoded-list one; delete what it subsumes rather than stacking.
+- **Custom tools / driving instructions already exist** in
+  `smoke/samples/sample_tools.py` (`LOOKUP_TOOL`, `WEATHER_TOOL`, `EXECUTION_REPORTING`)
+  and `smoke/samples/sample_agents.py` (`store_memory_instruction`,
+  `recall_memory_instruction`, `emit_event_instruction`, the `**TOOL_AGENT` /
+  `**MEMORY_AGENT` shapes). Reuse a `ToolSpec`/instruction; add one there (not
+  inline, not a duplicate) only if none fits.
+- **Assertions live on the observation collections** (`Replies`, `Events`,
+  `ToolCalls`, `Memories`) — reach for `assert_contains_any` / `assert_contains_none`
+  / `assert_fired` / `assert_stored` before writing a raw `assert`. Add a method
+  there only if it's a genuinely new, reusable check.
+- **Never hardcode an adapter list.** Use the `Adapter` enum with `@with_agents`,
+  or a registry selector with `@across_adapters` — the matrix follows the registry.
+
+When you do add something reusable, put it in the shared module (a `ToolSpec` in
+`sample_tools`, an instruction in `sample_agents`, an assertion on the collection)
+so the next agent finds and reuses it instead of writing a third copy.
+
 Run: `E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov`
 
 **Wiring a new framework adapter into the matrix?** See

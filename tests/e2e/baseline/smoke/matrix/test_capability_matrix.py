@@ -26,6 +26,7 @@ from band.core.types import Capability
 from tests.e2e.baseline.agents import across_adapters
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     MEMORY_AGENT,
+    recall_memory_instruction,
     store_memory_instruction,
     unique_marker,
 )
@@ -66,6 +67,49 @@ async def test_store_memory_across_memory_adapters(
         )
 
     mem.stored.assert_stored(content=marker)
+
+
+@across_adapters(supports={Capability.MEMORY}, **MEMORY_AGENT)
+@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@pytest.mark.timeout(extra=120)  # store -> list -> get is a multi-tool turn
+@pytest.mark.asyncio(loop_scope="session")
+async def test_recall_memory_across_memory_adapters(
+    adapter_id: str,
+    matrix_agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """Every memory-capable adapter can store a memory and read it back.
+
+    The complement of ``test_store_memory_across_memory_adapters`` (which proves the
+    *store* lands): the same subgroup drives a store -> list -> get sequence in one
+    turn, so the assertion covers the memory tools' *read* path too. The record must
+    land AND the agent must both query (``assert_list_called``) and fetch it back by
+    id (``assert_get_called``) — list alone would pass on a mis-wired read that
+    returns nothing, so the get hop is what proves an actual read-back.
+    """
+    marker = unique_marker("rmem")
+    room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-recall-{adapter_id}", participants=[matrix_agent.id]
+    )
+    async with reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id,
+            recall_memory_instruction(marker),
+            mention_id=matrix_agent.id,
+            mention_name=matrix_agent.name,
+        )
+        await capture.wait_for_processed(mid, matrix_agent.id)
+        mem = await capture.memory(
+            matrix_agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
+        )
+
+    # Write side: the record landed in the store.
+    mem.stored.assert_stored(content=marker)
+    # Read side: the agent queried its memory and fetched the record back by id.
+    mem.calls.assert_list_called()
+    mem.calls.assert_get_called()
 
 
 @across_adapters(without={Capability.MEMORY})

@@ -114,21 +114,28 @@ def adapter_params(
     exclude: Collection[Adapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
+    runs_tool_loop: bool | None = None,
 ) -> list[ParameterSet]:
     """One ``pytest.param`` per registered adapter, each gated by its requirements.
 
     Pick all adapters or a subset by what a test checks: no args = the full matrix;
     ``include={...}`` / ``exclude={...}`` slice by id; ``supports={Capability.MEMORY}``
     keeps only adapters advertising that capability and ``without={Capability.MEMORY}``
-    its complement. The ``requires(...)`` marks are resolved per-parameter by the
+    its complement; ``runs_tool_loop=True`` keeps only the custom-tool-capable
+    adapters. The ``requires(...)`` marks are resolved per-parameter by the
     conftest gate hook (a missing requirement fails the cell). Used directly to
-    parametrize an ``adapter_id`` (then ``build_adapter``), or via ``across_adapters``
-    to drive the ``matrix_agent`` fixture.
+    parametrize an ``adapter_id`` (then ``build_adapter`` — e.g. a rejoin scenario
+    that runs its own agent lifecycle), or via ``across_adapters`` to drive the
+    ``matrix_agent`` fixture.
     """
     return [
         pytest.param(spec.id, marks=requires(*spec.requires), id=str(spec.id))
         for spec in specs(
-            include=include, exclude=exclude, supports=supports, without=without
+            include=include,
+            exclude=exclude,
+            supports=supports,
+            without=without,
+            runs_tool_loop=runs_tool_loop,
         )
     ]
 
@@ -139,6 +146,7 @@ def across_adapters(
     exclude: Collection[Adapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
+    runs_tool_loop: bool | None = None,
     prompt: str | None = None,
     features: AdapterFeatures | None = None,
     tools: list[ToolSpec] | None = None,
@@ -150,10 +158,11 @@ def across_adapters(
     running agent per cell as ``matrix_agent`` (a ProvisionedAgent), with the
     cell's id available as the ``adapter_id`` fixture; the per-cell ``@requires``
     gate rides along. Filter the
-    matrix with ``include`` / ``exclude`` (by id) or ``supports`` / ``without`` (by
-    capability — complementary), and steer per-cell construction with ``prompt`` /
-    ``features`` (e.g. enable memory), exactly like ``@with_agents``. The indirect
-    parametrization overrides the fixture's default full-matrix params::
+    matrix with ``include`` / ``exclude`` (by id), ``supports`` / ``without`` (by
+    capability — complementary), or ``runs_tool_loop=True`` (the custom-tool-capable
+    subset), and steer per-cell construction with ``prompt`` / ``features`` (e.g.
+    enable memory), exactly like ``@with_agents``. The indirect parametrization
+    overrides the fixture's default full-matrix params::
 
         @across_adapters(supports={Capability.MEMORY}, features=memory_features())
         async def test_memory(matrix_agent, ...):
@@ -164,7 +173,11 @@ def across_adapters(
     filter or to set ``prompt`` / ``features``.
     """
     params = adapter_params(
-        include=include, exclude=exclude, supports=supports, without=without
+        include=include,
+        exclude=exclude,
+        supports=supports,
+        without=without,
+        runs_tool_loop=runs_tool_loop,
     )
     build = MatrixBuild(prompt=prompt, features=features, tools=tools)
 

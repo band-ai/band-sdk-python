@@ -112,14 +112,13 @@ def create_agno_adapter(settings: E2ESettings) -> SimpleAdapter[Any]:
     Use a strong instruction-following model via ``E2E_ANTHROPIC_MODEL``
     (e.g. ``claude-sonnet-4-6``). Cheap/small models (e.g. Haiku) refuse the
     suite's crafted trigger prompts as prompt-injection; Sonnet 4.6 clears
-    ``test_tool_execution_send_message[agno]`` (echo a code word) and
-    ``test_agents_in_different_rooms_isolated[agno]``.
+    ``test_tool_execution_send_message[agno]`` (echo a code word).
 
-    Note: the room-isolation trigger prompts are framed as a neutral "note"
+    Note: recall/isolation trigger prompts should be framed as a neutral "note"
     rather than a "secret code". A "secret code → recall it" prompt reads as a
     credential/embedded directive and gets refused even by Sonnet 4.6, which is
-    unrelated to isolation; the neutral wording avoids that false failure. See
-    ``tests/e2e/scenarios/test_room_isolation.py``.
+    unrelated to isolation; the neutral wording avoids that false failure. See the
+    baseline ``tests/e2e/baseline/smoke/matrix/test_room_isolation.py``.
     """
     _require_anthropic_key()
     from agno.agent import Agent as AgnoAgent

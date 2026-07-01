@@ -112,6 +112,16 @@ class AdapterSpec:
     gate ``@with_agents`` (that resolves any registered adapter) — a pending adapter
     simply has no ``@with_agents`` tests written for it. Use it to stand up a lane
     ahead of its tests.
+
+    ``runs_tool_loop`` marks an adapter that runs an LLM tool loop able to invoke a
+    translated local ``ToolSpec`` and emit observable ``tool_call`` events — the
+    precondition for a custom-tool scenario. It is deliberately *decoupled* from
+    ``supports`` (platform memory/contacts): an external coding-agent backend could
+    run custom tools yet advertise no platform capabilities, so this is its own
+    axis rather than ``bool(supports)``. Adapters that return a terminal result
+    (crewai_flow) or delegate tools to an external process / MCP server (codex,
+    opencode, letta) set it ``False`` and are excluded from the tool-loop matrix
+    (``specs(runs_tool_loop=True)``); flip one to ``True`` the day it is proven.
     """
 
     id: Adapter
@@ -119,6 +129,7 @@ class AdapterSpec:
     supports: frozenset[Capability]
     build: AdapterBuilder = field(compare=False)
     e2e_pending: bool = False
+    runs_tool_loop: bool = True
 
 
 # Keyed by the adapter's string id (== ``Adapter`` value; ``Adapter`` is a str
@@ -132,13 +143,15 @@ def adapter(
     requires: Iterable[Dep] = (),
     supports: Iterable[Capability] = (),
     e2e_pending: bool = False,
+    runs_tool_loop: bool = True,
 ) -> Callable[[AdapterBuilder], AdapterBuilder]:
     """Register ``name``'s builder in the matrix registry.
 
     The decorated function keeps its identity (it is returned unchanged) so it can
     also be called directly. Registering a duplicate is a programming error.
     ``e2e_pending=True`` keeps the adapter's CI lane defined but runs no cells for
-    it (no live E2E yet).
+    it (no live E2E yet). ``runs_tool_loop=False`` excludes the adapter from the
+    custom-tool matrix (see ``AdapterSpec``).
     """
 
     def register(build: AdapterBuilder) -> AdapterBuilder:
@@ -150,6 +163,7 @@ def adapter(
             supports=frozenset(supports),
             build=build,
             e2e_pending=e2e_pending,
+            runs_tool_loop=runs_tool_loop,
         )
         return build
 
@@ -389,6 +403,7 @@ def specs(
     exclude: Collection[Adapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
+    runs_tool_loop: bool | None = None,
     include_pending: bool = False,
 ) -> list[AdapterSpec]:
     """The registered specs, optionally narrowed.
@@ -398,8 +413,10 @@ def specs(
     ``supports={Capability.MEMORY}``); ``without`` keeps only adapters advertising
     *none* of them (the complement, e.g. ``without={Capability.MEMORY}`` for the
     non-memory adapters). ``supports`` and ``without`` are disjoint complementary
-    filters. ``e2e_pending`` adapters are excluded unless ``include_pending`` (they
-    define a CI lane but run no cells). Stable id order.
+    filters. ``runs_tool_loop=True`` keeps only the custom-tool-capable adapters
+    (``False`` the complement); see ``AdapterSpec.runs_tool_loop``. ``e2e_pending``
+    adapters are excluded unless ``include_pending`` (they define a CI lane but run
+    no cells). Stable id order.
     """
     wanted = frozenset(supports or ())
     unwanted = frozenset(without or ())
@@ -411,6 +428,7 @@ def specs(
         and (include_pending or not spec.e2e_pending)
         and wanted.issubset(spec.supports)
         and spec.supports.isdisjoint(unwanted)
+        and (runs_tool_loop is None or spec.runs_tool_loop == runs_tool_loop)
     ]
     return chosen
 
@@ -623,7 +641,7 @@ def _build_agno(
     )
 
 
-@adapter(Adapter.CREWAI_FLOW, requires=[Dep.CREWAI])
+@adapter(Adapter.CREWAI_FLOW, requires=[Dep.CREWAI], runs_tool_loop=False)
 def _build_crewai_flow(
     s: BaselineSettings,
     *,
@@ -649,7 +667,7 @@ def _build_crewai_flow(
     )
 
 
-@adapter(Adapter.CODEX, requires=[Dep.CODEX_CLI, Dep.CODEX_CWD])
+@adapter(Adapter.CODEX, requires=[Dep.CODEX_CLI, Dep.CODEX_CWD], runs_tool_loop=False)
 def _build_codex(
     s: BaselineSettings,
     *,
@@ -680,7 +698,7 @@ def _build_codex(
     )
 
 
-@adapter(Adapter.OPENCODE, requires=[Dep.OPENCODE_SERVER])
+@adapter(Adapter.OPENCODE, requires=[Dep.OPENCODE_SERVER], runs_tool_loop=False)
 def _build_opencode(
     s: BaselineSettings,
     *,
@@ -712,7 +730,7 @@ def _build_opencode(
 # TODO: cover Letta live once a reachable band-mcp + the Letta smokes land — flip
 # e2e_pending to False below (or drop the kwarg) to return it to the matrix, and
 # add the smokes; nothing else here changes.
-@adapter(Adapter.LETTA, requires=[Dep.LETTA], e2e_pending=True)
+@adapter(Adapter.LETTA, requires=[Dep.LETTA], e2e_pending=True, runs_tool_loop=False)
 def _build_letta(
     s: BaselineSettings,
     *,

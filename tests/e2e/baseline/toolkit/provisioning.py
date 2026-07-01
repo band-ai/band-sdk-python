@@ -226,6 +226,36 @@ class ResourceManager:
 
 
 @asynccontextmanager
+async def running_agent(
+    provisioned: ProvisionedAgent,
+    adapter: SimpleAdapter[Any],
+    settings: BaselineSettings,
+) -> AsyncGenerator[ProvisionedAgent, None]:
+    """Run ``adapter`` as an *already-provisioned* identity for the block.
+
+    The run half of ``running_provisioned_agent`` (which adds provisioning): this
+    owns only the run lifecycle, leaving provision + reap to the resource manager.
+    Yields the same ``provisioned`` back for symmetry with its sibling.
+
+    Enter it twice against one ``provisioned`` identity — each time with a *fresh*
+    adapter — to exercise a stop→rejoin: the second run starts with no in-memory
+    adapter state, so anything the agent then recalls must have come from the
+    platform rehydrating the room's history on bootstrap (``/context``), which is
+    exactly what a rejoin scenario asserts.
+    """
+    endpoints = settings.endpoints
+    agent = Agent.create(
+        adapter=adapter,
+        agent_id=provisioned.id,
+        api_key=provisioned.api_key,
+        ws_url=endpoints.ws_url,
+        rest_url=endpoints.rest_url,
+    )
+    async with agent:
+        yield provisioned
+
+
+@asynccontextmanager
 async def running_provisioned_agent(
     adapter: SimpleAdapter[Any],
     resources: ResourceManager,
@@ -236,18 +266,11 @@ async def running_provisioned_agent(
 
     Yields the ``ProvisionedAgent`` record (id, name, api_key) — the only thing
     callers need to mention/observe the agent. The running ``Agent`` object itself
-    is managed internally (kept alive for the block) and is not exposed, since no
-    caller uses it. Reaping is owned by the resource manager's teardown (the agent
-    is tracked at provision time), so this only manages the run lifecycle.
+    is managed internally (kept alive for the block, via ``running_agent``) and is
+    not exposed, since no caller uses it. Reaping is owned by the resource
+    manager's teardown (the agent is tracked at provision time), so this only
+    manages the run lifecycle.
     """
     provisioned = await resources.provision_agent(label)
-    endpoints = resources.settings.endpoints
-    agent = Agent.create(
-        adapter=adapter,
-        agent_id=provisioned.id,
-        api_key=provisioned.api_key,
-        ws_url=endpoints.ws_url,
-        rest_url=endpoints.rest_url,
-    )
-    async with agent:
-        yield provisioned
+    async with running_agent(provisioned, adapter, resources.settings) as running:
+        yield running
