@@ -58,7 +58,11 @@ class Adapter(StrEnum):
 
 ## Step 2 — Add the `@adapter` builder
 
-Same file, in the builder section at the bottom. The builder turns
+File: `tests/e2e/baseline/toolkit/builders.py` — the per-framework builders were
+split out of `adapters.py`; importing `adapters.py` imports `builders` for the
+`@adapter` registration side-effect, so a builder added here is registered for free.
+Use the shared helpers from `adapters` (`_custom_tool_defs` / `_reject_tools`) and the
+`_LLM_TOOL_LOOP` shorthand (defined in `builders`). The builder turns
 `BaselineSettings` (+ a steering `prompt`, `features`, and `tools`) into a
 **ready-to-run** adapter instance. It is the seam that hides each framework's
 heterogeneous constructor.
@@ -282,8 +286,9 @@ by contrast, always means a missing enum member or builder.
 
 The matrix machinery is generic — leave it alone. You do **not** edit `agents.py`
 (`@with_adapters` / `@per_adapter`), `conftest.py` fixtures, `capture.py`,
-`provisioning.py`, or any existing scenario/smoke. Registering in `adapters.py`
-(+ optional `requirements.py`/`settings.py`) is the entire surface. If you find
+`provisioning.py`, `ci_lanes.py`, or any existing scenario/smoke. The enum in
+`adapters.py` + the builder in `builders.py` (+ optional `requirements.py`/`settings.py`)
+is the entire surface. If you find
 yourself editing a scenario to special-case your adapter, that's a smell — the
 adapter should conform to the generic builder contract instead.
 
@@ -291,7 +296,8 @@ adapter should conform to the generic builder contract instead.
 
 | File | Your edit |
 |---|---|
-| `toolkit/adapters.py` | **always** — enum member + `@adapter` builder (or `NON_AGENT_ADAPTERS` entry for a bridge) |
+| `toolkit/adapters.py` | **always** — the `Adapter` enum member (or a `NON_AGENT_ADAPTERS` entry for a bridge) |
+| `toolkit/builders.py` | **always** — the `@adapter` builder function (registered via the side-effect import) |
 | `toolkit/requirements.py` | only for a brand-new `Dep` + availability check |
 | `settings.py` | only for a new credential or model id field |
 | `CLAUDE.md` (root) | document any new env vars |

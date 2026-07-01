@@ -126,8 +126,10 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
   across the matrix and hands each cell a *different-framework* peer B via the `peer`
   fixture (an `AdapterCell` the test drives — provision + `run_as`). The peer's
   `@requires` fold into the cell's single gate mark, and the peer is visible to lane
-  scheduling (so A + B must be lane-hostable together — see **CI lanes** below). The
-  `peer` fixture fails loud if the peer equals the cell (same framework, not cross).
+  scheduling (so A + B must be lane-hostable together — see **CI lanes** below).
+  `@per_adapter` rejects a peer that is not a **live** (non-`e2e_pending`) adapter, and
+  the `peer` fixture fails loud if the peer equals the cell (same framework, not cross).
+  Worked example: `smoke/matrix/test_rehydration_cross_framework.py`.
 
 ### Driving and observing a turn
 
@@ -200,7 +202,9 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | Path | What it is |
 |------|------------|
 | `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep, `track_running` reboot-race guard), `AdapterCell` (build / provision / running / run_as — the per-cell lifecycle object behind `agent`/`cell`), `running_agent` (run an already-provisioned identity — enter twice against one identity for a rejoin), `running_provisioned_agent` (provision + run, composes `running_agent`), `ProvisionedAgent` (`.adapter_id` records the cell/slot it came from) |
-| `toolkit/adapters.py` | adapter registry: `Adapter` enum (the **one** source of adapter ids), `@adapter` builders, `build_adapter`, `specs`, the discovery guard |
+| `toolkit/adapters.py` | registry core: `Adapter` enum (the **one** source of adapter ids), the `@adapter` decorator + registry, `spec_for`, `build_adapter`, `specs`, `adapter_lane`, the discovery guard |
+| `toolkit/builders.py` | the per-framework `@adapter` builder functions (one `_build_*` each); imported by `adapters.py` for the registration side-effect — no public API. Add a new adapter's builder here (see `ADDING_AN_ADAPTER.md`) |
+| `toolkit/ci_lanes.py` | the CI-lane partition + workflow-drift guards: `CILane`, `ci_lanes`, `hosting_lanes` (which lanes' `uv` extra can host a framework), `assert_every_adapter_has_a_ci_home`, `assert_workflow_lane_*` |
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
 | `agents.py` | topology decorators: `@with_adapters(Adapter.X, ...)` (fixed set / one room → `agent`/`agents`), `@per_adapter(*adapters, exclude/supports/without/runs_tool_loop, prompt=, features=, tools=)` (fan across the matrix/subset → `agent`/`cell`); `adapter_params` is the internal parameter source `@per_adapter` feeds to the `adapter_id` fixture |
 | `smoke/samples/sample_agents.py` | shared driving glue: the role-setting `TOOL_AGENT_SYSTEM_PROMPT`, `memory_features()`, reusable **agent shapes** (`TOOL_AGENT`, `MEMORY_AGENT`) for `@with_adapters(..., **SHAPE)` / `@per_adapter(..., **SHAPE)`, and the `*_instruction(...)` builders |
@@ -211,20 +215,30 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
 | `toolkit/requirements.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
-| `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
+| `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`, `mentioning(id)` to filter to replies mentioning a participant, `assert_contains_any`/`assert_mentions`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
 | `requires.py` | `@requires(Dep.X)` decorator (the pytest glue; re-exports `Dep` from `toolkit/requirements.py`, where the enum and its facts actually live) |
 | `conftest.py` | fixtures (below) + the always-on E2E gate |
-| `guards/` | harness self-tests (not "smoke"): `test_adapter_registry.py` (the static discovery/lane guard — constructs nothing, needs no keys), `test_provisioning.py`, `test_user_ops.py` |
+| `guards/` | E2E-tree harness self-tests (E2E-gated): `test_adapter_registry.py` (static discovery/lane guard), `test_provisioning.py`, `test_user_ops.py`, `test_adapter_cell.py`, `test_tool_spec.py`, and `test_agent_wiring.py` (only the `pytester` real-collection cases). **Pure policy tests run every PR from `tests/framework_conformance/`** — see the note below the table |
 | `smoke/` | proof tests that exercise the tools end to end — read these as worked examples — grouped by subject (below) |
 | `smoke/samples/` | shared driving glue (not tests): `sample_agents.py`, `sample_tools.py` |
-| `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
+| `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_agent_scenarios.py` |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py` |
 | `smoke/adapters/` | adapter-specific showcases: `test_agno.py`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
+
+**Pure policy tests run on every PR — put them outside this tree.** The whole
+`tests/e2e/**` tree is skipped unless `E2E_TESTS_ENABLED=true` (which PR CI does not
+set), so a pure-logic guard placed here protects nothing on PRs. The collection-time
+policy tests therefore live in **`tests/framework_conformance/`** (no platform, no
+keys, run every PR): `test_lane_scheduling.py` (the derive-then-guard scheduling +
+`hosting_lanes` rules), `test_e2e_lane_drift.py` (the `@lane`/workflow drift guards),
+and `test_agent_wiring_rules.py` (the `assert_agent_fixtures_wired` policy). When you
+add a new pure guard/policy check, put its unit tests there; keep only
+fixture-closure / platform-touching cases under `guards/`.
 
 ## Fixtures (from `conftest.py`)
 
@@ -295,6 +309,36 @@ async def test_recalls_after_rejoin(cell, resource_manager, user_ops, reply_capt
             mid = await user_ops.send_message(room_id, RECALL, mention_id=identity.id, mention_name=identity.name)
             await capture.wait_for_processed(mid, identity.id)
             capture.messages.since(mark).assert_contains_any([note])
+```
+
+Cross-framework peer — fan cell **A** across the matrix and drive a *different-framework*
+peer **B** (via the `peer` fixture) in the same room; `.mentioning()` filters a capture
+to replies that mention a participant. See `smoke/matrix/test_rehydration_cross_framework.py`:
+
+```python notest
+@per_adapter(exclude={Adapter.LANGGRAPH}, peer=Adapter.LANGGRAPH, prompt=REPLY_PROMPT)
+async def test_foreign_peer(cell, peer, resource_manager, user_ops, reply_capture):
+    marker = unique_marker("note")
+    a = await cell.provision(f"a-{cell.adapter_id}")          # A (fanned)
+    b = await peer.provision(f"b-{peer.adapter_id}")          # B (a different framework)
+    room_id = await resource_manager.provision_room(participants=[a.id, b.id])
+
+    # B authors one message mentioning A that carries the marker (so it enters A's
+    # agent-scoped /context), then stops. (The real test factors this into a helper.)
+    b_prompt = f"{REPLY_PROMPT} Send exactly one message that mentions {a.name} and contains this token: {marker}"
+    async with peer.run_as(b, prompt=b_prompt):
+        async with reply_capture(room_id) as capture:
+            probe = capture.messages.snapshot()
+            mid = await user_ops.send_message(room_id, "pass a note", mention_id=b.id, mention_name=b.name)
+            await capture.wait_for_processed(mid, b.id)
+            capture.messages.since(probe).mentioning(a.id).assert_contains_any([marker])  # setup precondition
+
+    async with cell.run_as(a):                                   # A cold-boots → rehydrates B's message
+        async with reply_capture(room_id) as capture:
+            mark = capture.messages.snapshot()
+            mid = await user_ops.send_message(room_id, "what token did they send?", mention_id=a.id, mention_name=a.name)
+            await capture.wait_for_processed(mid, a.id)
+            capture.messages.since(mark).assert_contains_any([marker])
 ```
 
 ## Wiring fences (fail at collection, before any live agent)
@@ -472,7 +516,7 @@ still fails.
 A **lane** is a CI job: a `uv` extra to install plus, for a lane with a server/CLI,
 the setup that stands it up. Each registered adapter belongs to exactly one lane,
 **derived from its `requires`** (`dep_lane` in `requirements.py` → the unique
-non-default lane among its deps). `ci_lanes()` (`toolkit/adapters.py`) groups every
+non-default lane among its deps). `ci_lanes()` (`toolkit/ci_lanes.py`) groups every
 adapter into a `CILane(id, extra, adapters)` — so a newly-registered adapter joins
 its lane for free, and the `assert_every_adapter_has_a_ci_home()` guard fails loudly
 if one lands nowhere.
@@ -505,12 +549,19 @@ its `@requires` gate (an unwired lane is red by design until its setup lands).
 Adapter-agnostic tests always run. **Unset** (the local default) runs the full matrix,
 fail-loud.
 
-A test whose frameworks span **more than one** home lane can be hosted by no single
-job, so `assert_every_item_is_schedulable` (the same hook) **fails collection** for it
-— the fail-loud guard against a test that would silently skip in every lane (false
-green). The escape hatch is `@lane(Lane.X)` (from `agents`): it pins such a test to one
-explicit lane whose `uv` extra hosts all its frameworks. A single-framework cell never
-trips this; a same-lane `peer=` (e.g. two core frameworks) is schedulable as-is.
+**Home ≠ hosting.** An adapter's *home* lane is where its single-framework cells run;
+*hosting* is which lanes' `uv` extra can actually install a framework (`hosting_lanes`
+in `toolkit/ci_lanes.py`: every `dev` lane hosts every `dev` framework; `dev-crewai`
+hosts only the crewai stack). A test whose frameworks share one home lane runs there.
+A test whose frameworks span **more than one** home lane is hosted by no single job by
+default, so `assert_every_item_is_schedulable` (the same hook) **fails collection** for
+it — the fail-loud guard against a test that would silently skip in every lane (false
+green). The escape hatch is `@lane(Lane.X)` (from `agents`), which pins such a test to
+one lane — and the guard **validates** that `Lane.X` actually *hosts* all its
+frameworks, so a typo'd, unknown, or wrong-extra pin fails collection too (not a
+silent skip). A single-framework cell never trips this; a same-lane `peer=` (e.g. two
+`core` frameworks, as in `smoke/matrix/test_rehydration_cross_framework.py`) is
+schedulable as-is.
 
 **Run locally:**
 
