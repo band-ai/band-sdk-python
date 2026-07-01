@@ -587,10 +587,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # Build message with context
         messages_to_send = []
 
-        # Include historical context on first message
+        # Include historical context on first message. Frame it as authoritative
+        # memory, not a passive quote: under the claude_code preset the model treats a
+        # "previous context" aside weakly, so a fact another participant stated (or that
+        # you stated) while you were offline gets missed on recall. Tell it plainly this
+        # is its own memory of the room and to answer recall questions from it.
         if is_session_bootstrap and self._session_context.get(room_id):
             messages_to_send.append(
-                f"[Previous conversation context:]\n{self._session_context[room_id]}"
+                "Your memory of this room so far — real earlier messages from you and "
+                "from other participants and agents, including ones sent while you were "
+                "offline. Treat these as facts you know and answer recall questions "
+                f"(e.g. 'what did X say?', 'what was the note?') directly from them:\n"
+                f"{self._session_context[room_id]}"
             )
 
         # Inject participants message if changed
