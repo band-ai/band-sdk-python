@@ -39,6 +39,7 @@ from prompts.characters import generate_tom_prompt
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -91,9 +92,9 @@ async def main() -> None:
             personality="none",
             custom_section=generate_tom_prompt("Tom"),
             include_base_instructions=True,
-            enable_task_events=True,
             fallback_send_agent_text=True,
-        )
+        ),
+        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
     )
 
     agent = Agent.from_config(
