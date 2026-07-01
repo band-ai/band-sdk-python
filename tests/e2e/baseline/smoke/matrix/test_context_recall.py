@@ -11,6 +11,13 @@ prior context reaches the model:
   in-memory adapter state, so a correct recall can only have come from the
   platform rehydrating the room's history on bootstrap (``/context``).
 
+``test_recalls_after_rejoin`` excludes ``codex`` / ``opencode``: those adapters
+recover context on reboot by resuming their own backend session (a session id
+persisted via task events), not by consuming platform ``/context`` as history — a
+different mechanism, so a pass there would not validate the ``/context`` guarantee
+the rejoin case asserts. The in-session case keeps the full matrix: it exercises
+each framework's history conversion within one run, which every adapter does.
+
 Replaces the now-removed legacy ``tests/e2e/scenarios/test_context_persistence.py``
 (the rejoin case), on the baseline toolkit; the in-session case is the simpler
 sibling. The rejoin lifecycle uses ``cell.run_as`` — a fresh adapter run under one
@@ -24,7 +31,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -75,7 +82,7 @@ async def test_recalls_within_session(
         capture.messages.since(mark).assert_contains_any([note])
 
 
-@per_adapter(prompt=REPLY_PROMPT)
+@per_adapter(exclude={Adapter.CODEX, Adapter.OPENCODE}, prompt=REPLY_PROMPT)
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(extra=180)  # two agent startups (state, then rejoin)
 @pytest.mark.asyncio(loop_scope="session")
