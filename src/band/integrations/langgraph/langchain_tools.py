@@ -170,10 +170,10 @@ def custom_tool_defs_to_langchain(tools: list[CustomToolDef]) -> list[Structured
                 return f"Error executing {_name}: see agent logs."
 
         def on_validation_error(error: Any, *, _name: str = name) -> str:
-            # Schema validation runs before the coroutine, so bad args are fed back
-            # to the LLM as a message (to retry) rather than raised — matching
-            # agent_tools_to_langchain and execute_custom_tool's own wording.
-            return f"Invalid arguments for {_name}: {error}"
+            # Schema validation runs before the coroutine; feed bad args back to the
+            # LLM (to retry) via the shared formatter, so the wording matches the
+            # band-tool path (agent_tools_to_langchain) exactly.
+            return format_tool_validation_error(_name, error)
 
         execute_custom.__name__ = f"{name}_wrapper"
         execute_custom.__doc__ = description

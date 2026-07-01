@@ -841,6 +841,19 @@ class TestEmptyFinalAnswer:
             room_id="room-123",
         )
 
+        # Regression: the swallowed turn's user message is preserved in history, so
+        # the next same-session turn isn't amnesiac (no AgentRunResultEvent fired, so
+        # the normal all_messages() capture was skipped).
+        from pydantic_ai.messages import ModelRequest, UserPromptPart
+
+        preserved = adapter._message_history["room-123"]
+        assert preserved, "swallowed turn should still record the user message"
+        assert isinstance(preserved[-1], ModelRequest)
+        assert any(
+            isinstance(part, UserPromptPart) and "Hello, agent!" in str(part.content)
+            for part in preserved[-1].parts
+        )
+
     @pytest.mark.asyncio
     async def test_empty_output_without_tool_propagates(
         self, sample_message, mock_tools, mock_pydantic_agent
