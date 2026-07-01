@@ -200,8 +200,16 @@ def per_adapter(
     the parameters.
     """
     include = frozenset(adapters) or None
-    if peer is not None and peer not in {s.id for s in specs(include_pending=True)}:
-        raise ValueError(f"@per_adapter(peer={peer!r}) is not a registered adapter")
+    if peer is not None:
+        if peer not in {s.id for s in specs(include_pending=True)}:
+            raise ValueError(f"@per_adapter(peer={peer!r}) is not a registered adapter")
+        if peer not in {s.id for s in specs()}:
+            # A pending adapter defines a lane but runs no cells (no builder-backed cell),
+            # so it can't be provisioned as a peer — fail at decoration, not at runtime.
+            raise ValueError(
+                f"@per_adapter(peer={peer!r}) is a pending adapter (runs no cells); "
+                "pick a live adapter as the peer"
+            )
     params = adapter_params(
         include=include,
         exclude=exclude,
