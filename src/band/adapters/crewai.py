@@ -338,7 +338,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
         messages = []
 
-        if is_session_bootstrap and self._message_history.get(room_id):
+        if self._message_history.get(room_id):
             history_text = "\n".join(
                 f"{m['role']}: {m['content']}" for m in self._message_history[room_id]
             )
