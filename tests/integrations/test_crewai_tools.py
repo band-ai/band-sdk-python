@@ -314,11 +314,11 @@ class TestToolSetComposition:
         assert tracker.replied is True
         assert tracker.tool_executed is True
 
-    def test_terminal_non_reply_tool_marks_tool_executed_only(self, builder_mod):
-        """A successful *terminal* non-reply tool flips tool_executed but NOT
-        replied, so a tool-only turn (e.g. a memory store the user told the agent
-        not to follow with a message) is recognized as productive work, not a
-        silent failure. band_send_event stands in for any side-effecting tool."""
+    def test_send_event_is_not_terminal_work(self, builder_mod):
+        """band_send_event emits an observational event (thought/error/task), not
+        terminal work — it must NOT flip tool_executed. So a turn that only sends an
+        event and then yields an empty final answer is a genuine no-response failure
+        the adapter still surfaces, not benign noise (see is_terminal_success)."""
         tools_obj = MagicMock()
         tools_obj.send_event = AsyncMock(return_value=None)
         tracker = builder_mod.ReplyTracker()
@@ -335,7 +335,7 @@ class TestToolSetComposition:
         result = json.loads(send_event._run(content="thinking", message_type="task"))
 
         assert result["status"] == "success"
-        assert tracker.tool_executed is True
+        assert tracker.tool_executed is False
         assert tracker.replied is False
 
     def test_read_only_tool_does_not_mark_tool_executed(self, builder_mod):

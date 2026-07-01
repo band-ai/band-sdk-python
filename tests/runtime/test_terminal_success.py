@@ -12,7 +12,9 @@ from __future__ import annotations
 from band.runtime.custom_tools import is_marked_terminal
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
+    EVENT_TOOL_NAMES,
     READ_ONLY_TOOL_NAMES,
+    band_tool_errored,
     is_terminal_success,
 )
 
@@ -34,6 +36,26 @@ def test_band_read_only_tool_never_counts() -> None:
 
 def test_failed_tool_never_counts() -> None:
     assert is_terminal_success(_TERMINAL_BAND_TOOL, succeeded=False) is False
+
+
+def test_event_tool_is_not_terminal() -> None:
+    # band_send_event emits an observational event (thought/error/task), not terminal
+    # work — a send-event-only turn + empty final must surface, not be swallowed.
+    assert "band_send_event" in EVENT_TOOL_NAMES
+    assert "band_send_event" in ALL_TOOL_NAMES  # it is a real Band tool...
+    assert (
+        is_terminal_success("band_send_event", succeeded=True) is False
+    )  # ...just not terminal
+
+
+def test_band_tool_errored_detects_error_prefix() -> None:
+    assert band_tool_errored("band_send_message", "Error sending: nope") is True
+    assert band_tool_errored("band_send_message", "sent") is False
+    # Only known Band tools follow the "Error " convention; custom tools do not.
+    assert band_tool_errored("lookup", "Error whatever") is False
+    # Non-string content (e.g. a dict result) is not an error string.
+    assert band_tool_errored("band_store_memory", {"id": "m1"}) is False
+    assert band_tool_errored(None, "Error x") is False
 
 
 def test_undeclared_custom_tool_is_not_terminal() -> None:

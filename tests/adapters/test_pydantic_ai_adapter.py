@@ -1164,3 +1164,69 @@ class TestCustomTools:
         )
 
         assert "room-123" in adapter._message_history
+
+
+class TestPortableCustomToolDef:
+    """pydantic accepts the portable CustomToolDef (InputModel, handler) tuple form —
+    the same custom-tool shape anthropic/crewai/claude_sdk/langgraph take."""
+
+    def test_tuple_is_normalized_to_a_named_callable(self):
+        from pydantic import BaseModel
+
+        class LookupInput(BaseModel):
+            """look up a code."""
+
+            key: str
+
+        def lookup(args: LookupInput) -> str:
+            return f"code:{args.key}"
+
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4", additional_tools=[(LookupInput, lookup)]
+        )
+        # Normalized to a native callable named from the model (not the handler).
+        assert [t.__name__ for t in adapter._custom_tools] == ["lookup"]
+        # ...and it still delegates to the handler.
+        assert adapter._custom_tools[0](LookupInput(key="alpha")) == "code:alpha"
+
+    def test_tuple_terminal_marker_is_honored(self):
+        from pydantic import BaseModel
+
+        class DeployInput(BaseModel):
+            """deploy."""
+
+            target: str
+
+        def deploy(args: DeployInput) -> str:
+            return "done"
+
+        deploy.band_terminal = True  # opt in as a terminal action
+
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4", additional_tools=[(DeployInput, deploy)]
+        )
+        assert adapter._custom_terminal_names == frozenset({"deploy"})
+
+    def test_converted_tuple_flattens_in_pydantic_ai(self):
+        from pydantic import BaseModel
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
+
+        class LookupInput(BaseModel):
+            """look up a code."""
+
+            key: str
+
+        def lookup(args: LookupInput) -> str:
+            return f"code:{args.key}"
+
+        native = _custom_tool_def_to_callable((LookupInput, lookup))
+        agent = Agent(TestModel())
+        agent.tool_plain(native)
+        (tool,) = agent._function_toolset.tools.values()
+        schema = tool.function_schema.json_schema
+        # pydantic-ai flattens the single model param into the tool's args.
+        assert tool.name == "lookup"
+        assert sorted((schema.get("properties") or {}).keys()) == ["key"]

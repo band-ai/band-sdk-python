@@ -36,10 +36,14 @@ from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
 )
-from band.runtime.custom_tools import is_marked_terminal
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    get_custom_tool_name,
+    is_marked_terminal,
+)
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
-    ALL_TOOL_NAMES,
+    band_tool_errored,
     get_tool_description,
     is_terminal_success,
 )
@@ -95,6 +99,28 @@ def _drop_non_replayable_messages(messages: list[ModelMessage]) -> list[ModelMes
     return [m for m in messages if _is_replayable_history_message(m)]
 
 
+def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
+    """Adapt a portable ``CustomToolDef`` (InputModel, handler) to a native pydantic-ai
+    tool callable — the same custom-tool form the other adapters accept.
+
+    pydantic-ai flattens a single Pydantic-model parameter into the tool's arguments,
+    so the handler's ``(args: InputModel)`` shape is used directly. The wrapper carries
+    the stable tool name (derived from the model) and the ``band_terminal`` marker, so
+    the tool name and the terminal-tool contract match the tuple adapters exactly.
+    """
+    input_model, handler = tool_def
+
+    def native(args: Any) -> Any:
+        return handler(args)
+
+    native.__name__ = get_custom_tool_name(input_model)
+    native.__doc__ = input_model.__doc__ or native.__name__
+    native.__annotations__ = {"args": input_model, "return": str}
+    if is_marked_terminal(handler):
+        native.band_terminal = True  # type: ignore[attr-defined]
+    return native
+
+
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
@@ -124,7 +150,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         enable_execution_reporting: bool = False,
         enable_memory_tools: bool = False,
         history_converter: PydanticAIHistoryConverter | None = None,
-        additional_tools: list[Callable[..., Any]] | None = None,
+        additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
         features: AdapterFeatures | None = None,
     ):
         """
@@ -137,7 +163,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             enable_execution_reporting: Deprecated. Use features=AdapterFeatures(emit={Emit.EXECUTION}).
             enable_memory_tools: Deprecated. Use features=AdapterFeatures(capabilities={Capability.MEMORY}).
             history_converter: Optional custom history converter
-            additional_tools: Optional list of PydanticAI-compatible tool functions.
+            additional_tools: Optional list of PydanticAI-compatible tool functions
+                and/or portable ``CustomToolDef`` (InputModel, handler) tuples.
                 Each function should follow PydanticAI's tool signature:
                 `def my_tool(ctx: RunContext[AgentToolsProtocol], arg1: str, ...) -> T`
                 These are registered via agent.tool() alongside platform tools.
@@ -182,8 +209,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         self._agent: Agent[AgentToolsProtocol, str] | None = None
         # Conversation history per room (Pydantic AI is stateless, we maintain state)
         self._message_history: dict[str, list] = {}
-        # Custom tools (PydanticAI-compatible functions)
-        self._custom_tools: list[Callable[..., Any]] = additional_tools or []
+        # Custom tools: accept both native callables and the portable CustomToolDef
+        # (InputModel, handler) form the other adapters take — tuples are converted to
+        # native pydantic-ai callables; plain callables pass through unchanged.
+        self._custom_tools: list[Callable[..., Any]] = [
+            _custom_tool_def_to_callable(tool) if isinstance(tool, tuple) else tool
+            for tool in (additional_tools or [])
+        ]
         # Custom tools that opt in as terminal actions (band_terminal=True on the
         # function). Only these let an empty final response be treated as benign;
         # an undeclared custom tool does not (fail-loud — see is_terminal_success).
@@ -607,20 +639,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         except Exception as e:
                             logger.warning("Failed to send tool_call event: %s", e)
                 elif isinstance(event, FunctionToolResultEvent):
-                    # A band tool wrapper returns an "Error ..." string on failure;
-                    # custom tools have no such convention, so only band tools are
-                    # checked for it. Custom tools count as terminal only if they
-                    # opted in (band_terminal); undeclared customs fail loud.
+                    # Custom tools count as terminal only if they opted in
+                    # (band_terminal); undeclared customs fail loud. A failed band
+                    # tool (its wrapper returns an "Error " string) is not terminal.
                     result_name = event.result.tool_name
-                    result_content = event.result.content
-                    succeeded = not (
-                        result_name in ALL_TOOL_NAMES
-                        and isinstance(result_content, str)
-                        and result_content.startswith("Error ")
-                    )
                     if is_terminal_success(
                         result_name,
-                        succeeded=succeeded,
+                        succeeded=not band_tool_errored(
+                            result_name, event.result.content
+                        ),
                         custom_terminal=result_name in self._custom_terminal_names,
                     ):
                         tool_executed = True
@@ -642,11 +669,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     # Keep native run history, but drop responses that replay as
                     # content:null (e.g. thinking-only) — providers reject them next request.
                     run_messages = list(event.result.all_messages())
-                    self._message_history[room_id] = [
-                        message
-                        for message in run_messages
-                        if _is_replayable_history_message(message)
-                    ]
+                    self._message_history[room_id] = _drop_non_replayable_messages(
+                        run_messages
+                    )
                     dropped = len(run_messages) - len(self._message_history[room_id])
                     if dropped:
                         logger.debug(
@@ -677,11 +702,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 # agent's tool calls/results, replay-filtered) so a later "what did
                 # you just say?" has context; fall back to just the user prompt if
                 # nothing was captured.
-                replayable = [
-                    message
-                    for message in captured
-                    if _is_replayable_history_message(message)
-                ]
+                replayable = _drop_non_replayable_messages(list(captured))
                 self._message_history[room_id] = replayable or [
                     *self._message_history[room_id],
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
