@@ -32,6 +32,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, StrEnum
 from pathlib import Path
+from urllib.parse import urlparse
 
 from tests.e2e.baseline.settings import BaselineSettings
 
@@ -40,7 +41,24 @@ from tests.e2e.baseline.settings import BaselineSettings
 # toolkit (e.g. locating the e2e workflow) so the depth assumption lives once.
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
-_LETTA_CLOUD_HOST = "https://api.letta.com"
+_LETTA_CLOUD_HOST = "api.letta.com"
+
+
+def _is_letta_cloud(base_url: str) -> bool:
+    """Whether ``base_url`` points at Letta Cloud, matching the host only.
+
+    Ignores scheme, case, port, and path so ``https://api.letta.com/v1``,
+    ``http://api.letta.com``, ``API.LETTA.COM``, and a trailing slash all count as
+    cloud (which needs an API key) rather than misclassifying as a self-hosted
+    server (which would be reported available with no key).
+    """
+    url = base_url.strip()
+    if not url:
+        return False
+    # Give urlparse a netloc to populate when the value is a bare host (no scheme).
+    if "//" not in url:
+        url = "//" + url
+    return (urlparse(url).hostname or "").lower() == _LETTA_CLOUD_HOST
 
 
 class Lane(StrEnum):
@@ -170,8 +188,8 @@ def _letta_available(settings: BaselineSettings) -> bool:
     Letta server: a self-hosted base_url needs no key, Letta Cloud needs its key.
     """
     backends = settings.backends
-    base_url = backends.letta_base_url.strip().rstrip("/")
-    if base_url and base_url != _LETTA_CLOUD_HOST:
+    base_url = backends.letta_base_url.strip()
+    if base_url and not _is_letta_cloud(base_url):
         return True  # a real self-hosted server needs no cloud key
     # Unset/blank base_url defaults to (or means) Letta Cloud, which needs a key.
     return bool(backends.letta_api_key)

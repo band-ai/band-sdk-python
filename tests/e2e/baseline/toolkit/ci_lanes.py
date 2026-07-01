@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import yaml
@@ -47,23 +48,28 @@ class CILane:
     adapters: tuple[Adapter, ...]
 
 
-def ci_lanes() -> list[CILane]:
+@lru_cache(maxsize=1)
+def ci_lanes() -> tuple[CILane, ...]:
     """Every registered adapter grouped into its CI lane (stable id order).
 
     The default lane is always present. This is what the CI workflow consumes to
     fan one job per lane (each job installs ``lane.extra`` and provisions its
     backend). An unwired backend lane still appears -- its cells fail loudly until
     the workflow stands the backend up.
+
+    Memoized: the registry is fixed once builders import, and the partition is
+    recomputed several times per collection. Returns an immutable tuple so the
+    shared cached value is safe.
     """
     # include_pending: a pending adapter still defines its lane (the CI job exists)
     # even though the matrix runs no cells for it.
     by_lane: dict[Lane, list[Adapter]] = {DEFAULT_LANE: []}
     for spec in specs(include_pending=True):  # stable id order
         by_lane.setdefault(adapter_lane(spec), []).append(spec.id)
-    return [
+    return tuple(
         CILane(id=lane, extra=lane_extra(lane), adapters=tuple(ids))
         for lane, ids in sorted(by_lane.items())
-    ]
+    )
 
 
 def assert_every_adapter_has_a_ci_home() -> None:

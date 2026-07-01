@@ -111,4 +111,8 @@ class ToolSpec:
         tool: Callable[..., str] = ns[self.name]
         tool.__annotations__ = self._annotations(ctx_annotation)
         tool.__doc__ = self.description
+        # Carry the terminal opt-in marker so the callable path (pydantic-ai/agno)
+        # agrees with the CustomToolDef tuple path on band_terminal.
+        if getattr(self.handler, "band_terminal", False):
+            tool.band_terminal = True  # type: ignore[attr-defined]
         return tool
