@@ -85,6 +85,28 @@ def assert_every_adapter_has_a_ci_home() -> None:
         )
 
 
+def hosting_lanes(home_lanes: frozenset[str]) -> frozenset[str]:
+    """CI lane ids whose ``uv`` extra can install *every* framework whose home lane is
+    in ``home_lanes`` — empty if none can (the frameworks need incompatible extras, e.g.
+    crewai + a ``dev``-extra framework); empty ``home_lanes`` → every lane.
+
+    A lane *hosts* a framework iff they share a ``uv`` extra
+    (``lane_extra(lane) == lane_extra(home)``): every ``dev`` lane installs every
+    ``dev`` framework, and ``dev-crewai`` installs only the crewai stack. Hosting is thus
+    broader than — and distinct from — an adapter's single *home* lane. Conservative and
+    correct given crewai is the only venv conflict, and derived purely from
+    ``lane_extra`` + the home-lane partition (no hand-maintained table).
+    """
+    lanes = ci_lanes()
+    if not home_lanes:
+        return frozenset(str(cl.id) for cl in lanes)
+    extras = {lane_extra(Lane(home)) for home in home_lanes}
+    if len(extras) != 1:  # frameworks need incompatible extras — no lane hosts them all
+        return frozenset()
+    (extra,) = extras
+    return frozenset(str(cl.id) for cl in lanes if cl.extra == extra)
+
+
 # The e2e workflow (REPO_ROOT is the single source of the checkout-depth assumption).
 _E2E_WORKFLOW = REPO_ROOT / ".github/workflows/e2e.yml"
 # A `matrix.lane == 'x'` / `!= "x"` gate literal in the workflow (either quote style).

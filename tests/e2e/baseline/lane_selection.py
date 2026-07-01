@@ -12,12 +12,15 @@ lane iff that lane can host **all** the frameworks the test touches.
 ``apply_lane_skips`` scopes a run to the active lane by one rule: a test with an
 explicit ``@lane(L)`` assignment runs iff ``L`` is active; otherwise a test whose
 frameworks share **one** home lane runs there (and is skip-with-reason'd elsewhere) —
-this reproduces single-adapter cell behaviour exactly. A test whose frameworks span
-more than one home lane with no ``@lane`` override can be hosted by no single job, so
-``assert_every_item_is_schedulable`` fails collection for it (the fail-loud guard
-against a test that would silently skip in every lane — false green). ``@lane`` (see
-``agents.lane``) is the override for a genuinely cross-lane test, naming the one lane
-whose ``uv`` extra hosts all its frameworks.
+this reproduces single-adapter cell behaviour exactly.
+
+``assert_every_item_is_schedulable`` is the fail-loud guard against a test that would
+silently skip in every lane (false green). It reasons about *hosting* — which lanes'
+``uv`` extra can install a framework (``ci_lanes.hosting_lanes``), broader than an
+adapter's single *home* lane. A test spanning >1 home lane must name a hosting lane
+with ``@lane(L)`` (see ``agents.lane``); a test whose frameworks need incompatible
+extras (e.g. crewai + a ``dev`` framework) can be hosted by no lane and fails outright,
+and an ``@lane`` that does not host all the frameworks is itself an error.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from tests.e2e.baseline.agents import (
     PerAdapter,
     WithAdapters,
 )
-from tests.e2e.baseline.toolkit.ci_lanes import CILane, ci_lanes
+from tests.e2e.baseline.toolkit.ci_lanes import CILane, ci_lanes, hosting_lanes
 
 
 def _lane_of(lanes: list[CILane]) -> dict[str, str]:
@@ -138,32 +141,57 @@ def apply_lane_skips(lane: str, items: list[pytest.Item]) -> None:
 
 
 def assert_every_item_is_schedulable(items: list[pytest.Item]) -> None:
-    """Fail collection for any test that no single CI lane can host.
+    """Fail collection for any test that no single CI lane can *host*.
 
-    Lanes partition the matrix into separate CI jobs (a venv or a backend). A test
-    whose frameworks live in *different* home lanes can be scheduled by no job — it is
-    skipped in **every** lane, so it never runs in CI yet shows green, the exact
-    false-confidence the fail-loud policy forbids. This is now peer-aware: a
-    ``@per_adapter(peer=...)`` cell whose cell and peer live in different lanes trips
-    it just as a cross-lane ``@with_adapters`` group does. The fix is an explicit
-    ``@lane(L)`` naming a lane whose ``uv`` extra hosts all the frameworks (or
-    restricting the frameworks to one lane). Runs in every collection — lane-scoped or
-    not — so drift fails before CI. Single-framework tests never trip it.
+    Lanes partition the matrix into separate CI jobs (a ``uv`` extra + optional backend).
+    A test runs in a lane only if that lane's extra installs **all** the frameworks it
+    touches (``ci_lanes.hosting_lanes``) — *hosting*, which is broader than an adapter's
+    single *home* lane (every ``dev`` lane hosts every ``dev`` framework). A test no lane
+    can host is skipped in **every** lane, so it never runs yet shows green — the exact
+    false-confidence the fail-loud policy forbids. This validates three things in one
+    rule (peer-aware — a ``@per_adapter(peer=...)`` cell's peer counts as a framework):
+
+    * an ``@lane(L)`` override must name a lane that actually hosts all the frameworks
+      (``L`` in their hosting lanes) — this catches a typo'd, unknown, or wrong-extra
+      pin, which would otherwise skip the test everywhere;
+    * a test spanning >1 home lane whose frameworks *share* an extra is schedulable but
+      ambiguous — it must pick one with ``@lane(L)``;
+    * a test whose frameworks need *incompatible* extras (e.g. crewai + a ``dev``
+      framework) can be hosted by no lane and no ``@lane`` can rescue it.
+
+    Runs in every collection — lane-scoped or not — so drift fails before CI.
+    Single-framework and same-home tests never trip it.
     """
     lane_of = _lane_of(ci_lanes())
     offenders: list[str] = []
     for item in items:
-        if _override_lane(item) is not None:
-            continue  # explicitly assigned; validated against known lanes at scoping
         homes = _home_lanes(item, lane_of)
-        if len(homes) > 1:
-            spanned = ", ".join(sorted(homes))
-            offenders.append(f"{item.nodeid} spans lanes {{{spanned}}}")
+        override = _override_lane(item)
+        if override is not None:
+            hosts = hosting_lanes(homes)
+            if override not in hosts:
+                offenders.append(
+                    f"{item.nodeid} pins @lane({override!r}) but no lane hosts all its "
+                    f"frameworks there; hosting lanes: {sorted(hosts) or 'none'}"
+                )
+            continue
+        if len(homes) <= 1:
+            continue  # single home lane (or adapter-agnostic) — always schedulable
+        hosts = hosting_lanes(homes)
+        if hosts:
+            offenders.append(
+                f"{item.nodeid} spans home lanes {sorted(homes)} but shares an extra; "
+                f"add @lane(L) with L in {sorted(hosts)}"
+            )
+        else:
+            offenders.append(
+                f"{item.nodeid} touches frameworks needing incompatible uv extras "
+                f"(home lanes {sorted(homes)}); no single lane can host them"
+            )
     if offenders:
         joined = "\n  ".join(offenders)
         raise pytest.UsageError(
-            "test(s) touch frameworks across multiple CI lanes, so no single lane can "
-            "host them and they never run in CI (false green). Restrict each to one "
-            "lane's adapters, or add @lane(L) naming a lane whose extra hosts all of "
-            f"them:\n  {joined}"
+            "unschedulable test(s) — each would skip in every CI lane and show green:\n  "
+            f"{joined}\nFix: restrict each to one lane's adapters, or add @lane(L) naming "
+            "a lane whose uv extra hosts all of the test's frameworks."
         )

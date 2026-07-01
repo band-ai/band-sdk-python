@@ -42,7 +42,8 @@ from tests.e2e.baseline.toolkit.adapters import (
     spec_for,
     specs,
 )
-from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes
+from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes, hosting_lanes
+from tests.e2e.baseline.toolkit.requirements import Extra
 
 
 class _FakeItem:
@@ -127,7 +128,7 @@ def test_unknown_active_lane_is_a_usage_error() -> None:
 def test_cross_lane_with_adapters_fails_collection() -> None:
     a, b = _two_adapters_in_different_lanes()
     item = _FakeItem("x.py::test_cross", agents=(a, b))
-    with pytest.raises(pytest.UsageError, match="multiple CI lanes"):
+    with pytest.raises(pytest.UsageError, match="unschedulable"):
         assert_every_item_is_schedulable([item])
 
 
@@ -135,7 +136,7 @@ def test_cross_lane_peer_fails_collection() -> None:
     """Peer-aware: a cell whose peer lives in another lane trips the guard too."""
     a, b = _two_adapters_in_different_lanes()
     item = _FakeItem("x.py::test_peer", adapter_id=str(a), peer=b)
-    with pytest.raises(pytest.UsageError, match="multiple CI lanes"):
+    with pytest.raises(pytest.UsageError, match="unschedulable"):
         assert_every_item_is_schedulable([item])
 
 
@@ -170,6 +171,56 @@ def test_lane_override_runs_only_in_assigned_lane() -> None:
     skip = _FakeItem("x.py::t", adapter_id=str(a), peer=b, assigned_lane=home_a)
     apply_lane_skips(other, [skip])
     assert skip.skipped
+
+
+# --- hosting: which lanes a framework set can run in, and @lane validation -----------
+
+
+def test_hosting_lanes_truth_table() -> None:
+    """A dev home hosts in every dev lane; incompatible extras host nowhere; empty→all."""
+    dev_lanes = frozenset(str(cl.id) for cl in ci_lanes() if cl.extra == Extra.DEV)
+    all_lanes = frozenset(str(cl.id) for cl in ci_lanes())
+    core_home = str(adapter_lane(spec_for(Adapter.ANTHROPIC)))  # 'core' (dev extra)
+    crewai_home = str(adapter_lane(spec_for(Adapter.CREWAI)))  # 'crewai' (dev-crewai)
+    assert hosting_lanes(frozenset({core_home})) == dev_lanes
+    assert hosting_lanes(frozenset()) == all_lanes
+    assert hosting_lanes(frozenset({core_home, crewai_home})) == frozenset()
+
+
+def test_lane_override_must_name_a_hosting_lane() -> None:
+    """A real-but-non-hosting @lane target (wrong extra) fails the guard — finding 1.
+
+    agno (core) + gemini (google) share the ``dev`` extra; ``crewai`` is ``dev-crewai``
+    and cannot host them, so pinning @lane(crewai) is a wrong-but-real lane.
+    """
+    item = _FakeItem(
+        "x.py::t", adapter_id="agno", peer=Adapter.GEMINI, assigned_lane=Lane.CREWAI
+    )
+    with pytest.raises(pytest.UsageError, match="no lane hosts all its frameworks"):
+        assert_every_item_is_schedulable([item])
+
+
+def test_incompatible_extras_are_unschedulable() -> None:
+    """crewai + a dev framework need different extras — no lane hosts them; no @lane helps."""
+    item = _FakeItem("x.py::t", adapter_id="anthropic", peer=Adapter.CREWAI)
+    with pytest.raises(pytest.UsageError, match="incompatible uv extras"):
+        assert_every_item_is_schedulable([item])
+    pinned = _FakeItem(
+        "x.py::t", adapter_id="anthropic", peer=Adapter.CREWAI, assigned_lane=Lane.CORE
+    )
+    with pytest.raises(pytest.UsageError, match="no lane hosts all its frameworks"):
+        assert_every_item_is_schedulable([pinned])
+
+
+def test_same_extra_cross_home_needs_lane_then_passes() -> None:
+    """agno (core) + gemini (google) share the dev extra: ambiguous → needs @lane, which fixes it."""
+    bare = _FakeItem("x.py::t", adapter_id="agno", peer=Adapter.GEMINI)
+    with pytest.raises(pytest.UsageError, match="add @lane"):
+        assert_every_item_is_schedulable([bare])
+    pinned = _FakeItem(
+        "x.py::t", adapter_id="agno", peer=Adapter.GEMINI, assigned_lane=Lane.GOOGLE
+    )
+    assert_every_item_is_schedulable([pinned])  # google hosts both dev frameworks
 
 
 # --- dep gating: peer requirements fold into ONE merged mark -------------------------
