@@ -33,13 +33,9 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
 # cannot recall a per-room note — exclude it from recall scenarios.
 @per_adapter(exclude={Adapter.CREWAI_FLOW})
-# Recall/isolation on a live model is non-deterministic: a capable model occasionally
-# emits a false "I can't remember" refusal despite having the note in context (observed
-# ~1/3 for google_adk, while recalling correctly in the other room the same run). That
-# intermittent recall miss is a model flake, not a code defect, so — unlike the rest of
-# the matrix's ``rerun_except=["AssertionError"]`` — allow AssertionError reruns here. A
-# genuine rehydration/isolation regression fails deterministically and stays red across
-# all reruns, so this does not mask correctness bugs.
+# Recall on a live model is non-deterministic (a capable model occasionally emits a
+# false "I can't remember" despite having the note), so allow AssertionError reruns
+# here — unlike the matrix's usual rerun_except; a real regression still fails red.
 @pytest.mark.flaky(reruns=2)
 @pytest.mark.timeout(extra=180)  # four sequential turns (two rooms × state + recall)
 @pytest.mark.asyncio(loop_scope="session")

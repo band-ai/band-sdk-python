@@ -49,32 +49,21 @@ _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
     "_crewai_reply_tracker", default=None
 )
 
-# One-shot guard so we deregister CrewAI's error panel handler only once.
-_lite_agent_error_panel_silenced = False
-
 
 def _silence_lite_agent_error_panel() -> None:
-    """Deregister CrewAI's console panel for LiteAgent execution errors.
+    """Deregister CrewAI's benign red "LiteAgent Failed" console panel.
 
-    CrewAI's global console listener renders a red "LiteAgent Failed" panel for
-    every ``LiteAgentExecutionErrorEvent``, regardless of the agent's ``verbose``
-    setting. In this adapter the agent replies via the ``band_send_message`` tool,
-    so CrewAI's post-tool reasoning step routinely returns an empty final answer
-    and raises the benign "Invalid response from LLM call - None or empty."
-    ``ValueError`` that ``on_message`` catches after a reply already went out. That
-    panel is pure console noise. Deregister only that one handler so started/
-    completed panels and any tracing listener are untouched; genuine errors still
-    surface via ``_report_error`` and the re-raise in ``on_message``.
-
-    Best-effort: if CrewAI's event internals move, leave the panel in place.
+    The agent replies via the band_send_message tool, so CrewAI's post-tool step
+    returns an empty final answer and raises the "Invalid response from LLM call"
+    ValueError that on_message already swallows — yet its global console listener
+    prints an alarming panel anyway (regardless of verbose). Remove only that
+    handler; tracing and genuine errors are untouched. Idempotent (a later call
+    finds nothing) and best-effort (leave the panel if CrewAI internals move).
     """
-    global _lite_agent_error_panel_silenced
-    if _lite_agent_error_panel_silenced:
-        return
     try:
-        # Importing the module-level singleton forces handler registration.
-        from crewai.events.event_listener import event_listener  # noqa: F401
+        # event_listener is imported for its side effect: registering the handlers.
         from crewai.events import crewai_event_bus
+        from crewai.events.event_listener import event_listener  # noqa: F401
         from crewai.events.types.agent_events import LiteAgentExecutionErrorEvent
 
         handlers = crewai_event_bus._sync_handlers.get(
@@ -83,9 +72,10 @@ def _silence_lite_agent_error_panel() -> None:
         for handler in list(handlers):
             if getattr(handler, "__name__", "") == "on_lite_agent_execution_error":
                 crewai_event_bus.off(LiteAgentExecutionErrorEvent, handler)
-    except Exception as e:  # noqa: BLE001 - cosmetic only, never fail startup
+    except (ImportError, AttributeError) as e:
+        # Tolerate only CrewAI's private event internals moving on a version bump
+        # (we reach into _sync_handlers); any other error is a real bug — let it raise.
         logger.debug("Could not silence CrewAI LiteAgent error panel: %s", e)
-    _lite_agent_error_panel_silenced = True
 
 
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):

@@ -712,14 +712,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         finally:
             capture_cm.__exit__(None, None, None)
 
-        # The run completed cleanly but did no terminal work — gpt-5.4-mini
-        # sometimes finishes a turn with a plain output_type=str answer instead
-        # of calling band_send_message, so nothing is ever posted to the room and
-        # the turn is a silent no-op. Surface it as an error event (mirrors the
-        # crewai adapter's "completed without sending a Band message" report) so a
-        # dropped reply fails clearly instead of vanishing. tool_executed keys off
-        # the same is_terminal_success contract both adapters share, so a genuine
-        # reply (band_send_message) or other terminal tool suppresses this.
+        # A clean run with no terminal work means the model answered in plain text
+        # without calling band_send_message — a silently dropped reply. Surface it
+        # as an error (mirrors the crewai adapter) instead of letting it vanish.
         if not tool_executed:
             await self._report_error(
                 tools,
