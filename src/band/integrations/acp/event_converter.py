@@ -53,9 +53,8 @@ class EventConverter:
                 return update_agent_message_text(f"[Error] {msg.content}")
             case "task":
                 # Usage records ride task events (USAGE_EVENT_TYPE) but are not
-                # lifecycle tasks — don't render them as a (never-completing)
-                # plan entry in the editor. There's no ACP cost widget yet, so
-                # skip; a dedicated usage session-update is INT-933.
+                # lifecycle tasks — don't render them as a (never-completing) plan
+                # entry in the editor. No ACP cost widget yet, so skip them.
                 if is_usage_event(msg.metadata):
                     return None
                 return update_plan([plan_entry(msg.content, status="in_progress")])

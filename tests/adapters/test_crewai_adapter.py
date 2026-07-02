@@ -44,20 +44,6 @@ def crewai_mocks(monkeypatch):
     mock_crewai_module.LLM = MagicMock()
     mock_crewai_tools_module.BaseTool = MockBaseTool
 
-    # The adapter reads token usage off CrewAI's event bus (LLMCallCompletedEvent);
-    # it imports ``crewai.events`` / ``crewai.events.types.llm_events`` locally in
-    # on_message. Submodule imports (`from crewai.events import ...`) need real
-    # sys.modules entries — a MagicMock on ``crewai`` alone doesn't satisfy them —
-    # so register lightweight module stubs. A real class stands in for the event
-    # type so isinstance/type hints behave.
-    class LLMCallCompletedEvent:  # minimal stand-in for the event type
-        usage: dict | None = None
-
-    mock_crewai_events = MagicMock()
-    mock_crewai_events.crewai_event_bus = MagicMock()
-    mock_crewai_llm_events = MagicMock()
-    mock_crewai_llm_events.LLMCallCompletedEvent = LLMCallCompletedEvent
-
     # Evict any cached integration modules so they pick up the freshly-mocked
     # `nest_asyncio`/`crewai.tools` from sys.modules on next import.
     for mod in (
@@ -70,10 +56,6 @@ def crewai_mocks(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "crewai", mock_crewai_module)
     monkeypatch.setitem(sys.modules, "crewai.tools", mock_crewai_tools_module)
-    monkeypatch.setitem(sys.modules, "crewai.events", mock_crewai_events)
-    monkeypatch.setitem(
-        sys.modules, "crewai.events.types.llm_events", mock_crewai_llm_events
-    )
     monkeypatch.setitem(sys.modules, "nest_asyncio", mock_nest_asyncio)
 
     try:
@@ -1875,53 +1857,3 @@ class TestCustomTools:
         result_data = json.loads(result)
         assert result_data["status"] == "error"
         assert "No room context available" in result_data["message"]
-
-
-class TestUsageMapping:
-    """The Emit.USAGE mapper: CrewAI LLMCallCompletedEvent.usage dict -> TurnUsage.
-
-    Usage is captured per LLM call from the event bus (and summed across the
-    turn in ``_process_message``), so it survives the benign empty-final-answer
-    path where kickoff raises and no result/usage_metrics is returned.
-    """
-
-    def test_maps_event_usage_dict(self, CrewAIAdapter):
-        """LLMCallCompletedEvent.usage (a LiteLLM-shaped dict) maps onto TurnUsage."""
-        from types import SimpleNamespace
-
-        from band.core.types import TurnUsage
-
-        event = SimpleNamespace(
-            usage={
-                "prompt_tokens": 100,
-                "completion_tokens": 20,
-                "total_tokens": 120,
-            }
-        )
-        assert CrewAIAdapter._usage_from_event(event) == TurnUsage(
-            input_tokens=100,
-            output_tokens=20,
-        )
-
-    def test_summing_across_calls(self, CrewAIAdapter):
-        """Per-call usages sum into the turn total (the loop accumulation)."""
-        from types import SimpleNamespace
-
-        from band.core.types import TurnUsage
-
-        call1 = SimpleNamespace(usage={"prompt_tokens": 100, "completion_tokens": 20})
-        call2 = SimpleNamespace(usage={"prompt_tokens": 130, "completion_tokens": 8})
-        total = CrewAIAdapter._usage_from_event(
-            call1
-        ) + CrewAIAdapter._usage_from_event(call2)
-        assert total == TurnUsage(input_tokens=230, output_tokens=28)
-
-    def test_missing_usage_is_empty(self, CrewAIAdapter):
-        """An event with usage=None yields empty usage."""
-        from types import SimpleNamespace
-
-        from band.core.types import TurnUsage
-
-        assert (
-            CrewAIAdapter._usage_from_event(SimpleNamespace(usage=None)) == TurnUsage()
-        )

@@ -35,17 +35,6 @@ def crewai_mocks(monkeypatch):
     mock_crewai_module.LLM = MagicMock()
     mock_crewai_tools_module.BaseTool = MockBaseTool
 
-    # The adapter reads usage off CrewAI's event bus (imports crewai.events /
-    # crewai.events.types.llm_events locally in on_message); submodule imports
-    # need real sys.modules entries, so stub them.
-    class LLMCallCompletedEvent:
-        usage: dict | None = None
-
-    mock_crewai_events = MagicMock()
-    mock_crewai_events.crewai_event_bus = MagicMock()
-    mock_crewai_llm_events = MagicMock()
-    mock_crewai_llm_events.LLMCallCompletedEvent = LLMCallCompletedEvent
-
     for mod in (
         "band.adapters.crewai",
         "band.integrations.crewai",
@@ -56,10 +45,6 @@ def crewai_mocks(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "crewai", mock_crewai_module)
     monkeypatch.setitem(sys.modules, "crewai.tools", mock_crewai_tools_module)
-    monkeypatch.setitem(sys.modules, "crewai.events", mock_crewai_events)
-    monkeypatch.setitem(
-        sys.modules, "crewai.events.types.llm_events", mock_crewai_llm_events
-    )
     monkeypatch.setitem(sys.modules, "nest_asyncio", mock_nest_asyncio)
 
     try:

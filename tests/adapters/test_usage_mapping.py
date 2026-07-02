@@ -55,25 +55,9 @@ class TestTurnUsageConstructors:
         data = {"i": "oops", "o": None}  # non-int / missing
         assert TurnUsage.from_mapping(data, input="i", output="o") == TurnUsage()
 
-    def test_cache_in_input_false_folds_cache_into_input(self):
-        """Anthropic-style: input excludes cache, so cache is folded into total."""
-        data = {"i": 100, "o": 20, "cr": 5, "cw": 3}
-        assert TurnUsage.from_mapping(
-            data,
-            input="i",
-            output="o",
-            cache_read="cr",
-            cache_write="cw",
-            cache_in_input=False,
-        ) == TurnUsage(
-            input_tokens=108,
-            output_tokens=20,
-            cache_read_tokens=5,
-            cache_write_tokens=3,
-        )
-
-    def test_cache_in_input_true_leaves_input_untouched(self):
-        """Gemini/LiteLLM-style: input already includes cache (the default)."""
+    def test_fields_are_raw_no_cache_folding(self):
+        """Per the convention, values pass through raw — cache is never folded
+        into input regardless of provider."""
         data = {"i": 100, "o": 20, "cr": 5, "cw": 3}
         assert TurnUsage.from_mapping(
             data, input="i", output="o", cache_read="cr", cache_write="cw"
@@ -103,11 +87,8 @@ class TestIsUsageEvent:
 
 class TestClaudeSDKUsageMapping:
     def test_maps_usage_dict(self):
-        """ResultMessage.usage (raw API dict) maps onto TurnUsage.
-
-        Claude's input_tokens EXCLUDES cache, so the mapper folds cache into the
-        total input (cache_in_input=False): input = 100 + 5 + 3 = 108.
-        """
+        """ResultMessage.usage (raw API dict) maps onto TurnUsage raw — Claude's
+        input_tokens excludes cache, reported separately in the cache fields."""
         result = SimpleNamespace(
             usage={
                 "input_tokens": 100,
@@ -117,7 +98,7 @@ class TestClaudeSDKUsageMapping:
             }
         )
         assert ClaudeSDKAdapter._usage_from_result(result) == TurnUsage(
-            input_tokens=108,
+            input_tokens=100,
             output_tokens=20,
             cache_read_tokens=5,
             cache_write_tokens=3,

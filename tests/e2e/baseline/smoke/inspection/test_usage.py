@@ -7,14 +7,16 @@ de-risking test for the ``Emit.USAGE`` / ``capture.usage()`` design across every
 usage-capable adapter.
 
 Coverage is registry-derived, not a hand-maintained list: the fan is the whole
-matrix minus ``CREWAI_FLOW`` (usage lives in user-supplied flow internals — N-A).
-``LETTA`` is auto-excluded because it is ``e2e_pending`` (it captures usage too,
-covered by unit mapping tests). Deriving from ``exclude=`` rather than an explicit
-include-list means a newly-registered usage-capable adapter is exercised
-automatically — and a new adapter that *cannot* emit usage fails loudly here until
-it's consciously added to the exclusion, which is the intended signal. The cells
-span several CI lanes (core / google / crewai / backends); each is a single-adapter
-``@per_adapter`` item, so each runs in its own lane's job — no ``@lane`` pin needed.
+matrix minus the adapters that don't emit usage — ``CREWAI_FLOW`` (usage lives in
+user-supplied flow internals — N-A) and ``CREWAI`` (usage capture deferred: its
+result counter is cumulative-lifetime, not per-turn). ``LETTA`` is auto-excluded
+because it is ``e2e_pending`` (it captures usage too, covered by unit mapping
+tests). Deriving from ``exclude=`` rather than an explicit include-list means a
+newly-registered usage-capable adapter is exercised automatically — and a new
+adapter that *cannot* emit usage fails loudly here until it's consciously added to
+the exclusion, which is the intended signal. The cells span several CI lanes
+(core / google / backends); each is a single-adapter ``@per_adapter`` item, so
+each runs in its own lane's job — no ``@lane`` pin needed.
 
 Turn completion uses the delivery-status barrier (``wait_for_processed``): the
 platform marks the trigger ``processed`` only after the reply is emitted, by which
@@ -32,11 +34,11 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-# crewai_flow is the one usage-incapable matrix adapter (usage lives in
-# user-supplied flow internals, not on the result the adapter sees), so exclude
-# it; every other registered adapter must emit usage. (LETTA is auto-excluded as
+# Adapters that don't emit usage: crewai_flow (usage in user-supplied flow
+# internals) and crewai (deferred — cumulative-lifetime counter, not per-turn).
+# Every other registered adapter must emit usage. (LETTA is auto-excluded as
 # e2e_pending — covered by unit mapping tests.)
-@per_adapter(exclude={Adapter.CREWAI_FLOW}, **COST_AGENT)
+@per_adapter(exclude={Adapter.CREWAI_FLOW, Adapter.CREWAI}, **COST_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_usage_recorded_for_a_turn(
     agent: ProvisionedAgent,
@@ -59,14 +61,14 @@ async def test_usage_recorded_for_a_turn(
       tools, so the turn is a single model call.
     - a plausible count (estimation) — the total *prompt* tokens the model
       processed clear a realistic floor, and the reply total stays under a
-      realistic ceiling. The prompt floor sums input + cache-read + cache-write
-      on purpose: caching adapters (e.g. claude_sdk) report most of the prompt
-      under cache_read and only a handful of *fresh* ``input_tokens`` (7, with
-      ~87k cached, in practice), so a floor on ``input_tokens`` alone would be
-      wrong. Every adapter sends a rendered system prompt + tool schemas, so the
-      processed prompt is realistically in the hundreds+; 20 sits well below that
-      yet still catches a garbage/tiny count a bare ``> 0`` would pass. A
-      one-line reply keeps ``total_tokens`` (input + output) far under the
+      realistic ceiling. The floor sums input + cache-read + cache-write because
+      TurnUsage fields are the provider's *raw* values and whether cache is
+      already inside ``input_tokens`` is provider-specific: caching adapters
+      (e.g. claude_sdk) report ~7 fresh ``input_tokens`` with the bulk (~87k) under
+      cache_read, so an ``input_tokens``-only floor would be wrong. The sum is a
+      robust lower bound on prompt size either way. A rendered system prompt +
+      tool schemas puts it in the hundreds+, so 20 catches a garbage/tiny count a
+      bare ``> 0`` would pass; a one-line reply keeps ``total_tokens`` under the
       ceiling. Both bounds stay loose enough that model/run variance never trips
       them. (Exact per-call summing is proven deterministically in the adapter
       unit tests, which — unlike this live read — can see the per-call
@@ -89,16 +91,21 @@ async def test_usage_recorded_for_a_turn(
     assert len(usage) == 1, (
         f"expected exactly one usage record for one turn, got {usage}"
     )
-    # Estimation: a realistic count, not just > 0. Per the TurnUsage convention
-    # input_tokens is the total prompt the model processed (cache folded in by
-    # each adapter's mapper), so a rendered system prompt + tool schemas puts it
-    # in the hundreds+ across every adapter, caching or not. 20 is a safe floor
-    # that still catches a garbage/tiny count; a one-line reply keeps input+output
-    # under the ceiling. Both bounds are loose enough that variance never trips them.
+    # Estimation: a realistic count, not just > 0. Sum the prompt the model
+    # processed — fresh input + cache-read + cache-write — because TurnUsage
+    # fields are raw provider values and caching adapters report most of the
+    # prompt under cache_* with only a few fresh input_tokens. The sum is a
+    # robust lower bound on prompt size regardless of whether the provider counts
+    # cache inside input; a rendered system prompt + tool schemas puts it well
+    # above 20, and a one-line reply keeps input+output under the ceiling.
     record = usage[0]
-    assert record.input_tokens >= 20, (
-        "input tokens (total prompt, cache incl.) implausibly low for a real turn: "
-        f"{record.input_tokens}"
+    prompt_tokens = (
+        record.input_tokens + record.cache_read_tokens + record.cache_write_tokens
+    )
+    assert prompt_tokens >= 20, (
+        f"prompt tokens implausibly low for a real turn: {prompt_tokens} "
+        f"(input={record.input_tokens}, cache_read={record.cache_read_tokens}, "
+        f"cache_write={record.cache_write_tokens})"
     )
     assert record.total_tokens < 100_000, (
         f"total tokens implausibly high for a one-line reply: {record.total_tokens}"

@@ -320,10 +320,10 @@ class TestToolExecution:
 
     @pytest.mark.asyncio
     async def test_usage_from_response_maps_and_sums(self):
-        """`_usage_from_response` maps Anthropic usage; TurnUsage `+` sums a loop.
+        """`_usage_from_response` maps Anthropic usage raw; TurnUsage `+` sums a loop.
 
-        Anthropic's input_tokens EXCLUDES cache, so per the TurnUsage convention
-        the mapper folds cache_read+cache_write into input_tokens (total prompt).
+        Raw per the convention: Anthropic's input_tokens excludes cache (reported
+        separately), so it's passed through, not folded.
         """
         first = MagicMock()
         first.usage = MagicMock(
@@ -342,9 +342,8 @@ class TestToolExecution:
         total = AnthropicAdapter._usage_from_response(
             first
         ) + AnthropicAdapter._usage_from_response(second)
-        # input = (100+5+3) + 130 = 238 (cache folded into total prompt)
         assert total == TurnUsage(
-            input_tokens=238,
+            input_tokens=230,
             output_tokens=28,
             cache_read_tokens=5,
             cache_write_tokens=3,
