@@ -11,6 +11,7 @@ import logging
 import warnings
 from typing import ClassVar, Any, Callable
 
+import httpx
 from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
@@ -27,6 +28,8 @@ from pydantic_ai.messages import (
     ThinkingPart,
     UserPromptPart,
 )
+
+from band_rest.core.api_error import ApiError
 
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
@@ -730,10 +733,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
 
     async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send error event (best effort). Mirrors the crewai adapter."""
+        """Send an error event to the room (best effort).
+
+        Structurally mirrors the crewai adapter, but narrows the catch to the REST
+        call's real failure modes (ApiError = HTTP status, httpx = transport) so a
+        failed error-report never crashes the turn — while a real bug still raises.
+        """
         try:
             await tools.send_event(content=f"Error: {error}", message_type="error")
-        except Exception as e:
+        except (ApiError, httpx.HTTPError) as e:
             logger.warning("Failed to send error event: %s", e)
 
     # --- Copied from BandPydanticAgent._cleanup_session ---
