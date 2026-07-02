@@ -712,11 +712,34 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         finally:
             capture_cm.__exit__(None, None, None)
 
+        # The run completed cleanly but did no terminal work — gpt-5.4-mini
+        # sometimes finishes a turn with a plain output_type=str answer instead
+        # of calling band_send_message, so nothing is ever posted to the room and
+        # the turn is a silent no-op. Surface it as an error event (mirrors the
+        # crewai adapter's "completed without sending a Band message" report) so a
+        # dropped reply fails clearly instead of vanishing. tool_executed keys off
+        # the same is_terminal_success contract both adapters share, so a genuine
+        # reply (band_send_message) or other terminal tool suppresses this.
+        if not tool_executed:
+            await self._report_error(
+                tools,
+                "Pydantic AI completed without sending a Band message. This "
+                "usually means the agent returned a final answer as plain text "
+                "instead of using the band_send_message tool.",
+            )
+
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",
             room_id,
             len(self._message_history[room_id]),
         )
+
+    async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
+        """Send error event (best effort). Mirrors the crewai adapter."""
+        try:
+            await tools.send_event(content=f"Error: {error}", message_type="error")
+        except Exception as e:
+            logger.warning("Failed to send error event: %s", e)
 
     # --- Copied from BandPydanticAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:
