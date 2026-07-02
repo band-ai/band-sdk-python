@@ -117,7 +117,7 @@ class TurnUsage:
         )
 
     def to_dict(self) -> dict[str, int]:
-        """Serialize for the usage event payload (content JSON + metadata)."""
+        """Serialize the four token counts for the usage event's metadata."""
         return {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,

@@ -17,12 +17,7 @@ from typing import ClassVar, TYPE_CHECKING, Any
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import (
-    AdapterFeatures,
-    Capability,
-    Emit,
-    PlatformMessage,
-)
+from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.integrations.crewai import (
     CrewAIToolContext,

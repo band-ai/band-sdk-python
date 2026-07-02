@@ -53,7 +53,7 @@ class UsageRecord:
 
     @property
     def total_tokens(self) -> int:
-        """Input + output tokens (cache fields are a subset of input)."""
+        """Input + output tokens (raw; not cache-normalized across providers)."""
         return self.input_tokens + self.output_tokens
 
     @classmethod
