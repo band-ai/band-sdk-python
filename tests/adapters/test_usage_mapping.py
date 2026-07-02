@@ -215,7 +215,12 @@ class TestLettaUsageMapping:
 
 class TestOpencodeUsageMapping:
     def test_maps_info_tokens_with_nested_cache(self):
-        """OpenCode assistant info.tokens (nested cache) maps onto TurnUsage."""
+        """OpenCode assistant info.tokens (nested cache) maps onto TurnUsage.
+
+        OpenCode reports reasoning disjointly from output (its own total is
+        input + output + reasoning + cache), so reasoning folds into
+        output_tokens: 20 + 7 = 27.
+        """
         info = {
             "tokens": {
                 "input": 100,
@@ -226,7 +231,7 @@ class TestOpencodeUsageMapping:
         }
         assert OpencodeAdapter._usage_from_info(info) == TurnUsage(
             input_tokens=100,
-            output_tokens=20,
+            output_tokens=27,
             cache_read_tokens=5,
             cache_write_tokens=3,
         )
@@ -239,10 +244,17 @@ class TestOpencodeUsageMapping:
 
 class TestCodexUsageMapping:
     def test_maps_per_turn_deltas(self):
-        """Codex's per-turn token deltas (not thread cumulatives) map to TurnUsage."""
-        usage = SimpleNamespace(turn_input_tokens=130, turn_output_tokens=42)
+        """Codex's per-turn token deltas (not thread cumulatives) map to TurnUsage.
+
+        Codex reports reasoning disjointly from output (its own total is
+        input + output + reasoning), so reasoning folds into output_tokens:
+        42 + 8 = 50.
+        """
+        usage = SimpleNamespace(
+            turn_input_tokens=130, turn_output_tokens=42, turn_reasoning_tokens=8
+        )
         assert CodexAdapter._turn_usage(usage) == TurnUsage(
-            input_tokens=130, output_tokens=42
+            input_tokens=130, output_tokens=50
         )
 
     def test_none_usage_is_empty(self):

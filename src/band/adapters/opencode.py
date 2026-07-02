@@ -1051,6 +1051,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         modeled in this integration): the server reports
         ``tokens: {input, output, reasoning, cache: {read, write}}``. A missing
         or malformed ``tokens`` yields empty usage.
+
+        OpenCode reports reasoning tokens *disjointly* from output (its own total
+        is ``input + output + reasoning + cache``), so fold reasoning into
+        ``output_tokens`` — otherwise reasoning-heavy turns undercount, and this
+        stays consistent with providers that already count reasoning inside output.
         """
         tokens = info.get("tokens")
         if not isinstance(tokens, dict):
@@ -1060,6 +1065,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         flat = {
             "input": tokens.get("input"),
             "output": tokens.get("output"),
+            "reasoning": tokens.get("reasoning"),
             "cache_read": cache.get("read"),
             "cache_write": cache.get("write"),
         }
@@ -1067,6 +1073,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             flat,
             input="input",
             output="output",
+            reasoning="reasoning",
             cache_read="cache_read",
             cache_write="cache_write",
         )

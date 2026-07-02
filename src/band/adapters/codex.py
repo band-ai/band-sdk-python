@@ -1546,9 +1546,17 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         thread cumulatives, so each emitted record is this turn's usage —
         matching what the in-process adapters emit. Codex reports no cache
         dimension, so those stay 0; a ``None`` usage yields empty (no emit).
+
+        Codex reports reasoning tokens *disjointly* from output (its own total is
+        ``input + output + reasoning``), so fold reasoning into ``output_tokens``
+        — otherwise reasoning-heavy turns undercount, and this stays consistent
+        with providers that already count reasoning inside output.
         """
         return TurnUsage.from_object(
-            usage, input="turn_input_tokens", output="turn_output_tokens"
+            usage,
+            input="turn_input_tokens",
+            output="turn_output_tokens",
+            reasoning="turn_reasoning_tokens",
         )
 
     async def _emit_turn_outcome(

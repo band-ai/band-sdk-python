@@ -134,13 +134,23 @@ class TurnUsage:
         output: str,
         cache_read: str | None,
         cache_write: str | None,
+        reasoning: str | None,
     ) -> TurnUsage:
         """Shared core of from_object/from_mapping: read the named fields via
         ``get`` and coerce each to a non-negative int. Values are passed through
-        raw (no cache folding) per the class convention."""
+        raw (no cache folding) per the class convention.
+
+        ``reasoning`` is for providers that report reasoning/thinking tokens
+        *disjointly* from output (codex, opencode, whose own totals are
+        ``input + output + reasoning``): when named, it is folded into
+        ``output_tokens`` so this four-field schema stays consistent with the
+        providers that already count reasoning inside output (Anthropic thinking,
+        OpenAI completion tokens). Leave it ``None`` when output already includes
+        reasoning, to avoid double-counting."""
         return cls(
             input_tokens=_as_int(get(input)),
-            output_tokens=_as_int(get(output)),
+            output_tokens=_as_int(get(output))
+            + (_as_int(get(reasoning)) if reasoning else 0),
             cache_read_tokens=_as_int(get(cache_read)) if cache_read else 0,
             cache_write_tokens=_as_int(get(cache_write)) if cache_write else 0,
         )
@@ -154,6 +164,7 @@ class TurnUsage:
         output: str,
         cache_read: str | None = None,
         cache_write: str | None = None,
+        reasoning: str | None = None,
     ) -> TurnUsage:
         """Build from a usage *object*, reading the named attributes.
 
@@ -161,6 +172,10 @@ class TurnUsage:
         a non-negative int (missing/non-int → 0). ``src=None`` (usage absent on
         the response) yields an empty ``TurnUsage`` — so an adapter's mapper is a
         one-liner over ``getattr(response, "...", None)`` with no guard of its own.
+
+        Pass ``reasoning`` only when the provider reports reasoning tokens
+        disjointly from output (see :meth:`_build`); it is folded into
+        ``output_tokens``.
         """
         if src is None:
             return cls()
@@ -170,6 +185,7 @@ class TurnUsage:
             output=output,
             cache_read=cache_read,
             cache_write=cache_write,
+            reasoning=reasoning,
         )
 
     @classmethod
@@ -181,11 +197,14 @@ class TurnUsage:
         output: str,
         cache_read: str | None = None,
         cache_write: str | None = None,
+        reasoning: str | None = None,
     ) -> TurnUsage:
         """Build from a usage *mapping* (dict), reading the named keys.
 
         The mapping-source twin of :meth:`from_object`; a non-mapping ``data``
-        (e.g. usage absent) yields an empty ``TurnUsage``.
+        (e.g. usage absent) yields an empty ``TurnUsage``. Pass ``reasoning`` only
+        when the provider reports reasoning tokens disjointly from output (see
+        :meth:`_build`); it is folded into ``output_tokens``.
         """
         if not isinstance(data, Mapping):
             return cls()
@@ -195,6 +214,7 @@ class TurnUsage:
             output=output,
             cache_read=cache_read,
             cache_write=cache_write,
+            reasoning=reasoning,
         )
 
 

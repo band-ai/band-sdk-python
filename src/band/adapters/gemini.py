@@ -289,11 +289,19 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
         A response without usage yields empty usage. Gemini has no cache-write
         dimension (left 0); ``cached_content_token_count`` is the cache read.
+
+        Gemini reports thinking tokens *disjointly* from output (its own
+        ``total_token_count`` is ``prompt + candidates + thoughts``, so
+        ``candidates_token_count`` excludes thoughts), so fold
+        ``thoughts_token_count`` into ``output_tokens`` — otherwise thinking-model
+        turns undercount, and this stays consistent with providers that already
+        count reasoning inside output.
         """
         return TurnUsage.from_object(
             getattr(response, "usage_metadata", None),
             input="prompt_token_count",
             output="candidates_token_count",
+            reasoning="thoughts_token_count",
             cache_read="cached_content_token_count",
         )
 

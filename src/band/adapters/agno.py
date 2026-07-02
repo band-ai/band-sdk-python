@@ -329,6 +329,15 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         ``metrics`` (a ``RunMetrics``, aggregated across the run's model calls)
         is optional and its token field names line up 1:1 with TurnUsage's, so
         this is a straight ``from_object`` (missing metrics → empty usage).
+
+        Agno exposes a separate ``reasoning_tokens``, but unlike the single-provider
+        adapters it is a multi-provider aggregator whose ``output_tokens`` already
+        *includes* reasoning for some backends (OpenAI's completion tokens) and
+        *excludes* it for others (Gemini's candidates), so no static fold is
+        correct for every backend — folding would double-count OpenAI-backed runs.
+        Leaving reasoning out (rather than statically folding) mirrors the RAW
+        cache convention: don't apply a provider-specific normalization that this
+        aggregator can't guarantee. So reasoning is deliberately not folded here.
         """
         return TurnUsage.from_object(
             getattr(response, "metrics", None),
