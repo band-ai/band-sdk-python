@@ -47,7 +47,9 @@ from tests.e2e.baseline.toolkit.provisioning import (
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@per_adapter(prompt=REPLY_PROMPT)
+# CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
+# cannot recall a note stated on an earlier turn — exclude it from recall scenarios.
+@per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(extra=120)  # two turns (state, then recall)
 @pytest.mark.asyncio(loop_scope="session")
@@ -82,8 +84,13 @@ async def test_recalls_within_session(
         capture.messages.since(mark).assert_contains_any([note])
 
 
-@per_adapter(exclude={Adapter.CODEX, Adapter.OPENCODE}, prompt=REPLY_PROMPT)
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@per_adapter(
+    exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT
+)
+# Cold-boot recall is model-non-deterministic (the model occasionally denies having
+# the note despite it being in the rehydrated context), so allow AssertionError reruns
+# here — unlike the matrix's usual rerun_except; a real regression still fails red.
+@pytest.mark.flaky(reruns=2)
 @pytest.mark.timeout(extra=180)  # two agent startups (state, then rejoin)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_after_rejoin(

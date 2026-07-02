@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from pydantic_ai import (
     AgentRunResultEvent,
@@ -751,9 +752,13 @@ class TestExecutionReporting:
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
 
-        # Mock tools where send_event fails
+        # Mock tools where send_event fails with a real transport error (the kind
+        # _report_error narrowly tolerates); a generic Exception would be a bug and
+        # is intentionally left to propagate.
         failing_tools = AsyncMock()
-        failing_tools.send_event = AsyncMock(side_effect=Exception("Network error"))
+        failing_tools.send_event = AsyncMock(
+            side_effect=httpx.ConnectError("Network error")
+        )
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_stream_events(

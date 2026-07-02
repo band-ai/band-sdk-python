@@ -62,7 +62,8 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(
-    exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.LANGGRAPH}, prompt=REPLY_PROMPT
+    exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.LANGGRAPH, Adapter.CREWAI_FLOW},
+    prompt=REPLY_PROMPT,
 )
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(

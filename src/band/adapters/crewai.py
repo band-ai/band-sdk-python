@@ -50,6 +50,36 @@ _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
 )
 
 
+def _silence_lite_agent_error_panel() -> None:
+    """Deregister CrewAI's benign red "LiteAgent Failed" console panel.
+
+    The agent replies via the band_send_message tool, so CrewAI's post-tool step
+    returns an empty final answer and raises the "Invalid response from LLM call"
+    ValueError that on_message already swallows — yet its global console listener
+    prints an alarming panel anyway (regardless of verbose). Remove only that
+    handler; tracing and genuine errors are untouched. Idempotent (a later call
+    finds nothing) and best-effort (leave the panel if CrewAI internals move).
+    """
+    try:
+        # event_listener is imported for its side effect: registering the handlers.
+        from crewai.events import crewai_event_bus
+        from crewai.events.event_listener import event_listener  # noqa: F401
+        from crewai.events.types.agent_events import LiteAgentExecutionErrorEvent
+
+        handlers = crewai_event_bus._sync_handlers.get(
+            LiteAgentExecutionErrorEvent, frozenset()
+        )
+        for handler in list(handlers):
+            if getattr(handler, "__name__", "") == "on_lite_agent_execution_error":
+                crewai_event_bus.off(LiteAgentExecutionErrorEvent, handler)
+    except (ImportError, AttributeError) as e:
+        # Tolerate only CrewAI's private event internals moving on a version bump
+        # (we reach into _sync_handlers); any other error is a real bug — let it raise.
+        # warn (not debug): this means our private-API reach broke and the silencer
+        # needs updating — surface it rather than bury it.
+        logger.warning("Could not silence CrewAI LiteAgent error panel: %s", e)
+
+
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     """CrewAI adapter using the official CrewAI SDK.
 
@@ -187,6 +217,8 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                 "Install with: pip install 'band-sdk[crewai]'\n"
                 "Or: uv add crewai nest-asyncio"
             ) from e
+
+        _silence_lite_agent_error_panel()
 
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
