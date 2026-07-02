@@ -14,7 +14,13 @@ from band.converters.letta import LettaHistoryConverter, LettaSessionState
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -156,7 +162,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.TASK_EVENTS}
+        {Emit.EXECUTION, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -477,6 +483,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         messages = [{"role": "user", "content": content}]
         final_text_parts: list[str] = []
         used_send_message = False  # tracks if agent called band_send_message
+        # Per-turn token usage. Reachable only on the per_room path, where the
+        # non-streamed LettaResponse carries an aggregate .usage; the shared-mode
+        # Conversations stream exposes no such aggregate, so it stays empty (N-A).
+        turn_usage = TurnUsage()
 
         room_ctx = self._rooms.get(room_id)
 
@@ -493,6 +503,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 messages=messages,
             )
             response_messages = list(response.messages)
+            turn_usage = self._usage_from_response(response)
 
         for resp_msg in response_messages:
             msg_type = getattr(resp_msg, "message_type", None)
@@ -565,6 +576,10 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             await tools.send_message(final_text, mentions=mentions)
         else:
             logger.debug("Room %s: Letta turn complete, no output", room_id)
+
+        # Emit the turn's token usage (no-op unless Emit.USAGE is on; empty on
+        # the shared-mode stream path, so nothing is emitted there).
+        await self.emit_usage(tools, turn_usage)
 
         return final_text_parts
 
@@ -878,6 +893,22 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             )
         except Exception as e:
             logger.warning("Room %s: Memory consolidation failed: %s", room_id, e)
+
+    @staticmethod
+    def _usage_from_response(response: Any) -> TurnUsage:
+        """Map a Letta ``LettaResponse.usage`` (a ``Usage``) onto TurnUsage.
+
+        Field names verified against letta-client: ``prompt_tokens`` /
+        ``completion_tokens`` / ``cached_input_tokens`` / ``cache_write_tokens``.
+        A missing ``usage`` yields empty usage.
+        """
+        return TurnUsage.from_object(
+            getattr(response, "usage", None),
+            input="prompt_tokens",
+            output="completion_tokens",
+            cache_read="cached_input_tokens",
+            cache_write="cache_write_tokens",
+        )
 
     @staticmethod
     def _format_time_ago(dt: datetime) -> str:

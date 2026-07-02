@@ -1857,3 +1857,39 @@ class TestCustomTools:
         result_data = json.loads(result)
         assert result_data["status"] == "error"
         assert "No room context available" in result_data["message"]
+
+
+class TestUsageMapping:
+    """The Emit.USAGE mapper: CrewAI usage_metrics dict -> TurnUsage."""
+
+    def test_maps_usage_metrics_dict(self, CrewAIAdapter):
+        """LiteAgentOutput.usage_metrics (a dict) maps onto TurnUsage."""
+        from types import SimpleNamespace
+
+        from band.core.types import TurnUsage
+
+        result = SimpleNamespace(
+            usage_metrics={
+                "prompt_tokens": 100,
+                "completion_tokens": 20,
+                "cached_prompt_tokens": 5,
+                "cache_creation_tokens": 3,
+            }
+        )
+        assert CrewAIAdapter._usage_from_result(result) == TurnUsage(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=5,
+            cache_write_tokens=3,
+        )
+
+    def test_missing_usage_metrics_is_empty(self, CrewAIAdapter):
+        """A result with usage_metrics=None yields empty usage."""
+        from types import SimpleNamespace
+
+        from band.core.types import TurnUsage
+
+        assert (
+            CrewAIAdapter._usage_from_result(SimpleNamespace(usage_metrics=None))
+            == TurnUsage()
+        )

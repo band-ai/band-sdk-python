@@ -31,6 +31,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
 from band.runtime.custom_tools import (
@@ -63,7 +64,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -233,6 +234,8 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
         gemini_tools = self._build_gemini_tools(tools)
         tool_rounds = 0
+        # Gemini reports usage per call; sum across the loop into one TurnUsage.
+        turn_usage = TurnUsage()
         while True:
             if tool_rounds >= self.max_tool_rounds:
                 raise RuntimeError(
@@ -247,6 +250,8 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 logger.exception("Error calling Gemini: %s", e)
                 await self._report_error(tools, str(e))
                 raise
+
+            turn_usage = turn_usage + self._usage_from_response(response)
 
             candidate_content = self._extract_candidate_content(response)
             if candidate_content is not None:
@@ -267,6 +272,8 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
             tool_rounds += 1
 
+        await self.emit_usage(tools, turn_usage)
+
         # Trim after the tool loop so the LLM always sees full context for the
         # current turn; trimming only affects the next turn's window.
         self._trim_history(room_id)
@@ -275,6 +282,20 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
         """Clean up message history when the agent leaves a room."""
         self._message_history.pop(room_id, None)
         logger.debug("Room %s: Cleaned up Gemini history", room_id)
+
+    @staticmethod
+    def _usage_from_response(response: Any) -> TurnUsage:
+        """Map a Gemini ``GenerateContentResponse.usage_metadata`` onto TurnUsage.
+
+        A response without usage yields empty usage. Gemini has no cache-write
+        dimension (left 0); ``cached_content_token_count`` is the cache read.
+        """
+        return TurnUsage.from_object(
+            getattr(response, "usage_metadata", None),
+            input="prompt_token_count",
+            output="candidates_token_count",
+            cache_read="cached_content_token_count",
+        )
 
     def _trim_history(self, room_id: str) -> None:
         """Trim message history to stay within ``max_history_messages``.

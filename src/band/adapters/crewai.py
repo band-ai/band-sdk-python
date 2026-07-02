@@ -17,7 +17,13 @@ from typing import ClassVar, TYPE_CHECKING, Any
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.crewai import CrewAIHistoryConverter, CrewAIMessages
 from band.integrations.crewai import (
     CrewAIToolContext,
@@ -101,7 +107,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         the CrewAI LLM class (e.g., OPENAI_API_KEY, ANTHROPIC_API_KEY).
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -442,6 +448,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                     "band_send_message tool.",
                 )
 
+            # usage_metrics is the run's cumulative total, so emit once here.
+            await self.emit_usage(tools, self._usage_from_result(result))
+
             logger.info(
                 "Room %s: CrewAI agent completed (output_length=%s)",
                 room_id,
@@ -480,6 +489,23 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             "Message %s processed successfully (history now has %s messages)",
             msg.id,
             len(self._message_history[room_id]),
+        )
+
+    @staticmethod
+    def _usage_from_result(result: Any) -> TurnUsage:
+        """Map a CrewAI ``LiteAgentOutput.usage_metrics`` onto TurnUsage.
+
+        ``usage_metrics`` is a dict (``UsageMetrics.model_dump()``) or ``None``,
+        and is the run's cumulative total across model calls — read once, no
+        loop-summing. ``cache_creation_tokens`` is CrewAI's cache-write field
+        (Anthropic cache writes); ``cached_prompt_tokens`` is the cache read.
+        """
+        return TurnUsage.from_mapping(
+            getattr(result, "usage_metrics", None),
+            input="prompt_tokens",
+            output="completion_tokens",
+            cache_read="cached_prompt_tokens",
+            cache_write="cache_creation_tokens",
         )
 
     async def on_cleanup(self, room_id: str) -> None:

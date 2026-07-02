@@ -19,7 +19,13 @@ from band.converters.opencode import OpencodeHistoryConverter
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
@@ -79,6 +85,10 @@ class _RoomState:
     pending_question: _PendingQuestion | None = None
     last_error_message: str | None = None
     persisted_session_id: str | None = None
+    # Per-assistant-message usage for the current turn (last-write-wins per id,
+    # since message.updated streams repeatedly). Summed across messages at turn
+    # end — a tool loop produces several assistant messages.
+    usage_by_message: dict[str, TurnUsage] = field(default_factory=dict)
 
 
 @dataclass
@@ -131,7 +141,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.TASK_EVENTS}
+        {Emit.EXECUTION, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -524,6 +534,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 if info.get("role") == "assistant":
                     if message_id:
                         room_state.assistant_message_ids.add(message_id)
+                        usage = self._usage_from_info(info)
+                        if not usage.is_empty:
+                            room_state.usage_by_message[message_id] = usage
                     error = info.get("error")
                     if error:
                         room_state.last_error_message = self._format_opencode_error(
@@ -896,6 +909,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state.assistant_part_types.clear()
         room_state.reported_tool_calls.clear()
         room_state.reported_tool_results.clear()
+        room_state.usage_by_message.clear()
         room_state.last_error_message = None
 
     async def _watch_turn_completion(
@@ -931,6 +945,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self._release_turn_wait(room_state)
         else:
             await self._deliver_fallback_text(room_state)
+            await self._emit_turn_usage(room_state)
             self._release_turn_wait(room_state)
         finally:
             self._clear_turn_state(
@@ -1022,6 +1037,49 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             mentions=room_state.pending_mentions,
         )
         room_state.pending_mentions = []
+
+    async def _emit_turn_usage(self, room_state: _RoomState) -> None:
+        """Emit the turn's total token usage (summed across assistant messages).
+
+        No-op unless ``Emit.USAGE`` is enabled or nothing was captured — a live
+        OpenCode server reports ``tokens`` on the assistant ``info``, but that is
+        not present in mocked/offline runs, so an empty total is simply skipped
+        by ``emit_usage``.
+        """
+        if room_state.tools is None:
+            return
+        total = TurnUsage()
+        for usage in room_state.usage_by_message.values():
+            total = total + usage
+        await self.emit_usage(room_state.tools, total)
+
+    @staticmethod
+    def _usage_from_info(info: dict[str, Any]) -> TurnUsage:
+        """Map an OpenCode assistant ``info.tokens`` onto TurnUsage.
+
+        Read defensively off the raw event dict (OpenCode's payloads are not
+        modeled in this integration): the server reports
+        ``tokens: {input, output, reasoning, cache: {read, write}}``. A missing
+        or malformed ``tokens`` yields empty usage.
+        """
+        tokens = info.get("tokens")
+        if not isinstance(tokens, dict):
+            return TurnUsage()
+        cache = tokens.get("cache")
+        cache = cache if isinstance(cache, dict) else {}
+        flat = {
+            "input": tokens.get("input"),
+            "output": tokens.get("output"),
+            "cache_read": cache.get("read"),
+            "cache_write": cache.get("write"),
+        }
+        return TurnUsage.from_mapping(
+            flat,
+            input="input",
+            output="output",
+            cache_read="cache_read",
+            cache_write="cache_write",
+        )
 
     async def _report_tool_call(
         self,

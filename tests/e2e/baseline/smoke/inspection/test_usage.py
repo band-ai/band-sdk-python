@@ -5,7 +5,9 @@ The cross-adapter proof for the cost/token seam: an agent running with
 ``ReplyCapture.usage`` and asserted with :class:`Usage`. This is the end-to-end
 de-risking test for the ``Emit.USAGE`` / ``capture.usage()`` design as it is
 templated across the bucket-B adapters (anthropic, langgraph, pydantic_ai,
-claude_sdk, agno in the CORE lane; google_adk in the google lane).
+claude_sdk, agno in the CORE lane; google_adk and gemini in the google lane;
+crewai in the crewai lane; opencode in the backends lane). Letta captures usage
+too but is E2E-pending, so it's covered by unit mapping tests, not this smoke.
 
 Turn completion uses the delivery-status barrier (``wait_for_processed``): the
 platform marks the trigger ``processed`` only after the reply is emitted, by which
@@ -30,6 +32,9 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
     Adapter.CLAUDE_SDK,
     Adapter.AGNO,
     Adapter.GOOGLE_ADK,
+    Adapter.GEMINI,
+    Adapter.CREWAI,
+    Adapter.OPENCODE,
     **COST_AGENT,
 )
 @pytest.mark.asyncio(loop_scope="session")
