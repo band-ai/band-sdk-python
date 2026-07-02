@@ -9,11 +9,14 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from band.core.protocols import AgentToolsProtocol, HistoryConverter
 from band.core.types import (
+    USAGE_EVENT_TYPE,
+    USAGE_METADATA_KEY,
     AdapterFeatures,
     AgentInput,
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,6 +121,40 @@ class SimpleAdapter(Generic[H], ABC):
             room_id: The room identifier
         """
         ...
+
+    async def emit_usage(self, tools: AgentToolsProtocol, usage: TurnUsage) -> None:
+        """Emit a turn's token usage as a platform event, if enabled.
+
+        Additive and best-effort, mirroring how adapters emit ``tool_call``
+        events under ``Emit.EXECUTION``: gated on ``Emit.USAGE`` in the
+        adapter's features, and never allowed to crash the turn. The token
+        counts ride an accepted ``task`` event's structured ``metadata`` under
+        ``USAGE_METADATA_KEY`` (the read side filters on that key), since the
+        backend rejects an unknown ``usage`` message_type today; see
+        ``USAGE_EVENT_TYPE``.
+
+        Adapters call this once per turn with the usage summed across the tool
+        loop. An adapter that cannot observe usage (server-side execution)
+        simply never calls it, so no event is emitted and the toolkit records
+        N-A rather than a false zero. An all-zero usage is likewise skipped so a
+        read never sees a zero-only record masquerading as real data.
+        """
+        if Emit.USAGE not in self.features.emit:
+            return
+        if usage.is_empty:
+            logger.debug("Skipping empty usage event")
+            return
+        try:
+            await tools.send_event(
+                content=(
+                    f"Token usage: input={usage.input_tokens} "
+                    f"output={usage.output_tokens}"
+                ),
+                message_type=USAGE_EVENT_TYPE,
+                metadata={USAGE_METADATA_KEY: usage.to_dict()},
+            )
+        except Exception as e:  # best-effort: usage reporting must never crash a turn
+            logger.warning("Failed to send usage event: %s", e)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Override for session cleanup."""

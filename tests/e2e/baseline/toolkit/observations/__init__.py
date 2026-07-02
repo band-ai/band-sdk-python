@@ -15,6 +15,9 @@ methods, so a check lives with the data it inspects. ``ReplyCapture`` (see
 - :class:`Memories` -- the store-layer view: memory records that actually landed
   (agent-scoped). :class:`MemoryObservation` bundles both memory layers and is
   what ``ReplyCapture.memory`` returns.
+- :class:`UsageRecord` / :class:`Usage` -- the agent's per-turn token usage
+  (from ``usage`` events under ``Emit.USAGE``), what ``ReplyCapture.usage``
+  returns.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from tests.e2e.baseline.toolkit.observations.tool_calls import (
     ToolCall,
     ToolCalls,
 )
+from tests.e2e.baseline.toolkit.observations.usage import Usage, UsageRecord
 
 __all__ = [
     "Errors",
@@ -49,4 +53,6 @@ __all__ = [
     "Thoughts",
     "ToolCall",
     "ToolCalls",
+    "Usage",
+    "UsageRecord",
 ]

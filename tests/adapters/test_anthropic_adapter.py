@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
-from band.core.types import PlatformMessage
+from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
 
 
 @pytest.fixture
@@ -317,6 +317,77 @@ class TestToolExecution:
 
         assert "Failed to send tool_call event: 403 Forbidden" in caplog.text
         assert "Failed to send tool_result event: 403 Forbidden" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_usage_from_response_maps_and_sums(self):
+        """`_usage_from_response` maps Anthropic usage; TurnUsage `+` sums a loop."""
+        first = MagicMock()
+        first.usage = MagicMock(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_input_tokens=5,
+            cache_creation_input_tokens=0,
+        )
+        second = MagicMock()
+        second.usage = MagicMock(
+            input_tokens=130,
+            output_tokens=8,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        )
+        total = AnthropicAdapter._usage_from_response(
+            first
+        ) + AnthropicAdapter._usage_from_response(second)
+        assert total == TurnUsage(
+            input_tokens=230,
+            output_tokens=28,
+            cache_read_tokens=5,
+            cache_write_tokens=0,
+        )
+
+    @pytest.mark.asyncio
+    async def test_emits_usage_event_when_enabled(self, mock_tools):
+        """With Emit.USAGE on, a non-empty TurnUsage rides a task event's metadata."""
+        from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY
+
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+
+        await adapter.emit_usage(
+            mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
+        )
+
+        mock_tools.send_event.assert_awaited_once()
+        _, kwargs = mock_tools.send_event.call_args
+        assert kwargs["message_type"] == USAGE_EVENT_TYPE
+        payload = kwargs["metadata"][USAGE_METADATA_KEY]
+        assert payload["input_tokens"] == 100
+        assert payload["output_tokens"] == 20
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_usage_when_feature_off(self, mock_tools):
+        """Without Emit.USAGE, emit_usage is a no-op (no event)."""
+        adapter = AnthropicAdapter()  # no emit features
+        await adapter.emit_usage(
+            mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
+        )
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_empty_usage(self, mock_tools):
+        """An all-zero TurnUsage is skipped even with the feature on (no false zero)."""
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        await adapter.emit_usage(mock_tools, TurnUsage())
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_usage_emit_failure_does_not_crash(self, mock_tools):
+        """A send_event failure during usage emit is swallowed (best-effort)."""
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        mock_tools.send_event.side_effect = Exception("403 Forbidden")
+        # Should not raise.
+        await adapter.emit_usage(
+            mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
+        )
 
     @pytest.mark.asyncio
     async def test_handles_tool_error(self, mock_tools):

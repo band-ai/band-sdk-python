@@ -34,7 +34,13 @@ from band_rest.core.api_error import ApiError
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
@@ -140,7 +146,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -613,6 +619,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # terminal, successful tool ran (excludes read-only lookups and failed
         # band tools) so we can tell a productive turn from a genuine no-op below.
         tool_executed = False
+        # pydantic-ai's result.usage() is already summed across the run's model
+        # calls, so it's set once (on the result event), not accumulated.
+        turn_usage = TurnUsage()
         # Capture the run's messages so a benign empty-final response — which raises
         # before the AgentRunResultEvent that normally records history — can still
         # persist the *full* turn (user prompt + the agent's tool calls/results), not
@@ -669,6 +678,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         except Exception as e:
                             logger.warning("Failed to send tool_result event: %s", e)
                 elif isinstance(event, AgentRunResultEvent):
+                    turn_usage = self._usage_from_result(event.result)
                     # Keep native run history, but drop responses that replay as
                     # content:null (e.g. thinking-only) — providers reject them next request.
                     run_messages = list(event.result.all_messages())
@@ -726,10 +736,43 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 "instead of using the band_send_message tool.",
             )
 
+        # Emit the turn's token usage (no-op unless Emit.USAGE is on). Skipped on
+        # the benign empty-final-response path above, which returns before here —
+        # that turn has no result event, so no usage to report.
+        await self.emit_usage(tools, turn_usage)
+
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",
             room_id,
             len(self._message_history[room_id]),
+        )
+
+    @staticmethod
+    def _usage_from_result(result: Any) -> TurnUsage:
+        """Map a pydantic-ai ``AgentRunResult.usage()`` onto TurnUsage.
+
+        ``result.usage()`` is the run's total across all model requests. Field
+        names moved across pydantic-ai versions (``request_tokens`` /
+        ``response_tokens`` → ``input_tokens`` / ``output_tokens``), so both are
+        read defensively.
+        """
+        try:
+            usage = result.usage()
+        except Exception:  # pragma: no cover - defensive; usage is best-effort
+            return TurnUsage()
+
+        def _int(*names: str) -> int:
+            for name in names:
+                value = getattr(usage, name, None)
+                if isinstance(value, int):
+                    return value
+            return 0
+
+        return TurnUsage(
+            input_tokens=_int("input_tokens", "request_tokens"),
+            output_tokens=_int("output_tokens", "response_tokens"),
+            cache_read_tokens=_int("cache_read_tokens"),
+            cache_write_tokens=_int("cache_write_tokens"),
         )
 
     async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:

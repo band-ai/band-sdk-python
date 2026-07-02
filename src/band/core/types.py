@@ -23,6 +23,7 @@ class MessageType(StrEnum):
     THOUGHT = "thought"
     ERROR = "error"
     TASK = "task"
+    USAGE = "usage"
 
 
 # Subset of message types accepted by ``band_send_event`` — the non-history
@@ -49,6 +50,75 @@ class Emit(str, Enum):
     EXECUTION = "execution"
     THOUGHTS = "thoughts"
     TASK_EVENTS = "task_events"
+    USAGE = "usage"
+
+
+@dataclass(frozen=True)
+class TurnUsage:
+    """Token usage for a single agent turn, framework-agnostic.
+
+    Each adapter maps its response object's usage fields onto these four
+    dimensions (see the per-adapter table in the cost/token plan). A turn that
+    makes several LLM calls (a tool loop) sums the per-call usage into one
+    ``TurnUsage`` via ``+`` before emitting, so the record reflects the whole
+    turn, not the last call.
+
+    Zero is a valid value for any single dimension (a framework may not report
+    it); ``is_empty`` is the "nothing was reported at all" signal that gates
+    emission — an adapter that cannot observe usage never emits, and the toolkit
+    records N-A rather than a misleading all-zero record.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    def __add__(self, other: TurnUsage) -> TurnUsage:
+        """Sum two per-call usages (used to aggregate across a tool loop)."""
+        return TurnUsage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
+        )
+
+    @property
+    def total_tokens(self) -> int:
+        """Input + output tokens (cache fields are a subset breakdown of input,
+        so they are not added again here)."""
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def is_empty(self) -> bool:
+        """True when no dimension was reported — the signal to skip emission."""
+        return not (
+            self.input_tokens
+            or self.output_tokens
+            or self.cache_read_tokens
+            or self.cache_write_tokens
+        )
+
+    def to_dict(self) -> dict[str, int]:
+        """Serialize for the usage event payload (content JSON + metadata)."""
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+        }
+
+
+# Usage rides an already-accepted ``task`` event's free-form metadata (the path
+# codex already proves) rather than a dedicated ``usage`` message_type: the
+# backend's message_type whitelist rejects unknown types today, so a first-class
+# ``usage`` type would need a platform change + deploy first. Emit and read both
+# key off these two constants, so when the platform gains a ``usage`` type this
+# is a one-line flip (``USAGE_EVENT_TYPE = MessageType.USAGE``) — the discriminator
+# key is what a read filters on to tell a usage-bearing task event apart from a
+# lifecycle one.
+USAGE_EVENT_TYPE: MessageType = MessageType.TASK
+USAGE_METADATA_KEY: str = "band_usage"
 
 
 @dataclass(frozen=True)

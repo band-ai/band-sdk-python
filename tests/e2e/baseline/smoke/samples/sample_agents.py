@@ -45,11 +45,26 @@ def memory_features() -> AdapterFeatures:
     return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.EXECUTION})
 
 
+def usage_features() -> AdapterFeatures:
+    """Features for the cost/token smokes: emit each turn's token usage as a
+    ``usage`` event so the ``Usage`` observation layer is populated."""
+    return AdapterFeatures(emit={Emit.USAGE})
+
+
+# A plain reply-eliciting prompt for the cost smokes: the turn just needs to run
+# an LLM call (input tokens) and produce a reply (output tokens); no tools.
+COST_AGENT_SYSTEM_PROMPT = (
+    "You are a helpful assistant in a chat room. Reply directly to the user with "
+    "one short, friendly sentence."
+)
+
+
 # Reusable agent shapes for ``@with_adapters(..., **SHAPE)``: the prompt (and
 # features) a smoke runs its agents under. Declared once here so every test shares
 # the same shape instead of re-spelling it.
 TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
 MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
+COST_AGENT = {"prompt": COST_AGENT_SYSTEM_PROMPT, "features": usage_features()}
 
 
 # Reply-oriented driving glue shared by the context-recall and rehydration

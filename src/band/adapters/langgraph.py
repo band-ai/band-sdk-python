@@ -14,7 +14,13 @@ from langgraph.pregel import Pregel
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
 from band.runtime.prompts import render_system_prompt
 
@@ -72,7 +78,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -328,6 +334,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         graph_input = {"messages": messages}
 
+        # Usage is reported per model call on the stream; a turn may make several
+        # (a tool loop), so sum across every on_chat_model_end into one TurnUsage.
+        turn_usage = TurnUsage()
         try:
             async for event in graph.astream_events(
                 graph_input,
@@ -340,6 +349,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 version="v2",
             ):
                 await self._handle_stream_event(event, room_id, tools)
+                turn_usage = turn_usage + self._usage_from_stream_event(event)
+
+            await self.emit_usage(tools, turn_usage)
 
             if should_mark_bootstrapped:
                 self._bootstrapped_rooms[room_id] = None
@@ -422,6 +434,37 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 )
             except Exception as e:
                 logger.warning("Failed to send tool_result event: %s", e)
+
+    @staticmethod
+    def _usage_from_stream_event(event: Any) -> TurnUsage:
+        """Map a LangChain ``on_chat_model_end`` stream event onto TurnUsage.
+
+        Any other event (or a shape without ``usage_metadata``) contributes an
+        empty ``TurnUsage``. LangChain reports cache tokens under
+        ``input_token_details`` (``cache_read`` / ``cache_creation``).
+        """
+        if not isinstance(event, dict) or event.get("event") != "on_chat_model_end":
+            return TurnUsage()
+        data = event.get("data")
+        output = data.get("output") if isinstance(data, dict) else None
+        usage_metadata = getattr(output, "usage_metadata", None)
+        if usage_metadata is None and isinstance(output, dict):
+            usage_metadata = output.get("usage_metadata")
+        if not isinstance(usage_metadata, dict):
+            return TurnUsage()
+
+        details = usage_metadata.get("input_token_details")
+        details = details if isinstance(details, dict) else {}
+
+        def _int(value: Any) -> int:
+            return value if isinstance(value, int) else 0
+
+        return TurnUsage(
+            input_tokens=_int(usage_metadata.get("input_tokens")),
+            output_tokens=_int(usage_metadata.get("output_tokens")),
+            cache_read_tokens=_int(details.get("cache_read")),
+            cache_write_tokens=_int(details.get("cache_creation")),
+        )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up process-local LangGraph bookkeeping for a room."""

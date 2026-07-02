@@ -22,7 +22,13 @@ from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -280,7 +286,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -538,13 +544,18 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 len(room_history),
             )
 
-            # Run the ADK agent - it handles the full tool loop
+            # Run the ADK agent - it handles the full tool loop. Usage is
+            # reported per model response on the event stream, so sum across the
+            # loop into one per-turn TurnUsage (emitted after a clean run).
             final_response_text = ""
+            turn_usage = TurnUsage()
             async for event in runner.run_async(
                 user_id=room_id,
                 session_id=session_id,
                 new_message=user_content,
             ):
+                turn_usage = turn_usage + self._usage_from_event(event)
+
                 # Report tool calls/results if enabled
                 if Emit.EXECUTION in self.features.emit:
                     try:
@@ -566,6 +577,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         finally:
             await runner.close()
 
+        # Emit the turn's aggregated usage (reached only on a clean run — the
+        # except above re-raises). No-op unless Emit.USAGE is on.
+        await self.emit_usage(tools, turn_usage)
+
         # Accumulate message history for future transcript injection
         self._room_history[room_id].append(
             {"role": "user", "content": msg.format_for_llm()}
@@ -585,6 +600,29 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             ]
 
         logger.debug("Message %s processed successfully", msg.id)
+
+    @staticmethod
+    def _usage_from_event(event: Any) -> TurnUsage:
+        """Map an ADK event's ``usage_metadata`` onto TurnUsage.
+
+        Usage rides model-response events (``prompt_token_count`` /
+        ``candidates_token_count`` / ``cached_content_token_count``); events
+        without it (tool calls, etc.) contribute empty usage. Gemini has no
+        cache-write dimension, so it stays 0.
+        """
+        usage_metadata = getattr(event, "usage_metadata", None)
+        if usage_metadata is None:
+            return TurnUsage()
+
+        def _int(name: str) -> int:
+            value = getattr(usage_metadata, name, 0)
+            return value if isinstance(value, int) else 0
+
+        return TurnUsage(
+            input_tokens=_int("prompt_token_count"),
+            output_tokens=_int("candidates_token_count"),
+            cache_read_tokens=_int("cached_content_token_count"),
+        )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up session and history when agent leaves a room."""

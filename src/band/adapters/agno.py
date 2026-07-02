@@ -18,6 +18,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.prompts import render_system_prompt
@@ -108,7 +109,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS}
+        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -301,6 +302,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         if Emit.THOUGHTS in self.features.emit:
             await self._report_thoughts(response, tools, room_id=room_id, msg_id=msg.id)
 
+        # RunOutput.metrics is aggregated across the run's model calls.
+        await self.emit_usage(tools, self._usage_from_response(response))
+
         self._persist_turn(room_id, response)
 
         if not any(
@@ -317,6 +321,29 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's accumulated transcript when the agent leaves."""
         self._message_history.pop(room_id, None)
+
+    @staticmethod
+    def _usage_from_response(response: RunOutput) -> TurnUsage:
+        """Map an Agno ``RunOutput.metrics`` onto TurnUsage.
+
+        ``metrics`` (a ``RunMetrics``) is aggregated across the run's model
+        calls; its token field names line up with TurnUsage's. It is optional,
+        so a missing metrics object yields empty usage.
+        """
+        metrics = getattr(response, "metrics", None)
+        if metrics is None:
+            return TurnUsage()
+
+        def _int(name: str) -> int:
+            value = getattr(metrics, name, 0)
+            return value if isinstance(value, int) else 0
+
+        return TurnUsage(
+            input_tokens=_int("input_tokens"),
+            output_tokens=_int("output_tokens"),
+            cache_read_tokens=_int("cache_read_tokens"),
+            cache_write_tokens=_int("cache_write_tokens"),
+        )
 
     def _prior_transcript(
         self,

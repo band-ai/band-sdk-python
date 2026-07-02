@@ -130,6 +130,53 @@ def mock_pydantic_agent():
     return agent
 
 
+class TestUsageMapping:
+    """Tests for the Emit.USAGE seam's usage mapping."""
+
+    def test_usage_from_result_current_field_names(self):
+        """Maps RunUsage.input_tokens/output_tokens to TurnUsage."""
+        from types import SimpleNamespace
+
+        from band.core.types import TurnUsage
+
+        result = MagicMock()
+        result.usage.return_value = SimpleNamespace(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=5,
+            cache_write_tokens=0,
+        )
+        assert PydanticAIAdapter._usage_from_result(result) == TurnUsage(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=5,
+            cache_write_tokens=0,
+        )
+
+    def test_usage_from_result_legacy_field_names(self):
+        """Falls back to the older request_tokens/response_tokens names."""
+        from types import SimpleNamespace
+
+        from band.core.types import TurnUsage
+
+        result = MagicMock()
+        result.usage.return_value = SimpleNamespace(
+            request_tokens=130,
+            response_tokens=8,
+        )
+        assert PydanticAIAdapter._usage_from_result(result) == TurnUsage(
+            input_tokens=130, output_tokens=8
+        )
+
+    def test_usage_from_result_swallows_errors(self):
+        """A usage() that raises yields empty usage, never propagates."""
+        from band.core.types import TurnUsage
+
+        result = MagicMock()
+        result.usage.side_effect = RuntimeError("no usage")
+        assert PydanticAIAdapter._usage_from_result(result) == TurnUsage()
+
+
 class TestInitialization:
     """Tests for adapter initialization."""
 
