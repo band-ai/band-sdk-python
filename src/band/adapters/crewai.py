@@ -75,7 +75,9 @@ def _silence_lite_agent_error_panel() -> None:
     except (ImportError, AttributeError) as e:
         # Tolerate only CrewAI's private event internals moving on a version bump
         # (we reach into _sync_handlers); any other error is a real bug — let it raise.
-        logger.debug("Could not silence CrewAI LiteAgent error panel: %s", e)
+        # warn (not debug): this means our private-API reach broke and the silencer
+        # needs updating — surface it rather than bury it.
+        logger.warning("Could not silence CrewAI LiteAgent error panel: %s", e)
 
 
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
