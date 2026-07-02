@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import per_adapter
+from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -30,7 +30,9 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@per_adapter()
+# CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
+# cannot recall a per-room note — exclude it from recall scenarios.
+@per_adapter(exclude={Adapter.CREWAI_FLOW})
 @pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
 @pytest.mark.timeout(extra=180)  # four sequential turns (two rooms × state + recall)
 @pytest.mark.asyncio(loop_scope="session")
