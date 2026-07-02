@@ -142,6 +142,10 @@ class ResourceManager:
         self._provisioned_agent_ids: list[str] = []
         self._provisioned_room_ids: list[str] = []
         self._running_agent_ids: set[str] = set()
+        # One PeerActor (and its REST client) per agent id, reused across calls so
+        # repeated peer() calls don't open a fresh httpx pool each time (mirrors
+        # ReplyCapture's per-agent client reuse).
+        self._peer_actors: dict[str, PeerActor] = {}
 
     @contextmanager
     def track_running(self, agent_id: str) -> Iterator[None]:
@@ -201,9 +205,14 @@ class ResourceManager:
         """A ``PeerActor`` to drive ``agent`` as a peer (e.g. the ``Echo`` bounce).
 
         The manager already holds the settings and provisioned the identity, so a
-        test needs neither a separate fixture nor to thread ``settings``.
+        test needs neither a separate fixture nor to thread ``settings``. Cached
+        per agent id so repeated calls reuse one REST client.
         """
-        return PeerActor(agent, self._settings)
+        actor = self._peer_actors.get(agent.id)
+        if actor is None:
+            actor = PeerActor(agent, self._settings)
+            self._peer_actors[agent.id] = actor
+        return actor
 
     async def provision_room(
         self, *, title: str | None = None, participants: list[str] | None = None

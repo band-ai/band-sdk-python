@@ -19,13 +19,13 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.provisioning import ResourceManager
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 
 
 @with_adapters(Adapter.ANTHROPIC, prompt=REPLY_PROMPT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_peer_message_drives_agent_turn(
-    agent,
+    agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     reply_capture: CaptureFactory,
 ) -> None:
@@ -45,7 +45,8 @@ async def test_peer_message_drives_agent_turn(
         )
         await capture.wait_for_processed(mid, agent.id)
 
-    # The agent echoed the marker the *peer* asked for → the peer's message drove
-    # a real turn (delivered, mention-triggered, reached inference), not just a
-    # persisted row.
-    capture.messages.assert_contains_any([marker])
+    # The *agent under test* (not the peer) echoed the marker the peer asked for →
+    # the peer's message drove a real turn (delivered, mention-triggered, reached
+    # inference). Scope to the agent's own replies: the peer is itself an Agent, so
+    # its marker-bearing trigger is captured too and would falsely satisfy this.
+    capture.messages.from_sender(agent.id).assert_contains_any([marker])

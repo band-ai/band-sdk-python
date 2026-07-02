@@ -81,9 +81,10 @@ class UserOps:
         *,
         not_in_room: str | None = None,
         peer_type: ListMyPeersRequestType | None = None,
+        page: int = 1,
         limit: int = 100,
     ) -> list[Peer]:
-        """List peers the user can interact with — the invitable roster.
+        """List one page of peers the user can interact with — the invitable roster.
 
         The driver-side mirror of the agent's own ``band_lookup_peers``: it asks
         the Human API which entities (users and agents) the test user could bring
@@ -92,12 +93,15 @@ class UserOps:
         ``peer_type`` (``"User"``/``"Agent"``) narrows by kind. Returns the ``Peer``
         models so callers match on ``.name``/``.id``/``.handle``/``.type``.
 
+        Returns a single page (``limit`` items from ``page``); a caller that must
+        see the whole roster in a populated workspace pages until a short page.
+
         ``not_in_room``/``peer_type`` are query params: left ``None`` they are
         omitted (not sent as ``null``), matching how the SDK itself calls this
         endpoint, so no conditional kwargs bag is needed.
         """
         response = await self._client.human_api_peers.list_my_peers(
-            not_in_chat=not_in_room, type=peer_type, page_size=limit
+            not_in_chat=not_in_room, type=peer_type, page=page, page_size=limit
         )
         return list(response.data or [])
 

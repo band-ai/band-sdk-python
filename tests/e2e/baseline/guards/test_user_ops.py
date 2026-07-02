@@ -13,6 +13,23 @@ from band_rest import Peer
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
+_PEER_PAGE_SIZE = 100
+
+
+async def _all_invitable_agents(user_ops: UserOps, room_id: str) -> list[Peer]:
+    """Every Agent peer invitable to ``room_id``, paged so the check never assumes
+    the target lands on page 1 in a workspace that has accumulated agents."""
+    collected: list[Peer] = []
+    page = 1
+    while True:
+        batch = await user_ops.lookup_peers(
+            not_in_room=room_id, peer_type="Agent", page=page, limit=_PEER_PAGE_SIZE
+        )
+        collected.extend(batch)
+        if len(batch) < _PEER_PAGE_SIZE:
+            return collected
+        page += 1
+
 
 @pytest.mark.asyncio(loop_scope="session")
 async def test_user_ops_create_list_delete_room(user_ops: UserOps) -> None:
@@ -40,7 +57,7 @@ async def test_user_ops_lookup_peers_excludes_room_members(
     peer = await resource_manager.provision_agent(label="lookup-peer")
     room_id = await resource_manager.provision_room(title="e2e-userops-peers")
 
-    invitable = await user_ops.lookup_peers(not_in_room=room_id, peer_type="Agent")
+    invitable = await _all_invitable_agents(user_ops, room_id)
     match = next((p for p in invitable if p.id == peer.id), None)
     assert match is not None, (
         "a provisioned agent should be invitable to a room it isn't in"
@@ -53,7 +70,7 @@ async def test_user_ops_lookup_peers_excludes_room_members(
     )
 
     await user_ops.add_participant(room_id, peer.id)
-    after = await user_ops.lookup_peers(not_in_room=room_id)
+    after = await _all_invitable_agents(user_ops, room_id)
     assert all(p.id != peer.id for p in after), (
         "a peer already in the room must drop out of the invitable set"
     )
