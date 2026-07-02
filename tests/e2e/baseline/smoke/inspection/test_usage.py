@@ -21,6 +21,16 @@ each runs in its own lane's job — no ``@lane`` pin needed.
 Turn completion uses the delivery-status barrier (``wait_for_processed``): the
 platform marks the trigger ``processed`` only after the reply is emitted, by which
 point the turn's usage event is persisted — so the read is race-free.
+
+``test_usage_not_cumulative_across_turns`` extends the same fan to two turns and
+asserts each turn emits its *own* record scoped to that turn — the live guard for
+the per-turn convention. It catches the class of bug found in review where an
+adapter reports a *cumulative* count (a run/session total that grows every turn,
+e.g. pydantic_ai's benign fallback summing the replayed history, or crewai's
+lifetime ``usage_metrics``). It drives one long turn then one one-word turn: a
+correct per-turn second record sits far below the long turn, while a cumulative
+one (long + tiny) rises to ~= the long turn — a scale-immune split that ordinary
+reply-length variance can't cross.
 """
 
 from __future__ import annotations
@@ -28,7 +38,10 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
-from tests.e2e.baseline.smoke.samples.sample_agents import COST_AGENT
+from tests.e2e.baseline.smoke.samples.sample_agents import (
+    COST_AGENT,
+    COST_MULTI_TURN_AGENT,
+)
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -109,4 +122,92 @@ async def test_usage_recorded_for_a_turn(
     )
     assert record.total_tokens < 100_000, (
         f"total tokens implausibly high for a one-line reply: {record.total_tokens}"
+    )
+
+
+# Same fan and exclusions as the single-turn smoke: every usage-emitting adapter,
+# minus the crewai pair (crewai_flow N-A; crewai deferred). LETTA auto-excluded
+# (e2e_pending). The prompt lets the user dictate length so the test can drive one
+# LONG turn then one TINY turn (see COST_MULTI_TURN_AGENT).
+@per_adapter(exclude={Adapter.CREWAI_FLOW, Adapter.CREWAI}, **COST_MULTI_TURN_AGENT)
+# Two turns, and the first drives a long multi-paragraph generation — so this test
+# legitimately needs roughly a second turn's budget on top of the per-turn default.
+@pytest.mark.timeout(extra=120)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_usage_not_cumulative_across_turns(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """Each turn emits its OWN usage record — a per-turn count, never a cumulative total.
+
+    The live guard for the per-turn convention. Review found two adapters that
+    reported a *cumulative* count — a run/session total that grows every turn
+    (pydantic_ai's benign fallback summed the replayed history; crewai's
+    ``usage_metrics`` is a lifetime counter). This drives two turns in one room and
+    checks the second turn's record is that turn alone, not turn1+turn2.
+
+    The turns are deliberately ASYMMETRIC — a long first turn, a one-word second
+    turn — because that makes the check immune to LLM reply-length variance. Two
+    equal turns would force a fragile "1x vs 2x" ratio whose margin collapses when
+    an ordinary turn runs a bit long; instead:
+
+    - a correct per-turn second record is the *tiny* turn alone → far BELOW the
+      long first turn's output;
+    - a cumulative second record is ``long + tiny`` → ``~=`` the long first turn.
+
+    So ``turn2.output < turn1.output`` cleanly separates them (asserted at half,
+    for headroom). Output, not input: history grows turn-over-turn, so input rises
+    even when correct — output is the clean per-turn discriminator, and it's
+    exactly what a cumulative bug inflates. Two tolerant checks:
+
+    - exactly two records, one per turn — a per-turn emitter produces one record
+      each turn; a double-emit or a per-run-instead-of-per-turn regression would
+      change the count. (Same reasoning as the single-turn smoke's ``len == 1``.)
+    - the second record is not cumulative (the ratio above), floored by a plausible
+      first-turn size so the ratio can't pass vacuously on a degenerate record.
+    """
+    room_id = await resource_manager.provision_room(
+        title="e2e-usage-not-cumulative", participants=[agent.id]
+    )
+    async with reply_capture(room_id) as capture:
+        first = await user_ops.send_message(
+            room_id,
+            "Explain in detail how ocean tides work. Write several full paragraphs.",
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await capture.wait_for_processed(first, agent.id)
+        second = await user_ops.send_message(
+            room_id,
+            "Reply with a single word: yes.",
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await capture.wait_for_processed(second, agent.id)
+        # Both turns are complete and persisted; read the whole room's usage,
+        # oldest-first — [0] is turn 1 (long), [1] is turn 2 (one word).
+        usage = await capture.usage(sender_id=agent.id)
+
+    # Baseline sanity: real usage was recorded on both turns (input from the
+    # prompt, output from the replies) — reuses the L4 gate.
+    usage.assert_nonzero_input_and_output()
+    assert len(usage) == 2, (
+        f"expected exactly one usage record per turn (two turns), got {usage}"
+    )
+    turn_one, turn_two = usage[0], usage[1]
+    # The long turn must actually be sizeable, else the ratio below is vacuous
+    # (a degenerate near-zero turn_one would let almost anything pass).
+    assert turn_one.output_tokens >= 20, (
+        f"first turn's output implausibly small for a multi-paragraph reply: "
+        f"{turn_one.output_tokens}"
+    )
+    # The non-cumulative discriminator: a per-turn record for the one-word turn is
+    # far below the long turn's output, while a cumulative one (long + tiny) is
+    # ~= the long turn. Half the long turn splits them with wide margin either way.
+    assert turn_two.output_tokens < turn_one.output_tokens * 0.5, (
+        "second turn's output looks cumulative (turn1+turn2), not per-turn: a "
+        f"one-word reply should be far below the long turn — turn1="
+        f"{turn_one.output_tokens}, turn2={turn_two.output_tokens}"
     )
