@@ -417,13 +417,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             is_session_bootstrap,
         )
 
-        # NOTE: CrewAI usage capture is intentionally NOT implemented (Emit.USAGE
-        # is not in SUPPORTED_EMIT). CrewAI's result.usage_metrics is a cumulative
-        # lifetime counter on the once-created agent (not per-turn, and shared
-        # across concurrent rooms), and its per-call event usage comes in two
-        # incompatible provider shapes (LiteLLM vs native Anthropic) — so neither
-        # source yields correct per-turn usage without significant extra work.
-        # Deferred until that's addressed.
+        # CrewAI usage is intentionally not emitted (Emit.USAGE absent from
+        # SUPPORTED_EMIT): result.usage_metrics is cumulative-lifetime, not
+        # per-turn. Proper per-turn capture is deferred — don't add emit_usage here.
         try:
             # Type ignore explanation: CrewAI's kickoff_async is typed to accept
             # only a string prompt, but the implementation also accepts a list of
