@@ -390,6 +390,85 @@ class TestToolExecution:
         )
 
     @pytest.mark.asyncio
+    async def test_emits_summed_usage_across_tool_loop(
+        self, sample_message, mock_tools
+    ):
+        """A multi-call tool loop emits ONE usage event carrying the SUM.
+
+        The turn makes two model calls (a tool_use round then a final answer);
+        the emitted usage must be call1 + call2, proving the adapter accumulates
+        across the loop rather than reporting only the first or last call. This
+        is the deterministic summing proof the live smoke can't give (it never
+        sees the per-call intermediates).
+        """
+        from types import SimpleNamespace
+
+        from anthropic.types import TextBlock, ToolUseBlock
+
+        from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY
+
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+
+        def _usage(inp: int, out: int) -> SimpleNamespace:
+            return SimpleNamespace(
+                input_tokens=inp,
+                output_tokens=out,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=0,
+            )
+
+        # Call 1: a tool_use round (continues the loop). Call 2: the final answer.
+        resp1 = SimpleNamespace(
+            stop_reason="tool_use",
+            content=[
+                ToolUseBlock(
+                    type="tool_use",
+                    id="tool-1",
+                    name="band_send_message",
+                    input={"content": "hi"},
+                )
+            ],
+            usage=_usage(100, 20),
+        )
+        resp2 = SimpleNamespace(
+            stop_reason="end_turn",
+            content=[TextBlock(type="text", text="Hello!")],
+            usage=_usage(130, 8),
+        )
+
+        mock_tools.execute_tool_call.return_value = {"status": "success"}
+        call_anthropic = AsyncMock(side_effect=[resp1, resp2])
+        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        # Exactly two model calls were made (the loop ran twice).
+        assert call_anthropic.call_count == 2
+        # Find the single usage event and assert it carries the SUM (230/28),
+        # not just the first (100/20) or last (130/8) call.
+        usage_payloads = [
+            call.kwargs["metadata"][USAGE_METADATA_KEY]
+            for call in mock_tools.send_event.await_args_list
+            if call.kwargs.get("message_type") == USAGE_EVENT_TYPE
+            and USAGE_METADATA_KEY in (call.kwargs.get("metadata") or {})
+        ]
+        assert usage_payloads == [
+            {
+                "input_tokens": 230,
+                "output_tokens": 28,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], f"expected one summed usage event, got {usage_payloads}"
+
+    @pytest.mark.asyncio
     async def test_handles_tool_error(self, mock_tools):
         """Should handle tool execution errors gracefully."""
         from anthropic.types import ToolUseBlock

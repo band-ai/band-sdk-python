@@ -16,6 +16,7 @@ import pytest
 
 from band.adapters.agno import AgnoAdapter
 from band.adapters.claude_sdk import ClaudeSDKAdapter
+from band.adapters.codex import CodexAdapter
 from band.adapters.gemini import GeminiAdapter
 from band.adapters.google_adk import GoogleADKAdapter
 from band.adapters.letta import LettaAdapter
@@ -204,3 +205,16 @@ class TestOpencodeUsageMapping:
         """No tokens (or a non-dict tokens) yields empty usage."""
         assert OpencodeAdapter._usage_from_info({}) == TurnUsage()
         assert OpencodeAdapter._usage_from_info({"tokens": "nope"}) == TurnUsage()
+
+
+class TestCodexUsageMapping:
+    def test_maps_per_turn_deltas(self):
+        """Codex's per-turn token deltas (not thread cumulatives) map to TurnUsage."""
+        usage = SimpleNamespace(turn_input_tokens=130, turn_output_tokens=42)
+        assert CodexAdapter._turn_usage(usage) == TurnUsage(
+            input_tokens=130, output_tokens=42
+        )
+
+    def test_none_usage_is_empty(self):
+        """No usage object for the thread yields empty usage (no emit)."""
+        assert CodexAdapter._turn_usage(None) == TurnUsage()

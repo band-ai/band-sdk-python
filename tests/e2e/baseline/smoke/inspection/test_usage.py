@@ -3,11 +3,18 @@
 The cross-adapter proof for the cost/token seam: an agent running with
 ``Emit.USAGE`` emits its per-turn token usage, read back via
 ``ReplyCapture.usage`` and asserted with :class:`Usage`. This is the end-to-end
-de-risking test for the ``Emit.USAGE`` / ``capture.usage()`` design as it is
-templated across the bucket-B adapters (anthropic, langgraph, pydantic_ai,
-claude_sdk, agno in the CORE lane; google_adk and gemini in the google lane;
-crewai in the crewai lane; opencode in the backends lane). Letta captures usage
-too but is E2E-pending, so it's covered by unit mapping tests, not this smoke.
+de-risking test for the ``Emit.USAGE`` / ``capture.usage()`` design across every
+usage-capable adapter.
+
+Coverage is registry-derived, not a hand-maintained list: the fan is the whole
+matrix minus ``CREWAI_FLOW`` (usage lives in user-supplied flow internals — N-A).
+``LETTA`` is auto-excluded because it is ``e2e_pending`` (it captures usage too,
+covered by unit mapping tests). Deriving from ``exclude=`` rather than an explicit
+include-list means a newly-registered usage-capable adapter is exercised
+automatically — and a new adapter that *cannot* emit usage fails loudly here until
+it's consciously added to the exclusion, which is the intended signal. The cells
+span several CI lanes (core / google / crewai / backends); each is a single-adapter
+``@per_adapter`` item, so each runs in its own lane's job — no ``@lane`` pin needed.
 
 Turn completion uses the delivery-status barrier (``wait_for_processed``): the
 platform marks the trigger ``processed`` only after the reply is emitted, by which
@@ -25,18 +32,11 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@per_adapter(
-    Adapter.ANTHROPIC,
-    Adapter.LANGGRAPH,
-    Adapter.PYDANTIC_AI,
-    Adapter.CLAUDE_SDK,
-    Adapter.AGNO,
-    Adapter.GOOGLE_ADK,
-    Adapter.GEMINI,
-    Adapter.CREWAI,
-    Adapter.OPENCODE,
-    **COST_AGENT,
-)
+# crewai_flow is the one usage-incapable matrix adapter (usage lives in
+# user-supplied flow internals, not on the result the adapter sees), so exclude
+# it; every other registered adapter must emit usage. (LETTA is auto-excluded as
+# e2e_pending — covered by unit mapping tests.)
+@per_adapter(exclude={Adapter.CREWAI_FLOW}, **COST_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_usage_recorded_for_a_turn(
     agent: ProvisionedAgent,
@@ -44,11 +44,33 @@ async def test_usage_recorded_for_a_turn(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """The proof: one turn emits a usage record with non-zero input and output.
+    """The proof: one turn emits exactly one usage record with a plausible count.
 
-    Non-zero input tokens (the prompt was sent) AND non-zero output tokens (a
-    reply was generated) is exactly the ``assert_nonzero_input_and_output``
-    gate reused by L4 — here on an ordinary turn.
+    Three tolerant, deterministic checks (a floor and a broad band, never exact
+    magnitudes, so no LLM-variance flakiness):
+
+    - ``assert_nonzero_input_and_output`` — input tokens > 0 (the prompt was
+      sent) AND output tokens > 0 (a reply was generated); the same gate L4
+      reuses, here on an ordinary turn.
+    - exactly one record — one user message → one agent turn → the adapter sums
+      per-call usage into a single ``TurnUsage`` emitted once. Summing across
+      records would hide a double-emit or a per-call-instead-of-per-turn
+      regression, so assert the count too. The prompt (``COST_AGENT``) uses no
+      tools, so the turn is a single model call.
+    - a plausible count (estimation) — the total *prompt* tokens the model
+      processed clear a realistic floor, and the reply total stays under a
+      realistic ceiling. The prompt floor sums input + cache-read + cache-write
+      on purpose: caching adapters (e.g. claude_sdk) report most of the prompt
+      under cache_read and only a handful of *fresh* ``input_tokens`` (7, with
+      ~87k cached, in practice), so a floor on ``input_tokens`` alone would be
+      wrong. Every adapter sends a rendered system prompt + tool schemas, so the
+      processed prompt is realistically in the hundreds+; 20 sits well below that
+      yet still catches a garbage/tiny count a bare ``> 0`` would pass. A
+      one-line reply keeps ``total_tokens`` (input + output) far under the
+      ceiling. Both bounds stay loose enough that model/run variance never trips
+      them. (Exact per-call summing is proven deterministically in the adapter
+      unit tests, which — unlike this live read — can see the per-call
+      intermediates.)
     """
     room_id = await resource_manager.provision_room(
         title="e2e-usage-recorded", participants=[agent.id]
@@ -64,3 +86,25 @@ async def test_usage_recorded_for_a_turn(
         usage = await capture.usage(sender_id=agent.id)
 
     usage.assert_nonzero_input_and_output()
+    assert len(usage) == 1, (
+        f"expected exactly one usage record for one turn, got {usage}"
+    )
+    # Estimation: a realistic count, not just > 0. Sum the prompt the model
+    # actually processed — fresh input + cache-read + cache-write — because
+    # caching adapters report most of it under cache_* and only a few fresh
+    # input_tokens. A rendered system prompt + tool schemas puts that in the
+    # hundreds+, so 20 is a safe floor that still catches a garbage/tiny count;
+    # a one-line reply keeps input+output under the ceiling. Both bounds are
+    # loose enough that model/run variance never trips them.
+    record = usage[0]
+    prompt_tokens = (
+        record.input_tokens + record.cache_read_tokens + record.cache_write_tokens
+    )
+    assert prompt_tokens >= 20, (
+        f"prompt tokens implausibly low for a real turn: {prompt_tokens} "
+        f"(input={record.input_tokens}, cache_read={record.cache_read_tokens}, "
+        f"cache_write={record.cache_write_tokens})"
+    )
+    assert record.total_tokens < 100_000, (
+        f"total tokens implausibly high for a one-line reply: {record.total_tokens}"
+    )

@@ -423,6 +423,25 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             is_session_bootstrap,
         )
 
+        # Capture token usage from CrewAI's per-call telemetry rather than the
+        # run result: on the benign empty-final-answer path below, kickoff raises
+        # and no LiteAgentOutput (hence no usage_metrics) is returned — but the
+        # LLM calls that did the work already fired LLMCallCompletedEvent with
+        # usage. Accumulating those (and emitting in ``finally``) records usage on
+        # every path, mirroring the stream-capture approach the langgraph/opencode
+        # adapters use. Imported locally so the crewai-mocked unit tests (which
+        # stub sys.modules["crewai"]) don't need these submodules.
+        from crewai.events import crewai_event_bus
+        from crewai.events.types.llm_events import LLMCallCompletedEvent
+
+        turn_usage = TurnUsage()
+
+        def _accumulate_usage(_source: Any, event: LLMCallCompletedEvent) -> None:
+            # CrewAI's bus invokes handlers as handler(source, event).
+            nonlocal turn_usage
+            turn_usage = turn_usage + self._usage_from_event(event)
+
+        crewai_event_bus.on(LLMCallCompletedEvent)(_accumulate_usage)
         try:
             # Type ignore explanation: CrewAI's kickoff_async is typed to accept
             # only a string prompt, but the implementation also accepts a list of
@@ -447,9 +466,6 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                     "or the agent returned a final answer instead of using the "
                     "band_send_message tool.",
                 )
-
-            # usage_metrics is the run's cumulative total, so emit once here.
-            await self.emit_usage(tools, self._usage_from_result(result))
 
             logger.info(
                 "Room %s: CrewAI agent completed (output_length=%s)",
@@ -484,6 +500,13 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             logger.error("Error processing message: %s", e, exc_info=True)
             await self._report_error(tools, str(e))
             raise
+        finally:
+            # Deregister the per-turn handler and emit the accumulated usage on
+            # every exit path — success, the benign empty-answer return above, or
+            # a genuine error (tokens were still spent). No-op unless Emit.USAGE
+            # is on and usage is non-empty.
+            crewai_event_bus.off(LLMCallCompletedEvent, _accumulate_usage)
+            await self.emit_usage(tools, turn_usage)
 
         logger.debug(
             "Message %s processed successfully (history now has %s messages)",
@@ -492,20 +515,19 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         )
 
     @staticmethod
-    def _usage_from_result(result: Any) -> TurnUsage:
-        """Map a CrewAI ``LiteAgentOutput.usage_metrics`` onto TurnUsage.
+    def _usage_from_event(event: Any) -> TurnUsage:
+        """Map a CrewAI ``LLMCallCompletedEvent.usage`` dict onto TurnUsage.
 
-        ``usage_metrics`` is a dict (``UsageMetrics.model_dump()``) or ``None``,
-        and is the run's cumulative total across model calls — read once, no
-        loop-summing. ``cache_creation_tokens`` is CrewAI's cache-write field
-        (Anthropic cache writes); ``cached_prompt_tokens`` is the cache read.
+        Captured per LLM call and summed across the turn, so usage is recorded
+        even on the benign empty-final-answer path (where kickoff raises and no
+        result/usage_metrics is returned). The event's ``usage`` is the raw
+        LiteLLM usage dict (``prompt_tokens`` / ``completion_tokens``); cache
+        tokens are nested/uncertain there, so they're left 0.
         """
         return TurnUsage.from_mapping(
-            getattr(result, "usage_metrics", None),
+            getattr(event, "usage", None),
             input="prompt_tokens",
             output="completion_tokens",
-            cache_read="cached_prompt_tokens",
-            cache_write="cache_creation_tokens",
         )
 
     async def on_cleanup(self, room_id: str) -> None:

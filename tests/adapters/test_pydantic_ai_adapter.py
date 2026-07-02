@@ -176,6 +176,45 @@ class TestUsageMapping:
         result.usage.side_effect = RuntimeError("no usage")
         assert PydanticAIAdapter._usage_from_result(result) == TurnUsage()
 
+    def test_usage_from_messages_sums_model_responses(self):
+        """The benign-path fallback sums usage across captured ModelResponses.
+
+        Covers the empty-final-response path (no AgentRunResultEvent fires) where
+        the turn still spent tokens — each ModelResponse carries its own usage.
+        """
+        from types import SimpleNamespace
+
+        from pydantic_ai.messages import ModelRequest, ModelResponse
+
+        from band.core.types import TurnUsage
+
+        def response(inp, out):
+            r = ModelResponse.__new__(ModelResponse)
+            object.__setattr__(
+                r, "usage", SimpleNamespace(input_tokens=inp, output_tokens=out)
+            )
+            return r
+
+        messages = [
+            ModelRequest(parts=[]),  # non-response: ignored
+            response(100, 20),
+            response(130, 8),
+        ]
+        assert PydanticAIAdapter._usage_from_messages(messages) == TurnUsage(
+            input_tokens=230, output_tokens=28
+        )
+
+    def test_usage_from_messages_empty_when_no_responses(self):
+        """No ModelResponse in the captured messages → empty usage."""
+        from pydantic_ai.messages import ModelRequest
+
+        from band.core.types import TurnUsage
+
+        assert (
+            PydanticAIAdapter._usage_from_messages([ModelRequest(parts=[])])
+            == TurnUsage()
+        )
+
 
 class TestInitialization:
     """Tests for adapter initialization."""

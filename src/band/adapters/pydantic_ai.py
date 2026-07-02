@@ -720,6 +720,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     *self._message_history[room_id],
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
+                # This turn spent tokens even though no result event fired, so
+                # still emit usage (summed from the captured responses) — the
+                # happy-path emit below is skipped by this early return.
+                await self.emit_usage(tools, self._usage_from_messages(captured))
                 return
             raise
         finally:
@@ -736,9 +740,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 "instead of using the band_send_message tool.",
             )
 
-        # Emit the turn's token usage (no-op unless Emit.USAGE is on). Skipped on
-        # the benign empty-final-response path above, which returns before here —
-        # that turn has no result event, so no usage to report.
+        # Emit the turn's token usage (no-op unless Emit.USAGE is on). The benign
+        # empty-final-response path above emits its own (from captured messages)
+        # and returns before here.
         await self.emit_usage(tools, turn_usage)
 
         logger.debug(
@@ -748,18 +752,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
 
     @staticmethod
-    def _usage_from_result(result: Any) -> TurnUsage:
-        """Map a pydantic-ai ``AgentRunResult.usage()`` onto TurnUsage.
+    def _usage_from_usage_obj(usage: Any) -> TurnUsage:
+        """Map a pydantic-ai usage object (RunUsage / RequestUsage) onto TurnUsage.
 
-        ``result.usage()`` is the run's total across all model requests. Field
-        names moved across pydantic-ai versions (``request_tokens`` /
+        Field names moved across pydantic-ai versions (``request_tokens`` /
         ``response_tokens`` → ``input_tokens`` / ``output_tokens``), so both are
-        read defensively.
+        read; the first int found wins.
         """
-        try:
-            usage = result.usage()
-        except Exception:  # pragma: no cover - defensive; usage is best-effort
-            return TurnUsage()
 
         def _int(*names: str) -> int:
             for name in names:
@@ -774,6 +773,30 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             cache_read_tokens=_int("cache_read_tokens"),
             cache_write_tokens=_int("cache_write_tokens"),
         )
+
+    @staticmethod
+    def _usage_from_result(result: Any) -> TurnUsage:
+        """The run's total usage across all model requests (happy path)."""
+        try:
+            usage = result.usage()
+        except Exception:  # pragma: no cover - defensive; usage is best-effort
+            return TurnUsage()
+        return PydanticAIAdapter._usage_from_usage_obj(usage)
+
+    @staticmethod
+    def _usage_from_messages(messages: list[ModelMessage]) -> TurnUsage:
+        """Sum per-response usage across captured run messages.
+
+        The fallback for the benign empty-final-response path, where no
+        ``AgentRunResultEvent`` fires (so ``result.usage()`` is unavailable) yet
+        the turn still spent tokens — each ``ModelResponse`` carries its own
+        ``usage``, so summing them reconstructs the turn total.
+        """
+        total = TurnUsage()
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                total = total + PydanticAIAdapter._usage_from_usage_obj(message.usage)
+        return total
 
     async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
         """Send an error event to the room (best effort).
