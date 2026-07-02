@@ -622,6 +622,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # pydantic-ai's result.usage() is already summed across the run's model
         # calls, so it's set once (on the result event), not accumulated.
         turn_usage = TurnUsage()
+        # Snapshot the history length so the benign-path usage fallback can sum
+        # only THIS run's responses: capture_run_messages() records the passed
+        # message_history + the new turn, so summing the whole list would
+        # double-count every prior turn's usage.
+        history_len = len(self._message_history[room_id])
         # Capture the run's messages so a benign empty-final response — which raises
         # before the AgentRunResultEvent that normally records history — can still
         # persist the *full* turn (user prompt + the agent's tool calls/results), not
@@ -721,9 +726,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
                 # This turn spent tokens even though no result event fired, so
-                # still emit usage (summed from the captured responses) — the
-                # happy-path emit below is skipped by this early return.
-                await self.emit_usage(tools, self._usage_from_messages(captured))
+                # still emit usage — summed from only THIS run's responses
+                # (captured[history_len:]), since captured also holds the prior
+                # history. The happy-path emit below is skipped by this return.
+                await self.emit_usage(
+                    tools, self._usage_from_messages(captured[history_len:])
+                )
                 return
             raise
         finally:
@@ -785,12 +793,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
 
     @staticmethod
     def _usage_from_messages(messages: list[ModelMessage]) -> TurnUsage:
-        """Sum per-response usage across captured run messages.
+        """Sum per-response usage across the given run messages.
 
         The fallback for the benign empty-final-response path, where no
         ``AgentRunResultEvent`` fires (so ``result.usage()`` is unavailable) yet
         the turn still spent tokens — each ``ModelResponse`` carries its own
-        ``usage``, so summing them reconstructs the turn total.
+        ``usage``. Pass only the *current run's* messages (the caller slices off
+        the prior history); summing the full captured list would double-count
+        every prior turn.
         """
         total = TurnUsage()
         for message in messages:
