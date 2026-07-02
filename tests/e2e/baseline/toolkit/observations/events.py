@@ -24,7 +24,7 @@ from typing import ClassVar
 
 from band_rest import ChatMessage
 
-from band.core.types import MessageType
+from band.core.types import MessageType, is_usage_event
 
 from tests.e2e.baseline.toolkit.observations.assertions import ContentAssertions
 from tests.e2e.baseline.toolkit.user_ops import UserOps
@@ -78,12 +78,16 @@ class Events(ContentAssertions, list[ChatMessage]):
         messages = await user_ops.list_messages(
             room_id, message_type=mt, since=since, limit=limit
         )
-        events = cls()
-        for message in messages:
-            if sender_id is not None and message.sender_id != sender_id:
-                continue
-            events.append(message)
-        return events
+        # Keep only the requested sender's events, and drop usage records: they
+        # ride task events (USAGE_EVENT_TYPE) but are not lifecycle tasks (they
+        # have their own Usage observation). Only task events can carry usage, so
+        # the is_usage_event filter is a no-op for thought/error reads.
+        return cls(
+            message
+            for message in messages
+            if (sender_id is None or message.sender_id == sender_id)
+            and not is_usage_event(message.metadata)
+        )
 
     def present(self) -> bool:
         """True if any event of this type was captured."""

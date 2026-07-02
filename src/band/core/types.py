@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
@@ -79,6 +79,16 @@ class TurnUsage:
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
 
+    # Cross-provider convention (adapters MUST map onto this so the schema means
+    # one thing everywhere): ``input_tokens`` is the *total* prompt the model
+    # processed, INCLUDING cached tokens; ``cache_read_tokens`` / ``cache_write_tokens``
+    # are a *subset breakdown* of that total, not additive on top of it. So
+    # ``total_tokens = input_tokens + output_tokens`` is correct for every adapter,
+    # and cost math never double-counts (or under-counts) cache. Providers whose
+    # native "input" excludes cache (Anthropic, Claude SDK) fold cache back into
+    # ``input_tokens`` in their mapper; providers whose native "input" already
+    # includes cache (Gemini/ADK, LiteLLM-based crewai, LangChain) pass it through.
+
     def __add__(self, other: TurnUsage) -> TurnUsage:
         """Sum two per-call usages (used to aggregate across a tool loop)."""
         return TurnUsage(
@@ -90,8 +100,9 @@ class TurnUsage:
 
     @property
     def total_tokens(self) -> int:
-        """Input + output tokens (cache fields are a subset breakdown of input,
-        so they are not added again here)."""
+        """Total tokens for the turn: input (which already includes cache, per the
+        convention above) + output. Cache fields are a subset of input, so they
+        are not added again."""
         return self.input_tokens + self.output_tokens
 
     @property
@@ -114,6 +125,38 @@ class TurnUsage:
         }
 
     @classmethod
+    def _build(
+        cls,
+        get: Callable[[str], object],
+        *,
+        input: str,
+        output: str,
+        cache_read: str | None,
+        cache_write: str | None,
+        cache_in_input: bool,
+    ) -> TurnUsage:
+        """Shared core of from_object/from_mapping: read the named fields via
+        ``get`` and apply the cache convention.
+
+        ``cache_in_input`` declares the provider's native shape: True when the
+        input field already includes cached tokens (Gemini/ADK, LiteLLM, LangChain
+        — the default), False when it excludes them (Anthropic, Claude SDK), in
+        which case cache is folded back into ``input_tokens`` so the schema always
+        means "input = total prompt incl. cache" (see the class convention).
+        """
+        cache_read_tokens = _as_int(get(cache_read)) if cache_read else 0
+        cache_write_tokens = _as_int(get(cache_write)) if cache_write else 0
+        input_tokens = _as_int(get(input))
+        if not cache_in_input:
+            input_tokens += cache_read_tokens + cache_write_tokens
+        return cls(
+            input_tokens=input_tokens,
+            output_tokens=_as_int(get(output)),
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+        )
+
+    @classmethod
     def from_object(
         cls,
         src: object,
@@ -122,6 +165,7 @@ class TurnUsage:
         output: str,
         cache_read: str | None = None,
         cache_write: str | None = None,
+        cache_in_input: bool = True,
     ) -> TurnUsage:
         """Build from a usage *object*, reading the named attributes.
 
@@ -129,16 +173,17 @@ class TurnUsage:
         a non-negative int (missing/non-int → 0). ``src=None`` (usage absent on
         the response) yields an empty ``TurnUsage`` — so an adapter's mapper is a
         one-liner over ``getattr(response, "...", None)`` with no guard of its own.
+        See :meth:`_build` for ``cache_in_input``.
         """
         if src is None:
             return cls()
-        return cls(
-            input_tokens=_as_int(getattr(src, input, 0)),
-            output_tokens=_as_int(getattr(src, output, 0)),
-            cache_read_tokens=_as_int(getattr(src, cache_read, 0)) if cache_read else 0,
-            cache_write_tokens=(
-                _as_int(getattr(src, cache_write, 0)) if cache_write else 0
-            ),
+        return cls._build(
+            lambda name: getattr(src, name, 0),
+            input=input,
+            output=output,
+            cache_read=cache_read,
+            cache_write=cache_write,
+            cache_in_input=cache_in_input,
         )
 
     @classmethod
@@ -150,19 +195,23 @@ class TurnUsage:
         output: str,
         cache_read: str | None = None,
         cache_write: str | None = None,
+        cache_in_input: bool = True,
     ) -> TurnUsage:
         """Build from a usage *mapping* (dict), reading the named keys.
 
-        The attribute-source twin of :meth:`from_object`; a non-mapping ``data``
-        (e.g. usage absent) yields an empty ``TurnUsage``.
+        The mapping-source twin of :meth:`from_object`; a non-mapping ``data``
+        (e.g. usage absent) yields an empty ``TurnUsage``. See :meth:`_build` for
+        ``cache_in_input``.
         """
         if not isinstance(data, Mapping):
             return cls()
-        return cls(
-            input_tokens=_as_int(data.get(input, 0)),
-            output_tokens=_as_int(data.get(output, 0)),
-            cache_read_tokens=_as_int(data.get(cache_read, 0)) if cache_read else 0,
-            cache_write_tokens=_as_int(data.get(cache_write, 0)) if cache_write else 0,
+        return cls._build(
+            lambda name: data.get(name, 0),
+            input=input,
+            output=output,
+            cache_read=cache_read,
+            cache_write=cache_write,
+            cache_in_input=cache_in_input,
         )
 
 
@@ -176,6 +225,19 @@ class TurnUsage:
 # lifecycle one.
 USAGE_EVENT_TYPE: MessageType = MessageType.TASK
 USAGE_METADATA_KEY: str = "band_usage"
+
+
+def is_usage_event(metadata: object) -> bool:
+    """Whether an event's ``metadata`` marks it as a usage record (see
+    ``SimpleAdapter.emit_usage``).
+
+    Because usage currently rides ``USAGE_EVENT_TYPE`` (a ``task`` event) rather
+    than a dedicated type, every ``task``-event consumer that should NOT treat
+    usage as a lifecycle task calls this to skip it — the single source of truth
+    for "is this a usage event", so a new consumer has one guard to reuse instead
+    of re-deriving the ``band_usage`` check. Retired once usage becomes a
+    first-class ``usage`` message_type (see INT-933)."""
+    return isinstance(metadata, Mapping) and USAGE_METADATA_KEY in metadata
 
 
 @dataclass(frozen=True)

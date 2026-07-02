@@ -370,6 +370,9 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
         Cache fields are optional on the SDK model (absent/None when prompt
         caching is off); ``from_object`` reads them defensively (missing → 0).
+        Anthropic's ``input_tokens`` EXCLUDES cached tokens, so ``cache_in_input``
+        is False — cache is folded into the total input per the TurnUsage
+        convention.
         """
         return TurnUsage.from_object(
             response.usage,
@@ -377,6 +380,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             output="output_tokens",
             cache_read="cache_read_input_tokens",
             cache_write="cache_creation_input_tokens",
+            cache_in_input=False,
         )
 
     # --- Copied from BandAnthropicAgent._extract_text_content ---

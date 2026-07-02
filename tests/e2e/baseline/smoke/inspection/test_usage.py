@@ -89,21 +89,16 @@ async def test_usage_recorded_for_a_turn(
     assert len(usage) == 1, (
         f"expected exactly one usage record for one turn, got {usage}"
     )
-    # Estimation: a realistic count, not just > 0. Sum the prompt the model
-    # actually processed — fresh input + cache-read + cache-write — because
-    # caching adapters report most of it under cache_* and only a few fresh
-    # input_tokens. A rendered system prompt + tool schemas puts that in the
-    # hundreds+, so 20 is a safe floor that still catches a garbage/tiny count;
-    # a one-line reply keeps input+output under the ceiling. Both bounds are
-    # loose enough that model/run variance never trips them.
+    # Estimation: a realistic count, not just > 0. Per the TurnUsage convention
+    # input_tokens is the total prompt the model processed (cache folded in by
+    # each adapter's mapper), so a rendered system prompt + tool schemas puts it
+    # in the hundreds+ across every adapter, caching or not. 20 is a safe floor
+    # that still catches a garbage/tiny count; a one-line reply keeps input+output
+    # under the ceiling. Both bounds are loose enough that variance never trips them.
     record = usage[0]
-    prompt_tokens = (
-        record.input_tokens + record.cache_read_tokens + record.cache_write_tokens
-    )
-    assert prompt_tokens >= 20, (
-        f"prompt tokens implausibly low for a real turn: {prompt_tokens} "
-        f"(input={record.input_tokens}, cache_read={record.cache_read_tokens}, "
-        f"cache_write={record.cache_write_tokens})"
+    assert record.input_tokens >= 20, (
+        "input tokens (total prompt, cache incl.) implausibly low for a real turn: "
+        f"{record.input_tokens}"
     )
     assert record.total_tokens < 100_000, (
         f"total tokens implausibly high for a one-line reply: {record.total_tokens}"

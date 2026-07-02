@@ -55,10 +55,59 @@ class TestTurnUsageConstructors:
         data = {"i": "oops", "o": None}  # non-int / missing
         assert TurnUsage.from_mapping(data, input="i", output="o") == TurnUsage()
 
+    def test_cache_in_input_false_folds_cache_into_input(self):
+        """Anthropic-style: input excludes cache, so cache is folded into total."""
+        data = {"i": 100, "o": 20, "cr": 5, "cw": 3}
+        assert TurnUsage.from_mapping(
+            data,
+            input="i",
+            output="o",
+            cache_read="cr",
+            cache_write="cw",
+            cache_in_input=False,
+        ) == TurnUsage(
+            input_tokens=108,
+            output_tokens=20,
+            cache_read_tokens=5,
+            cache_write_tokens=3,
+        )
+
+    def test_cache_in_input_true_leaves_input_untouched(self):
+        """Gemini/LiteLLM-style: input already includes cache (the default)."""
+        data = {"i": 100, "o": 20, "cr": 5, "cw": 3}
+        assert TurnUsage.from_mapping(
+            data, input="i", output="o", cache_read="cr", cache_write="cw"
+        ) == TurnUsage(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=5,
+            cache_write_tokens=3,
+        )
+
+
+class TestIsUsageEvent:
+    """The shared discriminator task-event consumers use to skip usage records."""
+
+    def test_true_when_band_usage_present(self):
+        from band.core.types import USAGE_METADATA_KEY, is_usage_event
+
+        assert is_usage_event({USAGE_METADATA_KEY: {"input_tokens": 1}}) is True
+
+    def test_false_for_lifecycle_task_or_non_mapping(self):
+        from band.core.types import is_usage_event
+
+        assert is_usage_event({"codex_thread_id": "x"}) is False
+        assert is_usage_event(None) is False
+        assert is_usage_event("nope") is False
+
 
 class TestClaudeSDKUsageMapping:
     def test_maps_usage_dict(self):
-        """ResultMessage.usage (raw API dict) maps onto TurnUsage."""
+        """ResultMessage.usage (raw API dict) maps onto TurnUsage.
+
+        Claude's input_tokens EXCLUDES cache, so the mapper folds cache into the
+        total input (cache_in_input=False): input = 100 + 5 + 3 = 108.
+        """
         result = SimpleNamespace(
             usage={
                 "input_tokens": 100,
@@ -68,7 +117,7 @@ class TestClaudeSDKUsageMapping:
             }
         )
         assert ClaudeSDKAdapter._usage_from_result(result) == TurnUsage(
-            input_tokens=100,
+            input_tokens=108,
             output_tokens=20,
             cache_read_tokens=5,
             cache_write_tokens=3,

@@ -55,6 +55,45 @@ _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
     "_crewai_reply_tracker", default=None
 )
 
+# Per-turn token-usage accumulator for the fallback path (see the usage-capture
+# comment in _process_message). Keyed by contextvar so concurrent rooms sharing
+# CrewAI's process-global event bus never cross-contaminate: CrewAI copy_context()s
+# at emit time (crewai/events/event_bus.py), so a list set here before kickoff is
+# carried into the (thread-pool) handler and scoped to THIS turn's task. list.append
+# is atomic under the GIL, so no lock is needed.
+_current_usage_var: ContextVar[list[TurnUsage] | None] = ContextVar(
+    "_crewai_turn_usage", default=None
+)
+
+# One persistent LLMCallCompletedEvent handler is registered on CrewAI's singleton
+# bus (idempotent), not one per turn — a per-turn registration on a global bus is
+# what caused cross-room contamination. The handler just routes each call's usage
+# into the current turn's contextvar accumulator.
+_usage_handler_registered = False
+
+
+def _ensure_usage_handler_registered() -> None:
+    """Register the singleton usage-routing handler on CrewAI's event bus once.
+
+    Imported locally so the crewai-mocked unit tests (which stub
+    ``sys.modules["crewai"]``) don't need these submodules at import time.
+    """
+    global _usage_handler_registered
+    if _usage_handler_registered:
+        return
+    from crewai.events import crewai_event_bus
+    from crewai.events.types.llm_events import LLMCallCompletedEvent
+
+    @crewai_event_bus.on(LLMCallCompletedEvent)
+    def _route_usage(_source: Any, event: LLMCallCompletedEvent) -> None:
+        # CrewAI invokes handlers as handler(source, event). Append this call's
+        # usage to the current turn's accumulator (None when no turn is active).
+        acc = _current_usage_var.get()
+        if acc is not None:
+            acc.append(CrewAIAdapter._usage_from_event(event))
+
+    _usage_handler_registered = True
+
 
 def _silence_lite_agent_error_panel() -> None:
     """Deregister CrewAI's benign red "LiteAgent Failed" console panel.
@@ -423,25 +462,16 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             is_session_bootstrap,
         )
 
-        # Capture token usage from CrewAI's per-call telemetry rather than the
-        # run result: on the benign empty-final-answer path below, kickoff raises
-        # and no LiteAgentOutput (hence no usage_metrics) is returned — but the
-        # LLM calls that did the work already fired LLMCallCompletedEvent with
-        # usage. Accumulating those (and emitting in ``finally``) records usage on
-        # every path, mirroring the stream-capture approach the langgraph/opencode
-        # adapters use. Imported locally so the crewai-mocked unit tests (which
-        # stub sys.modules["crewai"]) don't need these submodules.
-        from crewai.events import crewai_event_bus
-        from crewai.events.types.llm_events import LLMCallCompletedEvent
-
+        # Token usage: prefer the kickoff's own result.usage_metrics (authoritative,
+        # per-kickoff -> concurrency-safe, includes cache). On the benign
+        # empty-final-answer path below, kickoff raises and no result is returned,
+        # so fall back to usage accumulated from CrewAI's LLMCallCompletedEvents
+        # into a contextvar (scoped to this turn -> safe under concurrent rooms on
+        # the process-global bus; see _current_usage_var). Emit once in finally.
+        _ensure_usage_handler_registered()
+        usage_records: list[TurnUsage] = []
+        usage_token = _current_usage_var.set(usage_records)
         turn_usage = TurnUsage()
-
-        def _accumulate_usage(_source: Any, event: LLMCallCompletedEvent) -> None:
-            # CrewAI's bus invokes handlers as handler(source, event).
-            nonlocal turn_usage
-            turn_usage = turn_usage + self._usage_from_event(event)
-
-        crewai_event_bus.on(LLMCallCompletedEvent)(_accumulate_usage)
         try:
             # Type ignore explanation: CrewAI's kickoff_async is typed to accept
             # only a string prompt, but the implementation also accepts a list of
@@ -449,6 +479,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             # context. This is documented behavior but the type stubs haven't been
             # updated. See: https://docs.crewai.com/concepts/agents
             result = await self._crewai_agent.kickoff_async(messages)  # type: ignore[arg-type]
+            turn_usage = self._usage_from_result(result)
 
             if result and result.raw:
                 self._message_history[room_id].append(
@@ -501,11 +532,14 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             await self._report_error(tools, str(e))
             raise
         finally:
-            # Deregister the per-turn handler and emit the accumulated usage on
-            # every exit path — success, the benign empty-answer return above, or
-            # a genuine error (tokens were still spent). No-op unless Emit.USAGE
-            # is on and usage is non-empty.
-            crewai_event_bus.off(LLMCallCompletedEvent, _accumulate_usage)
+            _current_usage_var.reset(usage_token)
+            # Emit on every exit path (success, benign empty-answer return, genuine
+            # error — tokens were still spent). Prefer the authoritative result
+            # usage set on success; fall back to the event-accumulated usage when
+            # the run raised before returning a result. No-op unless Emit.USAGE is
+            # on and usage is non-empty.
+            if turn_usage.is_empty:
+                turn_usage = sum(usage_records, TurnUsage())
             await self.emit_usage(tools, turn_usage)
 
         logger.debug(
@@ -515,19 +549,43 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         )
 
     @staticmethod
+    def _usage_from_result(result: Any) -> TurnUsage:
+        """Map a CrewAI ``LiteAgentOutput.usage_metrics`` onto TurnUsage.
+
+        The authoritative per-kickoff total (a dict, ``UsageMetrics.model_dump()``,
+        or ``None``); ``prompt_tokens`` already includes cached tokens (LiteLLM),
+        so the default ``cache_in_input=True`` holds. Used on the success path
+        (race-free, includes cache); ``None`` yields empty usage.
+        """
+        return TurnUsage.from_mapping(
+            getattr(result, "usage_metrics", None),
+            input="prompt_tokens",
+            output="completion_tokens",
+            cache_read="cached_prompt_tokens",
+            cache_write="cache_creation_tokens",
+        )
+
+    @staticmethod
     def _usage_from_event(event: Any) -> TurnUsage:
         """Map a CrewAI ``LLMCallCompletedEvent.usage`` dict onto TurnUsage.
 
-        Captured per LLM call and summed across the turn, so usage is recorded
-        even on the benign empty-final-answer path (where kickoff raises and no
-        result/usage_metrics is returned). The event's ``usage`` is the raw
-        LiteLLM usage dict (``prompt_tokens`` / ``completion_tokens``); cache
-        tokens are nested/uncertain there, so they're left 0.
+        The fallback source (accumulated per LLM call into the turn's contextvar)
+        for the benign empty-answer path, where kickoff raises and no result is
+        returned. The event's ``usage`` is the raw LiteLLM dict; cache lives
+        nested under ``prompt_tokens_details.cached_tokens``, flattened here so it
+        maps like the others. ``prompt_tokens`` already includes cached.
         """
+        usage = getattr(event, "usage", None)
+        if not isinstance(usage, dict):
+            return TurnUsage()
+        details = usage.get("prompt_tokens_details")
+        details = details if isinstance(details, dict) else {}
+        flat = {**usage, "cached_tokens": details.get("cached_tokens")}
         return TurnUsage.from_mapping(
-            getattr(event, "usage", None),
+            flat,
             input="prompt_tokens",
             output="completion_tokens",
+            cache_read="cached_tokens",
         )
 
     async def on_cleanup(self, room_id: str) -> None:
