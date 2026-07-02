@@ -319,24 +319,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 await release_future
             if turn_future is not None and turn_future.done():
                 await turn_task
-        except asyncio.TimeoutError:
-            logger.warning(
-                "OpenCode turn timed out for room %s (session=%s)",
-                room_id,
-                room_state.session_id,
-            )
-            if self._client and room_state.session_id:
-                try:
-                    await self._client.abort_session(room_state.session_id)
-                except Exception:
-                    logger.exception(
-                        "Failed to abort timed-out OpenCode session %s",
-                        room_state.session_id,
-                    )
-            await tools.send_event(
-                "OpenCode timed out before completing the turn.",
-                "error",
-            )
+        # NOTE: the turn timeout is owned solely by _watch_turn_completion (via
+        # asyncio.wait_for), which aborts the session and emits the error event.
+        # Nothing awaited here re-raises asyncio.TimeoutError, so on_message has no
+        # timeout handler of its own.
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenCode request failed for room %s", room_id)
             await tools.send_event(
@@ -534,9 +520,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 if info.get("role") == "assistant":
                     if message_id:
                         room_state.assistant_message_ids.add(message_id)
-                        usage = self._usage_from_info(info)
-                        if not usage.is_empty:
-                            room_state.usage_by_message[message_id] = usage
+                        if Emit.USAGE in self.features.emit:
+                            usage = self._usage_from_info(info)
+                            if not usage.is_empty:
+                                room_state.usage_by_message[message_id] = usage
                     error = info.get("error")
                     if error:
                         room_state.last_error_message = self._format_opencode_error(
@@ -942,6 +929,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     "OpenCode timed out before completing the turn.",
                     "error",
                 )
+            # Tokens spent before the timeout were still spent — emit them, same
+            # as the success path (best-effort; no-op if none captured).
+            await self._emit_turn_usage(room_state)
             self._release_turn_wait(room_state)
         else:
             await self._deliver_fallback_text(room_state)
@@ -1039,12 +1029,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state.pending_mentions = []
 
     async def _emit_turn_usage(self, room_state: _RoomState) -> None:
-        """Emit the turn's total token usage (summed across assistant messages).
+        """Sum the turn's per-assistant-message usage and emit it.
 
-        No-op unless ``Emit.USAGE`` is enabled or nothing was captured — a live
-        OpenCode server reports ``tokens`` on the assistant ``info``, but that is
-        not present in mocked/offline runs, so an empty total is simply skipped
-        by ``emit_usage``.
+        A no-op when usage reporting is off (``Emit.USAGE`` absent) or nothing was
+        captured — the base ``emit_usage`` skips an empty total. A live OpenCode
+        server reports ``tokens`` on each assistant ``info``; mocked/offline runs
+        don't, so the total is simply empty there.
         """
         if room_state.tools is None:
             return
