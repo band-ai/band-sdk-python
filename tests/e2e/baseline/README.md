@@ -201,7 +201,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 
 | Path | What it is |
 |------|------------|
-| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep, `track_running` reboot-race guard), `AdapterCell` (build / provision / running / run_as — the per-cell lifecycle object behind `agent`/`cell`), `running_agent` (run an already-provisioned identity — enter twice against one identity for a rejoin), `running_provisioned_agent` (provision + run, composes `running_agent`), `ProvisionedAgent` (`.adapter_id` records the cell/slot it came from) |
+| `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep, `track_running` reboot-race guard; `.peer(agent)` mints a `PeerActor`), `AdapterCell` (build / provision / running / run_as — the per-cell lifecycle object behind `agent`/`cell`), `running_agent` (run an already-provisioned identity — enter twice against one identity for a rejoin), `running_provisioned_agent` (provision + run, composes `running_agent`), `ProvisionedAgent` (`.adapter_id` records the cell/slot it came from), `PeerActor` (act as a peer agent — post one message as that agent via its own key; the Agent-API twin of `UserOps`, used for the L0/L4 `Echo` peer) |
 | `toolkit/adapters.py` | registry core: `Adapter` enum (the **one** source of adapter ids), the `@adapter` decorator + registry, `spec_for`, `build_adapter`, `specs`, `adapter_lane`, the discovery guard |
 | `toolkit/builders.py` | the per-framework `@adapter` builder functions (one `_build_*` each); imported by `adapters.py` for the registration side-effect — no public API. Add a new adapter's builder here (see `ADDING_AN_ADAPTER.md`) |
 | `toolkit/ci_lanes.py` | the CI-lane partition + workflow-drift guards: `CILane`, `ci_lanes`, `hosting_lanes` (which lanes' `uv` extra can host a framework), `assert_every_adapter_has_a_ci_home`, `assert_workflow_lane_*` |
@@ -211,7 +211,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `fixtures/agents.py` | the agent fixtures: `agent` (single running `ProvisionedAgent`), `agents` (the `@with_adapters` group), `cell` (an `AdapterCell` to drive yourself), `adapter_id` (internal `@per_adapter` parametrize target) |
 | `agent_wiring.py` | `assert_agent_fixtures_wired` — the collection-time guard that rejects mis-wired decorator/fixture pairings (see **Wiring fences**) |
 | `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, and the `EXECUTION_REPORTING` shape |
-| `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
+| `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events, `lookup_peers` — the invitable roster) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
 | `toolkit/requirements.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
@@ -369,6 +369,8 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | Drive the agent lifecycle myself (build-only / reboot / rehydration) | `@per_adapter()` → `cell` (`cell.build()` / `cell.provision()` / `cell.run_as()` — see **AdapterCell**) |
 | Clean up what I created | nothing: `resource_manager` reaps on teardown (`BAND_E2E_AUTOCLEAN=false` keeps it for debugging) |
 | Drive the platform as a user | the `user_ops` fixture (`UserOps`) |
+| List who the user could invite to a room | `await user_ops.lookup_peers(not_in_room=room_id)` → `list[Peer]` (the invitable roster; `peer_type="Agent"` narrows) |
+| Drive a peer agent (e.g. the `Echo` bounce) | `await resource_manager.peer(peer).send_message(room_id, "ECHO: ...", mention_id=agent.id, mention_name=agent.name)` — posts as that agent, returns the message id to barrier on (needs the peer already in the room) |
 | Observe replies without a race | `async with reply_capture(room_id) as capture:` then send |
 | Know a turn/burst finished (reply captured) | `mid = await user_ops.send_message(...)` then `await capture.wait_for_processed(mid, agent_id)` |
 | Wait for a specific delivery state (e.g. a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |

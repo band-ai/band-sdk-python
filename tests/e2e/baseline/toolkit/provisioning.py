@@ -20,7 +20,12 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
-from band_rest import AgentRegisterRequest, AsyncRestClient
+from band_rest import (
+    AgentRegisterRequest,
+    AsyncRestClient,
+    ChatMessageRequest,
+    ChatMessageRequestMentionsItem,
+)
 
 from band.agent import Agent
 from band.core.simple_adapter import SimpleAdapter
@@ -77,6 +82,44 @@ def agent_rest_client(
     return AsyncRestClient(api_key=agent.api_key, base_url=settings.endpoints.rest_url)
 
 
+class PeerActor:
+    """Drive a provisioned peer agent — the agent-side twin of ``UserOps``.
+
+    ``UserOps`` acts as the test *user* (Human API); ``PeerActor`` acts as a peer
+    *agent* (Agent API), so a scenario can have a second participant say something
+    deterministically without running a full framework adapter. The canonical use
+    is the L0/L4 ``Echo`` peer: provision an identity, invite it, then post one
+    ``ECHO: {body}`` bounce. Built from the peer's own key via ``agent_rest_client``.
+
+    The peer must already be a participant of the room (an agent can only post to a
+    room it is in); membership stays with ``ResourceManager``/``UserOps`` or the
+    agent under test, not here.
+    """
+
+    def __init__(self, peer: ProvisionedAgent, settings: BaselineSettings) -> None:
+        self._peer = peer
+        self._client = agent_rest_client(peer, settings)
+
+    async def send_message(
+        self, room_id: str, content: str, *, mention_id: str, mention_name: str
+    ) -> str:
+        """Post one message as this peer; return the message id.
+
+        Mirrors ``UserOps.send_message`` (mention required, returns the id) so a
+        test can barrier on the peer's message with ``wait_for_processed``.
+        """
+        response = await self._client.agent_api_messages.create_agent_chat_message(
+            room_id,
+            message=ChatMessageRequest(
+                content=content,
+                mentions=[
+                    ChatMessageRequestMentionsItem(id=mention_id, name=mention_name)
+                ],
+            ),
+        )
+        return response.data.id
+
+
 class ResourceManager:
     """Provisions and reaps platform resources for one test run.
 
@@ -99,6 +142,10 @@ class ResourceManager:
         self._provisioned_agent_ids: list[str] = []
         self._provisioned_room_ids: list[str] = []
         self._running_agent_ids: set[str] = set()
+        # One PeerActor (and its REST client) per agent id, reused across calls so
+        # repeated peer() calls don't open a fresh httpx pool each time (mirrors
+        # ReplyCapture's per-agent client reuse).
+        self._peer_actors: dict[str, PeerActor] = {}
 
     @contextmanager
     def track_running(self, agent_id: str) -> Iterator[None]:
@@ -153,6 +200,19 @@ class ResourceManager:
         self._provisioned_agent_ids.append(agent.id)
         logger.info("Provisioned agent %s (%s)", agent.id, name)
         return ProvisionedAgent(id=agent.id, api_key=credentials.api_key, name=name)
+
+    def peer(self, agent: ProvisionedAgent) -> PeerActor:
+        """A ``PeerActor`` to drive ``agent`` as a peer (e.g. the ``Echo`` bounce).
+
+        The manager already holds the settings and provisioned the identity, so a
+        test needs neither a separate fixture nor to thread ``settings``. Cached
+        per agent id so repeated calls reuse one REST client.
+        """
+        actor = self._peer_actors.get(agent.id)
+        if actor is None:
+            actor = PeerActor(agent, self._settings)
+            self._peer_actors[agent.id] = actor
+        return actor
 
     async def provision_room(
         self, *, title: str | None = None, participants: list[str] | None = None

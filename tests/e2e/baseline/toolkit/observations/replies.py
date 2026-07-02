@@ -69,6 +69,16 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
                 f"expected a reply mentioning {participant_id} (by metadata), but none did"
             )
 
+    def from_sender(self, sender_id: str) -> "Replies":
+        """The subset of replies authored by ``sender_id``.
+
+        Scope an assertion to one participant's own messages when several agents
+        post into the same captured room — e.g. a peer and the agent under test,
+        where the peer's own message would otherwise satisfy a content assertion.
+        Re-wraps the filter so the tolerant assertion methods survive.
+        """
+        return Replies(message for message in self if message.sender_id == sender_id)
+
     def snapshot(self) -> int:
         """A cursor at the current end of the buffer, for ``since`` after a turn.
 
