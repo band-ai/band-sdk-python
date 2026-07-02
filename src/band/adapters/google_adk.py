@@ -605,23 +605,14 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
     def _usage_from_event(event: Any) -> TurnUsage:
         """Map an ADK event's ``usage_metadata`` onto TurnUsage.
 
-        Usage rides model-response events (``prompt_token_count`` /
-        ``candidates_token_count`` / ``cached_content_token_count``); events
-        without it (tool calls, etc.) contribute empty usage. Gemini has no
-        cache-write dimension, so it stays 0.
+        Usage rides model-response events; events without it (tool calls, etc.)
+        contribute empty usage. Gemini has no cache-write dimension (left 0).
         """
-        usage_metadata = getattr(event, "usage_metadata", None)
-        if usage_metadata is None:
-            return TurnUsage()
-
-        def _int(name: str) -> int:
-            value = getattr(usage_metadata, name, 0)
-            return value if isinstance(value, int) else 0
-
-        return TurnUsage(
-            input_tokens=_int("prompt_token_count"),
-            output_tokens=_int("candidates_token_count"),
-            cache_read_tokens=_int("cached_content_token_count"),
+        return TurnUsage.from_object(
+            getattr(event, "usage_metadata", None),
+            input="prompt_token_count",
+            output="candidates_token_count",
+            cache_read="cached_content_token_count",
         )
 
     async def on_cleanup(self, room_id: str) -> None:

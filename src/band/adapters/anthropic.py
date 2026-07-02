@@ -369,14 +369,14 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         """Map an Anthropic ``Message.usage`` onto the framework-agnostic TurnUsage.
 
         Cache fields are optional on the SDK model (absent/None when prompt
-        caching is off), so they are read defensively and default to 0.
+        caching is off); ``from_object`` reads them defensively (missing → 0).
         """
-        usage = response.usage
-        return TurnUsage(
-            input_tokens=usage.input_tokens or 0,
-            output_tokens=usage.output_tokens or 0,
-            cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
-            cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
+        return TurnUsage.from_object(
+            response.usage,
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read_input_tokens",
+            cache_write="cache_creation_input_tokens",
         )
 
     # --- Copied from BandAnthropicAgent._extract_text_content ---

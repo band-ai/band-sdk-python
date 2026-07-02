@@ -453,17 +453,21 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         if not isinstance(usage_metadata, dict):
             return TurnUsage()
 
+        # Cache tokens live one level down under input_token_details; flatten
+        # them alongside the top-level counts so it's a single from_mapping.
         details = usage_metadata.get("input_token_details")
         details = details if isinstance(details, dict) else {}
-
-        def _int(value: Any) -> int:
-            return value if isinstance(value, int) else 0
-
-        return TurnUsage(
-            input_tokens=_int(usage_metadata.get("input_tokens")),
-            output_tokens=_int(usage_metadata.get("output_tokens")),
-            cache_read_tokens=_int(details.get("cache_read")),
-            cache_write_tokens=_int(details.get("cache_creation")),
+        flat = {
+            **usage_metadata,
+            "cache_read": details.get("cache_read"),
+            "cache_creation": details.get("cache_creation"),
+        }
+        return TurnUsage.from_mapping(
+            flat,
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read",
+            cache_write="cache_creation",
         )
 
     async def on_cleanup(self, room_id: str) -> None:

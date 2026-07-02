@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, StrEnum
@@ -51,6 +51,11 @@ class Emit(str, Enum):
     THOUGHTS = "thoughts"
     TASK_EVENTS = "task_events"
     USAGE = "usage"
+
+
+def _as_int(value: object) -> int:
+    """Coerce a usage field to an int; anything non-int (None, missing) → 0."""
+    return value if isinstance(value, int) else 0
 
 
 @dataclass(frozen=True)
@@ -107,6 +112,58 @@ class TurnUsage:
             "cache_read_tokens": self.cache_read_tokens,
             "cache_write_tokens": self.cache_write_tokens,
         }
+
+    @classmethod
+    def from_object(
+        cls,
+        src: object,
+        *,
+        input: str,
+        output: str,
+        cache_read: str | None = None,
+        cache_write: str | None = None,
+    ) -> TurnUsage:
+        """Build from a usage *object*, reading the named attributes.
+
+        The framework-specific attribute names are passed in; each is coerced to
+        a non-negative int (missing/non-int → 0). ``src=None`` (usage absent on
+        the response) yields an empty ``TurnUsage`` — so an adapter's mapper is a
+        one-liner over ``getattr(response, "...", None)`` with no guard of its own.
+        """
+        if src is None:
+            return cls()
+        return cls(
+            input_tokens=_as_int(getattr(src, input, 0)),
+            output_tokens=_as_int(getattr(src, output, 0)),
+            cache_read_tokens=_as_int(getattr(src, cache_read, 0)) if cache_read else 0,
+            cache_write_tokens=(
+                _as_int(getattr(src, cache_write, 0)) if cache_write else 0
+            ),
+        )
+
+    @classmethod
+    def from_mapping(
+        cls,
+        data: object,
+        *,
+        input: str,
+        output: str,
+        cache_read: str | None = None,
+        cache_write: str | None = None,
+    ) -> TurnUsage:
+        """Build from a usage *mapping* (dict), reading the named keys.
+
+        The attribute-source twin of :meth:`from_object`; a non-mapping ``data``
+        (e.g. usage absent) yields an empty ``TurnUsage``.
+        """
+        if not isinstance(data, Mapping):
+            return cls()
+        return cls(
+            input_tokens=_as_int(data.get(input, 0)),
+            output_tokens=_as_int(data.get(output, 0)),
+            cache_read_tokens=_as_int(data.get(cache_read, 0)) if cache_read else 0,
+            cache_write_tokens=_as_int(data.get(cache_write, 0)) if cache_write else 0,
+        )
 
 
 # Usage rides an already-accepted ``task`` event's free-form metadata (the path

@@ -326,23 +326,16 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     def _usage_from_response(response: RunOutput) -> TurnUsage:
         """Map an Agno ``RunOutput.metrics`` onto TurnUsage.
 
-        ``metrics`` (a ``RunMetrics``) is aggregated across the run's model
-        calls; its token field names line up with TurnUsage's. It is optional,
-        so a missing metrics object yields empty usage.
+        ``metrics`` (a ``RunMetrics``, aggregated across the run's model calls)
+        is optional and its token field names line up 1:1 with TurnUsage's, so
+        this is a straight ``from_object`` (missing metrics → empty usage).
         """
-        metrics = getattr(response, "metrics", None)
-        if metrics is None:
-            return TurnUsage()
-
-        def _int(name: str) -> int:
-            value = getattr(metrics, name, 0)
-            return value if isinstance(value, int) else 0
-
-        return TurnUsage(
-            input_tokens=_int("input_tokens"),
-            output_tokens=_int("output_tokens"),
-            cache_read_tokens=_int("cache_read_tokens"),
-            cache_write_tokens=_int("cache_write_tokens"),
+        return TurnUsage.from_object(
+            getattr(response, "metrics", None),
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read_tokens",
+            cache_write="cache_write_tokens",
         )
 
     def _prior_transcript(

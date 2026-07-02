@@ -783,25 +783,16 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
 
     @staticmethod
     def _usage_from_result(sdk_message: ResultMessage) -> TurnUsage:
-        """Map a Claude SDK ``ResultMessage.usage`` onto TurnUsage.
+        """Map a Claude SDK ``ResultMessage.usage`` (raw API dict) onto TurnUsage.
 
-        ``usage`` is the raw API usage dict (``input_tokens``, ``output_tokens``,
-        ``cache_read_input_tokens``, ``cache_creation_input_tokens``); it may be
-        absent, so read defensively and default each dimension to 0.
+        ``usage`` may be absent; ``from_mapping`` yields empty usage then.
         """
-        usage = getattr(sdk_message, "usage", None)
-        if not isinstance(usage, dict):
-            return TurnUsage()
-
-        def _int(key: str) -> int:
-            value = usage.get(key, 0)
-            return value if isinstance(value, int) else 0
-
-        return TurnUsage(
-            input_tokens=_int("input_tokens"),
-            output_tokens=_int("output_tokens"),
-            cache_read_tokens=_int("cache_read_input_tokens"),
-            cache_write_tokens=_int("cache_creation_input_tokens"),
+        return TurnUsage.from_mapping(
+            getattr(sdk_message, "usage", None),
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read_input_tokens",
+            cache_write="cache_creation_input_tokens",
         )
 
     # --- Copied from BandClaudeSDKAgent._cleanup_session ---
