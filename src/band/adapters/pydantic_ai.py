@@ -622,11 +622,15 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # pydantic-ai's result.usage() is already summed across the run's model
         # calls, so it's set once (on the result event), not accumulated.
         turn_usage = TurnUsage()
-        # Snapshot the history length so the benign-path usage fallback can sum
-        # only THIS run's responses: capture_run_messages() records the passed
-        # message_history + the new turn, so summing the whole list would
-        # double-count every prior turn's usage.
-        history_len = len(self._message_history[room_id])
+        # Snapshot the prior messages' identities so the benign-path usage
+        # fallback can sum only THIS run's responses: capture_run_messages()
+        # records the passed message_history + the new turn, so summing the whole
+        # list would double-count every prior turn. Identity (not a positional
+        # slice) because pydantic-ai runs _clean_message_history() on the passed
+        # history — merging adjacent same-type messages (e.g. the injected
+        # participants + contacts requests) — so a length-based boundary would
+        # slip; real API ModelResponses are never merged, so they keep identity.
+        prior_message_ids = {id(m) for m in self._message_history[room_id]}
         # Capture the run's messages so a benign empty-final response — which raises
         # before the AgentRunResultEvent that normally records history — can still
         # persist the *full* turn (user prompt + the agent's tool calls/results), not
@@ -726,12 +730,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
                 # This turn spent tokens even though no result event fired, so
-                # still emit usage — summed from only THIS run's responses
-                # (captured[history_len:]), since captured also holds the prior
-                # history. The happy-path emit below is skipped by this return.
-                await self.emit_usage(
-                    tools, self._usage_from_messages(captured[history_len:])
-                )
+                # still emit usage — summed from only THIS run's responses (those
+                # in captured whose identity wasn't in the prior history), since
+                # captured also holds the prior history. The happy-path emit below
+                # is skipped by this return.
+                this_run = self._new_run_messages(captured, prior_message_ids)
+                await self.emit_usage(tools, self._usage_from_messages(this_run))
                 return
             raise
         finally:
@@ -792,15 +796,32 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         return PydanticAIAdapter._usage_from_usage_obj(usage)
 
     @staticmethod
+    def _new_run_messages(
+        captured: list[ModelMessage], prior_message_ids: set[int]
+    ) -> list[ModelMessage]:
+        """This run's messages: those in ``captured`` not in the prior history.
+
+        Identity, not a positional boundary: pydantic-ai runs
+        ``_clean_message_history`` on the passed history, merging adjacent
+        same-type messages (e.g. the injected participants + contacts requests),
+        which shifts positions and shortens the list — so a ``len(prior)`` slice
+        would drop this turn's leading response(s). Real API ``ModelResponse``s
+        are never merged, so they keep their identity and survive this filter;
+        any newly-merged prior request lands here too but carries no usage, so the
+        ``ModelResponse``-only sum in :meth:`_usage_from_messages` ignores it.
+        """
+        return [m for m in captured if id(m) not in prior_message_ids]
+
+    @staticmethod
     def _usage_from_messages(messages: list[ModelMessage]) -> TurnUsage:
         """Sum per-response usage across the given run messages.
 
         The fallback for the benign empty-final-response path, where no
         ``AgentRunResultEvent`` fires (so ``result.usage()`` is unavailable) yet
         the turn still spent tokens — each ``ModelResponse`` carries its own
-        ``usage``. Pass only the *current run's* messages (the caller slices off
-        the prior history); summing the full captured list would double-count
-        every prior turn.
+        ``usage``. Pass only the *current run's* messages (the caller filters out
+        the prior history by identity); summing the full captured list would
+        double-count every prior turn.
         """
         total = TurnUsage()
         for message in messages:

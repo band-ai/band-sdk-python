@@ -215,6 +215,53 @@ class TestUsageMapping:
             == TurnUsage()
         )
 
+    def test_new_run_messages_isolates_this_run_despite_history_merge(self):
+        """Identity (not position) isolates this run when pydantic-ai merges history.
+
+        Regression guard: pydantic-ai's ``_clean_message_history`` merges adjacent
+        same-type messages in the passed history (e.g. the injected participants +
+        contacts requests), so ``captured`` is *shorter* than the raw prior history
+        and a ``len(prior)`` slice would drop this turn's response. Real API
+        responses keep their identity, so the identity filter still isolates this
+        run — and combined with the ModelResponse-only sum, yields only this turn's
+        usage.
+        """
+        from types import SimpleNamespace
+
+        from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
+
+        from band.core.types import TurnUsage
+
+        def response(inp, out):
+            r = ModelResponse.__new__(ModelResponse)
+            object.__setattr__(
+                r, "usage", SimpleNamespace(input_tokens=inp, output_tokens=out)
+            )
+            return r
+
+        # Prior history: a real response, then two instruction-less requests that
+        # pydantic-ai would merge into one on the next run.
+        prior_resp = response(100, 20)
+        req_participants = ModelRequest(parts=[UserPromptPart(content="[System]: p")])
+        req_contacts = ModelRequest(parts=[UserPromptPart(content="[System]: c")])
+        prior = [prior_resp, req_participants, req_contacts]
+        prior_ids = {id(m) for m in prior}
+
+        # captured after cleaning: prior_resp survives by identity, the two
+        # requests are merged into ONE new object, then this run's new response is
+        # appended. So len(captured)=3 < len(prior)=3+... a positional
+        # captured[len(prior):] would slice to empty and drop new_resp.
+        merged_req = ModelRequest(parts=[UserPromptPart(content="[System]: p\nc")])
+        new_resp = response(130, 8)
+        captured = [prior_resp, merged_req, new_resp]
+
+        this_run = PydanticAIAdapter._new_run_messages(captured, prior_ids)
+        # The merged request (new identity) rides along but carries no usage; only
+        # this run's response contributes.
+        assert PydanticAIAdapter._usage_from_messages(this_run) == TurnUsage(
+            input_tokens=130, output_tokens=8
+        )
+
 
 class TestInitialization:
     """Tests for adapter initialization."""
