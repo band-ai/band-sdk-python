@@ -8,6 +8,7 @@ stream event handling, execution reporting, and custom tools.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -82,6 +83,21 @@ def make_stream_events(
         yield result_event
 
     return stream()
+
+
+def make_usage_response(
+    inp: int, out: int, parts: list[Any] | None = None
+) -> ModelResponse:
+    """A ModelResponse carrying explicit usage counts.
+
+    Real construction (fully initialized, so the dataclass stays repr-safe),
+    then the usage field is overridden past any frozen/validated assignment.
+    """
+    response = ModelResponse(parts=parts or [])
+    object.__setattr__(
+        response, "usage", SimpleNamespace(input_tokens=inp, output_tokens=out)
+    )
+    return response
 
 
 @pytest.fixture
@@ -182,23 +198,12 @@ class TestUsageMapping:
         Covers the empty-final-response path (no AgentRunResultEvent fires) where
         the turn still spent tokens — each ModelResponse carries its own usage.
         """
-        from types import SimpleNamespace
-
-        from pydantic_ai.messages import ModelRequest, ModelResponse
-
         from band.core.types import TurnUsage
-
-        def response(inp, out):
-            r = ModelResponse.__new__(ModelResponse)
-            object.__setattr__(
-                r, "usage", SimpleNamespace(input_tokens=inp, output_tokens=out)
-            )
-            return r
 
         messages = [
             ModelRequest(parts=[]),  # non-response: ignored
-            response(100, 20),
-            response(130, 8),
+            make_usage_response(100, 20),
+            make_usage_response(130, 8),
         ]
         assert PydanticAIAdapter._usage_from_messages(messages) == TurnUsage(
             input_tokens=230, output_tokens=28
@@ -226,22 +231,11 @@ class TestUsageMapping:
         run — and combined with the ModelResponse-only sum, yields only this turn's
         usage.
         """
-        from types import SimpleNamespace
-
-        from pydantic_ai.messages import ModelRequest, ModelResponse, UserPromptPart
-
         from band.core.types import TurnUsage
-
-        def response(inp, out):
-            r = ModelResponse.__new__(ModelResponse)
-            object.__setattr__(
-                r, "usage", SimpleNamespace(input_tokens=inp, output_tokens=out)
-            )
-            return r
 
         # Prior history: a real response, then two instruction-less requests that
         # pydantic-ai would merge into one on the next run.
-        prior_resp = response(100, 20)
+        prior_resp = make_usage_response(100, 20)
         req_participants = ModelRequest(parts=[UserPromptPart(content="[System]: p")])
         req_contacts = ModelRequest(parts=[UserPromptPart(content="[System]: c")])
         prior = [prior_resp, req_participants, req_contacts]
@@ -252,7 +246,7 @@ class TestUsageMapping:
         # appended. So len(captured)=3 < len(prior)=3+... a positional
         # captured[len(prior):] would slice to empty and drop new_resp.
         merged_req = ModelRequest(parts=[UserPromptPart(content="[System]: p\nc")])
-        new_resp = response(130, 8)
+        new_resp = make_usage_response(130, 8)
         captured = [prior_resp, merged_req, new_resp]
 
         this_run = PydanticAIAdapter._new_run_messages(captured, prior_ids)
@@ -1086,7 +1080,6 @@ class TestEmptyFinalAnswer:
         falls back to summing this run's captured ModelResponses when no result
         event fired, so a hard mid-run failure doesn't silently drop usage."""
         from contextlib import contextmanager
-        from types import SimpleNamespace
 
         from band.core.types import Emit
         from tests.adapters.usage_events import sent_usage_payloads
@@ -1106,16 +1099,9 @@ class TestEmptyFinalAnswer:
         )
 
         # Simulate a run that captured a response with usage before raising.
-        failed_response = ModelResponse.__new__(ModelResponse)
-        object.__setattr__(
-            failed_response,
-            "usage",
-            SimpleNamespace(input_tokens=100, output_tokens=20),
-        )
-        object.__setattr__(failed_response, "parts", [TextPart(content="partial")])
         captured_turn = [
             ModelRequest(parts=[UserPromptPart(content="[Alice]: hi")]),
-            failed_response,
+            make_usage_response(100, 20, parts=[TextPart(content="partial")]),
         ]
 
         @contextmanager
@@ -1134,7 +1120,7 @@ class TestEmptyFinalAnswer:
                     room_id="room-123",
                 )
 
-        usage_payloads = sent_usage_payloads(mock_tools.send_event)
+        usage_payloads = sent_usage_payloads(mock_tools)
         assert usage_payloads == [
             {
                 "input_tokens": 100,

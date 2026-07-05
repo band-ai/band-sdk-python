@@ -336,7 +336,10 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         # Usage is reported per model call on the stream; a turn may make several
         # (a tool loop), so sum across every on_chat_model_end into one TurnUsage,
-        # emitted on every exit via the finally.
+        # emitted on every exit via the finally. Gated outside the loop: the
+        # stream yields per-token events, so accumulation there is pure churn
+        # when usage emission is off.
+        track_usage = Emit.USAGE in self.features.emit
         turn_usage = TurnUsage()
         try:
             async for event in graph.astream_events(
@@ -350,7 +353,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 version="v2",
             ):
                 await self._handle_stream_event(event, room_id, tools)
-                turn_usage = turn_usage + self._usage_from_stream_event(event)
+                if track_usage:
+                    turn_usage = turn_usage + self._usage_from_stream_event(event)
 
             if should_mark_bootstrapped:
                 self._bootstrapped_rooms[room_id] = None

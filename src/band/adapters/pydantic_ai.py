@@ -630,7 +630,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # history — merging adjacent same-type messages (e.g. the injected
         # participants + contacts requests) — so a length-based boundary would
         # slip; real API ModelResponses are never merged, so they keep identity.
-        prior_message_ids = {id(m) for m in self._message_history[room_id]}
+        # Built only when usage emission is on: the gated fallback in the
+        # finally is its sole consumer, and the set is O(history) per turn.
+        usage_enabled = Emit.USAGE in self.features.emit
+        prior_message_ids: set[int] = (
+            {id(m) for m in self._message_history[room_id]} if usage_enabled else set()
+        )
         # Capture the run's messages so a benign empty-final response — which raises
         # before the AgentRunResultEvent that normally records history — can still
         # persist the *full* turn (user prompt + the agent's tool calls/results), not
@@ -739,7 +744,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # identity (captured also holds the prior history). Feature-gated
             # here so the fallback's history scan never runs when usage
             # emission is off.
-            if Emit.USAGE in self.features.emit:
+            if usage_enabled:
                 if turn_usage.is_empty:
                     this_run = self._new_run_messages(captured, prior_message_ids)
                     turn_usage = self._usage_from_messages(this_run)

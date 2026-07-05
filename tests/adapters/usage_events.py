@@ -8,17 +8,20 @@ first-class usage event would retire.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
 
 from band.core.types import USAGE_METADATA_KEY, is_usage_event
 from band.testing import FakeAgentTools
 
 
-def sent_usage_payloads(send_event: AsyncMock) -> list[dict[str, Any]]:
-    """Usage payloads from a mocked ``send_event``'s awaited calls."""
+def sent_usage_payloads(tools: Any) -> list[dict[str, Any]]:
+    """Usage payloads from a mocked tools' awaited ``send_event`` calls.
+
+    Takes the whole tools double, like its ``FakeAgentTools`` sibling below;
+    typed ``Any`` because tests build it as a ``MagicMock``.
+    """
     return [
         call.kwargs["metadata"][USAGE_METADATA_KEY]
-        for call in send_event.await_args_list
+        for call in tools.send_event.await_args_list
         if is_usage_event(call.kwargs.get("metadata"))
     ]
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import warnings
 from abc import ABC, abstractmethod
@@ -137,16 +138,22 @@ class SimpleAdapter(Generic[H], ABC):
         loop, typically from a ``finally`` so every exit path is covered: it
         never raises, and an empty total is skipped, so a turn that fails after
         a successful model call still reports the tokens it spent while a
-        first-call failure emits nothing. An adapter that cannot observe usage
-        (server-side execution) simply never calls it, so no event is emitted
-        and the toolkit records N-A rather than a false zero. An all-zero usage
-        is likewise skipped so a read never sees a zero-only record
-        masquerading as real data.
+        first-call failure emits nothing. When the calling task is being
+        cancelled (shutdown, a turn timeout) the emit is skipped entirely, so
+        teardown never blocks on network I/O and a CancelledError can't fire
+        mid-send. An adapter that cannot observe usage (server-side execution)
+        simply never calls it, so no event is emitted and the toolkit records
+        N-A rather than a false zero. An all-zero usage is likewise skipped so
+        a read never sees a zero-only record masquerading as real data.
         """
         if Emit.USAGE not in self.features.emit:
             return
         if usage.is_empty:
             logger.debug("Skipping empty usage event")
+            return
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            logger.debug("Skipping usage emit during task cancellation")
             return
         try:
             await tools.send_event(

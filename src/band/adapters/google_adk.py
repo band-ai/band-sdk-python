@@ -556,7 +556,8 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 session_id=session_id,
                 new_message=user_content,
             ):
-                turn_usage = turn_usage + self._usage_from_event(event)
+                if Emit.USAGE in self.features.emit:
+                    turn_usage = turn_usage + self._usage_from_event(event)
 
                 # Report tool calls/results if enabled
                 if Emit.EXECUTION in self.features.emit:
@@ -577,10 +578,13 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             await self._report_error(tools, str(e))
             raise
         finally:
-            # Emit before close so a close() failure can't drop the usage.
-            # No-op unless Emit.USAGE is on; best-effort, never raises.
-            await self.emit_usage(tools, turn_usage)
-            await runner.close()
+            # Emit before close so a close() failure can't drop the usage, but
+            # nested so close() runs even if a cancellation interrupts the emit.
+            try:
+                # No-op unless Emit.USAGE is on; best-effort, never raises.
+                await self.emit_usage(tools, turn_usage)
+            finally:
+                await runner.close()
 
         # Accumulate message history for future transcript injection
         self._room_history[room_id].append(

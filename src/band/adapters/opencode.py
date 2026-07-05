@@ -286,6 +286,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 )
 
             self._begin_turn(room_state, sender_id=msg.sender_id)
+            # Snapshot THIS turn's state before the prompt await: prompt_async
+            # can span the whole turn (session.idle may arrive mid-POST), and a
+            # message racing in during that window would _begin_turn again;
+            # reading room_state afterwards would wire this turn's watch task
+            # to the wrong turn's future and usage dict.
+            release_future = room_state.turn_release_future
+            turn_future = room_state.turn_future
+            usage_by_message = room_state.usage_by_message
             try:
                 await client.prompt_async(
                     session_id,
@@ -305,20 +313,22 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     variant=self.config.variant,
                 )
             except Exception:
-                self._clear_turn_state(room_state)
+                self._clear_turn_state(room_state, expected_future=turn_future)
                 raise
 
-            release_future = room_state.turn_release_future
-            turn_future = room_state.turn_future
             turn_task = asyncio.create_task(
                 self._watch_turn_completion(
                     room_state,
                     room_id,
                     turn_future,
-                    room_state.usage_by_message,
+                    usage_by_message,
                 )
             )
-            room_state.turn_task = turn_task
+            # Register the watcher only while this turn is still current; a
+            # superseded turn's task must not clobber (or be cancelled through)
+            # the next turn's ambient pointer.
+            if room_state.turn_future is turn_future:
+                room_state.turn_task = turn_task
 
             if release_future is not None:
                 await release_future
@@ -1055,9 +1065,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         """
         if room_state.tools is None:
             return
-        total = TurnUsage()
-        for usage in usage_by_message.values():
-            total = total + usage
+        total = sum(usage_by_message.values(), TurnUsage())
         await self.emit_usage(room_state.tools, total)
 
     @staticmethod

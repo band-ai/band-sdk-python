@@ -926,6 +926,58 @@ class TestOpencodeAdapter:
         assert "boom" in error_events[0]["content"].lower()
 
     @pytest.mark.asyncio
+    async def test_watch_task_drains_the_turn_that_started_it(self) -> None:
+        """Regression: the turn's future and usage dict are snapshotted before
+        the prompt await. When the turn completes while prompt_async's POST is
+        still open and a racing message begins the next turn, the resumed
+        on_message must still drain ITS turn's usage, not the new turn's
+        (empty) dict."""
+        fake_client = FakeOpencodeClient(prompt_event_sequences=[[]])
+        adapter = OpencodeAdapter(
+            client_factory=lambda _config: fake_client,
+            features=AdapterFeatures(emit={Emit.USAGE}),
+        )
+        tools = FakeAgentTools()
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+
+        room_state = await adapter._get_or_create_room_state("room-1")
+        orig_prompt = fake_client.prompt_async
+
+        async def racing_prompt(*args: Any, **kwargs: Any) -> None:
+            # This turn's usage arrives and the turn completes while the
+            # prompt POST is still open...
+            room_state.usage_by_message["msg-1"] = TurnUsage(
+                input_tokens=100, output_tokens=20
+            )
+            adapter._finish_turn(room_state)
+            # ...and a racing message begins (and finishes) the next turn
+            # before the first on_message resumes.
+            adapter._begin_turn(room_state, sender_id="user-2")
+            adapter._finish_turn(room_state)
+            await orig_prompt(*args, **kwargs)
+
+        with patch.object(fake_client, "prompt_async", racing_prompt):
+            await adapter.on_message(
+                make_platform_message(),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+
+        usage_payloads = recorded_usage_payloads(tools)
+        assert usage_payloads == [
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], f"expected the first turn's snapshot to be drained, got {usage_payloads}"
+
+    @pytest.mark.asyncio
     async def test_new_turn_does_not_wipe_prior_turns_pending_usage(self) -> None:
         """Regression: a message racing in between turn completion and the usage
         drain must not empty the prior turn's usage. The dict is turn-owned (a

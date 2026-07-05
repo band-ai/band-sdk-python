@@ -8,6 +8,7 @@ message history management, tool execution, custom tools, and error handling.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +17,20 @@ from pydantic import BaseModel, Field
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
 from tests.adapters.usage_events import sent_usage_payloads
+
+
+def make_usage(inp: int, out: int) -> SimpleNamespace:
+    """Anthropic-shaped usage stub (cache fields zeroed).
+
+    One home for the provider's usage field spelling so a rename is a
+    single edit.
+    """
+    return SimpleNamespace(
+        input_tokens=inp,
+        output_tokens=out,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
 
 
 @pytest.fixture
@@ -395,6 +410,32 @@ class TestToolExecution:
         )
 
     @pytest.mark.asyncio
+    async def test_usage_emit_skipped_during_task_cancellation(self, mock_tools):
+        """A cancelled turn must not fire usage I/O from its finally: teardown
+        (shutdown, a turn timeout) would otherwise block on a REST call, and a
+        CancelledError raised mid-send could skip later cleanup."""
+        import asyncio
+
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        started = asyncio.Event()
+
+        async def turn() -> None:
+            try:
+                started.set()
+                await asyncio.sleep(30)
+            finally:
+                await adapter.emit_usage(
+                    mock_tools, TurnUsage(input_tokens=1, output_tokens=1)
+                )
+
+        task = asyncio.create_task(turn())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_emits_summed_usage_across_tool_loop(
         self, sample_message, mock_tools
     ):
@@ -406,19 +447,9 @@ class TestToolExecution:
         is the deterministic summing proof the live smoke can't give (it never
         sees the per-call intermediates).
         """
-        from types import SimpleNamespace
-
         from anthropic.types import TextBlock, ToolUseBlock
 
         adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
-
-        def _usage(inp: int, out: int) -> SimpleNamespace:
-            return SimpleNamespace(
-                input_tokens=inp,
-                output_tokens=out,
-                cache_read_input_tokens=0,
-                cache_creation_input_tokens=0,
-            )
 
         # Call 1: a tool_use round (continues the loop). Call 2: the final answer.
         resp1 = SimpleNamespace(
@@ -431,12 +462,12 @@ class TestToolExecution:
                     input={"content": "hi"},
                 )
             ],
-            usage=_usage(100, 20),
+            usage=make_usage(100, 20),
         )
         resp2 = SimpleNamespace(
             stop_reason="end_turn",
             content=[TextBlock(type="text", text="Hello!")],
-            usage=_usage(130, 8),
+            usage=make_usage(130, 8),
         )
 
         mock_tools.execute_tool_call.return_value = {"status": "success"}
@@ -456,7 +487,7 @@ class TestToolExecution:
         assert call_anthropic.call_count == 2
         # Find the single usage event and assert it carries the SUM (230/28),
         # not just the first (100/20) or last (130/8) call.
-        usage_payloads = sent_usage_payloads(mock_tools.send_event)
+        usage_payloads = sent_usage_payloads(mock_tools)
         assert usage_payloads == [
             {
                 "input_tokens": 230,
@@ -473,8 +504,6 @@ class TestToolExecution:
         """A tool loop that raises after a successful call still emits that
         call's usage: tokens spent before the failure were still spent. The
         exception still propagates (the turn is marked failed)."""
-        from types import SimpleNamespace
-
         from anthropic.types import ToolUseBlock
 
         adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
@@ -489,12 +518,7 @@ class TestToolExecution:
                     input={"content": "hi"},
                 )
             ],
-            usage=SimpleNamespace(
-                input_tokens=100,
-                output_tokens=20,
-                cache_read_input_tokens=0,
-                cache_creation_input_tokens=0,
-            ),
+            usage=make_usage(100, 20),
         )
 
         mock_tools.execute_tool_call.return_value = {"status": "success"}
@@ -511,7 +535,7 @@ class TestToolExecution:
                     room_id="room-123",
                 )
 
-        usage_payloads = sent_usage_payloads(mock_tools.send_event)
+        usage_payloads = sent_usage_payloads(mock_tools)
         assert usage_payloads == [
             {
                 "input_tokens": 100,
