@@ -62,3 +62,26 @@ class ContentAssertions:
             raise AssertionError(
                 f"no {self._noun()} contained any of {options}:\n{haystack}"
             )
+
+    def assert_contains_none(self, options: Iterable[str]) -> None:
+        """Assert *no* item's content contains any of ``options`` (tolerant
+        substring). The dual of :meth:`assert_contains_any`, and just as tolerant.
+
+        Use it to prove specific *named* wrong values are absent — another room's
+        unique marker did not leak in (isolation), or a decoy value was not echoed
+        (a noisy room). It checks the absence of concrete tokens, **not** that the
+        agent stayed silent, so it is not a banned mandatory-silence / exact-count
+        assertion. An empty ``options`` excludes nothing and passes.
+
+        Note it also passes vacuously on an *empty* collection (a silent/dead agent
+        proves nothing), so pair it with a presence check (``assert_present`` or
+        ``assert_contains_any``) when the agent is expected to have replied.
+        """
+        options = list(options)  # materialize once: it is scanned per item
+        for item in self:
+            for option in options:
+                if tolerant_match(option, item.content):  # type: ignore[attr-defined]
+                    raise AssertionError(
+                        f"a {self._noun()} unexpectedly contained {option!r}:\n"
+                        f"{item.content}"  # type: ignore[attr-defined]
+                    )

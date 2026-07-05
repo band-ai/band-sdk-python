@@ -159,22 +159,30 @@ def _get_tool_bridge_class() -> type:
 
             # Eagerly build and cache the declaration so schema errors
             # surface at construction time rather than mid-conversation.
+            sanitized = sanitize_tool_schema(
+                parameters_schema,
+                drop_numeric_bounds=True,
+                drop_additional_properties=True,
+            )
             try:
+                # The `parameters` field is Gemini's restricted OpenAPI Schema
+                # subset, which rejects JSON-Schema ``$ref``/``$defs`` — and
+                # Pydantic emits exactly those for enum-typed params (e.g.
+                # band_list_memories' scope/system/type). Schema.from_json_schema
+                # dereferences them into an inline, ref-free Schema that is valid
+                # on both the Gemini Developer API and Vertex AI (unlike
+                # parameters_json_schema, whose $ref support on Vertex is not
+                # guaranteed).
                 self._cached_declaration = types.FunctionDeclaration(
                     name=tool_name,
                     description=tool_description,
-                    parameters=sanitize_tool_schema(
-                        parameters_schema,
-                        drop_numeric_bounds=True,
-                        drop_additional_properties=True,
+                    parameters=types.Schema.from_json_schema(
+                        json_schema=types.JSONSchema(**sanitized)
                     ),
                 )
             except Exception as exc:
                 raise RuntimeError(
-                    f"Failed to build FunctionDeclaration for tool '{tool_name}'. "
-                    "This may indicate an incompatible google-adk version — "
-                    "the adapter relies on BaseTool's declaration mechanism "
-                    "pinned to google-adk >=1.0,<2."
+                    f"Failed to build FunctionDeclaration for tool '{tool_name}': {exc}"
                 ) from exc
 
         def _build_declaration(self) -> types.FunctionDeclaration:

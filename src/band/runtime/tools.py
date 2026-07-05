@@ -972,6 +972,29 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Read-only / informational agent tools - explicitly listed (not derived by a
+# name heuristic) because misclassifying a write tool as read-only would weaken
+# the benign-empty-answer suppression in the crewai/pydantic-ai adapters. These
+# tools only *fetch* state; running one is not a terminal action and does not
+# constitute a reply, so a turn that runs only these and then yields an empty
+# final answer is a genuine no-response failure, not benign noise.
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "band_get_participants",
+        "band_lookup_peers",
+        "band_list_contacts",
+        "band_list_contact_requests",
+        "band_list_memories",
+        "band_get_memory",
+    }
+)
+
+# Event-emitting tools are observational, not terminal work: band_send_event posts a
+# thought/error/task event (narration/status) — not a chat reply or a durable requested
+# action. Like read-only tools, a turn that only sends an event and then yields an empty
+# final answer is a genuine no-response failure, not benign (see is_terminal_success).
+EVENT_TOOL_NAMES: frozenset[str] = frozenset({"band_send_event"})
+
 # Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
 # ``surface="human"`` side of the registry. Used by iter_tool_definitions()
 # to apply the ``include_memory`` filter uniformly across both surfaces.
@@ -1004,12 +1027,68 @@ HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 # Derived from TOOL_MODELS — single source of truth
 ALL_TOOL_NAMES: frozenset[str] = frozenset(TOOL_MODELS.keys())
 
+
+def band_tool_errored(tool_name: str | None, content: Any) -> bool:
+    """Whether a Band tool call failed, by its wrapper's error convention.
+
+    Band tool wrappers catch exceptions and return a string starting with
+    ``"Error "``. Only known Band tools follow this convention (custom tools do not),
+    so it is checked for ``ALL_TOOL_NAMES`` members only. (crewai detects failure
+    differently — via its JSON ``status`` envelope — and does not use this helper.)
+    """
+    return (
+        tool_name in ALL_TOOL_NAMES
+        and isinstance(content, str)
+        and content.startswith("Error ")
+    )
+
+
+def is_terminal_success(
+    tool_name: str | None,
+    *,
+    succeeded: bool,
+    custom_terminal: bool = False,
+) -> bool:
+    """Whether a finished tool call counts as terminal productive work.
+
+    Single source of truth shared by the crewai / pydantic-ai adapters to decide
+    whether an empty final model response is *benign* (the agent already did its
+    work this turn) or a genuine no-response failure. Terminal work is:
+
+    * a Band tool that is not read-only, not observational, and did not fail, or
+    * a custom tool the caller declares terminal (``custom_terminal=True``).
+
+    Read-only Band tools (``READ_ONLY_TOOL_NAMES``) never count — fetching state is
+    not a terminal action. Observational tools (``EVENT_TOOL_NAMES`` — band_send_event
+    posts a thought/error/task event) don't count either: emitting narration/status is
+    not a chat reply or a durable requested action. Custom tools are **not** terminal
+    by default: the SDK cannot know whether a bare custom tool is a lookup or a
+    side-effecting action, so it fails loud — an empty final after only an undeclared
+    custom tool surfaces as a no-response error rather than being silently swallowed.
+    A custom tool that genuinely completes the turn opts in (see
+    ``runtime.custom_tools.is_marked_terminal``).
+    """
+    if not succeeded:
+        return False
+    if tool_name in READ_ONLY_TOOL_NAMES or tool_name in EVENT_TOOL_NAMES:
+        return False
+    if tool_name in ALL_TOOL_NAMES:
+        return True
+    return custom_terminal
+
+
 # Fail fast on typos — catch at import time, not in a test run.
 # Use explicit checks instead of ``assert`` so they are not stripped by -O.
 if MEMORY_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown memory tools: {MEMORY_TOOL_NAMES - ALL_TOOL_NAMES}")
 if CONTACT_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown contact tools: {CONTACT_TOOL_NAMES - ALL_TOOL_NAMES}")
+if READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES:
+    raise ValueError(
+        f"Unknown read-only tools: {READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES}"
+    )
+if EVENT_TOOL_NAMES - ALL_TOOL_NAMES:
+    raise ValueError(f"Unknown event tools: {EVENT_TOOL_NAMES - ALL_TOOL_NAMES}")
 
 # Human-surface registry membership is validated against TOOL_DEFINITIONS
 # (not TOOL_MODELS, which stays agent-only for back-compat).

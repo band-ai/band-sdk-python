@@ -92,7 +92,14 @@ class ToolCall:
                 "Skipping tool_call event %s: no tool name in payload", message.id
             )
             return None
+        # Args may arrive as a dict or, for some adapters (pydantic-ai), as a JSON
+        # string — normalize both to a dict so assertions are adapter-agnostic.
         args = payload.get("args")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args)
+            except json.JSONDecodeError:
+                args = {}
         return cls(
             name=str(payload["name"]),
             args=args if isinstance(args, dict) else {},

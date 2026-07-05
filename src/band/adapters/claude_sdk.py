@@ -69,6 +69,7 @@ from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
+    MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     iter_tool_definitions,
     mcp_tool_names,
@@ -586,10 +587,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # Build message with context
         messages_to_send = []
 
-        # Include historical context on first message
+        # Include historical context on first message. Frame it as authoritative
+        # memory, not a passive quote: under the claude_code preset the model treats a
+        # "previous context" aside weakly, so a fact another participant stated (or that
+        # you stated) while you were offline gets missed on recall. Tell it plainly this
+        # is its own memory of the room and to answer from it.
         if is_session_bootstrap and self._session_context.get(room_id):
             messages_to_send.append(
-                f"[Previous conversation context:]\n{self._session_context[room_id]}"
+                "Your memory of this room so far — real earlier messages from you and "
+                "from other participants and agents, including ones sent while you were "
+                "offline. Treat these as facts you know and answer questions about the "
+                f"conversation directly from them:\n"
+                f"{self._session_context[room_id]}"
             )
 
         # Inject participants message if changed
@@ -682,10 +691,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                     )
 
                     elif isinstance(block, ToolUseBlock):
+                        # Bare name for the cross-adapter tool_call record (the SDK
+                        # namespaces our tools mcp__band__*; see _semantic_tool_name).
+                        tool_name = self._semantic_tool_name(block.name)
                         logger.info(
                             "Room %s: Tool call: %s with %s...",
                             room_id,
-                            block.name,
+                            tool_name,
                             str(block.input)[:100],
                         )
                         if Emit.EXECUTION in self.features.emit:
@@ -693,7 +705,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "name": block.name,
+                                            "name": tool_name,
                                             "args": block.input,
                                             "tool_call_id": block.id,
                                         }
@@ -800,6 +812,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     # Chat-based approval flow
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _semantic_tool_name(sdk_tool_name: str) -> str:
+        """The bare tool name for platform/user-facing records.
+
+        claude_sdk exposes band + custom tools through an in-process MCP server, so
+        the Claude Agent SDK namespaces them as ``mcp__band__<tool>``. The platform
+        ``tool_call`` event and the approval UX are cross-adapter, semantic records
+        where every other adapter uses the bare name, so strip our own server's
+        prefix (``MCP_TOOL_PREFIX``). Any external MCP server's tools stay namespaced.
+        """
+        return sdk_tool_name.removeprefix(MCP_TOOL_PREFIX)
+
     def _make_can_use_tool(self, room_id: str) -> CanUseTool:
         """Return a room-bound ``can_use_tool`` callback for the Claude SDK."""
 
@@ -808,6 +832,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             tool_input: dict[str, Any],
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
+            # The SDK passes the MCP-namespaced name; use the bare name everywhere
+            # this approval surfaces to the user (summary, notifications, logs).
+            tool_name = self._semantic_tool_name(tool_name)
             summary = self._approval_summary(tool_name, tool_input)
             # Capture the sender now so it doesn't get overwritten by
             # messages arriving while we wait for a decision.

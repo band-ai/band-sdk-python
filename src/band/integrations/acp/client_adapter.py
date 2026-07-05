@@ -19,6 +19,9 @@ from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
     ACPRuntime,
     PermissionHandler,
+    allow_permission,
+    cancel_permission,
+    select_allow_option_id,
 )
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
@@ -204,7 +207,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             tool_call: object,
             **kwargs: object,
         ) -> dict[str, object]:
-            del options, kwargs
+            del kwargs
             tool_name = getattr(tool_call, "title", None) or getattr(
                 tool_call,
                 "name",
@@ -212,11 +215,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
             tool_call_id = getattr(tool_call, "tool_call_id", "")
 
+            # Auto-approve by selecting one of the agent's offered allow options;
+            # an ACP grant must reference an offered optionId (not a bare
+            # "allowed"), or the agent can't parse the response and aborts.
+            option_id = select_allow_option_id(options)
+
             logger.info(
-                "Permission request: tool=%s, session=%s, room=%s",
+                "Permission request: tool=%s, session=%s, room=%s, option=%s",
                 tool_name,
                 session_id,
                 room_id,
+                option_id,
             )
 
             await tools.send_event(
@@ -227,11 +236,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     "tool_name": tool_name,
                     "tool_call_id": tool_call_id,
                     "acp_session_id": session_id,
-                    "auto_allowed": True,
+                    "auto_allowed": option_id is not None,
                 },
             )
 
-            return {"outcome": {"outcome": "allowed"}}
+            if option_id is None:
+                return cancel_permission()
+            return allow_permission(option_id)
 
         return handler
 

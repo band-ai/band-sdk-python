@@ -47,6 +47,31 @@ from tests.e2e.fixtures.rooms import (  # noqa: F401
     e2e_parlant_room,
     e2e_room_allocator,
 )
+from tests.e2e.settings import E2ESettings
+
+
+def _effective_timeout(item: pytest.Item, base: int) -> int | None:
+    """Resolve an e2e item's pytest-timeout from its (optional) ``timeout`` marker.
+
+    The ``timeout`` marker is pytest-timeout's own, overloaded here so a test reads
+    in pytest-native spelling:
+
+    * no marker, or bare ``@pytest.mark.timeout()`` -> ``base`` (the turn budget);
+    * ``@pytest.mark.timeout(extra=n)`` -> ``base + n`` (headroom for a slow
+      framework, e.g. crewai cold-start), tracking ``base`` rather than hardcoding;
+    * ``@pytest.mark.timeout(n)`` (positional) -> ``None``, i.e. leave it alone so
+      pytest-timeout honors the absolute value natively (the long scenario tests).
+
+    Returning a value means the caller adds a clean ``timeout(value)`` marker; the
+    ``extra=``/bare forms are illegal to pytest-timeout's own parser, so the caller
+    must make that clean marker the *closest* one (it is the only one parsed).
+    """
+    marker = item.get_closest_marker("timeout")
+    if marker is None:
+        return base
+    if marker.args:  # absolute @pytest.mark.timeout(n): honored natively
+        return None
+    return base + marker.kwargs.get("extra", 0)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
@@ -58,15 +83,23 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
        causes "Future attached to a different loop" errors when tests call
        into session-scoped WS/REST clients.
 
-    2. ``timeout(120)`` — E2E tests interact with live platforms and LLMs,
-       so they need more time than the 30s default in pyproject.toml.
-       ``pytestmark`` in conftest.py is NOT applied to collected tests;
-       markers must be added here or directly on test items.
+    2. ``timeout`` — E2E tests interact with live platforms and LLMs, so they need
+       more time than the 30s default in pyproject.toml. Every test gets the
+       configured turn budget (``E2E_TIMEOUT``, via ``E2ESettings``) unless it opts
+       into more with ``@pytest.mark.timeout(extra=n)`` or sets an absolute
+       ``@pytest.mark.timeout(n)``; see :func:`_effective_timeout`. ``pytestmark``
+       in conftest.py is NOT applied to collected tests, so the marker is added
+       here. It is prepended (``append=False``) so this clean ``timeout(n)`` is the
+       marker pytest-timeout reads — ahead of any ``extra=``/bare form on the test,
+       which pytest-timeout's parser would otherwise reject.
     """
     e2e_dir = Path(__file__).parent
     session_marker = pytest.mark.asyncio(loop_scope="session")
-    timeout_marker = pytest.mark.timeout(120)
+    base = E2ESettings().e2e_timeout
     for item in items:
-        if Path(item.path).is_relative_to(e2e_dir):
-            item.add_marker(session_marker)
-            item.add_marker(timeout_marker)
+        if not Path(item.path).is_relative_to(e2e_dir):
+            continue
+        item.add_marker(session_marker)
+        timeout = _effective_timeout(item, base)
+        if timeout is not None:
+            item.add_marker(pytest.mark.timeout(timeout), append=False)

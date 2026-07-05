@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -23,6 +24,12 @@ import pytest
 from pydantic import BaseModel
 
 from band.integrations.acp.client_profiles import NoopACPClientProfile
+from band.integrations.acp.client_runtime import (
+    ACP_STDIO_LIMIT_BYTES,
+    allow_permission,
+    cancel_permission,
+    select_allow_option_id,
+)
 from band.integrations.acp.client_types import BandACPClient
 from band.runtime.mcp_server import (
     LocalMCPServer,
@@ -33,8 +40,23 @@ from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
 
-# Skip entire module if npx is not available
+# These are real E2E tests: each spawns `npx @zed-industries/codex-acp` as a
+# live subprocess (Node + network), so they are opt-in like the rest of the e2e
+# suite. Gated on E2E_TESTS_ENABLED so a plain `uv run pytest` skips them — they
+# are slow and their subprocess/fd pressure was starving nearby server tests
+# (e.g. tests/runtime/test_mcp_server.py) into spurious timeouts. Also requires
+# npx on PATH when enabled.
+_E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 pytestmark = [
+    pytest.mark.skipif(
+        not _E2E_ENABLED,
+        reason="codex-acp E2E tests are opt-in; set E2E_TESTS_ENABLED=true to run",
+    ),
     pytest.mark.skipif(
         shutil.which("npx") is None,
         reason="npx not available",
@@ -58,12 +80,31 @@ def acp_client() -> BandACPClient:
     return BandACPClient(profile=NoopACPClientProfile())
 
 
+async def _allow_all_permissions(
+    options: object = None, **kwargs: object
+) -> dict[str, object]:
+    """Approve every tool-call permission request by selecting an allow option.
+
+    codex-acp asks the client to approve before running an MCP tool
+    (``session/request_permission``); with no handler registered the client
+    auto-cancels, so the tool comes back "cancelled". This mirrors the production
+    bridge (``_make_permission_handler``): select an offered allow option."""
+    del kwargs
+    option_id = select_allow_option_id(options)
+    return cancel_permission() if option_id is None else allow_permission(option_id)
+
+
 @pytest.mark.asyncio
 async def test_codex_acp_initialize(acp_client: BandACPClient) -> None:
     """Should successfully initialize the ACP protocol with codex-acp."""
     from acp import spawn_agent_process
 
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = spawn_agent_process(
+        acp_client,
+        "npx",
+        "@zed-industries/codex-acp",
+        transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
+    )
     conn, _proc = await ctx.__aenter__()
     try:
         result = await asyncio.wait_for(
@@ -84,7 +125,12 @@ async def test_codex_acp_new_session(acp_client: BandACPClient) -> None:
     """Should create a new ACP session with cwd and mcp_servers."""
     from acp import spawn_agent_process
 
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = spawn_agent_process(
+        acp_client,
+        "npx",
+        "@zed-industries/codex-acp",
+        transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
+    )
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(
@@ -108,7 +154,12 @@ async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
     """Should send a prompt and collect response chunks from codex-acp."""
     from acp import spawn_agent_process, text_block
 
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = spawn_agent_process(
+        acp_client,
+        "npx",
+        "@zed-industries/codex-acp",
+        transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
+    )
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(
@@ -183,6 +234,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
             acp_client,
             "npx",
             "@zed-industries/codex-acp",
+            transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
         )
         conn, _proc = await ctx.__aenter__()
         try:
@@ -213,6 +265,9 @@ async def test_codex_acp_http_mcp_server_tool_call(
             )
 
             acp_client.reset_session(session.session_id)
+            acp_client.set_permission_handler(
+                session.session_id, _allow_all_permissions
+            )
 
             await asyncio.wait_for(
                 conn.prompt(
@@ -283,6 +338,7 @@ async def test_codex_acp_band_mcp_tool_call(
             acp_client,
             "npx",
             "@zed-industries/codex-acp",
+            transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
         )
         conn, _proc = await ctx.__aenter__()
         try:
@@ -313,6 +369,9 @@ async def test_codex_acp_band_mcp_tool_call(
             )
 
             acp_client.reset_session(session.session_id)
+            acp_client.set_permission_handler(
+                session.session_id, _allow_all_permissions
+            )
 
             await asyncio.wait_for(
                 conn.prompt(
@@ -356,7 +415,12 @@ async def test_codex_acp_multiple_sessions(acp_client: BandACPClient) -> None:
     """Should handle multiple concurrent sessions with separate buffers."""
     from acp import spawn_agent_process, text_block
 
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = spawn_agent_process(
+        acp_client,
+        "npx",
+        "@zed-industries/codex-acp",
+        transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
+    )
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(
@@ -410,7 +474,12 @@ async def test_codex_acp_list_sessions(acp_client: BandACPClient) -> None:
     from acp import spawn_agent_process
     from acp.exceptions import RequestError
 
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = spawn_agent_process(
+        acp_client,
+        "npx",
+        "@zed-industries/codex-acp",
+        transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
+    )
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(

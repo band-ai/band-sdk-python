@@ -1,8 +1,9 @@
 """Live: an Agno agent recalls prior conversation from Band history on rejoin.
 
-The shared cross-adapter recall test
-(``tests/e2e/scenarios/test_context_persistence.py``) excludes Agno because two
-of its behaviors break that test's assumptions without being SDK defects:
+The former shared cross-adapter recall test excluded Agno because two of its
+behaviors broke that test's assumptions without being SDK defects (it has since
+been replaced by ``tests/e2e/baseline/smoke/matrix/test_context_recall.py``, whose
+matrix includes Agno):
 
 1. On the shared, reused room a "secret code" prompt collides with standing
    organization-scoped agent memories phrased as a "code name", so the agent

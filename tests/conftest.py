@@ -52,10 +52,23 @@ from band.runtime.types import PlatformMessage
 # ordering triggered ruff E402 because a non-import comment sat between imports.
 from thenvoi_testing.markers import pytest_ignore_collect_in_ci as _ignore_collect_in_ci
 
+# Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
+# can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
+pytest_plugins = ["pytester"]
+
 
 def pytest_ignore_collect(collection_path):
-    """Skip integration tests in CI environment."""
-    return _ignore_collect_in_ci(str(collection_path), "integration")
+    """Skip integration tests in CI; defer to pytest otherwise.
+
+    ``pytest_ignore_collect`` is a firstresult hook: ``True`` ignores the path,
+    but returning ``False`` *vetoes* pytest's own ``--ignore``/``--ignore-glob``
+    handling for every path. Returning ``None`` (not ``False``) when we don't
+    want to force-ignore keeps the built-in ``--ignore`` flags working — without
+    it, ``pytest tests/ --ignore=tests/e2e`` silently collects e2e anyway.
+    """
+    if _ignore_collect_in_ci(str(collection_path), "integration"):
+        return True
+    return None
 
 
 # =============================================================================

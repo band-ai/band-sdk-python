@@ -1,47 +1,30 @@
-"""Declarative test-dependency requirements.
+"""Declarative test-dependency requirements (pytest glue).
 
-``@requires(Dep.OPENAI, ...)`` declares the requirements a test needs (provider
-keys, a second user, ...); it attaches a marker resolved by a hook in
-conftest.py. The always-on gate (E2E enabled, BAND_API_KEY_USER present) is
-applied to every baseline test by that hook -- it is not a dependency you pass.
+``@requires(Dep.OPENAI, ...)`` declares the requirements a test (or a matrix cell)
+needs; it attaches a marker resolved by a hook in conftest.py. The always-on gate
+(E2E enabled, BAND_API_KEY_USER present) is applied to every baseline test by that
+hook -- it is not a dependency you pass.
 
 Validation policy: a missing requirement **fails** the test, it never skips.
-Skipping a test because a key is absent hides misconfiguration as false-green.
-The only thing that skips is the ``E2E_TESTS_ENABLED`` master switch (the
-deliberate on/off for the whole live suite). Add a requirement by extending
-``_CHECKS``.
+Skipping a test because a key/CLI/server is absent hides misconfiguration as
+false-green. The only thing that skips is the ``E2E_TESTS_ENABLED`` master switch
+(the deliberate on/off for the whole live suite).
+
+The ``Dep`` enum and its facts live in the pytest-free ``toolkit.requirements``
+module (so the adapter registry can reference ``Dep`` without importing pytest);
+add a requirement by adding a ``Dep`` member and a ``_DEPS`` entry there.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from enum import Enum
-
 import pytest
 
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.requirements import Dep, requirement_reason
+
+__all__ = ["MARKER", "Dep", "require_dep", "requires"]
 
 MARKER = "requires_deps"
-
-
-class Dep(Enum):
-    """A requirement a test can declare (a model-provider key)."""
-
-    OPENAI = "openai"
-    ANTHROPIC = "anthropic"
-
-
-# Dep -> (is-available check, failure reason when absent).
-_CHECKS: dict[Dep, tuple[Callable[[BaselineSettings], bool], str]] = {
-    Dep.OPENAI: (
-        lambda s: bool(s.llm_credentials.openai_api_key),
-        "OPENAI_API_KEY not set",
-    ),
-    Dep.ANTHROPIC: (
-        lambda s: bool(s.llm_credentials.anthropic_api_key),
-        "ANTHROPIC_API_KEY not set",
-    ),
-}
 
 
 def require_dep(dep: Dep, settings: BaselineSettings) -> None:
@@ -51,8 +34,8 @@ def require_dep(dep: Dep, settings: BaselineSettings) -> None:
     would hide misconfiguration). Shared by the gate hook and by fixtures that
     self-gate on a requirement.
     """
-    check, reason = _CHECKS[dep]
-    if not check(settings):
+    reason = requirement_reason(dep, settings)
+    if reason is not None:
         pytest.fail(reason)
 
 

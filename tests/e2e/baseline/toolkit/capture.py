@@ -18,10 +18,11 @@ The surface is small — methods on ``ReplyCapture``:
 
 Why this is enough: the room processes a room's messages strictly one-at-a-time
 in FIFO order (a single per-room process loop), and the agent marks a message
-``processed`` only *after* its reply has been emitted. So waiting for the last
-message you sent to be processed (its id is returned by ``send_message``) proves
-every earlier message was handled *and* that the agent's reply is already in
-``messages`` — no probe message and no reply-text matching required.
+``processed`` when its handler completes. So waiting for the last message you sent
+to be processed (its id is returned by ``send_message``) proves every earlier
+message was handled — no probe message and no reply-text matching required. Note:
+``processed`` does **not** imply a reply was emitted — replies are optional (the LLM
+may not call ``band_send_message``), so never infer reply presence from the barrier.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ import logging
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
-from contextlib import asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -311,7 +312,6 @@ class ReplyCapture:
         segment: Any | None = None,
         content_query: str | None = None,
         status: Any | None = None,
-        page_size: int = 50,
     ) -> MemoryObservation:
         """Read both layers of ``agent``'s memory for the turn (after the barrier).
 
@@ -321,9 +321,10 @@ class ReplyCapture:
         memories API via the agent's own key -- hence the ``agent`` arg).
 
         The ``scope``/``system``/``type``/``segment``/``content_query``/``status``
-        filters narrow the store read. Needs ``user_ops`` and ``settings`` (both
-        bound by the ``reply_capture`` fixture); the agent must run with
-        ``Emit.EXECUTION`` for the call layer to be populated.
+        filters narrow the store read. ``limit`` caps both layers (call events and
+        stored records). Needs ``user_ops`` and ``settings`` (both bound by the
+        ``reply_capture`` fixture); the agent must run with ``Emit.EXECUTION`` for
+        the call layer to be populated.
         """
         user_ops = self._require_user_ops()
         if self._settings is None:
@@ -350,7 +351,7 @@ class ReplyCapture:
                 segment=segment,
                 content_query=content_query,
                 status=status,
-                page_size=page_size,
+                limit=limit,
             ),
         )
         return MemoryObservation(calls=calls, stored=stored)
@@ -449,3 +450,9 @@ async def reply_capture(
         yield capture
     finally:
         await ws.leave_chat_room_channel(room_id)
+
+
+# Type of the ``reply_capture`` fixture: call with a room id, get a
+# ``ReplyCapture`` async context manager. Shared so smokes type their fixture
+# parameter without each redefining the same alias.
+CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]

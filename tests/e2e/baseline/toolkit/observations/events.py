@@ -85,12 +85,16 @@ class Events(ContentAssertions, list[ChatMessage]):
             events.append(message)
         return events
 
-    def emitted(self) -> bool:
+    def present(self) -> bool:
         """True if any event of this type was captured."""
         return len(self) > 0
 
-    def assert_emitted(self, *, what: str | None = None) -> None:
-        """Assert at least one event of this type was emitted."""
+    def assert_present(self, *, what: str | None = None) -> None:
+        """Assert at least one event of this type was emitted.
+
+        Named ``assert_present`` to match the sibling collections (``Replies``,
+        ``Memories``); the failure message keeps the event-specific verb.
+        """
         label = what or (
             f"a {self.MESSAGE_TYPE.value} event" if self.MESSAGE_TYPE else "an event"
         )
