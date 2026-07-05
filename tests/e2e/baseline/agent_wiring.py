@@ -3,6 +3,9 @@
 Fails collection (before any live agent is provisioned) when a test wires the agent
 fixtures in a way that can't work or that bypasses the one-vocabulary rule:
 
+* a topology decorator is applied **at most once** (no stacked ``@per_adapter`` /
+  ``@with_adapters`` — the fixtures read the closest marker, so a second one would be
+  silently dropped);
 * ``cell`` needs ``@per_adapter``; ``agent`` / ``agents`` need one of the two decorators;
 * ``agents`` is group-only, ``cell`` is fan-only;
 * a test picks exactly one topology (not both decorators) and one provisioning mode
@@ -28,6 +31,11 @@ def _wiring_error(item: pytest.Item) -> str | None:
     group = item.get_closest_marker(WITH_ADAPTERS_MARKER) is not None
     fixtures = set(getattr(item, "fixturenames", ()))
 
+    def _count(marker_name: str) -> int:
+        """How many times ``marker_name`` is applied — >1 means a stacked decorator that
+        ``get_closest_marker`` would silently reduce to one."""
+        return sum(1 for _ in item.iter_markers(marker_name))
+
     wants_agent = "agent" in fixtures
     wants_agents = "agents" in fixtures
     wants_cell = "cell" in fixtures
@@ -46,6 +54,14 @@ def _wiring_error(item: pytest.Item) -> str | None:
     #    `def test(adapter_id)` is caught at collection, not only at fixture setup.
     #  * a topology decorator that injects no agent/agents/cell provisions nothing.
     rules: list[tuple[bool, str]] = [
+        (
+            _count(PER_ADAPTER_MARKER) > 1,
+            "has @per_adapter applied more than once — apply it exactly once",
+        ),
+        (
+            _count(WITH_ADAPTERS_MARKER) > 1,
+            "has @with_adapters applied more than once — apply it exactly once",
+        ),
         (
             each and group,
             "has both @per_adapter and @with_adapters — pick one topology",

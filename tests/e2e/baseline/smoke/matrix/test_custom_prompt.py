@@ -12,8 +12,8 @@ it:
   (via band_get_participants) AND the marker persists — again separate assertions —
   plus a known invitable-but-absent peer must NOT be fabricated (a tolerant negative).
 
-The marker is a fixed high-entropy token baked into the prompt at import; the reply
-capture is fresh each run, so per-run uniqueness isn't needed. This deliberately does
+The marker is a high-entropy token baked into the prompt at import; the reply capture is
+fresh each run, so per-run uniqueness isn't needed. This deliberately does
 not re-assert the tool-call round-trip that ``test_tool_round_trip`` owns; it asserts
 the *prompt effect* and *coexistence* on top.
 """

@@ -14,8 +14,8 @@ floors-only assertions from the one flow:
   send, so we barrier on A having spoken).
 
 The round-trip value (B relaying A's computed result back to the user) is the flakiest
-hop on a small model, so it is left as the plan's soft, non-gating tail. Named routing /
-recruitment / concurrent triage are already covered by ``test_multi_agent_collaboration``.
+hop on a small model, so it is kept soft and non-gating. Named routing / recruitment /
+concurrent triage are already covered by ``test_multi_agent_collaboration``.
 """
 
 from __future__ import annotations

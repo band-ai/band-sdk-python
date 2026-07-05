@@ -32,6 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from typing import ClassVar, Self
 
 import pytest
 from _pytest.mark.structures import ParameterSet
@@ -78,9 +79,34 @@ def lane(lane_id: Lane) -> pytest.MarkDecorator:
     return getattr(pytest.mark, LANE_MARKER)(lane_id)
 
 
+class MarkerPayload:
+    """A dataclass carried as its topology decorator's single marker arg.
+
+    Subclasses set ``MARKER`` to their marker name; :meth:`from_node` is the one
+    validated way to read the payload back off a collected test node — fail-loud with a
+    ``UsageError`` if the decorator is missing or the marker is malformed, never a
+    downstream ``IndexError`` / ``AttributeError`` far from the cause. That the same
+    decorator isn't applied *twice* is enforced separately, at collection, by
+    ``agent_wiring.assert_agent_fixtures_wired`` — so ``get_closest_marker`` (one marker)
+    is the correct read here.
+    """
+
+    MARKER: ClassVar[str]
+
+    @classmethod
+    def from_node(cls, node: pytest.Item, *, hint: str | None = None) -> Self:
+        mark = node.get_closest_marker(cls.MARKER)
+        payload = mark.args[0] if mark is not None and mark.args else None
+        if not isinstance(payload, cls):  # missing mark, no args, or wrong type
+            raise pytest.UsageError(hint or f"this test requires @{cls.MARKER}(...)")
+        return payload
+
+
 @dataclass(frozen=True)
-class WithAdapters:
-    """What ``@with_adapters`` asks the fixtures to provision (carried on the marker)."""
+class WithAdapters(MarkerPayload):
+    """What ``@with_adapters`` asks the fixtures to provision (carried on its marker)."""
+
+    MARKER: ClassVar[str] = WITH_ADAPTERS_MARKER
 
     adapters: tuple[Adapter, ...]
     prompt: str | None
@@ -89,8 +115,10 @@ class WithAdapters:
 
 
 @dataclass(frozen=True)
-class PerAdapter:
-    """Per-cell construction steering for ``@per_adapter`` (carried on the marker)."""
+class PerAdapter(MarkerPayload):
+    """Per-cell construction steering for ``@per_adapter`` (carried on its marker)."""
+
+    MARKER: ClassVar[str] = PER_ADAPTER_MARKER
 
     prompt: str | None
     features: AdapterFeatures | None

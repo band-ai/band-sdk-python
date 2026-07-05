@@ -21,7 +21,6 @@ import pytest
 from band.core.types import AdapterFeatures
 
 from tests.e2e.baseline.agents import (
-    WITH_ADAPTERS_MARKER,
     PER_ADAPTER_MARKER,
     Adapter,
     WithAdapters,
@@ -118,10 +117,9 @@ def cell(
     construction check, or a reboot / rehydration scenario. Carries the decorator's
     ``prompt`` / ``features`` / ``tools`` as defaults.
     """
-    marker = request.node.get_closest_marker(PER_ADAPTER_MARKER)
-    if marker is None:
-        raise pytest.UsageError("the `cell` fixture requires @per_adapter(...).")
-    each: PerAdapter = marker.args[0]
+    each = PerAdapter.from_node(
+        request.node, hint="the `cell` fixture requires @per_adapter(...)."
+    )
     return _make_cell(
         adapter_id,
         baseline_settings,
@@ -147,10 +145,9 @@ def peer(
     the declared peer adapter. Fails loud if the peer equals the current cell (that would
     be same-framework, not cross): exclude the peer from the fan, or pick another.
     """
-    marker = request.node.get_closest_marker(PER_ADAPTER_MARKER)
-    if marker is None:
-        raise pytest.UsageError("the `peer` fixture requires @per_adapter(peer=...).")
-    each: PerAdapter = marker.args[0]
+    each = PerAdapter.from_node(
+        request.node, hint="the `peer` fixture requires @per_adapter(peer=...)."
+    )
     if each.peer is None:
         raise pytest.UsageError(
             "the `peer` fixture requires @per_adapter(peer=...); no peer= was declared."
@@ -189,12 +186,10 @@ async def agent(
             yield running
         return
 
-    marker = request.node.get_closest_marker(WITH_ADAPTERS_MARKER)
-    if marker is None:
-        raise pytest.UsageError(
-            "`agent` requires @per_adapter(...) or @with_adapters(OneAdapter)."
-        )
-    req: WithAdapters = marker.args[0]
+    req = WithAdapters.from_node(
+        request.node,
+        hint="`agent` requires @per_adapter(...) or @with_adapters(OneAdapter).",
+    )
     if len(req.adapters) != 1:
         raise pytest.UsageError(
             f"`agent` needs exactly one adapter in @with_adapters(...); got "
@@ -217,13 +212,13 @@ async def agents(
     Each slot gets an index-suffixed label so the same framework can appear more than once
     (e.g. two Anthropic agents in one room) without provisioned-name collisions.
     """
-    marker = request.node.get_closest_marker(WITH_ADAPTERS_MARKER)
-    if marker is None:
-        raise pytest.UsageError(
-            "the `agents` fixture requires @with_adapters(...); use `agent`/`cell` under "
-            "@per_adapter."
-        )
-    req: WithAdapters = marker.args[0]
+    req = WithAdapters.from_node(
+        request.node,
+        hint=(
+            "the `agents` fixture requires @with_adapters(...); use `agent`/`cell` "
+            "under @per_adapter."
+        ),
+    )
     # Concurrent start (a serial start would mask co-residency collisions) lives in the
     # shared ``running_members`` helper — the same one ``AdapterCell.run_many`` uses.
     members = [
