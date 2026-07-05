@@ -8,6 +8,7 @@ stream event handling, execution reporting, and custom tools.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -84,6 +85,21 @@ def make_stream_events(
     return stream()
 
 
+def make_usage_response(
+    inp: int, out: int, parts: list[Any] | None = None
+) -> ModelResponse:
+    """A ModelResponse carrying explicit usage counts.
+
+    Real construction (fully initialized, so the dataclass stays repr-safe),
+    then the usage field is overridden past any frozen/validated assignment.
+    """
+    response = ModelResponse(parts=parts or [])
+    object.__setattr__(
+        response, "usage", SimpleNamespace(input_tokens=inp, output_tokens=out)
+    )
+    return response
+
+
 @pytest.fixture
 def sample_message():
     """Create a sample platform message."""
@@ -128,6 +144,117 @@ def mock_pydantic_agent():
         "band_create_chatroom": MagicMock(name="band_create_chatroom"),
     }
     return agent
+
+
+class TestUsageMapping:
+    """Tests for the Emit.USAGE seam's usage mapping."""
+
+    def test_usage_from_result_current_field_names(self):
+        """Maps RunUsage.input_tokens/output_tokens to TurnUsage."""
+        from types import SimpleNamespace
+
+        from band.core.types import TurnUsage
+
+        result = MagicMock()
+        result.usage.return_value = SimpleNamespace(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=5,
+            cache_write_tokens=0,
+        )
+        assert PydanticAIAdapter._usage_from_result(result) == TurnUsage(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=5,
+            cache_write_tokens=0,
+        )
+
+    def test_usage_from_result_legacy_field_names(self):
+        """Falls back to the older request_tokens/response_tokens names."""
+        from types import SimpleNamespace
+
+        from band.core.types import TurnUsage
+
+        result = MagicMock()
+        result.usage.return_value = SimpleNamespace(
+            request_tokens=130,
+            response_tokens=8,
+        )
+        assert PydanticAIAdapter._usage_from_result(result) == TurnUsage(
+            input_tokens=130, output_tokens=8
+        )
+
+    def test_usage_from_result_swallows_errors(self):
+        """A usage() that raises yields empty usage, never propagates."""
+        from band.core.types import TurnUsage
+
+        result = MagicMock()
+        result.usage.side_effect = RuntimeError("no usage")
+        assert PydanticAIAdapter._usage_from_result(result) == TurnUsage()
+
+    def test_usage_from_messages_sums_model_responses(self):
+        """The benign-path fallback sums usage across captured ModelResponses.
+
+        Covers the empty-final-response path (no AgentRunResultEvent fires) where
+        the turn still spent tokens — each ModelResponse carries its own usage.
+        """
+        from band.core.types import TurnUsage
+
+        messages = [
+            ModelRequest(parts=[]),  # non-response: ignored
+            make_usage_response(100, 20),
+            make_usage_response(130, 8),
+        ]
+        assert PydanticAIAdapter._usage_from_messages(messages) == TurnUsage(
+            input_tokens=230, output_tokens=28
+        )
+
+    def test_usage_from_messages_empty_when_no_responses(self):
+        """No ModelResponse in the captured messages → empty usage."""
+        from pydantic_ai.messages import ModelRequest
+
+        from band.core.types import TurnUsage
+
+        assert (
+            PydanticAIAdapter._usage_from_messages([ModelRequest(parts=[])])
+            == TurnUsage()
+        )
+
+    def test_new_run_messages_isolates_this_run_despite_history_merge(self):
+        """Identity (not position) isolates this run when pydantic-ai merges history.
+
+        Regression guard: pydantic-ai's ``_clean_message_history`` merges adjacent
+        same-type messages in the passed history (e.g. the injected participants +
+        contacts requests), so ``captured`` is *shorter* than the raw prior history
+        and a ``len(prior)`` slice would drop this turn's response. Real API
+        responses keep their identity, so the identity filter still isolates this
+        run — and combined with the ModelResponse-only sum, yields only this turn's
+        usage.
+        """
+        from band.core.types import TurnUsage
+
+        # Prior history: a real response, then two instruction-less requests that
+        # pydantic-ai would merge into one on the next run.
+        prior_resp = make_usage_response(100, 20)
+        req_participants = ModelRequest(parts=[UserPromptPart(content="[System]: p")])
+        req_contacts = ModelRequest(parts=[UserPromptPart(content="[System]: c")])
+        prior = [prior_resp, req_participants, req_contacts]
+        prior_ids = {id(m) for m in prior}
+
+        # captured after cleaning: prior_resp survives by identity, the two
+        # requests are merged into ONE new object, then this run's new response is
+        # appended. So len(captured)=3 < len(prior)=3+... a positional
+        # captured[len(prior):] would slice to empty and drop new_resp.
+        merged_req = ModelRequest(parts=[UserPromptPart(content="[System]: p\nc")])
+        new_resp = make_usage_response(130, 8)
+        captured = [prior_resp, merged_req, new_resp]
+
+        this_run = PydanticAIAdapter._new_run_messages(captured, prior_ids)
+        # The merged request (new identity) rides along but carries no usage; only
+        # this run's response contributes.
+        assert PydanticAIAdapter._usage_from_messages(this_run) == TurnUsage(
+            input_tokens=130, output_tokens=8
+        )
 
 
 class TestInitialization:
@@ -942,6 +1069,66 @@ class TestEmptyFinalAnswer:
                 is_session_bootstrap=True,
                 room_id="room-123",
             )
+
+    @pytest.mark.asyncio
+    async def test_failed_run_still_emits_captured_usage(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """A run that raises still emits the usage its captured responses accrued.
+
+        Tokens spent before the failure were still spent: the finally-based emit
+        falls back to summing this run's captured ModelResponses when no result
+        event fired, so a hard mid-run failure doesn't silently drop usage."""
+        from contextlib import contextmanager
+
+        from band.core.types import Emit
+        from tests.adapters.usage_events import sent_usage_payloads
+
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4",
+            features=AdapterFeatures(emit={Emit.USAGE}),
+        )
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                UnexpectedModelBehavior("Received empty model response"),
+                tool_result=True,
+            )
+        )
+
+        # Simulate a run that captured a response with usage before raising.
+        captured_turn = [
+            ModelRequest(parts=[UserPromptPart(content="[Alice]: hi")]),
+            make_usage_response(100, 20, parts=[TextPart(content="partial")]),
+        ]
+
+        @contextmanager
+        def fake_capture():
+            yield captured_turn
+
+        with patch("band.adapters.pydantic_ai.capture_run_messages", fake_capture):
+            with pytest.raises(UnexpectedModelBehavior):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        usage_payloads = sent_usage_payloads(mock_tools)
+        assert usage_payloads == [
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], f"expected the captured run's usage to be emitted, got {usage_payloads}"
 
     @pytest.mark.asyncio
     async def test_unrelated_model_error_propagates_even_after_tool(

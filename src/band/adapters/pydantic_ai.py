@@ -34,7 +34,13 @@ from band_rest.core.api_error import ApiError
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.pydantic_ai import (
     PydanticAIHistoryConverter,
     PydanticAIMessages,
@@ -140,7 +146,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -613,6 +619,23 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # terminal, successful tool ran (excludes read-only lookups and failed
         # band tools) so we can tell a productive turn from a genuine no-op below.
         tool_executed = False
+        # pydantic-ai's result.usage() is already summed across the run's model
+        # calls, so it's set once (on the result event), not accumulated.
+        turn_usage = TurnUsage()
+        # Snapshot the prior messages' identities so the fallback usage path
+        # (any run that raises) can sum only THIS run's responses: capture_run_messages()
+        # records the passed message_history + the new turn, so summing the whole
+        # list would double-count every prior turn. Identity (not a positional
+        # slice) because pydantic-ai runs _clean_message_history() on the passed
+        # history — merging adjacent same-type messages (e.g. the injected
+        # participants + contacts requests) — so a length-based boundary would
+        # slip; real API ModelResponses are never merged, so they keep identity.
+        # Built only when usage emission is on: the gated fallback in the
+        # finally is its sole consumer, and the set is O(history) per turn.
+        usage_enabled = Emit.USAGE in self.features.emit
+        prior_message_ids: set[int] = (
+            {id(m) for m in self._message_history[room_id]} if usage_enabled else set()
+        )
         # Capture the run's messages so a benign empty-final response — which raises
         # before the AgentRunResultEvent that normally records history — can still
         # persist the *full* turn (user prompt + the agent's tool calls/results), not
@@ -669,6 +692,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         except Exception as e:
                             logger.warning("Failed to send tool_result event: %s", e)
                 elif isinstance(event, AgentRunResultEvent):
+                    turn_usage = self._usage_from_result(event.result)
                     # Keep native run history, but drop responses that replay as
                     # content:null (e.g. thinking-only) — providers reject them next request.
                     run_messages = list(event.result.all_messages())
@@ -714,6 +738,17 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             raise
         finally:
             capture_cm.__exit__(None, None, None)
+            # Single emit point for every exit. A run that raised (benign
+            # empty-final or a hard failure) never saw the result event, so
+            # fall back to summing only THIS run's captured responses by
+            # identity (captured also holds the prior history). Feature-gated
+            # here so the fallback's history scan never runs when usage
+            # emission is off.
+            if usage_enabled:
+                if turn_usage.is_empty:
+                    this_run = self._new_run_messages(captured, prior_message_ids)
+                    turn_usage = self._usage_from_messages(this_run)
+                await self.emit_usage(tools, turn_usage)
 
         # A clean run with no terminal work means the model answered in plain text
         # without calling band_send_message — a silently dropped reply. Surface it
@@ -731,6 +766,72 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             room_id,
             len(self._message_history[room_id]),
         )
+
+    @staticmethod
+    def _usage_from_usage_obj(usage: Any) -> TurnUsage:
+        """Map a pydantic-ai usage object (RunUsage / RequestUsage) onto TurnUsage.
+
+        Field names moved across pydantic-ai versions (``request_tokens`` /
+        ``response_tokens`` → ``input_tokens`` / ``output_tokens``), so both are
+        read; the first int found wins.
+        """
+
+        def _int(*names: str) -> int:
+            for name in names:
+                value = getattr(usage, name, None)
+                if isinstance(value, int):
+                    return value
+            return 0
+
+        return TurnUsage(
+            input_tokens=_int("input_tokens", "request_tokens"),
+            output_tokens=_int("output_tokens", "response_tokens"),
+            cache_read_tokens=_int("cache_read_tokens"),
+            cache_write_tokens=_int("cache_write_tokens"),
+        )
+
+    @staticmethod
+    def _usage_from_result(result: Any) -> TurnUsage:
+        """The run's total usage across all model requests (happy path)."""
+        try:
+            usage = result.usage()
+        except Exception:  # pragma: no cover - defensive; usage is best-effort
+            return TurnUsage()
+        return PydanticAIAdapter._usage_from_usage_obj(usage)
+
+    @staticmethod
+    def _new_run_messages(
+        captured: list[ModelMessage], prior_message_ids: set[int]
+    ) -> list[ModelMessage]:
+        """This run's messages: those in ``captured`` not in the prior history.
+
+        Identity, not a positional boundary: pydantic-ai runs
+        ``_clean_message_history`` on the passed history, merging adjacent
+        same-type messages (e.g. the injected participants + contacts requests),
+        which shifts positions and shortens the list — so a ``len(prior)`` slice
+        would drop this turn's leading response(s). Real API ``ModelResponse``s
+        are never merged, so they keep their identity and survive this filter;
+        any newly-merged prior request lands here too but carries no usage, so the
+        ``ModelResponse``-only sum in :meth:`_usage_from_messages` ignores it.
+        """
+        return [m for m in captured if id(m) not in prior_message_ids]
+
+    @staticmethod
+    def _usage_from_messages(messages: list[ModelMessage]) -> TurnUsage:
+        """Sum per-response usage across the given run messages.
+
+        The fallback for the benign empty-final-response path, where no
+        ``AgentRunResultEvent`` fires (so ``result.usage()`` is unavailable) yet
+        the turn still spent tokens — each ``ModelResponse`` carries its own
+        ``usage``. Pass only the *current run's* messages (the caller filters out
+        the prior history by identity); summing the full captured list would
+        double-count every prior turn.
+        """
+        total = TurnUsage()
+        for message in messages:
+            if isinstance(message, ModelResponse):
+                total = total + PydanticAIAdapter._usage_from_usage_obj(message.usage)
+        return total
 
     async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
         """Send an error event to the room (best effort).

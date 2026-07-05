@@ -212,11 +212,11 @@ class TestUniversalBooleanShims:
         assert Emit.TASK_EVENTS not in adapter.features.emit
 
     def test_codex_supported_features_surface(self) -> None:
-        """SUPPORTED_EMIT advertises the three Codex-supported emit channels."""
+        """SUPPORTED_EMIT advertises the Codex-supported emit channels."""
         from band.adapters.codex import CodexAdapter
 
         assert CodexAdapter.SUPPORTED_EMIT == frozenset(
-            {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS}
+            {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
         )
 
 

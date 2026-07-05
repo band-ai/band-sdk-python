@@ -24,6 +24,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 from band.integrations.codex import (
     CodexJsonRpcError,
@@ -297,7 +298,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS}
+        {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -1537,6 +1538,27 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     exc_info=True,
                 )
 
+    @staticmethod
+    def _turn_usage(usage: CodexTokenUsage | None) -> TurnUsage:
+        """Map codex's per-turn token deltas onto the framework-agnostic TurnUsage.
+
+        Uses the per-turn deltas (rise from the turn-start anchor), not the
+        thread cumulatives, so each emitted record is this turn's usage —
+        matching what the in-process adapters emit. Codex reports no cache
+        dimension, so those stay 0; a ``None`` usage yields empty (no emit).
+
+        Codex reports reasoning tokens *disjointly* from output (its own total is
+        ``input + output + reasoning``), so fold reasoning into ``output_tokens``
+        — otherwise reasoning-heavy turns undercount, and this stays consistent
+        with providers that already count reasoning inside output.
+        """
+        return TurnUsage.from_object(
+            usage,
+            input="turn_input_tokens",
+            output="turn_output_tokens",
+            reasoning="turn_reasoning_tokens",
+        )
+
     async def _emit_turn_outcome(
         self,
         *,
@@ -1554,6 +1576,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # Look up token usage once for both marker and lifecycle events.
         usage = self._token_usage.get(thread_id)
         has_usage = usage is not None and usage.total_tokens > 0
+
+        # Emit this turn's usage through the unified Emit.USAGE seam so the
+        # toolkit's capture.usage() reads codex like every other adapter. This
+        # is independent of the codex-specific emit_token_usage_events path
+        # (which embeds codex_*_tokens on the marker/lifecycle task events);
+        # emit_usage no-ops unless Emit.USAGE is enabled and usage is non-empty.
+        await self.emit_usage(tools, self._turn_usage(usage))
 
         if (
             Emit.TASK_EVENTS in self.features.emit

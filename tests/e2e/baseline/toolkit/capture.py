@@ -56,6 +56,7 @@ from tests.e2e.baseline.toolkit.observations import (
     Tasks,
     Thoughts,
     ToolCalls,
+    Usage,
 )
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
@@ -297,6 +298,34 @@ class ReplyCapture:
             since=since,
             limit=limit,
             include_memory=include_memory,
+        )
+
+    async def usage(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> Usage:
+        """Read this room's per-turn token usage (call after the turn settles).
+
+        Reads the persisted ``usage`` events, so the agent must run with
+        ``Emit.USAGE`` on, and this should follow a completion barrier such as
+        ``wait_for_processed`` (the platform marks a message ``processed`` only
+        after the reply is emitted, by which point the turn's usage event is
+        already persisted). Pass ``sender_id`` to keep only one agent's usage.
+
+        Comes back empty for an adapter that cannot report usage (server-side
+        execution) — the honest N-A. Without ``since`` this returns *every*
+        usage record in the room; pass ``since`` (a server timestamp) to scope
+        to a single turn when reusing a capture across turns.
+        """
+        return await Usage.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
         )
 
     async def memory(

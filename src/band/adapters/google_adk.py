@@ -22,7 +22,13 @@ from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.tool_filter import sanitize_tool_schema
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.google_adk import GoogleADKHistoryConverter, GoogleADKMessages
 from band.runtime.custom_tools import (
     CustomToolDef,
@@ -280,7 +286,7 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -469,6 +475,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         # accumulates session history internally and tool schemas may change
         # between calls.  History is injected as a text transcript instead.
         runner = self._create_runner(tools)
+        # Per-turn usage, summed across the event stream below. Initialized
+        # outside the try so the finally can emit whatever accumulated.
+        turn_usage = TurnUsage()
         try:
             # Always create a new session ID — each runner is fresh, so there
             # is no in-memory state to resume.  The ID is stored for cleanup
@@ -538,13 +547,18 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
                 len(room_history),
             )
 
-            # Run the ADK agent - it handles the full tool loop
+            # Run the ADK agent - it handles the full tool loop. Usage is
+            # reported per model response on the event stream, so sum across
+            # the loop into one per-turn TurnUsage.
             final_response_text = ""
             async for event in runner.run_async(
                 user_id=room_id,
                 session_id=session_id,
                 new_message=user_content,
             ):
+                if Emit.USAGE in self.features.emit:
+                    turn_usage = turn_usage + self._usage_from_event(event)
+
                 # Report tool calls/results if enabled
                 if Emit.EXECUTION in self.features.emit:
                     try:
@@ -564,7 +578,13 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             await self._report_error(tools, str(e))
             raise
         finally:
-            await runner.close()
+            # Emit before close so a close() failure can't drop the usage, but
+            # nested so close() runs even if a cancellation interrupts the emit.
+            try:
+                # No-op unless Emit.USAGE is on; best-effort, never raises.
+                await self.emit_usage(tools, turn_usage)
+            finally:
+                await runner.close()
 
         # Accumulate message history for future transcript injection
         self._room_history[room_id].append(
@@ -585,6 +605,28 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             ]
 
         logger.debug("Message %s processed successfully", msg.id)
+
+    @staticmethod
+    def _usage_from_event(event: Any) -> TurnUsage:
+        """Map an ADK event's ``usage_metadata`` onto TurnUsage.
+
+        Usage rides model-response events; events without it (tool calls, etc.)
+        contribute empty usage. Gemini has no cache-write dimension (left 0).
+
+        Gemini reports thinking tokens *disjointly* from output (its own
+        ``total_token_count`` is ``prompt + candidates + thoughts``, so
+        ``candidates_token_count`` excludes thoughts), so fold
+        ``thoughts_token_count`` into ``output_tokens`` — otherwise thinking-model
+        turns undercount, and this stays consistent with providers that already
+        count reasoning inside output.
+        """
+        return TurnUsage.from_object(
+            getattr(event, "usage_metadata", None),
+            input="prompt_token_count",
+            output="candidates_token_count",
+            reasoning="thoughts_token_count",
+            cache_read="cached_content_token_count",
+        )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up session and history when agent leaves a room."""

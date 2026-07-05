@@ -14,7 +14,13 @@ from band.converters.letta import LettaHistoryConverter, LettaSessionState
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -156,7 +162,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.TASK_EVENTS}
+        {Emit.EXECUTION, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -475,25 +481,53 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         Returns the list of assistant text parts collected during the turn.
         """
         messages = [{"role": "user", "content": content}]
-        final_text_parts: list[str] = []
-        used_send_message = False  # tracks if agent called band_send_message
+        # Per-turn token usage. Reachable only on the per_room path, where the
+        # non-streamed LettaResponse carries an aggregate .usage; the shared-mode
+        # Conversations stream exposes no such aggregate, so it stays empty (N-A).
+        # Emitted on every exit via the finally.
+        turn_usage = TurnUsage()
 
         room_ctx = self._rooms.get(room_id)
 
-        # Use Conversations API in shared mode, direct agent API in per_room mode
-        if self.config.mode == "shared" and room_ctx and room_ctx.conversation_id:
-            conversation_stream = await self._client.conversations.messages.create(
-                conversation_id=room_ctx.conversation_id,
-                messages=messages,
-            )
-            response_messages = [resp_msg async for resp_msg in conversation_stream]
-        else:
-            response = await self._client.agents.messages.create(
-                agent_id=agent_id,
-                messages=messages,
-            )
-            response_messages = list(response.messages)
+        try:
+            # Use Conversations API in shared mode, direct agent API in per_room mode
+            if self.config.mode == "shared" and room_ctx and room_ctx.conversation_id:
+                conversation_stream = await self._client.conversations.messages.create(
+                    conversation_id=room_ctx.conversation_id,
+                    messages=messages,
+                )
+                response_messages = [resp_msg async for resp_msg in conversation_stream]
+            else:
+                response = await self._client.agents.messages.create(
+                    agent_id=agent_id,
+                    messages=messages,
+                )
+                response_messages = list(response.messages)
+                turn_usage = self._usage_from_response(response)
 
+            return await self._process_response_messages(
+                response_messages,
+                tools,
+                room_id,
+                reply_to_sender_id,
+            )
+        finally:
+            # No-op unless Emit.USAGE is on; best-effort, never raises.
+            await self.emit_usage(tools, turn_usage)
+
+    async def _process_response_messages(
+        self,
+        response_messages: list[Any],
+        tools: AgentToolsProtocol,
+        room_id: str,
+        reply_to_sender_id: str,
+    ) -> list[str]:
+        """Observe Letta response messages: report tool events, auto-relay text.
+
+        Returns the list of assistant text parts collected during the turn.
+        """
+        final_text_parts: list[str] = []
+        used_send_message = False  # tracks if agent called band_send_message
         for resp_msg in response_messages:
             msg_type = getattr(resp_msg, "message_type", None)
             logger.debug("Room %s: Letta response message type=%s", room_id, msg_type)
@@ -878,6 +912,22 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             )
         except Exception as e:
             logger.warning("Room %s: Memory consolidation failed: %s", room_id, e)
+
+    @staticmethod
+    def _usage_from_response(response: Any) -> TurnUsage:
+        """Map a Letta ``LettaResponse.usage`` (a ``Usage``) onto TurnUsage.
+
+        Field names verified against letta-client: ``prompt_tokens`` /
+        ``completion_tokens`` / ``cached_input_tokens`` / ``cache_write_tokens``.
+        A missing ``usage`` yields empty usage.
+        """
+        return TurnUsage.from_object(
+            getattr(response, "usage", None),
+            input="prompt_tokens",
+            output="completion_tokens",
+            cache_read="cached_input_tokens",
+            cache_write="cache_write_tokens",
+        )
 
     @staticmethod
     def _format_time_ago(dt: datetime) -> str:

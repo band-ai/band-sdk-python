@@ -1,11 +1,67 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from band.adapters.langgraph import LangGraphAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import (
+    USAGE_EVENT_TYPE,
+    USAGE_METADATA_KEY,
+    AdapterFeatures,
+    Emit,
+    TurnUsage,
+)
+
+
+class TestUsageReporting:
+    """Tests for the Emit.USAGE seam (usage mapping + emission)."""
+
+    def test_usage_from_on_chat_model_end(self):
+        """Maps AIMessage.usage_metadata (incl. cache token details) to TurnUsage."""
+        output = SimpleNamespace(
+            usage_metadata={
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "input_token_details": {"cache_read": 5, "cache_creation": 3},
+            }
+        )
+        event = {"event": "on_chat_model_end", "data": {"output": output}}
+        assert LangGraphAdapter._usage_from_stream_event(event) == TurnUsage(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_tokens=5,
+            cache_write_tokens=3,
+        )
+
+    def test_usage_from_non_model_event_is_empty(self):
+        """Non-model events (and non-dict events) contribute empty usage."""
+        assert (
+            LangGraphAdapter._usage_from_stream_event(
+                {"event": "on_tool_end", "data": {}}
+            )
+            == TurnUsage()
+        )
+        assert LangGraphAdapter._usage_from_stream_event("not a dict") == TurnUsage()
+
+    @pytest.mark.asyncio
+    async def test_emits_usage_event_when_enabled(
+        self, mock_tools, mock_llm, mock_checkpointer
+    ):
+        """With Emit.USAGE on, a non-empty TurnUsage rides a task event's metadata."""
+        adapter = LangGraphAdapter(
+            llm=mock_llm,
+            checkpointer=mock_checkpointer,
+            features=AdapterFeatures(emit=frozenset({Emit.USAGE})),
+        )
+        await adapter.emit_usage(
+            mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
+        )
+        mock_tools.send_event.assert_awaited_once()
+        kwargs = mock_tools.send_event.call_args.kwargs
+        assert kwargs["message_type"] == USAGE_EVENT_TYPE
+        assert kwargs["metadata"][USAGE_METADATA_KEY]["input_tokens"] == 100
 
 
 class TestStreamEventHandling:

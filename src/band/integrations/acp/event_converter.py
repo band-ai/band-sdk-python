@@ -17,7 +17,7 @@ from acp import (
 )
 
 from band.converters._tool_parsing import parse_tool_call, parse_tool_result
-from band.core.types import PlatformMessage
+from band.core.types import PlatformMessage, is_usage_event
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,11 @@ class EventConverter:
             case "error":
                 return update_agent_message_text(f"[Error] {msg.content}")
             case "task":
+                # Usage records ride task events (USAGE_EVENT_TYPE) but are not
+                # lifecycle tasks — don't render them as a (never-completing) plan
+                # entry in the editor. No ACP cost widget yet, so skip them.
+                if is_usage_event(msg.metadata):
+                    return None
                 return update_plan([plan_entry(msg.content, status="in_progress")])
             case _:
                 logger.debug("Unmapped message type %s, skipping", msg.message_type)

@@ -45,11 +45,46 @@ def memory_features() -> AdapterFeatures:
     return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.EXECUTION})
 
 
+def usage_features() -> AdapterFeatures:
+    """Features for the cost/token smokes: emit each turn's token usage as a
+    ``usage`` event so the ``Usage`` observation layer is populated."""
+    return AdapterFeatures(emit={Emit.USAGE})
+
+
+# A plain reply-eliciting prompt for the cost smokes: the turn just needs to run
+# an LLM call (input tokens) and produce a reply (output tokens); no tools.
+COST_AGENT_SYSTEM_PROMPT = (
+    "You are a helpful assistant in a chat room. Reply directly to the user with "
+    "one short, friendly sentence."
+)
+
+
+# A cost-smoke prompt for the multi-turn non-cumulative check: it must let the
+# *user* dictate reply length so the test can drive one LONG turn then one TINY
+# turn. That asymmetry is what makes the check robust — a correct per-turn record
+# has the tiny turn's output far below the long turn's, while a cumulative bug
+# (a running total) makes the second record ~= long + tiny, i.e. ~= the long
+# turn. Comparing a long turn against a tiny one is a scale-immune "small vs
+# large" split, unlike a "1x vs 2x" ratio of two equal turns, whose margin
+# collapses under ordinary LLM reply-length variance.
+COST_MULTI_TURN_SYSTEM_PROMPT = (
+    "You are a helpful assistant in a chat room. Follow the user's instructions "
+    "about reply length exactly: when they ask for detail, write several full "
+    "paragraphs; when they ask for a single word, reply with just that one word "
+    "and nothing else."
+)
+
+
 # Reusable agent shapes for ``@with_adapters(..., **SHAPE)``: the prompt (and
 # features) a smoke runs its agents under. Declared once here so every test shares
 # the same shape instead of re-spelling it.
 TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
 MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
+COST_AGENT = {"prompt": COST_AGENT_SYSTEM_PROMPT, "features": usage_features()}
+COST_MULTI_TURN_AGENT = {
+    "prompt": COST_MULTI_TURN_SYSTEM_PROMPT,
+    "features": usage_features(),
+}
 
 
 # Reply-oriented driving glue shared by the context-recall and rehydration

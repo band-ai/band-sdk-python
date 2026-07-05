@@ -50,7 +50,13 @@ except ImportError:
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.claude_sdk import (
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
@@ -178,7 +184,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS}
+        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -770,7 +776,26 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                 room_id,
                                 e,
                             )
+                # The ResultMessage carries the turn's total usage (the SDK runs
+                # its own tool loop internally, so this is already aggregated).
+                await self.emit_usage(tools, self._usage_from_result(sdk_message))
                 break
+
+    @staticmethod
+    def _usage_from_result(sdk_message: ResultMessage) -> TurnUsage:
+        """Map a Claude SDK ``ResultMessage.usage`` (raw API dict) onto TurnUsage.
+
+        Raw per the TurnUsage convention: the Claude API's ``input_tokens``
+        excludes cached tokens (reported separately in the cache fields).
+        ``usage`` may be absent; ``from_mapping`` yields empty usage then.
+        """
+        return TurnUsage.from_mapping(
+            getattr(sdk_message, "usage", None),
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read_input_tokens",
+            cache_write="cache_creation_input_tokens",
+        )
 
     # --- Copied from BandClaudeSDKAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:

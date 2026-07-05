@@ -417,6 +417,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             is_session_bootstrap,
         )
 
+        # CrewAI usage is intentionally not emitted (Emit.USAGE absent from
+        # SUPPORTED_EMIT): result.usage_metrics is cumulative-lifetime, not
+        # per-turn. Proper per-turn capture is deferred — don't add emit_usage here.
         try:
             # Type ignore explanation: CrewAI's kickoff_async is typed to accept
             # only a string prompt, but the implementation also accepts a list of

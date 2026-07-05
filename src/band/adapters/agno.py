@@ -18,6 +18,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.prompts import render_system_prompt
@@ -108,7 +109,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS}
+        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -301,6 +302,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         if Emit.THOUGHTS in self.features.emit:
             await self._report_thoughts(response, tools, room_id=room_id, msg_id=msg.id)
 
+        # RunOutput.metrics is aggregated across the run's model calls.
+        await self.emit_usage(tools, self._usage_from_response(response))
+
         self._persist_turn(room_id, response)
 
         if not any(
@@ -317,6 +321,31 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's accumulated transcript when the agent leaves."""
         self._message_history.pop(room_id, None)
+
+    @staticmethod
+    def _usage_from_response(response: RunOutput) -> TurnUsage:
+        """Map an Agno ``RunOutput.metrics`` onto TurnUsage.
+
+        ``metrics`` (a ``RunMetrics``, aggregated across the run's model calls)
+        is optional and its token field names line up 1:1 with TurnUsage's, so
+        this is a straight ``from_object`` (missing metrics → empty usage).
+
+        Agno exposes a separate ``reasoning_tokens``, but unlike the single-provider
+        adapters it is a multi-provider aggregator whose ``output_tokens`` already
+        *includes* reasoning for some backends (OpenAI's completion tokens) and
+        *excludes* it for others (Gemini's candidates), so no static fold is
+        correct for every backend — folding would double-count OpenAI-backed runs.
+        Leaving reasoning out (rather than statically folding) mirrors the RAW
+        cache convention: don't apply a provider-specific normalization that this
+        aggregator can't guarantee. So reasoning is deliberately not folded here.
+        """
+        return TurnUsage.from_object(
+            getattr(response, "metrics", None),
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read_tokens",
+            cache_write="cache_write_tokens",
+        )
 
     def _prior_transcript(
         self,
