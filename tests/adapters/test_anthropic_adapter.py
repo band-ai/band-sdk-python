@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
+from tests.adapters.usage_events import sent_usage_payloads
 
 
 @pytest.fixture
@@ -409,8 +410,6 @@ class TestToolExecution:
 
         from anthropic.types import TextBlock, ToolUseBlock
 
-        from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY
-
         adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
 
         def _usage(inp: int, out: int) -> SimpleNamespace:
@@ -457,12 +456,7 @@ class TestToolExecution:
         assert call_anthropic.call_count == 2
         # Find the single usage event and assert it carries the SUM (230/28),
         # not just the first (100/20) or last (130/8) call.
-        usage_payloads = [
-            call.kwargs["metadata"][USAGE_METADATA_KEY]
-            for call in mock_tools.send_event.await_args_list
-            if call.kwargs.get("message_type") == USAGE_EVENT_TYPE
-            and USAGE_METADATA_KEY in (call.kwargs.get("metadata") or {})
-        ]
+        usage_payloads = sent_usage_payloads(mock_tools.send_event)
         assert usage_payloads == [
             {
                 "input_tokens": 230,
@@ -471,6 +465,61 @@ class TestToolExecution:
                 "cache_write_tokens": 0,
             }
         ], f"expected one summed usage event, got {usage_payloads}"
+
+    @pytest.mark.asyncio
+    async def test_emits_accumulated_usage_when_loop_fails_midway(
+        self, sample_message, mock_tools
+    ):
+        """A tool loop that raises after a successful call still emits that
+        call's usage: tokens spent before the failure were still spent. The
+        exception still propagates (the turn is marked failed)."""
+        from types import SimpleNamespace
+
+        from anthropic.types import ToolUseBlock
+
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+
+        resp1 = SimpleNamespace(
+            stop_reason="tool_use",
+            content=[
+                ToolUseBlock(
+                    type="tool_use",
+                    id="tool-1",
+                    name="band_send_message",
+                    input={"content": "hi"},
+                )
+            ],
+            usage=SimpleNamespace(
+                input_tokens=100,
+                output_tokens=20,
+                cache_read_input_tokens=0,
+                cache_creation_input_tokens=0,
+            ),
+        )
+
+        mock_tools.execute_tool_call.return_value = {"status": "success"}
+        call_anthropic = AsyncMock(side_effect=[resp1, RuntimeError("boom")])
+        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
+            with pytest.raises(RuntimeError, match="boom"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        usage_payloads = sent_usage_payloads(mock_tools.send_event)
+        assert usage_payloads == [
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], f"expected the first call's usage to be emitted, got {usage_payloads}"
 
     @pytest.mark.asyncio
     async def test_handles_tool_error(self, mock_tools):

@@ -475,6 +475,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
         # accumulates session history internally and tool schemas may change
         # between calls.  History is injected as a text transcript instead.
         runner = self._create_runner(tools)
+        # Per-turn usage, summed across the event stream below. Initialized
+        # outside the try so the finally can emit whatever accumulated.
+        turn_usage = TurnUsage()
         try:
             # Always create a new session ID — each runner is fresh, so there
             # is no in-memory state to resume.  The ID is stored for cleanup
@@ -545,10 +548,9 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             )
 
             # Run the ADK agent - it handles the full tool loop. Usage is
-            # reported per model response on the event stream, so sum across the
-            # loop into one per-turn TurnUsage (emitted after a clean run).
+            # reported per model response on the event stream, so sum across
+            # the loop into one per-turn TurnUsage.
             final_response_text = ""
-            turn_usage = TurnUsage()
             async for event in runner.run_async(
                 user_id=room_id,
                 session_id=session_id,
@@ -575,11 +577,10 @@ class GoogleADKAdapter(SimpleAdapter[GoogleADKMessages]):
             await self._report_error(tools, str(e))
             raise
         finally:
+            # Emit before close so a close() failure can't drop the usage.
+            # No-op unless Emit.USAGE is on; best-effort, never raises.
+            await self.emit_usage(tools, turn_usage)
             await runner.close()
-
-        # Emit the turn's aggregated usage (reached only on a clean run — the
-        # except above re-raises). No-op unless Emit.USAGE is on.
-        await self.emit_usage(tools, turn_usage)
 
         # Accumulate message history for future transcript injection
         self._room_history[room_id].append(

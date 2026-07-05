@@ -271,61 +271,62 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
 
         # Tool loop - let LLM decide when to stop. Anthropic reports usage
         # per API call, so sum it across every iteration of the loop into one
-        # per-turn TurnUsage (emitted once, after the loop).
+        # per-turn TurnUsage, emitted on every exit via the finally.
         turn_usage = TurnUsage()
-        while True:
-            try:
-                response = await self._call_anthropic(
-                    messages=self._message_history[room_id],
-                    tools=tool_schemas,
-                )
-            except Exception as e:
-                logger.error("Error calling Anthropic: %s", e, exc_info=True)
-                await self._report_error(tools, str(e))
-                raise  # Re-raise so message is marked as failed
-
-            turn_usage = turn_usage + self._usage_from_response(response)
-
-            # Check for tool use
-            if response.stop_reason != "tool_use":
-                # No more tool calls - extract text content if any
-                text_content = self._extract_text_content(response.content)
-                if text_content:
-                    self._message_history[room_id].append(
-                        {
-                            "role": "assistant",
-                            "content": text_content,
-                        }
+        try:
+            while True:
+                try:
+                    response = await self._call_anthropic(
+                        messages=self._message_history[room_id],
+                        tools=tool_schemas,
                     )
-                logger.debug(
-                    "Room %s: Completed with stop_reason=%s",
-                    room_id,
-                    response.stop_reason,
+                except Exception as e:
+                    logger.error("Error calling Anthropic: %s", e, exc_info=True)
+                    await self._report_error(tools, str(e))
+                    raise  # Re-raise so message is marked as failed
+
+                turn_usage = turn_usage + self._usage_from_response(response)
+
+                # Check for tool use
+                if response.stop_reason != "tool_use":
+                    # No more tool calls - extract text content if any
+                    text_content = self._extract_text_content(response.content)
+                    if text_content:
+                        self._message_history[room_id].append(
+                            {
+                                "role": "assistant",
+                                "content": text_content,
+                            }
+                        )
+                    logger.debug(
+                        "Room %s: Completed with stop_reason=%s",
+                        room_id,
+                        response.stop_reason,
+                    )
+                    break
+
+                # Add assistant response with tool_use blocks to history
+                serialized_content = self._serialize_content_blocks(response.content)
+                self._message_history[room_id].append(
+                    {
+                        "role": "assistant",
+                        "content": serialized_content,
+                    }
                 )
-                break
 
-            # Add assistant response with tool_use blocks to history
-            serialized_content = self._serialize_content_blocks(response.content)
-            self._message_history[room_id].append(
-                {
-                    "role": "assistant",
-                    "content": serialized_content,
-                }
-            )
+                # Process tool calls
+                tool_results = await self._process_tool_calls(response, tools)
 
-            # Process tool calls
-            tool_results = await self._process_tool_calls(response, tools)
-
-            # Add tool results to history
-            self._message_history[room_id].append(
-                {
-                    "role": "user",
-                    "content": tool_results,
-                }
-            )
-
-        # Emit the turn's aggregated token usage (no-op unless Emit.USAGE is on).
-        await self.emit_usage(tools, turn_usage)
+                # Add tool results to history
+                self._message_history[room_id].append(
+                    {
+                        "role": "user",
+                        "content": tool_results,
+                    }
+                )
+        finally:
+            # No-op unless Emit.USAGE is on; best-effort, never raises.
+            await self.emit_usage(tools, turn_usage)
 
         logger.debug(
             "Message %s processed successfully (history now has %s messages)",

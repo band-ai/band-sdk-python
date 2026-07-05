@@ -234,45 +234,49 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
 
         gemini_tools = self._build_gemini_tools(tools)
         tool_rounds = 0
-        # Gemini reports usage per call; sum across the loop into one TurnUsage.
+        # Gemini reports usage per call; sum across the loop into one
+        # TurnUsage, emitted on every exit via the finally.
         turn_usage = TurnUsage()
-        while True:
-            if tool_rounds >= self.max_tool_rounds:
-                raise RuntimeError(
-                    f"Exceeded max tool rounds ({self.max_tool_rounds}) in room {room_id}"
+        try:
+            while True:
+                if tool_rounds >= self.max_tool_rounds:
+                    raise RuntimeError(
+                        f"Exceeded max tool rounds ({self.max_tool_rounds}) "
+                        f"in room {room_id}"
+                    )
+
+                try:
+                    response = await self._call_gemini(
+                        contents=self._message_history[room_id], tools=gemini_tools
+                    )
+                except Exception as e:
+                    logger.exception("Error calling Gemini: %s", e)
+                    await self._report_error(tools, str(e))
+                    raise
+
+                turn_usage = turn_usage + self._usage_from_response(response)
+
+                candidate_content = self._extract_candidate_content(response)
+                if candidate_content is not None:
+                    self._message_history[room_id].append(candidate_content)
+
+                function_calls = list(response.function_calls or [])
+                if not function_calls:
+                    break
+
+                tool_response_parts = await self._process_function_calls(
+                    function_calls=function_calls,
+                    tools=tools,
                 )
+                if tool_response_parts:
+                    self._message_history[room_id].append(
+                        types.Content(role="user", parts=tool_response_parts)
+                    )
 
-            try:
-                response = await self._call_gemini(
-                    contents=self._message_history[room_id], tools=gemini_tools
-                )
-            except Exception as e:
-                logger.exception("Error calling Gemini: %s", e)
-                await self._report_error(tools, str(e))
-                raise
-
-            turn_usage = turn_usage + self._usage_from_response(response)
-
-            candidate_content = self._extract_candidate_content(response)
-            if candidate_content is not None:
-                self._message_history[room_id].append(candidate_content)
-
-            function_calls = list(response.function_calls or [])
-            if not function_calls:
-                break
-
-            tool_response_parts = await self._process_function_calls(
-                function_calls=function_calls,
-                tools=tools,
-            )
-            if tool_response_parts:
-                self._message_history[room_id].append(
-                    types.Content(role="user", parts=tool_response_parts)
-                )
-
-            tool_rounds += 1
-
-        await self.emit_usage(tools, turn_usage)
+                tool_rounds += 1
+        finally:
+            # No-op unless Emit.USAGE is on; best-effort, never raises.
+            await self.emit_usage(tools, turn_usage)
 
         # Trim after the tool loop so the LLM always sees full context for the
         # current turn; trimming only affects the next turn's window.

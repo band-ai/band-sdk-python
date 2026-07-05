@@ -481,30 +481,53 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         Returns the list of assistant text parts collected during the turn.
         """
         messages = [{"role": "user", "content": content}]
-        final_text_parts: list[str] = []
-        used_send_message = False  # tracks if agent called band_send_message
         # Per-turn token usage. Reachable only on the per_room path, where the
         # non-streamed LettaResponse carries an aggregate .usage; the shared-mode
         # Conversations stream exposes no such aggregate, so it stays empty (N-A).
+        # Emitted on every exit via the finally.
         turn_usage = TurnUsage()
 
         room_ctx = self._rooms.get(room_id)
 
-        # Use Conversations API in shared mode, direct agent API in per_room mode
-        if self.config.mode == "shared" and room_ctx and room_ctx.conversation_id:
-            conversation_stream = await self._client.conversations.messages.create(
-                conversation_id=room_ctx.conversation_id,
-                messages=messages,
-            )
-            response_messages = [resp_msg async for resp_msg in conversation_stream]
-        else:
-            response = await self._client.agents.messages.create(
-                agent_id=agent_id,
-                messages=messages,
-            )
-            response_messages = list(response.messages)
-            turn_usage = self._usage_from_response(response)
+        try:
+            # Use Conversations API in shared mode, direct agent API in per_room mode
+            if self.config.mode == "shared" and room_ctx and room_ctx.conversation_id:
+                conversation_stream = await self._client.conversations.messages.create(
+                    conversation_id=room_ctx.conversation_id,
+                    messages=messages,
+                )
+                response_messages = [resp_msg async for resp_msg in conversation_stream]
+            else:
+                response = await self._client.agents.messages.create(
+                    agent_id=agent_id,
+                    messages=messages,
+                )
+                response_messages = list(response.messages)
+                turn_usage = self._usage_from_response(response)
 
+            return await self._process_response_messages(
+                response_messages,
+                tools,
+                room_id,
+                reply_to_sender_id,
+            )
+        finally:
+            # No-op unless Emit.USAGE is on; best-effort, never raises.
+            await self.emit_usage(tools, turn_usage)
+
+    async def _process_response_messages(
+        self,
+        response_messages: list[Any],
+        tools: AgentToolsProtocol,
+        room_id: str,
+        reply_to_sender_id: str,
+    ) -> list[str]:
+        """Observe Letta response messages: report tool events, auto-relay text.
+
+        Returns the list of assistant text parts collected during the turn.
+        """
+        final_text_parts: list[str] = []
+        used_send_message = False  # tracks if agent called band_send_message
         for resp_msg in response_messages:
             msg_type = getattr(resp_msg, "message_type", None)
             logger.debug("Room %s: Letta response message type=%s", room_id, msg_type)
@@ -576,10 +599,6 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
             await tools.send_message(final_text, mentions=mentions)
         else:
             logger.debug("Room %s: Letta turn complete, no output", room_id)
-
-        # Emit the turn's token usage (no-op unless Emit.USAGE is on; empty on
-        # the shared-mode stream path, so nothing is emitted there).
-        await self.emit_usage(tools, turn_usage)
 
         return final_text_parts
 

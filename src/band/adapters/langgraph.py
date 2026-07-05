@@ -335,7 +335,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         graph_input = {"messages": messages}
 
         # Usage is reported per model call on the stream; a turn may make several
-        # (a tool loop), so sum across every on_chat_model_end into one TurnUsage.
+        # (a tool loop), so sum across every on_chat_model_end into one TurnUsage,
+        # emitted on every exit via the finally.
         turn_usage = TurnUsage()
         try:
             async for event in graph.astream_events(
@@ -350,8 +351,6 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             ):
                 await self._handle_stream_event(event, room_id, tools)
                 turn_usage = turn_usage + self._usage_from_stream_event(event)
-
-            await self.emit_usage(tools, turn_usage)
 
             if should_mark_bootstrapped:
                 self._bootstrapped_rooms[room_id] = None
@@ -379,6 +378,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             except Exception:
                 logger.exception("Failed to report error event for message %s", msg.id)
             raise
+        finally:
+            # No-op unless Emit.USAGE is on; best-effort, never raises.
+            await self.emit_usage(tools, turn_usage)
 
     async def _handle_stream_event(
         self,

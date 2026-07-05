@@ -134,10 +134,14 @@ class SimpleAdapter(Generic[H], ABC):
         ``USAGE_EVENT_TYPE``.
 
         Adapters call this once per turn with the usage summed across the tool
-        loop. An adapter that cannot observe usage (server-side execution)
-        simply never calls it, so no event is emitted and the toolkit records
-        N-A rather than a false zero. An all-zero usage is likewise skipped so a
-        read never sees a zero-only record masquerading as real data.
+        loop, typically from a ``finally`` so every exit path is covered: it
+        never raises, and an empty total is skipped, so a turn that fails after
+        a successful model call still reports the tokens it spent while a
+        first-call failure emits nothing. An adapter that cannot observe usage
+        (server-side execution) simply never calls it, so no event is emitted
+        and the toolkit records N-A rather than a false zero. An all-zero usage
+        is likewise skipped so a read never sees a zero-only record
+        masquerading as real data.
         """
         if Emit.USAGE not in self.features.emit:
             return

@@ -311,7 +311,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             release_future = room_state.turn_release_future
             turn_future = room_state.turn_future
             turn_task = asyncio.create_task(
-                self._watch_turn_completion(room_state, room_id, turn_future)
+                self._watch_turn_completion(
+                    room_state,
+                    room_id,
+                    turn_future,
+                    room_state.usage_by_message,
+                )
             )
             room_state.turn_task = turn_task
 
@@ -896,7 +901,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state.assistant_part_types.clear()
         room_state.reported_tool_calls.clear()
         room_state.reported_tool_results.clear()
-        room_state.usage_by_message.clear()
+        # A fresh dict, not .clear(): the previous turn's watch task drains the
+        # dict instance it captured, so a new turn must not empty it out from
+        # under a still-pending _emit_turn_usage (same snapshot idea as passing
+        # turn_future into _watch_turn_completion).
+        room_state.usage_by_message = {}
         room_state.last_error_message = None
 
     async def _watch_turn_completion(
@@ -904,6 +913,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state: _RoomState,
         room_id: str,
         turn_future: asyncio.Future[None] | None,
+        usage_by_message: dict[str, TurnUsage],
     ) -> None:
         if turn_future is None:
             return
@@ -931,11 +941,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 )
             # Tokens spent before the timeout were still spent — emit them, same
             # as the success path (best-effort; no-op if none captured).
-            await self._emit_turn_usage(room_state)
+            await self._emit_turn_usage(room_state, usage_by_message)
             self._release_turn_wait(room_state)
         else:
             await self._deliver_fallback_text(room_state)
-            await self._emit_turn_usage(room_state)
+            await self._emit_turn_usage(room_state, usage_by_message)
             self._release_turn_wait(room_state)
         finally:
             self._clear_turn_state(
@@ -1028,18 +1038,25 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
         room_state.pending_mentions = []
 
-    async def _emit_turn_usage(self, room_state: _RoomState) -> None:
+    async def _emit_turn_usage(
+        self,
+        room_state: _RoomState,
+        usage_by_message: dict[str, TurnUsage],
+    ) -> None:
         """Sum the turn's per-assistant-message usage and emit it.
 
-        A no-op when usage reporting is off (``Emit.USAGE`` absent) or nothing was
-        captured — the base ``emit_usage`` skips an empty total. A live OpenCode
-        server reports ``tokens`` on each assistant ``info``; mocked/offline runs
-        don't, so the total is simply empty there.
+        Takes the turn-owned dict captured by the watch task (not
+        ``room_state.usage_by_message``, which a new turn may have replaced by
+        the time this runs). A no-op when usage reporting is off
+        (``Emit.USAGE`` absent) or nothing was captured: the base
+        ``emit_usage`` skips an empty total. A live OpenCode server reports
+        ``tokens`` on each assistant ``info``; mocked/offline runs don't, so
+        the total is simply empty there.
         """
         if room_state.tools is None:
             return
         total = TurnUsage()
-        for usage in room_state.usage_by_message.values():
+        for usage in usage_by_message.values():
             total = total + usage
         await self.emit_usage(room_state.tools, total)
 

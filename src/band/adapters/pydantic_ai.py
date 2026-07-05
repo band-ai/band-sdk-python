@@ -622,8 +622,8 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # pydantic-ai's result.usage() is already summed across the run's model
         # calls, so it's set once (on the result event), not accumulated.
         turn_usage = TurnUsage()
-        # Snapshot the prior messages' identities so the benign-path usage
-        # fallback can sum only THIS run's responses: capture_run_messages()
+        # Snapshot the prior messages' identities so the fallback usage path
+        # (any run that raises) can sum only THIS run's responses: capture_run_messages()
         # records the passed message_history + the new turn, so summing the whole
         # list would double-count every prior turn. Identity (not a positional
         # slice) because pydantic-ai runs _clean_message_history() on the passed
@@ -729,17 +729,21 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     *self._message_history[room_id],
                     ModelRequest(parts=[UserPromptPart(content=user_message)]),
                 ]
-                # This turn spent tokens even though no result event fired, so
-                # still emit usage — summed from only THIS run's responses (those
-                # in captured whose identity wasn't in the prior history), since
-                # captured also holds the prior history. The happy-path emit below
-                # is skipped by this return.
-                this_run = self._new_run_messages(captured, prior_message_ids)
-                await self.emit_usage(tools, self._usage_from_messages(this_run))
                 return
             raise
         finally:
             capture_cm.__exit__(None, None, None)
+            # Single emit point for every exit. A run that raised (benign
+            # empty-final or a hard failure) never saw the result event, so
+            # fall back to summing only THIS run's captured responses by
+            # identity (captured also holds the prior history). Feature-gated
+            # here so the fallback's history scan never runs when usage
+            # emission is off.
+            if Emit.USAGE in self.features.emit:
+                if turn_usage.is_empty:
+                    this_run = self._new_run_messages(captured, prior_message_ids)
+                    turn_usage = self._usage_from_messages(this_run)
+                await self.emit_usage(tools, turn_usage)
 
         # A clean run with no terminal work means the model answered in plain text
         # without calling band_send_message — a silently dropped reply. Surface it
@@ -751,11 +755,6 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 "usually means the agent returned a final answer as plain text "
                 "instead of using the band_send_message tool.",
             )
-
-        # Emit the turn's token usage (no-op unless Emit.USAGE is on). The benign
-        # empty-final-response path above emits its own (from captured messages)
-        # and returns before here.
-        await self.emit_usage(tools, turn_usage)
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",

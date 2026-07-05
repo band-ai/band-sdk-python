@@ -15,9 +15,10 @@ from pydantic import BaseModel
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import PlatformMessage
+from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools
+from tests.adapters.usage_events import recorded_usage_payloads
 
 
 def make_platform_message(
@@ -923,6 +924,43 @@ class TestOpencodeAdapter:
         error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
         assert error_events
         assert "boom" in error_events[0]["content"].lower()
+
+    @pytest.mark.asyncio
+    async def test_new_turn_does_not_wipe_prior_turns_pending_usage(self) -> None:
+        """Regression: a message racing in between turn completion and the usage
+        drain must not empty the prior turn's usage. The dict is turn-owned (a
+        fresh instance per _begin_turn), so the watch task sums the instance it
+        captured, not whatever the room currently points at."""
+        adapter = OpencodeAdapter(
+            client_factory=lambda _config: FakeOpencodeClient(),
+            features=AdapterFeatures(emit={Emit.USAGE}),
+        )
+        tools = FakeAgentTools()
+        room_state = await adapter._get_or_create_room_state("room-1")
+        room_state.tools = tools_protocol(tools)
+
+        adapter._begin_turn(room_state, sender_id="user-1")
+        room_state.usage_by_message["msg-1"] = TurnUsage(
+            input_tokens=100, output_tokens=20
+        )
+        # What on_message hands this turn's watch task.
+        first_turn_usage = room_state.usage_by_message
+
+        # The next turn begins before the first turn's usage is drained.
+        adapter._begin_turn(room_state, sender_id="user-2")
+        assert room_state.usage_by_message == {}
+
+        await adapter._emit_turn_usage(room_state, first_turn_usage)
+
+        usage_payloads = recorded_usage_payloads(tools)
+        assert usage_payloads == [
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], f"expected the first turn's usage to survive, got {usage_payloads}"
 
     @pytest.mark.asyncio
     async def test_cleanup_is_idempotent(self) -> None:

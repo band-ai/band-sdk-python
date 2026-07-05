@@ -1077,6 +1077,74 @@ class TestEmptyFinalAnswer:
             )
 
     @pytest.mark.asyncio
+    async def test_failed_run_still_emits_captured_usage(
+        self, sample_message, mock_tools, mock_pydantic_agent
+    ):
+        """A run that raises still emits the usage its captured responses accrued.
+
+        Tokens spent before the failure were still spent: the finally-based emit
+        falls back to summing this run's captured ModelResponses when no result
+        event fired, so a hard mid-run failure doesn't silently drop usage."""
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+
+        from band.core.types import Emit
+        from tests.adapters.usage_events import sent_usage_payloads
+
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4",
+            features=AdapterFeatures(emit={Emit.USAGE}),
+        )
+        with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
+            await adapter.on_started("TestBot", "Test bot")
+
+        adapter._agent.run_stream_events = MagicMock(
+            return_value=make_raising_stream(
+                UnexpectedModelBehavior("Received empty model response"),
+                tool_result=True,
+            )
+        )
+
+        # Simulate a run that captured a response with usage before raising.
+        failed_response = ModelResponse.__new__(ModelResponse)
+        object.__setattr__(
+            failed_response,
+            "usage",
+            SimpleNamespace(input_tokens=100, output_tokens=20),
+        )
+        object.__setattr__(failed_response, "parts", [TextPart(content="partial")])
+        captured_turn = [
+            ModelRequest(parts=[UserPromptPart(content="[Alice]: hi")]),
+            failed_response,
+        ]
+
+        @contextmanager
+        def fake_capture():
+            yield captured_turn
+
+        with patch("band.adapters.pydantic_ai.capture_run_messages", fake_capture):
+            with pytest.raises(UnexpectedModelBehavior):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        usage_payloads = sent_usage_payloads(mock_tools.send_event)
+        assert usage_payloads == [
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], f"expected the captured run's usage to be emitted, got {usage_payloads}"
+
+    @pytest.mark.asyncio
     async def test_unrelated_model_error_propagates_even_after_tool(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
