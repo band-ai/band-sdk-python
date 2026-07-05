@@ -30,6 +30,7 @@ from tests.e2e.baseline.smoke.samples.sample_tools import (
     LOOKUP,
     LOOKUP_PROMPT,
     LOOKUP_TOOL,
+    lookup_code_instruction,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
@@ -62,7 +63,7 @@ async def test_custom_tool_round_trips(
     async with reply_capture(room_id) as capture:
         mid = await user_ops.send_message(
             room_id,
-            f"look up the access code for key '{KEY}' and tell me the code",
+            lookup_code_instruction(KEY),
             mention_id=agent.id,
             mention_name=agent.name,
         )

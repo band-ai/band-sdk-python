@@ -13,9 +13,8 @@ topologies build through ``AdapterCell`` so construction + run wiring lives in o
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 
 import pytest
 
@@ -33,6 +32,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
+    running_members,
 )
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
@@ -224,25 +224,11 @@ async def agents(
             "@per_adapter."
         )
     req: WithAdapters = marker.args[0]
-    async with AsyncExitStack() as stack:
-        # Each member gets its own AsyncExitStack (that type isn't concurrency-safe),
-        # registered on the outer stack up front so teardown unwinds every member that
-        # entered even if another fails. Provision concurrently — one round-trip-bound
-        # enter per member instead of N sequential awaits — via a TaskGroup, which
-        # cancels and awaits the siblings if any member fails to come up.
-        member_stacks = [AsyncExitStack() for _ in req.adapters]
-        for member_stack in member_stacks:
-            await stack.enter_async_context(member_stack)
-        async with asyncio.TaskGroup() as tg:
-            tasks = [
-                tg.create_task(
-                    member_stacks[slot].enter_async_context(
-                        _running_group_member(
-                            name, slot, req, baseline_settings, resource_manager
-                        )
-                    )
-                )
-                for slot, name in enumerate(req.adapters)
-            ]
-        provisioned = [task.result() for task in tasks]
+    # Concurrent start (a serial start would mask co-residency collisions) lives in the
+    # shared ``running_members`` helper — the same one ``AdapterCell.run_many`` uses.
+    members = [
+        _running_group_member(name, slot, req, baseline_settings, resource_manager)
+        for slot, name in enumerate(req.adapters)
+    ]
+    async with running_members(members) as provisioned:
         yield provisioned

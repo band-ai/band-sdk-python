@@ -48,6 +48,26 @@ class Replies(ContentAssertions, list[MessageCreatedPayload]):
     def assert_present(self, *, what: str = "an agent reply") -> None:
         assert self, f"expected {what}, but no agent messages were captured"
 
+    def assert_at_most(self, n: int) -> None:
+        """Assert *at most* ``n`` replies — the one upper-bound check, for runaway guards.
+
+        The deliberate exception to the toolkit's floors-only rule, so it lives here on
+        ``Replies`` and **not** on the shared :class:`ContentAssertions` floor mixin
+        (which ``Events`` shares) — an upper bound there would erode the "a floor, never a
+        ceiling" contract for every collection. Use it **only** after scoping to a sender
+        and a post-trigger window (``from_sender(...).since(...)``), with a deliberately
+        high ceiling that a normal one-turn reply batch never crosses but a self-re-dispatch
+        loop does. It is a runaway guard, **not** an exact "one reply" or model-driven
+        reply-count assertion; an infinite loop is caught by the barrier timeout, not here.
+        """
+        count = len(self)
+        if count > n:
+            haystack = "\n".join(message.content for message in self)
+            raise AssertionError(
+                f"expected at most {n} {self._noun()}(s), got {count} — a self-dispatch "
+                f"loop, not model reply batching:\n{haystack}"
+            )
+
     def mentioning(self, participant_id: str) -> "Replies":
         """The subset of replies that mention ``participant_id`` (by metadata).
 
