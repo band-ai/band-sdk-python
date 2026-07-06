@@ -236,6 +236,29 @@ class ResourceManager:
         logger.info("Provisioned room %s", room_id)
         return room_id
 
+    def adopt_room(self, room_id: str) -> None:
+        """Track a room this run did not create via :meth:`provision_room` — e.g. one an
+        agent created itself through ``band_create_chatroom`` — so it is reaped on teardown
+        like any provisioned room. Idempotent. Reaping goes through the same
+        ``user_ops.delete_room`` path, which the platform authorizes because the test user
+        owns the agent that owns the room (agent-owner delete authz).
+        """
+        if room_id not in self._provisioned_room_ids:
+            self._provisioned_room_ids.append(room_id)
+
+    async def agent_room_ids(self, agent: ProvisionedAgent) -> set[str]:
+        """The ids of the chat rooms ``agent`` participates in, read with the agent's own key.
+
+        A before/after snapshot around a turn surfaces a room the agent created *itself*
+        (via ``band_create_chatroom``) — the only handle to it, since that tool takes no
+        title and adds no human participant, so the user/observer client never sees it.
+        Pair the new id with :meth:`adopt_room` so it is reaped on teardown like any
+        provisioned room. Uses the agent's Agent-API client (like the memory reads).
+        """
+        client = agent_rest_client(agent, self._settings)
+        response = await client.agent_api_chats.list_agent_chats()
+        return {room.id for room in (response.data or [])}
+
     async def reap_agent(self, agent_id: str) -> None:
         """Force-delete an agent."""
         await self._client.human_api_agents.delete_my_agent(agent_id, force=True)

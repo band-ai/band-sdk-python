@@ -20,7 +20,7 @@ import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -180,3 +180,18 @@ async def test_run_many_rejects_mismatched_labels() -> None:
     with pytest.raises(ValueError, match="labels length"):
         async with _fake_cell().run_many(2, labels=["only-one"]):
             pass
+
+
+async def test_adopt_room_is_reaped_once_on_teardown() -> None:
+    """An adopted (e.g. agent-created) room is reaped like a provisioned one, idempotently,
+    through the same ``user_ops.delete_room`` path."""
+    rm = ResourceManager(
+        user_client=MagicMock(),
+        settings=cast(BaselineSettings, MagicMock()),
+        run_id="test",
+    )
+    rm._user_ops.delete_room = AsyncMock()  # observe the reap without a network call
+    rm.adopt_room("room-abc")
+    rm.adopt_room("room-abc")  # idempotent — not tracked (or reaped) twice
+    await rm.reap_all()
+    rm._user_ops.delete_room.assert_awaited_once_with("room-abc")

@@ -294,6 +294,15 @@ def remove_participant_instruction(peer_name: str, peer_id: str) -> str:
     )
 
 
+# Drives the agent to create a brand-new chat room via band_create_chatroom (the only way
+# to produce one); the round-trip is then observed in the agent's own chat list, since the
+# tool takes no title and adds no human participant.
+CREATE_CHATROOM = (
+    "Create a new, separate chat room using the band_create_chatroom tool. Making that "
+    "tool call is your only action."
+)
+
+
 def remember_fact_instruction(fact: str) -> str:
     """One burst turn: ask the agent to remember ``fact`` (a unique marker). Terse so a
     burst of these is cheap; the later spanning recall is what's under test."""
