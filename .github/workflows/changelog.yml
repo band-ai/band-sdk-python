@@ -1,0 +1,73 @@
+name: Changelog
+
+# Publishes the release changelog when a GitHub Release is published (i.e. after
+# release-please's release PR is merged on main). Runs the shared
+# `changelog-generator` skill via the Claude Code Action, which:
+#   - reads merged Linear issues for the version (Linear GraphQL API)
+#   - opens a PR to the Fern docs repo and enables auto-merge
+#   - posts the announcement to Slack (incoming webhook)
+#   - drafts the announcement into the private Discord review channel (webhook)
+#   - writes back a Linear Release + release notes (Linear GraphQL API)
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to generate the changelog for (defaults to latest release)"
+        required: false
+        type: string
+
+# Never run two changelog jobs for the same ref at once.
+concurrency:
+  group: changelog-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # full history so the skill can diff the release range
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: band-ai
+          # Scope the token to exactly the repos the skill touches. The App must
+          # be installed on every repo listed here.
+          repositories: |
+            band-sdk-python
+            fern-config # TODO(devops): replace with the real Fern docs repo name
+            claude-plugins # only required while the marketplace repo is private
+
+      - name: Generate and publish changelog
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          plugin_marketplaces: "https://github.com/band-ai/claude-plugins.git"
+          plugins: "changelog-generator@band-plugins"
+          prompt: "/changelog-generator:generate ${{ github.event.release.tag_name || inputs.tag }}"
+          claude_args: |
+            --allowedTools "Bash,Read,Write,Edit,Glob,Grep"
+            --max-turns 30
+        env:
+          # gh CLI + git use this token for the source repo and the Fern docs repo.
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Slack: posted live to the announcement channel.
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Discord: drafted into the private review channel for a human to forward.
+          DISCORD_DRAFT_WEBHOOK_URL: ${{ secrets.DISCORD_DRAFT_WEBHOOK_URL }}
+          # Linear: read issues + write the Release entry via GraphQL.
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
