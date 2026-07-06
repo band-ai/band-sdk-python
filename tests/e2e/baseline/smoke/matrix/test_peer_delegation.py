@@ -82,11 +82,12 @@ async def test_peer_initiated_delegation_with_self_recall(
             ).assert_contains_any([value])
 
             # Cascade barrier: A's reply is driven by B's mention (not a user send), so
-            # wait until A has produced a message *since the delegation* before asserting
-            # it responded (scoped past `mark` so an earlier A message can't satisfy it).
+            # wait until A has produced a message *since the delegation* — reusing the same
+            # since()/from_sender() filter the assertion below uses (scoped past `mark`, so
+            # an earlier A message can't satisfy it).
             await capture.wait_until(
-                lambda messages: any(
-                    m.sender_id == agent_a.id for m in messages[mark:]
+                lambda _messages: bool(
+                    capture.messages.since(mark).from_sender(agent_a.id)
                 ),
                 deadline_s=cascade_deadline,
             )

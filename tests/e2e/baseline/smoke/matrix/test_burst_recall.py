@@ -27,6 +27,7 @@ import pytest
 from band.client.streaming import DeliveryStatus
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL_ALL_FACTS,
     REPLY_PROMPT,
@@ -43,13 +44,16 @@ BURST_SIZE = 6
 
 @per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
 @pytest.mark.flaky(reruns=2)  # spanning recall is model-driven
-@pytest.mark.timeout(extra=300)  # a burst of turns, then a recall turn
+@pytest.mark.timeout(
+    extra=780
+)  # a BURST_SIZE-turn backlog + a recall turn (slow backends)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_burst_handled_then_spanning_recall(
     agent: ProvisionedAgent,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
+    baseline_settings: BaselineSettings,
 ) -> None:
     """No burst turn is dropped, and an early/mid/recent fact all survive to recall."""
     facts = [unique_marker(f"fact{index}") for index in range(BURST_SIZE)]
@@ -70,7 +74,11 @@ async def test_burst_handled_then_spanning_recall(
             for fact in facts
         ]
         # No-drop gate: barrier once on the last, then non-waiting per-message reads.
-        await capture.wait_for_processed(mids[-1], agent.id)
+        # The single barrier covers a BURST_SIZE-turn FIFO backlog, so size its deadline
+        # to the backlog (the per-turn default would false-fail on a slow backend).
+        await capture.wait_for_processed(
+            mids[-1], agent.id, deadline_s=baseline_settings.e2e_timeout * BURST_SIZE
+        )
         for fact, mid in zip(facts, mids):
             status = capture.delivery_status(mid, agent.id)
             assert status == DeliveryStatus.PROCESSED, (

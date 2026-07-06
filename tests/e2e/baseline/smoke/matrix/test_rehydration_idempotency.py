@@ -115,8 +115,11 @@ async def test_handled_work_not_redrained_on_restart(
         async with cell.run_as(identity):
             await capture.wait_for_processed(offline_mid, identity.id)
         replies = capture.messages.from_sender(identity.id)
-        # Once the offline message is drained, snapshot the run-1 messages' delivery in
-        # this fresh run-2 capture: not being re-drained means no fresh transition here.
+        # The capture opened BEFORE the cold boot and the offline barrier just succeeded,
+        # so it observed every room delivery event from boot onward — including, had the
+        # SDK re-drained an already-handled message, that message's fresh PROCESSING. So a
+        # run-1 message with no PROCESSING transition here means "not re-drained", not
+        # "the capture saw nothing" — the offline barrier is the positive control.
         redrained = {
             mid: capture.delivery_history(mid, identity.id)
             for mid in (note_mid, invite_mid, handled_mid)

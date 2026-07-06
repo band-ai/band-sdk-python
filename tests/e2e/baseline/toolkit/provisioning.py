@@ -530,15 +530,18 @@ class AdapterCell:
             raise ValueError(
                 f"run_many labels length ({len(labels)}) must match count ({count})"
             )
-        identities = [
-            await self.provision(
-                label=labels[index] if labels else f"{self.adapter_id}-{index}"
+        # Each member provisions *and* runs (``running``), entered concurrently by
+        # ``running_members`` — so provisioning is concurrent too, exactly like the
+        # ``@with_adapters`` group path (``_running_group_member`` → ``cell.running``),
+        # not a serial provision loop before the concurrent run.
+        members = [
+            self.running(
+                label=labels[index] if labels else f"{self.adapter_id}-{index}",
+                prompt=prompt,
+                features=features,
+                tools=tools,
             )
             for index in range(count)
-        ]
-        members = [
-            self.run_as(identity, prompt=prompt, features=features, tools=tools)
-            for identity in identities
         ]
         async with running_members(members) as running:
             yield running
