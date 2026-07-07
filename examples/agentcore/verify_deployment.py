@@ -5,26 +5,36 @@
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
-"""Verify a deployed AgentCore three-agent orchestration demo end-to-end.
+"""Post-deployment smoke check for the AgentCore demo in this folder.
 
-This is manual verification tooling for the ``examples/agentcore/`` demo, not an
-automated test — it drives a **live** Band platform and the externally-deployed
-demo, so it never runs in CI. Use it after you have stood the demo up to confirm
-it actually orchestrates.
+Run this **once, by hand, after you have deployed the demo**, to confirm the live
+deployed system actually orchestrates end-to-end. Exit 0 = the deployment works;
+exit 1 = it does not.
 
-It exercises the acceptance scenario: a user asks ``@personal_assistant`` a
-question needing both ``@weather`` and ``@math``; PA adds them to the room, asks
-each what it needs, and posts a final synthesized answer. It runs that flow once
-in a single room, then twice concurrently in two rooms to confirm the bridge's
-per-room session isolation (no cross-bleed between rooms).
+What it checks:
+
+- the acceptance flow — a user asks ``@personal_assistant`` a question needing
+  both ``@weather`` and ``@math``; PA adds them to the room, asks each what it
+  needs, and posts a final synthesized answer;
+- per-room session isolation — the same flow run in two concurrent rooms does not
+  bleed between them.
+
+What it is NOT:
+
+- **not** a unit/CI test — it needs the externally-deployed AWS infra, so it never
+  runs in CI (nothing under ``tests/`` depends on it, and it depends on nothing
+  there);
+- **not** the demo itself, and **not** how you run the demo — the bridge is
+  ``run_agentcore.py`` and the deployed container is ``agentcore_llm_server.py``;
+- **not** a general SDK/adapter test — those live in ``tests/e2e/baseline/``.
 
 Prerequisites:
 
 1. ``BAND_REST_URL``, ``BAND_WS_URL``, ``BAND_API_KEY_USER`` — a user account on
    the target platform (this tool connects as the user, not an agent).
 2. The demo deployed and running externally:
-   - Three AgentCore Runtimes (weather / math / personal_assistant).
-   - The bridge running with ``BAND_BRIDGE_AGENTS`` pointing at the three
+   - three AgentCore Runtimes (weather / math / personal_assistant);
+   - the bridge running with ``BAND_BRIDGE_AGENTS`` pointing at the three
      identities and their runtime ARNs (see ``run_agentcore.py``).
 3. ``AGENTCORE_DEMO_PA_AGENT_ID`` — the personal_assistant's Band agent UUID, so
    this tool knows whom to @-mention. (PA recruits the other two at runtime.)
@@ -35,9 +45,7 @@ Config is read from the environment; values in ``.env.test`` at the repo root
 are loaded automatically. Run with::
 
     AGENTCORE_DEMO_PA_AGENT_ID=<uuid> \\
-        uv run python examples/agentcore/verify_demo.py
-
-Exits 0 if all flows pass, 1 otherwise.
+        uv run python examples/agentcore/verify_deployment.py
 """
 
 from __future__ import annotations
@@ -53,7 +61,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("verify_demo")
+logger = logging.getLogger("verify_deployment")
 
 # Load .env.test from the repo root so BAND_* vars are available without export.
 load_dotenv(Path(__file__).resolve().parents[2] / ".env.test", override=False)
