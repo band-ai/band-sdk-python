@@ -38,6 +38,7 @@ from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
     find_custom_tool,
+    format_validation_error,
     get_custom_tool_name,
 )
 from band.runtime.prompts import render_system_prompt
@@ -545,10 +546,7 @@ class GeminiAdapter(SimpleAdapter[GeminiMessages]):
                 )
                 is_error = False
             except ValidationError as exc:
-                errors = "; ".join(
-                    f"{err['loc'][0] if err.get('loc') else 'unknown'}: {err['msg']}"
-                    for err in exc.errors()
-                )
+                errors = format_validation_error(exc)
                 result_str = f"Invalid arguments for {tool_name}: {errors}"
                 is_error = True
                 logger.warning("Validation error for tool %s: %s", tool_name, errors)

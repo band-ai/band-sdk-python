@@ -19,6 +19,8 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
     MemorySegment,
@@ -151,6 +153,7 @@ def render_system_prompt(
     template: str = "default",
     include_base_instructions: bool = True,
     features: AdapterFeatures | None = None,
+    extra_sections: Sequence[str] = (),
 ) -> str:
     """
     Render system prompt: agent identity + custom section + optionally base instructions.
@@ -163,6 +166,10 @@ def render_system_prompt(
         include_base_instructions: Whether to include SDK's BASE_INSTRUCTIONS.
                                    Set False if providing fully custom behavior.
         features: AdapterFeatures controlling which capability sections to include.
+        extra_sections: Adapter-contributed sections (each with its own
+            heading), rendered between the capability sections and the
+            developer's custom section — SDK contract text must not
+            masquerade as developer instructions.
 
     Returns:
         Rendered system prompt
@@ -170,8 +177,8 @@ def render_system_prompt(
     identity = f"You are {agent_name}, {agent_description}."
 
     if not include_base_instructions:
-        # Minimal prompt: identity + custom section only
-        parts = [identity]
+        # Minimal prompt: identity + adapter sections + custom section only
+        parts = [identity, *(s.strip() for s in extra_sections)]
         if custom_section:
             parts.append(custom_section)
         return "\n\n".join(parts)
@@ -185,6 +192,8 @@ def render_system_prompt(
             parts.append(MEMORY_SECTION.strip())
         if Capability.CONTACTS in features.capabilities:
             parts.append(CONTACT_SECTION.strip())
+
+    parts.extend(s.strip() for s in extra_sections)
 
     # Developer instructions at the end
     if custom_section:

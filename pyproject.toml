@@ -64,6 +64,9 @@ langgraph = [
 claude_sdk = [
     "claude-agent-sdk>=0.1.16",  # Requires Node.js 20+ and @anthropic-ai/claude-code CLI
 ]
+copilot_sdk = [
+    "github-copilot-sdk>=1.0.5",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
+]
 parlant = [
     "parlant>=3.0.0",
     "openai>=1.0.0",
@@ -153,6 +156,8 @@ dev = [
     "anthropic>=0.75.0",
     # Include claude_sdk for testing
     "claude-agent-sdk>=0.1.16",
+    # Include copilot_sdk for testing
+    "github-copilot-sdk>=1.0.5",
     # Include langgraph for testing
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",

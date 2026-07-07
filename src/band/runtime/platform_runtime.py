@@ -12,6 +12,7 @@ from band.platform.event import ContactEvent, MessageEvent, PlatformEvent
 from band.runtime.contact_handler import ContactEventHandler
 from band.runtime.runtime import AgentRuntime
 from band.runtime.execution import ExecutionContext
+from band.runtime.single_instance import SingleInstanceGuard
 from band.runtime.types import (
     AgentConfig,
     ContactEventConfig,
@@ -66,6 +67,7 @@ class PlatformRuntime:
 
         self._link: BandLink | None = None
         self._runtime: AgentRuntime | None = None
+        self._instance_guard: SingleInstanceGuard | None = None
         self._agent_name: str = ""
         self._agent_description: str = ""
         self._contact_handler: ContactEventHandler | None = None
@@ -149,29 +151,63 @@ class PlatformRuntime:
         Args:
             on_execute: Callback for message execution
             on_cleanup: Callback for session cleanup
+
+        Raises:
+            BandConfigError: When another process on this host already runs
+                this agent id (see ``AgentConfig.single_instance``).
         """
-        # Auto-initialize if not already done
-        await self.initialize()
+        # Duplicates corrupt message claiming, so refuse before any
+        # processing starts. A failed start releases the lock: the guard
+        # must never block a retry within this same process.
+        self.claim_single_instance()
+        try:
+            # Auto-initialize if not already done
+            await self.initialize()
 
-        # Type narrowing: initialize() guarantees _link is set
-        assert self._link is not None
+            # Type narrowing: initialize() guarantees _link is set
+            assert self._link is not None
 
-        self._runtime = AgentRuntime(
-            link=self._link,
-            agent_id=self._agent_id,
-            on_execute=on_execute,
-            session_config=self._session_config,
-            on_session_cleanup=on_cleanup or self._noop_cleanup,
-            on_participant_added=self._on_participant_added,
-            on_participant_removed=self._on_participant_removed,
-        )
+            self._runtime = AgentRuntime(
+                link=self._link,
+                agent_id=self._agent_id,
+                on_execute=on_execute,
+                session_config=self._session_config,
+                on_session_cleanup=on_cleanup or self._noop_cleanup,
+                on_participant_added=self._on_participant_added,
+                on_participant_removed=self._on_participant_removed,
+            )
 
-        await self._runtime.start()
+            await self._runtime.start()
 
-        # Set up contact event handling after WebSocket is connected
-        await self._setup_contact_handling()
+            # Set up contact event handling after WebSocket is connected
+            await self._setup_contact_handling()
+        except BaseException:
+            self.release_single_instance()
+            raise
 
         logger.info("Platform runtime started for agent: %s", self._agent_name)
+
+    def claim_single_instance(self) -> None:
+        """Take this agent id's host-wide run lock (idempotent).
+
+        ``start()`` claims it anyway; ``Agent.start()`` claims it earlier —
+        before the adapter boots subprocesses or touches on-disk session
+        state — so a duplicate is refused before any side effects.
+        No-op when ``AgentConfig.single_instance`` is off.
+
+        Raises:
+            BandConfigError: When another process already holds the lock.
+        """
+        if self._config.single_instance and self._instance_guard is None:
+            guard = SingleInstanceGuard(self._agent_id)
+            guard.acquire()
+            self._instance_guard = guard
+
+    def release_single_instance(self) -> None:
+        """Release the run lock (idempotent; safe in ``finally`` blocks)."""
+        if self._instance_guard is not None:
+            self._instance_guard.release()
+            self._instance_guard = None
 
     async def stop(self, timeout: float | None = None) -> bool:
         """
@@ -184,18 +220,21 @@ class PlatformRuntime:
         Returns:
             True if stopped gracefully, False if cancelled mid-processing.
         """
-        graceful = True
-        if self._runtime:
-            graceful = await self._runtime.stop(timeout=timeout)
+        try:
+            graceful = True
+            if self._runtime:
+                graceful = await self._runtime.stop(timeout=timeout)
 
-        # Unsubscribe from contacts channel before disconnecting
-        if self._link and self._contacts_subscribed:
-            await self._link.unsubscribe_agent_contacts()
-            self._contacts_subscribed = False
-            logger.debug("Unsubscribed from contacts channel")
+            # Unsubscribe from contacts channel before disconnecting
+            if self._link and self._contacts_subscribed:
+                await self._link.unsubscribe_agent_contacts()
+                self._contacts_subscribed = False
+                logger.debug("Unsubscribed from contacts channel")
 
-        if self._link:
-            await self._link.disconnect()
+            if self._link:
+                await self._link.disconnect()
+        finally:
+            self.release_single_instance()
         logger.info("Platform runtime stopped")
         return graceful
 

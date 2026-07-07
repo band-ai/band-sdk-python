@@ -131,6 +131,7 @@ class Dep(Enum):
     OPENCODE_SERVER = "opencode_server"  # OPENCODE_BASE_URL of a running server
     LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
+    COPILOT_GITHUB_TOKEN = "copilot_github_token"  # GITHUB_TOKEN, Copilot-entitled
 
 
 @dataclass(frozen=True)
@@ -237,6 +238,15 @@ _DEPS: dict[Dep, DepSpec] = {
         lambda _s: importlib.util.find_spec("crewai") is not None,
         "crewai is not importable (install the dev-crewai lane)",
         lane=Lane.CREWAI,
+    ),
+    # The Copilot SDK self-downloads its own CLI runtime (no Node/CLI-on-PATH
+    # setup), so it needs no isolated lane — it runs in the shared ``core`` lane
+    # (DEFAULT_LANE). It does need a GitHub token from a Copilot-entitled account
+    # rather than a plain provider key; ``core`` carries that token too.
+    Dep.COPILOT_GITHUB_TOKEN: DepSpec(
+        lambda s: bool(s.backends.github_token),
+        "GITHUB_TOKEN not set (a token from a GitHub account with Copilot "
+        "entitlement is required to boot the Copilot runtime)",
     ),
 }
 

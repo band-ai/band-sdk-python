@@ -171,6 +171,13 @@ class SimpleAdapter(Generic[H], ABC):
         """Override for session cleanup."""
         pass
 
+    async def cleanup_all(self) -> None:
+        """Override to release adapter-wide resources (clients, servers).
+
+        Called by ``Agent.stop()`` after every room's ``on_cleanup``.
+        """
+        pass
+
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""
         self.agent_name = agent_name

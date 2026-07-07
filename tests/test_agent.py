@@ -483,6 +483,12 @@ class TestStartupRaceCondition:
                 """Initialize without starting message processing."""
                 pass
 
+            def claim_single_instance(self) -> None:
+                pass
+
+            def release_single_instance(self) -> None:
+                pass
+
             async def start(self, on_execute, on_cleanup=None):
                 self._on_execute = on_execute
 

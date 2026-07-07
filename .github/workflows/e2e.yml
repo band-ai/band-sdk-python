@@ -33,6 +33,10 @@ name: E2E (baseline)
 #                  band-mcp), so the lane runs no Letta cells. Own lane (shares the
 #                  `dev` extra) kept defined for the follow-up; see toolkit/adapters.py.
 #
+# CopilotSDKAdapter (BYOK on Anthropic) runs in `core`: the SDK self-downloads its
+# CLI runtime (no setup step), so it needs no isolated lane — it only needs the
+# Copilot-entitled GITHUB_TOKEN, which every lane's job env carries.
+#
 # An unwired backend still fails loudly (the @requires gate reports the missing
 # CLI/server) until its setup block lands. `fail-fast: false`
 # keeps a red lane from blocking the others.
@@ -149,6 +153,11 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
       OPENAI_API_KEY: ${{ secrets.E2E_OPENAI_API_KEY }}
       GOOGLE_API_KEY: ${{ secrets.E2E_GOOGLE_API_KEY }}
+      # A PAT from a GitHub account with Copilot entitlement — NOT the ambient
+      # secrets.GITHUB_TOKEN (a repo-scoped installation token with no such
+      # entitlement). The copilot_sdk adapter (in the `core` lane) needs it;
+      # exposed to every lane's job env so `core` picks it up.
+      GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
 
     steps:
     - name: Checkout code
