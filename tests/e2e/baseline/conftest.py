@@ -156,11 +156,12 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     assert_agent_fixtures_wired(items)
     assert_every_item_is_schedulable(items)
-    apply_lane_skips(BaselineSettings().run.lane, items)
+    settings = BaselineSettings()
+    apply_lane_skips(settings.run.lane, items)
 
     baseline_dir = Path(__file__).parent
     session_marker = pytest.mark.asyncio(loop_scope="session")
-    base = BaselineSettings().e2e_timeout
+    base = settings.e2e_timeout
     for item in items:
         if not Path(item.path).is_relative_to(baseline_dir):
             continue

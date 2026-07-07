@@ -49,14 +49,14 @@ class TrackingWebSocketClient:
         on_message_created: Callable[[MessageCreatedPayload], Awaitable[None]],
         on_message_updated: Callable[[MessageCreatedPayload], Awaitable[None]]
         | None = None,
-    ):
+    ) -> object:
         result = await self._ws.join_chat_room_channel(
             chat_room_id, on_message_created, on_message_updated
         )
         self._joined_rooms.add(chat_room_id)
         return result
 
-    async def leave_chat_room_channel(self, chat_room_id: str):
+    async def leave_chat_room_channel(self, chat_room_id: str) -> object:
         result = await self._ws.leave_chat_room_channel(chat_room_id)
         self._joined_rooms.discard(chat_room_id)
         return result

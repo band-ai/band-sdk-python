@@ -138,34 +138,52 @@ async def send_trigger_message(
 
 
 @asynccontextmanager
-async def listening_for_agent_responses(
+async def listening_for_synthesis(
     ws_client: TrackingWebSocketClient,
     room_id: str,
+    sender_id: str,
+    expected: list[str],
     timeout: float,
-) -> AsyncGenerator[Callable[[], Awaitable[list]], None]:
-    """Subscribe to a room before sending, then yield a waiter for agent replies."""
-    received: list = []
+) -> AsyncGenerator[Callable[[], Awaitable[str]], None]:
+    """Wait for PA's *synthesized* answer, not its first message.
+
+    PA posts per-peer coordination messages into this same room ("@weather Tel
+    Aviv?", then "@weather Warsaw?"), each naming only one city, and PA is itself
+    ``sender_type == "Agent"`` — so the first Agent/text message is a coordination
+    question, not the answer. Only the final synthesis names every city, so we
+    complete on the first message from ``sender_id`` whose content contains ALL of
+    ``expected`` (case-insensitive). Returns that message's content, or "" on
+    timeout.
+    """
+    needles = [token.lower() for token in expected]
+    match: list[str] = []
     event = asyncio.Event()
 
     async def handler(payload: object) -> None:
-        if payload.sender_type == "Agent" and payload.message_type == "text":
-            received.append(payload)
-            logger.info("Agent reply in room %s: %s", room_id, payload.content[:80])
-            event.set()
+        if (
+            payload.sender_type == "Agent"
+            and payload.message_type == "text"
+            and payload.sender_id == sender_id
+        ):
+            content = payload.content or ""
+            if all(needle in content.lower() for needle in needles):
+                match.append(content)
+                event.set()
 
     await ws_client.join_chat_room_channel(room_id, handler)
     try:
 
-        async def wait() -> list:
+        async def wait() -> str:
             try:
                 await asyncio.wait_for(event.wait(), timeout=timeout)
             except TimeoutError:
                 logger.warning(
-                    "Timeout after %.0fs waiting for a reply in room %s",
+                    "Timeout after %.0fs: no synthesis naming %s in room %s",
                     timeout,
+                    expected,
                     room_id,
                 )
-            return received
+            return match[0] if match else ""
 
         yield wait
     finally:
@@ -198,24 +216,33 @@ async def run_single_flow(
     pa_agent_id: str,
     pa_agent_name: str,
     question: str,
+    expected: list[str],
     label: str,
     timeout: float,
 ) -> str:
-    """Run one user → PA → peers → PA → user flow; return PA's final reply text."""
+    """Drive one user → PA → peers → PA flow; return PA's synthesized answer.
+
+    The synthesis is PA's message naming every city in ``expected``; returns "" if
+    none arrived within ``timeout`` (i.e. the demo did not complete the flow).
+    """
     room_id = await create_room_with_pa(user_client, pa_agent_id, label)
-    async with listening_for_agent_responses(ws_client, room_id, timeout) as wait:
+    async with listening_for_synthesis(
+        ws_client, room_id, pa_agent_id, expected, timeout
+    ) as wait:
         await send_trigger_message(
             user_client, room_id, question, pa_agent_name, pa_agent_id
         )
-        received = await wait()
+        final = await wait()
 
-    if not received:
-        raise RuntimeError(
-            f"[{label}] PA never replied — check the bridge is running and the "
-            "three AgentCore runtimes are healthy."
+    if final:
+        logger.info("[%s] PA synthesis: %s", label, final[:200])
+    else:
+        logger.warning(
+            "[%s] PA produced no synthesis naming %s — check the bridge and the "
+            "three AgentCore runtimes are healthy.",
+            label,
+            expected,
         )
-    final = received[-1].content
-    logger.info("[%s] PA final reply: %s", label, final[:200])
     return final
 
 
@@ -234,23 +261,22 @@ async def verify_single_room(
 ) -> bool:
     """One room: PA recruits @weather and @math, final answer names both cities."""
     logger.info("--- Scenario: single-room orchestration ---")
-    final = (
-        await run_single_flow(
-            user_client=user_client,
-            ws_client=ws_client,
-            pa_agent_id=pa_agent_id,
-            pa_agent_name=pa_agent_name,
-            question=(
-                "What is the temperature difference now, in percents, "
-                "between Tel Aviv and Warsaw?"
-            ),
-            label="solo",
-            timeout=timeout,
-        )
-    ).lower()
+    final = await run_single_flow(
+        user_client=user_client,
+        ws_client=ws_client,
+        pa_agent_id=pa_agent_id,
+        pa_agent_name=pa_agent_name,
+        question=(
+            "What is the temperature difference now, in percents, "
+            "between Tel Aviv and Warsaw?"
+        ),
+        expected=["Tel Aviv", "Warsaw"],
+        label="solo",
+        timeout=timeout,
+    )
     return check(
-        "tel aviv" in final and "warsaw" in final,
-        "single-room final reply names both cities",
+        bool(final),
+        "single-room: PA synthesized a final answer naming both cities",
     )
 
 
@@ -273,6 +299,7 @@ async def verify_parallel_rooms(
                 "What is the temperature difference now, in percents, "
                 "between Tel Aviv and Warsaw?"
             ),
+            expected=["Tel Aviv", "Warsaw"],
             label="room-A",
             timeout=timeout,
         ),
@@ -285,6 +312,7 @@ async def verify_parallel_rooms(
                 "What is the temperature difference now, in percents, "
                 "between New York and London?"
             ),
+            expected=["New York", "London"],
             label="room-B",
             timeout=timeout,
         ),
@@ -292,10 +320,16 @@ async def verify_parallel_rooms(
     a, b = reply_a.lower(), reply_b.lower()
     return all(
         [
-            check("tel aviv" in a and "warsaw" in a, "room A names its own cities"),
-            check("new york" in b and "london" in b, "room B names its own cities"),
-            check("new york" not in a, "room A did not leak room B's cities"),
-            check("tel aviv" not in b, "room B did not leak room A's cities"),
+            check(bool(reply_a), "room A: PA synthesized an answer naming its cities"),
+            check(bool(reply_b), "room B: PA synthesized an answer naming its cities"),
+            check(
+                "new york" not in a and "london" not in a,
+                "room A did not leak room B's cities",
+            ),
+            check(
+                "tel aviv" not in b and "warsaw" not in b,
+                "room B did not leak room A's cities",
+            ),
         ]
     )
 
