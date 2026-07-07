@@ -149,34 +149,48 @@ async def send_trigger_message(
 async def listening_for_synthesis(
     ws_client: TrackingWebSocketClient,
     room_id: str,
-    sender_id: str,
+    pa_sender_id: str,
     expected: list[str],
     timeout: float,
+    min_peers: int = 2,
 ) -> AsyncGenerator[Callable[[], Awaitable[str]], None]:
-    """Wait for PA's *synthesized* answer, not its first message.
+    """Wait for PA's synthesis — but only once the peers have actually done the work.
 
-    PA posts per-peer coordination messages into this same room ("@weather Tel
-    Aviv?", then "@weather Warsaw?"), each naming only one city, and PA is itself
-    ``sender_type == "Agent"`` — so the first Agent/text message is a coordination
-    question, not the answer. Only the final synthesis names every city, so we
-    complete on the first message from ``sender_id`` whose content contains ALL of
-    ``expected`` (case-insensitive). Returns that message's content, or "" on
-    timeout.
+    A PA message naming every city in ``expected`` is *necessary but not
+    sufficient* to prove orchestration: PA could name both cities in a single
+    coordination message ("@weather @math ... Tel Aviv and Warsaw?"), or answer
+    directly from its own model knowledge — in both cases naming both cities
+    without ``@weather``/``@math`` ever running. Accepting that would report a
+    broken deployment as PASSED.
+
+    So we also require evidence that at least ``min_peers`` distinct peer runtimes
+    replied. PA recruits the peers at runtime, so we don't know their ids up front;
+    a peer is any ``sender_type == "Agent"`` that is not PA. We complete only when
+    BOTH hold — both peers have posted AND PA has named every city — and return
+    that PA message. Otherwise we time out and return "" (a broken ``@weather`` or
+    ``@math`` then fails the check instead of sneaking a false PASS through).
     """
     needles = [token.lower() for token in expected]
+    peer_senders: set[str] = set()
+    pa_synthesis: list[str] = []
     match: list[str] = []
     event = asyncio.Event()
 
     async def handler(payload: object) -> None:
-        if (
-            payload.sender_type == "Agent"
-            and payload.message_type == "text"
-            and payload.sender_id == sender_id
-        ):
+        if payload.sender_type != "Agent" or payload.message_type != "text":
+            return
+        sid = payload.sender_id
+        if sid == pa_sender_id:
             content = payload.content or ""
             if all(needle in content.lower() for needle in needles):
-                match.append(content)
-                event.set()
+                pa_synthesis.append(content)
+        elif sid:
+            peer_senders.add(sid)
+        # Accept PA's answer as the synthesis only once both peers have actually
+        # replied (orchestration happened), never merely because PA named the cities.
+        if len(peer_senders) >= min_peers and pa_synthesis:
+            match.append(pa_synthesis[-1])
+            event.set()
 
     await ws_client.join_chat_room_channel(room_id, handler)
     try:
@@ -186,10 +200,14 @@ async def listening_for_synthesis(
                 await asyncio.wait_for(event.wait(), timeout=timeout)
             except TimeoutError:
                 logger.warning(
-                    "Timeout after %.0fs: no synthesis naming %s in room %s",
+                    "Timeout after %.0fs in room %s: %d/%d peers replied, PA named "
+                    "all cities=%s. Orchestration did not complete — check the "
+                    "@weather and @math runtimes.",
                     timeout,
-                    expected,
                     room_id,
+                    len(peer_senders),
+                    min_peers,
+                    bool(pa_synthesis),
                 )
             return match[0] if match else ""
 
