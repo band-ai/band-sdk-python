@@ -31,9 +31,11 @@ from band.core.memory_types import (
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     MEMORY_AGENT,
+    MEMORY_SECRETARY_AGENT,
     archive_memory_instruction,
     recall_memory_instruction,
     store_memory_instruction,
+    store_subject_memory_inferred_instruction,
     store_subject_memory_instruction,
     store_two_memories_instruction,
     supersede_memory_instruction,
@@ -126,6 +128,59 @@ async def test_memory_subject_scope(
     )
     mem.stored.assert_stored(content=marker, scope=MemoryStoreScope.SUBJECT)
     mem.stored.where(subject_id=agent.id).assert_present()
+
+
+# Deliberately Agno, not the file's usual Anthropic driver: this is the retired
+# legacy test's framework, and running it on a non-Anthropic adapter proves the
+# scope+identity inference rides the adapter-agnostic injected memory guidance,
+# not anything Anthropic-specific. Agno's builder uses the same capable Claude
+# model, so it is no less reliable here.
+@with_adapters(Adapter.AGNO, **MEMORY_SECRETARY_AGENT)
+@pytest.mark.asyncio(loop_scope="session")
+async def test_memory_subject_scope_inferred(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """Subject scope + subject_id are *inferred*, not spelled out.
+
+    The other subject test hands the agent ``scope=subject`` and the literal
+    ``subject_id``. Here a generic "remember this about me personally" message
+    names neither: the agent must classify the memory as subject-scoped and
+    resolve *the user's own* id (via ``band_get_participants``/
+    ``band_lookup_peers``) from the adapter's injected memory guidance alone.
+    Correct = a subject memory carrying the marker whose ``subject_id`` is the
+    real user id (``user_ops.whoami()``), proving the agent resolved the right
+    identity rather than inventing or omitting one.
+    """
+    marker = unique_marker("subjinfer")
+    user_id = await user_ops.whoami()
+    room_id = await resource_manager.provision_room(
+        title="e2e-memory-subject-inferred", participants=[agent.id]
+    )
+    async with reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id,
+            store_subject_memory_inferred_instruction(marker),
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await capture.wait_for_processed(mid, agent.id)
+        mem = await capture.memory(
+            agent,
+            scope=MemoryListScope.SUBJECT,
+            subject_id=user_id,
+            content_query=marker,
+        )
+
+    mem.calls.assert_store_called(
+        content=marker,
+        scope=MemoryStoreScope.SUBJECT,
+        subject_id=user_id,
+    )
+    mem.stored.assert_stored(content=marker, scope=MemoryStoreScope.SUBJECT)
+    mem.stored.where(subject_id=user_id).assert_present()
 
 
 @with_adapters(Adapter.ANTHROPIC, **MEMORY_AGENT)
