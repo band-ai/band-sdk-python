@@ -48,16 +48,16 @@ jobs:
           # be installed on every repo listed here.
           repositories: |
             band-sdk-python
-            fern-config # TODO(devops): replace with the real Fern docs repo name
-            claude-plugins # only required while the marketplace repo is private
+            fern # Fern docs repo (github.com/band-ai/fern)
+            private-agent-skills # private marketplace repo the skill is installed from
 
       - name: Generate and publish changelog
         uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
-          plugin_marketplaces: "https://github.com/band-ai/claude-plugins.git"
-          plugins: "changelog-generator@band-plugins"
+          plugin_marketplaces: "https://github.com/band-ai/private-agent-skills.git"
+          plugins: "changelog-generator@private-agent-skills"
           prompt: "/changelog-generator:generate ${{ github.event.release.tag_name || inputs.tag }}"
           claude_args: |
             --allowedTools "Bash,Read,Write,Edit,Glob,Grep"
