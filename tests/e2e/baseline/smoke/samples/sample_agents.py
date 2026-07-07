@@ -28,6 +28,7 @@ from band.core.memory_types import (
     WorkingLongTermMemoryType,
 )
 
+from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
 from tests.e2e.baseline.toolkit.observations import MemoryTool
 
 # Fixed role-setter: the actionable instruction (and marker) travels in the user
@@ -234,4 +235,96 @@ def store_two_memories_instruction(marker: str) -> str:
         f"system={MemorySystem.WORKING.value}, "
         f"type={WorkingLongTermMemoryType.EPISODIC.value}. "
         "Do not call any other tool."
+    )
+
+
+# --- Driving glue for the live matrix coverage scenarios ---------------------
+# Wording for the platform-adaptation / custom-prompt / context-fidelity /
+# multi-participant scenarios. Kept here (not inline per test) so every matrix
+# cell drives the model identically — a fair, single-source comparison across
+# frameworks. Prefer these builders over inline f-strings, and reuse
+# ``unique_marker`` for every verbatim assertion token.
+
+
+def custom_prompt_with_marker(marker: str) -> str:
+    """Custom system prompt that keeps the opaque-lookup behaviour (so a code still
+    round-trips) and requires ``marker`` in every reply, so the prompt's effect is
+    checkable verbatim across turns. Reuses ``LOOKUP_PROMPT`` so the tool guidance
+    stays single-source."""
+    return (
+        f"{LOOKUP_PROMPT} You can also use your platform tools to answer questions "
+        "about who is in the room. IMPORTANT: every message you send MUST include "
+        f"the exact word {marker}."
+    )
+
+
+# Roster probe: drives the agent to state its own name and use its platform tools
+# (band_get_participants / band_lookup_peers) to report who is present and who is
+# invitable — the identity + roster read.
+ROSTER_PROBE = (
+    "First, tell me your own name. Then use your tools to tell me who else is in "
+    "this room right now, and who you could still invite that isn't here yet."
+)
+
+
+def invite_instruction(peer_name: str, peer_id: str) -> str:
+    """Drive the agent to add a peer to the room via band_add_participant (only).
+    Mirrors the ``add agent (id ...)`` phrasing of the recruitment collab test."""
+    return (
+        f"There is an agent named {peer_name} (id {peer_id}) who is not in this room. "
+        "Use band_add_participant to add them to this room."
+    )
+
+
+def invite_and_message_instruction(peer_name: str, peer_id: str, marker: str) -> str:
+    """Drive the agent to invite a peer, then send it one directed message carrying
+    ``marker`` — so the mention and the marker land in the *same* message (the coupled
+    directed-message check)."""
+    return (
+        f"{invite_instruction(peer_name, peer_id)} Then send one band_send_message "
+        f"that mentions {peer_name} and includes the exact token {marker}."
+    )
+
+
+def remove_participant_instruction(peer_name: str, peer_id: str) -> str:
+    """Drive the agent to remove a peer from the room via band_remove_participant."""
+    return (
+        f"Use band_remove_participant to remove {peer_name} (id {peer_id}) from this "
+        "room now."
+    )
+
+
+# Drives the agent to create a brand-new chat room via band_create_chatroom (the only way
+# to produce one); the round-trip is then observed in the agent's own chat list, since the
+# tool takes no title and adds no human participant.
+CREATE_CHATROOM = (
+    "Create a new, separate chat room using the band_create_chatroom tool. Making that "
+    "tool call is your only action."
+)
+
+
+def remember_fact_instruction(fact: str) -> str:
+    """One burst turn: ask the agent to remember ``fact`` (a unique marker). Terse so a
+    burst of these is cheap; the later spanning recall is what's under test."""
+    return f"Remember this fact for later: {fact}."
+
+
+# Recall probe for the spanning-recall step: asks for the whole set so an early, a
+# mid-history, and a recent fact can each be checked separately (a single-fact recall
+# can't tell "kept the whole history" from "kept only a recent window").
+RECALL_ALL_FACTS = (
+    "List all the facts I have asked you to remember in this conversation so far, "
+    "including the earliest ones. Reply with the facts themselves."
+)
+
+
+def delegate_to_peer_instruction(peer_name: str, peer_id: str) -> str:
+    """Peer-initiated delegation: drive one agent to ask peer ``peer_name`` to confirm
+    the value it just remembered, then report that reply — so it emits a real routing
+    mention of the peer whose body carries the value it recalled from its own context,
+    and the peer responds."""
+    return (
+        f"Ask {peer_name} (id {peer_id}) to confirm the value you just remembered: "
+        f"send one band_send_message that mentions {peer_name} and states that exact "
+        "value, then report their reply back to me."
     )

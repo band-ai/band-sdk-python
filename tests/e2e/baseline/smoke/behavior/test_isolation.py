@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from datetime import datetime, timezone
 
 import pytest
 
@@ -37,30 +36,13 @@ from tests.e2e.baseline.smoke.samples.sample_tools import (
     WEATHER_TOOL,
 )
 from tests.e2e.baseline.toolkit.adapters import build_adapter
-from tests.e2e.baseline.toolkit.capture import CaptureFactory, ReplyCapture
+from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
     ResourceManager,
     running_provisioned_agent,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-
-
-def _turn_boundary(capture: ReplyCapture) -> datetime:
-    """Server timestamp of the latest captured message — a between-turns boundary.
-
-    Used as ``since`` for the next turn\'s ``tool_calls`` read. Naive timestamps are
-    treated as UTC (the platform stores UTC), matching the orphan-sweep coercion.
-    """
-    # The caller has awaited ``wait_for_processed``, so the reply should be buffered;
-    # assert it plainly rather than letting an empty buffer surface as an opaque
-    # ``IndexError`` (e.g. when a reply is slow/missing or arrives after PROCESSED).
-    assert capture.messages, (
-        "expected the prior turn's reply to be captured before the turn boundary, "
-        "but no agent messages were captured"
-    )
-    stamp = datetime.fromisoformat(capture.messages[-1].inserted_at)
-    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
 @requires(Dep.ANTHROPIC)
@@ -212,7 +194,7 @@ async def test_capture_scopes_to_current_turn(
         await capture.wait_for_processed(m_one, agent.id)
         # Boundary between turns (server timestamp of turn 1's reply). Turn 1's call
         # is verified by the unscoped read at the end.
-        boundary = _turn_boundary(capture)
+        boundary = capture.turn_boundary()
 
         # Turn 2, same capture reused. Barriering on turn 2's own id scopes the wait
         # to the new turn — it can't return on turn 1's reply.

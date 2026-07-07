@@ -13,16 +13,14 @@ topologies build through ``AdapterCell`` so construction + run wiring lives in o
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncGenerator
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import asynccontextmanager
 
 import pytest
 
 from band.core.types import AdapterFeatures
 
 from tests.e2e.baseline.agents import (
-    WITH_ADAPTERS_MARKER,
     PER_ADAPTER_MARKER,
     Adapter,
     WithAdapters,
@@ -33,6 +31,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
+    running_members,
 )
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
@@ -118,10 +117,9 @@ def cell(
     construction check, or a reboot / rehydration scenario. Carries the decorator's
     ``prompt`` / ``features`` / ``tools`` as defaults.
     """
-    marker = request.node.get_closest_marker(PER_ADAPTER_MARKER)
-    if marker is None:
-        raise pytest.UsageError("the `cell` fixture requires @per_adapter(...).")
-    each: PerAdapter = marker.args[0]
+    each = PerAdapter.from_node(
+        request.node, hint="the `cell` fixture requires @per_adapter(...)."
+    )
     return _make_cell(
         adapter_id,
         baseline_settings,
@@ -147,10 +145,9 @@ def peer(
     the declared peer adapter. Fails loud if the peer equals the current cell (that would
     be same-framework, not cross): exclude the peer from the fan, or pick another.
     """
-    marker = request.node.get_closest_marker(PER_ADAPTER_MARKER)
-    if marker is None:
-        raise pytest.UsageError("the `peer` fixture requires @per_adapter(peer=...).")
-    each: PerAdapter = marker.args[0]
+    each = PerAdapter.from_node(
+        request.node, hint="the `peer` fixture requires @per_adapter(peer=...)."
+    )
     if each.peer is None:
         raise pytest.UsageError(
             "the `peer` fixture requires @per_adapter(peer=...); no peer= was declared."
@@ -189,12 +186,10 @@ async def agent(
             yield running
         return
 
-    marker = request.node.get_closest_marker(WITH_ADAPTERS_MARKER)
-    if marker is None:
-        raise pytest.UsageError(
-            "`agent` requires @per_adapter(...) or @with_adapters(OneAdapter)."
-        )
-    req: WithAdapters = marker.args[0]
+    req = WithAdapters.from_node(
+        request.node,
+        hint="`agent` requires @per_adapter(...) or @with_adapters(OneAdapter).",
+    )
     if len(req.adapters) != 1:
         raise pytest.UsageError(
             f"`agent` needs exactly one adapter in @with_adapters(...); got "
@@ -217,32 +212,18 @@ async def agents(
     Each slot gets an index-suffixed label so the same framework can appear more than once
     (e.g. two Anthropic agents in one room) without provisioned-name collisions.
     """
-    marker = request.node.get_closest_marker(WITH_ADAPTERS_MARKER)
-    if marker is None:
-        raise pytest.UsageError(
-            "the `agents` fixture requires @with_adapters(...); use `agent`/`cell` under "
-            "@per_adapter."
-        )
-    req: WithAdapters = marker.args[0]
-    async with AsyncExitStack() as stack:
-        # Each member gets its own AsyncExitStack (that type isn't concurrency-safe),
-        # registered on the outer stack up front so teardown unwinds every member that
-        # entered even if another fails. Provision concurrently — one round-trip-bound
-        # enter per member instead of N sequential awaits — via a TaskGroup, which
-        # cancels and awaits the siblings if any member fails to come up.
-        member_stacks = [AsyncExitStack() for _ in req.adapters]
-        for member_stack in member_stacks:
-            await stack.enter_async_context(member_stack)
-        async with asyncio.TaskGroup() as tg:
-            tasks = [
-                tg.create_task(
-                    member_stacks[slot].enter_async_context(
-                        _running_group_member(
-                            name, slot, req, baseline_settings, resource_manager
-                        )
-                    )
-                )
-                for slot, name in enumerate(req.adapters)
-            ]
-        provisioned = [task.result() for task in tasks]
+    req = WithAdapters.from_node(
+        request.node,
+        hint=(
+            "the `agents` fixture requires @with_adapters(...); use `agent`/`cell` "
+            "under @per_adapter."
+        ),
+    )
+    # Concurrent start (a serial start would mask co-residency collisions) lives in the
+    # shared ``running_members`` helper — the same one ``AdapterCell.run_many`` uses.
+    members = [
+        _running_group_member(name, slot, req, baseline_settings, resource_manager)
+        for slot, name in enumerate(req.adapters)
+    ]
+    async with running_members(members) as provisioned:
         yield provisioned

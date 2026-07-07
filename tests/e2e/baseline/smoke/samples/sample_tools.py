@@ -76,6 +76,13 @@ LOOKUP_AND_WEATHER_PROMPT = (
 )
 
 
+def lookup_code_instruction(key: str) -> str:
+    """User message driving an opaque code lookup for ``key`` (its tool result must
+    round-trip into the reply). Shared so the tool-round-trip and custom-prompt matrix
+    tests drive the lookup with identical wording rather than duplicated inline strings."""
+    return f"look up the access code for key '{key}' and tell me the code"
+
+
 # Shape for @with_adapters / build_adapter: surface each tool call as a ``tool_call``
 # event so ``capture.tool_calls`` can read it. Spread it: ``@with_adapters(
 # Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING)``.

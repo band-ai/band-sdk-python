@@ -14,8 +14,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncGenerator, Iterator, Sequence
+from contextlib import (
+    AbstractAsyncContextManager,
+    AsyncExitStack,
+    asynccontextmanager,
+    contextmanager,
+)
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
@@ -231,6 +236,29 @@ class ResourceManager:
         logger.info("Provisioned room %s", room_id)
         return room_id
 
+    def adopt_room(self, room_id: str) -> None:
+        """Track a room this run did not create via :meth:`provision_room` — e.g. one an
+        agent created itself through ``band_create_chatroom`` — so it is reaped on teardown
+        like any provisioned room. Idempotent. Reaping goes through the same
+        ``user_ops.delete_room`` path, which the platform authorizes because the test user
+        owns the agent that owns the room (agent-owner delete authz).
+        """
+        if room_id not in self._provisioned_room_ids:
+            self._provisioned_room_ids.append(room_id)
+
+    async def agent_room_ids(self, agent: ProvisionedAgent) -> set[str]:
+        """The ids of the chat rooms ``agent`` participates in, read with the agent's own key.
+
+        A before/after snapshot around a turn surfaces a room the agent created *itself*
+        (via ``band_create_chatroom``) — the only handle to it, since that tool takes no
+        title and adds no human participant, so the user/observer client never sees it.
+        Pair the new id with :meth:`adopt_room` so it is reaped on teardown like any
+        provisioned room. Uses the agent's Agent-API client (like the memory reads).
+        """
+        client = agent_rest_client(agent, self._settings)
+        response = await client.agent_api_chats.list_agent_chats()
+        return {room.id for room in (response.data or [])}
+
     async def reap_agent(self, agent_id: str) -> None:
         """Force-delete an agent."""
         await self._client.human_api_agents.delete_my_agent(agent_id, force=True)
@@ -371,6 +399,34 @@ async def running_provisioned_agent(
         yield running
 
 
+@asynccontextmanager
+async def running_members(
+    members: Sequence[AbstractAsyncContextManager[ProvisionedAgent]],
+) -> AsyncGenerator[list[ProvisionedAgent], None]:
+    """Enter several per-member run contexts **concurrently**; yield the running identities.
+
+    The shared co-residency machinery behind both the ``@with_adapters`` group fixture
+    and ``AdapterCell.run_many``: each runs several agents in one room, and both must
+    start them concurrently — a serial start would mask the port / lock-file collisions
+    a co-residency test exists to catch. Keeping it here means neither caller re-rolls it.
+
+    Each member gets its own ``AsyncExitStack`` (that type isn't concurrency-safe),
+    registered on the outer stack up front so teardown unwinds every member that entered
+    even if another fails to start. A ``TaskGroup`` enters them concurrently and cancels +
+    awaits the siblings if any member raises. Results come back in member order.
+    """
+    async with AsyncExitStack() as stack:
+        member_stacks = [AsyncExitStack() for _ in members]
+        for member_stack in member_stacks:
+            await stack.enter_async_context(member_stack)
+        async with asyncio.TaskGroup() as tg:
+            tasks = [
+                tg.create_task(member_stacks[index].enter_async_context(member))
+                for index, member in enumerate(members)
+            ]
+        yield [task.result() for task in tasks]
+
+
 @dataclass(frozen=True)
 class AdapterCell:
     """The adapter under test for one matrix cell — build / provision / run it yourself.
@@ -464,4 +520,51 @@ class AdapterCell:
         async with self.run_as(
             identity, prompt=prompt, features=features, tools=tools
         ) as running:
+            yield running
+
+    @asynccontextmanager
+    async def run_many(
+        self,
+        count: int,
+        *,
+        labels: list[str] | None = None,
+        prompt: str | None = None,
+        features: AdapterFeatures | None = None,
+        tools: list[ToolSpec] | None = None,
+    ) -> AsyncGenerator[list[ProvisionedAgent], None]:
+        """Provision ``count`` distinct identities of this cell and run one fresh adapter
+        each, **concurrently**, for the block — the co-residency counterpart to :meth:`running`.
+
+        Where ``running`` starts a single agent, this stands up ``count`` instances of the
+        *same* adapter under distinct identities (so ``track_running`` never conflicts) and
+        yields the running list. It starts them concurrently — via ``running_members``, the
+        same helper the ``@with_adapters`` group uses — so a real port / lock-file collision
+        between instances races rather than being masked by a serial start, which is exactly
+        what a same-adapter co-residency gate must probe.
+
+        ``labels`` default to ``{adapter_id}-{index}``; an explicit list must be length
+        ``count`` so the provisioned names don't collide. ``prompt`` / ``features`` /
+        ``tools`` pass through to each :meth:`run_as`, preserving the cell defaults when
+        omitted.
+        """
+        if count <= 0:
+            raise ValueError(f"run_many count must be positive, got {count}")
+        if labels is not None and len(labels) != count:
+            raise ValueError(
+                f"run_many labels length ({len(labels)}) must match count ({count})"
+            )
+        # Each member provisions *and* runs (``running``), entered concurrently by
+        # ``running_members`` — so provisioning is concurrent too, exactly like the
+        # ``@with_adapters`` group path (``_running_group_member`` → ``cell.running``),
+        # not a serial provision loop before the concurrent run.
+        members = [
+            self.running(
+                label=labels[index] if labels else f"{self.adapter_id}-{index}",
+                prompt=prompt,
+                features=features,
+                tools=tools,
+            )
+            for index in range(count)
+        ]
+        async with running_members(members) as running:
             yield running

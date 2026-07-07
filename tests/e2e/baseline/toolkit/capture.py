@@ -33,7 +33,7 @@ import sys
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from band_rest import AsyncRestClient
@@ -162,6 +162,26 @@ class ReplyCapture:
     ) -> list[DeliveryStatus]:
         """Ordered, de-duplicated delivery transitions seen for the pair."""
         return list(self._history[(message_id, recipient_id)])
+
+    def turn_boundary(self) -> datetime:
+        """Server timestamp of the latest captured reply — a between-turns boundary.
+
+        Use it as ``since`` for a later durable read (``tool_calls`` / ``usage``) so
+        that read is scoped to the *next* turn, even across a reused capture or a
+        stop/restart (the value is a plain timestamp that carries over the capture's
+        lifetime). Naive timestamps are treated as UTC (the platform stores UTC),
+        matching the orphan-sweep coercion. Call it after a completion barrier: it
+        raises if no reply has been captured yet (an empty buffer would otherwise
+        surface as an opaque ``IndexError``).
+        """
+        if not self.messages:
+            raise RuntimeError(
+                "turn_boundary() needs a captured reply; call it after wait_for_processed"
+            )
+        # Normalize a trailing Z before parsing, matching the src/band convention.
+        raw = self.messages[-1].inserted_at.replace("Z", "+00:00")
+        stamp = datetime.fromisoformat(raw)
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
     def _delivery_error(self, message_id: str, recipient_id: str) -> str:
         """Best-effort last-attempt error string, for failure diagnostics."""
