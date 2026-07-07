@@ -213,11 +213,11 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, and the `EXECUTION_REPORTING` shape |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events, `lookup_peers` — the invitable roster) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
-| `toolkit/requirements.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
+| `toolkit/deps.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`, `mentioning(id)` to filter to replies mentioning a participant, `assert_contains_any`/`assert_mentions`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
-| `requires.py` | `@requires(Dep.X)` decorator (the pytest glue; re-exports `Dep` from `toolkit/requirements.py`, where the enum and its facts actually live) |
+| `requires.py` | `@requires(Dep.X)` decorator (the pytest glue; re-exports `Dep` from `toolkit/deps.py`, where the enum and its facts actually live) |
 | `conftest.py` | fixtures (below) + the always-on E2E gate |
 | `guards/` | E2E-tree harness self-tests (E2E-gated): `test_adapter_registry.py` (static discovery/lane guard), `test_provisioning.py`, `test_user_ops.py`, `test_adapter_cell.py`, `test_tool_spec.py`, and `test_agent_wiring.py` (only the `pytester` real-collection cases). **Pure policy tests run every PR from `tests/framework_conformance/`** — see the note below the table |
 | `smoke/` | proof tests that exercise the tools end to end — read these as worked examples — grouped by subject (below) |
@@ -517,7 +517,7 @@ still fails.
 
 A **lane** is a CI job: a `uv` extra to install plus, for a lane with a server/CLI,
 the setup that stands it up. Each registered adapter belongs to exactly one lane,
-**derived from its `requires`** (`dep_lane` in `requirements.py` → the unique
+**derived from its `requires`** (`dep_lane` in `deps.py` → the unique
 non-default lane among its deps). `ci_lanes()` (`toolkit/ci_lanes.py`) groups every
 adapter into a `CILane(id, extra, adapters)` — so a newly-registered adapter joins
 its lane for free, and the `assert_every_adapter_has_a_ci_home()` guard fails loudly
@@ -533,13 +533,13 @@ the `dev` extra but are split out for isolation.
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
 | `backends` | `dev` | codex, opencode | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), and a running `opencode serve` (`OPENCODE_BASE_URL`) |
-| `letta` | `dev` | letta | none yet — Letta is `e2e_pending` (no live tests; see "Letta is out of scope" below) |
+| `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below) |
 
 `backends` folds codex + opencode into one job (both install `dev`, differ only in
 the backend their job stands up) so a job-per-backend isn't needed; the cost is that
 one backend failing to come up can redden the other's cells (the per-adapter report
 still shows which). `google` gets its own lane so Google free-tier rate-limit
-flakiness is isolated; `letta` stands alone for the live-server backend it will need.
+flakiness is isolated; `letta` stands alone for the live Letta server its job stands up.
 
 **The knob:** `BAND_E2E_LANE=<lane id>`. Scheduling is *derived*: a test's lane is the
 home lane of **all** the frameworks it touches — a matrix cell's adapter (plus its
@@ -589,10 +589,10 @@ all lanes.
 
 Lanes live in the registry, not the workflow YAML. To add one:
 
-1. **`toolkit/requirements.py`** — add a `Lane` member (a content-based id) and map
+1. **`toolkit/deps.py`** — add a `Lane` member (a content-based id) and map
    it to its `uv` extra in `LANE_EXTRAS` (add an `Extra` member first if it's a new
    extra — and declare that extra in `pyproject.toml [project.optional-dependencies]`).
-2. **`toolkit/requirements.py`** — point a `Dep` at the lane via `lane=Lane.<NEW>` in
+2. **`toolkit/deps.py`** — point a `Dep` at the lane via `lane=Lane.<NEW>` in
    `_DEPS` (provider-key deps with no isolation need ride `DEFAULT_LANE`). The
    adapters whose `requires` include that dep now resolve into the new lane; the
    guards (`assert_every_adapter_has_a_ci_home`, the partition test) keep it honest.
@@ -610,20 +610,51 @@ Lanes live in the registry, not the workflow YAML. To add one:
    guard suite on every PR rather than silently never running / never being
    selectable.
 
-## Letta is out of scope (this PR)
+## Letta lane
 
-Letta has **no live E2E here** — its smokes are deferred to a follow-up. Letta is
-server-side and executes platform tools only by calling a band-mcp server, and
-standing one up reachable from the Letta server (its SSRF guard rejects a loopback
-MCP URL) isn't wired yet.
+Letta runs the `@per_adapter` matrix in its own `letta` lane, with one
+documented exclusion: `test_concurrent_same_adapter_instances_each_reply` —
+the Letta server materializes MCP tools globally by name, so co-resident
+same-process instances cross-wire their sends (see that test's module doc).
+Its platform tools execute over MCP, so a cell has three hops:
 
-So the Letta adapter is registered **`e2e_pending`** (`toolkit/adapters.py`): it
-still *defines* the `letta` CI lane via `ci_lanes()`, but `specs()`/`adapter_params()`
-exclude it, so it is **not a matrix cell** and no `@with_adapters(Adapter.LETTA)`
-tests run. The `letta` lane therefore runs only the adapter-agnostic baseline tests
-plus one placeholder (`smoke/adapters/test_letta.py`), and needs no backend setup.
+1. **Adapter → Letta server** — `LettaAdapter` drives the Letta server over REST.
+2. **Letta server → self-hosted MCP server** — the adapter starts the SDK's
+   in-process `LocalMCPServer` and registers its advertised URL with Letta,
+   which calls back over SSE at `host.docker.internal` (the dockerized server's
+   route to the pytest host).
+3. **Tools execute in-process** as the provisioned agent, with its own key.
 
-**To re-enable Letta** once band-mcp reachability is solved: flip `e2e_pending` to
-`False` (or drop the kwarg) on the `@adapter(Adapter.LETTA, …)` registration — that
-alone returns Letta to the matrix — then add the live smokes and the lane's band-mcp
-setup. The builder is kept valid for that day.
+Run locally (the setup script also works outside CI):
+
+```bash
+OPENAI_API_KEY=... GITHUB_ENV=/dev/null .github/scripts/setup-letta.sh
+export LETTA_BASE_URL=http://localhost:8283   # plus OPENAI_API_KEY in the test env
+
+E2E_TESTS_ENABLED=true BAND_E2E_LANE=letta \
+  uv run pytest tests/e2e/baseline/ -v -s --no-cov
+```
+
+Use the script rather than a bare `docker run`: besides the host-gateway alias
+and the health-wait, it relaxes Letta's MCP URL guard inside the container —
+Letta rejects any MCP hostname resolving to a non-public IP, and the callback
+to the in-pytest server is a private (docker-host) IP by definition. Without
+the patch, tool discovery silently returns zero tools and every cell fails.
+
+Knobs:
+
+- a self-hosted `LETTA_BASE_URL` needs `OPENAI_API_KEY`; a Letta Cloud URL needs
+  `LETTA_API_KEY` instead (the `Dep.LETTA` gate).
+- `LETTA_MCP_ADVERTISED_HOST` (default `host.docker.internal`) — the host Letta
+  dials to reach the in-pytest MCP server; set `127.0.0.1` for a natively-run
+  Letta. The builder binds `0.0.0.0` only for a non-loopback advertised host.
+- `MCP_SERVER_URL` — switch to an external band-mcp (the Letta Cloud /
+  production topology) instead of the self-hosted default.
+
+CI stands the server up via `.github/scripts/setup-letta.sh` (docker run with
+the host-gateway alias, health-wait on `GET /v1/health/`, the MCP URL guard
+patch, exports `LETTA_BASE_URL`).
+
+`e2e_pending` (which once excluded Letta) is now a reason *string*
+(`str | None`), pinned to an allowlist — empty today — in
+`tests/framework_conformance/test_agent_wiring_rules.py`.

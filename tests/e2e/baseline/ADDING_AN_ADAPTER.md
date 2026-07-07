@@ -122,7 +122,7 @@ Rules for the builder — each exists for a reason, don't skip them:
 ### Which CI lane your adapter lands in
 
 You **don't set a lane on the adapter** — it's derived from `requires`. Each `Dep`
-names a lane (`dep_lane` in `requirements.py`); your adapter runs in the unique
+names a lane (`dep_lane` in `deps.py`); your adapter runs in the unique
 non-default lane among its deps, else the shared `core` lane. So `requires` is the
 one and only place you express lane association:
 
@@ -138,7 +138,7 @@ An adapter belongs to exactly one lane: two deps naming different non-default la
 is an error (`adapter_lane` raises). If your adapter needs a **brand-new** lane (its
 own venv, server, or isolation — e.g. provider rate-limit flakiness), don't invent
 it here — follow **"Adding a CI lane"** in `README.md`: add the `Lane` + `Extra` and
-point a `Dep` at it in `requirements.py`, then `requires=[that Dep]` here.
+point a `Dep` at it in `deps.py`, then `requires=[that Dep]` here.
 
 A *test's* lane, by contrast, is derived from **all** the frameworks it touches — a
 matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set. A
@@ -178,7 +178,7 @@ new prerequisite.
 
 ### 4a. A new requirement → `Dep` + a check
 
-File: `tests/e2e/baseline/toolkit/requirements.py` (pytest-free — that's deliberate,
+File: `tests/e2e/baseline/toolkit/deps.py` (pytest-free — that's deliberate,
 so the registry can reference `Dep` without importing pytest).
 
 1. Add a `Dep` enum member.
@@ -215,9 +215,9 @@ File: `tests/e2e/baseline/settings.py`. Add the field to the concern that owns i
 - a **model id** → `LLMModels` (env-prefixed `E2E_`, e.g.
   `myprovider_model: str = "..."  # E2E_MYPROVIDER_MODEL`).
 
-CLI/server prerequisites that aren't keys (a binary on PATH, a base URL) are read
-straight from `os.environ` inside the builder and the check — they don't need a
-settings field (see codex/opencode/letta).
+CLI/server prerequisites that aren't provider keys (a binary override, a base
+URL, a backend model id) go in the `Backends` class — standard backend env var
+names, no prefix (see the codex/opencode/letta fields).
 
 ### 4c. Document the new env vars
 
@@ -236,7 +236,8 @@ The matrix can pass `tools=[CustomToolDef, ...]` (from `@with_adapters(..., tool
   agno uses `t.as_callable()` (a plain callable), pydantic-ai uses
   `t.as_callable(ctx_annotation=RunContext)` (a `RunContext`-first callable).
 - If it genuinely **can't** accept a locally-defined tool (only letta today —
-  its tools live on an MCP server), call `_reject_tools(Adapter.MYFRAMEWORK, tools)`
+  its tools live on a Band MCP server, which the adapter self-hosts in-process
+  by default), call `_reject_tools(Adapter.MYFRAMEWORK, tools)`
   at the top of the builder. This **fails loudly** when a test asks for tools your
   adapter can't honor, instead of
   silently dropping them (which would be a false green).
@@ -287,7 +288,7 @@ by contrast, always means a missing enum member or builder.
 The matrix machinery is generic — leave it alone. You do **not** edit `agents.py`
 (`@with_adapters` / `@per_adapter`), `conftest.py` fixtures, `capture.py`,
 `provisioning.py`, `ci_lanes.py`, or any existing scenario/smoke. The enum in
-`adapters.py` + the builder in `builders.py` (+ optional `requirements.py`/`settings.py`)
+`adapters.py` + the builder in `builders.py` (+ optional `deps.py`/`settings.py`)
 is the entire surface. If you find
 yourself editing a scenario to special-case your adapter, that's a smell — the
 adapter should conform to the generic builder contract instead.
@@ -298,7 +299,7 @@ adapter should conform to the generic builder contract instead.
 |---|---|
 | `toolkit/adapters.py` | **always** — the `Adapter` enum member (or a `NON_AGENT_ADAPTERS` entry for a bridge) |
 | `toolkit/builders.py` | **always** — the `@adapter` builder function (registered via the side-effect import) |
-| `toolkit/requirements.py` | only for a brand-new `Dep` + availability check |
+| `toolkit/deps.py` | only for a brand-new `Dep` + availability check |
 | `settings.py` | only for a new credential or model id field |
 | `CLAUDE.md` (root) | document any new env vars |
 | `guards/test_adapter_registry.py` | nothing — it's the guard that grades your work |

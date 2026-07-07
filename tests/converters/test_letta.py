@@ -15,6 +15,7 @@ class TestLettaHistoryConverter:
         assert state.room_id is None
         assert state.conversation_id is None
         assert state.created_at is None
+        assert state.replay_messages == []
 
     def test_convert_finds_latest_letta_mapping(self) -> None:
         converter = LettaHistoryConverter()
@@ -186,3 +187,45 @@ class TestLettaHistoryConverter:
         state = converter.convert(raw_history)
         assert state.agent_id == "agent-1"
         assert state.conversation_id is None
+
+    def test_replay_messages_from_text_history(self) -> None:
+        """Text messages become [sender]: content replay lines, in order."""
+        converter = LettaHistoryConverter()
+        raw_history = [
+            {"message_type": "text", "content": "hello", "sender_name": "Alice"},
+            {"message_type": "task", "metadata": {"letta_agent_id": "agent-1"}},
+            {"message_type": "thought", "content": "hmm", "sender_name": "Bot"},
+            {"message_type": "text", "content": "hi back", "sender_name": "Bot"},
+        ]
+        state = converter.convert(raw_history)
+        assert state.agent_id == "agent-1"
+        assert state.replay_messages == ["[Alice]: hello", "[Bot]: hi back"]
+
+    def test_replay_messages_without_task_metadata(self) -> None:
+        """Rooms with history but no persisted agent still get replay lines —
+        this is exactly the cold-boot seeding case."""
+        converter = LettaHistoryConverter()
+        raw_history = [
+            {"message_type": "text", "content": "the secret is 42", "sender_name": "A"},
+        ]
+        state = converter.convert(raw_history)
+        assert state.agent_id is None
+        assert state.replay_messages == ["[A]: the secret is 42"]
+
+    def test_replay_messages_fall_back_to_sender_type(self) -> None:
+        converter = LettaHistoryConverter()
+        raw_history = [
+            {"message_type": "text", "content": "hi", "sender_type": "User"},
+            {"message_type": "text", "content": "yo"},
+        ]
+        state = converter.convert(raw_history)
+        assert state.replay_messages == ["[User]: hi", "[Unknown]: yo"]
+
+    def test_replay_skips_empty_content(self) -> None:
+        converter = LettaHistoryConverter()
+        raw_history = [
+            {"message_type": "text", "content": "", "sender_name": "A"},
+            {"message_type": "text", "content": None, "sender_name": "A"},
+        ]
+        state = converter.convert(raw_history)
+        assert state.replay_messages == []

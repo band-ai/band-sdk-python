@@ -503,6 +503,8 @@ dependencies = [
     { name = "band-client-rest" },
     { name = "cryptography" },
     { name = "phoenix-channels-python-client" },
+    { name = "pydantic-settings", version = "2.10.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "pydantic-settings", version = "2.13.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
@@ -649,6 +651,8 @@ langgraph = [
 ]
 letta = [
     { name = "letta-client" },
+    { name = "mcp", version = "1.26.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "mcp", version = "1.27.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
 ]
 logging = [
     { name = "python-json-logger" },
@@ -734,6 +738,7 @@ requires-dist = [
     { name = "letta-client", marker = "extra == 'letta'", specifier = ">=0.1.0" },
     { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.25.0" },
     { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.25.0" },
+    { name = "mcp", marker = "extra == 'letta'", specifier = ">=1.25.0" },
     { name = "nest-asyncio", marker = "extra == 'crewai'", specifier = ">=1.6.0" },
     { name = "nest-asyncio", marker = "extra == 'dev-crewai'", specifier = ">=1.6.0" },
     { name = "openai", marker = "extra == 'crewai'", specifier = ">=2.0.0" },
@@ -750,6 +755,7 @@ requires-dist = [
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
     { name = "pydantic-ai-slim", marker = "extra == 'dev'", specifier = ">=1.56.0" },
     { name = "pydantic-ai-slim", extras = ["anthropic"], marker = "extra == 'pydantic-ai'", specifier = ">=1.56.0" },
+    { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pydantic-settings", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "pydantic-settings", marker = "extra == 'dev-crewai'", specifier = ">=2.0.0" },
     { name = "pyrefly", marker = "extra == 'dev'", specifier = ">=0.18.0" },

@@ -358,6 +358,28 @@ class TestLettaApiKeyShim:
             LettaAdapterConfig(provider_key="new-key", api_key="old-key")
 
 
+class TestLettaMCPKwargShim:
+    """Legacy Letta MCP kwargs must populate the nested MCP config."""
+
+    def test_legacy_mcp_kwargs_warn_and_populate_external_config(self) -> None:
+        from band.adapters.letta import LettaAdapterConfig
+
+        with pytest.warns(
+            DeprecationWarning,
+            match="mcp_server_url.*mcp_server_name.*mcp=LettaMCPConfig",
+        ):
+            config = LettaAdapterConfig(
+                mcp_server_url="http://mcp:9000/sse",
+                mcp_server_name="legacy-band",
+            )
+
+        assert config.mcp.mode == "external"
+        assert config.mcp.server_url == "http://mcp:9000/sse"
+        assert config.mcp.server_name == "legacy-band"
+        assert config.mcp_server_url is None
+        assert config.mcp_server_name is None
+
+
 class TestOpencodeDeprecationShims:
     """Opencode config booleans must warn when non-default."""
 

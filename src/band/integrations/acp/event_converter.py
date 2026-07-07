@@ -16,7 +16,7 @@ from acp import (
     update_tool_call,
 )
 
-from band.converters._tool_parsing import parse_tool_call, parse_tool_result
+from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.core.types import PlatformMessage, is_usage_event
 
 logger = logging.getLogger(__name__)

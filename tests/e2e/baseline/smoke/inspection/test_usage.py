@@ -9,14 +9,15 @@ usage-capable adapter.
 Coverage is registry-derived, not a hand-maintained list: the fan is the whole
 matrix minus the adapters that don't emit usage — ``CREWAI_FLOW`` (usage lives in
 user-supplied flow internals — N-A) and ``CREWAI`` (usage capture deferred: its
-result counter is cumulative-lifetime, not per-turn). ``LETTA`` is auto-excluded
-because it is ``e2e_pending`` (it captures usage too, covered by unit mapping
-tests). Deriving from ``exclude=`` rather than an explicit include-list means a
-newly-registered usage-capable adapter is exercised automatically — and a new
-adapter that *cannot* emit usage fails loudly here until it's consciously added to
-the exclusion, which is the intended signal. The cells span several CI lanes
-(core / google / backends); each is a single-adapter ``@per_adapter`` item, so
-each runs in its own lane's job — no ``@lane`` pin needed.
+result counter is cumulative-lifetime, not per-turn). Every other adapter runs,
+letta included (it emits via ``Emit.USAGE`` from the per-room
+``LettaResponse.usage``). Deriving from ``exclude=`` rather than an explicit
+include-list means a newly-registered usage-capable adapter is exercised
+automatically — and a new adapter that *cannot* emit usage fails loudly here
+until it's consciously added to the exclusion, which is the intended signal. The
+cells span several CI lanes (core / google / backends / letta); each is a
+single-adapter ``@per_adapter`` item, so each runs in its own lane's job — no
+``@lane`` pin needed.
 
 Turn completion uses the delivery-status barrier (``wait_for_processed``): the
 platform marks the trigger ``processed`` only after the reply is emitted, by which
@@ -49,8 +50,8 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 # Adapters that don't emit usage: crewai_flow (usage in user-supplied flow
 # internals) and crewai (deferred — cumulative-lifetime counter, not per-turn).
-# Every other registered adapter must emit usage. (LETTA is auto-excluded as
-# e2e_pending — covered by unit mapping tests.)
+# Every other registered adapter must emit usage (letta does, via Emit.USAGE
+# from the per-room LettaResponse.usage).
 @per_adapter(exclude={Adapter.CREWAI_FLOW, Adapter.CREWAI}, **COST_AGENT)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_usage_recorded_for_a_turn(
@@ -126,9 +127,9 @@ async def test_usage_recorded_for_a_turn(
 
 
 # Same fan and exclusions as the single-turn smoke: every usage-emitting adapter,
-# minus the crewai pair (crewai_flow N-A; crewai deferred). LETTA auto-excluded
-# (e2e_pending). The prompt lets the user dictate length so the test can drive one
-# LONG turn then one TINY turn (see COST_MULTI_TURN_AGENT).
+# minus the crewai pair (crewai_flow N-A; crewai deferred). The prompt lets the
+# user dictate length so the test can drive one LONG turn then one TINY turn
+# (see COST_MULTI_TURN_AGENT).
 @per_adapter(exclude={Adapter.CREWAI_FLOW, Adapter.CREWAI}, **COST_MULTI_TURN_AGENT)
 # Two turns, and the first drives a long multi-paragraph generation — so this test
 # legitimately needs roughly a second turn's budget on top of the per-turn default.

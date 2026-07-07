@@ -13,8 +13,19 @@ Environment variables:
     LETTA_MODEL                Model ID (e.g., openai/gpt-5.4)
     LETTA_MODE                 Operating mode: per_room or shared (default: per_room)
     LETTA_PROJECT              Letta Cloud project name (optional, ignored for self-hosted)
-    MCP_SERVER_URL             band-mcp server URL (default: http://localhost:8002/sse)
-    MCP_SERVER_NAME            MCP server name (default: band)
+    LETTA_EMBEDDING            Embedding model for agent create (required by Letta's
+                               Docker server, e.g. openai/text-embedding-3-small)
+    MCP_SERVER_URL             External band-mcp server URL. When set, the adapter
+                               registers that server with Letta; when unset, the
+                               adapter self-hosts its own Band MCP server in-process.
+    MCP_SERVER_NAME            MCP registration name (defaults to "band" in
+                               external mode; unique per registration when
+                               self-hosted). Omit for self-host unless the
+                               advertised MCP URL is stable across restarts —
+                               a fixed name plus an OS-assigned port breaks
+                               after process restart (see LettaMCPConfig).
+    LETTA_MCP_ADVERTISED_HOST  Hostname Letta uses to reach the self-hosted MCP
+                               server (e.g. "agent" in Docker Compose)
     BAND_WS_URL                Platform WebSocket URL
     BAND_REST_URL              Platform REST URL
 """
@@ -23,10 +34,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 from pathlib import Path
 from typing import Any, Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 try:
     import yaml
@@ -54,6 +66,30 @@ logger = logging.getLogger(__name__)
 LettaMode = Literal["per_room", "shared"]
 
 _MODES: dict[str, LettaMode] = {"per_room": "per_room", "shared": "shared"}
+
+
+class LettaRunnerSettings(BaseSettings):
+    """Runner environment (field name == env var, see module docstring).
+
+    Env values take precedence over the YAML config; ``None``/blank fields
+    fall through to YAML and then to the defaults (resolved in ``main``).
+    """
+
+    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
+
+    agent_config: str = ""  # AGENT_CONFIG (required; validated in main)
+    agent_key: str = "agent"  # AGENT_KEY
+    band_ws_url: str = "wss://app.band.ai/api/v1/socket/websocket"  # BAND_WS_URL
+    band_rest_url: str = "https://app.band.ai"  # BAND_REST_URL
+    letta_base_url: str | None = None  # LETTA_BASE_URL
+    letta_api_key: str | None = None  # LETTA_API_KEY
+    letta_model: str | None = None  # LETTA_MODEL
+    letta_mode: str | None = None  # LETTA_MODE
+    letta_project: str | None = None  # LETTA_PROJECT
+    letta_embedding: str | None = None  # LETTA_EMBEDDING
+    letta_mcp_advertised_host: str | None = None  # LETTA_MCP_ADVERTISED_HOST
+    mcp_server_url: str | None = None  # MCP_SERVER_URL
+    mcp_server_name: str | None = None  # MCP_SERVER_NAME
 
 
 def load_config(config_path: str, agent_key: str) -> dict[str, Any]:
@@ -116,63 +152,60 @@ async def main() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, _handle_signal, sig)
 
-    config_path = os.environ.get("AGENT_CONFIG")
-    if not config_path:
+    settings = LettaRunnerSettings()
+    if not settings.agent_config:
         raise ValueError("AGENT_CONFIG environment variable not set")
-
-    agent_key = os.environ.get("AGENT_KEY", "agent")
-
-    ws_url = os.environ.get(
-        "BAND_WS_URL",
-        os.environ.get("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket"),
-    )
-    rest_url = os.environ.get(
-        "BAND_REST_URL", os.environ.get("BAND_REST_URL", "https://app.band.ai")
-    )
-    if not ws_url:
+    if not settings.band_ws_url:
         raise ValueError("BAND_WS_URL environment variable is empty")
-    if not rest_url:
+    if not settings.band_rest_url:
         raise ValueError("BAND_REST_URL environment variable is empty")
+    ws_url = settings.band_ws_url
+    rest_url = settings.band_rest_url
 
-    logger.info("Loading config from: %s (key: %s)", config_path, agent_key)
-    config = load_config(config_path, agent_key)
+    logger.info(
+        "Loading config from: %s (key: %s)", settings.agent_config, settings.agent_key
+    )
+    config = load_config(settings.agent_config, settings.agent_key)
 
     from band import Agent
-    from band.adapters.letta import LettaAdapter, LettaAdapterConfig
+    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
     agent_id = config["agent_id"]
     api_key = config["api_key"]
 
-    # Letta-specific config from environment (env overrides YAML)
+    def resolve(env_value: str | None, config_key: str) -> str | None:
+        """Env overrides YAML; blank values fall through."""
+        return _optional_str(env_value) or _optional_str(config.get(config_key))
+
     letta_base_url = (
-        _optional_str(os.environ.get("LETTA_BASE_URL"))
-        or _optional_str(config.get("letta_base_url"))
-        or "https://api.letta.com"
+        resolve(settings.letta_base_url, "letta_base_url") or "https://api.letta.com"
     )
-    letta_api_key = _optional_str(os.environ.get("LETTA_API_KEY")) or _optional_str(
-        config.get("letta_api_key")
+    letta_api_key = resolve(settings.letta_api_key, "letta_api_key")
+    letta_model = resolve(settings.letta_model, "letta_model")
+    letta_mode = _parse_mode(resolve(settings.letta_mode, "letta_mode") or "per_room")
+    letta_embedding = resolve(settings.letta_embedding, "letta_embedding")
+    letta_mcp_advertised_host = resolve(
+        settings.letta_mcp_advertised_host, "letta_mcp_advertised_host"
     )
-    letta_model = _optional_str(os.environ.get("LETTA_MODEL")) or _optional_str(
-        config.get("letta_model")
-    )
-    letta_mode = _parse_mode(
-        _optional_str(os.environ.get("LETTA_MODE"))
-        or _optional_str(config.get("letta_mode"))
-        or "per_room"
-    )
-    mcp_server_url = (
-        _optional_str(os.environ.get("MCP_SERVER_URL"))
-        or _optional_str(config.get("mcp_server_url"))
-        or "http://localhost:8002/sse"
-    )
-    mcp_server_name = (
-        _optional_str(os.environ.get("MCP_SERVER_NAME"))
-        or _optional_str(config.get("mcp_server_name"))
-        or "band"
-    )
-    letta_project = _optional_str(os.environ.get("LETTA_PROJECT")) or _optional_str(
-        config.get("letta_project")
-    )
+    mcp_server_url = resolve(settings.mcp_server_url, "mcp_server_url")
+    mcp_server_name = resolve(settings.mcp_server_name, "mcp_server_name")
+    letta_project = resolve(settings.letta_project, "letta_project")
+
+    # An explicit MCP_SERVER_URL selects an external band-mcp; otherwise the
+    # adapter self-hosts its own Band MCP server in-process.
+    if mcp_server_url:
+        mcp_config = LettaMCPConfig(
+            mode="external",
+            server_url=mcp_server_url,
+            server_name=mcp_server_name,
+        )
+    else:
+        loopback = letta_mcp_advertised_host in (None, "127.0.0.1", "localhost", "::1")
+        mcp_config = LettaMCPConfig(
+            server_name=mcp_server_name,
+            bind_host="127.0.0.1" if loopback else "0.0.0.0",
+            advertised_host=letta_mcp_advertised_host,
+        )
 
     adapter = LettaAdapter(
         config=LettaAdapterConfig(
@@ -180,8 +213,8 @@ async def main() -> None:
             api_key=letta_api_key,
             model=letta_model,
             mode=letta_mode,
-            mcp_server_url=mcp_server_url,
-            mcp_server_name=mcp_server_name,
+            embedding=letta_embedding,
+            mcp=mcp_config,
             project=letta_project,
             custom_section="",
             include_base_instructions=True,
@@ -204,7 +237,7 @@ async def main() -> None:
         letta_base_url,
         letta_mode,
         letta_model or "auto",
-        mcp_server_url,
+        mcp_server_url or "self-hosted",
         letta_project or "(none)",
     )
 

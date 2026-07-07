@@ -15,7 +15,7 @@ except ImportError as e:
         "LangChain dependencies not installed. Install with: uv add band-sdk[langgraph]"
     ) from e
 
-from band.converters._tool_parsing import parse_tool_call, parse_tool_result
+from band.converters.parsing import parse_tool_call, parse_tool_result
 from band.core.protocols import HistoryConverter
 
 logger = logging.getLogger(__name__)

@@ -35,7 +35,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
     running_members,
 )
-from tests.e2e.baseline.toolkit.requirements import _is_letta_cloud
+from tests.e2e.baseline.toolkit.deps import _is_letta_cloud
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 

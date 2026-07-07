@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from band.converters._utils import optional_str, parse_iso_datetime
+from band.converters.helpers import optional_str, parse_iso_datetime
 from band.core.protocols import HistoryConverter
 from band.integrations.codex.types import CodexSessionState
 

@@ -29,7 +29,7 @@ from tests.e2e.baseline.toolkit.adapters import (
     _reject_tools,
     adapter,
 )
-from tests.e2e.baseline.toolkit.requirements import Dep
+from tests.e2e.baseline.toolkit.deps import Dep
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 _LLM_TOOL_LOOP = (Capability.MEMORY, Capability.CONTACTS)
@@ -255,7 +255,7 @@ def _build_codex(
     # default -- NOT defaulted to the OpenAI chat model: Codex uses its own model
     # catalogue (the OpenAI chat model isn't in it), so leaving config.model=None lets the
     # adapter discover/select a valid Codex model. CODEX_COMMAND likewise: an absent
-    # value spawns the stock `codex` binary. Splits mirror the gates in requirements.py.
+    # value spawns the stock `codex` binary. Splits mirror the gates in deps.py.
     config_kwargs: dict[str, Any] = {
         "cwd": s.backends.codex_cwd,
         "custom_section": prompt or "",
@@ -294,17 +294,12 @@ def _build_opencode(
     )
 
 
-# Letta is registered so the `letta` CI lane is still defined (ci_lanes), but
-# e2e_pending=True drops it from specs()/adapter_params(), so the matrix runs no
-# cells for it. (e2e_pending does not gate @with_adapters — there simply are no
-# @with_adapters(Adapter.LETTA) tests.) Letta executes platform tools only by calling
-# a band-mcp server, and standing one up reachable from the Letta server (its SSRF
-# guard rejects loopback) isn't wired yet, so the live smokes are deferred.
-#
-# TODO: cover Letta live once a reachable band-mcp + the Letta smokes land — flip
-# e2e_pending to False below (or drop the kwarg) to return it to the matrix, and
-# add the smokes; nothing else here changes.
-@adapter(Adapter.LETTA, requires=[Dep.LETTA], e2e_pending=True, runs_tool_loop=False)
+# Letta advertises no platform capabilities here yet: its tools live on the MCP
+# server, and the memory matrix cells assert the band memory-tool loop. The
+# self-hosted MCP server *can* serve memory tools (include_memory follows
+# Capability.MEMORY), so advertising MEMORY once proven live is a candidate
+# follow-up rather than a design limit.
+@adapter(Adapter.LETTA, requires=[Dep.LETTA], runs_tool_loop=False)
 def _build_letta(
     s: BaselineSettings,
     *,
@@ -312,16 +307,35 @@ def _build_letta(
     features: AdapterFeatures | None,
     tools: list[ToolSpec] | None = None,
 ) -> SimpleAdapter[Any]:
-    from band.adapters.letta import LettaAdapter, LettaAdapterConfig
+    from band.adapters.letta import LettaAdapter, LettaAdapterConfig, LettaMCPConfig
 
     _reject_tools(Adapter.LETTA, tools)
+
+    # An explicit MCP_SERVER_URL selects an external band-mcp (env → default
+    # precedence, parity with docker/letta/runner.py). Default is the adapter's
+    # self-hosted MCP server: bound only as wide as its advertised host needs —
+    # loopback for a natively-run Letta, all interfaces when the dockerized
+    # Letta reaches back via host.docker.internal.
+    external_url = s.backends.mcp_server_url.strip()
+    if external_url:
+        mcp = LettaMCPConfig(mode="external", server_url=external_url)
+    else:
+        advertised = s.backends.letta_mcp_advertised_host
+        loopback = advertised in ("127.0.0.1", "localhost")
+        mcp = LettaMCPConfig(
+            bind_host="127.0.0.1" if loopback else "0.0.0.0",
+            advertised_host=advertised,
+        )
 
     return LettaAdapter(
         config=LettaAdapterConfig(
             base_url=s.backends.letta_base_url,
             provider_key=s.backends.letta_api_key or None,
             model=s.backends.letta_model,
+            embedding=s.backends.letta_embedding or None,
+            mcp=mcp,
             custom_section=prompt or "",
+            consolidate_memory_on_cleanup=False,
         ),
         features=features,
     )

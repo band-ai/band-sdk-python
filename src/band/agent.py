@@ -254,6 +254,18 @@ class Agent:
 
         graceful = await self._runtime.stop(timeout=timeout)
         self._started = False
+
+        # Adapter-wide teardown: rooms are not individually cleaned on
+        # shutdown, so adapters release cross-room resources (self-hosted
+        # servers, external registrations) here. Best-effort — a teardown
+        # failure must not mask the stop result.
+        stop_hook = getattr(self._adapter, "on_stopped", None)
+        if stop_hook is not None:
+            try:
+                await stop_hook()
+            except Exception:
+                logger.exception("Adapter on_stopped teardown failed")
+
         logger.info(
             "Agent stopped: %s (graceful=%s)", self._runtime.agent_name, graceful
         )

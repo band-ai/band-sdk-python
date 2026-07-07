@@ -171,6 +171,16 @@ class SimpleAdapter(Generic[H], ABC):
         """Override for session cleanup."""
         pass
 
+    async def on_stopped(self) -> None:
+        """Override for adapter-wide teardown when the agent stops.
+
+        Called by ``Agent.stop()`` after the runtime has stopped. Rooms are
+        not individually cleaned on shutdown (``on_cleanup`` fires on room
+        removal, not agent stop), so resources that outlive rooms — a
+        self-hosted server, an external registration — release here.
+        """
+        pass
+
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Override for post-start setup."""
         self.agent_name = agent_name
