@@ -12,8 +12,6 @@ from __future__ import annotations
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from tests.e2e._constants import DEFAULT_E2E_TIMEOUT_S
-
 
 class BandEndpoints(BaseSettings):
     """Band platform URLs."""
@@ -169,7 +167,7 @@ class BaselineSettings(BaseSettings):
     # stuck (a failure deadline, never a success signal). Frameworks vary widely
     # in cold-start + round-trip latency (crewai crew construction, self-hosted
     # backends, free/slow models), so the budget is generous by default.
-    e2e_timeout: int = DEFAULT_E2E_TIMEOUT_S
+    e2e_timeout: int = 120
 
     endpoints: BandEndpoints = Field(default_factory=BandEndpoints)
     credentials: BandCredentials = Field(default_factory=BandCredentials)

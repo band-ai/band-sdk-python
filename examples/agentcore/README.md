@@ -220,8 +220,26 @@ room id so each room gets its own AgentCore microVM.
 | `agentcore_llm_server.py` | The container (FastAPI + SDK). Runs once per ARN. |
 | `Dockerfile` | Container image build. |
 | `run_agentcore.py` | Local bridge launcher (loads `.env.test`). |
+| `verify_demo.py` | Manual end-to-end check of a **deployed** demo (drives a live platform; not run in CI). See below. |
 | `agents/*.txt` | Per-agent system prompts; paste into `SYSTEM_PROMPT`. |
 | `agent_config.yaml.example` | Bridge config template — copy to `agent_config.yaml` (gitignored) and fill in values that flow into the JSON env var. |
+
+## Verifying the deployment
+
+Once the three runtimes and the bridge are up, confirm the whole orchestration
+works end-to-end with the bundled checker. It connects as a **user**, drives the
+acceptance scenario (PA recruits `@weather` and `@math`, posts a synthesized
+answer), and then runs two rooms concurrently to confirm per-room session
+isolation. It exits non-zero if any check fails.
+
+```bash
+AGENTCORE_DEMO_PA_AGENT_ID=<personal_assistant-agent-uuid> \
+    uv run python examples/agentcore/verify_demo.py
+```
+
+Requires `BAND_REST_URL`, `BAND_WS_URL`, and `BAND_API_KEY_USER` (read from the
+environment or `.env.test`). This is manual verification tooling — it needs the
+deployed demo, so it is not part of CI.
 
 ## Where to look when something is off
 

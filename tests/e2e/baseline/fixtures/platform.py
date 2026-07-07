@@ -16,7 +16,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     new_run_id,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.helpers import TrackingWebSocketClient
+from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
 
 __all__ = [
     "baseline_run_id",
@@ -80,10 +80,8 @@ async def baseline_ws(
         api_key=baseline_settings.credentials.api_key_user,
         agent_id=None,  # user connection, not an agent
     )
-    async with ws:
-        tracking = TrackingWebSocketClient(ws)
+    async with ws, TrackingWebSocketClient(ws) as tracking:
         yield tracking
-        await tracking.cleanup_channels()
 
 
 @pytest.fixture
