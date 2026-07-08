@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Literal, Protocol, cast
 
-from acp import spawn_agent_process, text_block
+from acp import connect_to_agent, spawn_agent_process, text_block
 from acp.interfaces import Client
 
 from band.integrations.acp.client_profiles import (
@@ -74,6 +74,51 @@ def allow_permission(option_id: str) -> dict[str, object]:
 def cancel_permission() -> dict[str, object]:
     """An ACP ``RequestPermissionResponse`` cancelling the request."""
     return {"outcome": {"outcome": "cancelled"}}
+
+
+def tcp_spawn_process(
+    host: str,
+    port: int,
+    *,
+    limit: int = ACP_STDIO_LIMIT_BYTES,
+) -> Callable[..., AbstractAsyncContextManager[tuple[object, object]]]:
+    """Build a ``spawn_process`` callable that connects to an ACP server over TCP.
+
+    Drop-in for the stdio ``spawn_agent_process`` seam in :class:`ACPRuntime`: the
+    runtime dials *into* an already-running ACP server (e.g. ``copilot --acp --port
+    N`` in a container) instead of spawning a subprocess. The returned callable
+    accepts and ignores the subprocess-shaped args the runtime forwards (the
+    command executable/args and ``transport_kwargs``) — host/port are captured
+    here — so no core change to ``ACPRuntime.start`` is needed.
+    """
+
+    @asynccontextmanager
+    async def _connect(
+        client: Client,
+        *_command: object,
+        env: dict[str, str] | None = None,
+        transport_kwargs: dict[str, object] | None = None,
+    ) -> AsyncIterator[tuple[object, object]]:
+        del _command, env, transport_kwargs  # subprocess-only; unused for TCP
+        reader, writer = await asyncio.open_connection(host, port, limit=limit)
+        # connect_to_agent argument order is (client, input_stream=writer,
+        # output_stream=reader) and it type-guards writer: StreamWriter /
+        # reader: StreamReader. Unlike spawn_agent_process it does no cleanup,
+        # so we close the connection and transport ourselves.
+        conn = connect_to_agent(client, writer, reader)
+        try:
+            yield conn, writer
+        finally:
+            try:
+                await conn.close()
+            finally:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    logger.debug("Error awaiting TCP writer close", exc_info=True)
+
+    return _connect
 
 
 class ACPConnectionProtocol(Protocol):
@@ -160,7 +205,23 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
                     chunk = CollectedChunk(chunk_type="text", content=text)
 
         if chunk is not None:
-            self._session_chunks.setdefault(session_id, []).append(chunk)
+            self._append_chunk(session_id, chunk)
+
+    # Chunk kinds that arrive as a stream of deltas for one logical message, so a
+    # run of them is coalesced into a single chunk (agents emit one delta per token
+    # or phrase). tool_call/tool_result/plan are discrete and never merged.
+    _COALESCED_CHUNK_TYPES = ("text", "thought")
+
+    def _append_chunk(self, session_id: str, chunk: CollectedChunk) -> None:
+        buffer = self._session_chunks.setdefault(session_id, [])
+        if (
+            buffer
+            and chunk.chunk_type in self._COALESCED_CHUNK_TYPES
+            and buffer[-1].chunk_type == chunk.chunk_type
+        ):
+            buffer[-1].content += chunk.content  # merge the streamed delta
+        else:
+            buffer.append(chunk)
 
     async def request_permission(  # type: ignore[override]  # ACP Client uses specific types; we widen to object
         self,
@@ -282,8 +343,10 @@ class ACPRuntime:
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]],
             self._spawn_process(
                 self._client,
-                self._command[0],
-                *self._command[1:],
+                # Splat the whole command: stdio forwards executable + args, while
+                # a TCP transport passes an empty command (host/port live in the
+                # injected spawn_process closure) and receives no positional args.
+                *self._command,
                 env=self._env,
                 transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
             ),
@@ -302,7 +365,12 @@ class ACPRuntime:
         except Exception:
             await self._cleanup_failed_start(ctx, "init failure")
             raise
-        logger.info("Connected to ACP agent: %s", " ".join(self._command))
+        # A connect-only transport (e.g. TCP) carries no command; describe it
+        # rather than logging a blank suffix.
+        logger.info(
+            "Connected to ACP agent: %s",
+            " ".join(self._command) or "<injected transport>",
+        )
 
     async def ensure_connection(self, *, can_respawn: bool) -> ACPConnectionProtocol:
         async with self._stop_lock:

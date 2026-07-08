@@ -6,21 +6,22 @@
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-ACP Server with routing - Target specific peers via slash commands or modes.
+ACP Server with push notifications - Real-time activity from Band peers.
 
-This example demonstrates how to route editor prompts to specific Band
-peers using the AgentRouter. Users can:
+This example demonstrates push notifications: when platform messages arrive
+for rooms with active ACP sessions but no pending prompt, they are pushed
+to the editor as unsolicited session_update notifications.
 
-  1. Use slash commands: "/codex fix this bug" -> routes to "codex" peer
-  2. Set session modes: mode "code" -> routes to configured peer
-  3. Default: mention all peers in the room
+This lets the editor display real-time activity from other agents working
+in the same Band room, even when the user hasn't sent a prompt.
 
 Architecture:
-    Editor prompt "/codex fix bug"
-      -> ACPServer.prompt()
-        -> AgentRouter.resolve() -> ("fix bug", "codex")
-          -> BandACPServerAdapter.handle_prompt(mention=["codex"])
-            -> Band Platform (only @codex is mentioned)
+    Band Platform (peer sends a message in room)
+      -> BandACPServerAdapter.on_message() (no pending prompt)
+        -> ACPPushHandler.handle_push_event()
+          -> EventConverter.convert(msg) -> ACP session_update chunk
+            -> acp_client.session_update(session_id, chunk)
+              -> Editor shows real-time peer activity
 
 Prerequisites:
     1. Set environment variables:
@@ -31,7 +32,7 @@ Prerequisites:
     2. Have peers configured on the Band platform
 
 Run with:
-    uv run examples/acp/03_acp_server_with_routing.py
+    uv run examples/acp/servers/push_notifications.py
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ACPServer, BandACPServerAdapter
 from band.config import load_agent_config
-from band.integrations.acp import AgentRouter
+from band.integrations.acp import ACPPushHandler
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -76,25 +77,15 @@ async def main() -> None:
     else:
         agent_id = os.getenv("BAND_AGENT_ID", "acp-server")
 
-    # Configure routing: slash commands and mode-based routing
-    router = AgentRouter(
-        slash_commands={
-            "codex": "codex",  # /codex <prompt> -> route to "codex" peer
-            "claude": "claude",  # /claude <prompt> -> route to "claude" peer
-            "gemini": "gemini",  # /gemini <prompt> -> route to "gemini" peer
-        },
-        mode_to_peer={
-            "code": "codex",  # "code" mode -> route to "codex" peer
-            "research": "gemini",  # "research" mode -> route to "gemini" peer
-        },
-    )
-
-    # Create ACP server adapter with routing
+    # Create ACP server adapter
     adapter = BandACPServerAdapter(
         rest_url=rest_url,
         api_key=api_key,
     )
-    adapter.set_router(router)
+
+    # Wire up push handler for unsolicited session_update notifications
+    push_handler = ACPPushHandler(adapter)
+    adapter.set_push_handler(push_handler)
 
     # Create ACP protocol handler
     server = ACPServer(adapter)
@@ -108,9 +99,8 @@ async def main() -> None:
         rest_url=rest_url,
     )
 
-    logger.info("Starting ACP server with routing...")
-    logger.info("Slash commands: /codex, /claude, /gemini")
-    logger.info("Session modes: code -> codex, research -> gemini")
+    logger.info("Starting ACP server with push notifications...")
+    logger.info("Peer activity will be pushed to the editor in real time.")
 
     # Start platform connection (non-blocking)
     await agent.start()

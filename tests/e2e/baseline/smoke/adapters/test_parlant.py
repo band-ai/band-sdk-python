@@ -45,10 +45,13 @@ pytest.importorskip("parlant.sdk")
 _SHORT = "You are a friendly assistant in a chat room. Reply in one short sentence."
 
 
+# Parlant isn't in the adapter registry (NON_AGENT_ADAPTERS), so the lane selector
+# can't derive its home lane and would run it in every lane. Pin it to core (whose
+# dev extra hosts parlant + OpenAI) explicitly.
+@lane(Lane.CORE)
 @requires(
     Dep.OPENAI
 )  # running_parlant_server uses the OpenAI NLP service (OPENAI_API_KEY)
-@lane(Lane.CORE)
 @flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 # The barrier below waits up to ``e2e_timeout * 3`` (360s at the 120s default) for
 # Parlant's cold multi-call pipeline. The outer cap is ``e2e_timeout + extra``, so

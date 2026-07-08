@@ -1,20 +1,23 @@
 """Copilot SDK showcase smokes — the toolkit driving the Copilot adapter live.
 
-Copilot SDK is a ``copilot``-lane matrix adapter (its own lane: it needs a
-GitHub token from a Copilot-entitled account, not a plain provider key — see
-``deps.py``), so the generic matrix (``smoke/matrix/``) already runs the
-standard scenarios against it via the registry builder. These are Copilot-focused
-instead: ``ask_user`` routing (handler and room mode), recall when Copilot's
-*native* session resume misses, and one client shared across adapter lifecycles —
-none of which the generic builder's ``prompt``/``features``/``tools`` contract can
-express, so each test constructs ``CopilotSDKAdapter`` by hand (like
+Copilot SDK is a ``core``-lane matrix adapter (gated on the Anthropic BYOK key;
+its Copilot auth — a stored login or ``GITHUB_TOKEN`` — is out-of-band, see the
+builder in ``toolkit/builders.py``), so the generic matrix (``smoke/matrix/``)
+already runs the standard scenarios against it via the registry builder. These
+are Copilot-focused instead: ``ask_user`` routing (handler and room mode), recall
+when Copilot's *native* session resume misses, and one client shared across adapter
+lifecycles — none of which the generic builder's ``prompt``/``features``/``tools``
+contract can express, so each test constructs ``CopilotSDKAdapter`` by hand (like
 ``test_parlant.py``) and hands it to the toolkit's run primitives.
 
-Because construction is bespoke, gating is explicit (``@requires``) rather than
-riding on ``@with_adapters``/``@per_adapter``.
+Because construction is bespoke, these expose no adapter binding to the lane
+selector (no ``@with_adapters``/``@per_adapter`` — that would demand the ``agent``
+fixture and re-provision generically). So gating stays explicit (``@requires``) and
+lane scoping is pinned with ``@lane(Lane.CORE)`` — without it the selector would see
+no framework and run these heavy smokes in *every* lane.
 
 Run with:
-    E2E_TESTS_ENABLED=true BAND_E2E_LANE=copilot uv run pytest \\
+    E2E_TESTS_ENABLED=true BAND_E2E_LANE=core uv run pytest \\
         tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py -v -s --no-cov
 """
 
@@ -30,6 +33,8 @@ import pytest
 from band.adapters.copilot_sdk import ASK_USER_ROOM, _COPILOT_SDK_AVAILABLE
 
 from tests.e2e.baseline.flaky import flaky_infra
+
+from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -83,7 +88,8 @@ def _chosen_word(reply: str) -> str:
     return words[-1]
 
 
-@requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
+@lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
+@requires(Dep.ANTHROPIC)
 @flaky_infra(
     "Copilot runtime boot + ask_user double round-trip can time out transiently"
 )
@@ -155,7 +161,8 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
     replies.assert_contains_any([operator_channel])
 
 
-@requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
+@lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
+@requires(Dep.ANTHROPIC)
 @flaky_infra("two full live turns plus Copilot runtime boot can time out transiently")
 @pytest.mark.timeout(extra=180)  # two full turns (question turn + answer turn)
 @pytest.mark.asyncio(loop_scope="session")
@@ -225,7 +232,8 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
             replies.assert_contains_any([secret_channel])
 
 
-@requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
+@lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
+@requires(Dep.ANTHROPIC)
 @flaky_infra(
     "two fresh Copilot runtime boots (resume-miss setup) can time out transiently"
 )
@@ -303,7 +311,8 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
             replies.assert_contains_any([agent_word])
 
 
-@requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
+@lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
+@requires(Dep.ANTHROPIC)
 @flaky_infra(
     "several live turns across two adapter lifecycles can time out transiently"
 )

@@ -144,6 +144,10 @@ class Backends(BaseSettings):
     # only the runtime-auth token, from a GitHub account with Copilot entitlement.
     github_token: str = ""  # GITHUB_TOKEN
 
+    # Copilot CLI over ACP (copilot_acp adapter). Command defaults to `copilot --acp`;
+    # override the binary + args via COPILOT_COMMAND. Auth reuses github_token above.
+    copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
+
 
 class LLMModels(BaseSettings):
     """Model ids for the agents under test and the judge."""

@@ -27,8 +27,9 @@ name: E2E (baseline)
 # - google       — gemini/google_adk (own lane so free-tier rate-limit flakiness is
 #                  isolated from core; shares the `dev` extra).
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
-#                  CodexAdapter (codex CLI) + the codex-acp e2e, and OpencodeAdapter
-#                  (local `opencode serve`, Zen free model).
+#                  CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
+#                  (local `opencode serve`, Zen free model), and CopilotACPAdapter
+#                  (copilot CLI over ACP; auth via the Copilot-entitled GITHUB_TOKEN).
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -229,6 +230,11 @@ jobs:
       # executed .sh depends on the exec bit surviving checkout and Git Bash
       # resolving the shebang; `bash <script>` sidesteps both. No-op on Linux.
       run: bash .github/scripts/setup-codex.sh
+
+    # copilot_acp drives `copilot --acp`; auth is the job-env GITHUB_TOKEN (no login).
+    - name: Install the GitHub Copilot CLI (copilot_acp)
+      if: matrix.lane == 'backends'
+      run: .github/scripts/setup-copilot.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'

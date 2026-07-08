@@ -107,3 +107,40 @@ class TestReply:
             }
         ]
         assert not tools.messages_sent
+
+    @pytest.mark.asyncio
+    async def test_fallback_fires_when_band_send_message_fails(self):
+        """A failed band_send_message (ok=False, no exception) must NOT mark the turn
+        replied — the final-text fallback must still fire, else the user gets a silent
+        turn."""
+        from band.runtime.tools import ToolCallOutcome
+
+        class SendFailsTools(ToolSchemaFakeTools):
+            async def execute_tool_call_structured(self, tool_name, arguments):
+                if tool_name == "band_send_message":
+                    return ToolCallOutcome(
+                        value="Error executing band_send_message: upstream 500",
+                        ok=False,
+                        error_message="upstream 500",
+                    )
+                return await super().execute_tool_call_structured(tool_name, arguments)
+
+        async def model_sends_message(session: FakeCopilotSession) -> None:
+            await session.find_tool("band_send_message").handler(
+                ToolInvocation(
+                    tool_call_id="call-1",
+                    tool_name="band_send_message",
+                    arguments={"content": "sent via tool", "mentions": ["user-1"]},
+                )
+            )
+
+        client = FakeCopilotClient(
+            reply_content="Fallback reply", turn_events=[model_sends_message]
+        )
+        adapter = await make_started_adapter(client)
+        tools = SendFailsTools()
+
+        await run_message(adapter, tools)
+
+        # The tool failed, so the fallback text must reach the room (no silent turn).
+        assert [m["content"] for m in tools.messages_sent] == ["Fallback reply"]

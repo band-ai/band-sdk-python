@@ -1,0 +1,41 @@
+# Copilot-in-a-container reachable over TCP; Band tools via a SEPARATE band-mcp
+# service on the same compose network (the cloud-style "independently scaled
+# services" topology).
+#
+#   host: client.py (Band SDK)  --TCP-->  copilot:8080 (published)
+#   copilot (in container)      --SSE-->  band-mcp:3000 (compose DNS)
+#
+# The SDK on the host never resolves band-mcp:3000 — that URL is dialed by Copilot
+# INSIDE the compose network. Only the ACP port (8080) is published to the host.
+
+services:
+  band-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.band-mcp
+    environment:
+      # band-mcp acts as ONE Band identity (an agent key: thnv_a_… / band_a_…).
+      # The MCP client (Copilot) sends no credentials, so keep this service off the
+      # host network — it is a trusted sidecar reachable only within the compose net.
+      BAND_AGENT_KEY: ${BAND_AGENT_KEY:?set BAND_AGENT_KEY in .env}
+      # Point band-mcp at your Band platform (its own default is app.thenvoi.com).
+      THENVOI_BASE_URL: ${BAND_REST_URL:-https://app.band.ai}
+      # Allow the compose-DNS host Copilot dials; without this every SSE request 421s.
+      ALLOWED_HOSTS: '["band-mcp:*"]'
+    expose:
+      - "3000"  # internal to the compose network only; NOT published to the host
+
+  copilot:
+    build:
+      context: .
+      dockerfile: Dockerfile.copilot
+    environment:
+      # Copilot-entitled token; the Copilot CLI reads it automatically.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:?set GITHUB_TOKEN (Copilot-entitled) in .env}
+    ports:
+      # Loopback only: this copilot --acp is unauthenticated and runs allow-all
+      # tools, so it must not be reachable off-host. Widen to "0.0.0.0:8080:8080"
+      # deliberately (behind your own auth) only when the SDK runs on another host.
+      - "127.0.0.1:8080:8080"  # the host-side SDK (client.py) connects here over TCP
+    depends_on:
+      - band-mcp

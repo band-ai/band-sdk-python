@@ -34,6 +34,10 @@ if TYPE_CHECKING:
     from band.adapters.copilot_sdk import (
         CopilotSDKAdapterConfig as CopilotSDKAdapterConfig,
     )
+    from band.adapters.copilot_acp import CopilotACPAdapter as CopilotACPAdapter
+    from band.adapters.copilot_acp import (
+        CopilotACPAdapterConfig as CopilotACPAdapterConfig,
+    )
     from band.adapters.parlant import ParlantAdapter as ParlantAdapter
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapter
     from band.adapters.crewai_flow import (
@@ -66,6 +70,8 @@ __all__ = [
     "ClaudeSDKAdapter",
     "CopilotSDKAdapter",
     "CopilotSDKAdapterConfig",
+    "CopilotACPAdapter",
+    "CopilotACPAdapterConfig",
     "ParlantAdapter",
     "CrewAIAdapter",
     "CrewAIFlowAdapter",
@@ -97,6 +103,8 @@ _LAZY_IMPORTS: dict[str, str] = {
     "ClaudeSDKAdapter": "claude_sdk",
     "CopilotSDKAdapter": "copilot_sdk",
     "CopilotSDKAdapterConfig": "copilot_sdk",
+    "CopilotACPAdapter": "copilot_acp",
+    "CopilotACPAdapterConfig": "copilot_acp",
     "ParlantAdapter": "parlant",
     "CrewAIAdapter": "crewai",
     "CrewAIFlowAdapter": "crewai_flow",

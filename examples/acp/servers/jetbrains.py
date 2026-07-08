@@ -58,7 +58,7 @@ Prerequisites:
     2. Set BAND_API_KEY and BAND_AGENT_ID
 
 Run standalone for testing:
-    BAND_API_KEY=... BAND_AGENT_ID=... uv run examples/acp/07_jetbrains_server.py
+    BAND_API_KEY=... BAND_AGENT_ID=... uv run examples/acp/servers/jetbrains.py
 """
 
 from __future__ import annotations

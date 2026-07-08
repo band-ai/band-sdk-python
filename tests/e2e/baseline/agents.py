@@ -72,9 +72,15 @@ LANE_MARKER = "assigned_lane"
 def lane(lane_id: Lane) -> pytest.MarkDecorator:
     """Assign a test to an explicit CI lane, overriding derived home-lane scheduling.
 
-    Only needed for a multi-framework test whose frameworks live in different home
-    lanes (which is otherwise a collection error): it names the one lane — whose
-    ``uv`` extra must host all the frameworks — the test runs in.
+    Two cases need it — both because home-lane derivation (from ``item_frameworks``)
+    can't place the test:
+
+    * a multi-framework test whose frameworks live in different home lanes (otherwise a
+      collection error): names the one lane whose ``uv`` extra hosts all of them;
+    * a *bespoke* smoke that builds its adapter by hand and requests no ``agent`` fixture
+      (e.g. ``smoke/adapters/test_copilot_sdk.py``, ``test_parlant.py``): it exposes no
+      framework to the selector, so absent this pin it would run in *every* lane. Here
+      ``@with_adapters`` is not an option — the wiring guard requires it to provision.
     """
     return getattr(pytest.mark, LANE_MARKER)(lane_id)
 
