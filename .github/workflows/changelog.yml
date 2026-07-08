@@ -4,7 +4,7 @@ name: Changelog
 # release-please's release PR is merged on main). Runs the shared
 # `changelog-generator` skill via the Claude Code Action, which:
 #   - reads merged Linear issues for the version (Linear GraphQL API)
-#   - opens a PR to the Fern docs repo and enables auto-merge
+#   - opens a DRAFT PR to the Fern docs repo for a human to review and merge
 #   - posts the announcement to Slack (incoming webhook)
 #   - drafts the announcement into the private Discord review channel (webhook)
 #   - writes back a Linear Release + release notes (Linear GraphQL API)

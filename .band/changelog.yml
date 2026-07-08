@@ -3,7 +3,7 @@
 # at run time. NON-SECRET values only — secrets come from the workflow env:
 # LINEAR_API_KEY, SLACK_WEBHOOK_URL, DISCORD_DRAFT_WEBHOOK_URL.
 
-# Fern docs repo that receives the changelog PR (auto-merged after Fern CI passes).
+# Fern docs repo that receives the changelog PR (opened as a DRAFT for a human to review and merge).
 fern_repo: band-ai/fern
 # Path within the Fern repo where changelog entries live. Match the layout of the
 # newest existing entry in that repo.
