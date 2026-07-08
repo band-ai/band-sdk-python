@@ -312,9 +312,7 @@ tests/
 ├── runtime/        # Runtime tests
 ├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
-│   ├── adapters/   # Per-adapter smoke & tool execution tests
-│   ├── baseline/   # Reusable baseline toolkit + smokes (see baseline/README.md)
-│   └── scenarios/  # Legacy scenarios (langgraph restart smoke, agno-specific); cross-cutting matrix scenarios now live in baseline/smoke/matrix/
+│   └── baseline/   # The only E2E suite: reusable toolkit + smokes (see baseline/README.md)
 └── conftest.py     # Shared fixtures
 ```
 

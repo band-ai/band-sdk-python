@@ -16,7 +16,7 @@ from tests.e2e.baseline.toolkit.capture import reply_capture as _reply_capture
 from tests.e2e.baseline.toolkit.judge import Verdict
 from tests.e2e.baseline.toolkit.judge import judge as _judge
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.helpers import TrackingWebSocketClient
+from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
 
 __all__ = ["judge", "reply_capture"]
 

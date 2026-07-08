@@ -9,10 +9,19 @@ required to run. Add a new subclass + nested field as new concerns appear
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from tests.e2e._constants import DEFAULT_E2E_TIMEOUT_S
+# Load .env.test into os.environ (idempotent, non-overriding) so the framework
+# LLM SDKs (anthropic, openai, google-genai) that read their provider keys
+# straight from the environment pick them up. pydantic-settings' ``env_file``
+# only populates this module's own fields, not ``os.environ``, so the SDKs — and
+# any adapter/model the toolkit builds — need this explicit load. Imported before
+# any fixture constructs a client or adapter, so keys are present in time.
+load_dotenv(Path(__file__).parents[3] / ".env.test", override=False)
 
 
 class BandEndpoints(BaseSettings):
@@ -169,7 +178,7 @@ class BaselineSettings(BaseSettings):
     # stuck (a failure deadline, never a success signal). Frameworks vary widely
     # in cold-start + round-trip latency (crewai crew construction, self-hosted
     # backends, free/slow models), so the budget is generous by default.
-    e2e_timeout: int = DEFAULT_E2E_TIMEOUT_S
+    e2e_timeout: int = 120
 
     endpoints: BandEndpoints = Field(default_factory=BandEndpoints)
     credentials: BandCredentials = Field(default_factory=BandCredentials)
