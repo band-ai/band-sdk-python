@@ -8,6 +8,7 @@ with the Band platform.
 from __future__ import annotations
 
 import logging
+import time
 from typing import ClassVar, TYPE_CHECKING, Any
 
 from band.core.protocols import AgentToolsProtocol
@@ -72,6 +73,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         history_converter: ParlantHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         features: AdapterFeatures | None = None,
+        response_timeout: float = 300.0,
+        response_poll: float = 30.0,
     ):
         """
         Initialize the Parlant SDK adapter.
@@ -84,6 +87,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             history_converter: Custom history converter (optional)
             additional_tools: List of custom tools as (InputModel, callable) tuples
             features: Shared adapter feature settings (capabilities, emit, tool filters).
+            response_timeout: Max seconds to wait for the agent's response per turn.
+                Default 300 (5 min): a cold start — server warmup plus the first
+                guideline-matching/generation round-trips — can run long on a slow host.
+            response_poll: Seconds per polling window within that budget (default 30);
+                the wait returns as soon as the response arrives, so a warm turn is fast.
         """
         super().__init__(
             history_converter=history_converter or ParlantHistoryConverter(),
@@ -94,6 +102,8 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         self._parlant_agent = parlant_agent
         self.system_prompt = system_prompt
         self.custom_section = custom_section
+        self._response_timeout = response_timeout
+        self._response_poll = response_poll
 
         # Parlant application (accessed via container)
         self._app: Application | None = None
@@ -392,6 +402,13 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
 
         If the send_message tool was called during processing, we don't need to
         forward Parlant's response (it would be a duplicate or empty).
+
+        Waiting is bounded by a total budget, polling in shorter windows and
+        retrying on an empty window so a slow (cold-start) turn is still answered.
+        If the budget elapses with no final message, the turn is given up honestly
+        (no reply): a preamble alone is an acknowledgment, not an answer, so it is
+        never forwarded as the reply. Parlant intermittently stalls the post-preamble
+        generation; when it does, this turn legitimately produces nothing.
         """
         if not self._app:
             logger.error("Room %s: No Parlant Application available", room_id)
@@ -403,18 +420,20 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         from parlant.core.sessions import EventKind, EventSource  # type: ignore[missing-import]
 
         current_offset = min_offset
-        max_iterations = 10  # Safety limit to prevent infinite loops
-        iteration = 0
+        # Wait up to the total response budget, polling in shorter windows. An empty
+        # window is not a give-up: the agent may still be generating (cold start /
+        # slow model), so we keep waiting until the budget is spent. The loop returns
+        # the moment a final (or tool-sent) message is seen, so a warm turn is fast.
+        deadline = time.monotonic() + self._response_timeout
 
-        while iteration < max_iterations:
-            iteration += 1
+        while time.monotonic() < deadline:
+            poll = min(self._response_poll, deadline - time.monotonic())
 
             # Wait for agent response
             logger.info(
-                "Room %s: Waiting for agent response (min_offset=%s, iteration=%s)...",
+                "Room %s: Waiting for agent response (min_offset=%s)...",
                 room_id,
                 current_offset + 1,
-                iteration,
             )
 
             try:
@@ -423,7 +442,7 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     min_offset=current_offset + 1,
                     kinds=[EventKind.MESSAGE],
                     source=EventSource.AI_AGENT,
-                    timeout=Timeout(120),  # Increased timeout for tool execution
+                    timeout=Timeout(poll),
                 )
                 logger.info(
                     "Room %s: wait_for_more_events returned: %s", room_id, has_update
@@ -444,15 +463,15 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 return
 
             if not has_update:
-                # Timeout - but check if message was already sent via tool
+                # Empty poll window. If a tool already sent the reply we're done;
+                # otherwise keep waiting until the budget — don't drop a slow turn.
                 if was_message_sent(session_id_str):
                     logger.info(
-                        "Room %s: Timeout but message was sent via tool, OK",
+                        "Room %s: No new events but message was sent via tool, OK",
                         room_id,
                     )
                     return
-                logger.warning("Room %s: Timeout waiting for agent response", room_id)
-                return
+                continue
 
             # Get new events
             try:
@@ -474,10 +493,14 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 return
 
             if not events:
+                # A positive signal with no query-visible event yet is a transient
+                # read, not the answer: keep polling until the budget rather than
+                # dropping the turn (the same class of bug as a single empty window).
                 logger.warning(
-                    "Room %s: No events found despite update signal", room_id
+                    "Room %s: No events found despite update signal; still waiting",
+                    room_id,
                 )
-                return
+                continue
 
             # Process events and track if we got a non-preamble message
             got_final_message = False
@@ -579,17 +602,21 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                 room_id,
             )
 
-        # Reached max iterations - check if message was sent
+        # Budget exhausted without a final message. A preamble alone is an
+        # acknowledgment ("one moment…"), not an answer — Parlant intermittently
+        # stalls the post-preamble generation. We do NOT forward the preamble as the
+        # reply: that would make the turn look answered when the agent actually failed
+        # the user. Give up honestly; the turn produced no answer.
         if was_message_sent(session_id_str):
             logger.info(
-                "Room %s: Max iterations but message was sent via tool, OK",
+                "Room %s: Response budget elapsed but message was sent via tool, OK",
                 room_id,
             )
         else:
             logger.warning(
-                "Room %s: Reached max iterations (%s) waiting for response",
+                "Room %s: Timed out after %ss waiting for agent response",
                 room_id,
-                max_iterations,
+                self._response_timeout,
             )
 
     async def on_cleanup(self, room_id: str) -> None:
