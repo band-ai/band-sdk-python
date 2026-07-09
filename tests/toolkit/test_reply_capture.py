@@ -105,43 +105,22 @@ async def test_wait_for_reply_awaits_a_late_reply_frame() -> None:
     assert [r.content for r in replies] == ["hello there"]
 
 
-async def test_wait_for_reply_defaults_to_recipient_author() -> None:
-    """Without ``sender_id``, the barrier scopes to the *recipient* (the agent that
-    processed the trigger) — a peer's own captured message must not satisfy it, even
-    though the buffer holds it. This is the safe zero-config default for multi-agent
-    rooms."""
+async def test_wait_for_reply_scopes_to_the_recipient() -> None:
+    """The barrier scopes to the recipient (the agent that processed the trigger) — a
+    peer's own captured message must not satisfy it, even though the buffer holds it.
+    The wait keys on the recipient's PROCESSED signal, so it waits for the recipient's
+    reply, which is what makes it safe in a multi-agent room."""
     capture = ReplyCapture(ROOM)
     trigger = "m-trigger"
 
-    # No sender_id passed → defaults to the recipient (AGENT).
     waiter = asyncio.ensure_future(capture.wait_for_reply(trigger, AGENT, deadline_s=5))
 
     capture._on_message_updated(_processed(trigger, AGENT))
     capture._on_message(_reply(PEER, "peer chatter", mid="m-peer"))
     await _drain()
-    assert not waiter.done(), "default must scope to the recipient, not any sender"
-
-    capture._on_message(_reply(AGENT, "the agent's answer", mid="m-agent"))
-    replies = await asyncio.wait_for(waiter, timeout=1)
-
-    assert [r.sender_id for r in replies] == [AGENT]
-
-
-async def test_wait_for_reply_scopes_to_sender() -> None:
-    """With ``sender_id`` set, a *peer's* reply doesn't satisfy the barrier — only
-    the named author's does (the explicit escape hatch for the rare case where the
-    replier differs from the trigger's recipient)."""
-    capture = ReplyCapture(ROOM)
-    trigger = "m-trigger"
-
-    waiter = asyncio.ensure_future(
-        capture.wait_for_reply(trigger, AGENT, sender_id=AGENT, deadline_s=5)
+    assert not waiter.done(), (
+        "a peer's reply must not satisfy the recipient-scoped wait"
     )
-
-    capture._on_message_updated(_processed(trigger, AGENT))
-    capture._on_message(_reply(PEER, "peer chatter", mid="m-peer"))
-    await _drain()
-    assert not waiter.done(), "a peer's reply must not satisfy a sender-scoped wait"
 
     capture._on_message(_reply(AGENT, "the agent's answer", mid="m-agent"))
     replies = await asyncio.wait_for(waiter, timeout=1)
@@ -157,5 +136,7 @@ async def test_wait_for_reply_times_out_on_a_silent_turn() -> None:
 
     capture._on_message_updated(_processed(trigger, AGENT))
 
-    with pytest.raises(TimeoutError, match="processed message m-trigger.*but no reply"):
+    with pytest.raises(
+        TimeoutError, match="processed message m-trigger.*captured no reply"
+    ):
         await capture.wait_for_reply(trigger, AGENT, deadline_s=0.2)

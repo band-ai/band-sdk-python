@@ -287,13 +287,11 @@ class ReplyCapture:
         message_id: str,
         recipient_id: str,
         *,
-        sender_id: str | None = None,
         since: int = 0,
         deadline_s: float | None = None,
     ) -> Replies:
         """Block until ``recipient_id`` has PROCESSED ``message_id`` *and* a reply by
-        ``recipient_id`` (or ``sender_id`` if given, past cursor ``since``) is captured;
-        return that reply window.
+        ``recipient_id`` (past cursor ``since``) is captured; return that reply window.
 
         The reply barrier — use it instead of ``wait_for_processed`` whenever the test
         then asserts on captured reply *text*. ``wait_for_processed`` only proves the
@@ -306,19 +304,18 @@ class ReplyCapture:
         deterministically, and is event-driven — the deadline is a *failure* bound, not
         a success signal.
 
-        By default the reply is scoped to ``recipient_id`` — the agent that processed the
-        trigger is normally the one that replies, and scoping keeps a peer's own captured
-        message from satisfying the wait in a multi-agent room. Override ``sender_id``
-        only for the rare case where you barrier on one agent but want another's reply.
-        Pair with ``snapshot()`` across a reused capture: pass the pre-send cursor as
-        ``since`` so only this turn's replies count. On timeout the error says whether the
-        turn never finished (stuck) or finished without the expected reply (silent), so a
-        failure is diagnosable rather than a bare empty buffer.
+        The reply is scoped to ``recipient_id``: the wait keys on *its* PROCESSED signal,
+        so it waits for *its* reply (a peer's own captured message can't satisfy it in a
+        multi-agent room). A reply by some other agent isn't gated by this signal — wait
+        on that with ``wait_until`` instead. Pair with ``snapshot()`` across a reused
+        capture: pass the pre-send cursor as ``since`` so only this turn's replies count.
+        On timeout the error says whether the turn never finished (stuck) or finished
+        without a reply (silent), so a failure is diagnosable rather than a bare empty
+        buffer.
         """
-        author = sender_id if sender_id is not None else recipient_id
 
         def window() -> Replies:
-            return self.messages.since(since).from_sender(author)
+            return self.messages.since(since).from_sender(recipient_id)
 
         def ready(_messages: list[MessageCreatedPayload]) -> bool:
             return self.delivery_status(
@@ -332,7 +329,7 @@ class ReplyCapture:
             if status == DeliveryStatus.PROCESSED:
                 raise TimeoutError(
                     f"{recipient_id} processed message {message_id} in room "
-                    f"{self.room_id} but no reply from {author} was captured"
+                    f"{self.room_id} but captured no reply from it"
                 ) from None
             raise TimeoutError(
                 f"{recipient_id} did not process message {message_id} in room "

@@ -135,7 +135,7 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
 
 - **Send as the user:** `mid = await user_ops.send_message(room_id, text, mention_id=, mention_name=)`.
 - **Two barriers — pick by what you assert:**
-  - `replies = await capture.wait_for_reply(mid, agent.id[, sender_id=, since=])` — use
+  - `replies = await capture.wait_for_reply(mid, agent.id[, since=])` — use
     this whenever you then assert on **reply text** (`assert_present`,
     `assert_contains_any`, `mentioning`, …). It waits until the turn is processed **and**
     the reply frame is actually captured, and returns that reply window to assert on.
@@ -342,7 +342,7 @@ async def test_foreign_peer(cell, peer, resource_manager, user_ops, reply_captur
         async with reply_capture(room_id) as capture:
             probe = capture.messages.snapshot()
             mid = await user_ops.send_message(room_id, "pass a note", mention_id=b.id, mention_name=b.name)
-            replies = await capture.wait_for_reply(mid, b.id, sender_id=b.id, since=probe)
+            replies = await capture.wait_for_reply(mid, b.id, since=probe)
             replies.mentioning(a.id).assert_contains_any([marker])  # setup precondition
 
     async with cell.run_as(a):                                   # A cold-boots → rehydrates B's message
@@ -384,7 +384,7 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | List who the user could invite to a room | `await user_ops.lookup_peers(not_in_room=room_id)` → `list[Peer]` (the invitable roster; `peer_type="Agent"` narrows) |
 | Drive a peer agent (e.g. the `Echo` bounce) | `await resource_manager.peer(peer).send_message(room_id, "ECHO: ...", mention_id=agent.id, mention_name=agent.name)` — posts as that agent, returns the message id to barrier on (needs the peer already in the room) |
 | Observe replies without a race | `async with reply_capture(room_id) as capture:` then send |
-| Get an agent's reply to assert on | `replies = await capture.wait_for_reply(mid, agent_id[, sender_id=, since=])` — waits for the reply frame, returns it |
+| Get an agent's reply to assert on | `replies = await capture.wait_for_reply(mid, agent_id[, since=])` — waits for the recipient's reply frame, returns it |
 | Know a turn finished (reply optional; reading durable state) | `await capture.wait_for_processed(mid, agent_id)` |
 | Wait for a specific delivery state (e.g. a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |
 | Inspect the delivery lifecycle | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
