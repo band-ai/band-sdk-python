@@ -259,6 +259,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             system_prompt=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
+            # pydantic-ai defaults to retries=1 for tool-arg and final-output
+            # validation. With a tool-only agent driven by a small model, one retry
+            # is too tight: the model occasionally needs another attempt to emit a
+            # valid tool call (e.g. band_create_chatroom) or a non-empty final
+            # answer before pydantic-ai raises UnexpectedModelBehavior. A modest
+            # budget makes the turn resilient without masking a genuinely stuck run.
+            retries=3,
             # Strip content:null responses on every request, including mid-run
             # ones the storage filter can't reach (see the function docstring).
             history_processors=[_drop_non_replayable_messages],
