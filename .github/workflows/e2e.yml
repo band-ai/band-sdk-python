@@ -60,12 +60,12 @@ on:
           - ubuntu
           - windows
 
-# Serialize E2E runs: they share one live platform, so never let two race (and
-# reap each other's provisioned agents/rooms). Newest wins — a fresh dispatch
-# cancels an in-flight run rather than queuing behind it.
-concurrency:
-  group: e2e-baseline
-  cancel-in-progress: true
+# Concurrency is scoped per (lane, OS) on the e2e job below — NOT workflow-wide.
+# A fresh dispatch cancels only the same lane+OS still in flight, so re-running
+# one lane (e.g. to iterate on a fix) leaves the others alone. Cross-lane races
+# on the shared platform are safe: each run provisions uniquely-named agents and
+# the orphan sweep only reaps agents older than BAND_E2E_ORPHAN_MAX_AGE_MINUTES,
+# so a concurrent run's fresh agents are never swept out from under it.
 
 jobs:
 
@@ -145,6 +145,12 @@ jobs:
     name: e2e (${{ matrix.lane }} / ${{ matrix.os }})
     needs: lanes
     runs-on: ${{ matrix.runner }}
+    # Per-(lane, OS) concurrency: a new dispatch cancels only the matching
+    # lane+OS still running, never the whole matrix — so one lane can be
+    # re-run in isolation. (See the note above the jobs block.)
+    concurrency:
+      group: e2e-baseline-${{ matrix.lane }}-${{ matrix.os }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.lanes.outputs.lanes) }}
@@ -155,6 +161,12 @@ jobs:
         shell: bash
     env:
       E2E_TESTS_ENABLED: "true"
+      # Force UTF-8 for stdout/stderr. On the windows-latest runner Python defaults
+      # to the cp1252 console codec, so a framework that logs emoji (e.g. CrewAI's
+      # event bus: 🤖/🔧/✅) raises UnicodeEncodeError mid-turn and fails the test.
+      # No-op on Linux (already UTF-8).
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
       # Turn budget (E2E_TIMEOUT) is not set here: it defaults to 120s in the e2e
       # settings, and slow frameworks add headroom per-test via
       # @pytest.mark.timeout(extra=...). See tests/e2e/baseline/conftest.py.
