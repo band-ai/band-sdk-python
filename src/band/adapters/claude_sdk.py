@@ -392,6 +392,17 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             mcp_servers={"band": self._mcp_server},
             allowed_tools=self._mcp_backend.allowed_tools,
             permission_mode=self.permission_mode,
+            # Isolate the bridged agent from ambient Claude Code config. Left unset,
+            # setting_sources defaults to loading the host's user + project settings
+            # (~/.claude and ./.claude): filesystem skills and subagents then surface
+            # as `Skill`/`Agent` tools, and the larger toolset trips ToolSearch, which
+            # withholds tool definitions (including our `mcp__band__*` tools) behind a
+            # search step. A Band agent's capabilities must be defined here, not by
+            # whatever config happens to sit on the host — otherwise behaviour drifts
+            # between machines (e.g. a CI runner with a global Claude Code install saw
+            # the model wander through ToolSearch/Bash/Agent/Skill instead of calling
+            # the Band tool). Empty = load nothing; built-in tools stay available.
+            setting_sources=[],
         )
 
         # Add extended thinking if configured
