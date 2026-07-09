@@ -147,6 +147,7 @@ dev = [
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
+    "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
     "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
@@ -213,6 +214,7 @@ dev-crewai = [
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
+    "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
     "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",

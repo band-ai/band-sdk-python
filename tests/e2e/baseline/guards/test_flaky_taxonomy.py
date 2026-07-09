@@ -18,6 +18,7 @@ from tests.e2e.baseline.flaky import (
     assert_flaky_is_classified,
     flaky_infra,
     flaky_model,
+    model_turn_retrying,
 )
 
 
@@ -63,3 +64,34 @@ def test_guard_rejects_a_raw_flaky_marker() -> None:
 def test_guard_accepts_a_taxonomy_stamped_flaky() -> None:
     # A flaky marker carrying the taxonomy stamp is fine (went through the decorators).
     assert_flaky_is_classified([_item("flaky", "flaky_reason")])
+
+
+async def test_model_turn_retry_re_drives_an_assertion_until_it_passes() -> None:
+    tries = 0
+    async for attempt in model_turn_retrying(attempts=3):
+        with attempt:
+            tries += 1
+            if tries < 3:
+                raise AssertionError("bad moment")
+    assert tries == 3  # it re-drove the turn until it passed
+
+
+async def test_model_turn_retry_reraises_the_final_diagnostic_when_exhausted() -> None:
+    tries = 0
+    with pytest.raises(AssertionError, match="persistent miss"):
+        async for attempt in model_turn_retrying(attempts=2):
+            with attempt:
+                tries += 1
+                raise AssertionError("persistent miss")
+    assert tries == 2  # exhausted the attempts, then failed loud with the real message
+
+
+async def test_model_turn_retry_does_not_retry_non_assertion_errors() -> None:
+    # A stuck/silent turn is infra, not a model bad moment — it must NOT be retried.
+    tries = 0
+    with pytest.raises(TimeoutError):
+        async for attempt in model_turn_retrying(attempts=3):
+            with attempt:
+                tries += 1
+                raise TimeoutError("stuck turn")
+    assert tries == 1

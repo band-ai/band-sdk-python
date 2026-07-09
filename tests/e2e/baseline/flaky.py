@@ -25,10 +25,38 @@ from collections.abc import Callable
 from typing import Any, TypeVar
 
 import pytest
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 
 DEFAULT_RERUNS = 2
 
 _T = TypeVar("_T")
+
+
+def model_turn_retrying(*, attempts: int = DEFAULT_RERUNS + 1) -> AsyncRetrying:
+    """Retry a single flaky model *turn* — the turn-level counterpart to
+    :func:`flaky_model`.
+
+    Returns a tenacity ``AsyncRetrying`` configured to retry a turn that raises
+    ``AssertionError`` (a model *bad moment* — a missed recall/tool/answer it usually
+    gets) up to ``attempts``, reraising the final failure with its own diagnostic. A
+    non-assertion error (e.g. a ``TimeoutError`` from a stuck turn) is *not* retried —
+    that is infra, not a model miss. Use tenacity's native idiom::
+
+        async for attempt in model_turn_retrying():
+            with attempt:
+                mid = await user_ops.send_message(room, RECALL, mention_id=agent.id, ...)
+                replies = await capture.wait_for_reply(mid, agent.id, since=mark)
+                replies.assert_contains_any([marker])
+
+    This re-drives only the flaky turn, so it is far cheaper than ``flaky_model``
+    (which re-provisions and re-runs the *whole* test). ``attempts`` defaults to
+    ``flaky_model``'s reruns + 1, so both give a capable model the same number of tries.
+    """
+    return AsyncRetrying(
+        retry=retry_if_exception_type(AssertionError),
+        stop=stop_after_attempt(attempts),
+        reraise=True,
+    )
 
 
 def flaky_model(reason: str, *, reruns: int = DEFAULT_RERUNS) -> Callable[[_T], _T]:
