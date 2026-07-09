@@ -291,8 +291,8 @@ class ReplyCapture:
         since: int = 0,
         deadline_s: float | None = None,
     ) -> Replies:
-        """Block until ``recipient_id`` has PROCESSED ``message_id`` *and* a captured
-        reply (optionally only ``sender_id``'s, past cursor ``since``) is present;
+        """Block until ``recipient_id`` has PROCESSED ``message_id`` *and* a reply by
+        ``recipient_id`` (or ``sender_id`` if given, past cursor ``since``) is captured;
         return that reply window.
 
         The reply barrier — use it instead of ``wait_for_processed`` whenever the test
@@ -306,17 +306,19 @@ class ReplyCapture:
         deterministically, and is event-driven — the deadline is a *failure* bound, not
         a success signal.
 
-        Pass ``sender_id`` when several agents post into the room (e.g. a peer whose own
-        message is captured too) to wait for a *specific* author's reply. Pair with
-        ``snapshot()`` across a reused capture: pass the pre-send cursor as ``since`` so
-        only this turn's replies count. On timeout the error says whether the turn never
-        finished (stuck) or finished without the expected reply (silent), so a failure is
-        diagnosable rather than a bare empty buffer.
+        By default the reply is scoped to ``recipient_id`` — the agent that processed the
+        trigger is normally the one that replies, and scoping keeps a peer's own captured
+        message from satisfying the wait in a multi-agent room. Override ``sender_id``
+        only for the rare case where you barrier on one agent but want another's reply.
+        Pair with ``snapshot()`` across a reused capture: pass the pre-send cursor as
+        ``since`` so only this turn's replies count. On timeout the error says whether the
+        turn never finished (stuck) or finished without the expected reply (silent), so a
+        failure is diagnosable rather than a bare empty buffer.
         """
+        author = sender_id if sender_id is not None else recipient_id
 
         def window() -> Replies:
-            replies = self.messages.since(since)
-            return replies.from_sender(sender_id) if sender_id is not None else replies
+            return self.messages.since(since).from_sender(author)
 
         def ready(_messages: list[MessageCreatedPayload]) -> bool:
             return self.delivery_status(
@@ -328,10 +330,9 @@ class ReplyCapture:
         except TimeoutError:
             status = self.delivery_status(message_id, recipient_id)
             if status == DeliveryStatus.PROCESSED:
-                who = f" from {sender_id}" if sender_id is not None else ""
                 raise TimeoutError(
                     f"{recipient_id} processed message {message_id} in room "
-                    f"{self.room_id} but no reply{who} was captured"
+                    f"{self.room_id} but no reply from {author} was captured"
                 ) from None
             raise TimeoutError(
                 f"{recipient_id} did not process message {message_id} in room "
