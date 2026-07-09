@@ -97,6 +97,7 @@ _MEMORY_SCOPE_GUIDANCE = f"""Prefer `scope="{MemoryStoreScope.SUBJECT.value}"` w
 stays attached to that subject rather than leaking org-wide. Storing with `scope="{MemoryStoreScope.SUBJECT.value}"` requires a
 real `subject_id` UUID: for someone in the current room (e.g. the user you are talking to), call
 `band_get_participants` and use their `id`; for someone not in the room, use `band_lookup_peers`.
+A handle or name is never a valid `subject_id` — always look up the UUID `id` field.
 A memory the sender frames about themselves in the first person ("me", "my", "I") has that sender
 as its subject, so resolve the sender's `id` — not your own.
 Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization
