@@ -149,24 +149,25 @@ async def test_usage_not_cumulative_across_turns(
     checks the second turn's record is that turn alone, not turn1+turn2.
 
     The turns are deliberately ASYMMETRIC — a long first turn, a one-word second
-    turn — because that makes the check immune to LLM reply-length variance. Two
-    equal turns would force a fragile "1x vs 2x" ratio whose margin collapses when
-    an ordinary turn runs a bit long; instead:
+    turn — because that makes the check immune to LLM reply-length variance:
 
-    - a correct per-turn second record is the *tiny* turn alone → far BELOW the
-      long first turn's output;
-    - a cumulative second record is ``long + tiny`` → ``~=`` the long first turn.
+    - a correct per-turn second record is the *tiny* turn alone → below the long
+      first turn's output;
+    - a cumulative second record is ``long + tiny`` → at or above the long first turn.
 
-    So ``turn2.output < turn1.output`` cleanly separates them (asserted at half,
-    for headroom). Output, not input: history grows turn-over-turn, so input rises
-    even when correct — output is the clean per-turn discriminator, and it's
-    exactly what a cumulative bug inflates. Two tolerant checks:
+    So ``turn2.output < turn1.output`` is the exact boundary that separates them.
+    Compare against turn1 itself, not a fraction of it: some adapters (e.g. google_adk)
+    fold reasoning tokens into output, so even a one-word reply carries a few hundred
+    output tokens — a fractional bound would be brittle, but a substantial long turn
+    still clears it. Output, not input: history grows turn-over-turn, so input rises
+    even when correct — output is the clean per-turn discriminator, and it's exactly
+    what a cumulative bug inflates. Two tolerant checks:
 
     - exactly two records, one per turn — a per-turn emitter produces one record
       each turn; a double-emit or a per-run-instead-of-per-turn regression would
       change the count. (Same reasoning as the single-turn smoke's ``len == 1``.)
-    - the second record is not cumulative (the ratio above), floored by a plausible
-      first-turn size so the ratio can't pass vacuously on a degenerate record.
+    - the second record is not cumulative (the boundary above), floored by a plausible
+      first-turn size so a degenerate record surfaces as its own clear failure.
     """
     room_id = await resource_manager.provision_room(
         title="e2e-usage-not-cumulative", participants=[agent.id]
@@ -174,7 +175,9 @@ async def test_usage_not_cumulative_across_turns(
     async with reply_capture(room_id) as capture:
         first = await user_ops.send_message(
             room_id,
-            "Explain in detail how ocean tides work. Write several full paragraphs.",
+            "Explain in thorough detail how ocean tides work — cover the moon's "
+            "gravity, the sun's role, and spring versus neap tides. Write at least "
+            "six full paragraphs.",
             mention_id=agent.id,
             mention_name=agent.name,
         )
@@ -197,17 +200,21 @@ async def test_usage_not_cumulative_across_turns(
         f"expected exactly one usage record per turn (two turns), got {usage}"
     )
     turn_one, turn_two = usage[0], usage[1]
-    # The long turn must actually be sizeable, else the ratio below is vacuous
-    # (a degenerate near-zero turn_one would let almost anything pass).
-    assert turn_one.output_tokens >= 20, (
+    # The long turn must actually be a substantial reply, so a per-turn second turn
+    # sits below it; a degenerate near-zero turn_one would make the boundary below
+    # false-fail with a confusing message, so surface that as its own clear failure.
+    assert turn_one.output_tokens >= 100, (
         f"first turn's output implausibly small for a multi-paragraph reply: "
         f"{turn_one.output_tokens}"
     )
-    # The non-cumulative discriminator: a per-turn record for the one-word turn is
-    # far below the long turn's output, while a cumulative one (long + tiny) is
-    # ~= the long turn. Half the long turn splits them with wide margin either way.
-    assert turn_two.output_tokens < turn_one.output_tokens * 0.5, (
+    # The non-cumulative discriminator, at the exact boundary of the bug: a cumulative
+    # (lifetime) counter reports turn2 = turn1 + turn2, landing AT OR ABOVE turn1; a
+    # per-turn counter reports the one-word turn alone, below the long turn. Compare
+    # against turn1 itself, not a fraction of it — some adapters (e.g. google_adk) fold
+    # reasoning tokens into output, so even a one-word reply carries a few hundred
+    # output tokens; a fractional bound is brittle, but the long turn still clears it.
+    assert turn_two.output_tokens < turn_one.output_tokens, (
         "second turn's output looks cumulative (turn1+turn2), not per-turn: a "
-        f"one-word reply should be far below the long turn — turn1="
+        f"one-word reply should sit below the long turn — turn1="
         f"{turn_one.output_tokens}, turn2={turn_two.output_tokens}"
     )

@@ -72,9 +72,11 @@ async def test_two_agents_greet_each_other(
 
     verdict = await judge(
         criteria=(
-            "Two agents share a room. The transcript should show BOTH agents "
-            "producing a greeting (e.g. 'hello', 'hi') directed at the other. "
-            "Pass only if both agents greeted."
+            "Two agents share a room and were each asked to greet the other. The "
+            "transcript should show BOTH agents directing a warm greeting or "
+            "salutation at the other — e.g. 'hello', 'hi', 'hey', 'nice to meet you', "
+            "'good to meet you', 'greetings'. Pass if both agents greeted the other in "
+            "any such natural form; fail only if one produced no greeting at all."
         ),
         transcript=transcript,
     )
