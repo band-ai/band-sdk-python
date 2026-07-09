@@ -547,6 +547,7 @@ test, where the markdown-docs run actually executes it.
 - Catch `pydantic.ValidationError` separately from generic `Exception`
 - Use `raise ValueError(...)` for missing required config, not `logger.error()` + `sys.exit()`
 - Never put issue-tracker references in code — no Linear issue IDs (e.g. `INT-123`), Linear URLs, or ticket numbers in comments, docstrings, or strings. Explain the *why* in plain terms instead. (Branch names, commit messages, and PR descriptions may reference issues.)
+- Comments should describe the code as it is, not narrate what changed between versions.
 
 ## Pre-Commit Checklist
 
