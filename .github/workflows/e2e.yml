@@ -198,14 +198,17 @@ jobs:
     # .github/scripts/ for the inline detail.
     - name: Install + authenticate the Codex CLI (codex)
       if: matrix.lane == 'backends'
-      run: .github/scripts/setup-codex.sh
+      # Invoke via `bash` explicitly: on the windows-latest runner a directly
+      # executed .sh depends on the exec bit surviving checkout and Git Bash
+      # resolving the shebang; `bash <script>` sidesteps both. No-op on Linux.
+      run: bash .github/scripts/setup-codex.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'
       env:
         # The OpenCode Zen provider key the server reads via {env:...} substitution.
         OPENCODE_ZEN_API_KEY: ${{ secrets.E2E_OPENCODE_ZEN_API_KEY }}
-      run: .github/scripts/setup-opencode.sh
+      run: bash .github/scripts/setup-opencode.sh
 
     # The `letta` lane currently runs no Letta tests (Letta is registered
     # e2e_pending — see tests/e2e/baseline/toolkit/adapters.py), so it needs no
