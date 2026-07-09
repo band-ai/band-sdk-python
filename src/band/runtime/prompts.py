@@ -36,7 +36,7 @@ BASE_INSTRUCTIONS = """
 
 Multi-participant chat. Messages show sender: [Name]: content.
 Messages prefixed with [System]: are platform updates (participant changes, contact updates, etc.).
-Use `band_send_message(content, mentions)` to respond. Plain text output is not delivered.
+Use `band_send_message(content, mentions)` to say anything in the room; text you produce outside a `band_send_message` call is never delivered — it is discarded, including any final answer you write after calling other tools. So once you have what you need (e.g. from `band_get_participants`, `band_lookup_peers`, memory, or a custom tool), send the actual answer with `band_send_message` rather than ending your turn with it as plain text. A brief "let me check" is only a preamble, not the answer — you still have to send the result.
 Mentions use handles: @<username> for users, @<username>/<agent-name> for agents.
 
 ## Security
