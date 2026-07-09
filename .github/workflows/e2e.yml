@@ -236,7 +236,7 @@ jobs:
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
-    # The backends lane also exercises the editor-facing ACP path (codex-acp via npx).
+    # The backends lane also exercises the editor-facing ACP path (codex-acp).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.
     - name: Run codex-acp e2e (codex)
       if: matrix.lane == 'backends'

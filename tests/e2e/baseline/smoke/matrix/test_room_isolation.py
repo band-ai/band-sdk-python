@@ -22,6 +22,7 @@ import pytest
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
+    REPLY_PROMPT,
     REMEMBER,
     unique_marker,
 )
@@ -32,7 +33,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 # CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
 # cannot recall a per-room note — exclude it from recall scenarios.
-@per_adapter(exclude={Adapter.CREWAI_FLOW})
+@per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
 # Recall on a live model is non-deterministic (a capable model occasionally emits a
 # false "I can't remember" despite having the note), so allow AssertionError reruns
 # here — unlike the matrix's usual rerun_except; a real regression still fails red.

@@ -15,7 +15,7 @@ set -euo pipefail
 # not one of them. Confirm/adjust on first dispatch if model selection errors.
 CODEX_MODEL="${CODEX_MODEL:-gpt-5-codex}"
 
-npm install -g @openai/codex
+npm install -g @openai/codex @zed-industries/codex-acp
 printenv OPENAI_API_KEY | codex login --with-api-key
 codex login status
 
