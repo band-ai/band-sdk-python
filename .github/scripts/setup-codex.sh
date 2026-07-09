@@ -21,8 +21,15 @@ codex login status
 
 # Codex may write to its working dir, so point it at a throwaway path outside the
 # checkout and opt in explicitly (the requirement gate enforces this).
+codex_cwd="$(mktemp -d)"
+# On the Windows runner this script runs under Git Bash, so `codex` is a native
+# .exe that won't understand a /tmp/... msys path — hand it a native path.
+# cygpath is absent on Linux, so the value passes through unchanged there.
+if command -v cygpath >/dev/null 2>&1; then
+  codex_cwd="$(cygpath -w "$codex_cwd")"
+fi
 {
-  echo "CODEX_CWD=$(mktemp -d)"
+  echo "CODEX_CWD=${codex_cwd}"
   echo "E2E_CODEX_CWD_IS_DISPOSABLE=true"
   echo "CODEX_MODEL=${CODEX_MODEL}"
 } >> "$GITHUB_ENV"

@@ -51,6 +51,14 @@ on:
           - google
           - backends
           - letta
+      os:
+        description: "OS to run on (all = Linux + Windows)."
+        type: choice
+        default: all
+        options:
+          - all
+          - ubuntu
+          - windows
 
 # Serialize E2E runs: they share one live platform, so never let two race (and
 # reap each other's provisioned agents/rooms). Newest wins — a fresh dispatch
@@ -83,6 +91,8 @@ jobs:
       env:
         # The dispatch `lane` input; defaults to 'all' (the full matrix).
         SELECTED_LANE: ${{ github.event.inputs.lane || 'all' }}
+        # The dispatch `os` input; defaults to 'all' (Linux + Windows).
+        SELECTED_OS: ${{ github.event.inputs.os || 'all' }}
       run: |
         uv run python - <<'PY' >> "$GITHUB_OUTPUT"
         import json
@@ -111,21 +121,38 @@ jobs:
                 f"Requested lane {selected!r} is not one the registry emits "
                 f"(known: {sorted(known)}). Pick 'all' or a known lane."
             )
+        # OS is a workflow concern (runner image), not a registry fact: every lane
+        # runs on each selected OS. `runner` is the runs-on image; `os` is the short
+        # id surfaced in the job name.
+        runners = {"ubuntu": "ubuntu-latest", "windows": "windows-latest"}
+        selected_os = os.environ.get("SELECTED_OS") or "all"
+        if selected_os != "all" and selected_os not in runners:
+            raise SystemExit(
+                f"Requested os {selected_os!r} is not known "
+                f"(known: {sorted(runners)}). Pick 'all', 'ubuntu', or 'windows'."
+            )
+        oses = list(runners) if selected_os == "all" else [selected_os]
         include = [
-            {"lane": lane.id, "extra": lane.extra}
+            {"lane": lane.id, "extra": lane.extra, "os": osid, "runner": runners[osid]}
             for lane in lanes
             if selected == "all" or lane.id == selected
+            for osid in oses
         ]
         print("lanes=" + json.dumps({"include": include}))
         PY
 
   e2e:
-    name: e2e (${{ matrix.lane }})
+    name: e2e (${{ matrix.lane }} / ${{ matrix.os }})
     needs: lanes
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.lanes.outputs.lanes) }}
+    # Use bash on every OS so the setup scripts and uv commands run identically
+    # (Git Bash ships on the windows-latest runner).
+    defaults:
+      run:
+        shell: bash
     env:
       E2E_TESTS_ENABLED: "true"
       # Turn budget (E2E_TIMEOUT) is not set here: it defaults to 120s in the e2e
