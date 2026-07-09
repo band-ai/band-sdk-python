@@ -265,10 +265,12 @@ class TestBandInstructionInjection:
         # Band guidance is injected in on_started, not lazily on first message.
         adapter, agent = await make_started_adapter()
 
-        assert isinstance(agent.additional_context, str)
-        assert "## Environment" in agent.additional_context
+        # The Band operating contract frames the agent via ``description`` (ahead of
+        # the developer's own ``instructions``), not via ``additional_context``.
+        assert isinstance(agent.description, str)
+        assert "## Environment" in agent.description
         # Band-registered identity is injected so the model knows who it is.
-        assert "You are TestBot, desc." in agent.additional_context
+        assert "You are TestBot, desc." in agent.description
 
 
 class TestBandEntrypointBinding:
