@@ -63,9 +63,10 @@ async def test_reports_identity_and_roster(
         mid = await user_ops.send_message(
             room_id, ROSTER_PROBE, mention_id=agent.id, mention_name=agent.name
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(
+            mid, agent.id, sender_id=agent.id, since=mark
+        )
 
-    replies = capture.messages.since(mark).from_sender(agent.id)
     # Each self-sourced value asserted separately over the same replies — an any-of
     # over all three would pass on just one.
     replies.assert_contains_any([agent.name])  # identity (only the SDK knows it)

@@ -94,9 +94,11 @@ async def test_handled_work_not_redrained_on_restart(
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            await capture.wait_for_processed(handled_mid, identity.id)
             # Pre-restart: the marked probe was answered.
-            capture.messages.from_sender(identity.id).assert_contains_any([handled])
+            replies = await capture.wait_for_reply(
+                handled_mid, identity.id, sender_id=identity.id
+            )
+            replies.assert_contains_any([handled])
         # ...and the completed invite put Echo in the room.
         after_invite = await user_ops.list_participant_ids(room_id)
         assert echo.id in after_invite, (
@@ -113,8 +115,10 @@ async def test_handled_work_not_redrained_on_restart(
     # question during startup, before any post-boot trigger.
     async with reply_capture(room_id) as capture:
         async with cell.run_as(identity):
-            await capture.wait_for_processed(offline_mid, identity.id)
-        replies = capture.messages.from_sender(identity.id)
+            # Wait for the boot-drain reply itself (asserted after the run closes).
+            replies = await capture.wait_for_reply(
+                offline_mid, identity.id, sender_id=identity.id
+            )
         # The capture opened BEFORE the cold boot and the offline barrier just succeeded,
         # so it observed every room delivery event from boot onward — including, had the
         # SDK re-drained an already-handled message, that message's fresh PROCESSING. So a
@@ -175,7 +179,8 @@ async def test_restart_usage_splits_replay_and_inference(
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            await capture.wait_for_processed(mid, identity.id)
+            # Wait for the reply so turn_boundary() has a timestamp to read.
+            await capture.wait_for_reply(mid, identity.id, sender_id=identity.id)
             boundary = capture.turn_boundary()
 
     # Run 2 (cold): a post-boot recall turn. Non-zero input tokens mean the rehydrated

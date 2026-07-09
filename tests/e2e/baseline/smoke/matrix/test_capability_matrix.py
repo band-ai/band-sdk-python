@@ -36,7 +36,9 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(supports={Capability.MEMORY}, **MEMORY_AGENT)
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@pytest.mark.flaky(
+    reruns=2, rerun_except=["AssertionError"]
+)  # retry a transient live-turn timeout; assertion failures fail loud
 @pytest.mark.asyncio(loop_scope="session")
 async def test_store_memory_across_memory_adapters(
     agent: ProvisionedAgent,
@@ -111,7 +113,9 @@ async def test_recall_memory_across_memory_adapters(
 
 
 @per_adapter(without={Capability.MEMORY})
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@pytest.mark.flaky(
+    reruns=2, rerun_except=["AssertionError"]
+)  # retry a transient live-turn timeout; assertion failures fail loud
 @pytest.mark.asyncio(loop_scope="session")
 async def test_reply_across_non_memory_adapters(
     agent: ProvisionedAgent,
@@ -134,6 +138,6 @@ async def test_reply_across_non_memory_adapters(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(trigger, agent.id)
+        replies = await capture.wait_for_reply(trigger, agent.id)
 
-    capture.messages.assert_present(what=f"a reply from {agent.adapter_id}")
+    replies.assert_present(what=f"a reply from {agent.adapter_id}")

@@ -42,16 +42,16 @@ async def test_two_agents_greet_each_other(
     )
 
     async with reply_capture(room_id) as capture:
-        # User asks each agent, in turn, to greet the other. Barrier on each
-        # trigger being processed — when that returns the greeting is already
-        # captured (processed is reported only after the reply is emitted).
+        # User asks each agent, in turn, to greet the other. The reply barrier on
+        # each trigger waits for that agent's greeting to actually be captured, so
+        # both replies are in the transcript before we snapshot it.
         m_a = await user_ops.send_message(
             room_id,
             f"please say hello to {b.name}",
             mention_id=a.id,
             mention_name=a.name,
         )
-        await capture.wait_for_processed(m_a, a.id)
+        await capture.wait_for_reply(m_a, a.id, sender_id=a.id)
 
         m_b = await user_ops.send_message(
             room_id,
@@ -59,7 +59,7 @@ async def test_two_agents_greet_each_other(
             mention_id=b.id,
             mention_name=b.name,
         )
-        await capture.wait_for_processed(m_b, b.id)
+        await capture.wait_for_reply(m_b, b.id, sender_id=b.id)
 
         transcript = Replies(capture.messages)
 

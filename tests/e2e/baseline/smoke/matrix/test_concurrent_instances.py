@@ -63,11 +63,13 @@ async def test_concurrent_same_adapter_instances_each_reply(
                 )
             )
             # ...but await the barriers SEQUENTIALLY (one nudge per capture).
-            for instance, mid in zip(instances, mids):
-                await capture.wait_for_processed(mid, instance.id)
+            replies = [
+                await capture.wait_for_reply(mid, instance.id, sender_id=instance.id)
+                for instance, mid in zip(instances, mids)
+            ]
 
         # Each instance produced its own reply — proof all K co-resided and ran.
-        for instance in instances:
-            capture.messages.from_sender(instance.id).assert_present(
+        for instance, instance_replies in zip(instances, replies):
+            instance_replies.assert_present(
                 what=f"a reply from instance {instance.name}"
             )

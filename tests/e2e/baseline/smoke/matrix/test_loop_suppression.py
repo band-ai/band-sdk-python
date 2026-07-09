@@ -67,10 +67,10 @@ async def test_peer_message_drives_turn_without_loop(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(peer_mid, agent.id)
+        replies = await capture.wait_for_reply(peer_mid, agent.id, sender_id=agent.id)
         # Positive: the peer-authored message drove a real reply from the AGENT (scope
         # to the agent — Echo is itself an Agent, so its own probe is captured too).
-        capture.messages.from_sender(agent.id).assert_contains_any([marker])
+        replies.assert_contains_any([marker])
 
         # Loop-suppression: snapshot after the peer turn, then a follow-up user probe.
         mark = capture.messages.snapshot()

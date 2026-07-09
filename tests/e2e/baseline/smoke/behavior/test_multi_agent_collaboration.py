@@ -246,7 +246,9 @@ async def test_coordinator_recruits_specialist_mid_conversation(
     prompt=COLLAB_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@pytest.mark.flaky(
+    reruns=2, rerun_except=["AssertionError"]
+)  # retry a transient live-turn timeout; assertion failures fail loud
 @pytest.mark.timeout(extra=180)  # three concurrent turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_heterogeneous_agents_triage_concurrent_mentions(

@@ -74,12 +74,12 @@ async def test_peer_initiated_delegation_with_self_recall(
                 mention_id=agent_b.id,
                 mention_name=agent_b.name,
             )
-            await capture.wait_for_processed(deleg_mid, agent_b.id)
             # Coupled: B mentioned A (metadata) in a message carrying the recalled value
             # — a real peer-initiated routing mention off B's own context.
-            capture.messages.since(mark).from_sender(agent_b.id).mentioning(
-                agent_a.id
-            ).assert_contains_any([value])
+            replies_b = await capture.wait_for_reply(
+                deleg_mid, agent_b.id, sender_id=agent_b.id, since=mark
+            )
+            replies_b.mentioning(agent_a.id).assert_contains_any([value])
 
             # Cascade barrier: A's reply is driven by B's mention (not a user send), so
             # wait until A has produced a message *since the delegation* — reusing the same

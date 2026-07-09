@@ -101,13 +101,11 @@ async def test_rehydrates_foreign_peer_message(
                 mention_id=speaker.id,
                 mention_name=speaker.name,
             )
-            await capture.wait_for_processed(mid, speaker.id)
+            replies = await capture.wait_for_reply(mid, speaker.id, since=probe)
             # Setup precondition (fail loud): B's marker-bearing message must actually
             # mention A — else it never reaches A's context and a later recall miss would
             # look like a rehydration bug rather than a setup failure.
-            capture.messages.since(probe).mentioning(recaller.id).assert_contains_any(
-                [marker]
-            )
+            replies.mentioning(recaller.id).assert_contains_any([marker])
 
     # A boots fresh under its own identity — no in-memory history — and is asked what the
     # other participant told it. A correct recall can only come from the platform
@@ -122,5 +120,5 @@ async def test_rehydrates_foreign_peer_message(
                 mention_id=recaller.id,
                 mention_name=recaller.name,
             )
-            await capture.wait_for_processed(mid, recaller.id)
-            capture.messages.since(mark).assert_contains_any([marker])
+            replies = await capture.wait_for_reply(mid, recaller.id, since=mark)
+            replies.assert_contains_any([marker])

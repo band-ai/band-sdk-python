@@ -67,11 +67,11 @@ async def test_custom_tool_round_trips(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
 
     # The call half: the opaque tool fired with the requested key.
     calls.assert_fired(LOOKUP, with_args={"key": KEY})
     # The result half: the secret code (knowable only via the tool result) came
     # back in the reply — the round-trip completed, not just the dispatch.
-    capture.messages.assert_contains_any([ACCESS_CODES[KEY]])
+    replies.assert_contains_any([ACCESS_CODES[KEY]])

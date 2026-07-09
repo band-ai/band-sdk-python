@@ -39,7 +39,9 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 @with_adapters(
     Adapter.AGNO, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@pytest.mark.flaky(
+    reruns=2, rerun_except=["AssertionError"]
+)  # retry a transient live-turn timeout; assertion failures fail loud
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agno_executes_native_tool(
     agent: ProvisionedAgent,
@@ -63,11 +65,11 @@ async def test_agno_executes_native_tool(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
 
     calls.assert_fired(LOOKUP, with_args={"key": "alpha"})
-    capture.messages.assert_contains_any([ACCESS_CODES["alpha"]])
+    replies.assert_contains_any([ACCESS_CODES["alpha"]])
 
 
 @with_adapters(
@@ -76,7 +78,9 @@ async def test_agno_executes_native_tool(
     prompt=LOOKUP_AND_WEATHER_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@pytest.mark.flaky(
+    reruns=2, rerun_except=["AssertionError"]
+)  # retry a transient live-turn timeout; assertion failures fail loud
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agno_handles_multiple_native_tools(
     agent: ProvisionedAgent,
@@ -101,9 +105,9 @@ async def test_agno_handles_multiple_native_tools(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
 
     calls.assert_fired(LOOKUP, with_args={"key": "beta"})
     calls.assert_fired(WEATHER, with_args={"place": "Zorath"})
-    capture.messages.assert_contains_any([ACCESS_CODES["beta"]])
+    replies.assert_contains_any([ACCESS_CODES["beta"]])

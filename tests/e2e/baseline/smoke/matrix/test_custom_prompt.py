@@ -72,8 +72,7 @@ async def test_custom_prompt_takes_effect_and_coexists_with_platform_tools(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(code_mid, agent.id)
-        turn_one = capture.messages.from_sender(agent.id)
+        turn_one = await capture.wait_for_reply(code_mid, agent.id, sender_id=agent.id)
         turn_one.assert_contains_any([ACCESS_CODES[KEY]])  # tool result round-tripped
         turn_one.assert_contains_any([PROMPT_MARKER])  # prompt still in effect
 
@@ -86,8 +85,9 @@ async def test_custom_prompt_takes_effect_and_coexists_with_platform_tools(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(who_mid, agent.id)
-        turn_two = capture.messages.since(mark).from_sender(agent.id)
+        turn_two = await capture.wait_for_reply(
+            who_mid, agent.id, sender_id=agent.id, since=mark
+        )
 
     # The platform tool still works under the custom prompt (a known member appears),
     # the marker still rides the reply, and an invitable-but-absent peer is not fabricated.

@@ -12,7 +12,14 @@ The surface is small — methods on ``ReplyCapture``:
 - ``wait_for_delivery`` — block until a recipient's delivery status for a message
   reaches one of the given ``DeliveryStatus`` values; the general delivery waiter.
 - ``wait_for_processed`` — the common barrier built on ``wait_for_delivery``:
-  block until a recipient has *processed* a given message.
+  block until a recipient has *processed* a given message. Use it before reading
+  *durable* turn state (memory, tool calls, usage, events) — persisted by the time a
+  message is processed.
+- ``wait_for_reply`` — the reply barrier: block until the turn is processed *and* the
+  agent's reply frame has actually been captured. Use it (not ``wait_for_processed``)
+  before asserting on captured reply text — the reply's ``message_created`` frame and
+  the delivery-status ``message_updated`` frame are independent, unordered platform
+  events, so the buffer can lag the processed signal.
 - ``delivery_status`` / ``delivery_history`` — inspect the current state and the
   observed transition sequence (e.g. ``[PROCESSING, PROCESSED]``).
 
@@ -249,8 +256,10 @@ class ReplyCapture:
         Driven by ``message_updated`` delivery-state events, not chat text — so
         it is immune to how (or whether) the agent phrases a reply. Per-room FIFO
         means a processed barrier message proves every earlier message was
-        processed too, and because ``PROCESSED`` is reported only after the reply
-        is emitted, that reply is already in ``messages`` once this returns.
+        processed too. This proves the *turn* finished and its durable state is
+        persisted; it does **not** prove the reply's ``message_created`` frame has
+        been captured — that frame is an independent, unordered platform event, so
+        to assert on reply text wait on ``wait_for_reply`` instead.
 
         ``PROCESSED`` is the only success terminal: ``FAILED`` is transient (the
         platform retries), so we wait through it rather than giving up. On
@@ -272,6 +281,65 @@ class ReplyCapture:
                 f"{last.value if last else 'none'}"
                 f"{self._delivery_error(message_id, recipient_id)}"
             ) from None
+
+    async def wait_for_reply(
+        self,
+        message_id: str,
+        recipient_id: str,
+        *,
+        sender_id: str | None = None,
+        since: int = 0,
+        deadline_s: float | None = None,
+    ) -> Replies:
+        """Block until ``recipient_id`` has PROCESSED ``message_id`` *and* a captured
+        reply (optionally only ``sender_id``'s, past cursor ``since``) is present;
+        return that reply window.
+
+        The reply barrier — use it instead of ``wait_for_processed`` whenever the test
+        then asserts on captured reply *text*. ``wait_for_processed`` only proves the
+        turn finished: the reply arrives as a ``message_created`` frame the platform
+        emits *independently* of the delivery-status ``message_updated`` frame (a
+        different row, a different write), with no cross-frame ordering guarantee. So
+        the PROCESSED frame can reach the observer a beat before the reply's frame, and
+        reading ``messages`` the instant ``wait_for_processed`` returns races that gap
+        and can see an empty buffer. Waiting on the reply itself closes the race
+        deterministically, and is event-driven — the deadline is a *failure* bound, not
+        a success signal.
+
+        Pass ``sender_id`` when several agents post into the room (e.g. a peer whose own
+        message is captured too) to wait for a *specific* author's reply. Pair with
+        ``snapshot()`` across a reused capture: pass the pre-send cursor as ``since`` so
+        only this turn's replies count. On timeout the error says whether the turn never
+        finished (stuck) or finished without the expected reply (silent), so a failure is
+        diagnosable rather than a bare empty buffer.
+        """
+
+        def window() -> Replies:
+            replies = self.messages.since(since)
+            return replies.from_sender(sender_id) if sender_id is not None else replies
+
+        def ready(_messages: list[MessageCreatedPayload]) -> bool:
+            return self.delivery_status(
+                message_id, recipient_id
+            ) == DeliveryStatus.PROCESSED and bool(window())
+
+        try:
+            await self.wait_until(ready, deadline_s=deadline_s)
+        except TimeoutError:
+            status = self.delivery_status(message_id, recipient_id)
+            if status == DeliveryStatus.PROCESSED:
+                who = f" from {sender_id}" if sender_id is not None else ""
+                raise TimeoutError(
+                    f"{recipient_id} processed message {message_id} in room "
+                    f"{self.room_id} but no reply{who} was captured"
+                ) from None
+            raise TimeoutError(
+                f"{recipient_id} did not process message {message_id} in room "
+                f"{self.room_id}; last delivery status: "
+                f"{status.value if status else 'none'}"
+                f"{self._delivery_error(message_id, recipient_id)}"
+            ) from None
+        return window()
 
     def _require_user_ops(self) -> UserOps:
         """Return the bound ``UserOps`` or raise (durable reads need it).

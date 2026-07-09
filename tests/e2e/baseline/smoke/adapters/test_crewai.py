@@ -37,7 +37,9 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 @with_adapters(
     Adapter.CREWAI, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@pytest.mark.flaky(
+    reruns=2, rerun_except=["AssertionError"]
+)  # retry a transient live-turn timeout; assertion failures fail loud
 @pytest.mark.asyncio(loop_scope="session")
 async def test_crewai_executes_custom_tool(
     agent: ProvisionedAgent,
@@ -60,15 +62,17 @@ async def test_crewai_executes_custom_tool(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
 
     calls.assert_fired(LOOKUP, with_args={"key": "gamma"})
-    capture.messages.assert_contains_any([ACCESS_CODES["gamma"]])
+    replies.assert_contains_any([ACCESS_CODES["gamma"]])
 
 
 @with_adapters(Adapter.CREWAI_FLOW)
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@pytest.mark.flaky(
+    reruns=2, rerun_except=["AssertionError"]
+)  # retry a transient live-turn timeout; assertion failures fail loud
 @pytest.mark.asyncio(loop_scope="session")
 async def test_crewai_flow_replies(
     agent: ProvisionedAgent,
@@ -92,6 +96,6 @@ async def test_crewai_flow_replies(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id)
 
-    capture.messages.assert_present(what="a crewai-flow reply")
+    replies.assert_present(what="a crewai-flow reply")

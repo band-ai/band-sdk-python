@@ -80,8 +80,8 @@ async def test_recalls_within_session(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
-        capture.messages.since(mark).assert_contains_any([note])
+        replies = await capture.wait_for_reply(mid, agent.id, since=mark)
+        replies.assert_contains_any([note])
 
 
 @per_adapter(
@@ -136,5 +136,5 @@ async def test_recalls_after_rejoin(
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            await capture.wait_for_processed(mid, identity.id)
-            capture.messages.since(mark).assert_contains_any([note])
+            replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+            replies.assert_contains_any([note])

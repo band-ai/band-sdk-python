@@ -99,9 +99,9 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
         # agent wrongly made is already buffered, with no WS-ordering race (the
         # reason the toolkit prefers this over text matching). Only our agent
         # replies (the bystander never runs), so no sender filtering is needed.
-        await capture.wait_for_processed(probe, agent.id, deadline_s=flood_deadline)
-
-        flood_replies = capture.messages.since(flood_mark)
+        flood_replies = await capture.wait_for_reply(
+            probe, agent.id, since=flood_mark, deadline_s=flood_deadline
+        )
         # Liveness: it answered its own probe.
         flood_replies.assert_contains_any([live])
         # Ignored cross-talk: nothing it said during the flood echoed a decoy.
@@ -115,7 +115,6 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
-        recall = capture.messages.since(recall_mark)
+        recall = await capture.wait_for_reply(mid, agent.id, since=recall_mark)
         recall.assert_contains_any([needle])
         recall.assert_contains_none(decoys)

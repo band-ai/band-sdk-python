@@ -90,8 +90,9 @@ async def test_burst_handled_then_spanning_recall(
         recall_mid = await user_ops.send_message(
             room_id, RECALL_ALL_FACTS, mention_id=agent.id, mention_name=agent.name
         )
-        await capture.wait_for_processed(recall_mid, agent.id)
-        recall = capture.messages.since(mark).from_sender(agent.id)
+        recall = await capture.wait_for_reply(
+            recall_mid, agent.id, sender_id=agent.id, since=mark
+        )
 
     recall.assert_contains_any([facts[0]])  # early
     recall.assert_contains_any([facts[BURST_SIZE // 2]])  # mid-history

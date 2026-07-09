@@ -81,13 +81,13 @@ async def test_capture_exposes_replies_and_tool_calls(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
 
     # The reply view: the agent reported the secret code, which it could only know
     # by calling the tool.
-    capture.messages.assert_present()
-    capture.messages.assert_contains_any([ACCESS_CODES["beta"]])
+    replies.assert_present()
+    replies.assert_contains_any([ACCESS_CODES["beta"]])
     # The tool-call view: the lookup tool fired.
     calls.assert_fired(LOOKUP, with_args={"key": "beta"})
 

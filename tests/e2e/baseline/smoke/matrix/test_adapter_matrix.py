@@ -36,7 +36,9 @@ def test_build_adapter_constructs_each(cell: AdapterCell) -> None:
 
 
 @per_adapter()
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@pytest.mark.flaky(
+    reruns=2, rerun_except=["AssertionError"]
+)  # retry a transient live-turn timeout; assertion failures fail loud
 @pytest.mark.asyncio(loop_scope="session")
 async def test_per_adapter_replies(
     agent: ProvisionedAgent,
@@ -60,5 +62,5 @@ async def test_per_adapter_replies(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(trigger, agent.id)
-    capture.messages.assert_present(what=f"a reply from {agent.adapter_id}")
+        replies = await capture.wait_for_reply(trigger, agent.id)
+    replies.assert_present(what=f"a reply from {agent.adapter_id}")

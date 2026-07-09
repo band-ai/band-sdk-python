@@ -92,5 +92,5 @@ async def test_recalls_offline_note_on_cold_boot(
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            await capture.wait_for_processed(mid, identity.id)
-            capture.messages.since(mark).assert_contains_any([note])
+            replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+            replies.assert_contains_any([note])

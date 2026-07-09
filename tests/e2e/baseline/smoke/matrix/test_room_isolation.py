@@ -88,9 +88,9 @@ async def test_rooms_keep_isolated_context(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await cap_a.wait_for_processed(mid, agent.id)
-        cap_a.messages.assert_contains_any([note_a])
-        cap_a.messages.assert_contains_none([note_b])
+        replies = await cap_a.wait_for_reply(mid, agent.id)
+        replies.assert_contains_any([note_a])
+        replies.assert_contains_none([note_b])
 
     async with reply_capture(room_b) as cap_b:
         mid = await user_ops.send_message(
@@ -99,6 +99,6 @@ async def test_rooms_keep_isolated_context(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await cap_b.wait_for_processed(mid, agent.id)
-        cap_b.messages.assert_contains_any([note_b])
-        cap_b.messages.assert_contains_none([note_a])
+        replies = await cap_b.wait_for_reply(mid, agent.id)
+        replies.assert_contains_any([note_b])
+        replies.assert_contains_none([note_a])

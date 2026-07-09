@@ -57,7 +57,7 @@ async def test_invites_messages_and_removes_a_peer(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(invite_mid, agent.id)
+        replies = await capture.wait_for_reply(invite_mid, agent.id, sender_id=agent.id)
 
         # State: Echo is a participant after the invite (model-independent).
         after_invite = await user_ops.list_participant_ids(room_id)
@@ -65,9 +65,7 @@ async def test_invites_messages_and_removes_a_peer(
             f"expected {echo.name} added to the room; participants: {after_invite}"
         )
         # Coupled: the mention and the marker are in the SAME agent message.
-        capture.messages.from_sender(agent.id).mentioning(echo.id).assert_contains_any(
-            [marker]
-        )
+        replies.mentioning(echo.id).assert_contains_any([marker])
 
         # Turn 2: remove Echo.
         remove_mid = await user_ops.send_message(
