@@ -5,7 +5,7 @@ import json
 import logging
 import socket
 from collections.abc import Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -471,8 +471,11 @@ class LocalMCPServer:
                 finally:
                     if not http_task.done():
                         http_task.cancel()
-                    with suppress(asyncio.CancelledError):
-                        await http_task
+                    # gather(return_exceptions=True) swallows http_task's own
+                    # cancellation while still propagating a cancel aimed at this
+                    # lifespan — a bare suppress(CancelledError) would eat that
+                    # too and stall shutdown (routine race on Windows).
+                    await asyncio.gather(http_task, return_exceptions=True)
 
         async def sse_endpoint(request: Request) -> Response:
             async with sse_transport.connect_sse(

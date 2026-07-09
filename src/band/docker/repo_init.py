@@ -15,11 +15,10 @@ import logging
 import os
 import re
 import subprocess
-import time
 from collections import Counter
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Generator
 from urllib.parse import urlparse
 
@@ -68,7 +67,11 @@ class RepoConfig(BaseModel):
         val = value.strip()
         if not val:
             raise ValueError("repo.path must not be empty")
-        if not Path(val).is_absolute():
+        # repo.path is a container path (typically POSIX, e.g. /workspace/repo),
+        # but validation may run on any host. Accept a path that is absolute
+        # under either convention so a Windows host doesn't reject a Linux
+        # container path (Path.is_absolute() is host-OS specific).
+        if not (PurePosixPath(val).is_absolute() or PureWindowsPath(val).is_absolute()):
             raise ValueError("repo.path must be an absolute path")
         return val
 
@@ -585,27 +588,26 @@ def _write_text_atomic(path: Path, content: str) -> None:
 
 @contextmanager
 def _locked_file(path: Path, *, timeout_s: float) -> Generator[None, None, None]:
-    """Acquire an exclusive lock on a file for the duration of the context."""
-    import fcntl
+    """Acquire an exclusive lock on a file for the duration of the context.
+
+    Uses ``filelock`` for a cross-platform advisory lock (``fcntl`` on POSIX,
+    ``msvcrt`` on Windows) so multi-agent startup stays concurrency-safe on
+    every platform the SDK runs on.
+    """
+    from filelock import FileLock, Timeout
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a+", encoding="utf-8") as lock_file:
-        deadline = time.monotonic() + timeout_s
-        while True:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    raise ValueError(
-                        f"Timed out waiting for repo init lock at {path} "
-                        f"after {timeout_s:.1f}s"
-                    ) from None
-                time.sleep(0.1)
-        try:
-            yield
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    lock = FileLock(str(path), timeout=timeout_s)
+    try:
+        lock.acquire()
+    except Timeout:
+        raise ValueError(
+            f"Timed out waiting for repo init lock at {path} after {timeout_s:.1f}s"
+        ) from None
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def _is_git_repo(path: Path) -> bool:

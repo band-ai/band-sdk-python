@@ -64,7 +64,7 @@ class TestACPClientAdapterInit:
             cwd="/workspace",
             mcp_servers=[{"type": "stdio", "command": "server"}],
         )
-        assert adapter._cwd == "/workspace"
+        assert adapter._cwd == os.path.abspath("/workspace")
         assert adapter._env == {"API_KEY": "test"}
         assert len(adapter._mcp_servers) == 1
 

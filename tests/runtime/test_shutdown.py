@@ -110,6 +110,42 @@ class TestGracefulShutdownSignalRegistration:
         shutdown.unregister_signals()  # Should not raise
         assert shutdown._registered is False
 
+    async def test_register_signals_falls_back_to_signal_module_on_windows(
+        self, mock_agent
+    ):
+        """When loop.add_signal_handler is unsupported (Windows Proactor loop),
+        register_signals() falls back to signal.signal() instead of raising."""
+        shutdown = GracefulShutdown(mock_agent)
+        loop = asyncio.get_running_loop()
+
+        with patch.object(loop, "add_signal_handler", side_effect=NotImplementedError):
+            with patch("band.runtime.shutdown.signal.signal") as mock_signal:
+                shutdown.register_signals()  # must not raise
+
+        assert shutdown._registered is True
+        # Every signal that could not use the loop fell back to signal.signal().
+        assert mock_signal.call_count == len(shutdown._signal_module_sigs)
+        assert signal.SIGINT in shutdown._signal_module_sigs
+        assert signal.SIGTERM in shutdown._signal_module_sigs
+
+        # unregister restores original handlers via signal.signal(), not the loop.
+        with patch("band.runtime.shutdown.signal.signal") as mock_restore:
+            shutdown.unregister_signals()
+        assert mock_restore.call_count >= 2
+        assert shutdown._registered is False
+        assert shutdown._signal_module_sigs == set()
+
+    async def test_handle_os_signal_bounces_onto_loop(self, mock_agent):
+        """The Windows fallback handler schedules _handle_signal on the loop."""
+        shutdown = GracefulShutdown(mock_agent)
+        loop = asyncio.get_running_loop()
+        shutdown._loop = loop
+
+        with patch.object(loop, "call_soon_threadsafe") as mock_soon:
+            shutdown._handle_os_signal(signal.SIGINT, None)
+
+        mock_soon.assert_called_once_with(shutdown._handle_signal, signal.SIGINT)
+
 
 class TestGracefulShutdownHandler:
     """Test signal handling behavior."""

@@ -502,6 +502,7 @@ source = { editable = "." }
 dependencies = [
     { name = "band-client-rest" },
     { name = "cryptography" },
+    { name = "filelock" },
     { name = "phoenix-channels-python-client" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
@@ -705,6 +706,7 @@ requires-dist = [
     { name = "crewai", marker = "extra == 'dev-crewai'", specifier = "==1.14.3" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "fastapi", marker = "extra == 'agentcore-runtime'", specifier = ">=0.110" },
+    { name = "filelock", specifier = ">=3.12" },
     { name = "google-adk", marker = "extra == 'dev'", specifier = ">=1.0.0,<2" },
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=1.0.0,<2" },
     { name = "google-genai", marker = "extra == 'dev'", specifier = ">=1.43.0" },

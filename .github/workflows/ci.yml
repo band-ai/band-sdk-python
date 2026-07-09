@@ -34,11 +34,18 @@ jobs:
 
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12']
       fail-fast: false
+
+    # Use bash on every OS so these steps stay identical (Git Bash ships on the
+    # windows-latest runner). Keeps command substitution / quoting portable.
+    defaults:
+      run:
+        shell: bash
 
     steps:
     - name: Checkout code
@@ -65,7 +72,9 @@ jobs:
       run: uv run pytest
 
     - name: Run markdown doc tests
-      if: matrix.python-version == '3.12'
+      # Linux-only: doc snippets are OS-independent, and this step relies on
+      # git ls-files globbing that we don't need to re-run per platform.
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
       # examples/ READMEs have illustrative fragments not yet snippet-testable
       run: uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 
