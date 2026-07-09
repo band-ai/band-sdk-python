@@ -25,7 +25,7 @@ import asyncio
 
 import pytest
 
-from band.client.streaming import MessageCreatedPayload
+from band.client.streaming import DeliveryStatus, MessageCreatedPayload
 
 from tests.e2e.baseline.toolkit.capture import ReplyCapture
 
@@ -70,20 +70,23 @@ async def _drain() -> None:
         await asyncio.sleep(0)
 
 
-async def test_processed_before_reply_leaves_buffer_empty() -> None:
-    """The unsafe pattern: PROCESSED can land before the reply frame, so reading
-    ``messages`` right after ``wait_for_processed`` returns can see nothing."""
+async def test_processed_reached_but_reply_not_yet_buffered_is_the_race() -> None:
+    """The race state, and why ``wait_for_processed`` can't be the reply barrier: the
+    delivery status reaches PROCESSED (so ``wait_for_processed`` returns) while the reply
+    frame is not yet buffered — both true at once. A test that read ``capture.messages``
+    here would see nothing. It also pins the reply-optional contract: ``wait_for_processed``
+    must return on the PROCESSED signal alone (feeding no reply, it would hang otherwise)."""
     capture = ReplyCapture(ROOM)
     trigger = "m-trigger"
 
-    # Racey backend order: delivery-status PROCESSED arrives first.
+    # Racey backend order: delivery-status PROCESSED arrives, reply frame has not.
     capture._on_message_updated(_processed(trigger, AGENT))
-
     await capture.wait_for_processed(trigger, AGENT)
-    # The turn is "done" by the barrier, yet the reply frame hasn't been delivered.
-    assert not capture.messages, (
-        "the processed barrier does not imply the reply is buffered"
-    )
+
+    # PROCESSED is genuinely reached...
+    assert capture.delivery_status(trigger, AGENT) == DeliveryStatus.PROCESSED
+    # ...yet no reply is buffered: reading capture.messages here would race the reply.
+    assert not capture.messages
 
 
 async def test_wait_for_reply_awaits_a_late_reply_frame() -> None:
@@ -126,6 +129,31 @@ async def test_wait_for_reply_scopes_to_the_recipient() -> None:
     replies = await asyncio.wait_for(waiter, timeout=1)
 
     assert [r.sender_id for r in replies] == [AGENT]
+
+
+async def test_wait_for_reply_scopes_past_the_since_cursor() -> None:
+    """With ``since``, a reply from an *earlier* turn (before the cursor) must not
+    satisfy the wait — only a reply captured after the cursor counts. This guards the
+    reused-capture pattern (``mark = messages.snapshot()`` then ``since=mark``) that the
+    multi-turn matrix tests rely on to scope each turn."""
+    capture = ReplyCapture(ROOM)
+
+    # An earlier turn's reply is already in the buffer; the cursor sits after it.
+    capture._on_message(_reply(AGENT, "earlier-turn reply", mid="m-old"))
+    mark = capture.messages.snapshot()
+
+    trigger = "m-trigger"
+    waiter = asyncio.ensure_future(
+        capture.wait_for_reply(trigger, AGENT, since=mark, deadline_s=5)
+    )
+    capture._on_message_updated(_processed(trigger, AGENT))
+    await _drain()
+    assert not waiter.done(), "a reply before the cursor must not satisfy the wait"
+
+    capture._on_message(_reply(AGENT, "this-turn reply", mid="m-new"))
+    replies = await asyncio.wait_for(waiter, timeout=1)
+
+    assert [r.content for r in replies] == ["this-turn reply"]
 
 
 async def test_wait_for_reply_times_out_on_a_silent_turn() -> None:

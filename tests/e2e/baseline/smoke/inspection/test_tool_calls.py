@@ -8,9 +8,12 @@ attached and ``**EXECUTION_REPORTING`` so each tool call surfaces as a ``tool_ca
 event, read back via ``ReplyCapture.tool_calls`` and checked with
 ``ToolCalls.assert_fired``.
 
-Turn completion uses the delivery-status barrier (``wait_for_processed``): the
-platform marks the trigger ``processed`` only after the reply is emitted, by which
-point the turn's ``tool_call`` events are persisted — so the read is race-free.
+Tool-call reads use the delivery-status barrier (``wait_for_processed``):
+``processed`` is stamped when the handler completes, by which point the turn's
+``tool_call`` events are persisted — so the read is race-free. A reply-text
+assertion instead uses ``wait_for_reply`` (the reply's ``message_created`` frame is
+delivered independently of the ``processed`` signal, so reading the buffer off
+``processed`` alone would race it).
 """
 
 from __future__ import annotations

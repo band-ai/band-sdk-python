@@ -18,9 +18,9 @@ the exclusion, which is the intended signal. The cells span several CI lanes
 (core / google / backends); each is a single-adapter ``@per_adapter`` item, so
 each runs in its own lane's job — no ``@lane`` pin needed.
 
-Turn completion uses the delivery-status barrier (``wait_for_processed``): the
-platform marks the trigger ``processed`` only after the reply is emitted, by which
-point the turn's usage event is persisted — so the read is race-free.
+Turn completion uses the delivery-status barrier (``wait_for_processed``):
+``processed`` is stamped when the handler completes, by which point the turn's
+usage event is persisted — so the read is race-free.
 
 ``test_usage_not_cumulative_across_turns`` extends the same fan to two turns and
 asserts each turn emits its *own* record scoped to that turn — the live guard for

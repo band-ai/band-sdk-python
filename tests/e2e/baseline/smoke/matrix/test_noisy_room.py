@@ -93,12 +93,12 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        # Barrier on delivery state, not reply text: per-room FIFO means the probe
-        # is PROCESSED only after every earlier (decoy) message was, and the reply
-        # is emitted before PROCESSED — so once this returns, any decoy reply the
-        # agent wrongly made is already buffered, with no WS-ordering race (the
-        # reason the toolkit prefers this over text matching). Only our agent
-        # replies (the bystander never runs), so no sender filtering is needed.
+        # Wait for the probe's own reply. Per-room FIFO means the probe is answered
+        # only after every earlier (decoy) message, so once the probe's reply frame is
+        # captured, any decoy reply the agent wrongly made is already buffered too.
+        # wait_for_reply waits on the reply frame itself, so it doesn't race the
+        # independently-delivered delivery-status frame. Only our agent replies (the
+        # bystander never runs), so no sender filtering is needed.
         flood_replies = await capture.wait_for_reply(
             probe, agent.id, since=flood_mark, deadline_s=flood_deadline
         )
