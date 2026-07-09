@@ -109,15 +109,27 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             require_dep(dep, settings)
 
 
+# pytest-timeout is a hard backstop (a SIGALRM that skips async unwinding and can
+# poison the whole process — leaked host-global locks, orphaned agents/servers). It
+# must fire only after the *soft* reply barrier, which raises a clean, diagnosable
+# TimeoutError. The barrier's clock starts after per-test setup (provisioning, server
+# boot), so the backstop clears the barrier deadline *plus* that setup — this fixed
+# margin on top of the turn budget.
+_TIMEOUT_BACKSTOP_MARGIN_S = 60
+
+
 def _effective_timeout(item: pytest.Item, base: int) -> int | None:
     """Resolve a baseline item's pytest-timeout from its (optional) ``timeout`` marker.
 
     The ``timeout`` marker is pytest-timeout's own, overloaded here so a test reads
-    in pytest-native spelling:
+    in pytest-native spelling. Every resolved value keeps ``_TIMEOUT_BACKSTOP_MARGIN_S``
+    of headroom over the turn budget so the soft barrier fires first (see above):
 
-    * no marker, or bare ``@pytest.mark.timeout()`` -> ``base`` (the turn budget);
-    * ``@pytest.mark.timeout(extra=n)`` -> ``base + n`` (headroom for a slow
-      framework, e.g. crewai cold-start), tracking ``base`` rather than hardcoding;
+    * no marker, or bare ``@pytest.mark.timeout()`` -> ``base + margin`` (the turn
+      budget plus the backstop margin);
+    * ``@pytest.mark.timeout(extra=n)`` -> ``base + max(n, margin)`` (extra headroom
+      for a slow framework, e.g. crewai cold-start, but never below the margin),
+      tracking ``base`` rather than hardcoding;
     * ``@pytest.mark.timeout(n)`` (positional) -> ``None``, i.e. leave it alone so
       pytest-timeout honors the absolute value natively (the long scenario tests).
 
@@ -127,10 +139,10 @@ def _effective_timeout(item: pytest.Item, base: int) -> int | None:
     """
     marker = item.get_closest_marker("timeout")
     if marker is None:
-        return base
+        return base + _TIMEOUT_BACKSTOP_MARGIN_S
     if marker.args:  # absolute @pytest.mark.timeout(n): honored natively
         return None
-    return base + marker.kwargs.get("extra", 0)
+    return base + max(marker.kwargs.get("extra", 0), _TIMEOUT_BACKSTOP_MARGIN_S)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
