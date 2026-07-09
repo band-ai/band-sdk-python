@@ -225,7 +225,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_agent_scenarios.py` |
 | `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py` |
-| `smoke/adapters/` | adapter-specific showcases: `test_agno.py`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
+| `smoke/adapters/` | adapter-specific showcases: `test_agno.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
@@ -529,7 +529,7 @@ the `dev` extra but are split out for isolation.
 
 | Lane | `uv` extra | Adapters | Backend the CI job provides |
 |------|-----------|----------|------------------------------|
-| `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai | provider keys (secrets) |
+| `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and needs a Copilot-entitled `GITHUB_TOKEN` (BYOK inference reuses `ANTHROPIC_API_KEY`) |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
 | `backends` | `dev` | codex, opencode | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), and a running `opencode serve` (`OPENCODE_BASE_URL`) |

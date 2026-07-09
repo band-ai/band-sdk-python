@@ -100,6 +100,12 @@ def _claude_sdk_factory(**kw: Any) -> Any:
     return ClaudeSDKHistoryConverter(**kw)
 
 
+def _copilot_sdk_factory(**kw: Any) -> Any:
+    from band.converters.copilot_sdk import CopilotSDKHistoryConverter
+
+    return CopilotSDKHistoryConverter(**kw)
+
+
 def _pydantic_ai_factory(**kw: Any) -> Any:
     from band.converters.pydantic_ai import PydanticAIHistoryConverter
 
@@ -200,6 +206,26 @@ def _build_claude_sdk_config() -> ConverterConfig:
         skips_empty_content=True,
         has_role_concept=False,
         output_adapter=ClaudeSDKOutputAdapter(),
+    )
+
+
+def _build_copilot_sdk_config() -> ConverterConfig:
+    from band.converters.copilot_sdk import CopilotSDKSessionState
+    from tests.framework_configs.output_adapters import CopilotSDKOutputAdapter
+
+    return ConverterConfig(
+        framework_id="copilot_sdk",
+        display_name="CopilotSDK",
+        converter_factory=_copilot_sdk_factory,
+        empty_result=CopilotSDKSessionState(text=""),
+        # Own-agent text is kept: the adapter silences band_send_message tool
+        # reporting, so these lines are the only record of the agent's replies.
+        filters_own_messages=False,
+        empty_sender_behavior=SenderBehavior.BRACKETS_EMPTY,
+        missing_sender_behavior=SenderBehavior.UNKNOWN_PREFIX,
+        skips_empty_content=True,
+        has_role_concept=False,
+        output_adapter=CopilotSDKOutputAdapter(),
     )
 
 
@@ -324,6 +350,7 @@ _CONVERTER_CONFIG_BUILDERS: list[Callable[[], ConverterConfig]] = [
     _build_langchain_config,
     _build_crewai_config,
     _build_claude_sdk_config,
+    _build_copilot_sdk_config,
     _build_pydantic_ai_config,
     _build_parlant_config,
     _build_agno_config,

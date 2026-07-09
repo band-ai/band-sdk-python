@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import weakref
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _get_version
 from pathlib import Path
@@ -34,6 +35,17 @@ except PackageNotFoundError:
 
 # Default graceful shutdown timeout in seconds
 DEFAULT_SHUTDOWN_TIMEOUT: float = 30.0
+
+# Agents started in this process and not yet stopped. Weak so a dropped
+# agent never leaks through the registry; exists for harnesses whose
+# failure paths can abandon an agent without unwinding it (e.g.
+# pytest-timeout's signal kill), which need to find and stop it.
+_running_agents: weakref.WeakSet[Agent] = weakref.WeakSet()
+
+
+def running_agents() -> list[Agent]:
+    """Agents started in this process that have not been stopped yet."""
+    return list(_running_agents)
 
 
 class _TimeoutNotSet:
@@ -212,23 +224,40 @@ class Agent:
             logger.warning("Agent already started")
             return
 
-        # 1. Initialize runtime (fetch metadata via REST, no WebSocket yet)
-        await self._runtime.initialize()
+        # 0. Refuse a duplicate instance BEFORE the adapter boots anything
+        # (subprocesses, on-disk sessions). runtime.start() re-claims
+        # idempotently for callers driving PlatformRuntime directly.
+        self._runtime.claim_single_instance()
+        try:
+            # 1. Initialize runtime (fetch metadata via REST, no WebSocket yet)
+            await self._runtime.initialize()
 
-        # 2. Initialize adapter with agent metadata BEFORE message processing
-        setattr(self._adapter, "_band_agent_id", self._runtime.agent_id)
-        await self._adapter.on_started(
-            self._runtime.agent_name,
-            self._runtime.agent_description,
-        )
+            # 2. Initialize adapter with agent metadata BEFORE message processing
+            setattr(self._adapter, "_band_agent_id", self._runtime.agent_id)
+            await self._adapter.on_started(
+                self._runtime.agent_name,
+                self._runtime.agent_description,
+            )
 
-        # 3. NOW start message processing (connects WebSocket)
-        await self._runtime.start(
-            on_execute=self._on_execute,
-            on_cleanup=self._adapter.on_cleanup,
-        )
+            # 3. NOW start message processing (connects WebSocket)
+            try:
+                await self._runtime.start(
+                    on_execute=self._on_execute,
+                    on_cleanup=self._adapter.on_cleanup,
+                )
+            except BaseException:
+                # on_started may have acquired resources (e.g. a CLI runtime
+                # subprocess); a failed start must release them — stop() won't
+                # run for an agent that never started.
+                await self._cleanup_adapter()
+                raise
+        except BaseException:
+            # Idempotent: a failure inside runtime.start() already released.
+            self._runtime.release_single_instance()
+            raise
 
         self._started = True
+        _running_agents.add(self)
         logger.info(
             "Agent started: %s (band-sdk %s)", self._runtime.agent_name, _SDK_VERSION
         )
@@ -252,12 +281,27 @@ class Agent:
         if not self._started:
             return True
 
-        graceful = await self._runtime.stop(timeout=timeout)
-        self._started = False
+        try:
+            graceful = await self._runtime.stop(timeout=timeout)
+        finally:
+            # Always release adapter-wide resources (e.g. a CLI runtime
+            # subprocess), even when the runtime fails to stop cleanly.
+            await self._cleanup_adapter()
+            self._started = False
+            _running_agents.discard(self)
         logger.info(
             "Agent stopped: %s (graceful=%s)", self._runtime.agent_name, graceful
         )
         return graceful
+
+    async def _cleanup_adapter(self) -> None:
+        """Release adapter-wide resources, best-effort."""
+        cleanup_all = getattr(self._adapter, "cleanup_all", None)
+        if cleanup_all is not None:
+            try:
+                await cleanup_all()
+            except Exception:
+                logger.exception("Adapter cleanup_all failed")
 
     async def run(
         self, shutdown_timeout: float | None = DEFAULT_SHUTDOWN_TIMEOUT

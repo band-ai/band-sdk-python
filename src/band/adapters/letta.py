@@ -22,17 +22,9 @@ from band.core.types import (
     TurnUsage,
 )
 from band.runtime.prompts import render_system_prompt
+from band.runtime.tools import SELF_REPORTING_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
-
-# Platform tools whose execution should not be reported as tool_call/tool_result
-# events — they already produce visible output (messages or events) on the platform.
-_SILENT_REPORTING_TOOLS: frozenset[str] = frozenset(
-    {
-        "band_send_message",
-        "band_send_event",
-    }
-)
 
 # Letta-specific preamble prepended to the system prompt when writing to the
 # agent's instruction block.  In practice, models routed through Letta
@@ -551,7 +543,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                     used_send_message = True
 
                 if Emit.EXECUTION in self.features.emit:
-                    if tool_name not in _SILENT_REPORTING_TOOLS:
+                    if tool_name not in SELF_REPORTING_TOOL_NAMES:
                         await tools.send_event(
                             content=json.dumps(
                                 {
@@ -568,7 +560,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 # MCP tool result — observe for reporting
                 if Emit.EXECUTION in self.features.emit:
                     tool_name = getattr(resp_msg, "tool_name", "unknown")
-                    if tool_name not in _SILENT_REPORTING_TOOLS:
+                    if tool_name not in SELF_REPORTING_TOOL_NAMES:
                         await tools.send_event(
                             content=json.dumps(
                                 {

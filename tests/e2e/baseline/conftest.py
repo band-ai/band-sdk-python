@@ -28,6 +28,7 @@ from tests.e2e.baseline.fixtures.platform import (
     baseline_user_client,
     baseline_ws,
     orphan_sweep,
+    reap_leaked_agents,
     resource_manager,
     user_ops,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "judge",
     "orphan_sweep",
     "peer",
+    "reap_leaked_agents",
     "reply_capture",
     "resource_manager",
     "user_ops",

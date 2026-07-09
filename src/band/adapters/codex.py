@@ -45,7 +45,9 @@ from band.runtime.custom_tools import (
     custom_tool_to_openai_schema,
     execute_custom_tool,
     find_custom_tool,
+    format_validation_error,
 )
+from band.runtime.tools import SELF_REPORTING_TOOL_NAMES
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -56,16 +58,12 @@ ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
 _REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
-# Platform tools whose execution should not be reported as tool_call/tool_result
-# events — they already produce visible output (messages or events) on the platform.
-_SILENT_REPORTING_TOOLS: frozenset[str] = frozenset(
-    {
-        "band_send_message",
-        "band_send_event",
-        "setmodel",
-        "setreasoning",
-    }
-)
+# Shared platform set plus codex-local slash commands, which also surface
+# their outcome in the room themselves.
+_SILENT_REPORTING_TOOLS: frozenset[str] = SELF_REPORTING_TOOL_NAMES | {
+    "setmodel",
+    "setreasoning",
+}
 
 # Slash commands recognised by _extract_local_command().
 _LOCAL_COMMANDS: frozenset[str] = frozenset(
@@ -1362,9 +1360,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         message_type="tool_result",
                     )
             except ValidationError as exc:
-                errors = "; ".join(
-                    f"{err['loc'][0]}: {err['msg']}" for err in exc.errors()
-                )
+                errors = format_validation_error(exc)
                 error_text = f"Invalid arguments for {tool_name}: {errors}"
                 logger.error("Validation error for tool %s: %s", tool_name, exc)
                 await self._client.respond(

@@ -161,6 +161,18 @@ def find_custom_tool(
     return None
 
 
+def format_validation_error(exc: ValidationError) -> str:
+    """Format a pydantic ValidationError as an LLM-readable field list.
+
+    Model-level validators report an empty ``loc``, so the field name
+    falls back to "unknown" instead of raising IndexError.
+    """
+    return "; ".join(
+        f"{err['loc'][0] if err.get('loc') else 'unknown'}: {err['msg']}"
+        for err in exc.errors()
+    )
+
+
 @lru_cache(maxsize=256)
 def _custom_tool_accepts_input(func: Callable[..., Any]) -> bool:
     try:

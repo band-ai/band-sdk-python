@@ -97,7 +97,7 @@ class LLMCredentials(BaseSettings):
 
 
 class Backends(BaseSettings):
-    """Config for the external-backend adapters (codex / opencode / letta).
+    """Config for the external-backend adapters (codex / opencode / letta / copilot_sdk).
 
     Reads each backend's standard env vars (no shared prefix). Defaults that the
     matrix relies on live here -- the single source -- not scattered through the
@@ -131,6 +131,10 @@ class Backends(BaseSettings):
     letta_api_key: str = ""  # LETTA_API_KEY (Letta Cloud)
     letta_model: str = "openai/gpt-5.4-mini"  # LETTA_MODEL
     mcp_server_url: str = ""  # MCP_SERVER_URL (band-mcp SSE endpoint)
+
+    # Copilot SDK. BYOK inference reuses llm_credentials.anthropic_api_key; this is
+    # only the runtime-auth token, from a GitHub account with Copilot entitlement.
+    github_token: str = ""  # GITHUB_TOKEN
 
 
 class LLMModels(BaseSettings):
