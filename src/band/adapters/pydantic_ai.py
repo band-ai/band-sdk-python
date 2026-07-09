@@ -48,6 +48,7 @@ from band.converters.pydantic_ai import (
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
+    invoke_validated_custom_tool,
     is_marked_terminal,
 )
 from band.runtime.prompts import render_system_prompt
@@ -113,14 +114,21 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     tool callable — the same custom-tool form the other adapters accept.
 
     pydantic-ai flattens a single Pydantic-model parameter into the tool's arguments,
-    so the handler's ``(args: InputModel)`` shape is used directly. The wrapper carries
-    the stable tool name (derived from the model) and the ``band_terminal`` marker, so
-    the tool name and the terminal-tool contract match the tuple adapters exactly.
+    so the wrapper keeps the ``(args: InputModel)`` registration shape. Execution is
+    routed through the shared ``invoke_validated_custom_tool`` so the CustomToolDef
+    contract matches every other adapter: async handlers are awaited and
+    zero-argument handlers (empty InputModel) are called without args — a plain sync
+    passthrough would hand pydantic-ai an unawaited coroutine or raise TypeError for
+    those. pydantic-ai has already validated ``args`` into the InputModel, so the
+    instance is passed through directly — a dump/re-validate round-trip would break
+    models using field aliases. The wrapper carries the stable tool name (derived
+    from the model) and the ``band_terminal`` marker, so the tool name and the
+    terminal-tool contract match the tuple adapters exactly.
     """
     input_model, handler = tool_def
 
-    def native(args: Any) -> Any:
-        return handler(args)
+    async def native(args: Any) -> Any:
+        return await invoke_validated_custom_tool(tool_def, args)
 
     native.__name__ = get_custom_tool_name(input_model)
     native.__doc__ = input_model.__doc__ or native.__name__

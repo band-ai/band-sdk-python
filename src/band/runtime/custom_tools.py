@@ -202,8 +202,32 @@ async def execute_custom_tool(
             f"Invalid arguments for {tool_name}: {', '.join(errors)}"
         ) from e
 
+    if not _custom_tool_accepts_input(func) and arguments:
+        tool_name = get_custom_tool_name(model)
+        raise ValueError(
+            f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
+        )
+    return await invoke_validated_custom_tool(tool, validated)
+
+
+async def invoke_validated_custom_tool(
+    tool: CustomToolDef,
+    validated: Any,
+) -> Any:
+    """
+    Execute a custom tool whose arguments are already a validated InputModel
+    instance — the post-validation half of :func:`execute_custom_tool`.
+
+    For callers whose framework has already constructed the InputModel (e.g.
+    pydantic-ai validates tool args natively): re-serializing the instance to
+    a dict and re-validating would break models using field aliases, so the
+    instance is passed through as-is. Async/zero-argument handler semantics
+    match :func:`execute_custom_tool` exactly.
+    """
+    model, func = tool
+
     accepts_input = _custom_tool_accepts_input(func)
-    if not accepts_input and (arguments or model.model_fields):
+    if not accepts_input and model.model_fields:
         tool_name = get_custom_tool_name(model)
         raise ValueError(
             f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
