@@ -403,6 +403,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             # the model wander through ToolSearch/Bash/Agent/Skill instead of calling
             # the Band tool). Empty = load nothing; built-in tools stay available.
             setting_sources=[],
+            # Keep the Band (and any custom) tools directly in context. By default the
+            # CLI turns on tool search once the tool set is large enough, which withholds
+            # definitions behind a `ToolSearch(select:...)` step; a model can then spend
+            # its turn searching instead of calling `mcp__band__lookup`. Disabling it
+            # makes tool availability deterministic — the reply path (band_send_message)
+            # and any task tool are always visible. env is merged onto the CLI's
+            # inherited environment (it does not replace it), so this sets only this key.
+            env={"ENABLE_TOOL_SEARCH": "false"},
         )
 
         # Add extended thinking if configured
