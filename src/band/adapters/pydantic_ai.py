@@ -256,7 +256,16 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # type must be provided other than `None`")`.
         agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
-            system_prompt=system,
+            # Pass the rendered prompt as `instructions`, not `system_prompt`.
+            # pydantic-ai materializes `system_prompt` as a single SystemPromptPart
+            # only on the first request, after which it ages into buried history;
+            # by the time the model composes the post-tool reply it sits beneath the
+            # user prompt, tool call, and tool return, so a custom rule that must ride
+            # *every* reply (e.g. a required marker word) gets dropped. `instructions`
+            # are re-attached to each ModelRequest — including the post-tool-return
+            # request that generates the reply — mirroring how the anthropic adapter
+            # re-sends `system=` on every call, so the contract stays in force.
+            instructions=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
             # pydantic-ai defaults to retries=1 for tool-arg and final-output
