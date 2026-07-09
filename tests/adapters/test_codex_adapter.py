@@ -4943,6 +4943,39 @@ class TestCodexTypes:
         assert meta["codex_input_tokens"] == 1000
         assert "1,700" in usage.format_summary()
 
+    def test_codex_token_usage_update_current_schema(self) -> None:
+        """The current app-server schema nests cumulative counters under
+        ``tokenUsage.total`` and names reasoning ``reasoningOutputTokens``."""
+        from band.integrations.codex.types import CodexTokenUsage
+
+        usage = CodexTokenUsage()
+        usage.update(
+            {
+                "threadId": "t-1",
+                "turnId": "turn-1",
+                "tokenUsage": {
+                    "total": {
+                        "totalTokens": 14822,
+                        "inputTokens": 14725,
+                        "cachedInputTokens": 2432,
+                        "outputTokens": 97,
+                        "reasoningOutputTokens": 59,
+                    },
+                    "last": {
+                        "totalTokens": 14822,
+                        "inputTokens": 14725,
+                        "outputTokens": 97,
+                        "reasoningOutputTokens": 59,
+                    },
+                    "modelContextWindow": 258400,
+                },
+            }
+        )
+        assert usage.input_tokens == 14725
+        assert usage.output_tokens == 97
+        assert usage.reasoning_tokens == 59
+        assert usage.total_tokens == 14822
+
     def test_config_new_flags_default_false(self) -> None:
         """All new config flags default to False (except structured_errors=True)."""
         config = CodexAdapterConfig()

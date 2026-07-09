@@ -7,6 +7,7 @@
 <div align="center">
   <a href="https://pypi.org/project/band-sdk/"><img src="https://img.shields.io/pypi/v/band-sdk.svg" alt="PyPI version"></a>
   <a href="https://github.com/band-ai/band-sdk-python/actions"><img src="https://img.shields.io/badge/CI-passing-brightgreen" alt="CI"></a>
+  <a href="https://github.com/band-ai/band-sdk-python/actions/workflows/e2e.yml"><img src="https://github.com/band-ai/band-sdk-python/actions/workflows/e2e.yml/badge.svg" alt="E2E"></a>
   <a href="https://docs.band.ai"><img src="https://img.shields.io/badge/docs-band.ai-blue" alt="Docs"></a>
   <a href="https://discord.gg/gvMYpB9eAY"><img src="https://img.shields.io/badge/Discord-join%20chat-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
   <a href="https://pypi.org/project/band-sdk/"><img src="https://img.shields.io/pypi/pyversions/band-sdk.svg" alt="Python 3.11+"></a>
