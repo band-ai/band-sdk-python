@@ -7,10 +7,8 @@ and execute custom tools with validation.
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
-from functools import lru_cache
 from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
@@ -161,7 +159,6 @@ def find_custom_tool(
     return None
 
 
-@lru_cache(maxsize=256)
 def _custom_tool_accepts_input(func: Callable[..., Any]) -> bool:
     try:
         return len(inspect.signature(func).parameters) > 0
@@ -234,6 +231,11 @@ async def invoke_validated_custom_tool(
         )
     args = (validated,) if accepts_input else ()
 
-    if asyncio.iscoroutinefunction(func):
-        return await func(*args)
-    return func(*args)
+    # Call the handler, then await if it produced an awaitable. This covers plain
+    # sync/async functions AND callable objects with an async __call__ (for which
+    # asyncio.iscoroutinefunction returns False, so a bare check would leak the
+    # coroutine unawaited).
+    result = func(*args)
+    if inspect.isawaitable(result):
+        return await result
+    return result
