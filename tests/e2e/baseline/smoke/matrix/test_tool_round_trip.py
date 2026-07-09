@@ -22,6 +22,7 @@ value on top of the tool firing.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_tools import (
@@ -45,7 +46,7 @@ KEY = "alpha"  # ACCESS_CODES["alpha"] -> a code the model cannot guess
     prompt=LOOKUP_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 # crewai's crew construction + first kickoff cold-start can push the turn past the
 # base budget; grant headroom so a slow-but-healthy cell isn't killed by the timeout.
 @pytest.mark.timeout(extra=120)

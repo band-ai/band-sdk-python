@@ -19,6 +19,7 @@ Run with:
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.smoke.samples.sample_tools import (
@@ -39,9 +40,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 @with_adapters(
     Adapter.AGNO, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.flaky(
-    reruns=2, rerun_except=["AssertionError"]
-)  # retry a transient live-turn timeout; assertion failures fail loud
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agno_executes_native_tool(
     agent: ProvisionedAgent,
@@ -78,9 +77,7 @@ async def test_agno_executes_native_tool(
     prompt=LOOKUP_AND_WEATHER_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.flaky(
-    reruns=2, rerun_except=["AssertionError"]
-)  # retry a transient live-turn timeout; assertion failures fail loud
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agno_handles_multiple_native_tools(
     agent: ProvisionedAgent,

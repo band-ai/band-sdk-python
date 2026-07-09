@@ -30,6 +30,7 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -50,7 +51,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
 # cannot recall a note stated on an earlier turn — exclude it from recall scenarios.
 @per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=120)  # two turns (state, then recall)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_within_session(
@@ -87,10 +88,10 @@ async def test_recalls_within_session(
 @per_adapter(
     exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT
 )
-# Cold-boot recall is model-non-deterministic (the model occasionally denies having
-# the note despite it being in the rehydrated context), so allow AssertionError reruns
-# here — unlike the matrix's usual rerun_except; a real regression still fails red.
-@pytest.mark.flaky(reruns=2)
+@flaky_model(
+    "cold-boot recall is model-non-deterministic — the model occasionally denies "
+    "having the note despite it being in the rehydrated context"
+)
 @pytest.mark.timeout(extra=180)  # two agent startups (state, then rejoin)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_after_rejoin(

@@ -24,6 +24,7 @@ un-sourceable, so they stay out under the floors-only policy.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import ROSTER_PROBE
@@ -33,7 +34,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True)
-@pytest.mark.flaky(reruns=2)  # small-model wording of names is non-deterministic
+@flaky_model("small-model wording of names is non-deterministic")
 @pytest.mark.timeout(extra=120)  # a turn with two platform-tool reads
 @pytest.mark.asyncio(loop_scope="session")
 async def test_reports_identity_and_roster(

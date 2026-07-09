@@ -23,6 +23,7 @@ A stronger sibling of ``test_recalls_within_session`` (single fact, two turns). 
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from band.client.streaming import DeliveryStatus
 
@@ -43,7 +44,7 @@ BURST_SIZE = 6
 
 
 @per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
-@pytest.mark.flaky(reruns=2)  # spanning recall is model-driven
+@flaky_model("spanning recall is model-driven")
 @pytest.mark.timeout(
     extra=780
 )  # a BURST_SIZE-turn backlog + a recall turn (slow backends)

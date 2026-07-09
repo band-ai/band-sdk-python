@@ -259,6 +259,7 @@ timeout = 30
 markers = [
     "requires_api: marks tests as requiring real API credentials (skipped in CI)",
     "e2e: marks tests as end-to-end (requires live services)",
+    "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
 ]
 
 [tool.uv]

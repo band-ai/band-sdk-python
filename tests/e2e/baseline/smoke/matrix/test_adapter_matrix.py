@@ -11,6 +11,7 @@ or rely on CI's multiple lanes.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from band.core.simple_adapter import SimpleAdapter
 
@@ -36,9 +37,7 @@ def test_build_adapter_constructs_each(cell: AdapterCell) -> None:
 
 
 @per_adapter()
-@pytest.mark.flaky(
-    reruns=2, rerun_except=["AssertionError"]
-)  # retry a transient live-turn timeout; assertion failures fail loud
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.asyncio(loop_scope="session")
 async def test_per_adapter_replies(
     agent: ProvisionedAgent,

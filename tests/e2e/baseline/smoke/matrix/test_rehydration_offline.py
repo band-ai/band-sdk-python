@@ -28,6 +28,7 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -45,10 +46,10 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(exclude={Adapter.CODEX, Adapter.OPENCODE}, prompt=REPLY_PROMPT)
-# Cold-boot recall is model-non-deterministic (the model occasionally denies having
-# the note despite it being in the rehydrated context), so allow AssertionError reruns
-# here — unlike the matrix's usual rerun_except; a real regression still fails red.
-@pytest.mark.flaky(reruns=2)
+@flaky_model(
+    "cold-boot recall is model-non-deterministic — the model occasionally denies "
+    "having the note despite it being in the rehydrated context"
+)
 @pytest.mark.timeout(extra=180)  # cold boot + backlog + recall
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_offline_note_on_cold_boot(

@@ -21,6 +21,7 @@ concurrent triage are already covered by ``test_multi_agent_collaboration``.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
@@ -36,7 +37,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT)
-@pytest.mark.flaky(reruns=2)  # multi-hop routing on a small model is non-deterministic
+@flaky_model("multi-hop routing on a small model is non-deterministic")
 @pytest.mark.timeout(extra=300)  # a seed turn + a B→A→B delegation cascade
 @pytest.mark.asyncio(loop_scope="session")
 async def test_peer_initiated_delegation_with_self_recall(

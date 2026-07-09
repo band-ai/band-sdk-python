@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
@@ -46,9 +47,7 @@ _SHORT = "You are a friendly assistant in a chat room. Reply in one short senten
 @requires(
     Dep.OPENAI
 )  # running_parlant_server uses the OpenAI NLP service (OPENAI_API_KEY)
-@pytest.mark.flaky(
-    reruns=2, rerun_except=["AssertionError"]
-)  # retry a transient live-turn timeout; assertion failures fail loud
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 # The barrier below waits up to ``e2e_timeout * 3`` (360s at the 120s default) for
 # Parlant's cold multi-call pipeline. The outer cap is ``e2e_timeout + extra``, so
 # ``extra`` must clear that 3x barrier *plus* in-process server boot, provisioning,

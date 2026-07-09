@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.settings import BaselineSettings
@@ -97,7 +98,7 @@ assert FORECAST_FRAGMENT in FORECASTS[PANEL_PLACE.lower()]
     prompt=COLLAB_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.flaky(reruns=2)  # a multi-hop cascade occasionally drops a turn; retry
+@flaky_model("a multi-hop cascade occasionally drops a turn; retry")
 @pytest.mark.timeout(extra=300)  # cascade spans several live turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_coordinator_delegates_to_two_specialists(
@@ -180,7 +181,7 @@ async def test_coordinator_delegates_to_two_specialists(
     prompt=COLLAB_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.flaky(reruns=2)  # recruit + cascade occasionally drops a turn; retry
+@flaky_model("recruit + cascade occasionally drops a turn; retry")
 @pytest.mark.timeout(extra=300)  # recruitment + a delegation round-trip
 @pytest.mark.asyncio(loop_scope="session")
 async def test_coordinator_recruits_specialist_mid_conversation(
@@ -246,9 +247,7 @@ async def test_coordinator_recruits_specialist_mid_conversation(
     prompt=COLLAB_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.flaky(
-    reruns=2, rerun_except=["AssertionError"]
-)  # retry a transient live-turn timeout; assertion failures fail loud
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.timeout(extra=180)  # three concurrent turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_heterogeneous_agents_triage_concurrent_mentions(

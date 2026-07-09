@@ -16,6 +16,7 @@ which the platform authorizes because the test user owns the agent that owns the
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import CREATE_CHATROOM, TOOL_AGENT
@@ -29,7 +30,7 @@ CREATE_CHATROOM_TOOL = "band_create_chatroom"
 
 
 @per_adapter(runs_tool_loop=True, **TOOL_AGENT, **EXECUTION_REPORTING)
-@pytest.mark.flaky(reruns=2)  # the tool call is a model decision
+@flaky_model("the tool call is a model decision")
 @pytest.mark.timeout(extra=120)  # one turn, with headroom for a slow backend cold-start
 @pytest.mark.asyncio(loop_scope="session")
 async def test_agent_creates_a_chatroom(

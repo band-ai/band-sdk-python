@@ -32,6 +32,7 @@ exclusion the other rehydration tests spell out.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 
 from band.client.streaming import DeliveryStatus
 
@@ -51,7 +52,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT)
-@pytest.mark.flaky(reruns=2)  # cold-boot recall is model-non-deterministic
+@flaky_model("cold-boot recall is model-non-deterministic")
 @pytest.mark.timeout(extra=300)  # several run-1 turns + two agent boots
 @pytest.mark.asyncio(loop_scope="session")
 async def test_handled_work_not_redrained_on_restart(
@@ -145,7 +146,7 @@ async def test_handled_work_not_redrained_on_restart(
     prompt=REPLY_PROMPT,
     features=usage_features(),
 )
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient reruns
+@flaky_infra("only transient reruns")
 @pytest.mark.timeout(extra=300)  # two agent boots + two turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_restart_usage_splits_replay_and_inference(

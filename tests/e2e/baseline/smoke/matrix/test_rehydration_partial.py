@@ -44,6 +44,7 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -64,7 +65,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
     exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.LANGGRAPH, Adapter.CREWAI_FLOW},
     prompt=REPLY_PROMPT,
 )
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 @pytest.mark.timeout(
     extra=300
 )  # two boots for the rebooted agent + peer boot + 3 turns

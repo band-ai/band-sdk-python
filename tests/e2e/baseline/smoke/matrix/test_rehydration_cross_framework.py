@@ -38,6 +38,7 @@ lane (schedulable, no cross-lane) and guarantees A is never langgraph (so A ≠ 
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, Lane, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import REPLY_PROMPT, unique_marker
@@ -65,7 +66,7 @@ def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
     peer=Adapter.LANGGRAPH,
     prompt=REPLY_PROMPT,
 )
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=300)  # peer boot + relay turn + fresh A boot + recall turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_rehydrates_foreign_peer_message(

@@ -37,6 +37,7 @@ from tests.e2e.baseline.agents import (
     PER_ADAPTER_MARKER,
 )
 from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
+from tests.e2e.baseline.flaky import assert_flaky_is_classified
 from tests.e2e.baseline.lane_selection import (
     apply_lane_skips,
     assert_every_item_is_schedulable,
@@ -168,10 +169,16 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     assert_agent_fixtures_wired(items)
     assert_every_item_is_schedulable(items)
+
+    baseline_dir = Path(__file__).parent
+    baseline_items = [
+        item for item in items if Path(item.path).is_relative_to(baseline_dir)
+    ]
+    assert_flaky_is_classified(baseline_items)
+
     settings = BaselineSettings()
     apply_lane_skips(settings.run.lane, items)
 
-    baseline_dir = Path(__file__).parent
     session_marker = pytest.mark.asyncio(loop_scope="session")
     base = settings.e2e_timeout
     for item in items:

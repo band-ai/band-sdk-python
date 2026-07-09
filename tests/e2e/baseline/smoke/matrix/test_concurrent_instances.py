@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
@@ -34,7 +35,7 @@ INSTANCES = 3  # the spec's Test Agent + Calc + Greeter trio
 
 
 @per_adapter()
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient reruns
+@flaky_infra("only transient reruns")
 @pytest.mark.timeout(extra=300)  # three concurrent boots + three turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_concurrent_same_adapter_instances_each_reply(

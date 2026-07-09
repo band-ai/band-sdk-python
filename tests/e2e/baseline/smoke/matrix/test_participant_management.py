@@ -20,6 +20,7 @@ with no removal), so it overlaps only slightly.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -33,7 +34,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True)
-@pytest.mark.flaky(reruns=2)  # tool invocation + directed message are model-driven
+@flaky_model("tool invocation + directed message are model-driven")
 @pytest.mark.timeout(extra=180)  # invite + directed message, then remove (two turns)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_invites_messages_and_removes_a_peer(

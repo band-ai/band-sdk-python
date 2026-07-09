@@ -21,6 +21,7 @@ the *prompt effect* and *coexistence* on top.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -47,7 +48,7 @@ KEY = "beta"  # ACCESS_CODES["beta"] -> a code the model cannot guess
     tools=[LOOKUP_TOOL],
     prompt=custom_prompt_with_marker(PROMPT_MARKER),
 )
-@pytest.mark.flaky(reruns=2)  # marker-in-every-reply is a model-driven behaviour
+@flaky_model("marker-in-every-reply is a model-driven behaviour")
 @pytest.mark.timeout(extra=180)  # a custom-tool turn, then a roster turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_custom_prompt_takes_effect_and_coexists_with_platform_tools(
