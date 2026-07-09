@@ -19,10 +19,12 @@ from unittest.mock import AsyncMock
 import pytest
 from agno.agent import Agent as AgnoAgent
 from agno.models.message import Message
-from agno.run.agent import RunOutput
+from agno.run import RunStatus
+from agno.run.agent import RunErrorEvent, RunOutput
 
 from band.adapters.agno import (
     AgnoAdapter,
+    AgnoRunError,
     _bind_room_tools,
     _make_band_entrypoint,
 )
@@ -830,6 +832,64 @@ class TestRunFailureReporting:
         )
         # The exception text (which can carry secrets) must not leak to the room.
         assert "secret-token" not in errors[0]["content"]
+
+    async def test_error_status_run_is_raised_and_reported(
+        self, make_started_adapter, tools
+    ):
+        # Agno swallows run exceptions (model/API failures included) and
+        # returns a normal-looking RunOutput with status=error. The adapter
+        # must surface it as a failure — otherwise the runtime marks the
+        # message processed and the turn dies silently with no reply.
+        adapter, agent = await make_started_adapter(
+            response=RunOutput(
+                content="api dsn leaked: secret-token", status=RunStatus.error
+            )
+        )
+
+        with pytest.raises(AgnoRunError):
+            await adapter.on_message(
+                _msg("room-A", "hi"),
+                tools,
+                [],
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-A",
+            )
+
+        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
+        assert len(errors) == 1
+        assert "secret-token" not in errors[0]["content"]
+        # A failed turn must not be committed to the room transcript.
+        assert not adapter._message_history.get("room-A")
+
+    async def test_streaming_error_event_is_raised_and_reported(
+        self, make_started_adapter, tools
+    ):
+        # In the streaming path a swallowed error surfaces only as a
+        # RunErrorEvent — the stream never yields a final RunOutput. The
+        # adapter must raise on it instead of returning None (a "successful"
+        # empty turn).
+        adapter, agent = await make_started_adapter(
+            features=AdapterFeatures(emit={Emit.EXECUTION}),
+            events=[RunErrorEvent(content="api dsn leaked: secret-token")],
+        )
+
+        with pytest.raises(AgnoRunError):
+            await adapter.on_message(
+                _msg("room-A", "hi"),
+                tools,
+                [],
+                None,
+                None,
+                is_session_bootstrap=True,
+                room_id="room-A",
+            )
+
+        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
+        assert len(errors) == 1
+        assert "secret-token" not in errors[0]["content"]
+        assert not adapter._message_history.get("room-A")
 
     async def test_error_event_failure_does_not_mask_original(
         self, make_started_adapter

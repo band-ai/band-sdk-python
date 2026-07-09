@@ -26,7 +26,9 @@ from band.runtime.tools import get_band_tool_category
 
 try:
     from agno.models.message import Message
+    from agno.run import RunStatus
     from agno.run.agent import (
+        RunErrorEvent,
         RunOutput,
         ToolCallCompletedEvent,
         ToolCallStartedEvent,
@@ -58,6 +60,23 @@ _CONVERSATION_ROLES = frozenset({"user", "assistant", "tool"})
 _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
     "agno_current_tools", default=None
 )
+
+
+class AgnoRunError(RuntimeError):
+    """An Agno run finished in an error state instead of raising.
+
+    Agno catches exceptions inside ``Agent.arun`` (model/API failures included)
+    and reports them as an error-status result rather than propagating. Raising
+    here restores the cross-adapter contract: a failed turn must reach the
+    runtime so the message is marked failed and the platform retries it,
+    instead of being recorded as a successful turn that produced no output.
+    """
+
+
+def _error_summary(detail: str | None) -> str:
+    """A bounded, log-safe summary of Agno's swallowed error text."""
+    text = (detail or "unknown error").strip() or "unknown error"
+    return text if len(text) <= 500 else f"{text[:500]}..."
 
 
 def _tool_executions(response: RunOutput) -> list[Any]:
@@ -441,6 +460,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                     )
                 else:
                     response = await agent.arun(input=messages, session_id=session_id)
+            # Agno swallows run exceptions into a normal-looking return value
+            # (status=error); surface it so the shared except path below treats
+            # the turn as failed rather than as a silent empty reply.
+            if response is not None and response.status == RunStatus.error:
+                raise AgnoRunError(_error_summary(response.content))
         except Exception:
             # Keep the user-facing payload generic; the full traceback is in the
             # agent log via logger.exception. Exception text can include DB
@@ -493,6 +517,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         ):
             if isinstance(item, RunOutput):
                 final = item
+            elif isinstance(item, RunErrorEvent):
+                # On a swallowed run error the stream ends with this event and
+                # never yields a final RunOutput — raise instead of returning
+                # None, which would read as a successful turn with no output.
+                raise AgnoRunError(_error_summary(item.content))
             else:
                 await self._emit_stream_event(
                     item, tools, room_id=room_id, msg_id=msg_id
