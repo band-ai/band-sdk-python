@@ -51,8 +51,17 @@ NAME_PREFIX = "e2e-band-"
 
 
 def new_run_id() -> str:
-    """Short token identifying a single test session's provisioned resources."""
-    return uuid.uuid4().hex[:8]
+    """Short token identifying a single test session's provisioned resources.
+
+    Kept to 5 hex chars so a provisioned agent name — ``{NAME_PREFIX}{run_id}-{label}``
+    = ``e2e-band-{5}-{label}`` — stays within the platform's 24-char mention-handle
+    cap for the asserted labels (``member``/``invitable``/``nonmember``, ≤9 chars):
+    9 + 5 + 1 + 9 = 24. Beyond that the handle truncates (``…-invitable`` -> ``…-invita``),
+    so a peer referenced by @mention would never surface its full name and the
+    self-sourced roster assertions in test_identity_and_roster would fail. Five hex
+    (~1M) is ample entropy given the run-id + age guards in ``sweep_orphans``.
+    """
+    return uuid.uuid4().hex[:5]
 
 
 @dataclass(frozen=True)
