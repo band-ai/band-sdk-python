@@ -431,10 +431,12 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
         # window is not a give-up: the agent may still be generating (cold start /
         # slow model), so we keep waiting until the budget is spent. The loop returns
         # the moment a final (or tool-sent) message is seen, so a warm turn is fast.
-        deadline = time.monotonic() + self._response_timeout
+        # Use perf_counter (the highest-resolution monotonic clock) for deadlines —
+        # its resolution holds up on Windows, where time.monotonic() is coarse.
+        deadline = time.perf_counter() + self._response_timeout
 
-        while time.monotonic() < deadline:
-            poll = min(self._response_poll, deadline - time.monotonic())
+        while time.perf_counter() < deadline:
+            poll = min(self._response_poll, deadline - time.perf_counter())
 
             # Wait for agent response
             logger.info(
@@ -478,7 +480,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                         room_id,
                     )
                     return
-                backoff = min(EMPTY_READ_BACKOFF_SECONDS, deadline - time.monotonic())
+                backoff = min(
+                    EMPTY_READ_BACKOFF_SECONDS, deadline - time.perf_counter()
+                )
                 if backoff > 0:
                     await asyncio.sleep(backoff)
                 continue
@@ -510,7 +514,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     "Room %s: No events found despite update signal; still waiting",
                     room_id,
                 )
-                backoff = min(EMPTY_READ_BACKOFF_SECONDS, deadline - time.monotonic())
+                backoff = min(
+                    EMPTY_READ_BACKOFF_SECONDS, deadline - time.perf_counter()
+                )
                 if backoff > 0:
                     await asyncio.sleep(backoff)
                 continue
