@@ -51,7 +51,7 @@ async def test_two_agents_greet_each_other(
             mention_id=a.id,
             mention_name=a.name,
         )
-        await capture.wait_for_reply(m_a, a.id, sender_id=a.id)
+        await capture.wait_for_reply(m_a, a.id)
 
         m_b = await user_ops.send_message(
             room_id,
@@ -59,7 +59,7 @@ async def test_two_agents_greet_each_other(
             mention_id=b.id,
             mention_name=b.name,
         )
-        await capture.wait_for_reply(m_b, b.id, sender_id=b.id)
+        await capture.wait_for_reply(m_b, b.id)
 
         transcript = Replies(capture.messages)
 

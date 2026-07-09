@@ -113,9 +113,7 @@ async def test_partial_reboot_preserves_context_and_peer(
                     mention_id=rebooter.id,
                     mention_name=rebooter.name,
                 )
-                replies = await capture.wait_for_reply(
-                    mid, rebooter.id, sender_id=rebooter.id, since=mark
-                )
+                replies = await capture.wait_for_reply(mid, rebooter.id, since=mark)
                 # Scope to the REBOOTER's replies: it, not the still-live stayer,
                 # must be the one that rehydrated the note.
                 replies.assert_contains_any([note])
@@ -132,7 +130,5 @@ async def test_partial_reboot_preserves_context_and_peer(
                     mention_id=stayer.id,
                     mention_name=stayer.name,
                 )
-                replies = await capture.wait_for_reply(
-                    probe, stayer.id, sender_id=stayer.id, since=mark2
-                )
+                replies = await capture.wait_for_reply(probe, stayer.id, since=mark2)
                 replies.assert_present(what="a liveness reply from the stayer")

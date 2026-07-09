@@ -57,7 +57,7 @@ async def test_invites_messages_and_removes_a_peer(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        replies = await capture.wait_for_reply(invite_mid, agent.id, sender_id=agent.id)
+        replies = await capture.wait_for_reply(invite_mid, agent.id)
 
         # State: Echo is a participant after the invite (model-independent).
         after_invite = await user_ops.list_participant_ids(room_id)

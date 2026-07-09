@@ -64,7 +64,7 @@ async def test_concurrent_same_adapter_instances_each_reply(
             )
             # ...but await the barriers SEQUENTIALLY (one nudge per capture).
             replies = [
-                await capture.wait_for_reply(mid, instance.id, sender_id=instance.id)
+                await capture.wait_for_reply(mid, instance.id)
                 for instance, mid in zip(instances, mids)
             ]
 

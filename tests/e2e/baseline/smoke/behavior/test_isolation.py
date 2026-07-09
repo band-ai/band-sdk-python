@@ -195,7 +195,7 @@ async def test_capture_scopes_to_current_turn(
         )
         # Wait for turn 1's reply to be captured — turn_boundary() reads its timestamp
         # and raises on an empty buffer, so the processed signal alone isn't enough.
-        await capture.wait_for_reply(m_one, agent.id, sender_id=agent.id)
+        await capture.wait_for_reply(m_one, agent.id)
         # Boundary between turns (server timestamp of turn 1's reply). Turn 1's call
         # is verified by the unscoped read at the end.
         boundary = capture.turn_boundary()

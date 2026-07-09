@@ -63,9 +63,7 @@ async def test_reports_identity_and_roster(
         mid = await user_ops.send_message(
             room_id, ROSTER_PROBE, mention_id=agent.id, mention_name=agent.name
         )
-        replies = await capture.wait_for_reply(
-            mid, agent.id, sender_id=agent.id, since=mark
-        )
+        replies = await capture.wait_for_reply(mid, agent.id, since=mark)
 
     # Each self-sourced value asserted separately over the same replies — an any-of
     # over all three would pass on just one.
