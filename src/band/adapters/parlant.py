@@ -7,6 +7,7 @@ with the Band platform.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import ClassVar, TYPE_CHECKING, Any
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Parlant preamble message tag - used to identify acknowledgment messages before tool execution
 PARLANT_PREAMBLE_TAG = "__preamble__"
+EMPTY_READ_BACKOFF_SECONDS = 0.05
 
 
 class ParlantAdapter(SimpleAdapter[ParlantMessages]):
@@ -97,6 +99,11 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
             history_converter=history_converter or ParlantHistoryConverter(),
             features=features,
         )
+
+        if response_timeout <= 0:
+            raise ValueError("response_timeout must be greater than 0")
+        if response_poll <= 0:
+            raise ValueError("response_poll must be greater than 0")
 
         self._server = server
         self._parlant_agent = parlant_agent
@@ -471,6 +478,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                         room_id,
                     )
                     return
+                backoff = min(EMPTY_READ_BACKOFF_SECONDS, deadline - time.monotonic())
+                if backoff > 0:
+                    await asyncio.sleep(backoff)
                 continue
 
             # Get new events
@@ -500,6 +510,9 @@ class ParlantAdapter(SimpleAdapter[ParlantMessages]):
                     "Room %s: No events found despite update signal; still waiting",
                     room_id,
                 )
+                backoff = min(EMPTY_READ_BACKOFF_SECONDS, deadline - time.monotonic())
+                if backoff > 0:
+                    await asyncio.sleep(backoff)
                 continue
 
             # Process events and track if we got a non-preamble message

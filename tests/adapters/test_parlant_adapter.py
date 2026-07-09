@@ -59,7 +59,7 @@ def mock_parlant_server():
         return_value=MagicMock(offset=1)
     )
     mock_app.sessions.create_event = AsyncMock()
-    mock_app.sessions.wait_for_update = AsyncMock(return_value=True)
+    mock_app.sessions.wait_for_more_events = AsyncMock(return_value=False)
     mock_app.sessions.find_events = AsyncMock(return_value=[])
 
     # Container returns Application
@@ -207,6 +207,8 @@ class TestOnMessage:
         adapter = ParlantAdapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
+            response_timeout=0.05,
+            response_poll=0.01,
         )
         adapter.agent_name = "TestBot"
         adapter.agent_description = "A test bot"
@@ -219,7 +221,7 @@ class TestOnMessage:
         mock_app.sessions.create_customer_message = AsyncMock(
             return_value=MagicMock(offset=1)
         )
-        mock_app.sessions.wait_for_update = AsyncMock(return_value=True)
+        mock_app.sessions.wait_for_more_events = AsyncMock(return_value=False)
         mock_app.sessions.find_events = AsyncMock(return_value=[])
 
         adapter._app = mock_app
