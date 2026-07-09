@@ -34,15 +34,52 @@ jobs:
 
 
   test:
-    runs-on: ${{ matrix.os }}
+    name: test (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12']
       fail-fast: false
 
-    # Use bash on every OS so these steps stay identical (Git Bash ships on the
-    # windows-latest runner). Keeps command substitution / quoting portable.
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Configure git to use HTTPS for GitHub
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: uv sync --extra dev
+
+    - name: Run tests
+      run: uv run pytest
+
+    - name: Run markdown doc tests
+      if: matrix.python-version == '3.12'
+      # examples/ READMEs have illustrative fragments not yet snippet-testable
+      run: uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+
+  test-windows:
+    name: test (windows-latest, ${{ matrix.python-version }})
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+      fail-fast: false
+
+    # Git Bash ships on the windows-latest runner. Keeping bash here lets the
+    # Windows path use the same command syntax as the Linux test job.
     defaults:
       run:
         shell: bash
@@ -70,13 +107,6 @@ jobs:
 
     - name: Run tests
       run: uv run pytest
-
-    - name: Run markdown doc tests
-      # Linux-only: doc snippets are OS-independent, and this step relies on
-      # git ls-files globbing that we don't need to re-run per platform.
-      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
-      # examples/ READMEs have illustrative fragments not yet snippet-testable
-      run: uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 
 
   test-crewai:
