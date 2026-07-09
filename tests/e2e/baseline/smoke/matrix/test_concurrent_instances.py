@@ -5,7 +5,7 @@ instances of the current matrix adapter (distinct identities) **concurrently** i
 room; a mention is fired at each, and each must reply. Collisions fail loud for free: an
 instance that can't start makes ``run_many`` raise (the test errors); one deadlocked on a
 shared port/lock never reaches ``PROCESSED`` (its barrier times out); one that starts but
-can't reply fails ``assert_present``.
+can't reply times out its ``wait_for_reply`` barrier.
 
 Runs the FULL matrix via bare ``@per_adapter()`` — **including** codex/opencode, the
 shared-``serve`` / shared-``CWD`` backends whose co-residency this gate most needs to
@@ -62,14 +62,9 @@ async def test_concurrent_same_adapter_instances_each_reply(
                     for instance in instances
                 )
             )
-            # ...but await the barriers SEQUENTIALLY (one nudge per capture).
-            replies = [
+            # ...but await the barriers SEQUENTIALLY (one nudge per capture). Each
+            # wait_for_reply blocks until that instance's own reply is captured, or
+            # raises TimeoutError naming the stalled turn — so completing this loop is
+            # itself the proof that all K instances co-resided and each replied.
+            for instance, mid in zip(instances, mids):
                 await capture.wait_for_reply(mid, instance.id)
-                for instance, mid in zip(instances, mids)
-            ]
-
-        # Each instance produced its own reply — proof all K co-resided and ran.
-        for instance, instance_replies in zip(instances, replies):
-            instance_replies.assert_present(
-                what=f"a reply from instance {instance.name}"
-            )

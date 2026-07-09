@@ -597,9 +597,9 @@ def _locked_file(path: Path, *, timeout_s: float) -> Generator[None, None, None]
     from filelock import FileLock, Timeout
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock = FileLock(str(path), timeout=timeout_s)
+    lock = FileLock(str(path))
     try:
-        lock.acquire()
+        lock.acquire(timeout=timeout_s)
     except Timeout:
         raise ValueError(
             f"Timed out waiting for repo init lock at {path} after {timeout_s:.1f}s"
