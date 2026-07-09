@@ -80,11 +80,18 @@ jobs:
 
 
   test-crewai:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python-version: ['3.11', '3.12']
       fail-fast: false
+
+    # Use bash on every OS so the multiline pytest and pyrefly commands stay
+    # identical across Linux and Windows.
+    defaults:
+      run:
+        shell: bash
 
     steps:
     - name: Checkout code
