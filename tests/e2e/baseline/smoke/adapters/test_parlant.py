@@ -50,12 +50,9 @@ _SHORT = "You are a friendly assistant in a chat room. Reply in one short senten
 )  # running_parlant_server uses the OpenAI NLP service (OPENAI_API_KEY)
 @lane(Lane.CORE)
 @flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
-# The barrier below waits up to ``e2e_timeout * 3`` (360s at the 120s default) for
-# Parlant's cold multi-call pipeline. The outer cap is ``e2e_timeout + extra``, so
-# ``extra`` must clear that 3x barrier *plus* in-process server boot, provisioning,
-# and teardown — otherwise the outer timeout hard-kills the test before the barrier
-# can surface its diagnostic TimeoutError. 480 -> 600s outer, leaving 240s overhead.
-@pytest.mark.timeout(extra=480)
+# Pytest markers are evaluated at import time; the runtime reply deadline below
+# still comes from the ``baseline_settings`` fixture.
+@pytest.mark.timeout(BaselineSettings().e2e_parlant_backstop_timeout())
 @pytest.mark.asyncio(loop_scope="session")
 async def test_parlant_replies(
     resource_manager: ResourceManager,
@@ -104,9 +101,11 @@ async def test_parlant_replies(
                 mention_name=agent.name,
             )
             # Parlant's first turn runs a multi-LLM-call pipeline on a cold
-            # in-process server, so give the barrier more than one per-turn budget.
+            # in-process server, so it has a Parlant-specific reply deadline.
             replies = await capture.wait_for_reply(
-                mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 3
+                mid,
+                agent.id,
+                deadline_s=baseline_settings.e2e_parlant_reply_timeout,
             )
 
     replies.assert_present(what="a parlant reply")

@@ -191,6 +191,19 @@ class BaselineSettings(BaseSettings):
     # in cold-start + round-trip latency (crewai crew construction, self-hosted
     # backends, free/slow models), so the budget is generous by default.
     e2e_timeout: int = 120
+    # E2E_TIMEOUT_BACKSTOP_MARGIN — minimum headroom above a soft wait_for/capture
+    # deadline before pytest-timeout hard-kills the test process.
+    e2e_timeout_backstop_margin: int = 60
+    # E2E_ACP_INIT_TIMEOUT — lightweight codex-acp protocol operations.
+    e2e_acp_init_timeout: int = 30
+    # E2E_ACP_PROMPT_TIMEOUT — live codex-acp prompt/tool-call turns.
+    e2e_acp_prompt_timeout: int = 120
+    # E2E_PARLANT_REPLY_TIMEOUT — Parlant's cold first turn runs a multi-call
+    # pipeline on an in-process server, so it needs a named larger soft deadline.
+    e2e_parlant_reply_timeout: int = 360
+    # E2E_PARLANT_BACKSTOP_EXTRA — headroom above Parlant's reply deadline for
+    # server boot, provisioning, and teardown before pytest-timeout hard-kills.
+    e2e_parlant_backstop_extra: int = 240
 
     endpoints: BandEndpoints = Field(default_factory=BandEndpoints)
     credentials: BandCredentials = Field(default_factory=BandCredentials)
@@ -198,3 +211,17 @@ class BaselineSettings(BaseSettings):
     llm_credentials: LLMCredentials = Field(default_factory=LLMCredentials)
     llm_models: LLMModels = Field(default_factory=LLMModels)
     backends: Backends = Field(default_factory=Backends)
+
+    def e2e_backstop_timeout(self, timeout: int, *, extra: int = 0) -> int:
+        """Return the hard pytest-timeout cap for a soft E2E deadline."""
+        return timeout + max(extra, self.e2e_timeout_backstop_margin)
+
+    def e2e_default_backstop_timeout(self, *, extra: int = 0) -> int:
+        """Return the hard pytest-timeout cap for the default E2E turn budget."""
+        return self.e2e_backstop_timeout(self.e2e_timeout, extra=extra)
+
+    def e2e_parlant_backstop_timeout(self) -> int:
+        """Return Parlant's hard pytest-timeout cap."""
+        return self.e2e_backstop_timeout(
+            self.e2e_parlant_reply_timeout, extra=self.e2e_parlant_backstop_extra
+        )

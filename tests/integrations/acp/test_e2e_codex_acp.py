@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import shutil
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -37,35 +36,17 @@ from band.runtime.mcp_server import (
     build_band_mcp_tool_registrations,
 )
 from band.runtime.tools import AgentTools
-from tests.toolkit.timeouts import backstop_timeout
+from tests.e2e.baseline.settings import BaselineSettings
 
 logger = logging.getLogger(__name__)
 
-# These are real E2E tests: each spawns `codex-acp` as a
-# live subprocess (Node + network), so they are opt-in like the rest of the e2e
-# suite. Gated on E2E_TESTS_ENABLED so a plain `uv run pytest` skips them — they
-# are slow and their subprocess/fd pressure was starving nearby server tests
-# (e.g. tests/runtime/test_mcp_server.py) into spurious timeouts.
-_E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 _CODEX_ACP_COMMAND = shutil.which("codex-acp")
-_INIT_TIMEOUT = 30
-_PROMPT_TIMEOUT = 120
 pytestmark = [
-    pytest.mark.skipif(
-        not _E2E_ENABLED,
-        reason="codex-acp E2E tests are opt-in; set E2E_TESTS_ENABLED=true to run",
-    ),
     pytest.mark.skipif(
         _CODEX_ACP_COMMAND is None,
         reason="codex-acp not available",
     ),
     pytest.mark.e2e,
-    pytest.mark.timeout(backstop_timeout(_PROMPT_TIMEOUT)),
 ]
 
 
@@ -95,6 +76,11 @@ def acp_client() -> BandACPClient:
     return BandACPClient(profile=NoopACPClientProfile())
 
 
+@pytest.fixture
+def e2e_settings() -> BaselineSettings:
+    return BaselineSettings()
+
+
 async def _allow_all_permissions(
     options: object = None, **kwargs: object
 ) -> dict[str, object]:
@@ -110,14 +96,16 @@ async def _allow_all_permissions(
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_initialize(acp_client: BandACPClient) -> None:
+async def test_codex_acp_initialize(
+    acp_client: BandACPClient, e2e_settings: BaselineSettings
+) -> None:
     """Should successfully initialize the ACP protocol with codex-acp."""
     ctx = _spawn_codex_acp(acp_client)
     conn, _proc = await ctx.__aenter__()
     try:
         result = await asyncio.wait_for(
             conn.initialize(protocol_version=1),
-            timeout=_INIT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_init_timeout,
         )
         logger.info("Initialize result: %s", result)
         assert result is not None
@@ -129,19 +117,21 @@ async def test_codex_acp_initialize(acp_client: BandACPClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_new_session(acp_client: BandACPClient) -> None:
+async def test_codex_acp_new_session(
+    acp_client: BandACPClient, e2e_settings: BaselineSettings
+) -> None:
     """Should create a new ACP session with cwd and mcp_servers."""
     ctx = _spawn_codex_acp(acp_client)
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(
             conn.initialize(protocol_version=1),
-            timeout=_INIT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_init_timeout,
         )
 
         session = await asyncio.wait_for(
             conn.new_session(cwd="/tmp", mcp_servers=[]),
-            timeout=_INIT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_init_timeout,
         )
         logger.info("Session ID: %s", session.session_id)
         assert session.session_id is not None
@@ -151,7 +141,9 @@ async def test_codex_acp_new_session(acp_client: BandACPClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
+async def test_codex_acp_prompt_and_collect(
+    acp_client: BandACPClient, e2e_settings: BaselineSettings
+) -> None:
     """Should send a prompt and collect response chunks from codex-acp."""
     from acp import text_block
 
@@ -160,11 +152,11 @@ async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
     try:
         await asyncio.wait_for(
             conn.initialize(protocol_version=1),
-            timeout=_INIT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_init_timeout,
         )
         session = await asyncio.wait_for(
             conn.new_session(cwd="/tmp"),
-            timeout=_INIT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_init_timeout,
         )
         session_id = session.session_id
 
@@ -177,7 +169,7 @@ async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
                 session_id=session_id,
                 prompt=[text_block("What is 2 + 2? Reply with just the number.")],
             ),
-            timeout=_PROMPT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_prompt_timeout,
         )
         logger.info("Prompt result: %s", result)
 
@@ -202,6 +194,7 @@ async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
 @pytest.mark.asyncio
 async def test_codex_acp_http_mcp_server_tool_call(
     acp_client: BandACPClient,
+    e2e_settings: BaselineSettings,
 ) -> None:
     """Should connect to a local HTTP MCP server and execute a tool."""
     from acp import text_block
@@ -231,7 +224,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
         try:
             init_result = await asyncio.wait_for(
                 conn.initialize(protocol_version=1),
-                timeout=_INIT_TIMEOUT,
+                timeout=e2e_settings.e2e_acp_init_timeout,
             )
             mcp_capabilities = getattr(
                 getattr(init_result, "agent_capabilities", None),
@@ -252,7 +245,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
                         )
                     ],
                 ),
-                timeout=_INIT_TIMEOUT,
+                timeout=e2e_settings.e2e_acp_init_timeout,
             )
 
             acp_client.reset_session(session.session_id)
@@ -270,7 +263,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
                         )
                     ],
                 ),
-                timeout=_PROMPT_TIMEOUT,
+                timeout=e2e_settings.e2e_acp_prompt_timeout,
             )
 
             chunks = acp_client.get_collected_chunks(session.session_id)
@@ -288,6 +281,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
 @pytest.mark.asyncio
 async def test_codex_acp_band_mcp_tool_call(
     acp_client: BandACPClient,
+    e2e_settings: BaselineSettings,
 ) -> None:
     """Should discover and call a real Band MCP tool."""
     from acp import text_block
@@ -330,7 +324,7 @@ async def test_codex_acp_band_mcp_tool_call(
         try:
             init_result = await asyncio.wait_for(
                 conn.initialize(protocol_version=1),
-                timeout=_INIT_TIMEOUT,
+                timeout=e2e_settings.e2e_acp_init_timeout,
             )
             mcp_capabilities = getattr(
                 getattr(init_result, "agent_capabilities", None),
@@ -351,7 +345,7 @@ async def test_codex_acp_band_mcp_tool_call(
                         )
                     ],
                 ),
-                timeout=_INIT_TIMEOUT,
+                timeout=e2e_settings.e2e_acp_init_timeout,
             )
 
             acp_client.reset_session(session.session_id)
@@ -371,7 +365,7 @@ async def test_codex_acp_band_mcp_tool_call(
                         )
                     ],
                 ),
-                timeout=_PROMPT_TIMEOUT,
+                timeout=e2e_settings.e2e_acp_prompt_timeout,
             )
 
             chunks = acp_client.get_collected_chunks(session.session_id)
@@ -397,7 +391,9 @@ async def test_codex_acp_band_mcp_tool_call(
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_multiple_sessions(acp_client: BandACPClient) -> None:
+async def test_codex_acp_multiple_sessions(
+    acp_client: BandACPClient, e2e_settings: BaselineSettings
+) -> None:
     """Should handle multiple concurrent sessions with separate buffers."""
     from acp import text_block
 
@@ -406,12 +402,18 @@ async def test_codex_acp_multiple_sessions(acp_client: BandACPClient) -> None:
     try:
         await asyncio.wait_for(
             conn.initialize(protocol_version=1),
-            timeout=_INIT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_init_timeout,
         )
 
         # Create two sessions
-        s1 = await asyncio.wait_for(conn.new_session(cwd="/tmp"), timeout=_INIT_TIMEOUT)
-        s2 = await asyncio.wait_for(conn.new_session(cwd="/tmp"), timeout=_INIT_TIMEOUT)
+        s1 = await asyncio.wait_for(
+            conn.new_session(cwd="/tmp"),
+            timeout=e2e_settings.e2e_acp_init_timeout,
+        )
+        s2 = await asyncio.wait_for(
+            conn.new_session(cwd="/tmp"),
+            timeout=e2e_settings.e2e_acp_init_timeout,
+        )
         assert s1.session_id != s2.session_id
 
         # Reset buffers
@@ -424,14 +426,14 @@ async def test_codex_acp_multiple_sessions(acp_client: BandACPClient) -> None:
                 session_id=s1.session_id,
                 prompt=[text_block("Say 'hello' and nothing else.")],
             ),
-            timeout=_PROMPT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_prompt_timeout,
         )
         await asyncio.wait_for(
             conn.prompt(
                 session_id=s2.session_id,
                 prompt=[text_block("Say 'world' and nothing else.")],
             ),
-            timeout=_PROMPT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_prompt_timeout,
         )
 
         # Both sessions should have responses in separate buffers
@@ -450,7 +452,9 @@ async def test_codex_acp_multiple_sessions(acp_client: BandACPClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_codex_acp_list_sessions(acp_client: BandACPClient) -> None:
+async def test_codex_acp_list_sessions(
+    acp_client: BandACPClient, e2e_settings: BaselineSettings
+) -> None:
     """Should list created sessions (if supported by the agent)."""
     from acp.exceptions import RequestError
 
@@ -459,20 +463,20 @@ async def test_codex_acp_list_sessions(acp_client: BandACPClient) -> None:
     try:
         await asyncio.wait_for(
             conn.initialize(protocol_version=1),
-            timeout=_INIT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_init_timeout,
         )
 
         # Create a session
         session = await asyncio.wait_for(
             conn.new_session(cwd="/tmp"),
-            timeout=_INIT_TIMEOUT,
+            timeout=e2e_settings.e2e_acp_init_timeout,
         )
 
         # list_sessions is optional per ACP protocol — some agents don't implement it
         try:
             result = await asyncio.wait_for(
                 conn.list_sessions(),
-                timeout=_INIT_TIMEOUT,
+                timeout=e2e_settings.e2e_acp_init_timeout,
             )
             logger.info("Listed sessions: %s", result)
             assert result is not None

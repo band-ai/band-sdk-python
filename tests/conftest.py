@@ -48,6 +48,7 @@ from band.platform.event import (
     ContactRemovedEvent,
 )
 from band.runtime.types import PlatformMessage
+from tests.e2e.baseline.settings import BaselineSettings
 
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
@@ -76,8 +77,20 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     tests), which spawn real backends and must never ride a normal
     unit run.
     """
-    if os.environ.get("E2E_TESTS_ENABLED") == "true":
+    settings = BaselineSettings()
+    if settings.e2e_tests_enabled:
+        tests_dir = Path(__file__).parent
+        baseline_e2e_dir = tests_dir / "e2e"
+        timeout = settings.e2e_backstop_timeout(settings.e2e_acp_prompt_timeout)
+        for item in items:
+            if not item.get_closest_marker("e2e"):
+                continue
+            if Path(item.path).is_relative_to(baseline_e2e_dir):
+                continue
+            if item.get_closest_marker("timeout") is None:
+                item.add_marker(pytest.mark.timeout(timeout), append=False)
         return
+
     skip = pytest.mark.skip(reason="set E2E_TESTS_ENABLED=true to run e2e tests")
     for item in items:
         if item.get_closest_marker("e2e"):

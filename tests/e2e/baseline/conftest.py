@@ -10,6 +10,7 @@ The fixture re-exports are listed in ``__all__`` so they read as intentional.
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,6 @@ from tests.e2e.baseline.lane_selection import (
 )
 from tests.e2e.baseline.requires import MARKER, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.toolkit.timeouts import effective_timeout
 
 # Re-exported fixtures (defined in fixtures/*; imported so pytest registers them).
 __all__ = [
@@ -113,6 +113,15 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             require_dep(dep, settings)
 
 
+def _effective_timeout(item: pytest.Item, settings: BaselineSettings) -> int | None:
+    marker = item.get_closest_marker("timeout")
+    if marker is None:
+        return settings.e2e_default_backstop_timeout()
+    if marker.args:
+        return None
+    return settings.e2e_default_backstop_timeout(extra=marker.kwargs.get("extra", 0))
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Guard wiring + schedulability, scope to ``BAND_E2E_LANE``, then apply the
     session event loop + per-turn timeout to every baseline test.
@@ -122,17 +131,18 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     ``BAND_E2E_LANE`` skips (see ``lane_selection``). Order is load-bearing: guard
     before skip, so an unschedulable test is a loud error rather than a silent skip.
 
-    The final loop applies two markers baseline tests need (baseline is a plain
+    The final loop applies the markers baseline tests need (baseline is a plain
     module tree with no auto-marking otherwise):
 
-    * ``asyncio(loop_scope="session")`` — align each test with the session-scoped
-      fixtures (WS/REST clients), which ``asyncio_default_fixture_loop_scope`` puts on
-      the session loop; a function-scoped test loop would raise "attached to a
-      different loop".
-    * ``timeout`` — live turns need far more than the 30s pyproject default;
-      :func:`_effective_timeout` gives each test the ``E2E_TIMEOUT`` budget (plus any
-      ``extra=``), prepended (``append=False``) so this clean ``timeout(n)`` is the
-      marker pytest-timeout reads, ahead of any ``extra=``/bare form it would reject.
+    * ``asyncio(loop_scope="session")`` — align async tests with the
+      session-scoped fixtures (WS/REST clients), which
+      ``asyncio_default_fixture_loop_scope`` puts on the session loop; a
+      function-scoped test loop would raise "attached to a different loop".
+    * ``timeout`` — live turns need far more than the 30s pyproject default; the
+      settings backstop gives each test the ``E2E_TIMEOUT`` budget (plus any
+      ``extra=``), prepended (``append=False``) so this clean ``timeout(n)`` is
+      the marker pytest-timeout reads, ahead of any ``extra=``/bare form it
+      would reject.
     """
     assert_agent_fixtures_wired(items)
     assert_every_item_is_schedulable(items)
@@ -147,11 +157,11 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     apply_lane_skips(settings.run.lane, items)
 
     session_marker = pytest.mark.asyncio(loop_scope="session")
-    base = settings.e2e_timeout
     for item in items:
         if not Path(item.path).is_relative_to(baseline_dir):
             continue
-        item.add_marker(session_marker)
-        timeout = effective_timeout(item, base)
+        if inspect.iscoroutinefunction(getattr(item, "obj", None)):
+            item.add_marker(session_marker)
+        timeout = _effective_timeout(item, settings)
         if timeout is not None:
             item.add_marker(pytest.mark.timeout(timeout), append=False)
