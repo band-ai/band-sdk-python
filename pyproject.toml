@@ -78,7 +78,7 @@ parlant = [
     "werkzeug>=3.1.6",
 ]
 crewai = [
-    "crewai==1.14.3",
+    "crewai==1.15.2",
     "openai>=2.0.0",  # crewai 1.14.3 requires openai>=2.0.0
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
@@ -226,7 +226,7 @@ dev-crewai = [
     "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
-    "crewai==1.14.3",
+    "crewai==1.15.2",
     "openai>=2.0.0",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
