@@ -92,13 +92,13 @@ a2a = [
 a2a_gateway = [
     "a2a-sdk>=0.3.22",  # Official A2A Python SDK; brings protobuf>=5.29.5 transitively
     "starlette>=0.40.0",  # HTTP server framework
-    "uvicorn>=0.32.0",  # ASGI server
+    "uvicorn>=0.29",  # ASGI server
     "python-multipart>=0.0.22",
 ]
 a2a_gateway_demo = [
     "a2a-sdk>=0.3.22",      # A2A client for calling gateway peers
     "starlette>=0.40.0",    # HTTP server
-    "uvicorn>=0.32.0",      # ASGI server
+    "uvicorn>=0.29",      # ASGI server
     "langgraph>=1.0.0",     # LangGraph for orchestrator agent
     "langchain-openai>=0.3.0",  # OpenAI model for LLM
     "click>=8.0.0",         # CLI for demo orchestrator
@@ -107,12 +107,12 @@ acp = [
     "agent-client-protocol>=0.9.0",  # ACP Python SDK
     "mcp>=1.25.0",
     "starlette>=0.40.0",
-    "uvicorn>=0.32.0",
+    "uvicorn>=0.29",
 ]
 slack = [
     "slack-sdk>=3.27.0",     # AsyncWebClient, signature verifier, Socket Mode
     "starlette>=0.40.0",     # HTTP server framework
-    "uvicorn>=0.32.0",       # ASGI server
+    "uvicorn>=0.29",       # ASGI server
     "aiohttp>=3.9,<4",       # Socket Mode transport (slack_sdk.socket_mode.aiohttp)
 ]
 bridge = [
@@ -178,7 +178,7 @@ dev = [
     "a2a-sdk>=0.3.22",
     # Include a2a_gateway deps for testing
     "starlette>=0.40.0",
-    "uvicorn>=0.32.0",
+    "uvicorn>=0.29",
     # Include a2a_gateway_demo deps for testing
     "click>=8.0.0",
     # Include parlant for testing (see the parlant extra for why >=3.3.2)
