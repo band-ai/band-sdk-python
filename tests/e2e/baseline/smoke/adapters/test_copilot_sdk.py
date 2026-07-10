@@ -24,7 +24,6 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import re
 import uuid
 from typing import Any
 
@@ -75,17 +74,6 @@ def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
         ),
         **overrides,
     )
-
-
-def _chosen_word(reply: str) -> str:
-    """Extract the word the agent chose from its phase-1 reply.
-
-    The prompt asks for exactly one word; tolerate mentions/punctuation by
-    taking the last alphabetic token of meaningful length.
-    """
-    words = re.findall(r"[A-Za-z]{4,}", reply)
-    assert words, f"phase-1 reply contains no candidate word: {reply!r}"
-    return words[-1]
 
 
 @lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
@@ -254,14 +242,16 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     Copilot's own session resume answer for free. This test gives each phase a
     fresh ``base_directory``, so phase 2's resume finds no state and recall
     must flow through the converter's injected text history instead. Two facts
-    are asserted after the restart: a code the USER stated (plain injected-
-    history recall), and a word the AGENT itself chose in phase 1 — the user
-    never utters it, so the agent's own injected replies are its only possible
-    source (the regression case for one-sided injected history).
+    are asserted after the restart: a tracking marker the USER stated (plain
+    injected-history recall), and a calibration answer the AGENT produced in
+    phase 1 — the user never utters that answer, so the agent's own injected
+    replies are its only possible source (the regression case for one-sided
+    injected history).
     """
     from band.adapters.copilot_sdk import CopilotSDKAdapter
 
-    secret_code = f"CODE_{uuid.uuid4().hex[:6]}"
+    tracking_marker = f"MARKER_{uuid.uuid4().hex[:6]}"
+    agent_fact = "blue"
 
     def make_adapter(phase: str) -> CopilotSDKAdapter:
         # A fresh base_directory per phase: phase 2 has no on-disk session
@@ -280,16 +270,21 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
         async with reply_capture(room_id) as capture:
             mid = await user_ops.send_message(
                 room_id,
-                f"Remember this secret code: {secret_code}. Now choose one "
-                "uncommon English word yourself and reply with exactly that "
-                "single word, nothing else.",
+                "Create a short project log note for later reference. The "
+                f"tracking marker is {tracking_marker}. Also answer this "
+                "calibration question inside your reply: what color is a "
+                "clear daytime sky? Reply in one short sentence that includes "
+                "the tracking marker and the color answer.",
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
             replies = await capture.wait_for_reply(
                 mid, identity.id, deadline_s=baseline_settings.e2e_timeout
             )
-            agent_word = _chosen_word(replies[-1].content)
+            replies.assert_contains_any([tracking_marker])
+            # The user never uttered this answer; it must come from the
+            # agent's phase-1 reply when phase 2 reconstructs history.
+            replies.assert_contains_any([agent_fact])
 
     # Phase 2: fresh process state AND fresh Copilot state directory — recall
     # can only come from the platform history the adapter injects.
@@ -297,18 +292,18 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
         async with reply_capture(room_id) as capture:
             mid = await user_ops.send_message(
                 room_id,
-                "What was the secret code I told you, and what was the "
-                "single word you chose earlier? Reply with both.",
+                "From the earlier project log, what was the tracking marker "
+                "and what color answer did you give? Reply with both.",
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
             replies = await capture.wait_for_reply(
                 mid, identity.id, deadline_s=baseline_settings.e2e_timeout
             )
-            replies.assert_contains_any([secret_code])
-            # The user never uttered this word — only the agent's own injected
-            # phase-1 reply can supply it.
-            replies.assert_contains_any([agent_word])
+            replies.assert_contains_any([tracking_marker])
+            # The user never uttered this answer — only the agent's own
+            # injected phase-1 reply can supply it.
+            replies.assert_contains_any([agent_fact])
 
 
 @lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
