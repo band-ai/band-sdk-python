@@ -184,8 +184,10 @@ def test_outcome_row_ignores_non_adapter_parametrization() -> None:
 
 
 def test_collector_combines_outcomes_and_na() -> None:
-    collector = ScorecardCollector()
-    collector.on_report(_report("m.py::t[anthropic]", "call", outcome="passed"))
+    collector = ScorecardCollector(path="unused")
+    collector.pytest_runtest_logreport(
+        _report("m.py::t[anthropic]", "call", outcome="passed")
+    )
     item = _FakeItem(
         "m.py::t[anthropic]", (ExcludedAdapter(Adapter.CREWAI, "no usage"),)
     )

@@ -127,17 +127,20 @@ def outcome_row(
 
 
 class ScorecardCollector:
-    """Accumulates cell outcomes across a run, then folds in the ``N/A`` markers.
+    """A pytest plugin that records cell outcomes and writes the run's scorecard.
 
-    Held as a single instance by the conftest; its hooks delegate ``on_report`` per test
-    and ``scorecard`` at session end. Kept here (not in the conftest) so the logic is
-    unit-testable and the conftest stays a thin delegate — mirroring ``lane_selection``.
+    The conftest registers one instance — only when emission is enabled (a path is set),
+    so its hooks are unconditional once active — instead of routing session-wide hooks
+    through module globals. It owns its state and its output path; the row-building stays
+    in the module-level pure functions (``outcome_row`` / ``na_rows``), so ``scorecard``
+    is unit-testable without a running session.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, path: str | Path) -> None:
+        self._path = path
         self._outcomes: dict[tuple[str, str], ScorecardRow] = {}
 
-    def on_report(self, report: pytest.TestReport) -> None:
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         row = outcome_row(report)
         if row is not None:
             # Last write wins — a flaky rerun's final report is the cell's real outcome.
@@ -152,6 +155,9 @@ class ScorecardCollector:
         rows = dict(self._outcomes)
         rows.update(na_rows(items))
         return sorted(rows.values(), key=lambda row: (row.test, row.adapter))
+
+    def pytest_sessionfinish(self, session: pytest.Session) -> None:
+        write_json(self.scorecard(session.items), self._path)
 
 
 def merge(scorecards: Iterable[list[ScorecardRow]]) -> list[ScorecardRow]:
