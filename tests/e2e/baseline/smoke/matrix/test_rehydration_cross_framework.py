@@ -38,6 +38,7 @@ lane (schedulable, no cross-lane) and guarantees A is never langgraph (so A ≠ 
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, Lane, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import REPLY_PROMPT, unique_marker
@@ -65,7 +66,7 @@ def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
     peer=Adapter.LANGGRAPH,
     prompt=REPLY_PROMPT,
 )
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=300)  # peer boot + relay turn + fresh A boot + recall turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_rehydrates_foreign_peer_message(
@@ -101,13 +102,11 @@ async def test_rehydrates_foreign_peer_message(
                 mention_id=speaker.id,
                 mention_name=speaker.name,
             )
-            await capture.wait_for_processed(mid, speaker.id)
+            replies = await capture.wait_for_reply(mid, speaker.id, since=probe)
             # Setup precondition (fail loud): B's marker-bearing message must actually
             # mention A — else it never reaches A's context and a later recall miss would
             # look like a rehydration bug rather than a setup failure.
-            capture.messages.since(probe).mentioning(recaller.id).assert_contains_any(
-                [marker]
-            )
+            replies.mentioning(recaller.id).assert_contains_any([marker])
 
     # A boots fresh under its own identity — no in-memory history — and is asked what the
     # other participant told it. A correct recall can only come from the platform
@@ -122,5 +121,5 @@ async def test_rehydrates_foreign_peer_message(
                 mention_id=recaller.id,
                 mention_name=recaller.name,
             )
-            await capture.wait_for_processed(mid, recaller.id)
-            capture.messages.since(mark).assert_contains_any([marker])
+            replies = await capture.wait_for_reply(mid, recaller.id, since=mark)
+            replies.assert_contains_any([marker])

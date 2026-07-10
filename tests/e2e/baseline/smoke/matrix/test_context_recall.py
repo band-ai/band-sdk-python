@@ -30,6 +30,7 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra, model_turn_retrying
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -50,7 +51,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
 # cannot recall a note stated on an earlier turn — exclude it from recall scenarios.
 @per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=120)  # two turns (state, then recall)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_within_session(
@@ -80,17 +81,17 @@ async def test_recalls_within_session(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
-        capture.messages.since(mark).assert_contains_any([note])
+        replies = await capture.wait_for_reply(mid, agent.id, since=mark)
+        replies.assert_contains_any([note])
 
 
 @per_adapter(
     exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT
 )
-# Cold-boot recall is model-non-deterministic (the model occasionally denies having
-# the note despite it being in the rehydrated context), so allow AssertionError reruns
-# here — unlike the matrix's usual rerun_except; a real regression still fails red.
-@pytest.mark.flaky(reruns=2)
+# The recall turn's model non-determinism is absorbed per-turn (model_turn_retrying)
+# rather than by re-running the whole two-boot test; this decorator only covers a
+# transient live-turn timeout, and an assertion still fails loud.
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.timeout(extra=180)  # two agent startups (state, then rejoin)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recalls_after_rejoin(
@@ -129,12 +130,16 @@ async def test_recalls_after_rejoin(
     # so a correct recall proves the platform rehydrated the room on bootstrap.
     async with cell.run_as(identity):
         async with reply_capture(room_id) as capture:
-            mark = capture.messages.snapshot()  # scope to the recall turn
-            mid = await user_ops.send_message(
-                room_id,
-                RECALL,
-                mention_id=identity.id,
-                mention_name=identity.name,
-            )
-            await capture.wait_for_processed(mid, identity.id)
-            capture.messages.since(mark).assert_contains_any([note])
+            # Re-ask on a model bad moment (a false "I don't recall") — a cheap
+            # per-turn retry, not a whole-test rerun. A persistent miss still fails.
+            async for attempt in model_turn_retrying():
+                with attempt:
+                    mark = capture.messages.snapshot()  # scope to this recall turn
+                    mid = await user_ops.send_message(
+                        room_id,
+                        RECALL,
+                        mention_id=identity.id,
+                        mention_name=identity.name,
+                    )
+                    replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+                    replies.assert_contains_any([note])

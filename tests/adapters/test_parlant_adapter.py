@@ -7,6 +7,7 @@ This file contains Parlant-specific behavior: server/agent initialization,
 Application container, session management, history injection, and error handling.
 """
 
+import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 import sys
@@ -58,7 +59,7 @@ def mock_parlant_server():
         return_value=MagicMock(offset=1)
     )
     mock_app.sessions.create_event = AsyncMock()
-    mock_app.sessions.wait_for_update = AsyncMock(return_value=True)
+    mock_app.sessions.wait_for_more_events = AsyncMock(return_value=False)
     mock_app.sessions.find_events = AsyncMock(return_value=[])
 
     # Container returns Application
@@ -206,6 +207,8 @@ class TestOnMessage:
         adapter = ParlantAdapter(
             server=mock_parlant_server,
             parlant_agent=mock_parlant_agent,
+            response_timeout=0.05,
+            response_poll=0.01,
         )
         adapter.agent_name = "TestBot"
         adapter.agent_description = "A test bot"
@@ -218,7 +221,7 @@ class TestOnMessage:
         mock_app.sessions.create_customer_message = AsyncMock(
             return_value=MagicMock(offset=1)
         )
-        mock_app.sessions.wait_for_update = AsyncMock(return_value=True)
+        mock_app.sessions.wait_for_more_events = AsyncMock(return_value=False)
         mock_app.sessions.find_events = AsyncMock(return_value=[])
 
         adapter._app = mock_app
@@ -608,3 +611,181 @@ class TestErrorHandling:
 
         # No calls should be made
         mock_tools.send_message.assert_not_called()
+
+
+class TestResponseWaitBudget:
+    """The response wait retries across empty poll windows up to a total budget.
+
+    A cold start (server warmup + the first NLP round-trips) can leave the first
+    poll window empty on a slow host. The wait must keep polling until the budget,
+    not abandon the turn after one empty window — otherwise a slow first turn is
+    silently dropped (no reply forwarded). This is the deterministic guard for that
+    behavior: the live E2E can only trigger it on a genuinely slow runner, so it
+    can't reliably reproduce it, but driving the wait loop directly can.
+    """
+
+    @staticmethod
+    def _agent_event(message: str, offset: int, tags: list[str] | None = None):
+        """A Parlant AI-agent MESSAGE event as the wait loop reads it."""
+        from parlant.core.sessions import EventKind, EventSource
+
+        event = MagicMock()
+        event.kind = EventKind.MESSAGE
+        event.source = EventSource.AI_AGENT
+        event.offset = offset
+        event.data = {"message": message, "tags": tags or []}
+        return event
+
+    @staticmethod
+    def _app_with_waits(wait_results, events):
+        """A mock Application whose wait_for_more_events yields ``wait_results`` in
+        order and whose find_events returns ``events``."""
+        app = MagicMock()
+        app.sessions = AsyncMock()
+        app.sessions.wait_for_more_events = AsyncMock(side_effect=wait_results)
+        app.sessions.find_events = AsyncMock(return_value=events)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_retries_past_empty_windows_then_forwards_late_reply(
+        self, mock_parlant_server, mock_parlant_agent, mock_tools
+    ):
+        """Two empty poll windows (still generating), then the reply arrives — it is
+        still forwarded, not dropped after the first empty window."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        adapter._app = self._app_with_waits(
+            wait_results=[False, False, True],
+            events=[self._agent_event("Hello there!", offset=2)],
+        )
+
+        await adapter._process_agent_response(
+            session_id="cold-start-session",
+            room_id="room-1",
+            min_offset=0,
+            tools=mock_tools,
+            sender_name="Alice",
+        )
+
+        # The reply is only returned on the 3rd wait, so forwarding it proves the loop
+        # retried past both empty windows instead of giving up on the first.
+        mock_tools.send_message.assert_awaited_once_with(
+            "Hello there!", mentions=["Alice"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_gives_up_after_budget_when_no_reply_ever_arrives(
+        self, mock_parlant_server, mock_parlant_agent, mock_tools
+    ):
+        """A genuinely silent turn is bounded: once the total budget elapses the wait
+        returns (no hang) and nothing is forwarded."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            response_timeout=0.05,
+            response_poll=0.01,
+        )
+        # Never any event: every poll window is empty.
+        app = MagicMock()
+        app.sessions = AsyncMock()
+        app.sessions.wait_for_more_events = AsyncMock(return_value=False)
+        app.sessions.find_events = AsyncMock(return_value=[])
+        adapter._app = app
+
+        await asyncio.wait_for(
+            adapter._process_agent_response(
+                session_id="silent-session",
+                room_id="room-1",
+                min_offset=0,
+                tools=mock_tools,
+                sender_name="Alice",
+            ),
+            timeout=5,
+        )
+
+        # It gave up within the budget (the wait_for above would raise on a hang)
+        # without forwarding anything.
+        mock_tools.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_preamble_only_times_out_without_forwarding_a_reply(
+        self, mock_parlant_server, mock_parlant_agent, mock_tools
+    ):
+        """Parlant emits a preamble then stalls the final generation. A preamble is an
+        acknowledgment, not an answer, so the adapter must NOT forward it as the reply
+        — the turn is given up honestly (no send_message) rather than faking success."""
+        from band.adapters.parlant import PARLANT_PREAMBLE_TAG
+
+        adapter = ParlantAdapter(
+            server=mock_parlant_server,
+            parlant_agent=mock_parlant_agent,
+            response_timeout=0.05,
+            response_poll=0.01,
+        )
+        # The preamble arrives on the first poll; no final ever follows.
+        seen = {"delivered": False}
+
+        def _preamble_once(*_args, **_kwargs):
+            if seen["delivered"]:
+                return False
+            seen["delivered"] = True
+            return True
+
+        app = MagicMock()
+        app.sessions = AsyncMock()
+        app.sessions.wait_for_more_events = AsyncMock(side_effect=_preamble_once)
+        app.sessions.find_events = AsyncMock(
+            return_value=[
+                self._agent_event("One moment…", offset=1, tags=[PARLANT_PREAMBLE_TAG])
+            ]
+        )
+        adapter._app = app
+
+        await asyncio.wait_for(
+            adapter._process_agent_response(
+                session_id="preamble-only-session",
+                room_id="room-1",
+                min_offset=0,
+                tools=mock_tools,
+                sender_name="Alice",
+            ),
+            timeout=5,
+        )
+
+        # The preamble was NOT forwarded — a stalled turn fails honestly, not silently
+        # dressed up as an answer.
+        mock_tools.send_message.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_empty_find_events_then_final_still_forwards(
+        self, mock_parlant_server, mock_parlant_agent, mock_tools
+    ):
+        """A positive wait signal with an empty find_events read is a transient
+        visibility gap, not the answer: the loop keeps polling and forwards the final
+        message once it becomes query-visible, rather than dropping the turn."""
+        adapter = ParlantAdapter(
+            server=mock_parlant_server, parlant_agent=mock_parlant_agent
+        )
+        app = MagicMock()
+        app.sessions = AsyncMock()
+        # The signal fires both reads; the event is only query-visible on the second.
+        app.sessions.wait_for_more_events = AsyncMock(return_value=True)
+        app.sessions.find_events = AsyncMock(
+            side_effect=[[], [self._agent_event("The answer.", offset=2)]]
+        )
+        adapter._app = app
+
+        await adapter._process_agent_response(
+            session_id="visibility-gap-session",
+            room_id="room-1",
+            min_offset=0,
+            tools=mock_tools,
+            sender_name="Alice",
+        )
+
+        # The final is only query-visible on the 2nd read, so forwarding it proves the
+        # loop re-polled past the empty read instead of dropping the turn.
+        mock_tools.send_message.assert_awaited_once_with(
+            "The answer.", mentions=["Alice"]
+        )

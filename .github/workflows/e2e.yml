@@ -57,13 +57,21 @@ on:
           - google
           - backends
           - letta
+      os:
+        description: "OS to run on (all = Linux + Windows)."
+        type: choice
+        default: all
+        options:
+          - all
+          - ubuntu
+          - windows
 
-# Serialize E2E runs: they share one live platform, so never let two race (and
-# reap each other's provisioned agents/rooms). Newest wins — a fresh dispatch
-# cancels an in-flight run rather than queuing behind it.
-concurrency:
-  group: e2e-baseline
-  cancel-in-progress: true
+# Concurrency is scoped per (lane, OS) on the e2e job below — NOT workflow-wide.
+# A fresh dispatch cancels only the same lane+OS still in flight, so re-running
+# one lane (e.g. to iterate on a fix) leaves the others alone. Cross-lane races
+# on the shared platform are safe: each run provisions uniquely-named agents and
+# the orphan sweep only reaps agents older than BAND_E2E_ORPHAN_MAX_AGE_MINUTES,
+# so a concurrent run's fresh agents are never swept out from under it.
 
 jobs:
 
@@ -89,6 +97,8 @@ jobs:
       env:
         # The dispatch `lane` input; defaults to 'all' (the full matrix).
         SELECTED_LANE: ${{ github.event.inputs.lane || 'all' }}
+        # The dispatch `os` input; defaults to 'all' (Linux + Windows).
+        SELECTED_OS: ${{ github.event.inputs.os || 'all' }}
       run: |
         uv run python - <<'PY' >> "$GITHUB_OUTPUT"
         import json
@@ -117,23 +127,56 @@ jobs:
                 f"Requested lane {selected!r} is not one the registry emits "
                 f"(known: {sorted(known)}). Pick 'all' or a known lane."
             )
+        # OS is a workflow concern (runner image), not a registry fact: every lane
+        # runs on each selected OS. `runner` is the runs-on image; `os` is the short
+        # id surfaced in the job name.
+        runners = {"ubuntu": "ubuntu-latest", "windows": "windows-latest"}
+        selected_os = os.environ.get("SELECTED_OS") or "all"
+        if selected_os != "all" and selected_os not in runners:
+            raise SystemExit(
+                f"Requested os {selected_os!r} is not known "
+                f"(known: {sorted(runners)}). Pick 'all', 'ubuntu', or 'windows'."
+            )
+        oses = list(runners) if selected_os == "all" else [selected_os]
+        # A lane that can only run on Linux (its backend has no Windows story —
+        # ``LINUX_ONLY_LANES``, surfaced as ``lane.linux_only``) contributes no
+        # windows cell, so a full-matrix dispatch never emits a cell that can't run.
         include = [
-            {"lane": lane.id, "extra": lane.extra}
+            {"lane": lane.id, "extra": lane.extra, "os": osid, "runner": runners[osid]}
             for lane in lanes
             if selected == "all" or lane.id == selected
+            for osid in oses
+            if not (osid == "windows" and lane.linux_only)
         ]
         print("lanes=" + json.dumps({"include": include}))
         PY
 
   e2e:
-    name: e2e (${{ matrix.lane }})
+    name: e2e (${{ matrix.lane }} / ${{ matrix.os }})
     needs: lanes
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    # Per-(lane, OS) concurrency: a new dispatch cancels only the matching
+    # lane+OS still running, never the whole matrix — so one lane can be
+    # re-run in isolation. (See the note above the jobs block.)
+    concurrency:
+      group: e2e-baseline-${{ matrix.lane }}-${{ matrix.os }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.lanes.outputs.lanes) }}
+    # Use bash on every OS so the setup scripts and uv commands run identically
+    # (Git Bash ships on the windows-latest runner).
+    defaults:
+      run:
+        shell: bash
     env:
       E2E_TESTS_ENABLED: "true"
+      # Force UTF-8 for stdout/stderr. On the windows-latest runner Python defaults
+      # to the cp1252 console codec, so a framework that logs emoji (e.g. CrewAI's
+      # event bus: 🤖/🔧/✅) raises UnicodeEncodeError mid-turn and fails the test.
+      # No-op on Linux (already UTF-8).
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
       # Turn budget (E2E_TIMEOUT) is not set here: it defaults to 120s in the e2e
       # settings, and slow frameworks add headroom per-test via
       # @pytest.mark.timeout(extra=...). See tests/e2e/baseline/conftest.py.
@@ -182,14 +225,17 @@ jobs:
     # .github/scripts/ for the inline detail.
     - name: Install + authenticate the Codex CLI (codex)
       if: matrix.lane == 'backends'
-      run: .github/scripts/setup-codex.sh
+      # Invoke via `bash` explicitly: on the windows-latest runner a directly
+      # executed .sh depends on the exec bit surviving checkout and Git Bash
+      # resolving the shebang; `bash <script>` sidesteps both. No-op on Linux.
+      run: bash .github/scripts/setup-codex.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'
       env:
         # The OpenCode Zen provider key the server reads via {env:...} substitution.
         OPENCODE_ZEN_API_KEY: ${{ secrets.E2E_OPENCODE_ZEN_API_KEY }}
-      run: .github/scripts/setup-opencode.sh
+      run: bash .github/scripts/setup-opencode.sh
 
     # The Letta server runs in docker with a host-gateway alias so it can call
     # back into the adapter's self-hosted MCP server (LocalMCPServer inside the
@@ -209,7 +255,7 @@ jobs:
     - name: Run baseline E2E (lane ${{ matrix.lane }})
       run: uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
-    # The backends lane also exercises the editor-facing ACP path (codex-acp via npx).
+    # The backends lane also exercises the editor-facing ACP path (codex-acp).
     # It uses the same ~/.codex login and a local MCP server — no Band platform.
     - name: Run codex-acp e2e (codex)
       if: matrix.lane == 'backends'

@@ -1362,7 +1362,8 @@ class TestPortableCustomToolDef:
     """pydantic accepts the portable CustomToolDef (InputModel, handler) tuple form —
     the same custom-tool shape anthropic/crewai/claude_sdk/langgraph take."""
 
-    def test_tuple_is_normalized_to_a_named_callable(self):
+    @pytest.mark.asyncio
+    async def test_tuple_is_normalized_to_a_named_callable(self):
         from pydantic import BaseModel
 
         class LookupInput(BaseModel):
@@ -1378,8 +1379,9 @@ class TestPortableCustomToolDef:
         )
         # Normalized to a native callable named from the model (not the handler).
         assert [t.__name__ for t in adapter._custom_tools] == ["lookup"]
-        # ...and it still delegates to the handler.
-        assert adapter._custom_tools[0](LookupInput(key="alpha")) == "code:alpha"
+        # ...and it still delegates to the handler (async — execution routes
+        # through the shared execute_custom_tool).
+        assert await adapter._custom_tools[0](LookupInput(key="alpha")) == "code:alpha"
 
     def test_tuple_terminal_marker_is_honored(self):
         from pydantic import BaseModel
@@ -1422,3 +1424,97 @@ class TestPortableCustomToolDef:
         # pydantic-ai flattens the single model param into the tool's args.
         assert tool.name == "lookup"
         assert sorted((schema.get("properties") or {}).keys()) == ["key"]
+
+    @staticmethod
+    def _tool_return_contents(result) -> list:
+        from pydantic_ai.messages import ToolReturnPart
+
+        return [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_async_handler_tuple_is_awaited_end_to_end(self):
+        """An async CustomToolDef handler returns its awaited value through a real
+        pydantic-ai run — not an unawaited coroutine (which the previous sync
+        passthrough produced, failing serialization)."""
+        from pydantic import BaseModel
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
+
+        class LookupInput(BaseModel):
+            """look up a code."""
+
+            key: str
+
+        async def lookup(args: LookupInput) -> str:
+            return f"code:{args.key}"
+
+        native = _custom_tool_def_to_callable((LookupInput, lookup))
+        agent = Agent(TestModel(), output_type=str)
+        agent.tool_plain(native)
+
+        result = await agent.run("go")
+
+        (content,) = self._tool_return_contents(result)
+        assert isinstance(content, str)
+        assert content.startswith("code:")
+
+    @pytest.mark.asyncio
+    async def test_zero_arg_handler_tuple_runs_end_to_end(self):
+        """A zero-argument handler with an empty InputModel executes through a real
+        pydantic-ai run — the previous sync passthrough called it with one
+        positional arg and raised TypeError."""
+        from pydantic import BaseModel
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
+
+        class PingInput(BaseModel):
+            """ping."""
+
+        def ping() -> str:
+            return "pong"
+
+        native = _custom_tool_def_to_callable((PingInput, ping))
+        agent = Agent(TestModel(), output_type=str)
+        agent.tool_plain(native)
+
+        result = await agent.run("go")
+
+        assert self._tool_return_contents(result) == ["pong"]
+
+    @pytest.mark.asyncio
+    async def test_aliased_input_model_runs_end_to_end(self):
+        """An InputModel using a field alias executes through a real pydantic-ai
+        run — a dump/re-validate round-trip would emit field names and fail
+        re-validation against the alias-only model."""
+        from pydantic import BaseModel, Field
+        from pydantic_ai import Agent
+        from pydantic_ai.models.test import TestModel
+
+        from band.adapters.pydantic_ai import _custom_tool_def_to_callable
+
+        class AliasedInput(BaseModel):
+            """look up a user."""
+
+            user_id: str = Field(alias="userId")
+
+        def lookup(args: AliasedInput) -> str:
+            return f"user:{args.user_id}"
+
+        native = _custom_tool_def_to_callable((AliasedInput, lookup))
+        agent = Agent(TestModel(), output_type=str)
+        agent.tool_plain(native)
+
+        result = await agent.run("go")
+
+        (content,) = self._tool_return_contents(result)
+        assert isinstance(content, str)
+        assert content.startswith("user:")

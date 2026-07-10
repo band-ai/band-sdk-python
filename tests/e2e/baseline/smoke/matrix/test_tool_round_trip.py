@@ -22,6 +22,7 @@ value on top of the tool firing.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_tools import (
@@ -45,7 +46,7 @@ KEY = "alpha"  # ACCESS_CODES["alpha"] -> a code the model cannot guess
     prompt=LOOKUP_PROMPT,
     **EXECUTION_REPORTING,
 )
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 # crewai's crew construction + first kickoff cold-start can push the turn past the
 # base budget; grant headroom so a slow-but-healthy cell isn't killed by the timeout.
 @pytest.mark.timeout(extra=120)
@@ -67,11 +68,11 @@ async def test_custom_tool_round_trips(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id)
         calls = await capture.tool_calls(sender_id=agent.id)
 
     # The call half: the opaque tool fired with the requested key.
     calls.assert_fired(LOOKUP, with_args={"key": KEY})
     # The result half: the secret code (knowable only via the tool result) came
     # back in the reply — the round-trip completed, not just the dispatch.
-    capture.messages.assert_contains_any([ACCESS_CODES[KEY]])
+    replies.assert_contains_any([ACCESS_CODES[KEY]])

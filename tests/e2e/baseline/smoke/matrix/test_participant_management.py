@@ -20,6 +20,7 @@ with no removal), so it overlaps only slightly.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -33,7 +34,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True)
-@pytest.mark.flaky(reruns=2)  # tool invocation + directed message are model-driven
+@flaky_model("tool invocation + directed message are model-driven")
 @pytest.mark.timeout(extra=180)  # invite + directed message, then remove (two turns)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_invites_messages_and_removes_a_peer(
@@ -57,7 +58,7 @@ async def test_invites_messages_and_removes_a_peer(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(invite_mid, agent.id)
+        replies = await capture.wait_for_reply(invite_mid, agent.id)
 
         # State: Echo is a participant after the invite (model-independent).
         after_invite = await user_ops.list_participant_ids(room_id)
@@ -65,9 +66,7 @@ async def test_invites_messages_and_removes_a_peer(
             f"expected {echo.name} added to the room; participants: {after_invite}"
         )
         # Coupled: the mention and the marker are in the SAME agent message.
-        capture.messages.from_sender(agent.id).mentioning(echo.id).assert_contains_any(
-            [marker]
-        )
+        replies.mentioning(echo.id).assert_contains_any([marker])
 
         # Turn 2: remove Echo.
         remove_mid = await user_ops.send_message(

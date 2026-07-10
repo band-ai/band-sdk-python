@@ -22,6 +22,7 @@ making model-driven reply batching part of the contract.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -40,7 +41,7 @@ LOOP_CEILING = 5
 
 
 @per_adapter(prompt=REPLY_PROMPT)
-@pytest.mark.flaky(reruns=2)
+@flaky_model("the peer-driven reply is a model decision")
 @pytest.mark.timeout(extra=180)  # a peer turn, then a follow-up probe turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_peer_message_drives_turn_without_loop(
@@ -67,10 +68,10 @@ async def test_peer_message_drives_turn_without_loop(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(peer_mid, agent.id)
+        replies = await capture.wait_for_reply(peer_mid, agent.id)
         # Positive: the peer-authored message drove a real reply from the AGENT (scope
         # to the agent — Echo is itself an Agent, so its own probe is captured too).
-        capture.messages.from_sender(agent.id).assert_contains_any([marker])
+        replies.assert_contains_any([marker])
 
         # Loop-suppression: snapshot after the peer turn, then a follow-up user probe.
         mark = capture.messages.snapshot()

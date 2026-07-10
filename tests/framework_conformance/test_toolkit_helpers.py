@@ -30,9 +30,14 @@ from band.client.streaming import MessageCreatedPayload
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.observations import Replies
 from tests.e2e.baseline.toolkit.provisioning import (
+    MAX_MENTIONED_LABEL_LEN,
+    MENTION_HANDLE_CAP,
+    NAME_PREFIX,
     AdapterCell,
     ProvisionedAgent,
     ResourceManager,
+    new_run_id,
+    run_id_len,
     running_members,
 )
 from tests.e2e.baseline.toolkit.deps import _is_letta_cloud
@@ -195,3 +200,38 @@ async def test_adopt_room_is_reaped_once_on_teardown() -> None:
     rm.adopt_room("room-abc")  # idempotent — not tracked (or reaped) twice
     await rm.reap_all()
     rm._user_ops.delete_room.assert_awaited_once_with("room-abc")
+
+
+def test_mentioned_peer_names_fit_handle_cap() -> None:
+    """The derived run-id keeps every @mentioned peer name within the handle cap.
+
+    Enforces the invariant that used to be a hand-computed number in a docstring: a
+    peer a scenario asserts by @mention must not truncate. If a wider ``NAME_PREFIX``
+    or a longer mentioned label ever breaks the budget, this fails loudly here on
+    every PR rather than as a silent handle truncation in a live roster assertion.
+    """
+    length = run_id_len()
+    # A run id must still be generated (and carry enough entropy to be collision-safe
+    # across concurrent runs); if the budget ever squeezes it away, that's a design
+    # signal to shorten a label or the prefix, not to ship a 0-width id.
+    assert length >= 4, (
+        f"derived run-id length {length} is too short for collision safety; "
+        f"shorten a mentioned label or NAME_PREFIX"
+    )
+    assert len(new_run_id()) == length
+
+    # The longest label a scenario provisions AND asserts by @mention must fit.
+    longest = "x" * MAX_MENTIONED_LABEL_LEN
+    name = f"{NAME_PREFIX}{'a' * length}-{longest}"
+    assert len(name) <= MENTION_HANDLE_CAP, (
+        f"longest @mentioned peer name {name!r} is {len(name)} chars, over the "
+        f"{MENTION_HANDLE_CAP}-char mention-handle cap"
+    )
+
+    # Every peer label the suite actually provisions-and-mentions stays within budget.
+    for label in ("member", "invitable", "nonmember"):
+        assert len(label) <= MAX_MENTIONED_LABEL_LEN, (
+            f"peer label {label!r} exceeds MAX_MENTIONED_LABEL_LEN "
+            f"({MAX_MENTIONED_LABEL_LEN}); bump the constant (it shrinks the run id) "
+            f"or shorten the label"
+        )

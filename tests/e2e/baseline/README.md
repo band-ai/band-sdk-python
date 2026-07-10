@@ -55,8 +55,8 @@ async def test_greets(agent, resource_manager, user_ops, reply_capture):
         mid = await user_ops.send_message(                                    # 4. drive as user
             room_id, "say hi", mention_id=agent.id, mention_name=agent.name
         )
-        await capture.wait_for_processed(mid, agent.id)                       # 5. barrier
-    capture.messages.assert_present()                                         # 6. assert
+        replies = await capture.wait_for_reply(mid, agent.id)                 # 5. reply barrier
+    replies.assert_present()                                                  # 6. assert on what it returns
 ```
 
 `@with_adapters` / `@per_adapter` auto-apply the `@requires` provider-key gate
@@ -134,11 +134,22 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
 ### Driving and observing a turn
 
 - **Send as the user:** `mid = await user_ops.send_message(room_id, text, mention_id=, mention_name=)`.
-- **Barrier:** `await capture.wait_for_processed(mid, agent.id)` — the only correct
-  "agent is done" signal (delivery state, not reply text). Once it returns, the
-  reply is already in `capture.messages`.
+- **Two barriers — pick by what you assert:**
+  - `replies = await capture.wait_for_reply(mid, agent.id[, since=])` — use
+    this whenever you then assert on **reply text** (`assert_present`,
+    `assert_contains_any`, `mentioning`, …). It waits until the turn is processed **and**
+    the reply frame is actually captured, and returns that reply window to assert on.
+  - `await capture.wait_for_processed(mid, agent.id)` — use this when you read **durable**
+    turn state (`tool_calls`/`usage`/`events`/`memory`) or just need the turn done. A
+    reply is *optional* here.
+  - ⚠️ Why two: the reply's `message_created` frame and the delivery-status
+    `message_updated`→PROCESSED frame are **independent, unordered** platform events, so
+    PROCESSED does **not** imply the reply is buffered yet. Asserting on `capture.messages`
+    right after `wait_for_processed` is a race ("no agent messages were captured"). Assert
+    on what `wait_for_reply` **returns**, not by re-reading `capture.messages`.
 - **Reused capture, later turn:** `mark = capture.messages.snapshot()` before sending,
-  `capture.messages.since(mark)` after the barrier.
+  then pass `since=mark` to `wait_for_reply` (or `capture.messages.since(mark)` after a
+  `wait_for_processed` durable read).
 - **Inspect (read-after-barrier):** `capture.tool_calls()`, `capture.thoughts()/errors()/tasks()`,
   `capture.memory(agent)` — see the inspection sections below.
 
@@ -147,7 +158,8 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
 **Do**
 - Reuse the fixtures for everything — provisioning, the user driver, capture, waits,
   assertions. Your test is the scenario, not the scaffolding.
-- Wait event-driven: `wait_for_processed` / `wait_for_delivery` / `wait_until`.
+- Wait event-driven: `wait_for_reply` (asserting on reply text) / `wait_for_processed`
+  (durable-state reads) / `wait_for_delivery` / `wait_until`.
 - Assert cheaply and tolerantly: the `Replies`/`Events`/`Memories` assertion
   methods first; the `judge` only for genuinely semantic outcomes.
 - Use the `Adapter` enum, the `**TOOL_AGENT` / `**MEMORY_AGENT` shapes, and
@@ -212,7 +224,7 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `agent_wiring.py` | `assert_agent_fixtures_wired` — the collection-time guard that rejects mis-wired decorator/fixture pairings (see **Wiring fences**) |
 | `smoke/samples/sample_tools.py` | sample custom tools as `ToolSpec`s (`LOOKUP_TOOL`, `WEATHER_TOOL`), prompts, and the `EXECUTION_REPORTING` shape |
 | `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events, `lookup_peers` — the invitable roster) |
-| `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
+| `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_reply` (reply barrier), `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)`, `CaptureFactory` |
 | `toolkit/deps.py` | pytest-free requirement facts: `Dep` enum, `DepSpec` predicates, `Lane`/`LANE_EXTRAS`, `dep_lane` (the **one** source of the `Dep`/lane facts the registry references without importing pytest) |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`, `mentioning(id)` to filter to replies mentioning a participant, `assert_contains_any`/`assert_mentions`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
@@ -307,8 +319,8 @@ async def test_recalls_after_rejoin(cell, resource_manager, user_ops, reply_capt
         async with reply_capture(room_id) as capture:
             mark = capture.messages.snapshot()
             mid = await user_ops.send_message(room_id, RECALL, mention_id=identity.id, mention_name=identity.name)
-            await capture.wait_for_processed(mid, identity.id)
-            capture.messages.since(mark).assert_contains_any([note])
+            replies = await capture.wait_for_reply(mid, identity.id, since=mark)
+            replies.assert_contains_any([note])
 ```
 
 Cross-framework peer — fan cell **A** across the matrix and drive a *different-framework*
@@ -330,15 +342,15 @@ async def test_foreign_peer(cell, peer, resource_manager, user_ops, reply_captur
         async with reply_capture(room_id) as capture:
             probe = capture.messages.snapshot()
             mid = await user_ops.send_message(room_id, "pass a note", mention_id=b.id, mention_name=b.name)
-            await capture.wait_for_processed(mid, b.id)
-            capture.messages.since(probe).mentioning(a.id).assert_contains_any([marker])  # setup precondition
+            replies = await capture.wait_for_reply(mid, b.id, since=probe)
+            replies.mentioning(a.id).assert_contains_any([marker])  # setup precondition
 
     async with cell.run_as(a):                                   # A cold-boots → rehydrates B's message
         async with reply_capture(room_id) as capture:
             mark = capture.messages.snapshot()
             mid = await user_ops.send_message(room_id, "what token did they send?", mention_id=a.id, mention_name=a.name)
-            await capture.wait_for_processed(mid, a.id)
-            capture.messages.since(mark).assert_contains_any([marker])
+            replies = await capture.wait_for_reply(mid, a.id, since=mark)
+            replies.assert_contains_any([marker])
 ```
 
 ## Wiring fences (fail at collection, before any live agent)
@@ -372,7 +384,8 @@ The topology is guarded two ways so a mis-wired test never false-greens:
 | List who the user could invite to a room | `await user_ops.lookup_peers(not_in_room=room_id)` → `list[Peer]` (the invitable roster; `peer_type="Agent"` narrows) |
 | Drive a peer agent (e.g. the `Echo` bounce) | `await resource_manager.peer(peer).send_message(room_id, "ECHO: ...", mention_id=agent.id, mention_name=agent.name)` — posts as that agent, returns the message id to barrier on (needs the peer already in the room) |
 | Observe replies without a race | `async with reply_capture(room_id) as capture:` then send |
-| Know a turn/burst finished (reply captured) | `mid = await user_ops.send_message(...)` then `await capture.wait_for_processed(mid, agent_id)` |
+| Get an agent's reply to assert on | `replies = await capture.wait_for_reply(mid, agent_id[, since=])` — waits for the recipient's reply frame, returns it |
+| Know a turn finished (reply optional; reading durable state) | `await capture.wait_for_processed(mid, agent_id)` |
 | Wait for a specific delivery state (e.g. a failure) | `await capture.wait_for_delivery(mid, agent_id, until={DeliveryStatus.FAILED})` |
 | Inspect the delivery lifecycle | `capture.delivery_status(mid, agent_id)` / `capture.delivery_history(mid, agent_id)` |
 | Wait on a custom condition | `await capture.wait_until(predicate)` |
@@ -408,13 +421,19 @@ instead of the judge.
 
 - Waits are event-driven and deterministic. Never `sleep` or poll a fixed window.
 - `deadline_s` is a failure deadline only (raises `TimeoutError`); never a success signal.
-- `wait_for_processed(message_id, agent_id)` is the way to know an agent is done.
+- `wait_for_processed(message_id, agent_id)` is the way to know an agent *turn* is done.
   It reads the platform's `message_updated` delivery state — the same signal the
   runtime itself uses — so it never depends on the agent's reply text. Per-room
   FIFO processing means barriering on the last message you sent proves every earlier
-  message was handled; and since `processed` is reported only after the reply is
-  emitted, that reply is already in `capture.messages` once it returns. (No probe
-  message is needed — `send_message` returns the id to barrier on.)
+  message was handled. Use it before reading durable turn state (tool calls, usage,
+  events, memory). (No probe message is needed — `send_message` returns the id to
+  barrier on.)
+- `wait_for_reply(message_id, agent_id, ...)` is the barrier to use when you then assert
+  on the **reply text**. `processed` does **not** imply the reply is buffered: the reply
+  (`message_created`) and the delivery-status (`message_updated`) are independent,
+  unordered platform events, so `processed` can arrive first. `wait_for_reply` waits for
+  the reply frame itself and returns it — assert on the return value, not by re-reading
+  `capture.messages` right after `wait_for_processed` (that races the reply).
 
 ## Waiting on delivery state (`DeliveryStatus`)
 
@@ -519,9 +538,10 @@ A **lane** is a CI job: a `uv` extra to install plus, for a lane with a server/C
 the setup that stands it up. Each registered adapter belongs to exactly one lane,
 **derived from its `requires`** (`dep_lane` in `deps.py` → the unique
 non-default lane among its deps). `ci_lanes()` (`toolkit/ci_lanes.py`) groups every
-adapter into a `CILane(id, extra, adapters)` — so a newly-registered adapter joins
-its lane for free, and the `assert_every_adapter_has_a_ci_home()` guard fails loudly
-if one lands nowhere.
+adapter into a `CILane(id, extra, adapters, linux_only)` — so a newly-registered
+adapter joins its lane for free, and the `assert_every_adapter_has_a_ci_home()` guard
+fails loudly if one lands nowhere. `linux_only` (from `LINUX_ONLY_LANES`) marks a lane
+whose backend can't run off Linux, so the workflow drops its Windows cells.
 
 Lane ids are **content-based** (what the lane runs) and **decoupled from the `uv`
 extra** a lane installs (`Lane` → `Extra` via `LANE_EXTRAS`): several lanes share
@@ -533,7 +553,7 @@ the `dev` extra but are split out for isolation.
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
 | `backends` | `dev` | codex, opencode | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), and a running `opencode serve` (`OPENCODE_BASE_URL`) |
-| `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below) |
+| `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 
 `backends` folds codex + opencode into one job (both install `dev`, differ only in
 the backend their job stands up) so a job-per-backend isn't needed; the cost is that
@@ -654,6 +674,14 @@ Knobs:
 CI stands the server up via `.github/scripts/setup-letta.sh` (docker run with
 the host-gateway alias, health-wait on `GET /v1/health/`, the MCP URL guard
 patch, exports `LETTA_BASE_URL`).
+
+**Linux-only lane (no Windows cells).** The letta lane runs on Linux only. Its
+server has no Windows story on the `windows-latest` runner: the `letta/letta`
+image is Linux-only (that runner only runs Windows containers), and Letta's own
+install guide supports a native install on macOS / Linux / WSL only, not raw
+Windows ([docs.letta.com/guides/server/source](https://docs.letta.com/guides/server/source)).
+So `letta` is listed in `LINUX_ONLY_LANES` (`toolkit/deps.py`) and the e2e
+workflow emits no `letta × windows` cell — every other lane runs on both OSes.
 
 `e2e_pending` (which once excluded Letta) is now a reason *string*
 (`str | None`), pinned to an allowlist — empty today — in

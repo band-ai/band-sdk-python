@@ -44,6 +44,7 @@ credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -53,7 +54,6 @@ from tests.e2e.baseline.smoke.samples.sample_agents import (
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
-from tests.e2e.baseline.toolkit.observations import Replies
 from tests.e2e.baseline.toolkit.provisioning import (
     AdapterCell,
     ResourceManager,
@@ -65,7 +65,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
     exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.LANGGRAPH, Adapter.CREWAI_FLOW},
     prompt=REPLY_PROMPT,
 )
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 @pytest.mark.timeout(
     extra=300
 )  # two boots for the rebooted agent + peer boot + 3 turns
@@ -114,14 +114,10 @@ async def test_partial_reboot_preserves_context_and_peer(
                     mention_id=rebooter.id,
                     mention_name=rebooter.name,
                 )
-                await capture.wait_for_processed(mid, rebooter.id)
+                replies = await capture.wait_for_reply(mid, rebooter.id, since=mark)
                 # Scope to the REBOOTER's replies: it, not the still-live stayer,
                 # must be the one that rehydrated the note.
-                Replies(
-                    m
-                    for m in capture.messages.since(mark)
-                    if m.sender_id == rebooter.id
-                ).assert_contains_any([note])
+                replies.assert_contains_any([note])
 
                 # Peer continuity: the never-rebooted stayer should still respond.
                 # We assert it *produced a reply* (scoped to its own sender id), not
@@ -135,7 +131,5 @@ async def test_partial_reboot_preserves_context_and_peer(
                     mention_id=stayer.id,
                     mention_name=stayer.name,
                 )
-                await capture.wait_for_processed(probe, stayer.id)
-                Replies(
-                    m for m in capture.messages.since(mark2) if m.sender_id == stayer.id
-                ).assert_present(what="a liveness reply from the stayer")
+                replies = await capture.wait_for_reply(probe, stayer.id, since=mark2)
+                replies.assert_present(what="a liveness reply from the stayer")

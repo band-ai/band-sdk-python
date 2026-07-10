@@ -48,6 +48,7 @@ from band.converters.pydantic_ai import (
 from band.runtime.custom_tools import (
     CustomToolDef,
     get_custom_tool_name,
+    invoke_validated_custom_tool,
     is_marked_terminal,
 )
 from band.runtime.prompts import render_system_prompt
@@ -113,14 +114,21 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     tool callable — the same custom-tool form the other adapters accept.
 
     pydantic-ai flattens a single Pydantic-model parameter into the tool's arguments,
-    so the handler's ``(args: InputModel)`` shape is used directly. The wrapper carries
-    the stable tool name (derived from the model) and the ``band_terminal`` marker, so
-    the tool name and the terminal-tool contract match the tuple adapters exactly.
+    so the wrapper keeps the ``(args: InputModel)`` registration shape. Execution is
+    routed through the shared ``invoke_validated_custom_tool`` so the CustomToolDef
+    contract matches every other adapter: async handlers are awaited and
+    zero-argument handlers (empty InputModel) are called without args — a plain sync
+    passthrough would hand pydantic-ai an unawaited coroutine or raise TypeError for
+    those. pydantic-ai has already validated ``args`` into the InputModel, so the
+    instance is passed through directly — a dump/re-validate round-trip would break
+    models using field aliases. The wrapper carries the stable tool name (derived
+    from the model) and the ``band_terminal`` marker, so the tool name and the
+    terminal-tool contract match the tuple adapters exactly.
     """
     input_model, handler = tool_def
 
-    def native(args: Any) -> Any:
-        return handler(args)
+    async def native(args: Any) -> Any:
+        return await invoke_validated_custom_tool(tool_def, args)
 
     native.__name__ = get_custom_tool_name(input_model)
     native.__doc__ = input_model.__doc__ or native.__name__
@@ -256,9 +264,25 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # type must be provided other than `None`")`.
         agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
-            system_prompt=system,
+            # Pass the rendered prompt as `instructions`, not `system_prompt`.
+            # pydantic-ai materializes `system_prompt` as a single SystemPromptPart
+            # only on the first request, after which it ages into buried history;
+            # by the time the model composes the post-tool reply it sits beneath the
+            # user prompt, tool call, and tool return, so a custom rule that must ride
+            # *every* reply (e.g. a required marker word) gets dropped. `instructions`
+            # are re-attached to each ModelRequest — including the post-tool-return
+            # request that generates the reply — mirroring how the anthropic adapter
+            # re-sends `system=` on every call, so the contract stays in force.
+            instructions=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
+            # pydantic-ai defaults to retries=1 for tool-arg and final-output
+            # validation. With a tool-only agent driven by a small model, one retry
+            # is too tight: the model occasionally needs another attempt to emit a
+            # valid tool call (e.g. band_create_chatroom) or a non-empty final
+            # answer before pydantic-ai raises UnexpectedModelBehavior. A modest
+            # budget makes the turn resilient without masking a genuinely stuck run.
+            retries=3,
             # Strip content:null responses on every request, including mid-run
             # ones the storage filter can't reach (see the function docstring).
             history_processors=[_drop_non_replayable_messages],

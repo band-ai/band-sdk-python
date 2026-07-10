@@ -274,9 +274,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             raise RuntimeError("OpenCode client is not initialized")
 
         try:
-            session_id, created, restored_missing_session = await self._ensure_session(
-                room_state, history
-            )
+            session_id, created = await self._ensure_session(room_state, history)
             if Emit.TASK_EVENTS in self.features.emit and (
                 room_state.persisted_session_id != session_id or is_session_bootstrap
             ):
@@ -301,11 +299,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         msg,
                         participants_msg,
                         contacts_msg,
-                        replay_messages=(
-                            history.replay_messages
-                            if restored_missing_session
-                            else None
-                        ),
+                        # A newly-created server session holds no prior context, so
+                        # seed it with the converted in-session history. This covers
+                        # both the 404-recovery case and a fresh session created
+                        # because no prior id was recoverable — e.g. turn 2 of an
+                        # in-session exchange after the in-memory session id was lost.
+                        # Without this the model sees only the latest message and
+                        # answers "I don't recall". A reused session (created is
+                        # False) already holds the history server-side, so we must
+                        # not replay and double it.
+                        replay_messages=(history.replay_messages if created else None),
                     ),
                     system=self._system_prompt,
                     model=self._build_model_payload(),
@@ -861,13 +864,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     async def _ensure_session(
         self, room_state: _RoomState, history: OpencodeSessionState
-    ) -> tuple[str, bool, bool]:
+    ) -> tuple[str, bool]:
         if self._client is None:
             raise RuntimeError("OpenCode client is not initialized")
 
         restored_session_id = room_state.session_id or history.session_id
         created = False
-        restored_missing_session = False
 
         if restored_session_id:
             try:
@@ -883,7 +885,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     title=self._build_session_title(room_state.room_id),
                 )
                 created = True
-                restored_missing_session = True
             session_id = str(session["id"])
         else:
             session = await self._client.create_session(
@@ -898,7 +899,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             room_state.session_id = session_id
             self._room_by_session[session_id] = room_state.room_id
 
-        return session_id, created, restored_missing_session
+        return session_id, created
 
     def _begin_turn(self, room_state: _RoomState, *, sender_id: str | None) -> None:
         loop = asyncio.get_running_loop()

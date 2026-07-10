@@ -202,6 +202,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         cwd: str | None = None,
+        setting_sources: list[str] | None = None,
         # Chat-based approval flow (opt-in)
         approval_mode: ApprovalMode | None = None,
         approval_text_notifications: bool = True,
@@ -325,6 +326,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd
+        # Which host settings the CLI loads (skills/subagents/settings from
+        # ~/.claude and ./.claude). Default isolates the bridged agent so its
+        # capabilities are defined here, not by whatever config sits on the host
+        # (the source of Windows-vs-Linux tool drift). Pass e.g. ["user", "project"]
+        # to opt back into host config.
+        self.setting_sources: list[str] = (
+            list(setting_sources) if setting_sources is not None else []
+        )
 
         # Chat-based approval config
         self.approval_mode: ApprovalMode | None = approval_mode
@@ -392,6 +401,19 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             mcp_servers={"band": self._mcp_server},
             allowed_tools=self._mcp_backend.allowed_tools,
             permission_mode=self.permission_mode,
+            # Isolate the bridged agent from ambient Claude Code config (default []).
+            # Left at the SDK default, setting_sources loads the host's user + project
+            # settings (~/.claude and ./.claude): filesystem skills and subagents then
+            # surface as `Skill`/`Agent` tools, and the enlarged toolset trips
+            # ToolSearch, which withholds tool definitions (including our `mcp__band__*`
+            # tools) behind a search step — so on a CI runner with a global Claude Code
+            # install the model wandered through ToolSearch/Bash/Agent/Skill instead of
+            # calling the Band tool. Loading no host config keeps the tool set lean, so
+            # ToolSearch does not engage and the Band tools stay directly in context.
+            # Configurable via the constructor for callers who want their host config.
+            # cast: the public param is list[str]; the SDK types it as a list of the
+            # "user"/"project"/"local" literals. The CLI validates the values.
+            setting_sources=cast("Any", self.setting_sources),
         )
 
         # Add extended thinking if configured

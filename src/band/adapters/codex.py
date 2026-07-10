@@ -619,7 +619,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if usage_obj is not None:
                 usage_obj.reset_turn_deltas()
 
-            _turn_start = _time.monotonic()
+            # perf_counter (not monotonic): highest-resolution clock, so a fast
+            # turn still measures a non-zero duration on Windows, where
+            # monotonic()'s coarse tick can round an instant turn to 0.0.
+            _turn_start = _time.perf_counter()
             try:
                 result = await self._process_turn_events(
                     tools=tools,
@@ -641,7 +644,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     turn_error="Internal error during turn processing",
                 )
 
-            _turn_duration_s = _time.monotonic() - _turn_start
+            _turn_duration_s = _time.perf_counter() - _turn_start
             await self._emit_turn_outcome(
                 tools=tools,
                 msg=msg,
@@ -674,7 +677,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             while True:
                 _remaining = max(
                     0.0,
-                    self.config.turn_timeout_s - (_time.monotonic() - turn_start),
+                    self.config.turn_timeout_s - (_time.perf_counter() - turn_start),
                 )
                 event = await self._client.recv_event(timeout_s=_remaining)
                 if event.kind == "request":

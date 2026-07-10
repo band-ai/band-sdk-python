@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from typing import Any, ClassVar
 
 from acp import spawn_agent_process
@@ -38,6 +39,21 @@ from band.runtime.tools import iter_tool_definitions
 logger = logging.getLogger(__name__)
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
+
+
+def _resolve_launcher(command: list[str]) -> list[str]:
+    """Resolve the launcher to its full path so the subprocess spawns on Windows.
+
+    An npm-installed launcher like ``npx`` is ``npx.cmd`` on Windows, and
+    ``create_subprocess_exec`` does not apply PATHEXT to a bare name — so it fails
+    with ``FileNotFoundError``. ``shutil.which`` finds the ``.cmd`` shim (and the
+    plain binary on POSIX). A name that can't be resolved is left as-is, so a
+    genuinely missing binary still fails loudly at spawn.
+    """
+    if not command:
+        return command
+    resolved = shutil.which(command[0])
+    return [resolved, *command[1:]] if resolved else list(command)
 
 
 class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
@@ -81,7 +97,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._profile = profile
 
         self._runtime = ACPRuntime(
-            command=self._command,
+            command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
             client_factory=lambda: BandACPClient(profile=self._profile),

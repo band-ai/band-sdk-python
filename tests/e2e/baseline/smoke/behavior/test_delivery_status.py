@@ -70,7 +70,12 @@ async def test_healthy_message_reaches_processed_via_processing(
     reply_capture: CaptureFactory,
 ) -> None:
     """Success path: the observed lifecycle ends in PROCESSED and passes through
-    PROCESSING, and the agent's reply is already captured once PROCESSED lands."""
+    PROCESSING, and the agent's reply does arrive.
+
+    The reply's ``message_created`` frame and the delivery-status ``message_updated``
+    frame are *independent, unordered* platform events, so PROCESSED does not imply the
+    reply is buffered yet — hence the reply barrier (``wait_for_reply``) waits for the
+    reply itself rather than assuming it landed with PROCESSED."""
     room_id = await resource_manager.provision_room(
         title="e2e-delivery-healthy", participants=[agent.id]
     )
@@ -78,16 +83,15 @@ async def test_healthy_message_reaches_processed_via_processing(
         mid = await user_ops.send_message(
             room_id, "Say hi.", mention_id=agent.id, mention_name=agent.name
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id)
         history = capture.delivery_history(mid, agent.id)
-        replied = any(m.sender_id == agent.id for m in capture.messages)
 
     logger.info("healthy delivery history: %s", [s.value for s in history])
     assert history, "expected at least one delivery-status transition"
     assert history[-1] is DeliveryStatus.PROCESSED, f"history ended at {history}"
     assert DeliveryStatus.PROCESSING in history, f"never saw processing: {history}"
-    # The barrier's core guarantee: processed implies the reply is already in.
-    assert replied, "PROCESSED reported but no agent reply was captured"
+    # The reply arrives on its own frame; the barrier waited for it, closing the race.
+    replies.assert_present(what="an agent reply")
 
 
 @pytest.mark.asyncio(loop_scope="session")

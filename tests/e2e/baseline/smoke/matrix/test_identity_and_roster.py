@@ -24,6 +24,7 @@ un-sourceable, so they stay out under the floors-only policy.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import ROSTER_PROBE
@@ -33,7 +34,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True)
-@pytest.mark.flaky(reruns=2)  # small-model wording of names is non-deterministic
+@flaky_model("small-model wording of names is non-deterministic")
 @pytest.mark.timeout(extra=120)  # a turn with two platform-tool reads
 @pytest.mark.asyncio(loop_scope="session")
 async def test_reports_identity_and_roster(
@@ -63,9 +64,8 @@ async def test_reports_identity_and_roster(
         mid = await user_ops.send_message(
             room_id, ROSTER_PROBE, mention_id=agent.id, mention_name=agent.name
         )
-        await capture.wait_for_processed(mid, agent.id)
+        replies = await capture.wait_for_reply(mid, agent.id, since=mark)
 
-    replies = capture.messages.since(mark).from_sender(agent.id)
     # Each self-sourced value asserted separately over the same replies — an any-of
     # over all three would pass on just one.
     replies.assert_contains_any([agent.name])  # identity (only the SDK knows it)

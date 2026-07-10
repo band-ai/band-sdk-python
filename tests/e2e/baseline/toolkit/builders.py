@@ -271,6 +271,14 @@ def _build_crewai_flow(
 
     return CrewAIFlowAdapter(
         flow_factory=_E2EFlow,
+        # In the baseline room scenarios crewai_flow is a live participant that must
+        # react to peer (agent-authored) messages — e.g. the loop_suppression positive,
+        # where a peer's directed probe has to drive a turn. The SDK default is the
+        # conservative False (a router ignores agent-initiated turns to avoid A<->B echo
+        # loops); opting in here is safe because the runtime already drops an agent's
+        # OWN messages before dispatch (execution.py self-filter), so crewai_flow reacts
+        # to peers without ever looping on its own output.
+        accept_agent_initiated=True,
         additional_tools=_custom_tool_defs(tools),
         features=features,
     )

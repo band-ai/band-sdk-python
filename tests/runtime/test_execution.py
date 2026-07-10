@@ -1855,7 +1855,9 @@ class TestGracefulStopWithTimeout:
         elapsed = asyncio.get_running_loop().time() - start
 
         assert result is False
-        assert elapsed >= 0.1  # Should have waited the full timeout
+        # Should have waited the full timeout. Windows event-loop timers tick at
+        # ~15.6 ms granularity, so the wait can end slightly early — allow one tick.
+        assert elapsed >= 0.1 - 0.02
 
 
 class TestErrorLabel:

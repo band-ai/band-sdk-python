@@ -112,6 +112,19 @@ LANE_EXTRAS: dict[Lane, Extra] = {
 }
 
 
+# Lanes whose CI job is Linux-only — their server backend has no Windows story.
+# OS is otherwise a workflow concern (the runner image); this is the one fact
+# about it the registry owns, because it is a property of what a lane *runs*.
+#
+# Letta stands up a self-hosted server, and neither way to run it works on the
+# windows-latest runner: the ``letta/letta`` image is Linux-only (the Windows
+# runner only runs Windows containers), and Letta's own install guide supports a
+# native install on macOS / Linux / WSL only, not raw Windows
+# (https://docs.letta.com/guides/server/source). Every other lane runs on every
+# OS the e2e matrix offers.
+LINUX_ONLY_LANES: frozenset[Lane] = frozenset({Lane.LETTA})
+
+
 class Dep(Enum):
     """A capability a test or adapter builder can require.
 

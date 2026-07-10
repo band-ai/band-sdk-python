@@ -5,7 +5,7 @@ instances of the current matrix adapter (distinct identities) **concurrently** i
 room; a mention is fired at each, and each must reply. Collisions fail loud for free: an
 instance that can't start makes ``run_many`` raise (the test errors); one deadlocked on a
 shared port/lock never reaches ``PROCESSED`` (its barrier times out); one that starts but
-can't reply fails ``assert_present``.
+can't reply times out its ``wait_for_reply`` barrier.
 
 Runs the matrix via ``@per_adapter()`` — **including** codex/opencode, the
 shared-``serve`` / shared-``CWD`` backends whose co-residency this gate most needs to
@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
@@ -43,7 +44,7 @@ INSTANCES = 3  # the spec's Test Agent + Calc + Greeter trio
 @per_adapter(
     exclude={Adapter.LETTA}
 )  # Letta: global-by-name MCP tools (see module doc)
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient reruns
+@flaky_infra("only transient reruns")
 @pytest.mark.timeout(extra=300)  # three concurrent boots + three turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_concurrent_same_adapter_instances_each_reply(
@@ -71,12 +72,9 @@ async def test_concurrent_same_adapter_instances_each_reply(
                     for instance in instances
                 )
             )
-            # ...but await the barriers SEQUENTIALLY (one nudge per capture).
+            # ...but await the barriers SEQUENTIALLY (one nudge per capture). Each
+            # wait_for_reply blocks until that instance's own reply is captured, or
+            # raises TimeoutError naming the stalled turn — so completing this loop is
+            # itself the proof that all K instances co-resided and each replied.
             for instance, mid in zip(instances, mids):
-                await capture.wait_for_processed(mid, instance.id)
-
-        # Each instance produced its own reply — proof all K co-resided and ran.
-        for instance in instances:
-            capture.messages.from_sender(instance.id).assert_present(
-                what=f"a reply from instance {instance.name}"
-            )
+                await capture.wait_for_reply(mid, instance.id)
