@@ -69,13 +69,15 @@ def _seek_to_lock_region(fd: int) -> None:
 def _lock_with_msvcrt(fd: int) -> None:
     assert msvcrt is not None
     _seek_to_lock_region(fd)
-    msvcrt.locking(fd, msvcrt.LK_NBLCK, _LOCK_SPAN_BYTES)
+    # msvcrt is Windows-only; its attributes are absent when pyrefly runs on Linux.
+    msvcrt.locking(fd, msvcrt.LK_NBLCK, _LOCK_SPAN_BYTES)  # pyrefly: ignore[missing-attribute]
 
 
 def _unlock_with_msvcrt(fd: int) -> None:
     assert msvcrt is not None
     _seek_to_lock_region(fd)
-    msvcrt.locking(fd, msvcrt.LK_UNLCK, _LOCK_SPAN_BYTES)
+    # msvcrt is Windows-only; its attributes are absent when pyrefly runs on Linux.
+    msvcrt.locking(fd, msvcrt.LK_UNLCK, _LOCK_SPAN_BYTES)  # pyrefly: ignore[missing-attribute]
 
 
 def _lock_fd(fd: int) -> bool:
