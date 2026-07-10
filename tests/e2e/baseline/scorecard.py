@@ -29,9 +29,14 @@ from typing import Literal
 
 import pytest
 
-from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, PerAdapter
+from tests.e2e.baseline.agents import PER_ADAPTER_MARKER, Adapter, PerAdapter
 
 logger = logging.getLogger(__name__)
+
+# Only a registered adapter id names a matrix cell. Other parametrized tests carry
+# unrelated params in their nodeid (e.g. ``test_send_event[thought]``), which must not
+# be mistaken for adapters when reading outcomes off a report.
+_ADAPTER_IDS: frozenset[str] = frozenset(str(adapter) for adapter in Adapter)
 
 # ``na`` = deliberately excluded (with a reason); ``skip`` = collected but not run in this
 # lane (lane scoping / E2E disabled). Ranked so a real outcome beats ``skip`` when the
@@ -90,18 +95,23 @@ def outcome_row(
 ) -> tuple[tuple[str, str], ScorecardRow] | None:
     """A pass / fail / skip row for one matrix cell, keyed by ``(test, adapter)``.
 
-    Only parametrized matrix cells carry an ``[adapter]`` in their nodeid; other tests
-    (provisioning, user-ops, the registry guards) are not part of the grid and return
-    ``None``. The verdict comes from the setup and call phases: a skip (lane scoping,
-    E2E disabled, or an in-body ``pytest.skip``) is ``skip``; a setup *error* (a failed
-    fixture) or a call failure is ``fail``; a passing call is ``pass``. Teardown reports
-    and passing setups carry no verdict and are ignored — so the accumulator's
-    last-write-wins keeps the call outcome, not a trailing teardown.
+    Only matrix cells count: a cell's ``[…]`` param is a registered adapter id, so a
+    parametrized test carrying anything else (``test_send_event[thought]``) and the
+    unparametrized tests (provisioning, user-ops, the registry guards) return ``None``.
+    The verdict comes from the setup and call phases: a skip (lane scoping, E2E disabled,
+    or an in-body ``pytest.skip``) is ``skip``; a setup *error* (a failed fixture) or a
+    call failure is ``fail``; a passing call is ``pass``. Teardown reports and passing
+    setups carry no verdict and are ignored — so the accumulator's last-write-wins keeps
+    the call outcome, not a trailing teardown.
     """
-    if "[" not in report.nodeid:
-        return None
     if report.when not in ("setup", "call"):
         return None
+    test, sep, rest = report.nodeid.partition("[")
+    if not sep:
+        return None  # unparametrized — not a matrix cell
+    adapter = rest.rstrip("]")
+    if adapter not in _ADAPTER_IDS:
+        return None  # a non-adapter parametrization (e.g. an event type)
     if report.skipped:
         status: Status = "skip"
         reason = _skip_reason(report)
@@ -113,8 +123,6 @@ def outcome_row(
         reason = None
     else:
         return None  # a passing setup carries no verdict — wait for the call phase
-    test, _, rest = report.nodeid.partition("[")
-    adapter = rest.rstrip("]")
     return (test, adapter), ScorecardRow(test, adapter, status, reason)
 
 

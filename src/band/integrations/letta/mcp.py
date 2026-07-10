@@ -200,51 +200,46 @@ class LettaMCPBridge:
                 f"is reachable by Letta at {server_url}: {e}"
             ) from e
 
-    @property
-    def registration_rotates_on_release(self) -> bool:
-        """Whether ``release`` deregisters from Letta and mints new tool ids.
-
-        True only for self-host mode with an auto-generated registration name
-        (``server_name`` unset).  Fixed names and external mode keep the Letta
-        row across adapter restarts, so tool ids stay stable.
-        """
-        return self._config.mode == "self_host" and self._config.server_name is None
-
     async def release(self, client: Any) -> None:
-        """Release the local MCP tool-path cache; deregister only when safe.
+        """Relinquish the local tool-path cache without deregistering from Letta.
 
         **External mode** — no-op.  The registration names a long-lived server
         this process does not own (often the shared default ``"band"``).
-        Deleting it would strip tools from other live agents; clearing cached
-        ids would force pointless re-discovery on restart.
 
-        **Self-host, fixed ``server_name``** — clear ``server_id`` / ``tool_ids``
-        only.  The Letta row is kept: deregistering a fixed name soft-deletes
-        it permanently.  The next ``ensure_ready`` re-adopts by name after
-        verifying the URL.  Because the in-process server uses an OS-assigned
-        port, a process restart usually changes the URL — see
-        ``LettaMCPConfig.server_name``.
+        **Self-host** (fixed or ephemeral name) — clear ``server_id`` /
+        ``tool_ids`` only; never delete the Letta row.  Letta stores MCP tools
+        keyed by tool *name* at organization scope, so every adapter registered
+        against the same org shares the same tool rows regardless of its
+        registration name.  Deregistering cascade-deletes those shared rows and
+        strips the tools from sibling agents still running in the org — the
+        failure this method used to cause.  Keeping the row is safe: the tools
+        stay valid, the next ``ensure_ready`` re-adopts (fixed name) or
+        registers a fresh ``band-{suffix}`` against the still-running in-process
+        server (ephemeral), and a row orphaned by a changed port is inert (see
+        ``LettaMCPConfig.server_name``).  State is cleared before any await so a
+        concurrent message can re-register.
 
-        **Self-host, ephemeral name** (``server_name`` unset) — deregister the
-        Letta row, then clear cache.  The in-process server keeps running until
-        process exit (Letta closes its MCP session asynchronously after delete;
-        stopping the server around that close wedges Letta's serial sync worker).
-        The next ``ensure_ready`` registers under a fresh ``band-{suffix}`` name.
-        State is cleared before any await so a concurrent message can re-register.
+        ``client`` is accepted for signature stability with the deregistering
+        past; it is unused now that release never calls the server.
         """
+        del client  # no server call — see docstring
         if self._config.mode == "external":
             return
-        server_id = self.server_id
         self.server_id = None
         self.tool_ids = []
-        if client and server_id and self.registration_rotates_on_release:
-            ok = await bounded_teardown(
-                client.mcp_servers.delete(server_id),
-                timeout_s=self._teardown_timeout_s,
-                action=f"deregister MCP server {server_id}",
-            )
-            if ok:
-                logger.debug("Deregistered MCP server %s from Letta", server_id)
+
+    async def reregister(self, client: Any) -> None:
+        """Re-register from scratch to recover tool ids that died in the org.
+
+        On a stale-tool 404 (the registration's org tool rows were deleted out
+        from under us — e.g. by an external sweep), re-listing the existing
+        server yields nothing; only a fresh registration re-syncs attachable
+        tools.  Drops the cache and runs ``ensure_ready``, which registers a new
+        server against the still-running backend and rediscovers its tools.
+        """
+        self.server_id = None
+        self.tool_ids = []
+        await self.ensure_ready(client)
 
     def resolve_send_tools(self, tool_names: list[str]) -> None:
         """Derive the send/event tool names from the server's discovered tools.

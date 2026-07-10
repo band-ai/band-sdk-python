@@ -171,6 +171,15 @@ def test_outcome_row_ignores_non_matrix_and_passing_setup() -> None:
     assert outcome_row(_report("m.py::t[agno]", "teardown", outcome="passed")) is None
 
 
+def test_outcome_row_ignores_non_adapter_parametrization() -> None:
+    # A parametrized test whose param is not a registered adapter (an event type, not a
+    # matrix cell) must not pollute the grid with a phantom "adapter".
+    assert (
+        outcome_row(_report("e.py::test_send_event[thought]", "call", outcome="passed"))
+        is None
+    )
+
+
 # --- collector + merge: a run's rows, then the cross-lane union ----------------------
 
 
