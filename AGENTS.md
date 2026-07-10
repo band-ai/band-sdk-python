@@ -561,6 +561,7 @@ test, where the markdown-docs run actually executes it.
   restate definitions (asserting dataclass defaults equal themselves, echoing a
   constant) or otherwise cannot fail for a real reason; they add maintenance
   cost without protection.
+- Comments should describe the code as it is, not narrate what changed between versions.
 
 ## Pre-Commit Checklist
 

@@ -21,6 +21,7 @@ the *prompt effect* and *coexistence* on top.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -47,7 +48,7 @@ KEY = "beta"  # ACCESS_CODES["beta"] -> a code the model cannot guess
     tools=[LOOKUP_TOOL],
     prompt=custom_prompt_with_marker(PROMPT_MARKER),
 )
-@pytest.mark.flaky(reruns=2)  # marker-in-every-reply is a model-driven behaviour
+@flaky_model("marker-in-every-reply is a model-driven behaviour")
 @pytest.mark.timeout(extra=180)  # a custom-tool turn, then a roster turn
 @pytest.mark.asyncio(loop_scope="session")
 async def test_custom_prompt_takes_effect_and_coexists_with_platform_tools(
@@ -72,8 +73,7 @@ async def test_custom_prompt_takes_effect_and_coexists_with_platform_tools(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(code_mid, agent.id)
-        turn_one = capture.messages.from_sender(agent.id)
+        turn_one = await capture.wait_for_reply(code_mid, agent.id)
         turn_one.assert_contains_any([ACCESS_CODES[KEY]])  # tool result round-tripped
         turn_one.assert_contains_any([PROMPT_MARKER])  # prompt still in effect
 
@@ -86,8 +86,7 @@ async def test_custom_prompt_takes_effect_and_coexists_with_platform_tools(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(who_mid, agent.id)
-        turn_two = capture.messages.since(mark).from_sender(agent.id)
+        turn_two = await capture.wait_for_reply(who_mid, agent.id, since=mark)
 
     # The platform tool still works under the custom prompt (a known member appears),
     # the marker still rides the reply, and an invitable-but-absent peer is not fabricated.

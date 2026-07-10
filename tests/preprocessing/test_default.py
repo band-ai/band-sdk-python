@@ -206,6 +206,53 @@ class TestAgentInputConstruction:
         assert result.msg.sender_type == "User"
         assert result.room_id == "room-123"
 
+    async def test_translates_uuid_mentions_in_current_message(self):
+        """@[[uuid]] mention tokens become @handle, like history formatting.
+
+        The platform normalizes mentions to ``@[[uuid]]`` in stored content; a
+        raw uuid in the live turn misleads the LLM (e.g. into using it as a
+        memory ``subject_id``), so the current message gets the same
+        translation history already gets.
+        """
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        ctx.participants = [
+            {"id": "agent-9", "name": "Bot", "type": "Agent", "handle": "org/bot"},
+            {"id": "user-1", "name": "Alice", "type": "User", "handle": "alice"},
+        ]
+        event = make_message_event(
+            content="@[[agent-9]] please remember this about me",
+            sender_id="user-1",
+        )
+
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "band.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is not None
+        assert result.msg.content == "@org/bot please remember this about me"
+
+    async def test_unknown_mention_uuid_is_left_intact(self):
+        """A mention of someone missing from the roster stays untranslated."""
+        preprocessor = DefaultPreprocessor()
+        ctx = make_mock_ctx()
+        event = make_message_event(content="@[[stranger-7]] hello")
+
+        with patch("band.preprocessing.default.AgentTools") as mock_tools:
+            mock_tools.from_context.return_value = MagicMock()
+            with patch(
+                "band.preprocessing.default.check_and_format_participants"
+            ) as mock_participants:
+                mock_participants.return_value = None
+                result = await preprocessor.process(ctx, event, agent_id="agent-1")
+
+        assert result is not None
+        assert result.msg.content == "@[[stranger-7]] hello"
+
     async def test_sets_history_provider(self):
         """Should set HistoryProvider on AgentInput."""
         preprocessor = DefaultPreprocessor()

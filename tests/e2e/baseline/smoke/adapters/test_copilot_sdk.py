@@ -2,7 +2,7 @@
 
 Copilot SDK is a ``copilot``-lane matrix adapter (its own lane: it needs a
 GitHub token from a Copilot-entitled account, not a plain provider key — see
-``requirements.py``), so the generic matrix (``smoke/matrix/``) already runs the
+``deps.py``), so the generic matrix (``smoke/matrix/``) already runs the
 standard scenarios against it via the registry builder. These are Copilot-focused
 instead: ``ask_user`` routing (handler and room mode), recall when Copilot's
 *native* session resume misses, and one client shared across adapter lifecycles —
@@ -29,6 +29,7 @@ import pytest
 
 from band.adapters.copilot_sdk import ASK_USER_ROOM, _COPILOT_SDK_AVAILABLE
 
+from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -83,7 +84,9 @@ def _chosen_word(reply: str) -> str:
 
 
 @requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])
+@flaky_infra(
+    "Copilot runtime boot + ask_user double round-trip can time out transiently"
+)
 # ask_user adds a second model round trip (ask -> handler answers -> final
 # reply) on top of Copilot's own runtime boot.
 @pytest.mark.timeout(extra=120)
@@ -141,7 +144,7 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
                 mention_id=agent.id,
                 mention_name=agent.name,
             )
-            await capture.wait_for_processed(
+            replies = await capture.wait_for_reply(
                 mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 2
             )
 
@@ -149,11 +152,11 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
     assert asked[0].get("question"), f"ask_user carried no question: {asked[0]!r}"
     # Only the operator handler can supply this token; the reply containing it
     # proves the answer round-tripped through the turn.
-    capture.messages.assert_contains_any([operator_channel])
+    replies.assert_contains_any([operator_channel])
 
 
 @requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])
+@flaky_infra("two full live turns plus Copilot runtime boot can time out transiently")
 @pytest.mark.timeout(extra=180)  # two full turns (question turn + answer turn)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_copilot_ask_user_room_question_answered_by_next_message(
@@ -201,10 +204,10 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
                 mention_id=agent.id,
                 mention_name=agent.name,
             )
-            await capture.wait_for_processed(
-                mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 2
+            replies = await capture.wait_for_reply(
+                mid, agent.id, since=mark, deadline_s=baseline_settings.e2e_timeout * 2
             )
-            capture.messages.since(mark).assert_contains_any(["channel"])
+            replies.assert_contains_any(["channel"])
 
             # Turn 2: the user's next room message is the answer.
             mark = capture.messages.snapshot()
@@ -214,16 +217,18 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
                 mention_id=agent.id,
                 mention_name=agent.name,
             )
-            await capture.wait_for_processed(
-                mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 2
+            replies = await capture.wait_for_reply(
+                mid, agent.id, since=mark, deadline_s=baseline_settings.e2e_timeout * 2
             )
             # Only the answer message contains this token; the reply relaying
             # it proves the question/answer round-tripped through the room.
-            capture.messages.since(mark).assert_contains_any([secret_channel])
+            replies.assert_contains_any([secret_channel])
 
 
 @requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])
+@flaky_infra(
+    "two fresh Copilot runtime boots (resume-miss setup) can time out transiently"
+)
 # Two agent lifecycles, each booting a fresh Copilot runtime into an empty
 # base_directory (the resume-miss setup) — the heaviest boot path in this file.
 @pytest.mark.timeout(extra=180)
@@ -273,10 +278,10 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            await capture.wait_for_processed(
+            replies = await capture.wait_for_reply(
                 mid, identity.id, deadline_s=baseline_settings.e2e_timeout
             )
-            agent_word = _chosen_word(capture.messages[-1].content)
+            agent_word = _chosen_word(replies[-1].content)
 
     # Phase 2: fresh process state AND fresh Copilot state directory — recall
     # can only come from the platform history the adapter injects.
@@ -289,17 +294,19 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            await capture.wait_for_processed(
+            replies = await capture.wait_for_reply(
                 mid, identity.id, deadline_s=baseline_settings.e2e_timeout
             )
-            capture.messages.assert_contains_any([secret_code])
+            replies.assert_contains_any([secret_code])
             # The user never uttered this word — only the agent's own injected
             # phase-1 reply can supply it.
-            capture.messages.assert_contains_any([agent_word])
+            replies.assert_contains_any([agent_word])
 
 
 @requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])
+@flaky_infra(
+    "several live turns across two adapter lifecycles can time out transiently"
+)
 # Two sequential adapter lifecycles on one shared runtime, the first serving
 # two concurrent room sessions — several live turns, so widen the outer budget.
 @pytest.mark.timeout(extra=180)
@@ -340,10 +347,10 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            await capture.wait_for_processed(
+            replies = await capture.wait_for_reply(
                 mid, identity.id, deadline_s=baseline_settings.e2e_timeout
             )
-        capture.messages.assert_present(what="a copilot_sdk[shared-client] reply")
+        replies.assert_present(what="a copilot_sdk[shared-client] reply")
 
     def make_shared_adapter(client: Any) -> CopilotSDKAdapter:
         return CopilotSDKAdapter(_copilot_config(baseline_settings), client=client)

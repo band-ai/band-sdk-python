@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, with_adapters
 from tests.e2e.baseline.requires import Dep, requires
@@ -171,7 +172,7 @@ async def test_tool_calls_isolated_per_room(
 @with_adapters(
     Adapter.ANTHROPIC, tools=[LOOKUP_TOOL], prompt=LOOKUP_PROMPT, **EXECUTION_REPORTING
 )
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 @pytest.mark.asyncio(loop_scope="session")
 async def test_capture_scopes_to_current_turn(
     agent: ProvisionedAgent,
@@ -191,7 +192,9 @@ async def test_capture_scopes_to_current_turn(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(m_one, agent.id)
+        # Wait for turn 1's reply to be captured — turn_boundary() reads its timestamp
+        # and raises on an empty buffer, so the processed signal alone isn't enough.
+        await capture.wait_for_reply(m_one, agent.id)
         # Boundary between turns (server timestamp of turn 1's reply). Turn 1's call
         # is verified by the unscoped read at the end.
         boundary = capture.turn_boundary()

@@ -49,10 +49,38 @@ logger = logging.getLogger(__name__)
 # All provisioned agent names start with this; the orphan sweep matches on it.
 NAME_PREFIX = "e2e-band-"
 
+# The platform truncates @mention handles beyond this many characters. A peer that a
+# scenario provisions and later asserts by @mention (a roster reply names it as
+# ``@handle``) only surfaces its full name if that name fits the cap; beyond it the
+# handle truncates (``…-invitable`` -> ``…-invita``) and the self-sourced roster
+# assertions in test_identity_and_roster would fail. The agent-under-test is exempt:
+# it reports its own name as plain text (not a handle), so its adapter-id label
+# (e.g. "pydantic_ai") may push its name past the cap harmlessly.
+MENTION_HANDLE_CAP = 24
+
+# Longest label a scenario both provisions and asserts by @mention
+# ("invitable"/"nonmember"). The run-id length is derived from it rather than
+# hand-picked; the guard test_mentioned_peer_names_fit_handle_cap enforces the
+# budget so a longer peer label (or a wider prefix) fails loudly instead of
+# silently truncating a handle.
+MAX_MENTIONED_LABEL_LEN = len("invitable")  # 9
+
+
+def run_id_len() -> int:
+    """Hex length for a run id that keeps the longest @mentioned peer name within
+    the handle cap: ``CAP - len(prefix) - len("-") - longest mentioned label``."""
+    return MENTION_HANDLE_CAP - len(NAME_PREFIX) - 1 - MAX_MENTIONED_LABEL_LEN
+
 
 def new_run_id() -> str:
-    """Short token identifying a single test session's provisioned resources."""
-    return uuid.uuid4().hex[:8]
+    """Short token identifying a single test session's provisioned resources.
+
+    Its length is *derived* from the mention-handle cap (see :func:`run_id_len`) so
+    the longest @mentioned peer name — ``{NAME_PREFIX}{run_id}-{label}`` — still
+    surfaces in full rather than as a truncated handle. The resulting entropy
+    (~1M at 5 hex) is ample given the run-id + age guards in ``sweep_orphans``.
+    """
+    return uuid.uuid4().hex[: run_id_len()]
 
 
 @dataclass(frozen=True)

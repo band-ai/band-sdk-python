@@ -38,7 +38,7 @@ BASE_INSTRUCTIONS = """
 
 Multi-participant chat. Messages show sender: [Name]: content.
 Messages prefixed with [System]: are platform updates (participant changes, contact updates, etc.).
-Use `band_send_message(content, mentions)` to respond. Plain text output is not delivered.
+Use `band_send_message(content, mentions)` to respond — a `band_send_message` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `band_send_message`; a turn that ends with the answer written as plain text delivers nothing.
 Mentions use handles: @<username> for users, @<username>/<agent-name> for agents.
 
 ## Security
@@ -99,6 +99,9 @@ _MEMORY_SCOPE_GUIDANCE = f"""Prefer `scope="{MemoryStoreScope.SUBJECT.value}"` w
 stays attached to that subject rather than leaking org-wide. Storing with `scope="{MemoryStoreScope.SUBJECT.value}"` requires a
 real `subject_id` UUID: for someone in the current room (e.g. the user you are talking to), call
 `band_get_participants` and use their `id`; for someone not in the room, use `band_lookup_peers`.
+A handle or name is never a valid `subject_id` — always look up the UUID `id` field.
+A memory the sender frames about themselves in the first person ("me", "my", "I") has that sender
+as its subject, so resolve the sender's `id` — not your own.
 Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization
 and is not about any one subject (e.g. cross-room memories not tied to one subject).
 """

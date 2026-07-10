@@ -38,12 +38,14 @@ from tests.e2e.baseline.agents import (
     PER_ADAPTER_MARKER,
 )
 from tests.e2e.baseline.agent_wiring import assert_agent_fixtures_wired
+from tests.e2e.baseline.flaky import assert_flaky_is_classified
 from tests.e2e.baseline.lane_selection import (
     apply_lane_skips,
     assert_every_item_is_schedulable,
 )
 from tests.e2e.baseline.requires import MARKER, require_dep
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.toolkit.timeouts import effective_timeout
 
 # Re-exported fixtures (defined in fixtures/*; imported so pytest registers them).
 __all__ = [
@@ -111,30 +113,6 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
             require_dep(dep, settings)
 
 
-def _effective_timeout(item: pytest.Item, base: int) -> int | None:
-    """Resolve a baseline item's pytest-timeout from its (optional) ``timeout`` marker.
-
-    The ``timeout`` marker is pytest-timeout's own, overloaded here so a test reads
-    in pytest-native spelling:
-
-    * no marker, or bare ``@pytest.mark.timeout()`` -> ``base`` (the turn budget);
-    * ``@pytest.mark.timeout(extra=n)`` -> ``base + n`` (headroom for a slow
-      framework, e.g. crewai cold-start), tracking ``base`` rather than hardcoding;
-    * ``@pytest.mark.timeout(n)`` (positional) -> ``None``, i.e. leave it alone so
-      pytest-timeout honors the absolute value natively (the long scenario tests).
-
-    Returning a value means the caller adds a clean ``timeout(value)`` marker; the
-    ``extra=``/bare forms are illegal to pytest-timeout's own parser, so the caller
-    must make that clean marker the *closest* one (it is the only one parsed).
-    """
-    marker = item.get_closest_marker("timeout")
-    if marker is None:
-        return base
-    if marker.args:  # absolute @pytest.mark.timeout(n): honored natively
-        return None
-    return base + marker.kwargs.get("extra", 0)
-
-
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Guard wiring + schedulability, scope to ``BAND_E2E_LANE``, then apply the
     session event loop + per-turn timeout to every baseline test.
@@ -158,16 +136,22 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     assert_agent_fixtures_wired(items)
     assert_every_item_is_schedulable(items)
+
+    baseline_dir = Path(__file__).parent
+    baseline_items = [
+        item for item in items if Path(item.path).is_relative_to(baseline_dir)
+    ]
+    assert_flaky_is_classified(baseline_items)
+
     settings = BaselineSettings()
     apply_lane_skips(settings.run.lane, items)
 
-    baseline_dir = Path(__file__).parent
     session_marker = pytest.mark.asyncio(loop_scope="session")
     base = settings.e2e_timeout
     for item in items:
         if not Path(item.path).is_relative_to(baseline_dir):
             continue
         item.add_marker(session_marker)
-        timeout = _effective_timeout(item, base)
+        timeout = effective_timeout(item, base)
         if timeout is not None:
             item.add_marker(pytest.mark.timeout(timeout), append=False)

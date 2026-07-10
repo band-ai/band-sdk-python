@@ -26,7 +26,9 @@ from __future__ import annotations
 import contextlib
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
+from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -46,7 +48,8 @@ _SHORT = "You are a friendly assistant in a chat room. Reply in one short senten
 @requires(
     Dep.OPENAI
 )  # running_parlant_server uses the OpenAI NLP service (OPENAI_API_KEY)
-@pytest.mark.flaky(reruns=2)  # a live agent turn occasionally times out; retry it
+@lane(Lane.CORE)
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
 # The barrier below waits up to ``e2e_timeout * 3`` (360s at the 120s default) for
 # Parlant's cold multi-call pipeline. The outer cap is ``e2e_timeout + extra``, so
 # ``extra`` must clear that 3x barrier *plus* in-process server boot, provisioning,
@@ -102,9 +105,8 @@ async def test_parlant_replies(
             )
             # Parlant's first turn runs a multi-LLM-call pipeline on a cold
             # in-process server, so give the barrier more than one per-turn budget.
-            await capture.wait_for_processed(
+            replies = await capture.wait_for_reply(
                 mid, agent.id, deadline_s=baseline_settings.e2e_timeout * 3
             )
-            replies = capture.messages
 
     replies.assert_present(what="a parlant reply")

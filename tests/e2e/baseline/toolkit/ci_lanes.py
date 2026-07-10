@@ -31,6 +31,7 @@ from tests.e2e.baseline.toolkit.adapters import (
 )
 from tests.e2e.baseline.toolkit.deps import (
     DEFAULT_LANE,
+    LINUX_ONLY_LANES,
     REPO_ROOT,
     Extra,
     Lane,
@@ -41,11 +42,16 @@ from tests.e2e.baseline.toolkit.deps import (
 
 @dataclass(frozen=True)
 class CILane:
-    """A CI lane (one job): its id, the ``uv`` extra it installs, and its adapters."""
+    """A CI lane (one job): its id, the ``uv`` extra it installs, and its adapters.
+
+    ``linux_only`` marks a lane whose backend can't run off Linux (see
+    ``LINUX_ONLY_LANES``); the workflow uses it to drop that lane's Windows cells.
+    """
 
     id: Lane
     extra: Extra
     adapters: tuple[Adapter, ...]
+    linux_only: bool = False
 
 
 @lru_cache(maxsize=1)
@@ -67,7 +73,12 @@ def ci_lanes() -> tuple[CILane, ...]:
     for spec in specs(include_pending=True):  # stable id order
         by_lane.setdefault(adapter_lane(spec), []).append(spec.id)
     return tuple(
-        CILane(id=lane, extra=lane_extra(lane), adapters=tuple(ids))
+        CILane(
+            id=lane,
+            extra=lane_extra(lane),
+            adapters=tuple(ids),
+            linux_only=lane in LINUX_ONLY_LANES,
+        )
         for lane, ids in sorted(by_lane.items())
     )
 

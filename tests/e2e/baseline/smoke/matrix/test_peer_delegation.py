@@ -21,6 +21,7 @@ concurrent triage are already covered by ``test_multi_agent_collaboration``.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
@@ -36,7 +37,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(runs_tool_loop=True, prompt=REPLY_PROMPT)
-@pytest.mark.flaky(reruns=2)  # multi-hop routing on a small model is non-deterministic
+@flaky_model("multi-hop routing on a small model is non-deterministic")
 @pytest.mark.timeout(extra=300)  # a seed turn + a B→A→B delegation cascade
 @pytest.mark.asyncio(loop_scope="session")
 async def test_peer_initiated_delegation_with_self_recall(
@@ -74,12 +75,10 @@ async def test_peer_initiated_delegation_with_self_recall(
                 mention_id=agent_b.id,
                 mention_name=agent_b.name,
             )
-            await capture.wait_for_processed(deleg_mid, agent_b.id)
             # Coupled: B mentioned A (metadata) in a message carrying the recalled value
             # — a real peer-initiated routing mention off B's own context.
-            capture.messages.since(mark).from_sender(agent_b.id).mentioning(
-                agent_a.id
-            ).assert_contains_any([value])
+            replies_b = await capture.wait_for_reply(deleg_mid, agent_b.id, since=mark)
+            replies_b.mentioning(agent_a.id).assert_contains_any([value])
 
             # Cascade barrier: A's reply is driven by B's mention (not a user send), so
             # wait until A has produced a message *since the delegation* — reusing the same

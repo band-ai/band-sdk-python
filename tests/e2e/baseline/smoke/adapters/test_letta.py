@@ -91,7 +91,7 @@ async def test_reply_arrives_via_mcp_send_tool(
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
-            await capture.wait_for_processed(trigger, identity.id)
-    capture.messages.assert_present(
+            replies = await capture.wait_for_reply(trigger, identity.id)
+    replies.assert_present(
         what="a reply sent through the MCP band_send_message tool (relay disabled)"
     )

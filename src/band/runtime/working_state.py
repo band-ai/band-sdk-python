@@ -26,7 +26,6 @@ below the cadence), so even one missed/slow ping stays within the TTL window.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 
@@ -89,8 +88,14 @@ class WorkingStateReporter:
         task, self._task = self._task, None
         if task is not None:
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            # ``gather(return_exceptions=True)`` swallows the keep-alive task's
+            # own CancelledError (returned as a result) while still propagating a
+            # cancellation aimed at *us* — the caller awaiting stop(). A bare
+            # ``suppress(CancelledError)`` here would also eat an external cancel
+            # landing in this await window, silently un-cancelling the caller's
+            # process loop and stalling shutdown (observed as a hang on Windows,
+            # where scheduling makes the race routine).
+            await asyncio.gather(task, return_exceptions=True)
 
         send = asyncio.ensure_future(self._safe_report(False))
         try:

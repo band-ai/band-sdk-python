@@ -18,10 +18,12 @@ reliably refuse to repeat a credential-shaped value, an unrelated false failure.
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_model
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
+    REPLY_PROMPT,
     REMEMBER,
     unique_marker,
 )
@@ -32,11 +34,11 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 # CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
 # cannot recall a per-room note — exclude it from recall scenarios.
-@per_adapter(exclude={Adapter.CREWAI_FLOW})
-# Recall on a live model is non-deterministic (a capable model occasionally emits a
-# false "I can't remember" despite having the note), so allow AssertionError reruns
-# here — unlike the matrix's usual rerun_except; a real regression still fails red.
-@pytest.mark.flaky(reruns=2)
+@per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
+@flaky_model(
+    "recall on a live model is non-deterministic — the model occasionally denies "
+    "having the note despite it being in context"
+)
 @pytest.mark.timeout(extra=180)  # four sequential turns (two rooms × state + recall)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_rooms_keep_isolated_context(
@@ -88,9 +90,9 @@ async def test_rooms_keep_isolated_context(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await cap_a.wait_for_processed(mid, agent.id)
-        cap_a.messages.assert_contains_any([note_a])
-        cap_a.messages.assert_contains_none([note_b])
+        replies = await cap_a.wait_for_reply(mid, agent.id)
+        replies.assert_contains_any([note_a])
+        replies.assert_contains_none([note_b])
 
     async with reply_capture(room_b) as cap_b:
         mid = await user_ops.send_message(
@@ -99,6 +101,6 @@ async def test_rooms_keep_isolated_context(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await cap_b.wait_for_processed(mid, agent.id)
-        cap_b.messages.assert_contains_any([note_b])
-        cap_b.messages.assert_contains_none([note_a])
+        replies = await cap_b.wait_for_reply(mid, agent.id)
+        replies.assert_contains_any([note_b])
+        replies.assert_contains_none([note_a])

@@ -28,6 +28,7 @@ a credential-shaped value — an unrelated false failure).
 from __future__ import annotations
 
 import pytest
+from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
@@ -40,7 +41,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 # CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
 # cannot recall a seeded fact — exclude it from recall scenarios.
 @per_adapter(exclude={Adapter.CREWAI_FLOW})
-@pytest.mark.flaky(reruns=2, rerun_except=["AssertionError"])  # only transient failures
+@flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=300)  # seed + several noise inferences + probe + recall
 @pytest.mark.asyncio(loop_scope="session")
 async def test_recall_and_ignore_crosstalk_in_busy_room(
@@ -93,15 +94,15 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        # Barrier on delivery state, not reply text: per-room FIFO means the probe
-        # is PROCESSED only after every earlier (decoy) message was, and the reply
-        # is emitted before PROCESSED — so once this returns, any decoy reply the
-        # agent wrongly made is already buffered, with no WS-ordering race (the
-        # reason the toolkit prefers this over text matching). Only our agent
-        # replies (the bystander never runs), so no sender filtering is needed.
-        await capture.wait_for_processed(probe, agent.id, deadline_s=flood_deadline)
-
-        flood_replies = capture.messages.since(flood_mark)
+        # Wait for the probe's own reply. Per-room FIFO means the probe is answered
+        # only after every earlier (decoy) message, so once the probe's reply frame is
+        # captured, any decoy reply the agent wrongly made is already buffered too.
+        # wait_for_reply waits on the reply frame itself, so it doesn't race the
+        # independently-delivered delivery-status frame. Only our agent replies (the
+        # bystander never runs), so no sender filtering is needed.
+        flood_replies = await capture.wait_for_reply(
+            probe, agent.id, since=flood_mark, deadline_s=flood_deadline
+        )
         # Liveness: it answered its own probe.
         flood_replies.assert_contains_any([live])
         # Ignored cross-talk: nothing it said during the flood echoed a decoy.
@@ -115,7 +116,6 @@ async def test_recall_and_ignore_crosstalk_in_busy_room(
             mention_id=agent.id,
             mention_name=agent.name,
         )
-        await capture.wait_for_processed(mid, agent.id)
-        recall = capture.messages.since(recall_mark)
+        recall = await capture.wait_for_reply(mid, agent.id, since=recall_mark)
         recall.assert_contains_any([needle])
         recall.assert_contains_none(decoys)

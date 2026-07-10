@@ -28,6 +28,7 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
+    "filelock>=3.12",  # Cross-platform advisory file lock for repo init (Docker runners)
 ]
 
 [project.optional-dependencies]
@@ -70,7 +71,9 @@ copilot_sdk = [
     "github-copilot-sdk>=1.0.5",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
 ]
 parlant = [
-    "parlant>=3.0.0",
+    # Floor at 3.3.2: older versions stall the in-process server's post-preamble
+    # message generation (event-loop starvation).
+    "parlant>=3.3.2",
     "openai>=1.0.0",
     "werkzeug>=3.1.6",
 ]
@@ -149,6 +152,7 @@ dev = [
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
+    "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
     "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
@@ -177,8 +181,8 @@ dev = [
     "uvicorn>=0.32.0",
     # Include a2a_gateway_demo deps for testing
     "click>=8.0.0",
-    # Include parlant for testing
-    "parlant>=3.0.0",
+    # Include parlant for testing (see the parlant extra for why >=3.3.2)
+    "parlant>=3.3.2",
     "werkzeug>=3.1.6",
     # Include ACP deps for testing
     "agent-client-protocol>=0.9.0",
@@ -217,6 +221,7 @@ dev-crewai = [
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
+    "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
     "thenvoi-testing-python==0.1.4",
     "httpx>=0.24.0",
@@ -263,6 +268,7 @@ timeout = 30
 markers = [
     "requires_api: marks tests as requiring real API credentials (skipped in CI)",
     "e2e: marks tests as end-to-end (requires live services)",
+    "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
 ]
 
 [tool.uv]

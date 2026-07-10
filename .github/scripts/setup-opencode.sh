@@ -6,12 +6,11 @@
 set -euo pipefail
 
 npm install -g opencode-ai
-mkdir -p ~/.config/opencode
 
 # The unsecured localhost server reads the Zen key via the {env:...} substitution.
 # Free-tier account, so the config pins free models (incl. the small/title model)
 # to avoid paid calls.
-cat > ~/.config/opencode/opencode.json <<'JSON'
+read -r -d '' OPENCODE_CONFIG_JSON <<'JSON' || true
 {
   "$schema": "https://opencode.ai/config.json",
   "small_model": "opencode/mimo-v2.5-free",
@@ -25,6 +24,12 @@ JSON
 # tools, so in the repo checkout a weak free model wanders into the source instead of
 # replying. An empty cwd keeps it on task.
 workdir="$(mktemp -d)"
+mkdir -p ~/.config/opencode
+printf '%s\n' "$OPENCODE_CONFIG_JSON" > ~/.config/opencode/opencode.json
+# Also drop a project-local config in the serve cwd: the native opencode on the
+# Windows runner reads its config from %APPDATA%, not ~/.config, but honours a
+# cwd-local opencode.json on every platform — so this is the portable placement.
+printf '%s\n' "$OPENCODE_CONFIG_JSON" > "$workdir/opencode.json"
 ( cd "$workdir" && nohup opencode serve --hostname 127.0.0.1 --port 4096 \
     >/tmp/opencode-serve.log 2>&1 & )
 ready=false

@@ -914,10 +914,15 @@ class ExecutionContext:
                     self.queue.qsize(),
                 )
                 try:
-                    event = await asyncio.wait_for(
-                        self.queue.get(),
-                        timeout=self.config.idle_resync_seconds,
-                    )
+                    # asyncio.timeout() (not wait_for): wait_for wraps the
+                    # awaitable in a child task, and on Python 3.11 cancelling
+                    # this loop while it is parked there can be lost — the cancel
+                    # is recorded but never delivered, wedging shutdown (a routine
+                    # race on the Windows Proactor loop). asyncio.timeout() arms a
+                    # timer on the current task instead, so an external cancel
+                    # propagates directly into `queue.get()`.
+                    async with asyncio.timeout(self.config.idle_resync_seconds):
+                        event = await self.queue.get()
                 except asyncio.TimeoutError:
                     logger.debug(
                         "ExecutionContext %s: Idle for %ss, re-polling /next",
