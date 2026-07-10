@@ -123,14 +123,20 @@ class Backends(BaseSettings):
     # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
     opencode_model_id: str = "mimo-v2.5-free"  # OPENCODE_MODEL_ID
 
-    # Letta (Cloud or self-hosted). Letta executes platform tools via a band-mcp
-    # server it calls (MCP_SERVER_URL). Letta has no live E2E here yet (the adapter
-    # is registered e2e_pending) — these fields back the registered builder and the
-    # Dep.LETTA requirement, ready for when the Letta smokes land.
+    # Letta (Cloud or self-hosted). The Letta server executes platform tools by
+    # calling a Band MCP server: by default the adapter self-hosts one in-process
+    # (advertised to the dockerized Letta via LETTA_MCP_ADVERTISED_HOST); setting
+    # MCP_SERVER_URL switches the builder to an external band-mcp instead.
     letta_base_url: str = "https://api.letta.com"  # LETTA_BASE_URL
     letta_api_key: str = ""  # LETTA_API_KEY (Letta Cloud)
     letta_model: str = "openai/gpt-5.4-mini"  # LETTA_MODEL
-    mcp_server_url: str = ""  # MCP_SERVER_URL (band-mcp SSE endpoint)
+    # Letta's docker server requires an embedding model on agent create.
+    letta_embedding: str = "openai/text-embedding-3-small"  # LETTA_EMBEDDING
+    # Host the (dockerized) Letta server uses to reach the adapter's self-hosted
+    # MCP server. host.docker.internal works on CI (docker run --add-host) and on
+    # macOS/Windows Docker Desktop; set 127.0.0.1 for a natively-run Letta.
+    letta_mcp_advertised_host: str = "host.docker.internal"  # LETTA_MCP_ADVERTISED_HOST
+    mcp_server_url: str = ""  # MCP_SERVER_URL (external band-mcp SSE endpoint)
 
     # Copilot SDK. BYOK inference reuses llm_credentials.anthropic_api_key; this is
     # only the runtime-auth token, from a GitHub account with Copilot entitlement.

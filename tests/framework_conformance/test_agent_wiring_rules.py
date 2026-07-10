@@ -211,13 +211,49 @@ def test_all_offenders_are_reported() -> None:
 
 
 def test_peer_must_be_a_live_adapter() -> None:
-    """A pending adapter (runs no cells) is rejected as a peer at decoration time."""
+    """A pending adapter (runs no cells) is rejected as a peer at decoration time.
+
+    Synthesizes the pending state by patching a live adapter's registry entry,
+    so the guard stays testable when (as expected) no real adapter is pending.
+    """
+    from dataclasses import replace
+    from unittest.mock import patch
+
     from tests.e2e.baseline.agents import per_adapter
+    from tests.e2e.baseline.toolkit import adapters as adapters_module
+    from tests.e2e.baseline.toolkit.adapters import Adapter, spec_for
+
+    pending_spec = replace(
+        spec_for(Adapter.LANGGRAPH), e2e_pending="synthetic: backend not CI-wired"
+    )
+    with patch.dict(adapters_module._REGISTRY, {Adapter.LANGGRAPH: pending_spec}):
+        with pytest.raises(ValueError, match="pending adapter"):
+            per_adapter(peer=Adapter.LANGGRAPH)
+
+
+# --- e2e_pending allowlist ----------------------------------------------------------------
+
+# Pending is a short-lived staging state for an adapter whose backend isn't
+# CI-wired yet: it keeps the adapter's CI lane defined while running zero matrix
+# cells, which must never become a quiet way to dodge E2E. Adding an adapter here
+# requires editing this allowlist (naming it, deliberately, in review) and a
+# follow-up that takes its lane live.
+EXPECTED_PENDING_ADAPTERS: frozenset[str] = frozenset()
+
+
+def test_pending_adapters_match_the_allowlist() -> None:
+    """The e2e_pending set equals the explicit allowlist (empty today)."""
     from tests.e2e.baseline.toolkit.adapters import specs
 
-    pending = [
-        s.id for s in specs(include_pending=True) if s.id not in {s.id for s in specs()}
-    ]
-    assert pending, "expected at least one e2e_pending adapter (e.g. letta)"
-    with pytest.raises(ValueError, match="pending adapter"):
-        per_adapter(peer=pending[0])
+    pending = {
+        str(spec.id): spec.e2e_pending
+        for spec in specs(include_pending=True)
+        if spec.e2e_pending
+    }
+    assert set(pending) == EXPECTED_PENDING_ADAPTERS, (
+        f"e2e_pending adapters drifted from the allowlist: {pending}. "
+        "Pending is a deliberate, short-lived staging state — update "
+        "EXPECTED_PENDING_ADAPTERS alongside the registry change, state the "
+        "reason in the registration's e2e_pending string, and file the "
+        "live-lane follow-up."
+    )

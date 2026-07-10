@@ -25,6 +25,7 @@ dependencies = [
     "band-client-rest==0.0.10",
     "phoenix-channels-python-client>=0.2.1",
     "python-dotenv>=1.2.2",
+    "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
 ]
@@ -42,6 +43,7 @@ opencode = [
 ]
 letta = [
     "letta-client>=0.1.0",
+    "mcp>=1.25.0",
 ]
 pydantic-ai = [
     "pydantic-ai-slim[anthropic]>=1.56.0",

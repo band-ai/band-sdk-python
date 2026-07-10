@@ -246,6 +246,29 @@ class TestStop:
 
         mock_runtime.stop.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_calls_adapter_cleanup_all(self, mock_runtime, mock_adapter):
+        """Should give the adapter its shutdown teardown hook."""
+        mock_runtime.stop.return_value = True
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+
+        await agent.start()
+        await agent.stop()
+
+        mock_adapter.cleanup_all.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_all_failure_does_not_mask_stop(
+        self, mock_runtime, mock_adapter
+    ):
+        """A teardown failure is logged, not raised — stop still reports."""
+        mock_runtime.stop.return_value = True
+        mock_adapter.cleanup_all = AsyncMock(side_effect=Exception("teardown boom"))
+        agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
+
+        await agent.start()
+        assert await agent.stop() is True
+
 
 class TestRun:
     """Tests for Agent.run() method."""

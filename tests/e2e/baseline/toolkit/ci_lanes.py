@@ -29,7 +29,7 @@ from tests.e2e.baseline.toolkit.adapters import (
     adapter_lane,
     specs,
 )
-from tests.e2e.baseline.toolkit.requirements import (
+from tests.e2e.baseline.toolkit.deps import (
     DEFAULT_LANE,
     REPO_ROOT,
     Extra,

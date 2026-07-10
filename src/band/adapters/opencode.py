@@ -14,7 +14,7 @@ from typing import ClassVar, Any, Literal
 
 import httpx
 
-from band.converters._utils import optional_str
+from band.converters.helpers import optional_str
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol

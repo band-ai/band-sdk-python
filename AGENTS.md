@@ -414,7 +414,7 @@ When adding a new framework adapter and converter, follow this TDD workflow. Use
 
 ### Phase 1: Scaffold Source Files
 
-1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters._tool_parsing import parse_tool_call, parse_tool_result`.
+1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters.parsing import parse_tool_call, parse_tool_result`.
 2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `enable_execution_reporting`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`.
 3. If the framework needs an external SDK, add an optional dependency group in `pyproject.toml`.
 
@@ -540,6 +540,15 @@ test, where the markdown-docs run actually executes it.
 
 - Always use type hints for function parameters and return types
 - Use `from __future__ import annotations` as the first import in every file
+- No underscores in file names or class names: modules get a clean single word
+  (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
+  PascalCase with no leading underscore. Exception: patterns a tool requires,
+  e.g. pytest's `test_*.py` / `conftest.py`.
+- Never read configuration with `os.environ` / `os.getenv` — define a
+  `pydantic-settings` `BaseSettings` class (field name == env var name,
+  `SettingsConfigDict(extra="ignore", case_sensitive=False)`) and read its
+  fields; see `tests/e2e/baseline/settings.py` for the canonical pattern
+- Prefer `match`/`case` over long `if`/`elif` chains that dispatch on one value
 - Never use `print()` — use `logging` with module-level `logger = logging.getLogger(__name__)`
 - Use `%s` placeholders in log messages for lazy evaluation
 - Use Pydantic v2 for data models; use `model_dump()` not `dict()`
@@ -548,6 +557,10 @@ test, where the markdown-docs run actually executes it.
 - Catch `pydantic.ValidationError` separately from generic `Exception`
 - Use `raise ValueError(...)` for missing required config, not `logger.error()` + `sys.exit()`
 - Never put issue-tracker references in code — no Linear issue IDs (e.g. `INT-123`), Linear URLs, or ticket numbers in comments, docstrings, or strings. Explain the *why* in plain terms instead. (Branch names, commit messages, and PR descriptions may reference issues.)
+- Test what really matters — behavior that can break. Don't write tests that
+  restate definitions (asserting dataclass defaults equal themselves, echoing a
+  constant) or otherwise cannot fail for a real reason; they add maintenance
+  cost without protection.
 
 ## Pre-Commit Checklist
 

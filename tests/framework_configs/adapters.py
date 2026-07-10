@@ -651,7 +651,7 @@ def _build_codex_config() -> AdapterConfig:
 
 
 def _build_letta_config() -> AdapterConfig:
-    from band.adapters.letta import LettaAdapterConfig
+    from band.adapters.letta import LettaAdapterConfig, LettaMCPConfig
 
     return AdapterConfig(
         framework_id="letta",
@@ -664,14 +664,14 @@ def _build_letta_config() -> AdapterConfig:
             "config": LettaAdapterConfig(
                 enable_execution_reporting=True,
                 mode="shared",
-                mcp_server_url="http://mcp:9000/sse",
+                mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
         },
         custom_expected={
             "config": LettaAdapterConfig(
                 enable_execution_reporting=True,
                 mode="shared",
-                mcp_server_url="http://mcp:9000/sse",
+                mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
         },
         has_custom_tools_attr=False,

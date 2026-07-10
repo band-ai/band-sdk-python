@@ -64,7 +64,7 @@ from band.runtime.custom_tools import CustomToolDef
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 from tests.e2e.baseline.settings import BaselineSettings
-from tests.e2e.baseline.toolkit.requirements import (
+from tests.e2e.baseline.toolkit.deps import (
     DEFAULT_LANE,
     Dep,
     Lane,
@@ -105,12 +105,16 @@ AdapterBuilder = Callable[..., SimpleAdapter[Any]]
 class AdapterSpec:
     """A registered adapter: its id, requirements, capabilities, and builder.
 
-    ``e2e_pending`` marks an adapter that is registered (so it still defines its CI
-    lane via ``ci_lanes``) but has no live E2E coverage yet: ``specs()`` excludes it
-    by default, so the matrix (``adapter_params``) runs no cells for it. It does NOT
-    gate ``@with_adapters`` (that resolves any registered adapter) — a pending adapter
-    simply has no ``@with_adapters`` tests written for it. Use it to stand up a lane
-    ahead of its tests.
+    ``e2e_pending`` is the plain-language reason an adapter is registered but not
+    live — what it is waiting on (e.g. ``"needs the X server wired in CI"``).
+    ``None`` (the default) means live. A pending adapter still defines its CI lane
+    via ``ci_lanes``, but ``specs()`` excludes it by default, so the matrix
+    (``adapter_params``) runs no cells for it. It does NOT gate ``@with_adapters``
+    (that resolves any registered adapter) — a pending adapter simply has no
+    ``@with_adapters`` tests written for it. Pending is a short-lived staging
+    state guarded by an explicit allowlist in
+    ``tests/framework_conformance/test_agent_wiring_rules.py`` — marking an
+    adapter pending is a deliberate, two-file act with a live-lane follow-up.
 
     ``runs_tool_loop`` marks an adapter that runs an LLM tool loop able to invoke a
     translated local ``ToolSpec`` and emit observable ``tool_call`` events — the
@@ -127,7 +131,7 @@ class AdapterSpec:
     requires: tuple[Dep, ...]
     supports: frozenset[Capability]
     build: AdapterBuilder = field(compare=False)
-    e2e_pending: bool = False
+    e2e_pending: str | None = None
     runs_tool_loop: bool = True
 
 
@@ -141,15 +145,16 @@ def adapter(
     *,
     requires: Iterable[Dep] = (),
     supports: Iterable[Capability] = (),
-    e2e_pending: bool = False,
+    e2e_pending: str | None = None,
     runs_tool_loop: bool = True,
 ) -> Callable[[AdapterBuilder], AdapterBuilder]:
     """Register ``name``'s builder in the matrix registry.
 
     The decorated function keeps its identity (it is returned unchanged) so it can
     also be called directly. Registering a duplicate is a programming error.
-    ``e2e_pending=True`` keeps the adapter's CI lane defined but runs no cells for
-    it (no live E2E yet). ``runs_tool_loop=False`` excludes the adapter from the
+    ``e2e_pending`` takes the reason the adapter is registered but not live; it
+    keeps the adapter's CI lane defined while running no cells (see
+    ``AdapterSpec``). ``runs_tool_loop=False`` excludes the adapter from the
     custom-tool matrix (see ``AdapterSpec``).
     """
 

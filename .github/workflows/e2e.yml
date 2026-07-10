@@ -12,7 +12,7 @@ name: E2E (baseline)
 # an existing lane needs no edit here.
 #
 # HOW TO ADD A LANE: lanes live in the registry, not this file. Add a `Lane`
-# member + its `uv` extra in tests/e2e/baseline/toolkit/requirements.py, point a
+# member + its `uv` extra in tests/e2e/baseline/toolkit/deps.py, point a
 # `Dep` at it, and (only if the lane needs a server/CLI) add a setup step below
 # gated to that lane id, plus the matching dropdown option in the `lane` input
 # below (a guard test ties that option list back to the registry, so a missing or
@@ -29,9 +29,11 @@ name: E2E (baseline)
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
 #                  CodexAdapter (codex CLI) + the codex-acp e2e, and OpencodeAdapter
 #                  (local `opencode serve`, Zen free model).
-# - letta        — LettaAdapter; e2e_pending (no live tests yet — needs a reachable
-#                  band-mcp), so the lane runs no Letta cells. Own lane (shares the
-#                  `dev` extra) kept defined for the follow-up; see toolkit/adapters.py.
+# - letta        — LettaAdapter against a self-hosted Letta server (docker). The
+#                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
+#                  inside the pytest process; the container reaches it back via
+#                  host.docker.internal. Own lane (shares the `dev` extra) for the
+#                  server it stands up.
 #
 # CopilotSDKAdapter (BYOK on Anthropic) runs in `core`: the SDK self-downloads its
 # CLI runtime (no setup step), so it needs no isolated lane — it only needs the
@@ -189,9 +191,13 @@ jobs:
         OPENCODE_ZEN_API_KEY: ${{ secrets.E2E_OPENCODE_ZEN_API_KEY }}
       run: .github/scripts/setup-opencode.sh
 
-    # The `letta` lane currently runs no Letta tests (Letta is registered
-    # e2e_pending — see tests/e2e/baseline/toolkit/adapters.py), so it needs no
-    # backend setup. Wiring a reachable band-mcp + the Letta smokes is a follow-up.
+    # The Letta server runs in docker with a host-gateway alias so it can call
+    # back into the adapter's self-hosted MCP server (LocalMCPServer inside the
+    # pytest process) via host.docker.internal. OPENAI_API_KEY (mapped at job
+    # level) doubles as the Letta server's own LLM provider key.
+    - name: Start the Letta server (letta)
+      if: matrix.lane == 'letta'
+      run: .github/scripts/setup-letta.sh
 
     # -----------------------------------------------------------------------------
 
@@ -208,3 +214,7 @@ jobs:
     - name: Run codex-acp e2e (codex)
       if: matrix.lane == 'backends'
       run: uv run pytest tests/integrations/acp/test_e2e_codex_acp.py -v --no-cov
+
+    - name: Stop the Letta server (letta)
+      if: always() && matrix.lane == 'letta'
+      run: docker rm -f letta-server || true

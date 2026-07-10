@@ -300,7 +300,7 @@ def _build_gemini_config() -> ConverterConfig:
 
 
 # Converter modules intentionally excluded from conformance tests.
-# _tool_parsing and _utils are internal utility modules (shared helpers, not converters).
+# parsing and helpers are internal utility modules (shared helpers, not converters).
 # a2a / a2a_gateway use the A2A protocol which has a different message schema.
 # acp_client / acp_server use ACP protocol session updates, not standard convert().
 # codex, letta, and opencode are metadata-only converters that extract session state
@@ -312,8 +312,8 @@ def _build_gemini_config() -> ConverterConfig:
 # room's bootstrap task event (SlackSessionState), not a message-history conversion.
 CONVERTER_EXCLUDED_MODULES: frozenset[str] = frozenset(
     {
-        "_tool_parsing",
-        "_utils",
+        "parsing",
+        "helpers",
         "a2a",
         "a2a_gateway",
         "acp_client",

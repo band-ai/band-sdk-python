@@ -43,7 +43,7 @@ from tests.e2e.baseline.toolkit.adapters import (
     specs,
 )
 from tests.e2e.baseline.toolkit.ci_lanes import ci_lanes, hosting_lanes
-from tests.e2e.baseline.toolkit.requirements import Extra
+from tests.e2e.baseline.toolkit.deps import Extra
 
 
 class _FakeItem:

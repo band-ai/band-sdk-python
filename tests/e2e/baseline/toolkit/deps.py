@@ -1,4 +1,4 @@
-"""Test-dependency requirements and their availability checks (pytest-free).
+"""Test dependency gates and availability checks (pytest-free).
 
 A ``Dep`` is a capability a test (or an adapter builder) needs: a model-provider
 key, an external CLI/server, or a dependency lane. This module owns the *facts* --
@@ -7,7 +7,7 @@ decides whether it is available, the human reason when it is not, and the **CI
 lane** the dep belongs to). It deliberately imports no pytest, so the toolkit
 (registry, builders) can reference ``Dep`` without pulling in the test framework.
 The pytest glue (the ``@requires`` marker and the ``pytest.fail`` on an absent
-requirement) lives in ``..requires``.
+dep) lives in ``..requires``.
 
 Lanes: CI can't run the whole fail-loud matrix in one job -- crewai conflicts with
 the default venv's deps, and the external-backend adapters (codex/opencode/letta)
@@ -182,16 +182,39 @@ def _codex_cwd_available(settings: BaselineSettings) -> bool:
     return path != REPO_ROOT and REPO_ROOT not in path.parents
 
 
-def _letta_available(settings: BaselineSettings) -> bool:
-    """A self-hosted (non-cloud) ``LETTA_BASE_URL``, or a Letta Cloud API key.
+def _letta_llm_provider_available(settings: BaselineSettings) -> bool:
+    """Keys the self-hosted Letta server needs for its configured model/embedding."""
+    llm = settings.llm_credentials
+    backends = settings.backends
+    specs = (backends.letta_model, backends.letta_embedding)
+    for spec in specs:
+        provider = spec.split("/", 1)[0].lower() if spec else ""
+        match provider:
+            case "openai":
+                if not llm.openai_api_key:
+                    return False
+            case "anthropic":
+                if not llm.anthropic_api_key:
+                    return False
+            case "google" | "gemini":
+                if not _google_available(settings):
+                    return False
+    return True
 
-    Auto-relay mode (no Band MCP server) means availability needs only a reachable
-    Letta server: a self-hosted base_url needs no key, Letta Cloud needs its key.
+
+def _letta_available(settings: BaselineSettings) -> bool:
+    """A reachable Letta server plus the key its own LLM calls need.
+
+    A self-hosted (non-cloud) ``LETTA_BASE_URL`` needs no Letta key, but the
+    Letta server makes its own model calls using the provider named in
+    ``LETTA_MODEL`` / ``LETTA_EMBEDDING``. Letta Cloud needs its API key.
+    Env-only predicate — no network calls; reachability failures surface
+    fail-loud at run time.
     """
     backends = settings.backends
     base_url = backends.letta_base_url.strip()
     if base_url and not _is_letta_cloud(base_url):
-        return True  # a real self-hosted server needs no cloud key
+        return _letta_llm_provider_available(settings)
     # Unset/blank base_url defaults to (or means) Letta Cloud, which needs a key.
     return bool(backends.letta_api_key)
 
@@ -231,7 +254,9 @@ _DEPS: dict[Dep, DepSpec] = {
     ),
     Dep.LETTA: DepSpec(
         _letta_available,
-        "a self-hosted LETTA_BASE_URL or a Letta Cloud LETTA_API_KEY not set",
+        "a self-hosted LETTA_BASE_URL + provider key for LETTA_MODEL/LETTA_EMBEDDING "
+        "(e.g. OPENAI_API_KEY or ANTHROPIC_API_KEY), or a Letta Cloud LETTA_API_KEY, "
+        "not set",
         lane=Lane.LETTA,
     ),
     Dep.CREWAI: DepSpec(

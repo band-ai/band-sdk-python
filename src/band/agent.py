@@ -285,7 +285,8 @@ class Agent:
             graceful = await self._runtime.stop(timeout=timeout)
         finally:
             # Always release adapter-wide resources (e.g. a CLI runtime
-            # subprocess), even when the runtime fails to stop cleanly.
+            # subprocess, a self-hosted MCP server, an external registration),
+            # even when the runtime fails to stop cleanly.
             await self._cleanup_adapter()
             self._started = False
             _running_agents.discard(self)

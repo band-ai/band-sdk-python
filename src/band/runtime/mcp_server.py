@@ -309,7 +309,13 @@ def _serialize_tool_result(result: Any) -> dict[str, Any]:
 
 
 class LocalMCPServer:
-    """A local localhost-only MCP server with SSE and streamable HTTP endpoints."""
+    """A local MCP server with SSE and streamable HTTP endpoints.
+
+    Binds to loopback by default. An explicit non-loopback ``host`` (e.g.
+    ``"0.0.0.0"``) is allowed for callers whose MCP client runs in a container
+    and reaches back over the docker bridge — but it exposes the agent's tools
+    to the local network, so only opt in on an isolated/trusted host.
+    """
 
     def __init__(
         self,
@@ -323,8 +329,6 @@ class LocalMCPServer:
         http_path: str = LOCAL_MCP_HTTP_PATH,
         message_path: str = LOCAL_MCP_MESSAGE_PATH,
     ) -> None:
-        if host != LOCAL_MCP_HOST:
-            raise ValueError(f"LocalMCPServer only supports host={LOCAL_MCP_HOST}")
         if port_min > port_max:
             raise ValueError("port_min must be less than or equal to port_max")
 
