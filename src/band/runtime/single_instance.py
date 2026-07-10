@@ -33,16 +33,66 @@ from band.core.exceptions import BandConfigError
 
 try:
     import fcntl
-except ImportError:  # non-POSIX; the guard degrades to a warning
+except ImportError:
     fcntl = None  # type: ignore[assignment]
 
+try:
+    import msvcrt
+except ImportError:
+    msvcrt = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+_LOCK_SPAN_BYTES = 1
 
 # Live holders in this process, by agent id. Exists for lifecycles that
 # skip normal unwinding (e.g. a test runner's signal kill bypasses
 # ``Agent.stop``): the leaked fd would otherwise pin the lock for the
 # process lifetime. ``release_all_held`` lets such harnesses reap.
 _held: dict[str, SingleInstanceGuard] = {}
+
+
+def _contention_error(agent_id: str, lock_path: Path) -> BandConfigError:
+    return BandConfigError(
+        f"Agent {agent_id} is already running on this host "
+        f"(lock: {lock_path}). Two instances of one agent steal "
+        "each other's room messages and split conversations — stop "
+        "the other process first, or set "
+        "AgentConfig(single_instance=False) to bypass the guard."
+    )
+
+
+def _seek_to_lock_region(fd: int) -> None:
+    os.lseek(fd, 0, os.SEEK_SET)
+
+
+def _lock_with_msvcrt(fd: int) -> None:
+    assert msvcrt is not None
+    _seek_to_lock_region(fd)
+    msvcrt.locking(fd, msvcrt.LK_NBLCK, _LOCK_SPAN_BYTES)
+
+
+def _unlock_with_msvcrt(fd: int) -> None:
+    assert msvcrt is not None
+    _seek_to_lock_region(fd)
+    msvcrt.locking(fd, msvcrt.LK_UNLCK, _LOCK_SPAN_BYTES)
+
+
+def _lock_fd(fd: int) -> bool:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    if msvcrt is not None:
+        _lock_with_msvcrt(fd)
+        return True
+    return False
+
+
+def _unlock_fd(fd: int) -> None:
+    if fcntl is not None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    elif msvcrt is not None:
+        _unlock_with_msvcrt(fd)
 
 
 def release_all_held() -> list[str]:
@@ -76,6 +126,9 @@ class SingleInstanceGuard:
         """Take the agent's run lock, failing fast when it is held."""
         if self._fd is not None:
             return
+        if self._agent_id in _held:
+            raise _contention_error(self._agent_id, self.lock_path)
+
         try:
             fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT, 0o644)
         except OSError as exc:
@@ -87,20 +140,15 @@ class SingleInstanceGuard:
                 "bypass the guard."
             ) from exc
         try:
-            if fcntl is None:  # non-POSIX platform; degrade openly
+            if not _lock_fd(fd):
                 logger.warning("No file-locking primitive; single-instance guard inert")
-            else:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:  # the one errno that means contention
             os.close(fd)
-            raise BandConfigError(
-                f"Agent {self._agent_id} is already running on this host "
-                f"(lock: {self.lock_path}). Two instances of one agent steal "
-                "each other's room messages and split conversations — stop "
-                "the other process first, or set "
-                "AgentConfig(single_instance=False) to bypass the guard."
-            ) from exc
-        except OSError as exc:  # flock unsupported (e.g. some NFS mounts)
+            raise _contention_error(self._agent_id, self.lock_path) from exc
+        except PermissionError as exc:
+            os.close(fd)
+            raise _contention_error(self._agent_id, self.lock_path) from exc
+        except OSError as exc:  # locking unsupported (e.g. some NFS mounts)
             os.close(fd)
             raise BandConfigError(
                 f"Cannot take the single-instance lock at {self.lock_path} "
@@ -119,7 +167,6 @@ class SingleInstanceGuard:
             del _held[self._agent_id]
         fd, self._fd = self._fd, None
         try:
-            if fcntl is not None:
-                fcntl.flock(fd, fcntl.LOCK_UN)
+            _unlock_fd(fd)
         finally:
             os.close(fd)
