@@ -255,7 +255,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
         # This allows concurrent rooms to process messages in parallel. Both
         # ensures are idempotent; the outer check just avoids the lock on the
         # established-room fast path. The MCP path may need re-registering
-        # after on_stopped released it — retained rooms then carry
+        # after cleanup_all released it — retained rooms then carry
         # stale_tools so their agents re-sync against the new registration.
         try:
             room_ctx = self._rooms.get(room_id)
@@ -982,7 +982,7 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
                 await self._consolidate_memory(room_ctx.agent_id, room_id)
         logger.debug("Room %s: Cleaned up Letta adapter state", room_id)
 
-    async def on_stopped(self) -> None:
+    async def cleanup_all(self) -> None:
         """Release the MCP tool path on agent shutdown.
 
         See ``LettaMCPBridge.release`` for the three registration ownership

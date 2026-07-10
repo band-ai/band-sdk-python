@@ -125,7 +125,7 @@ async def test_adapter_self_hosted_mcp_registration() -> None:
     finally:
         # Releases the registration; the local server dies with the process
         # (stopping it here would wedge Letta's sync worker — see the adapter).
-        await adapter.on_stopped()
+        await adapter.cleanup_all()
 
 
 @pytest.mark.asyncio

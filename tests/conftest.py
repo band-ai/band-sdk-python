@@ -15,7 +15,9 @@ return SDK-native types for pattern matching compatibility.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -47,28 +49,79 @@ from band.platform.event import (
 )
 from band.runtime.types import PlatformMessage
 
-# E402: module-level import not at top of file. Grouped after first-party SDK
-# imports to keep test-utility imports separate. The original interleaved
-# ordering triggered ruff E402 because a non-import comment sat between imports.
-from thenvoi_testing.markers import pytest_ignore_collect_in_ci as _ignore_collect_in_ci
-
 # Enable the `pytester` fixture (must live in the root conftest) so hook/plugin behaviour
 # can be exercised in a real sub-run — used by tests/e2e/baseline/guards/test_agent_wiring.py.
 pytest_plugins = ["pytester"]
 
 
-def pytest_ignore_collect(collection_path):
-    """Skip integration tests in CI; defer to pytest otherwise.
+def pytest_ignore_collect(collection_path: Path) -> bool | None:
+    """Skip real-API integration tests (tests/integration/) in CI.
 
-    ``pytest_ignore_collect`` is a firstresult hook: ``True`` ignores the path,
-    but returning ``False`` *vetoes* pytest's own ``--ignore``/``--ignore-glob``
-    handling for every path. Returning ``None`` (not ``False``) when we don't
-    want to force-ignore keeps the built-in ``--ignore`` flags working — without
-    it, ``pytest tests/ --ignore=tests/e2e`` silently collects e2e anyway.
+    Matches the exact path segment: the substring check it replaces also
+    swallowed tests/integrations/ — the mocked framework-integration unit
+    tests — silently dropping them from every CI run. Returns None (not
+    False) when not ignoring, so other mechanisms like --ignore still
+    apply locally.
     """
-    if _ignore_collect_in_ci(str(collection_path), "integration"):
+    if os.environ.get("CI") == "true" and "integration" in collection_path.parts:
         return True
     return None
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Skip e2e-marked tests unless explicitly enabled.
+
+    tests/e2e/ gates itself through its own conftest; this covers
+    e2e-marked tests living elsewhere (e.g. the codex ACP protocol
+    tests), which spawn real backends and must never ride a normal
+    unit run.
+    """
+    if os.environ.get("E2E_TESTS_ENABLED") == "true":
+        return
+    skip = pytest.mark.skip(reason="set E2E_TESTS_ENABLED=true to run e2e tests")
+    for item in items:
+        if item.get_closest_marker("e2e"):
+            item.add_marker(skip)
+
+
+@pytest.fixture(autouse=True)
+def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
+    """Give every unit test its own single-instance lock dir.
+
+    The guard is host-global by design (one process per agent id); unit
+    tests reuse agent ids and may start runtimes they never stop, which
+    would otherwise hold the shared lock for the rest of the pytest
+    process. The lock dir is minted lazily (per test, on first guard
+    construction) so the 3000+ tests that never build a guard pay nothing.
+
+    Live tests (e2e/integration) keep the REAL host-global guard: there,
+    two same-id agents genuinely corrupt each other, and a loud
+    BandConfigError beats silent message stealing.
+    """
+    if {"e2e", "integration"} & set(request.node.path.parts):
+        yield
+        return
+
+    from band.runtime.single_instance import SingleInstanceGuard
+
+    lock_dir: list = []
+    created: list[SingleInstanceGuard] = []
+
+    def isolated_guard(agent_id):
+        if not lock_dir:
+            lock_dir.append(tmp_path_factory.mktemp("agent-locks"))
+        guard = SingleInstanceGuard(agent_id, lock_dir=lock_dir[0])
+        created.append(guard)
+        return guard
+
+    monkeypatch.setattr(
+        "band.runtime.platform_runtime.SingleInstanceGuard", isolated_guard
+    )
+    yield
+    # A test that starts a runtime and never stops it would otherwise leak
+    # the lock fd (and its process-registry entry) for the whole session.
+    for guard in created:
+        guard.release()
 
 
 # =============================================================================

@@ -63,7 +63,7 @@ from tests.e2e.baseline.toolkit.provisioning import (
     agent_rest_client,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.helpers import TrackingWebSocketClient
+from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
 
 logger = logging.getLogger(__name__)
 

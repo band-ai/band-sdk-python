@@ -4,7 +4,7 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 ## Core Features
 
-1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno)
+1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno)
 2. A2A protocol support: Bridge to remote A2A agents and expose Band peers as A2A endpoints
 3. ACP integration: Editor-facing server and subprocess client adapters (Cursor, Codex, Claude Code)
 4. Platform tools for chat, contacts, and memory management
@@ -312,9 +312,7 @@ tests/
 ├── runtime/        # Runtime tests
 ├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
-│   ├── adapters/   # Per-adapter smoke & tool execution tests
-│   ├── baseline/   # Reusable baseline toolkit + smokes (see baseline/README.md)
-│   └── scenarios/  # Legacy scenarios (langgraph restart smoke, agno-specific); cross-cutting matrix scenarios now live in baseline/smoke/matrix/
+│   └── baseline/   # The only E2E suite: reusable toolkit + smokes (see baseline/README.md)
 └── conftest.py     # Shared fixtures
 ```
 
@@ -393,6 +391,7 @@ resolves each in a separate fork.
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
+- `GITHUB_TOKEN`: A token from a GitHub account with Copilot entitlement, for the Copilot SDK adapter's runtime auth (BYOK inference reuses `ANTHROPIC_API_KEY`). Read by the baseline toolkit's `tests/e2e/baseline/settings.py`
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
@@ -401,7 +400,7 @@ resolves each in a separate fork.
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters, `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and needs a Copilot-entitled `GITHUB_TOKEN`; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 

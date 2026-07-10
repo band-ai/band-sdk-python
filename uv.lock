@@ -562,6 +562,9 @@ claude-sdk = [
 codex = [
     { name = "websockets" },
 ]
+copilot-sdk = [
+    { name = "github-copilot-sdk" },
+]
 crewai = [
     { name = "crewai" },
     { name = "nest-asyncio" },
@@ -579,6 +582,7 @@ dev = [
     { name = "claude-agent-sdk" },
     { name = "click", version = "8.3.2", source = { registry = "https://pypi.org/simple" } },
     { name = "commitizen" },
+    { name = "github-copilot-sdk" },
     { name = "google-adk" },
     { name = "google-genai" },
     { name = "httpx" },
@@ -709,6 +713,8 @@ requires-dist = [
     { name = "crewai", marker = "extra == 'dev-crewai'", specifier = "==1.14.3" },
     { name = "cryptography", specifier = ">=46.0.5" },
     { name = "fastapi", marker = "extra == 'agentcore-runtime'", specifier = ">=0.110" },
+    { name = "github-copilot-sdk", marker = "extra == 'copilot-sdk'", specifier = ">=1.0.5" },
+    { name = "github-copilot-sdk", marker = "extra == 'dev'", specifier = ">=1.0.5" },
     { name = "google-adk", marker = "extra == 'dev'", specifier = ">=1.0.0,<2" },
     { name = "google-adk", marker = "extra == 'google-adk'", specifier = ">=1.0.0,<2" },
     { name = "google-genai", marker = "extra == 'dev'", specifier = ">=1.43.0" },
@@ -804,7 +810,7 @@ requires-dist = [
     { name = "werkzeug", marker = "extra == 'dev'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["logging", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "dev", "dev-crewai"]
+provides-extras = ["logging", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "copilot-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "dev", "dev-crewai"]
 
 [[package]]
 name = "bcrypt"
@@ -2110,6 +2116,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/72/94/63b0fc47eb32792c7ba1fe1b694daec9a63620db1e313033d18140c2320a/gitdb-4.0.12.tar.gz", hash = "sha256:5ef71f855d191a3326fcfbc0d5da835f26b13fbcba60c32c21091c349ffdb571", size = 394684, upload-time = "2025-01-02T07:20:46.413Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a0/61/5c78b91c3143ed5c14207f463aecfc8f9dbb5092fb2869baf37c273b2705/gitdb-4.0.12-py3-none-any.whl", hash = "sha256:67073e15955400952c6565cc3e707c554a4eea2e428946f7a4c162fab9bd9bcf", size = 62794, upload-time = "2025-01-02T07:20:43.624Z" },
+]
+
+[[package]]
+name = "github-copilot-sdk"
+version = "1.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "python-dateutil" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/13/c7/152a5e87528a3960886bf8d6af8cd1c32437367d2c40725b51da428fdaca/github_copilot_sdk-1.0.5-py3-none-any.whl", hash = "sha256:4f4715553dfab863ffdbff250fc245fb484577e2a16c9cbaab3cf43bb69c4ca7", size = 375876, upload-time = "2026-07-01T15:11:57.92Z" },
 ]
 
 [[package]]

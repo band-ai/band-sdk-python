@@ -271,14 +271,14 @@ class TestSelfHostedMCPLifecycle:
 
     @pytest.mark.asyncio
     async def test_message_after_stop_reregisters_same_backend(self) -> None:
-        """After on_stopped released the registration, a new message
+        """After cleanup_all released the registration, a new message
         re-registers the still-running server instead of starting a second."""
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
         fake_backend = make_fake_mcp_backend(port=55999)
-        adapter._mcp.backend = fake_backend  # kept by on_stopped
+        adapter._mcp.backend = fake_backend  # kept by cleanup_all
         assert adapter._mcp.server_id is None
 
         mock_server = make_mock_mcp_server("mcp-server-2")
@@ -313,7 +313,7 @@ class TestSelfHostedMCPLifecycle:
 
     @pytest.mark.asyncio
     async def test_message_after_stop_resyncs_retained_room_tools(self) -> None:
-        """A room retained across on_stopped keeps its Letta agent, but the
+        """A room retained across cleanup_all keeps its Letta agent, but the
         re-registration mints new tool ids — the agent must be re-attached to
         them, or its platform tool calls die with the old registration."""
         adapter = LettaAdapter()
@@ -325,7 +325,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.backend = make_fake_mcp_backend()
         adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
 
-        await adapter.on_stopped()
+        await adapter.cleanup_all()
 
         mock_client.mcp_servers.list.return_value = []
         mock_client.mcp_servers.create.return_value = make_mock_mcp_server("mcp-new")
@@ -405,7 +405,7 @@ class TestSelfHostedMCPLifecycle:
         mock_client.agents.messages.create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_on_stopped_external_keeps_shared_registration(self) -> None:
+    async def test_cleanup_all_external_keeps_shared_registration(self) -> None:
         """External MCP registrations are shared — stopping one adapter must
         not deregister the server or mark retained rooms stale."""
         adapter = LettaAdapter(
@@ -421,7 +421,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.tool_ids = ["t1"]
         adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
 
-        await adapter.on_stopped()
+        await adapter.cleanup_all()
 
         mock_client.mcp_servers.delete.assert_not_called()
         assert adapter._mcp.server_id == "shared-mcp"
@@ -429,7 +429,7 @@ class TestSelfHostedMCPLifecycle:
         assert adapter._rooms["room-1"].stale_tools is False
 
     @pytest.mark.asyncio
-    async def test_on_stopped_fixed_server_name_keeps_registration(self) -> None:
+    async def test_cleanup_all_fixed_server_name_keeps_registration(self) -> None:
         """A configured self-hosted server_name must not be deregistered — Letta
         soft-deletes names, so one stop would poison the fixed name forever."""
         adapter = LettaAdapter(
@@ -441,7 +441,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.tool_ids = ["t1"]
         adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
 
-        await adapter.on_stopped()
+        await adapter.cleanup_all()
 
         mock_client.mcp_servers.delete.assert_not_called()
         assert adapter._mcp.server_id is None
@@ -521,7 +521,7 @@ class TestSelfHostedMCPLifecycle:
         assert adapter._get_room_tools("other") is None
 
     @pytest.mark.asyncio
-    async def test_on_stopped_deregisters_but_keeps_server_running(self) -> None:
+    async def test_cleanup_all_deregisters_but_keeps_server_running(self) -> None:
         """Agent shutdown releases the Letta registration (it would otherwise
         leak and poison later syncs) but leaves the server serving: Letta
         closes its cached session asynchronously after the delete, and a
@@ -534,7 +534,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.backend = fake_backend
         adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
 
-        await adapter.on_stopped()
+        await adapter.cleanup_all()
 
         mock_client.mcp_servers.delete.assert_awaited_once_with("mcp-server-1")
         fake_backend.stop.assert_not_awaited()
@@ -544,7 +544,7 @@ class TestSelfHostedMCPLifecycle:
         assert adapter._rooms["room-1"].stale_tools is True
 
     @pytest.mark.asyncio
-    async def test_on_stopped_timeout_warns_and_continues(self, caplog) -> None:
+    async def test_cleanup_all_timeout_warns_and_continues(self, caplog) -> None:
         async def stalled_delete(_server_id: str) -> None:
             await asyncio.sleep(1)
 
@@ -555,7 +555,7 @@ class TestSelfHostedMCPLifecycle:
         adapter._mcp.server_id = "mcp-server-1"
 
         with caplog.at_level("WARNING", logger="band.adapters.letta"):
-            await adapter.on_stopped()
+            await adapter.cleanup_all()
 
         mock_client.mcp_servers.delete.assert_awaited_once_with("mcp-server-1")
         assert adapter._mcp.server_id is None

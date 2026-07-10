@@ -247,7 +247,7 @@ class TestStop:
         mock_runtime.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_calls_adapter_on_stopped(self, mock_runtime, mock_adapter):
+    async def test_calls_adapter_cleanup_all(self, mock_runtime, mock_adapter):
         """Should give the adapter its shutdown teardown hook."""
         mock_runtime.stop.return_value = True
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
@@ -255,15 +255,15 @@ class TestStop:
         await agent.start()
         await agent.stop()
 
-        mock_adapter.on_stopped.assert_awaited_once()
+        mock_adapter.cleanup_all.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_on_stopped_failure_does_not_mask_stop(
+    async def test_cleanup_all_failure_does_not_mask_stop(
         self, mock_runtime, mock_adapter
     ):
         """A teardown failure is logged, not raised — stop still reports."""
         mock_runtime.stop.return_value = True
-        mock_adapter.on_stopped = AsyncMock(side_effect=Exception("teardown boom"))
+        mock_adapter.cleanup_all = AsyncMock(side_effect=Exception("teardown boom"))
         agent = Agent(runtime=mock_runtime, adapter=mock_adapter)
 
         await agent.start()
@@ -504,6 +504,12 @@ class TestStartupRaceCondition:
 
             async def initialize(self) -> None:
                 """Initialize without starting message processing."""
+                pass
+
+            def claim_single_instance(self) -> None:
+                pass
+
+            def release_single_instance(self) -> None:
                 pass
 
             async def start(self, on_execute, on_cleanup=None):

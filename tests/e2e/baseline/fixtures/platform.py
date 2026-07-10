@@ -1,8 +1,10 @@
 """Platform/session fixtures: settings, the user REST client, WS observer, and
-provision/reap lifecycle (including the session-start orphan sweep)."""
+provision/reap lifecycle (including the session-start orphan sweep and the
+per-test reaper for agents a killed test abandons)."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -16,7 +18,9 @@ from tests.e2e.baseline.toolkit.provisioning import (
     new_run_id,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.helpers import TrackingWebSocketClient
+from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "baseline_run_id",
@@ -24,6 +28,7 @@ __all__ = [
     "baseline_user_client",
     "baseline_ws",
     "orphan_sweep",
+    "reap_leaked_agents",
     "resource_manager",
     "user_ops",
 ]
@@ -80,10 +85,8 @@ async def baseline_ws(
         api_key=baseline_settings.credentials.api_key_user,
         agent_id=None,  # user connection, not an agent
     )
-    async with ws:
-        tracking = TrackingWebSocketClient(ws)
+    async with ws, TrackingWebSocketClient(ws) as tracking:
         yield tracking
-        await tracking.cleanup_channels()
 
 
 @pytest.fixture
@@ -128,3 +131,41 @@ async def orphan_sweep(
         run_id=baseline_run_id,
     )
     await resources.sweep_orphans()
+
+
+@pytest.fixture(autouse=True)
+async def reap_leaked_agents() -> AsyncGenerator[None, None]:
+    """Stop agents (and free their locks) abandoned by a killed test.
+
+    pytest-timeout's signal method aborts a test without unwinding its
+    ``async with agent`` blocks: the agent's tasks stay alive on the
+    session loop (a zombie that keeps consuming room messages) and its
+    single-instance lock stays held, refusing every rerun and later test
+    using the same agent id. Stopping the agent — not merely releasing
+    its lock — removes the zombie so the next start is a true singleton.
+    Reruns re-run function fixtures, so reaping here heals them too.
+    """
+    from band import agent as agent_module
+    from band.runtime import single_instance
+
+    yield
+    for leaked_agent in agent_module.running_agents():
+        logger.warning(
+            "Stopping agent leaked by a killed test: %s",
+            leaked_agent.runtime.agent_id,
+        )
+        try:
+            await leaked_agent.stop(timeout=None)
+        except Exception:
+            # A zombie's transport may already be dead; the lock backstop
+            # below must still run for the remaining leaks.
+            logger.exception("Leaked agent %s did not stop cleanly", leaked_agent)
+    # Backstop for guards whose owner is unreachable (e.g. a runtime
+    # driven without Agent): a held lock with no live owner can only
+    # block, never protect.
+    leaked_locks = single_instance.release_all_held()
+    if leaked_locks:
+        logger.warning(
+            "Released single-instance lock(s) abandoned by a killed test: %s",
+            ", ".join(leaked_locks),
+        )

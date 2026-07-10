@@ -76,6 +76,16 @@ class UserOps:
         )
         return [participant.id for participant in (response.data or [])]
 
+    async def whoami(self) -> str:
+        """Return the driving user's own id, via the Human profile endpoint.
+
+        The subject id for memories *about the user*. Used when a scenario must
+        assert an agent resolved *the user's* identity itself (e.g. inferred
+        subject-scoped memory) rather than being handed the id in the prompt.
+        """
+        response = await self._client.human_api_profile.get_my_profile()
+        return response.data.id
+
     async def lookup_peers(
         self,
         *,

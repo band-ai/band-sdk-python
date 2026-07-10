@@ -171,13 +171,14 @@ class SimpleAdapter(Generic[H], ABC):
         """Override for session cleanup."""
         pass
 
-    async def on_stopped(self) -> None:
-        """Override for adapter-wide teardown when the agent stops.
+    async def cleanup_all(self) -> None:
+        """Override to release adapter-wide resources (clients, servers).
 
         Called by ``Agent.stop()`` after the runtime has stopped. Rooms are
         not individually cleaned on shutdown (``on_cleanup`` fires on room
-        removal, not agent stop), so resources that outlive rooms — a
-        self-hosted server, an external registration — release here.
+        removal, not agent stop), so resources that outlive rooms — a CLI
+        runtime subprocess, a self-hosted server, an external registration —
+        release here.
         """
         pass
 

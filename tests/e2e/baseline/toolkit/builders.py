@@ -72,6 +72,41 @@ def _build_claude_sdk(
     )
 
 
+@adapter(
+    Adapter.COPILOT_SDK,
+    requires=[Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC],
+    supports=_LLM_TOOL_LOOP,
+)
+def _build_copilot_sdk(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    # The generic matrix builder is BYOK-on-Anthropic, matching claude_sdk's model;
+    # ask_user / base_directory / a shared client are bespoke knobs exercised by
+    # tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py, not by this builder.
+    from copilot import ProviderConfig
+
+    from band.adapters.copilot_sdk import CopilotSDKAdapter, CopilotSDKAdapterConfig
+
+    return CopilotSDKAdapter(
+        CopilotSDKAdapterConfig(
+            model=s.llm_models.anthropic_model,
+            provider=ProviderConfig(
+                type="anthropic",
+                base_url="https://api.anthropic.com",
+                api_key=s.llm_credentials.anthropic_api_key,
+            ),
+            github_token=s.backends.github_token,
+            custom_section=prompt or "",
+        ),
+        additional_tools=_custom_tool_defs(tools),
+        features=features,
+    )
+
+
 @adapter(Adapter.LANGGRAPH, requires=[Dep.OPENAI], supports=_LLM_TOOL_LOOP)
 def _build_langgraph(
     s: BaselineSettings,

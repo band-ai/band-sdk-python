@@ -1121,6 +1121,14 @@ def get_band_tool_category(name: str) -> str | None:
     return _TOOL_CATEGORIES.get(name)
 
 
+# Platform tools whose execution is already visible in the room (they post
+# messages/events themselves), so adapters must not also report them as
+# tool_call/tool_result events. Adapters may extend this with local names.
+SELF_REPORTING_TOOL_NAMES: frozenset[str] = frozenset(
+    {"band_send_message", "band_send_event"}
+)
+
+
 def mcp_tool_names(names: frozenset[str]) -> list[str]:
     """Convert base tool names to MCP-prefixed names for Claude SDK.
 
@@ -1379,10 +1387,14 @@ class AgentTools(AgentToolsProtocol):
             ChatMessageRequestMentionsItem,
         )
 
-        # Deprecation warning for dict-style mentions
-        if mentions and isinstance(mentions[0], dict):
+        # Deprecation warning for dict-style mentions WITHOUT an id: those
+        # lean on name/handle resolution, which list[str] does better.
+        # Id-bearing dicts are adapter-supplied ground truth (the message's
+        # own sender_id) — the one shape that can never miss the
+        # participants cache — and stay first-class.
+        if any(isinstance(m, dict) and not m.get("id") for m in mentions or []):
             warnings.warn(
-                "Passing mentions as list[dict] is deprecated. "
+                "Passing mentions as list[dict] without an 'id' is deprecated. "
                 "Use list[str] with handles instead.",
                 DeprecationWarning,
                 stacklevel=2,

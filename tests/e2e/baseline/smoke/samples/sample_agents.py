@@ -76,11 +76,28 @@ COST_MULTI_TURN_SYSTEM_PROMPT = (
 )
 
 
+# A memory prompt for the *inference* smoke: a generic secretary persona that
+# remembers what the user shares, deliberately WITHOUT spelling out memory
+# mechanics (scope/subject_id/tool). Where ``TOOL_AGENT_SYSTEM_PROMPT`` says "use
+# the given arguments" — which defeats inference — this leaves scope classification
+# and identity resolution entirely to the adapter's auto-injected memory guidance.
+MEMORY_SECRETARY_PROMPT = (
+    "You are the user's personal secretary in a chat room. When the user shares "
+    "something worth remembering, save it with your memory tools so you can recall "
+    "it later. Decide for yourself how to scope and attribute each memory. Keep "
+    "replies to one short sentence."
+)
+
+
 # Reusable agent shapes for ``@with_adapters(..., **SHAPE)``: the prompt (and
 # features) a smoke runs its agents under. Declared once here so every test shares
 # the same shape instead of re-spelling it.
 TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
 MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
+MEMORY_SECRETARY_AGENT = {
+    "prompt": MEMORY_SECRETARY_PROMPT,
+    "features": memory_features(),
+}
 COST_AGENT = {"prompt": COST_AGENT_SYSTEM_PROMPT, "features": usage_features()}
 COST_MULTI_TURN_AGENT = {
     "prompt": COST_MULTI_TURN_SYSTEM_PROMPT,
@@ -172,6 +189,23 @@ def store_subject_memory_instruction(marker: str, subject_id: str) -> str:
         f"scope = {MemoryStoreScope.SUBJECT.value}; "
         f"subject_id = {subject_id}; "
         "thought = a brief reason. Do not call any other tool."
+    )
+
+
+def store_subject_memory_inferred_instruction(marker: str) -> str:
+    """Generic user message to remember a personal fact: a natural-language
+    "about me" intent that names no scope enum, no subject_id, and no tool.
+
+    The agent must map "about me" to subject scope and look up *whose* subject it
+    is (via ``band_get_participants``/``band_lookup_peers``) from the adapter's
+    injected memory guidance alone — unlike ``store_subject_memory_instruction``,
+    which hands it the scope and the literal ``subject_id``. Deliberately avoids
+    naming (or contrasting) the organization scope, which would spell out the
+    very classification under test.
+    """
+    return (
+        "Please remember this about me personally so you can recall it later: "
+        f"my project code phrase is {marker}."
     )
 
 

@@ -83,6 +83,7 @@ class Adapter(StrEnum):
 
     ANTHROPIC = "anthropic"
     CLAUDE_SDK = "claude_sdk"
+    COPILOT_SDK = "copilot_sdk"
     LANGGRAPH = "langgraph"
     PYDANTIC_AI = "pydantic_ai"
     GEMINI = "gemini"
