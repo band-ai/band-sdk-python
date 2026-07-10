@@ -80,6 +80,10 @@ class BaselineRun(BaseSettings):
     # Safety guard: the sweep only reaps agents older than this, so a
     # concurrent run on the same shared platform is never deleted mid-flight.
     orphan_max_age_minutes: int = 120  # BAND_E2E_ORPHAN_MAX_AGE_MINUTES
+    # Write this run's adapter×test scorecard (pass/fail/skip + N/A reasons) as JSON
+    # to this path at session end. Empty = don't emit (the local default). CI sets one
+    # path per lane; a final job merges them (see scorecard.py).
+    scorecard_json: str = ""  # BAND_E2E_SCORECARD_JSON
 
 
 class LLMCredentials(BaseSettings):

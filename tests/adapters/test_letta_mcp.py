@@ -9,7 +9,6 @@ and agent lifecycle — so each file stays focused on one concern.
 
 from __future__ import annotations
 
-import asyncio
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -33,6 +32,15 @@ from tests.adapters.lettakit import (
     make_mock_tool_page,
     make_platform_message,
 )
+
+
+def _stale_tool_error(message: str) -> Exception:
+    """A 404 ApiError-shaped exception, as letta-client raises when a tool id
+    no longer exists in the organization."""
+    err = Exception(message)
+    err.status_code = 404  # type: ignore[attr-defined]
+    return err
+
 
 # ──────────────────────────────────────────────────────────────────────
 # on_started
@@ -312,26 +320,20 @@ class TestSelfHostedMCPLifecycle:
         assert adapter._mcp.tool_ids == ["t9"]
 
     @pytest.mark.asyncio
-    async def test_message_after_stop_resyncs_retained_room_tools(self) -> None:
-        """A room retained across cleanup_all keeps its Letta agent, but the
-        re-registration mints new tool ids — the agent must be re-attached to
-        them, or its platform tool calls die with the old registration."""
+    async def test_stale_room_resyncs_tools_on_next_message(self) -> None:
+        """A room flagged stale by a runtime re-register keeps its Letta agent
+        but re-attaches to the new tool ids on its next message — otherwise its
+        platform tool calls die with the old registration's ids."""
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._system_prompt = "Test"
-        adapter._mcp.server_id = "mcp-old"
-        adapter._mcp.tool_ids = ["t-old"]
+        # A re-register already minted fresh ids and flagged the room stale.
+        adapter._mcp.server_id = "mcp-new"
+        adapter._mcp.tool_ids = ["t-new"]
         adapter._mcp.backend = make_fake_mcp_backend()
-        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
+        adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1", stale_tools=True)
 
-        await adapter.cleanup_all()
-
-        mock_client.mcp_servers.list.return_value = []
-        mock_client.mcp_servers.create.return_value = make_mock_mcp_server("mcp-new")
-        mock_client.mcp_servers.tools.list.return_value = [
-            make_mock_mcp_tool("t-new", "band_send_message"),
-        ]
         # The agent still carries only the old registration's (dead) tool.
         mock_client.agents.tools.list.return_value = make_mock_tool_page(
             make_mock_mcp_tool("t-old", "band_send_message")
@@ -490,20 +492,6 @@ class TestSelfHostedMCPLifecycle:
         assert create_name != "band-deadname"
         assert adapter._mcp.server_id == "mcp-fresh"
 
-    def test_registration_rotates_on_release(self) -> None:
-        external = LettaAdapter(
-            config=LettaAdapterConfig(
-                mcp=LettaMCPConfig(mode="external", server_url="http://mcp/sse")
-            )
-        )
-        ephemeral = LettaAdapter()
-        fixed = LettaAdapter(
-            config=LettaAdapterConfig(mcp=LettaMCPConfig(server_name="band-compose"))
-        )
-        assert external._mcp.registration_rotates_on_release is False
-        assert ephemeral._mcp.registration_rotates_on_release is True
-        assert fixed._mcp.registration_rotates_on_release is False
-
     def test_advertised_url_loopback_when_bind_all_interfaces(self) -> None:
         adapter = LettaAdapter(
             config=LettaAdapterConfig(
@@ -521,47 +509,93 @@ class TestSelfHostedMCPLifecycle:
         assert adapter._get_room_tools("other") is None
 
     @pytest.mark.asyncio
-    async def test_cleanup_all_deregisters_but_keeps_server_running(self) -> None:
-        """Agent shutdown releases the Letta registration (it would otherwise
-        leak and poison later syncs) but leaves the server serving: Letta
-        closes its cached session asynchronously after the delete, and a
-        server that dies around that close wedges Letta's sync worker."""
+    async def test_cleanup_all_selfhost_keeps_registration(self) -> None:
+        """Ephemeral self-host cleanup must NOT deregister the Letta row.
+
+        Letta shares MCP tool rows by name across the org, so deregistering one
+        adapter's server cascade-deletes tools out from under sibling agents
+        still running in the same org (the silent-turn failure this guards).
+        cleanup_all clears only the local cache; the row and its tools survive.
+        """
         adapter = LettaAdapter()
         mock_client = AsyncMock()
         adapter._client = mock_client
         adapter._mcp.server_id = "mcp-server-1"
+        adapter._mcp.tool_ids = ["t1"]
         fake_backend = make_fake_mcp_backend()
         adapter._mcp.backend = fake_backend
         adapter._rooms["room-1"] = _RoomContext(agent_id="agent-1")
 
         await adapter.cleanup_all()
 
-        mock_client.mcp_servers.delete.assert_awaited_once_with("mcp-server-1")
+        mock_client.mcp_servers.delete.assert_not_called()
         fake_backend.stop.assert_not_awaited()
         assert adapter._mcp.backend is fake_backend
         assert adapter._mcp.server_id is None
         assert adapter._mcp.tool_ids == []
-        assert adapter._rooms["room-1"].stale_tools is True
+        # Nothing rotated, so the retained room's attachments stay valid.
+        assert adapter._rooms["room-1"].stale_tools is False
 
     @pytest.mark.asyncio
-    async def test_cleanup_all_timeout_warns_and_continues(self, caplog) -> None:
-        async def stalled_delete(_server_id: str) -> None:
-            await asyncio.sleep(1)
-
-        adapter = LettaAdapter(config=LettaAdapterConfig(teardown_timeout_s=0.01))
+    async def test_attach_recovers_from_stale_tool_404(self) -> None:
+        """A 404 on attach (tool ids died in the org) triggers one re-register
+        against a fresh server, then re-attaches the new ids."""
+        adapter = LettaAdapter()
         mock_client = AsyncMock()
-        mock_client.mcp_servers.delete.side_effect = stalled_delete
         adapter._client = mock_client
-        adapter._mcp.server_id = "mcp-server-1"
+        adapter._system_prompt = "Test"
+        adapter._mcp.backend = make_fake_mcp_backend(port=55001)
+        adapter._mcp.server_id = "mcp-dead"
+        adapter._mcp.tool_ids = ["t-dead"]
 
-        with caplog.at_level("WARNING", logger="band.adapters.letta"):
-            await adapter.cleanup_all()
+        # First attach 404s (stale); after re-register it succeeds.
+        stale = _stale_tool_error("Tool with id=t-dead not found in organization")
+        mock_client.agents.tools.attach.side_effect = [stale, None]
+        mock_client.agents.create.return_value = make_mock_agent("agent-1")
+        # Re-registration mints a fresh server exposing a live tool id.
+        mock_client.mcp_servers.list.return_value = []
+        mock_client.mcp_servers.create.return_value = make_mock_mcp_server("mcp-fresh")
+        mock_client.mcp_servers.tools.list.return_value = [
+            make_mock_mcp_tool("t-live", "band_send_message"),
+        ]
 
-        mock_client.mcp_servers.delete.assert_awaited_once_with("mcp-server-1")
-        assert adapter._mcp.server_id is None
-        assert (
-            "Timed out after 0.01s while trying to deregister MCP server" in caplog.text
-        )
+        agent_id = await adapter._create_agent()
+
+        assert agent_id == "agent-1"
+        assert adapter._mcp.server_id == "mcp-fresh"
+        assert adapter._mcp.tool_ids == ["t-live"]
+        # Attached the dead id (fails), then the live id after re-register.
+        attached = [
+            c.kwargs["tool_id"] for c in mock_client.agents.tools.attach.call_args_list
+        ]
+        assert attached == ["t-dead", "t-live"]
+
+    @pytest.mark.asyncio
+    async def test_reregister_marks_other_rooms_stale(self) -> None:
+        """When a re-register mints new tool ids, other rooms' agents must be
+        flagged to re-verify — their fast path would otherwise run dead tools."""
+        adapter = LettaAdapter()
+        mock_client = AsyncMock()
+        adapter._client = mock_client
+        adapter._system_prompt = "Test"
+        adapter._mcp.backend = make_fake_mcp_backend(port=55002)
+        adapter._mcp.server_id = "mcp-dead"
+        adapter._mcp.tool_ids = ["t-dead"]
+        # A sibling room, live before the recovery, wired to the old ids.
+        adapter._rooms["other"] = _RoomContext(agent_id="agent-other")
+
+        stale = _stale_tool_error("Tool with id=t-dead not found in organization")
+        mock_client.agents.tools.attach.side_effect = [stale, None]
+        mock_client.agents.create.return_value = make_mock_agent("agent-new")
+        mock_client.mcp_servers.list.return_value = []
+        mock_client.mcp_servers.create.return_value = make_mock_mcp_server("mcp-fresh")
+        mock_client.mcp_servers.tools.list.return_value = [
+            make_mock_mcp_tool("t-live", "band_send_message"),
+        ]
+
+        await adapter._create_agent()
+
+        assert adapter._rooms["other"].stale_tools is True
 
     @pytest.mark.asyncio
     async def test_create_conflict_recovers_committed_registration(self) -> None:

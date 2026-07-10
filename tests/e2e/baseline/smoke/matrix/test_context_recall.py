@@ -32,7 +32,7 @@ from __future__ import annotations
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra, model_turn_retrying
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -48,9 +48,16 @@ from tests.e2e.baseline.toolkit.provisioning import (
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-# CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
-# cannot recall a note stated on an earlier turn — exclude it from recall scenarios.
-@per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
+@per_adapter(
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CREWAI_FLOW,
+            "terminal echo flow with no memory — cannot recall a note from an "
+            "earlier turn",
+        )
+    ],
+    prompt=REPLY_PROMPT,
+)
 @flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=120)  # two turns (state, then recall)
 @pytest.mark.asyncio(loop_scope="session")
@@ -86,7 +93,23 @@ async def test_recalls_within_session(
 
 
 @per_adapter(
-    exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CODEX,
+            "recovers context by resuming its own backend session, not via platform "
+            "/context — a pass would not validate this rehydration",
+        ),
+        ExcludedAdapter(
+            Adapter.OPENCODE,
+            "recovers context by resuming its own backend session, not via platform "
+            "/context — a pass would not validate this rehydration",
+        ),
+        ExcludedAdapter(
+            Adapter.CREWAI_FLOW,
+            "terminal echo flow with no memory — cannot recall across a rejoin",
+        ),
+    ],
+    prompt=REPLY_PROMPT,
 )
 # The recall turn's model non-determinism is absorbed per-turn (model_turn_retrying)
 # rather than by re-running the whole two-boot test; this decorator only covers a

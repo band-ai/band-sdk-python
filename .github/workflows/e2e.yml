@@ -204,6 +204,10 @@ jobs:
       # entitlement). The copilot_sdk adapter (in the `core` lane) needs it;
       # exposed to every lane's job env so `core` picks it up.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
+      # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
+      # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final
+      # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py.
+      BAND_E2E_SCORECARD_JSON: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
 
     steps:
     - name: Checkout code
@@ -270,3 +274,62 @@ jobs:
     - name: Stop the Letta server (letta)
       if: always() && matrix.lane == 'letta'
       run: docker rm -f letta-server || true
+
+    # Emitted even when tests fail (session end still runs), so a red lane still
+    # contributes its pass/fail rows to the merged scorecard.
+    - name: Upload lane scorecard
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scorecard-${{ matrix.lane }}-${{ matrix.os }}
+        path: artifacts/scorecard-*.json
+        if-no-files-found: ignore
+
+  # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A).
+  # `if: always()` so a failed lane still yields a scorecard; this job reports the
+  # matrix, it does not gate on it (gating policy is tracked separately).
+  scorecard:
+    name: scorecard (merge lanes)
+    needs: e2e
+    if: always()
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up E2E environment
+      uses: ./.github/actions/setup-e2e
+
+    - name: Install dependencies
+      run: uv sync --extra dev
+
+    - name: Download lane scorecards
+      uses: actions/download-artifact@v4
+      with:
+        pattern: scorecard-*
+        path: artifacts
+        merge-multiple: true
+
+    - name: Merge into one scorecard
+      run: |
+        shopt -s nullglob
+        files=(artifacts/scorecard-*.json)
+        if [ ${#files[@]} -eq 0 ]; then
+          echo "no lane scorecards to merge (all lanes failed before session end)"
+          exit 0
+        fi
+        uv run python -m tests.e2e.baseline.scorecard merge "${files[@]}" \
+          --out artifacts/scorecard.json --markdown artifacts/scorecard.md
+
+    - name: Upload scorecard
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scorecard
+        path: |
+          artifacts/scorecard.json
+          artifacts/scorecard.md
+        if-no-files-found: ignore

@@ -36,7 +36,7 @@ from tests.e2e.baseline.flaky import flaky_infra, flaky_model
 
 from band.client.streaming import DeliveryStatus
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -142,7 +142,12 @@ async def test_handled_work_not_redrained_on_restart(
 
 @per_adapter(
     runs_tool_loop=True,
-    exclude={Adapter.CREWAI},  # cumulative usage → the per-turn token gate is N-A
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CREWAI,
+            "cumulative-lifetime usage counter — the per-turn token gate is N/A",
+        )
+    ],
     prompt=REPLY_PROMPT,
     features=usage_features(),
 )

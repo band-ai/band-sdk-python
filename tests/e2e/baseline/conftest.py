@@ -44,6 +44,7 @@ from tests.e2e.baseline.lane_selection import (
     assert_every_item_is_schedulable,
 )
 from tests.e2e.baseline.requires import MARKER, require_dep
+from tests.e2e.baseline.scorecard import ScorecardCollector
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.toolkit.timeouts import effective_timeout
 
@@ -68,6 +69,13 @@ __all__ = [
 
 
 def pytest_configure(config: pytest.Config) -> None:
+    # Register the scorecard plugin only when a path is set (empty = don't emit, the
+    # local default), so its hooks own their state instead of module globals.
+    scorecard_json = BaselineSettings().run.scorecard_json
+    if scorecard_json:
+        config.pluginmanager.register(
+            ScorecardCollector(scorecard_json), name="baseline-scorecard"
+        )
     config.addinivalue_line(
         "markers",
         f"{MARKER}(deps): declare a baseline test's optional dependencies; the "

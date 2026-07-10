@@ -31,7 +31,7 @@ rehydration bug.
 Lifecycle: A's identity via ``cell`` (owns its boot); B's via the ``peer`` fixture (a
 different-framework cell the test drives). The two runs are strictly sequential — B's
 run fully exits before A boots — so ``track_running`` never sees overlapping runs of one
-identity. ``lane=Lane.CORE`` + ``exclude={LANGGRAPH}`` keeps A and B both in the core
+identity. ``lane=Lane.CORE`` + excluding ``LANGGRAPH`` keeps A and B both in the core
 lane (schedulable, no cross-lane) and guarantees A is never langgraph (so A ≠ B).
 """
 
@@ -40,7 +40,7 @@ from __future__ import annotations
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra
 
-from tests.e2e.baseline.agents import Adapter, Lane, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, Lane, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import REPLY_PROMPT, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
@@ -62,7 +62,12 @@ def _relay_prompt(target: ProvisionedAgent, marker: str) -> str:
 
 @per_adapter(
     lane=Lane.CORE,
-    exclude={Adapter.LANGGRAPH},
+    exclude=[
+        ExcludedAdapter(
+            Adapter.LANGGRAPH,
+            "the fixed foreign peer here, so it can't also be the fanned cell",
+        )
+    ],
     peer=Adapter.LANGGRAPH,
     prompt=REPLY_PROMPT,
 )

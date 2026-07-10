@@ -30,7 +30,7 @@ from __future__ import annotations
 import pytest
 from tests.e2e.baseline.flaky import flaky_model
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -45,7 +45,21 @@ from tests.e2e.baseline.toolkit.provisioning import (
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-@per_adapter(exclude={Adapter.CODEX, Adapter.OPENCODE}, prompt=REPLY_PROMPT)
+@per_adapter(
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CODEX,
+            "recovers context by resuming its own backend session, not via platform "
+            "/context — a pass would not validate this rehydration",
+        ),
+        ExcludedAdapter(
+            Adapter.OPENCODE,
+            "recovers context by resuming its own backend session, not via platform "
+            "/context — a pass would not validate this rehydration",
+        ),
+    ],
+    prompt=REPLY_PROMPT,
+)
 @flaky_model(
     "cold-boot recall is model-non-deterministic — the model occasionally denies "
     "having the note despite it being in the rehydrated context"

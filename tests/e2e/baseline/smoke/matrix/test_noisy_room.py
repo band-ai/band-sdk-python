@@ -30,7 +30,7 @@ from __future__ import annotations
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -38,9 +38,14 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-# CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
-# cannot recall a seeded fact — exclude it from recall scenarios.
-@per_adapter(exclude={Adapter.CREWAI_FLOW})
+@per_adapter(
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CREWAI_FLOW,
+            "terminal echo flow with no memory — cannot recall a seeded fact",
+        )
+    ]
+)
 @flaky_infra("only transient failures")
 @pytest.mark.timeout(extra=300)  # seed + several noise inferences + probe + recall
 @pytest.mark.asyncio(loop_scope="session")
