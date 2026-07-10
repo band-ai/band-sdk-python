@@ -46,7 +46,7 @@ from __future__ import annotations
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REMEMBER,
@@ -62,7 +62,28 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 @per_adapter(
-    exclude={Adapter.CODEX, Adapter.OPENCODE, Adapter.LANGGRAPH, Adapter.CREWAI_FLOW},
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CODEX,
+            "recovers context by resuming its own backend session, not via platform "
+            "/context — a pass would not validate this rehydration",
+        ),
+        ExcludedAdapter(
+            Adapter.OPENCODE,
+            "recovers context by resuming its own backend session, not via platform "
+            "/context — a pass would not validate this rehydration",
+        ),
+        ExcludedAdapter(
+            Adapter.LANGGRAPH,
+            "emits no chat reply after a reboot in a live multi-agent room "
+            "(langgraph-adapter behaviour under investigation)",
+        ),
+        ExcludedAdapter(
+            Adapter.CREWAI_FLOW,
+            "terminal echo flow with no memory — cannot rehydrate context across a "
+            "reboot",
+        ),
+    ],
     prompt=REPLY_PROMPT,
 )
 @flaky_infra("only transient failures")

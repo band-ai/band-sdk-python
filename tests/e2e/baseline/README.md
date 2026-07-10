@@ -102,9 +102,9 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
 | several named adapters in one room | `@with_adapters(Adapter.LANGGRAPH, Adapter.ANTHROPIC)` | `agents` — list; `a, b = agents` |
 | two of the **same** adapter | `@with_adapters(Adapter.ANTHROPIC, Adapter.ANTHROPIC)` | `agents` |
 | the **same scenario across every adapter** | `@per_adapter()` (the full matrix, explicitly) | `agent` (id via `agent.adapter_id`) |
-| a **subset** of adapters | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude={...} / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True)` | `agent` |
+| a **subset** of adapters | `@per_adapter(Adapter.X, Adapter.Y)` (positional = include) / `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "reason")] / supports={Capability.MEMORY} / without={Capability.MEMORY} / runs_tool_loop=True)` | `agent` |
 | to **drive the lifecycle yourself** (build-only, reboot, rehydration) | `@per_adapter()` | `cell` — an `AdapterCell` (see **AdapterCell** below) |
-| a **fanned cell A + one different-framework peer B** (cross-framework) | `@per_adapter(exclude={Adapter.X}, peer=Adapter.X)` | `cell` (A) + `peer` (B, an `AdapterCell` you drive); peer deps fold into the cell's `@requires` |
+| a **fanned cell A + one different-framework peer B** (cross-framework) | `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "it is the peer")], peer=Adapter.X)` | `cell` (A) + `peer` (B, an `AdapterCell` you drive); peer deps fold into the cell's `@requires` |
 | custom tools (any tool-capable framework) | `@with_adapters(Adapter.X, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` — one `ToolSpec`, translated per framework (anthropic-family, pydantic-ai, agno) | `agent` |
 | custom tools across the matrix | `@per_adapter(Adapter.ANTHROPIC, Adapter.PYDANTIC_AI, Adapter.AGNO, tools=[LOOKUP_TOOL], **EXECUTION_REPORTING)` | `agent` |
 
@@ -122,7 +122,7 @@ room). What they *share* — `@requires` gating, `AdapterCell` construction, and
   `RunContext` callable, an agno tool). Add `**EXECUTION_REPORTING` to observe the
   calls via `capture.tool_calls`. Only letta can't accept a local tool (MCP) and
   **rejects** `tools` with a clear error rather than silently dropping it.
-- **Cross-framework peer:** `@per_adapter(exclude={Adapter.X}, peer=Adapter.X)` fans A
+- **Cross-framework peer:** `@per_adapter(exclude=[ExcludedAdapter(Adapter.X, "reason")], peer=Adapter.X)` fans A
   across the matrix and hands each cell a *different-framework* peer B via the `peer`
   fixture (an `AdapterCell` the test drives — provision + `run_as`). The peer's
   `@requires` fold into the cell's single gate mark, and the peer is visible to lane
@@ -328,7 +328,11 @@ peer **B** (via the `peer` fixture) in the same room; `.mentioning()` filters a 
 to replies that mention a participant. See `smoke/matrix/test_rehydration_cross_framework.py`:
 
 ```python notest
-@per_adapter(exclude={Adapter.LANGGRAPH}, peer=Adapter.LANGGRAPH, prompt=REPLY_PROMPT)
+@per_adapter(
+    exclude=[ExcludedAdapter(Adapter.LANGGRAPH, "it is the fixed peer here")],
+    peer=Adapter.LANGGRAPH,
+    prompt=REPLY_PROMPT,
+)
 async def test_foreign_peer(cell, peer, resource_manager, user_ops, reply_capture):
     marker = unique_marker("note")
     a = await cell.provision(f"a-{cell.adapter_id}")          # A (fanned)
@@ -629,6 +633,34 @@ Lanes live in the registry, not the workflow YAML. To add one:
    that's missing the new lane (or still lists a removed one), fails loudly in the
    guard suite on every PR rather than silently never running / never being
    selectable.
+
+## Scorecard (the adapter×test artifact)
+
+One place to see **adapter × test → pass / fail / skip / N-A (+ reason)**. An excluded
+adapter would otherwise vanish from the results (`specs()` omits it, no test node) with
+its reason buried in a comment; the scorecard makes the full grid observable and gives
+CI a queryable N-A instead of a silent gap.
+
+- **Reasons live at the call site.** `@per_adapter(exclude=…)` takes
+  `ExcludedAdapter(adapter, reason)` records — a non-empty reason is required at
+  decoration time (`ExcludedAdapter.__post_init__`), so an adapter can never be excluded
+  without saying why. The records ride the `PerAdapter` marker, so collection can read
+  them back.
+- **Emission is settings-driven.** Set `BAND_E2E_SCORECARD_JSON=<path>` and the session
+  writes that run's rows at the end — collected cells' pass/fail (read from each test
+  report, keyed by exact nodeid — no junit scraping), out-of-lane cells as `skip`, and
+  the `@per_adapter` exclusions as `na` with their reasons. Empty (the local default)
+  emits nothing.
+- **CI folds the lanes together.** Each `e2e` lane writes its own slice to
+  `artifacts/scorecard-<lane>-<os>.json` and uploads it; the final `scorecard` job merges
+  them (`python -m tests.e2e.baseline.scorecard merge … --out … --markdown …`) into one
+  `artifacts/scorecard.json` (+ a markdown grid). A cell runs in exactly one lane, so the
+  union keeps its real outcome over the `skip`s and never clobbers an `na`. The job
+  *reports* the matrix; it does not gate on it.
+
+The logic (`na_rows` / `outcome_row` / `merge`) lives in `scorecard.py` as pure functions
+(unit-tested in `tests/framework_conformance/test_scorecard.py`); the conftest is a thin
+`pytest_runtest_logreport` / `pytest_sessionfinish` delegate.
 
 ## Letta lane
 

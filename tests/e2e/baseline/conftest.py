@@ -44,6 +44,7 @@ from tests.e2e.baseline.lane_selection import (
     assert_every_item_is_schedulable,
 )
 from tests.e2e.baseline.requires import MARKER, require_dep
+from tests.e2e.baseline.scorecard import ScorecardCollector, write_json
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.toolkit.timeouts import effective_timeout
 
@@ -67,7 +68,15 @@ __all__ = [
 ]
 
 
+# Session-scoped scorecard accumulator; the hooks below delegate to it. The path it
+# writes to is read once at configure (empty = don't emit — the local default).
+_scorecard = ScorecardCollector()
+_scorecard_path = ""
+
+
 def pytest_configure(config: pytest.Config) -> None:
+    global _scorecard_path
+    _scorecard_path = BaselineSettings().run.scorecard_json
     config.addinivalue_line(
         "markers",
         f"{MARKER}(deps): declare a baseline test's optional dependencies; the "
@@ -155,3 +164,15 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
         timeout = effective_timeout(item, base)
         if timeout is not None:
             item.add_marker(pytest.mark.timeout(timeout), append=False)
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    """Feed each cell's outcome to the scorecard (no-op unless emission is enabled)."""
+    if _scorecard_path:
+        _scorecard.on_report(report)
+
+
+def pytest_sessionfinish(session: pytest.Session) -> None:
+    """Write this run's scorecard — collected outcomes plus the N/A exclusions."""
+    if _scorecard_path:
+        write_json(_scorecard.scorecard(session.items), _scorecard_path)
