@@ -84,6 +84,83 @@ class TestACPClientAdapterInit:
             ACPClientAdapter(command="codex", rest_url="ftp://invalid")
 
 
+class TestACPClientAdapterTransport:
+    """Tests for stdio-vs-TCP transport selection and validation."""
+
+    def test_tcp_construction_sets_host_port_and_empty_command(self) -> None:
+        """TCP transport records host/port and spawns no subprocess command."""
+        adapter = ACPClientAdapter(host="10.0.0.5", port=8080)
+        assert adapter._host == "10.0.0.5"
+        assert adapter._port == 8080
+        assert adapter._command == []
+
+    def test_stdio_construction_leaves_host_port_unset(self) -> None:
+        adapter = ACPClientAdapter(command="copilot")
+        assert adapter._host is None
+        assert adapter._port is None
+        assert adapter._command == ["copilot"]
+
+    def test_requires_a_transport(self) -> None:
+        """Neither command nor host/port is a misconfiguration."""
+        with pytest.raises(ValueError, match="command .*or host"):
+            ACPClientAdapter()
+
+    def test_empty_command_is_rejected(self) -> None:
+        """An empty command is not a usable transport (would crash at spawn)."""
+        with pytest.raises(ValueError, match="command .*or host"):
+            ACPClientAdapter(command=[])
+        with pytest.raises(ValueError, match="command .*or host"):
+            ACPClientAdapter(command="")
+
+    def test_rejects_command_and_tcp_together(self) -> None:
+        with pytest.raises(ValueError, match="not both"):
+            ACPClientAdapter(command="copilot", host="10.0.0.5", port=8080)
+
+    def test_tcp_requires_both_host_and_port(self) -> None:
+        with pytest.raises(ValueError, match="both host and port"):
+            ACPClientAdapter(host="10.0.0.5")
+        with pytest.raises(ValueError, match="both host and port"):
+            ACPClientAdapter(port=8080)
+
+    @pytest.mark.asyncio
+    async def test_injected_spawn_process_wins_over_defaults(
+        self, make_acp_transport
+    ) -> None:
+        """An explicit spawn_process is used even for a TCP-configured adapter."""
+        transport = make_acp_transport()
+        adapter = ACPClientAdapter(host="10.0.0.5", port=8080, spawn_process=transport)
+
+        await adapter.on_started("Copilot", "Copilot over TCP")
+
+        assert adapter._runtime._conn is transport.conn
+        # TCP still forwards no positional command.
+        args, _ = transport.last_call
+        assert args == ()
+
+
+class TestACPClientAdapterShutdown:
+    """Graceful shutdown must release the adapter-wide subprocess/TCP connection.
+
+    ``Agent.stop()`` invokes ``cleanup_all()`` (not ``stop()``), so the teardown has
+    to hang off ``cleanup_all`` or the transport spawned in ``on_started`` leaks.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cleanup_all_tears_down_the_transport(
+        self, make_acp_transport
+    ) -> None:
+        adapter = ACPClientAdapter(
+            command="codex", spawn_process=make_acp_transport(), inject_band_tools=False
+        )
+        await adapter.on_started("Codex", "bridge")
+        assert adapter._runtime._ctx is not None  # transport is up
+
+        await adapter.cleanup_all()  # the hook Agent.stop() calls on graceful shutdown
+
+        assert adapter._runtime._ctx is None  # ...and released
+        assert adapter._runtime._conn is None
+
+
 class TestACPClientAdapterLocalMcpConfig:
     """Tests for local Band MCP injection."""
 
@@ -166,113 +243,96 @@ class TestACPClientAdapterLocalMcpConfig:
 
 
 class TestACPClientAdapterOnStarted:
-    """Tests for ACPClientAdapter.on_started()."""
+    """Tests for ACPClientAdapter.on_started().
+
+    These inject a :class:`FakeSpawn` transport (the ``make_acp_transport`` fixture)
+    through the adapter's ``spawn_process`` seam rather than patching module globals,
+    so the real ACPRuntime start path runs against a scripted connection.
+    """
 
     @pytest.mark.asyncio
-    async def test_on_started_spawns_process(self) -> None:
+    async def test_on_started_spawns_process(self, make_acp_transport) -> None:
         """Should spawn ACP process and initialize connection."""
-        adapter = ACPClientAdapter(command="codex")
+        transport = make_acp_transport()
+        adapter = ACPClientAdapter(command="codex", spawn_process=transport)
 
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock()
-        mock_proc = MagicMock()
+        await adapter.on_started("Codex Bridge", "Bridge to Codex")
 
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, mock_proc))
-
-        with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
-        ):
-            await adapter.on_started("Codex Bridge", "Bridge to Codex")
-
-        assert adapter._runtime._conn is mock_conn
-        mock_conn.initialize.assert_called_once_with(protocol_version=1)
+        assert adapter._runtime._conn is transport.conn
+        transport.conn.initialize.assert_awaited_once_with(protocol_version=1)
 
     @pytest.mark.asyncio
-    async def test_on_started_uses_large_stdio_limit(self) -> None:
+    async def test_on_started_uses_large_stdio_limit(self, make_acp_transport) -> None:
         """Should raise the stdio reader limit for large ACP JSON frames."""
-        adapter = ACPClientAdapter(command=["npx", "@zed-industries/codex-acp"])
+        transport = make_acp_transport()
+        adapter = ACPClientAdapter(
+            command=["npx", "@zed-industries/codex-acp"],
+            spawn_process=transport,
+        )
 
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock()
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
+        await adapter.on_started("Codex Bridge", "Bridge to Codex")
 
-        with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
-        ) as mock_spawn:
-            await adapter.on_started("Codex Bridge", "Bridge to Codex")
-
-        assert mock_spawn.call_args.kwargs["transport_kwargs"] == {
-            "limit": 16 * 1024 * 1024
-        }
+        assert transport.last_kwargs["transport_kwargs"] == {"limit": 16 * 1024 * 1024}
 
     @pytest.mark.asyncio
-    async def test_on_started_stores_agent_info(self) -> None:
-        """Should store agent name and description."""
-        adapter = ACPClientAdapter(command="codex")
-
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock()
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
-
+    async def test_on_started_forwards_command_positionally(
+        self, make_acp_transport
+    ) -> None:
+        """Should forward the stdio command (executable + args) to the transport."""
+        transport = make_acp_transport()
+        # Pin the launcher pass-through: with no PATH resolution (which happens at
+        # construction, via _resolve_launcher) the command reaches the transport
+        # verbatim, so this asserts the positional splat, not _resolve_launcher
+        # (covered by TestResolveLauncher) or whether `npx` happens to be installed here.
         with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
+            "band.integrations.acp.client_adapter.shutil.which", return_value=None
         ):
-            await adapter.on_started("Test Agent", "A test agent")
+            adapter = ACPClientAdapter(
+                command=["npx", "@zed-industries/codex-acp"],
+                spawn_process=transport,
+            )
+
+        await adapter.on_started("Codex Bridge", "Bridge to Codex")
+
+        # spawn(client, *command, ...) — command splatted as positional args.
+        args, _ = transport.last_call
+        assert args == ("npx", "@zed-industries/codex-acp")
+
+    @pytest.mark.asyncio
+    async def test_on_started_stores_agent_info(self, make_acp_transport) -> None:
+        """Should store agent name and description."""
+        adapter = ACPClientAdapter(command="codex", spawn_process=make_acp_transport())
+
+        await adapter.on_started("Test Agent", "A test agent")
 
         assert adapter.agent_name == "Test Agent"
         assert adapter.agent_description == "A test agent"
 
     @pytest.mark.asyncio
-    async def test_on_started_prefers_http_mcp_when_supported(self) -> None:
+    async def test_on_started_prefers_http_mcp_when_supported(
+        self, make_acp_transport
+    ) -> None:
         """Should select HTTP MCP when the ACP agent advertises it."""
-        adapter = ACPClientAdapter(command="codex")
-
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock(
-            return_value=MagicMock(
-                agent_capabilities=MagicMock(
-                    mcp_capabilities=MagicMock(http=True, sse=True)
-                )
-            )
+        adapter = ACPClientAdapter(
+            command="codex",
+            spawn_process=make_acp_transport(http=True, sse=True),
         )
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
 
-        with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
-        ):
-            await adapter.on_started("Test Agent", "A test agent")
+        await adapter.on_started("Test Agent", "A test agent")
 
         assert adapter._runtime._agent_mcp_transport == "http"
 
     @pytest.mark.asyncio
-    async def test_on_started_uses_sse_mcp_when_http_missing(self) -> None:
+    async def test_on_started_uses_sse_mcp_when_http_missing(
+        self, make_acp_transport
+    ) -> None:
         """Should fall back to SSE MCP when that's all the ACP agent supports."""
-        adapter = ACPClientAdapter(command="codex")
-
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock(
-            return_value=MagicMock(
-                agent_capabilities=MagicMock(
-                    mcp_capabilities=MagicMock(http=False, sse=True)
-                )
-            )
+        adapter = ACPClientAdapter(
+            command="codex",
+            spawn_process=make_acp_transport(http=False, sse=True),
         )
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
 
-        with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
-        ):
-            await adapter.on_started("Test Agent", "A test agent")
+        await adapter.on_started("Test Agent", "A test agent")
 
         assert adapter._runtime._agent_mcp_transport == "sse"
 
@@ -1085,3 +1145,57 @@ class TestResolveLauncher:
             "band.integrations.acp.client_adapter.shutil.which", return_value=None
         ):
             assert _resolve_launcher(["mystery-bin", "arg"]) == ["mystery-bin", "arg"]
+
+
+class TestTurnRepliedInRoom:
+    """`_turn_replied_in_room`: detect a room post from the ACP tool-call stream.
+
+    ACP has no structured tool-name field and tools may run out-of-process, so the
+    adapter reads the collected chunk stream. These lock the id-correlation edges.
+    """
+
+    @staticmethod
+    def _chunk(chunk_type: str, content: str, **metadata: object) -> CollectedChunk:
+        return CollectedChunk(chunk_type=chunk_type, content=content, metadata=metadata)
+
+    def test_completed_posting_tool_call_counts_as_reply(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call",
+                "band_send_message",
+                tool_call_id="tc-1",
+                status="completed",
+            )
+        ]
+        assert ACPClientAdapter._turn_replied_in_room(chunks)
+
+    def test_posting_call_correlated_to_completed_result_counts(self) -> None:
+        # The tool_call arrives before its terminal status; the completed result seals it.
+        chunks = [
+            self._chunk(
+                "tool_call",
+                "band_send_message",
+                tool_call_id="tc-1",
+                status="in_progress",
+            ),
+            self._chunk("tool_result", "", tool_call_id="tc-1", status="completed"),
+        ]
+        assert ACPClientAdapter._turn_replied_in_room(chunks)
+
+    def test_empty_ids_do_not_cross_match(self) -> None:
+        # A not-yet-completed posting call with NO id and a completed NON-posting result
+        # with NO id both default to "" — they must not correlate, or the text fallback
+        # is falsely suppressed and the turn goes silent.
+        chunks = [
+            self._chunk("tool_call", "band_send_message", status="in_progress"),
+            self._chunk("tool_result", "", status="completed"),
+        ]
+        assert not ACPClientAdapter._turn_replied_in_room(chunks)
+
+    def test_non_posting_tool_never_counts(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call", "get_weather", tool_call_id="tc-1", status="completed"
+            )
+        ]
+        assert not ACPClientAdapter._turn_replied_in_room(chunks)

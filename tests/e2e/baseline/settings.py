@@ -80,6 +80,10 @@ class BaselineRun(BaseSettings):
     # Safety guard: the sweep only reaps agents older than this, so a
     # concurrent run on the same shared platform is never deleted mid-flight.
     orphan_max_age_minutes: int = 120  # BAND_E2E_ORPHAN_MAX_AGE_MINUTES
+    # Write this run's adapter×test scorecard (pass/fail/skip + N/A reasons) as JSON
+    # to this path at session end. Empty = don't emit (the local default). CI sets one
+    # path per lane; a final job merges them (see scorecard.py).
+    scorecard_json: str = ""  # BAND_E2E_SCORECARD_JSON
 
 
 class LLMCredentials(BaseSettings):
@@ -143,6 +147,10 @@ class Backends(BaseSettings):
     # Copilot SDK. BYOK inference reuses llm_credentials.anthropic_api_key; this is
     # only the runtime-auth token, from a GitHub account with Copilot entitlement.
     github_token: str = ""  # GITHUB_TOKEN
+
+    # Copilot CLI over ACP (copilot_acp adapter). Command defaults to `copilot --acp`;
+    # override the binary + args via COPILOT_COMMAND. Auth reuses github_token above.
+    copilot_command: str = ""  # COPILOT_COMMAND (override the `copilot` binary + args)
 
 
 class LLMModels(BaseSettings):

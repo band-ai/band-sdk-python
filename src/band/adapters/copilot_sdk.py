@@ -42,7 +42,11 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import SELF_REPORTING_TOOL_NAMES, get_band_tool_category
+from band.runtime.tools import (
+    SELF_REPORTING_TOOL_NAMES,
+    get_band_tool_category,
+    is_room_posting_tool,
+)
 
 try:
     from copilot import CopilotClient, PermissionHandler, Tool, ToolResult
@@ -164,7 +168,7 @@ class TurnState:
     # Mention target for anything this turn posts to the room: whoever
     # sent the message that triggered it.
     sender_mention: dict[str, str]
-    # True once the turn produced a room message (band_send_message or a
+    # True once the turn produced a room message (a Band messaging tool or a
     # room-routed ask_user question) — the final text then must not be
     # auto-sent on top of it.
     replied_in_room: bool = False
@@ -698,7 +702,22 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             if custom_tool:
                 result = await execute_custom_tool(custom_tool, arguments)
             else:
-                result = await room_tools.execute_tool_call(tool_name, arguments)
+                # Structured variant: a base tool (e.g. band_send_message) can fail
+                # without raising (bad args, API error) — that surfaces as ok=False,
+                # not an exception. Treat it as a failure so the turn is NOT marked
+                # replied and the final-text fallback still fires (avoids a silent
+                # turn). Mirrors the Slack adapter.
+                outcome = await room_tools.execute_tool_call_structured(
+                    tool_name, arguments
+                )
+                if not outcome.ok:
+                    return await self._fail_tool_call(
+                        room_tools,
+                        invocation,
+                        outcome.error_message or str(outcome.value),
+                        report=should_report,
+                    )
+                result = outcome.value
         except ValidationError as exc:
             logger.error("Validation error for tool %s: %s", tool_name, exc)
             error_text = (
@@ -716,7 +735,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
         text_result = (
             result if isinstance(result, str) else json.dumps(result, default=str)
         )
-        if tool_name == "band_send_message" and turn is not None:
+        if is_room_posting_tool(tool_name) and turn is not None:
             self._mark_replied_in_room(room_id, turn)
         if should_report:
             await self._report_tool_result(room_tools, invocation, text_result)

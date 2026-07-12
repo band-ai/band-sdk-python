@@ -74,7 +74,10 @@ def _build_claude_sdk(
 
 @adapter(
     Adapter.COPILOT_SDK,
-    requires=[Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC],
+    # Gate on the Anthropic BYOK key only, not a GitHub token: Copilot auth is
+    # flexible (env token OR a stored login) and provided out-of-band — a stored
+    # login locally, or GITHUB_TOKEN in the CI job env. Same reasoning as copilot_acp.
+    requires=[Dep.ANTHROPIC],
     supports=_LLM_TOOL_LOOP,
 )
 def _build_copilot_sdk(
@@ -99,7 +102,9 @@ def _build_copilot_sdk(
                 base_url="https://api.anthropic.com",
                 api_key=s.llm_credentials.anthropic_api_key,
             ),
-            github_token=s.backends.github_token,
+            # A configured token wins; empty -> None so the SDK falls back to the
+            # stored `copilot login` (an empty string would not).
+            github_token=s.backends.github_token or None,
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
@@ -332,6 +337,41 @@ def _build_opencode(
             model_id=s.backends.opencode_model_id,
             custom_section=prompt or "",
         ),
+        additional_tools=_custom_tool_defs(tools),
+        features=features,
+    )
+
+
+@adapter(Adapter.COPILOT_ACP, requires=[Dep.COPILOT_CLI], runs_tool_loop=False)
+def _build_copilot_acp(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    from band.adapters.copilot_acp import CopilotACPAdapter, CopilotACPAdapterConfig
+
+    # stdio spawn of `copilot --acp` co-located with the SDK, so Band tools reach
+    # Copilot over the loopback MCP server (inject_band_tools default True). Tools are
+    # delegated to Copilot over ACP/MCP, so runs_tool_loop=False (matches codex/opencode).
+    #
+    # Gate on the CLI only — not a token. Copilot accepts several auth methods (env
+    # token, stored login in the OS keychain, `gh`, BYOK), and a stored login isn't
+    # reliably detectable from settings; so, like codex (which gates on the CLI, not
+    # its API key, and logs in out-of-band via setup-codex.sh), auth is provided
+    # out-of-band: a stored login locally, or GITHUB_TOKEN in the CI job env (see
+    # setup-copilot.sh). We still forward a configured token as a convenience.
+    # COPILOT_COMMAND overrides the binary + args.
+    config_kwargs: dict[str, Any] = {
+        "custom_section": prompt or "",
+        "github_token": s.backends.github_token or None,
+    }
+    if s.backends.copilot_command.strip():
+        config_kwargs["command"] = tuple(s.backends.copilot_command.split())
+
+    return CopilotACPAdapter(
+        config=CopilotACPAdapterConfig(**config_kwargs),
         additional_tools=_custom_tool_defs(tools),
         features=features,
     )

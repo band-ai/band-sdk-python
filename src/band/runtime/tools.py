@@ -678,6 +678,30 @@ class ListMyPeersInput(BaseModel):
     page_size: int | None = Field(None, description="Items per page (optional).")
 
 
+# Tool names whose successful call posts a visible message into the room.
+# Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
+# fallback text relay once the turn has already replied in the room, so the
+# reply is delivered exactly once. Includes the standalone band-mcp server's
+# spelling, which remote agents call out-of-process.
+ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
+    {"band_send_message", "create_agent_chat_message"}
+)
+
+
+def is_room_posting_tool(tool_name: str) -> bool:
+    """True when a successful call of ``tool_name`` posts a message to the room.
+
+    Tolerates the one MCP naming convention seen in practice: a ``<server>-``
+    prefix (e.g. ``band-create_agent_chat_message``). Other spellings
+    (``mcp__server__tool``, ``server.tool``) are not matched — no wired backend
+    uses them, and a miss only costs a duplicate reply (the pre-suppression
+    behavior), never a wrong post. Extend here when such a backend is added.
+    """
+    if tool_name in ROOM_POSTING_TOOL_NAMES:
+        return True
+    return tool_name.endswith(tuple(f"-{name}" for name in ROOM_POSTING_TOOL_NAMES))
+
+
 # Registry mapping tool names to their schemas and bound AgentTools methods.
 TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "band_send_message": ToolDefinition(

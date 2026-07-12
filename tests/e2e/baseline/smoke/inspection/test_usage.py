@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     COST_AGENT,
     COST_MULTI_TURN_AGENT,
@@ -48,11 +48,19 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-# Adapters that don't emit usage: crewai_flow (usage in user-supplied flow
-# internals) and crewai (deferred — cumulative-lifetime counter, not per-turn).
-# Every other registered adapter must emit usage (letta does, via Emit.USAGE
-# from the per-room LettaResponse.usage).
-@per_adapter(exclude={Adapter.CREWAI_FLOW, Adapter.CREWAI}, **COST_AGENT)
+# Every registered adapter must emit usage (letta does, via Emit.USAGE from the
+# per-room LettaResponse.usage) except the crewai pair excluded below.
+@per_adapter(
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"
+        ),
+        ExcludedAdapter(
+            Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
+        ),
+    ],
+    **COST_AGENT,
+)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_usage_recorded_for_a_turn(
     agent: ProvisionedAgent,
@@ -126,11 +134,20 @@ async def test_usage_recorded_for_a_turn(
     )
 
 
-# Same fan and exclusions as the single-turn smoke: every usage-emitting adapter,
-# minus the crewai pair (crewai_flow N-A; crewai deferred). The prompt lets the
-# user dictate length so the test can drive one LONG turn then one TINY turn
-# (see COST_MULTI_TURN_AGENT).
-@per_adapter(exclude={Adapter.CREWAI_FLOW, Adapter.CREWAI}, **COST_MULTI_TURN_AGENT)
+# Same fan and exclusions as the single-turn smoke. The prompt lets the user dictate
+# length so the test can drive one LONG turn then one TINY turn (see
+# COST_MULTI_TURN_AGENT).
+@per_adapter(
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"
+        ),
+        ExcludedAdapter(
+            Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
+        ),
+    ],
+    **COST_MULTI_TURN_AGENT,
+)
 # Two turns, and the first drives a long multi-paragraph generation — so this test
 # legitimately needs roughly a second turn's budget on top of the per-turn default.
 @pytest.mark.timeout(extra=120)

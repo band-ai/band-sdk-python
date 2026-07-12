@@ -47,7 +47,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
-from band.runtime.tools import SELF_REPORTING_TOOL_NAMES
+from band.runtime.tools import SELF_REPORTING_TOOL_NAMES, is_room_posting_tool
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -1335,14 +1335,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
                     result = await execute_custom_tool(custom_tool, arguments)
+                    success = True
                 else:
-                    result = await tools.execute_tool_call(tool_name, arguments)
+                    # Structured: a base tool (e.g. band_send_message) can fail without
+                    # raising (bad args, API error) via ok=False; the plain variant would
+                    # report success and wrongly suppress the final-text fallback.
+                    outcome = await tools.execute_tool_call_structured(
+                        tool_name, arguments
+                    )
+                    result = outcome.value
+                    success = outcome.ok
                 text_result = (
                     result
                     if isinstance(result, str)
                     else json.dumps(result, default=str)
                 )
-                success = True
                 await self._client.respond(
                     event.id,
                     {
@@ -1350,7 +1357,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         "success": success,
                     },
                 )
-                tool_call_succeeded = True
+                tool_call_succeeded = success
                 if should_report:
                     await tools.send_event(
                         content=json.dumps(
@@ -1406,7 +1413,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         message_type="tool_result",
                     )
 
-            return tool_name == "band_send_message" and tool_call_succeeded
+            return is_room_posting_tool(tool_name) and tool_call_succeeded
 
         if event.method in CODEX_APPROVAL_METHODS:
             await self._handle_approval_request(

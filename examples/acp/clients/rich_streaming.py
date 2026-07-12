@@ -6,32 +6,44 @@
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-ACP Client example - Use a remote ACP agent from Band.
+ACP Client with rich streaming - Thoughts, tool calls, and plans.
 
-This example connects to a remote ACP-compliant agent (Codex CLI, Gemini CLI,
-Claude Code, Goose, etc.) and makes it available as a Band platform agent.
-Messages from the platform are forwarded to the ACP agent, and responses are
-posted back to the chat.
+This example shows how the ACPClientAdapter handles rich session_update
+chunks from remote ACP agents. Beyond plain text, it captures:
+
+  - Thoughts: Internal reasoning from the agent
+  - Tool calls: Tool invocations with name, args, and results
+  - Plans: Task plans with status tracking
+
+All rich events are posted back to the Band platform with full type
+fidelity, so other participants can see exactly what the remote agent
+is doing.
+
+Permission requests from the ACP agent are also posted to the platform
+as visible events (auto-allowed by default).
 
 Architecture:
     Band Platform (message arrives in room)
-      -> ACPClientAdapter
-        -> remote ACP agent subprocess/session
-          -> Remote ACP Agent (Codex CLI, Gemini CLI, etc.)
-            -> session_update responses streamed back
-        -> Posts response to Band room
+      -> ACPClientAdapter.on_message()
+        -> remote ACP prompt/session handling
+          -> Remote ACP Agent (e.g., Claude Code)
+            -> session_update: thought -> tools.send_event("thought")
+            -> session_update: tool_call -> tools.send_event("tool_call")
+            -> session_update: text -> tools.send_message()
+            -> request_permission -> tools.send_event("tool_call", permission)
+        -> All events visible on Band platform
 
 Prerequisites:
     1. Set environment variables:
        - BAND_WS_URL: WebSocket URL
        - BAND_REST_URL: REST API URL
-       - ACP_AGENT_COMMAND: Command to spawn the ACP agent
+       - ACP_AGENT_COMMAND: Command to spawn
          (default: "npx @zed-industries/codex-acp")
 
     2. Have the remote ACP agent installed and available in PATH
 
 Run with:
-    uv run examples/acp/02_acp_client.py
+    uv run examples/acp/clients/rich_streaming.py
 """
 
 from __future__ import annotations
@@ -51,7 +63,7 @@ from band import Agent
 from band.adapters import ACPClientAdapter
 from band.config import load_agent_config
 
-setup_logging()
+setup_logging(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
@@ -87,11 +99,9 @@ async def main() -> None:
         rest_url=rest_url,
     )
 
-    logger.info(
-        "Starting ACP client bridge (forwarding to '%s')...",
-        " ".join(acp_command),
-    )
-    logger.info("Messages from Band will be forwarded to the ACP agent.")
+    logger.info("Starting ACP client bridge with rich streaming...")
+    logger.info("Command: %s", " ".join(acp_command))
+    logger.info("Thoughts, tool calls, and plans will be posted to the platform.")
     await agent.run()
 
 

@@ -39,7 +39,7 @@ Optional environment variables:
     - ACP_INJECT_BAND_TOOLS (default: true)
 
 Run with:
-    uv run examples/acp/08_acp_bridge_architecture.py
+    uv run examples/acp/clients/bridge_architecture.py
 """
 
 from __future__ import annotations

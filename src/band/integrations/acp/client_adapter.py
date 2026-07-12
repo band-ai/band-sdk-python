@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import shutil
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from acp import spawn_agent_process
@@ -23,6 +24,7 @@ from band.integrations.acp.client_runtime import (
     allow_permission,
     cancel_permission,
     select_allow_option_id,
+    tcp_spawn_process,
 )
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
@@ -32,13 +34,20 @@ from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
 )
+from band.integrations.acp.types import CollectedChunk
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.mcp_server import LocalMCPServer
-from band.runtime.tools import iter_tool_definitions
+from band.runtime.tools import is_room_posting_tool, iter_tool_definitions
 
 logger = logging.getLogger(__name__)
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
+
+# The transport seam: a callable matching ACPRuntime's spawn_process contract —
+# ``(client, *command, env=..., transport_kwargs=...) -> async CM yielding (conn, _)``.
+# stdio and TCP are the built-in transports; injecting one (e.g. docker exec / ssh,
+# or a fake in tests) is the supported extension point.
+SpawnProcess = Callable[..., object]
 
 
 def _resolve_launcher(command: list[str]) -> list[str]:
@@ -70,7 +79,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
     def __init__(
         self,
-        command: str | list[str],
+        command: str | list[str] | None = None,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
@@ -80,12 +89,29 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         auth_method: str | None = None,
         profile: ACPClientProfile | None = None,
         features: AdapterFeatures | None = None,
+        # Transport + advanced knobs are keyword-only: this preserves the original
+        # positional order (command, env, cwd, …) for existing callers, and TCP /
+        # custom-transport wiring reads clearly at the call site.
+        *,
+        host: str | None = None,
+        port: int | None = None,
+        custom_section: str = "",
+        spawn_process: SpawnProcess | None = None,
     ) -> None:
         super().__init__(
             history_converter=ACPClientHistoryConverter(),
             features=features,
         )
-        self._command = command if isinstance(command, list) else [command]
+        self._host, self._port = self._resolve_transport(command, host, port)
+        # stdio spawns a subprocess from ``command``; TCP dials an already-running
+        # ACP server at host/port and passes an empty command to the runtime.
+        self._command: list[str]
+        if self._host is not None:
+            self._command = []
+        else:
+            # _resolve_transport guarantees command is set when host is None.
+            assert command is not None
+            self._command = [command] if isinstance(command, str) else list(command)
         self._env = env
         self._cwd = os.path.abspath(cwd or ".")
         self._mcp_servers = list(mcp_servers or [])
@@ -95,17 +121,24 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
         self._profile = profile
+        self._custom_section = custom_section
+
+        # Transport: an explicit spawn_process wins (advanced/custom transports and
+        # tests); otherwise default to acp's subprocess spawner (stdio) or a
+        # connect-only seam closed over host/port (TCP; see tcp_spawn_process).
+        if spawn_process is not None:
+            transport: SpawnProcess = spawn_process
+        elif self._host is not None and self._port is not None:
+            transport = tcp_spawn_process(self._host, self._port)
+        else:
+            transport = spawn_agent_process
 
         self._runtime = ACPRuntime(
             command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
             client_factory=lambda: BandACPClient(profile=self._profile),
-            spawn_process=lambda client, *args, **kwargs: spawn_agent_process(
-                client,
-                *args,
-                **kwargs,
-            ),
+            spawn_process=transport,
         )
 
         self._room_to_session: dict[str, str] = {}
@@ -167,10 +200,17 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
             sender_name = msg.sender_name or msg.sender_id or "Unknown"
             mentions = [{"id": msg.sender_id, "name": sender_name}]
+            # Reply delivery is tool-first with a text fallback, like the other
+            # bridge adapters (copilot_sdk / codex): if the turn already posted
+            # via a Band messaging tool, relaying its plain text too would
+            # duplicate the reply (and leak the agent's narration of the call).
+            replied_in_room = self._turn_replied_in_room(chunks)
+            # Streaming text/thought deltas are coalesced into one chunk per run by
+            # ACPCollectingClient, so one chunk here == one logical message/event.
             for chunk in chunks:
                 match chunk.chunk_type:
                     case "text":
-                        if chunk.content:
+                        if chunk.content and not replied_in_room:
                             await tools.send_message(
                                 content=chunk.content,
                                 mentions=mentions,
@@ -211,6 +251,40 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 "acp_client_room_id": room_id,
             },
         )
+
+    @staticmethod
+    def _turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
+        """True when the turn posted to the room via a Band messaging tool.
+
+        Unlike copilot_sdk / codex, which execute Band tools in-process and flip
+        a flag at execution time, ACP tool calls may run out-of-process (a remote
+        band-mcp server the SDK never sees execute). The ACP session-update
+        stream is the one record of the turn that covers both, so detection
+        matches the collected tool-call chunks by their reported title (ACP has
+        no structured tool-name field). A room-posting call counts once it (or
+        its result update) reports ``completed`` — a failed post must not
+        suppress the text fallback, or the turn goes silent.
+        """
+        posting_call_ids: set[str] = set()
+        for chunk in chunks:
+            metadata = chunk.metadata or {}
+            call_id = str(metadata.get("tool_call_id", ""))
+            if chunk.chunk_type == "tool_call" and is_room_posting_tool(chunk.content):
+                if metadata.get("status") == "completed":
+                    return True
+                # Correlate with a later result only by a real id. An empty id
+                # (a missing tool_call_id) would match any other id-less result —
+                # e.g. a non-posting tool's — and falsely suppress the text
+                # fallback, silencing the turn.
+                if call_id:
+                    posting_call_ids.add(call_id)
+            elif (
+                chunk.chunk_type == "tool_result"
+                and call_id in posting_call_ids
+                and metadata.get("status") == "completed"
+            ):
+                return True
+        return False
 
     def _make_permission_handler(
         self,
@@ -263,6 +337,33 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         return handler
 
     @staticmethod
+    def _resolve_transport(
+        command: str | list[str] | None,
+        host: str | None,
+        port: int | None,
+    ) -> tuple[str | None, int | None]:
+        """Validate exactly one transport is configured; return (host, port) for TCP.
+
+        stdio spawns a subprocess from ``command``; TCP connects to an
+        already-running ACP server at ``host``/``port``. The two are mutually
+        exclusive and one is required.
+        """
+        # An empty command ("" or []) is not a usable stdio transport — treat it as
+        # absent so it fails the "one is required" check below with a clear error,
+        # rather than slipping through to crash at spawn time.
+        has_command = bool(command)
+        has_tcp = host is not None or port is not None
+        if has_command and has_tcp:
+            raise ValueError(
+                "Provide either command (stdio) or host+port (TCP), not both"
+            )
+        if not has_command and not has_tcp:
+            raise ValueError("Provide either command (stdio) or host+port (TCP)")
+        if has_tcp and (host is None or port is None):
+            raise ValueError("TCP transport requires both host and port")
+        return (host, port) if has_tcp else (None, None)
+
+    @staticmethod
     def _validate_rest_url(rest_url: str) -> None:
         if not rest_url.startswith(("http://", "https://")):
             raise ValueError("rest_url must be a valid HTTP(S) URL")
@@ -278,6 +379,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         system_prompt = render_system_prompt(
             agent_name=agent_name,
             agent_description=agent_desc,
+            custom_section=self._custom_section,
             include_base_instructions=False,
             features=self.features,
         )
@@ -285,8 +387,11 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         room_context = (
             f"\n## Room Context\n"
             f"You are connected to Band using the Band tools.\n"
-            f"Use the Band tools for any visible room action. Plain text "
-            f"output is not posted back to the room.\n"
+            f"Use the Band tools for any visible room action. If you post a "
+            f"message with a Band tool, your plain text output is not also "
+            f"posted; otherwise your plain text reply is delivered to the "
+            f"room on your behalf. Never both — reply exactly once, and do "
+            f"not narrate the tool calls you are about to make.\n"
             f"\n"
             f"Current room_id: {room_id}\n"
             f"Current requester name: {requester_name}\n"
@@ -368,7 +473,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 
-    async def stop(self) -> None:
+    async def cleanup_all(self) -> None:
+        """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
+
+        The ACP subprocess / TCP connection and the local Band MCP server are started
+        adapter-wide in ``on_started`` (not per room), so releasing them belongs here,
+        not in per-room ``on_cleanup``. Idempotent — safe to call again from ``stop()``.
+        """
         async with self._session_lock:
             self._room_to_session.clear()
             self._room_tools.clear()
@@ -383,6 +494,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             await local_mcp_server.stop()
         await self._runtime.stop()
         logger.info("ACP client adapter stopped")
+
+    async def stop(self) -> None:
+        """Tear down now (used by the ``on_message`` error path); see ``cleanup_all``."""
+        await self.cleanup_all()
 
     def _rehydrate(self, room_id: str, history: ACPClientSessionState) -> None:
         del room_id

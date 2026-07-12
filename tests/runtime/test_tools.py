@@ -21,6 +21,7 @@ from band.runtime.tools import (
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
+    is_room_posting_tool,
 )
 
 
@@ -1368,3 +1369,27 @@ class TestToolInputModels:
         """CreateChatroomInput should work without task_id."""
         model = CreateChatroomInput()
         assert model.task_id is None
+
+
+class TestIsRoomPostingTool:
+    """Which tool calls count as having replied in the room."""
+
+    def test_sdk_injected_tool(self):
+        assert is_room_posting_tool("band_send_message") is True
+
+    def test_standalone_band_mcp_tool(self):
+        assert is_room_posting_tool("create_agent_chat_message") is True
+
+    def test_mcp_server_prefixed_names(self):
+        """MCP clients may prefix the server name onto the tool name."""
+        assert is_room_posting_tool("band-band_send_message") is True
+        assert is_room_posting_tool("band-create_agent_chat_message") is True
+
+    def test_non_posting_tools(self):
+        assert is_room_posting_tool("band_send_event") is False
+        assert is_room_posting_tool("band_lookup_peers") is False
+        assert is_room_posting_tool("get_weather") is False
+
+    def test_no_substring_false_positive(self):
+        """Only an exact or server-prefixed match counts, not any substring."""
+        assert is_room_posting_tool("band_send_message_draft") is False

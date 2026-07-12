@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 from tests.e2e.baseline.flaky import flaky_model
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL,
     REPLY_PROMPT,
@@ -32,9 +32,15 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-# CREWAI_FLOW is a terminal echo flow with no memory (like codex/opencode), so it
-# cannot recall a per-room note — exclude it from recall scenarios.
-@per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
+@per_adapter(
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CREWAI_FLOW,
+            "terminal echo flow with no memory — cannot recall a per-room note",
+        )
+    ],
+    prompt=REPLY_PROMPT,
+)
 @flaky_model(
     "recall on a live model is non-deterministic — the model occasionally denies "
     "having the note despite it being in context"

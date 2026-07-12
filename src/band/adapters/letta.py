@@ -803,65 +803,120 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
 
         return agent_id
 
-    async def _attach_mcp_tools(self, agent_id: str) -> None:
-        """Attach all discovered MCP tools to a Letta agent."""
-        for tool_id in self._mcp.tool_ids:
+    @staticmethod
+    def _is_stale_tool_error(error: Exception) -> bool:
+        """Whether an attach failure means the tool id is gone from the org.
+
+        A 404 "tool not found in organization" says the cached id died with its
+        registration's tool rows (deleted out from under us) — recoverable by
+        re-registering.  Other errors (transient network, auth) are not.
+        """
+        if getattr(error, "status_code", None) == 404:
+            return True
+        return "not found in organization" in str(error)
+
+    async def _attach_tools(self, agent_id: str, tool_ids: list[str]) -> bool:
+        """Attach each tool id to the agent.
+
+        Returns False if an attach failed because the id is stale (a 404) — the
+        caller should re-register and retry, since the remaining ids share the
+        same dead registration.  Other failures are logged and tolerated.
+        """
+        for tool_id in tool_ids:
             try:
                 await self._client.agents.tools.attach(
-                    agent_id=agent_id,
-                    tool_id=tool_id,
+                    agent_id=agent_id, tool_id=tool_id
                 )
             except Exception as e:
+                if self._is_stale_tool_error(e):
+                    logger.warning(
+                        "Agent %s: MCP tool %s is gone from the org "
+                        "(registration's tool rows deleted)",
+                        agent_id,
+                        tool_id,
+                    )
+                    return False
                 logger.warning(
                     "Failed to attach MCP tool %s to agent %s: %s",
                     tool_id,
                     agent_id,
                     e,
                 )
+        return True
+
+    async def _reregister_and_mark_stale(self, *, wired_agent_id: str) -> None:
+        """Re-register the MCP path and flag other rooms to re-sync their tools.
+
+        Re-registration can mint new tool ids; any other room whose agent was
+        wired to the now-dead ids must re-verify attachment on its next turn
+        (its early-return fast path would otherwise run with dead tools).
+        ``wired_agent_id`` is the agent the caller re-attaches inline, so it is
+        left unmarked.
+        """
+        await self._mcp.reregister(self._client)
+        for room_ctx in self._rooms.values():
+            if room_ctx.agent_id != wired_agent_id:
+                room_ctx.stale_tools = True
+
+    async def _attach_mcp_tools(self, agent_id: str) -> None:
+        """Attach all discovered MCP tools to a Letta agent.
+
+        Self-heals once from stale ids: a 404 means the cached ids died in the
+        org, so re-register to re-sync fresh ones and retry.
+        """
+        if not await self._attach_tools(agent_id, self._mcp.tool_ids):
+            logger.warning(
+                "Agent %s: MCP tool ids stale; re-registering the Band MCP path",
+                agent_id,
+            )
+            await self._reregister_and_mark_stale(wired_agent_id=agent_id)
+            await self._attach_tools(agent_id, self._mcp.tool_ids)
         logger.debug(
             "Attached %d MCP tools to agent %s",
             len(self._mcp.tool_ids),
             agent_id,
         )
 
+    async def _list_attached_tool_ids(self, agent_id: str) -> set[str]:
+        """The ids of tools currently attached to a Letta agent."""
+        result = await self._client.agents.tools.list(agent_id=agent_id)
+        if isinstance(result, list):
+            tools = result
+        elif hasattr(result, "items"):
+            tools = list(result.items)
+        else:
+            tools = [t async for t in result]
+        return {t.id for t in tools if getattr(t, "id", None)}
+
     async def _verify_mcp_tools_attached(self, agent_id: str) -> bool:
         """Verify MCP tools are attached to an existing agent, re-attach if needed.
 
         Best-effort: failures are logged, not raised.  Returns False when the
         agent may still be missing tools, so callers tracking staleness can
-        retry on the next turn instead of considering the agent synced.
+        retry on the next turn instead of considering the agent synced.  Recovers
+        once from stale ids (a 404) by re-registering and re-attaching the fresh
+        set — mirrors ``_attach_mcp_tools``.
         """
         try:
-            agent_tools_result = await self._client.agents.tools.list(agent_id=agent_id)
-            if isinstance(agent_tools_result, list):
-                agent_tools = agent_tools_result
-            elif hasattr(agent_tools_result, "items"):
-                agent_tools = list(agent_tools_result.items)
-            else:
-                agent_tools = [t async for t in agent_tools_result]
-
-            attached_ids = {t.id for t in agent_tools if getattr(t, "id", None)}
-            missing = [tid for tid in self._mcp.tool_ids if tid not in attached_ids]
-            complete = True
-            if missing:
-                logger.info(
-                    "Agent %s missing %d MCP tools, re-attaching",
-                    agent_id,
-                    len(missing),
-                )
-                for tool_id in missing:
-                    try:
-                        await self._client.agents.tools.attach(
-                            agent_id=agent_id,
-                            tool_id=tool_id,
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to re-attach tool %s: %s", tool_id, e)
-                        complete = False
-            return complete
+            attached_ids = await self._list_attached_tool_ids(agent_id)
         except Exception as e:
             logger.warning("Failed to verify MCP tools for agent %s: %s", agent_id, e)
             return False
+
+        missing = [tid for tid in self._mcp.tool_ids if tid not in attached_ids]
+        if not missing:
+            return True
+        logger.info(
+            "Agent %s missing %d MCP tools, re-attaching", agent_id, len(missing)
+        )
+        if await self._attach_tools(agent_id, missing):
+            return True
+        # Stale ids — re-register for a fresh set, then re-attach all of them.
+        logger.warning(
+            "Agent %s: MCP tool ids stale during verify; re-registering", agent_id
+        )
+        await self._reregister_and_mark_stale(wired_agent_id=agent_id)
+        return await self._attach_tools(agent_id, self._mcp.tool_ids)
 
     # Labels tried (in order) when injecting the system prompt into a
     # pre-existing agent's memory.  "persona" is the Letta default; others
@@ -985,15 +1040,13 @@ class LettaAdapter(SimpleAdapter[LettaSessionState]):
     async def cleanup_all(self) -> None:
         """Release the MCP tool path on agent shutdown.
 
-        See ``LettaMCPBridge.release`` for the three registration ownership
-        tiers (external / fixed self-host / ephemeral self-host).  Retained
-        rooms are marked ``stale_tools`` only when ``release`` deregisters
-        from Letta — ephemeral self-host — because that rotation mints new
-        tool ids that existing agents must re-attach.
+        ``release`` keeps the Letta registration alive (see
+        ``LettaMCPBridge.release``): the org shares MCP tool rows by name, so
+        deregistering would strip tools from sibling agents.  Nothing rotates,
+        so retained rooms keep their valid tool attachments — no ``stale_tools``
+        marking needed here.  (A runtime re-registration triggered by a stale
+        404 is what marks rooms stale; see ``_reregister_and_mark_stale``.)
         """
-        if self._mcp.registration_rotates_on_release and self._mcp.server_id:
-            for room_ctx in self._rooms.values():
-                room_ctx.stale_tools = True
         await self._mcp.release(self._client)
 
     async def _delete_agent(self, agent_id: str, room_id: str) -> None:

@@ -18,8 +18,8 @@ you cannot add Band as an agent inside Cursor's UI). This integration works
 the other direction — Band spawns Cursor's agent as a backend.
 
 For the reverse direction (IDE connects to Band), see:
-- JetBrains: examples/acp/07_jetbrains_server.py
-- Zed: examples/acp/01_basic_acp_server.py
+- JetBrains: examples/acp/servers/jetbrains.py
+- Zed: examples/acp/servers/basic.py
 - Any ACP client: band-acp CLI
 
 Architecture:
@@ -43,7 +43,7 @@ Prerequisites:
        - ACP_AGENT_CWD: Working directory for Cursor sessions (default: .)
 
 Run with:
-    uv run examples/acp/06_cursor_client.py
+    uv run examples/acp/clients/cursor.py
 """
 
 from __future__ import annotations

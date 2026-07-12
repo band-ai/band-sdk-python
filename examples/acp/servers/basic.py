@@ -6,22 +6,20 @@
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-ACP Server with push notifications - Real-time activity from Band peers.
+Basic ACP Server example - Band as an ACP agent.
 
-This example demonstrates push notifications: when platform messages arrive
-for rooms with active ACP sessions but no pending prompt, they are pushed
-to the editor as unsolicited session_update notifications.
-
-This lets the editor display real-time activity from other agents working
-in the same Band room, even when the user hasn't sent a prompt.
+This example starts Band as an ACP agent that editors (Zed, Cursor,
+JetBrains, Neovim) can connect to. It implements the "Super-Agent" pattern:
+a single ACP facade that routes editor requests to multiple Band peers.
 
 Architecture:
-    Band Platform (peer sends a message in room)
-      -> BandACPServerAdapter.on_message() (no pending prompt)
-        -> ACPPushHandler.handle_push_event()
-          -> EventConverter.convert(msg) -> ACP session_update chunk
-            -> acp_client.session_update(session_id, chunk)
-              -> Editor shows real-time peer activity
+    Editor (Zed/Cursor/JetBrains/Neovim)
+      -> ACP JSON-RPC over stdio
+        -> ACPServer (protocol handler)
+          -> BandACPServerAdapter (platform bridge)
+            -> Band Platform (REST + WebSocket)
+              -> Multi-agent responses via Phoenix Channels
+            -> ACP session_update notifications back to editor
 
 Prerequisites:
     1. Set environment variables:
@@ -31,8 +29,15 @@ Prerequisites:
 
     2. Have peers configured on the Band platform
 
+Editor Configuration:
+    Zed (settings.json):
+        {"agent_servers": {"Band": {"type": "custom", "command": "uv run examples/acp/servers/basic.py"}}}
+
+    JetBrains (~/.jetbrains/acp.json):
+        {"agent_servers": {"Band": {"command": "band-acp", "args": ["--agent-id", "..."], "env": {"BAND_API_KEY": "..."}}}}
+
 Run with:
-    uv run examples/acp/05_acp_server_push_notifications.py
+    uv run examples/acp/servers/basic.py
 """
 
 from __future__ import annotations
@@ -51,7 +56,6 @@ from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ACPServer, BandACPServerAdapter
 from band.config import load_agent_config
-from band.integrations.acp import ACPPushHandler
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -77,15 +81,11 @@ async def main() -> None:
     else:
         agent_id = os.getenv("BAND_AGENT_ID", "acp-server")
 
-    # Create ACP server adapter
+    # Create ACP server adapter with direct REST client
     adapter = BandACPServerAdapter(
         rest_url=rest_url,
         api_key=api_key,
     )
-
-    # Wire up push handler for unsolicited session_update notifications
-    push_handler = ACPPushHandler(adapter)
-    adapter.set_push_handler(push_handler)
 
     # Create ACP protocol handler
     server = ACPServer(adapter)
@@ -99,8 +99,8 @@ async def main() -> None:
         rest_url=rest_url,
     )
 
-    logger.info("Starting ACP server with push notifications...")
-    logger.info("Peer activity will be pushed to the editor in real time.")
+    logger.info("Starting ACP server (Band as ACP agent)...")
+    logger.info("Waiting for editor to connect via stdio...")
 
     # Start platform connection (non-blocking)
     await agent.start()

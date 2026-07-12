@@ -191,3 +191,29 @@ jobs:
         from band.config import load_agent_config
         print('All imports successful')
         "
+
+
+  # Single aggregate gate for branch protection. Branch rulesets require exactly
+  # this one context: `needs` a matrix job is green only when every one of its
+  # OS/Python cells passed, so requiring `ci-required` covers the whole matrix and
+  # survives future matrix changes without re-editing the ruleset. `if: always()`
+  # runs it even when a dependency failed (a skipped/failed dep would otherwise
+  # skip this job and report nothing, leaving the required check stuck "Expected").
+  ci-required:
+    name: ci-required
+    needs: [lint, test, test-crewai, packaging]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+    - name: Fail unless every required job succeeded
+      env:
+        RESULTS: ${{ needs.lint.result }} ${{ needs.test.result }} ${{ needs.test-crewai.result }} ${{ needs.packaging.result }}
+      run: |
+        echo "dependency results: ${RESULTS}"
+        for result in ${RESULTS}; do
+          if [ "${result}" != "success" ]; then
+            echo "::error::A required CI job did not succeed (results: ${RESULTS})."
+            exit 1
+          fi
+        done
+        echo "All required CI jobs succeeded."

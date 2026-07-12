@@ -6,20 +6,21 @@
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
-Basic ACP Server example - Band as an ACP agent.
+ACP Server with routing - Target specific peers via slash commands or modes.
 
-This example starts Band as an ACP agent that editors (Zed, Cursor,
-JetBrains, Neovim) can connect to. It implements the "Super-Agent" pattern:
-a single ACP facade that routes editor requests to multiple Band peers.
+This example demonstrates how to route editor prompts to specific Band
+peers using the AgentRouter. Users can:
+
+  1. Use slash commands: "/codex fix this bug" -> routes to "codex" peer
+  2. Set session modes: mode "code" -> routes to configured peer
+  3. Default: mention all peers in the room
 
 Architecture:
-    Editor (Zed/Cursor/JetBrains/Neovim)
-      -> ACP JSON-RPC over stdio
-        -> ACPServer (protocol handler)
-          -> BandACPServerAdapter (platform bridge)
-            -> Band Platform (REST + WebSocket)
-              -> Multi-agent responses via Phoenix Channels
-            -> ACP session_update notifications back to editor
+    Editor prompt "/codex fix bug"
+      -> ACPServer.prompt()
+        -> AgentRouter.resolve() -> ("fix bug", "codex")
+          -> BandACPServerAdapter.handle_prompt(mention=["codex"])
+            -> Band Platform (only @codex is mentioned)
 
 Prerequisites:
     1. Set environment variables:
@@ -29,15 +30,8 @@ Prerequisites:
 
     2. Have peers configured on the Band platform
 
-Editor Configuration:
-    Zed (settings.json):
-        {"agent_servers": {"Band": {"type": "custom", "command": "uv run examples/acp/01_basic_acp_server.py"}}}
-
-    JetBrains (~/.jetbrains/acp.json):
-        {"agent_servers": {"Band": {"command": "band-acp", "args": ["--agent-id", "..."], "env": {"BAND_API_KEY": "..."}}}}
-
 Run with:
-    uv run examples/acp/01_basic_acp_server.py
+    uv run examples/acp/servers/routing.py
 """
 
 from __future__ import annotations
@@ -56,6 +50,7 @@ from setup_logging import setup_logging
 from band import Agent
 from band.adapters import ACPServer, BandACPServerAdapter
 from band.config import load_agent_config
+from band.integrations.acp import AgentRouter
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -81,11 +76,25 @@ async def main() -> None:
     else:
         agent_id = os.getenv("BAND_AGENT_ID", "acp-server")
 
-    # Create ACP server adapter with direct REST client
+    # Configure routing: slash commands and mode-based routing
+    router = AgentRouter(
+        slash_commands={
+            "codex": "codex",  # /codex <prompt> -> route to "codex" peer
+            "claude": "claude",  # /claude <prompt> -> route to "claude" peer
+            "gemini": "gemini",  # /gemini <prompt> -> route to "gemini" peer
+        },
+        mode_to_peer={
+            "code": "codex",  # "code" mode -> route to "codex" peer
+            "research": "gemini",  # "research" mode -> route to "gemini" peer
+        },
+    )
+
+    # Create ACP server adapter with routing
     adapter = BandACPServerAdapter(
         rest_url=rest_url,
         api_key=api_key,
     )
+    adapter.set_router(router)
 
     # Create ACP protocol handler
     server = ACPServer(adapter)
@@ -99,8 +108,9 @@ async def main() -> None:
         rest_url=rest_url,
     )
 
-    logger.info("Starting ACP server (Band as ACP agent)...")
-    logger.info("Waiting for editor to connect via stdio...")
+    logger.info("Starting ACP server with routing...")
+    logger.info("Slash commands: /codex, /claude, /gemini")
+    logger.info("Session modes: code -> codex, research -> gemini")
 
     # Start platform connection (non-blocking)
     await agent.start()

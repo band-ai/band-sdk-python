@@ -1383,6 +1383,23 @@ class TestPortableCustomToolDef:
         # through the shared execute_custom_tool).
         assert await adapter._custom_tools[0](LookupInput(key="alpha")) == "code:alpha"
 
+    @pytest.mark.asyncio
+    async def test_async_handler_is_awaited(self):
+        """An async portable handler must be awaited (not returned as a coroutine) —
+        the same shared-executor path every other adapter uses."""
+        from pydantic import BaseModel
+
+        class LookupInput(BaseModel):
+            key: str
+
+        async def lookup(args: LookupInput) -> str:
+            return f"code:{args.key}"
+
+        adapter = PydanticAIAdapter(
+            model="openai:gpt-5.4", additional_tools=[(LookupInput, lookup)]
+        )
+        assert await adapter._custom_tools[0](LookupInput(key="beta")) == "code:beta"
+
     def test_tuple_terminal_marker_is_honored(self):
         from pydantic import BaseModel
 

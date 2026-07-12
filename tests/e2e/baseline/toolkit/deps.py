@@ -144,7 +144,7 @@ class Dep(Enum):
     OPENCODE_SERVER = "opencode_server"  # OPENCODE_BASE_URL of a running server
     LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
-    COPILOT_GITHUB_TOKEN = "copilot_github_token"  # GITHUB_TOKEN, Copilot-entitled
+    COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
 
 
 @dataclass(frozen=True)
@@ -172,11 +172,20 @@ def _google_available(settings: BaselineSettings) -> bool:
     )
 
 
+def _cli_on_path(command: str, default_binary: str) -> bool:
+    """Whether the CLI binary (from an override ``command`` or ``default_binary``) is on PATH."""
+    binary = command.split()[0] if command.strip() else default_binary
+    return shutil.which(binary) is not None
+
+
 def _codex_cli_available(settings: BaselineSettings) -> bool:
     """The Codex CLI (or the binary named by ``CODEX_COMMAND``) is on PATH."""
-    command = settings.backends.codex_command
-    binary = command.split()[0] if command.strip() else "codex"
-    return shutil.which(binary) is not None
+    return _cli_on_path(settings.backends.codex_command, "codex")
+
+
+def _copilot_cli_available(settings: BaselineSettings) -> bool:
+    """The Copilot CLI (or the binary named by ``COPILOT_COMMAND``) is on PATH."""
+    return _cli_on_path(settings.backends.copilot_command, "copilot")
 
 
 def _codex_cwd_available(settings: BaselineSettings) -> bool:
@@ -254,6 +263,11 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.CODEX_CLI: DepSpec(
         _codex_cli_available, "Codex CLI not found on PATH", lane=Lane.BACKENDS
     ),
+    # The Copilot CLI (unlike the self-downloading Copilot SDK) must be stood up on
+    # PATH, so its ACP backend rides the ``backends`` lane alongside codex/opencode.
+    Dep.COPILOT_CLI: DepSpec(
+        _copilot_cli_available, "Copilot CLI not found on PATH", lane=Lane.BACKENDS
+    ),
     Dep.CODEX_CWD: DepSpec(
         _codex_cwd_available,
         "CODEX_CWD must be an existing disposable dir outside the repo "
@@ -276,15 +290,6 @@ _DEPS: dict[Dep, DepSpec] = {
         lambda _s: importlib.util.find_spec("crewai") is not None,
         "crewai is not importable (install the dev-crewai lane)",
         lane=Lane.CREWAI,
-    ),
-    # The Copilot SDK self-downloads its own CLI runtime (no Node/CLI-on-PATH
-    # setup), so it needs no isolated lane — it runs in the shared ``core`` lane
-    # (DEFAULT_LANE). It does need a GitHub token from a Copilot-entitled account
-    # rather than a plain provider key; ``core`` carries that token too.
-    Dep.COPILOT_GITHUB_TOKEN: DepSpec(
-        lambda s: bool(s.backends.github_token),
-        "GITHUB_TOKEN not set (a token from a GitHub account with Copilot "
-        "entitlement is required to boot the Copilot runtime)",
     ),
 }
 

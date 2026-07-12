@@ -6,7 +6,7 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno)
 2. A2A protocol support: Bridge to remote A2A agents and expose Band peers as A2A endpoints
-3. ACP integration: Editor-facing server and subprocess client adapters (Cursor, Codex, Claude Code)
+3. ACP integration: Editor-facing server and client adapters over stdio or TCP (Cursor, Codex, Claude Code, GitHub Copilot)
 4. Platform tools for chat, contacts, and memory management
 5. WebSocket + REST transport: Real-time messaging with REST API fallback
 
@@ -224,7 +224,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | Platform Bridge | `BandACPServerAdapter` | `ACPClientAdapter` |
 
 **Server**: Editor -> ACP -> `ACPServer` -> `BandACPServerAdapter` -> Band REST/WS -> Peers
-**Client**: Band room message -> `ACPClientAdapter` -> spawned subprocess (Codex, Claude Code, etc.)
+**Client**: Band room message -> `ACPClientAdapter` -> stdio subprocess **or** TCP connection (Codex, Claude Code, Cursor, GitHub Copilot, etc.)
 
 ### Key Files
 
@@ -232,7 +232,9 @@ Two-layer pattern (mirrors A2A Gateway):
 |------|---------|
 | `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
-| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
+| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
+| `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic), `tcp_spawn_process` (TCP connect seam) |
+| `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — per-session chunk buffering |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
@@ -261,7 +263,11 @@ BAND_AGENT_ID=my-agent BAND_API_KEY=key band-acp
 
 ### Per-Session Buffers (Client Adapter)
 
-`BandACPClient` uses per-session chunk buffers (`_session_chunks: dict[str, list[CollectedChunk]]`) to allow concurrent rooms without global locking. Each session's buffer is reset before a prompt and read after.
+`BandACPClient` uses per-session chunk buffers (`_session_chunks: dict[str, list[CollectedChunk]]`) to allow concurrent rooms without global locking. Each session's buffer is reset before a prompt and read after. Consecutive streamed text/thought deltas are coalesced into one chunk at collection, so one chunk == one logical message.
+
+### Reply Delivery (Client Adapter)
+
+Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the text is relayed as the reply. Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools.py`): the SDK's `band_send_message` plus the standalone band-mcp server's `create_agent_chat_message`. The siblings flip a flag when they execute the tool in-process; the ACP adapter instead reads the ACP tool-call stream (`tool_call` title + `completed` status), because its tools may execute out-of-process (remote band-mcp).
 
 ### Optional Dependency
 
@@ -271,6 +277,43 @@ acp = ["agent-client-protocol"]
 ```
 
 Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
+
+### Client transports (stdio / TCP)
+
+`ACPClientAdapter` selects a transport at construction; both flow through `ACPRuntime`'s
+injectable `spawn_process` seam, so the runtime and downstream code are transport-agnostic.
+
+- **stdio** (default): pass `command=[...]` to spawn the agent as a subprocess
+  (`acp.spawn_agent_process`).
+- **TCP**: pass `host=` + `port=` to connect to an already-running ACP server
+  (`tcp_spawn_process` → `asyncio.open_connection` → `acp.connect_to_agent`). Use for an
+  ACP agent in a remote/containerized environment.
+- Exactly one of `{command, (host, port)}` is required (validated in `__init__`).
+- Advanced: inject a custom `spawn_process` (e.g. `docker exec -i … copilot --acp`, ssh,
+  or a fake in tests). Tests inject a fake through this seam rather than patching module
+  globals (see `tests/integrations/acp/conftest.py::FakeSpawn` / the `make_acp_transport`
+  fixture).
+
+### GitHub Copilot CLI backend
+
+`CopilotACPAdapter` (`src/band/adapters/copilot_acp.py`) drives `copilot --acp` through
+`ACPClientAdapter`. Copilot speaks vanilla ACP (no `copilot/*` extension methods → no custom
+profile). Auth is flexible — an env token (`COPILOT_GITHUB_TOKEN`>`GH_TOKEN`>`GITHUB_TOKEN`),
+a stored `copilot login`, `gh`, or BYOK; for stdio pass any of it via the config `env`
+(`github_token` is a convenience for `GITHUB_TOKEN`), unset to use the ambient login.
+Registered in the baseline matrix under the `backends` lane (gated on the CLI only, like
+codex — auth is out-of-band); excluded from framework-conformance as a bridge.
+
+- stdio example: `examples/acp/clients/copilot.py`.
+- Copilot-in-a-container over TCP + Band tools via a `band-mcp` (SSE) server:
+  `examples/acp/copilot_docker/compose/` (separate services) and
+  `examples/acp/copilot_docker/colocated/` (single container). Both use
+  `inject_band_tools=False` + an explicit `mcp_servers` SSE URL, since a remote Copilot
+  can't reach the SDK host's loopback `LocalMCPServer`.
+- Copilot in a Docker **microVM sandbox** ([`sbx`](https://docs.docker.com/ai/sandboxes/))
+  over stdio (`sbx exec -i <sandbox> copilot --acp`): `examples/acp/copilot_sandbox/` —
+  isolation + a host-side secret proxy (token never enters the VM). Uses the ordinary
+  stdio transport; auth is out-of-band via `sbx secret set -g github`.
 
 ## REST Client OMIT vs Null
 
@@ -391,7 +434,7 @@ resolves each in a separate fork.
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
-- `GITHUB_TOKEN`: A token from a GitHub account with Copilot entitlement, for the Copilot SDK adapter's runtime auth (BYOK inference reuses `ANTHROPIC_API_KEY`). Read by the baseline toolkit's `tests/e2e/baseline/settings.py`
+- `GITHUB_TOKEN`: A Copilot-entitled GitHub token for the `copilot_sdk` and `copilot_acp` adapters' runtime auth (BYOK inference reuses `ANTHROPIC_API_KEY`). Optional when a stored `copilot login` is present; used for headless/CI. Read by the baseline toolkit's `tests/e2e/baseline/settings.py`
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
@@ -400,13 +443,14 @@ resolves each in a separate fork.
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and needs a Copilot-entitled `GITHUB_TOKEN`; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and authenticates via a stored `copilot login` or a Copilot-entitled `GITHUB_TOKEN`; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
 - `BAND_E2E_AUTOCLEAN`: Reap provisioned agents + rooms on teardown (default: `true`; set `false` to keep resources for debugging a failing run)
 - `BAND_E2E_ORPHAN_SWEEP`: Sweep leftover agents from crashed prior runs at session start (default: `true`)
 - `BAND_E2E_ORPHAN_MAX_AGE_MINUTES`: Only sweep agents older than this, so a concurrent run is never reaped mid-flight (default: `120`)
+- `BAND_E2E_SCORECARD_JSON`: Write this run's adapter×test scorecard (pass/fail/skip + N/A reasons) as JSON to this path at session end (default: empty = don't emit). CI sets one path per lane; a final job merges them (see `tests/e2e/baseline/scorecard.py` and the Scorecard section of the baseline README)
 
 ## Adding a New Framework Integration
 

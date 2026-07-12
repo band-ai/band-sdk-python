@@ -49,6 +49,7 @@ __all__ = [
     "LANE_MARKER",
     "Adapter",
     "Lane",
+    "ExcludedAdapter",
     "WithAdapters",
     "PerAdapter",
     "adapter_params",
@@ -72,9 +73,15 @@ LANE_MARKER = "assigned_lane"
 def lane(lane_id: Lane) -> pytest.MarkDecorator:
     """Assign a test to an explicit CI lane, overriding derived home-lane scheduling.
 
-    Only needed for a multi-framework test whose frameworks live in different home
-    lanes (which is otherwise a collection error): it names the one lane — whose
-    ``uv`` extra must host all the frameworks — the test runs in.
+    Two cases need it — both because home-lane derivation (from ``item_frameworks``)
+    can't place the test:
+
+    * a multi-framework test whose frameworks live in different home lanes (otherwise a
+      collection error): names the one lane whose ``uv`` extra hosts all of them;
+    * a *bespoke* smoke that builds its adapter by hand and requests no ``agent`` fixture
+      (e.g. ``smoke/adapters/test_copilot_sdk.py``, ``test_parlant.py``): it exposes no
+      framework to the selector, so absent this pin it would run in *every* lane. Here
+      ``@with_adapters`` is not an option — the wiring guard requires it to provision.
     """
     return getattr(pytest.mark, LANE_MARKER)(lane_id)
 
@@ -115,8 +122,37 @@ class WithAdapters(MarkerPayload):
 
 
 @dataclass(frozen=True)
+class ExcludedAdapter:
+    """An adapter a ``@per_adapter`` test deliberately does not run, and why.
+
+    The reason lives at the call site (the test file that decides the exclusion) so
+    the scorecard renders an ``N/A`` cell with a human explanation instead of the
+    adapter silently vanishing from the matrix. Mirrors ``AdapterSpec.e2e_pending``:
+    a plain-language reason string, not a code. It is constructed inline in the
+    decorator call, so the empty-reason guard fires at import time (decoration),
+    never at runtime.
+    """
+
+    adapter: Adapter
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.reason.strip():
+            raise ValueError(
+                f"@per_adapter exclude of {self.adapter} needs a non-empty reason "
+                "(why is this adapter N/A for this test?)"
+            )
+
+
+@dataclass(frozen=True)
 class PerAdapter(MarkerPayload):
-    """Per-cell construction steering for ``@per_adapter`` (carried on its marker)."""
+    """Per-cell construction steering for ``@per_adapter`` (carried on its marker).
+
+    ``exclude`` records the adapters this test opts out of, each with its reason. They
+    produce no test node (``specs()`` omits them), so they exist only here — this is
+    what lets the scorecard surface an excluded cell as ``N/A`` (+ reason) rather than
+    letting it disappear without a trace.
+    """
 
     MARKER: ClassVar[str] = PER_ADAPTER_MARKER
 
@@ -124,6 +160,7 @@ class PerAdapter(MarkerPayload):
     features: AdapterFeatures | None
     tools: list[ToolSpec] | None
     peer: Adapter | None = None
+    exclude: tuple[ExcludedAdapter, ...] = ()
 
 
 def with_adapters(
@@ -197,7 +234,7 @@ def adapter_params(
 
 def per_adapter(
     *adapters: Adapter,
-    exclude: Collection[Adapter] | None = None,
+    exclude: Collection[ExcludedAdapter] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
@@ -216,7 +253,7 @@ def per_adapter(
     ``peer`` fixtures carry these as defaults::
 
         @per_adapter()                                   # full matrix
-        @per_adapter(exclude={Adapter.CREWAI})           # all but crewai
+        @per_adapter(exclude=[ExcludedAdapter(Adapter.CREWAI, "no per-turn usage")])
         @per_adapter(Adapter.ANTHROPIC, Adapter.AGNO)    # only these
         @per_adapter(supports={Capability.MEMORY})       # by capability
         @per_adapter(lane=Lane.CORE, peer=Adapter.LANGGRAPH)  # each cell + a foreign peer
@@ -228,8 +265,17 @@ def per_adapter(
     the parameters.
     """
     include = frozenset(adapters) or None
+    excluded = tuple(exclude or ())
+    exclude_ids = frozenset(e.adapter for e in excluded)
+    registered = {s.id for s in specs(include_pending=True)}
+    unknown = exclude_ids - registered
+    if unknown:
+        # A typo'd or stale exclusion would otherwise silently no-op (nothing to drop).
+        raise ValueError(
+            f"@per_adapter(exclude=...) names unregistered adapters: {sorted(unknown)}"
+        )
     if peer is not None:
-        if peer not in {s.id for s in specs(include_pending=True)}:
+        if peer not in registered:
             raise ValueError(f"@per_adapter(peer={peer!r}) is not a registered adapter")
         if peer not in {s.id for s in specs()}:
             # A pending adapter defines a lane but runs no cells (no builder-backed cell),
@@ -240,7 +286,7 @@ def per_adapter(
             )
     params = adapter_params(
         include=include,
-        exclude=exclude,
+        exclude=exclude_ids or None,
         supports=supports,
         without=without,
         runs_tool_loop=runs_tool_loop,
@@ -253,11 +299,13 @@ def per_adapter(
         raise ValueError(
             "@per_adapter selected no adapters "
             f"(include={sorted(map(str, include)) if include else None}, "
-            f"exclude={exclude}, supports={supports}, without={without}, "
-            f"runs_tool_loop={runs_tool_loop}, lane={lane}); widen the filter or fix "
-            "the registry drift"
+            f"exclude={sorted(map(str, exclude_ids)) or None}, supports={supports}, "
+            f"without={without}, runs_tool_loop={runs_tool_loop}, lane={lane}); widen "
+            "the filter or fix the registry drift"
         )
-    build = PerAdapter(prompt=prompt, features=features, tools=tools, peer=peer)
+    build = PerAdapter(
+        prompt=prompt, features=features, tools=tools, peer=peer, exclude=excluded
+    )
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:
         fn = pytest.mark.parametrize("adapter_id", params, indirect=True)(fn)

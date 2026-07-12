@@ -27,7 +27,7 @@ from tests.e2e.baseline.flaky import flaky_model
 
 from band.client.streaming import DeliveryStatus
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     RECALL_ALL_FACTS,
@@ -43,7 +43,15 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 BURST_SIZE = 6
 
 
-@per_adapter(exclude={Adapter.CREWAI_FLOW}, prompt=REPLY_PROMPT)
+@per_adapter(
+    exclude=[
+        ExcludedAdapter(
+            Adapter.CREWAI_FLOW,
+            "terminal echo flow with no memory — cannot span-recall an early fact",
+        )
+    ],
+    prompt=REPLY_PROMPT,
+)
 @flaky_model("spanning recall is model-driven")
 @pytest.mark.timeout(
     extra=780

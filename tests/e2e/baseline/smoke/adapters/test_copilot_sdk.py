@@ -1,27 +1,29 @@
 """Copilot SDK showcase smokes — the toolkit driving the Copilot adapter live.
 
-Copilot SDK is a ``copilot``-lane matrix adapter (its own lane: it needs a
-GitHub token from a Copilot-entitled account, not a plain provider key — see
-``deps.py``), so the generic matrix (``smoke/matrix/``) already runs the
-standard scenarios against it via the registry builder. These are Copilot-focused
-instead: ``ask_user`` routing (handler and room mode), recall when Copilot's
-*native* session resume misses, and one client shared across adapter lifecycles —
-none of which the generic builder's ``prompt``/``features``/``tools`` contract can
-express, so each test constructs ``CopilotSDKAdapter`` by hand (like
+Copilot SDK is a ``core``-lane matrix adapter (gated on the Anthropic BYOK key;
+its Copilot auth — a stored login or ``GITHUB_TOKEN`` — is out-of-band, see the
+builder in ``toolkit/builders.py``), so the generic matrix (``smoke/matrix/``)
+already runs the standard scenarios against it via the registry builder. These
+are Copilot-focused instead: ``ask_user`` routing (handler and room mode), recall
+when Copilot's *native* session resume misses, and one client shared across adapter
+lifecycles — none of which the generic builder's ``prompt``/``features``/``tools``
+contract can express, so each test constructs ``CopilotSDKAdapter`` by hand (like
 ``test_parlant.py``) and hands it to the toolkit's run primitives.
 
-Because construction is bespoke, gating is explicit (``@requires``) rather than
-riding on ``@with_adapters``/``@per_adapter``.
+Because construction is bespoke, these expose no adapter binding to the lane
+selector (no ``@with_adapters``/``@per_adapter`` — that would demand the ``agent``
+fixture and re-provision generically). So gating stays explicit (``@requires``) and
+lane scoping is pinned with ``@lane(Lane.CORE)`` — without it the selector would see
+no framework and run these heavy smokes in *every* lane.
 
 Run with:
-    E2E_TESTS_ENABLED=true BAND_E2E_LANE=copilot uv run pytest \\
+    E2E_TESTS_ENABLED=true BAND_E2E_LANE=core uv run pytest \\
         tests/e2e/baseline/smoke/adapters/test_copilot_sdk.py -v -s --no-cov
 """
 
 from __future__ import annotations
 
 import asyncio
-import re
 import uuid
 from typing import Any
 
@@ -30,6 +32,8 @@ import pytest
 from band.adapters.copilot_sdk import ASK_USER_ROOM, _COPILOT_SDK_AVAILABLE
 
 from tests.e2e.baseline.flaky import flaky_infra
+
+from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
@@ -72,18 +76,8 @@ def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
     )
 
 
-def _chosen_word(reply: str) -> str:
-    """Extract the word the agent chose from its phase-1 reply.
-
-    The prompt asks for exactly one word; tolerate mentions/punctuation by
-    taking the last alphabetic token of meaningful length.
-    """
-    words = re.findall(r"[A-Za-z]{4,}", reply)
-    assert words, f"phase-1 reply contains no candidate word: {reply!r}"
-    return words[-1]
-
-
-@requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
+@lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
+@requires(Dep.ANTHROPIC)
 @flaky_infra(
     "Copilot runtime boot + ask_user double round-trip can time out transiently"
 )
@@ -155,7 +149,8 @@ async def test_copilot_ask_user_handler_round_trips_to_room_reply(
     replies.assert_contains_any([operator_channel])
 
 
-@requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
+@lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
+@requires(Dep.ANTHROPIC)
 @flaky_infra("two full live turns plus Copilot runtime boot can time out transiently")
 @pytest.mark.timeout(extra=180)  # two full turns (question turn + answer turn)
 @pytest.mark.asyncio(loop_scope="session")
@@ -225,7 +220,8 @@ async def test_copilot_ask_user_room_question_answered_by_next_message(
             replies.assert_contains_any([secret_channel])
 
 
-@requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
+@lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
+@requires(Dep.ANTHROPIC)
 @flaky_infra(
     "two fresh Copilot runtime boots (resume-miss setup) can time out transiently"
 )
@@ -246,14 +242,16 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
     Copilot's own session resume answer for free. This test gives each phase a
     fresh ``base_directory``, so phase 2's resume finds no state and recall
     must flow through the converter's injected text history instead. Two facts
-    are asserted after the restart: a code the USER stated (plain injected-
-    history recall), and a word the AGENT itself chose in phase 1 — the user
-    never utters it, so the agent's own injected replies are its only possible
-    source (the regression case for one-sided injected history).
+    are asserted after the restart: a tracking marker the USER stated (plain
+    injected-history recall), and a calibration answer the AGENT produced in
+    phase 1 — the user never utters that answer, so the agent's own injected
+    replies are its only possible source (the regression case for one-sided
+    injected history).
     """
     from band.adapters.copilot_sdk import CopilotSDKAdapter
 
-    secret_code = f"CODE_{uuid.uuid4().hex[:6]}"
+    tracking_marker = f"MARKER_{uuid.uuid4().hex[:6]}"
+    agent_fact = "blue"
 
     def make_adapter(phase: str) -> CopilotSDKAdapter:
         # A fresh base_directory per phase: phase 2 has no on-disk session
@@ -272,16 +270,21 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
         async with reply_capture(room_id) as capture:
             mid = await user_ops.send_message(
                 room_id,
-                f"Remember this secret code: {secret_code}. Now choose one "
-                "uncommon English word yourself and reply with exactly that "
-                "single word, nothing else.",
+                "Create a short project log note for later reference. The "
+                f"tracking marker is {tracking_marker}. Also answer this "
+                "calibration question inside your reply: what color is a "
+                "clear daytime sky? Reply in one short sentence that includes "
+                "the tracking marker and the color answer.",
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
             replies = await capture.wait_for_reply(
                 mid, identity.id, deadline_s=baseline_settings.e2e_timeout
             )
-            agent_word = _chosen_word(replies[-1].content)
+            replies.assert_contains_any([tracking_marker])
+            # The user never uttered this answer; it must come from the
+            # agent's phase-1 reply when phase 2 reconstructs history.
+            replies.assert_contains_any([agent_fact])
 
     # Phase 2: fresh process state AND fresh Copilot state directory — recall
     # can only come from the platform history the adapter injects.
@@ -289,21 +292,22 @@ async def test_copilot_recall_via_injected_history_when_resume_misses(
         async with reply_capture(room_id) as capture:
             mid = await user_ops.send_message(
                 room_id,
-                "What was the secret code I told you, and what was the "
-                "single word you chose earlier? Reply with both.",
+                "From the earlier project log, what was the tracking marker "
+                "and what color answer did you give? Reply with both.",
                 mention_id=identity.id,
                 mention_name=identity.name,
             )
             replies = await capture.wait_for_reply(
                 mid, identity.id, deadline_s=baseline_settings.e2e_timeout
             )
-            replies.assert_contains_any([secret_code])
-            # The user never uttered this word — only the agent's own injected
-            # phase-1 reply can supply it.
-            replies.assert_contains_any([agent_word])
+            replies.assert_contains_any([tracking_marker])
+            # The user never uttered this answer — only the agent's own
+            # injected phase-1 reply can supply it.
+            replies.assert_contains_any([agent_fact])
 
 
-@requires(Dep.COPILOT_GITHUB_TOKEN, Dep.ANTHROPIC)
+@lane(Lane.CORE)  # bespoke build exposes no framework; pin scheduling to core
+@requires(Dep.ANTHROPIC)
 @flaky_infra(
     "several live turns across two adapter lifecycles can time out transiently"
 )

@@ -93,6 +93,7 @@ class Adapter(StrEnum):
     CREWAI_FLOW = "crewai_flow"
     CODEX = "codex"
     OPENCODE = "opencode"
+    COPILOT_ACP = "copilot_acp"
     LETTA = "letta"
 
 

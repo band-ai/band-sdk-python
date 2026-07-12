@@ -32,7 +32,7 @@ import asyncio
 import pytest
 from tests.e2e.baseline.flaky import flaky_infra
 
-from tests.e2e.baseline.agents import Adapter, per_adapter
+from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ResourceManager
@@ -42,8 +42,14 @@ INSTANCES = 3  # the spec's Test Agent + Calc + Greeter trio
 
 
 @per_adapter(
-    exclude={Adapter.LETTA}
-)  # Letta: global-by-name MCP tools (see module doc)
+    exclude=[
+        ExcludedAdapter(
+            Adapter.LETTA,
+            "global-by-name MCP tools collide across concurrent same-adapter "
+            "instances (see module docstring)",
+        )
+    ]
+)
 @flaky_infra("only transient reruns")
 @pytest.mark.timeout(extra=300)  # three concurrent boots + three turns
 @pytest.mark.asyncio(loop_scope="session")

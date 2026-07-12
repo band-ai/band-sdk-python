@@ -27,8 +27,9 @@ name: E2E (baseline)
 # - google       — gemini/google_adk (own lane so free-tier rate-limit flakiness is
 #                  isolated from core; shares the `dev` extra).
 # - backends     — the CLI/server coding agents in one job (on the `dev` extra):
-#                  CodexAdapter (codex CLI) + the codex-acp e2e, and OpencodeAdapter
-#                  (local `opencode serve`, Zen free model).
+#                  CodexAdapter (codex CLI) + the codex-acp e2e, OpencodeAdapter
+#                  (local `opencode serve`, Zen free model), and CopilotACPAdapter
+#                  (copilot CLI over ACP; auth via the Copilot-entitled GITHUB_TOKEN).
 # - letta        — LettaAdapter against a self-hosted Letta server (docker). The
 #                  adapter self-hosts its Band MCP tool server (LocalMCPServer)
 #                  inside the pytest process; the container reaches it back via
@@ -203,6 +204,10 @@ jobs:
       # entitlement). The copilot_sdk adapter (in the `core` lane) needs it;
       # exposed to every lane's job env so `core` picks it up.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
+      # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
+      # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final
+      # `scorecard` job merges them. See tests/e2e/baseline/scorecard.py.
+      BAND_E2E_SCORECARD_JSON: artifacts/scorecard-${{ matrix.lane }}-${{ matrix.os }}.json
 
     steps:
     - name: Checkout code
@@ -229,6 +234,11 @@ jobs:
       # executed .sh depends on the exec bit surviving checkout and Git Bash
       # resolving the shebang; `bash <script>` sidesteps both. No-op on Linux.
       run: bash .github/scripts/setup-codex.sh
+
+    # copilot_acp drives `copilot --acp`; auth is the job-env GITHUB_TOKEN (no login).
+    - name: Install the GitHub Copilot CLI (copilot_acp)
+      if: matrix.lane == 'backends'
+      run: .github/scripts/setup-copilot.sh
 
     - name: Install + start the OpenCode server (opencode)
       if: matrix.lane == 'backends'
@@ -264,3 +274,62 @@ jobs:
     - name: Stop the Letta server (letta)
       if: always() && matrix.lane == 'letta'
       run: docker rm -f letta-server || true
+
+    # Emitted even when tests fail (session end still runs), so a red lane still
+    # contributes its pass/fail rows to the merged scorecard.
+    - name: Upload lane scorecard
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scorecard-${{ matrix.lane }}-${{ matrix.os }}
+        path: artifacts/scorecard-*.json
+        if-no-files-found: ignore
+
+  # Fold the per-lane scorecards into one adapter×test grid (pass / fail / skip / N-A).
+  # `if: always()` so a failed lane still yields a scorecard; this job reports the
+  # matrix, it does not gate on it (gating policy is tracked separately).
+  scorecard:
+    name: scorecard (merge lanes)
+    needs: e2e
+    if: always()
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up E2E environment
+      uses: ./.github/actions/setup-e2e
+
+    - name: Install dependencies
+      run: uv sync --extra dev
+
+    - name: Download lane scorecards
+      uses: actions/download-artifact@v4
+      with:
+        pattern: scorecard-*
+        path: artifacts
+        merge-multiple: true
+
+    - name: Merge into one scorecard
+      run: |
+        shopt -s nullglob
+        files=(artifacts/scorecard-*.json)
+        if [ ${#files[@]} -eq 0 ]; then
+          echo "no lane scorecards to merge (all lanes failed before session end)"
+          exit 0
+        fi
+        uv run python -m tests.e2e.baseline.scorecard merge "${files[@]}" \
+          --out artifacts/scorecard.json --markdown artifacts/scorecard.md
+
+    - name: Upload scorecard
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scorecard
+        path: |
+          artifacts/scorecard.json
+          artifacts/scorecard.md
+        if-no-files-found: ignore
