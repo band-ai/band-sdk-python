@@ -12,7 +12,7 @@ from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, PlatformMessage
 
 from tests.baseline.decisions import ModelDecision
-from tests.baseline.platform import BaselineTools
+from tests.baseline.tools import BaselineTools
 
 
 class DecisionScript:
@@ -117,6 +117,8 @@ class BaselineScenario:
             is_session_bootstrap=room_id not in self._rooms_started,
             room_id=room_id,
         )
+        # A failed turn is deliberately not committed as started: retry delivery
+        # must re-bootstrap from durable history rather than retain partial state.
         self._rooms_started.add(room_id)
         return Observation(tools=self.tools, script=self.script)
 

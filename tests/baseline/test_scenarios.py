@@ -8,7 +8,7 @@ from band.core.types import AdapterFeatures, Capability, Emit
 
 from tests.baseline.decisions import ModelDecision
 from tests.baseline.harness import BaselineScenario
-from tests.baseline.platform import BaselineTools
+from tests.baseline.tools import BaselineTools
 
 
 @pytest.mark.asyncio

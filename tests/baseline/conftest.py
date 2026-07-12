@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.baseline.platform import BaselineTools
+from tests.baseline.tools import BaselineTools
 
 
 @pytest.fixture
