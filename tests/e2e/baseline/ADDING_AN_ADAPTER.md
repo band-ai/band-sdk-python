@@ -287,9 +287,9 @@ by contrast, always means a missing enum member or builder.
 
 The matrix machinery is generic — leave it alone. You do **not** edit `agents.py`
 (`@with_adapters` / `@per_adapter`), `conftest.py` fixtures, `capture.py`,
-`provisioning.py`, `ci_lanes.py`, or any existing scenario/smoke. The enum in
-`adapters.py` + the builder in `builders.py` (+ optional `deps.py`/`settings.py`)
-is the entire surface. If you find
+`provisioning.py`, `ci_lanes.py`, or any existing scenario/smoke. The shared enum
+in `tests/baseline/adapter.py` + the builder in `builders.py` (+ optional
+`deps.py`/`settings.py`) is the entire surface. If you find
 yourself editing a scenario to special-case your adapter, that's a smell — the
 adapter should conform to the generic builder contract instead.
 

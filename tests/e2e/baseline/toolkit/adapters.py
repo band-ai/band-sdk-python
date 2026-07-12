@@ -1,7 +1,7 @@
 """Adapter discovery + generic construction for the baseline matrix (pytest-free).
 
-This is the one place that knows which framework adapters exist and how to build a
-ready-to-run instance of each. Tests never hard-code an adapter list: they iterate
+This is the E2E construction registry for the shared adapter identities declared
+in ``tests.baseline.adapter``. Tests never hard-code an adapter list: they iterate
 the registry, so L0-L4 scenarios and the smokes are written once and run across the
 whole matrix.
 
