@@ -11,8 +11,8 @@ that module) so the registry is populated before ``specs()`` / ``build_adapter``
 it. Heavy/optional framework imports live **inside** each builder so importing this
 module never pulls in an absent dependency.
 
-To add a framework: add an ``Adapter`` enum member in ``adapters`` and a decorated
-builder here (see ``adapters`` module docstring for the full recipe).
+To add a framework: add an ``Adapter`` enum member in ``tests.baseline.adapter`` and
+a decorated builder here (see ``adapters`` module docstring for the full recipe).
 """
 
 from __future__ import annotations

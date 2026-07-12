@@ -23,7 +23,7 @@ in a room), or a **bridge** that exposes Band to another protocol (a2a, acp, sla
 | It is… | Do this |
 |---|---|
 | an LLM-agent adapter | **Register it** — Steps 1–3 below (and 4 if it needs new config). |
-| a protocol bridge / needs a live server with bespoke setup (like `parlant`) | **Deny it** — add its module name to `NON_AGENT_ADAPTERS` in `toolkit/adapters.py`. One edit, done. |
+| a protocol bridge / needs a live server with bespoke setup (like `parlant`) | **Deny it** — add its module name to the shared `NON_AGENT_ADAPTERS` in `tests/baseline/adapter.py`. One edit, done. |
 
 Everything below is the register path.
 
@@ -34,18 +34,18 @@ Everything below is the register path.
 Some `band.adapters` modules are **not** LLM-agent adapters: protocol bridges
 (`a2a`, `a2a_gateway`, `acp`, `slack`) expose Band to another protocol rather than
 running the tool loop, and `parlant` needs a bespoke live server. They live in the
-`NON_AGENT_ADAPTERS` frozenset in `toolkit/adapters.py`; `discovered_agent_ids()`
+`NON_AGENT_ADAPTERS` frozenset in `tests/baseline/adapter.py`; `discovered_agent_ids()`
 subtracts them from the folder scan, so the guard neither expects a builder nor an
 enum member for them.
 
-To exclude a new non-agent module, add its module name to `NON_AGENT_ADAPTERS` —
+To exclude a new non-agent module, add its module name to the shared `NON_AGENT_ADAPTERS` —
 one edit, and the discovery guard stops demanding registration for it.
 
 ---
 
-## Step 1 — Add the `Adapter` enum member
+## Step 1 — Add the shared `Adapter` enum member
 
-File: `tests/e2e/baseline/toolkit/adapters.py`
+File: `tests/baseline/adapter.py`
 
 The member **value must equal the module name** under `band.adapters` (the guard
 keys on this three-way: enum ⇔ registry ⇔ discovered module).
@@ -297,7 +297,7 @@ adapter should conform to the generic builder contract instead.
 
 | File | Your edit |
 |---|---|
-| `toolkit/adapters.py` | **always** — the `Adapter` enum member (or a `NON_AGENT_ADAPTERS` entry for a bridge) |
+| `tests/baseline/adapter.py` | **always** — the shared `Adapter` enum member (or a `NON_AGENT_ADAPTERS` entry for a bridge) |
 | `toolkit/builders.py` | **always** — the `@adapter` builder function (registered via the side-effect import) |
 | `toolkit/deps.py` | only for a brand-new `Dep` + availability check |
 | `settings.py` | only for a new credential or model id field |

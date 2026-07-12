@@ -11,10 +11,15 @@ from tests.baseline.registry import (
     assert_support_is_complete,
     support_for,
 )
+from tests.e2e.baseline.toolkit.adapters import Adapter as E2EAdapter
 
 
 def test_every_adapter_declares_a_baseline_path_or_reason() -> None:
     assert_support_is_complete()
+
+
+def test_offline_and_e2e_baselines_share_adapter_identity() -> None:
+    assert Adapter is E2EAdapter
 
 
 @pytest.mark.parametrize("support", SUPPORT, ids=lambda item: item.adapter.value)
