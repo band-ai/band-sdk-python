@@ -440,6 +440,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             participant=ParticipantRequest(participant_id=peer_id, role="member"),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
+        # Stopgap, not a real fix. The platform's message claim is not exclusive:
+        # a message in flight is still handed out to any poll, so a slow or
+        # restarting peer can pick up this first message more than once and reply
+        # twice. We can only narrow that window from here by pausing before the
+        # caller posts; the durable fix is an exclusive, owned claim server-side.
         if self._new_participant_settle_seconds:
             await asyncio.sleep(self._new_participant_settle_seconds)
 
