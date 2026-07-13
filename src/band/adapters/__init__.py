@@ -17,6 +17,7 @@ Install the extra you need::
     uv add band-sdk[google_adk]
     uv add band-sdk[opencode]
     uv add band-sdk[slack]
+    uv add band-sdk[strands]
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
     from band.adapters.slack import SlackAdapter as SlackAdapter
     from band.adapters.slack import SlackApp as SlackApp
     from band.adapters.slack import SlackSessionState as SlackSessionState
+    from band.adapters.strands import StrandsAdapter as StrandsAdapter
 
 __all__ = [
     "LangGraphAdapter",
@@ -92,6 +94,7 @@ __all__ = [
     "SlackAdapter",
     "SlackApp",
     "SlackSessionState",
+    "StrandsAdapter",
 ]
 
 
@@ -125,6 +128,7 @@ _LAZY_IMPORTS: dict[str, str] = {
     "SlackAdapter": "slack",
     "SlackApp": "slack",
     "SlackSessionState": "slack",
+    "StrandsAdapter": "strands",
 }
 
 
