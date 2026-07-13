@@ -615,6 +615,11 @@ test, where the markdown-docs run actually executes it.
   constant) or otherwise cannot fail for a real reason; they add maintenance
   cost without protection.
 - Comments should describe the code as it is, not narrate what changed between versions.
+- Before adding a third-party dependency, prefer the stdlib or an existing
+  in-repo idiom (grep first) — don't take on a package to replace a few lines.
+  If a dependency is still warranted, vet it first: permissive license
+  (MIT/BSD/Apache-2.0), real adoption (stars + dependent packages/repos), and
+  active maintenance (release history, not a brand-new bus-factor-1 project).
 
 ## Pre-Commit Checklist
 
