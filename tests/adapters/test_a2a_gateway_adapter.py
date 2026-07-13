@@ -5,6 +5,7 @@ Tests the internal context mapping logic without hitting the real platform.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -24,6 +25,10 @@ class TestA2AGatewayContextIdFlow:
             api_key="test-key",
             gateway_url="http://localhost:10000",
             port=10000,
+            # These context-mapping tests don't exercise the settle window;
+            # disable it so they don't pause. The settle behaviour has its own
+            # tests below.
+            new_participant_settle_seconds=0.0,
         )
 
         # Mock peer
@@ -138,3 +143,101 @@ class TestA2AGatewayContextIdFlow:
             adapter._rest.agent_api_participants.add_agent_chat_participant.call_count
             == 2
         )
+
+
+class TestFreshlyJoinedPeerSettle:
+    """The gateway must let a freshly-added peer subscribe before the first message.
+
+    A peer added to a room needs a moment for its execution context to
+    subscribe to the room's real-time feed. If the gateway posts the first
+    message during that window, the peer can discover the message through both
+    its catch-up poll and its live feed and answer it more than once. The
+    gateway therefore settles after adding a peer and before returning control
+    to post the message. Warm rooms, where the peer is already a participant,
+    never add a peer and so never wait.
+    """
+
+    def _build_adapter(self, settle_seconds: float) -> A2AGatewayAdapter:
+        adapter = A2AGatewayAdapter(
+            rest_url="http://localhost:4000",
+            api_key="test-key",
+            new_participant_settle_seconds=settle_seconds,
+        )
+        peer = Peer(
+            id="uuid-weather",
+            name="Weather Agent",
+            type="Agent",
+            handle="test/weather-agent",
+            is_contact=False,
+            source="registry",
+        )
+        adapter._peers = {"weather-agent": peer}
+        adapter._peers_by_uuid = {"uuid-weather": peer}
+
+        response = MagicMock()
+        response.data = MagicMock(id="room-1")
+        adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
+            return_value=response
+        )
+        adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock()
+        return adapter
+
+    @pytest.mark.asyncio
+    async def test_first_message_waits_until_fresh_peer_subscribes(self) -> None:
+        """A fresh join must not return until the peer has had time to subscribe.
+
+        Reproduction: the peer subscribes a short while after being added. With
+        no settle window the gateway returns immediately, while the peer is
+        still unsubscribed, which is the race that lets the first message be
+        answered multiple times. The settle window must outlast the peer's
+        subscription so the gateway only proceeds once the peer is ready.
+        """
+        # Peer's subscription completes shortly after it is added to the room.
+        peer_subscribed = asyncio.Event()
+
+        async def start_peer_subscription(*args: object, **kwargs: object) -> None:
+            async def subscribe() -> None:
+                await asyncio.sleep(0.05)
+                peer_subscribed.set()
+
+            asyncio.get_running_loop().create_task(subscribe())
+
+        # Settle window comfortably longer than the peer's subscribe time.
+        adapter = self._build_adapter(settle_seconds=0.5)
+        adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock(
+            side_effect=start_peer_subscription
+        )
+
+        await adapter._get_or_create_room("ctx-fresh", "uuid-weather")
+
+        assert peer_subscribed.is_set(), (
+            "gateway returned before the freshly-added peer finished subscribing; "
+            "the first message would be posted into the duplicate-processing window"
+        )
+
+    @pytest.mark.asyncio
+    async def test_warm_room_reuse_never_waits(self) -> None:
+        """Reusing a room where the peer is already a member must not settle."""
+        # A settle this long would hang the test if the warm path waited.
+        adapter = self._build_adapter(settle_seconds=30.0)
+        adapter._context_to_room["ctx-warm"] = "room-existing"
+        adapter._room_participants["room-existing"] = {"uuid-weather"}
+
+        room_id, _ = await asyncio.wait_for(
+            adapter._get_or_create_room("ctx-warm", "uuid-weather"), timeout=1.0
+        )
+
+        assert room_id == "room-existing"
+        adapter._rest.agent_api_participants.add_agent_chat_participant.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_zero_settle_returns_without_waiting(self) -> None:
+        """A zero settle window opts out of the pause entirely."""
+        # A peer that never signals readiness: proves the gateway does not wait.
+        adapter = self._build_adapter(settle_seconds=0.0)
+
+        await asyncio.wait_for(
+            adapter._get_or_create_room("ctx-fast", "uuid-weather"), timeout=1.0
+        )
+
+        adapter._rest.agent_api_participants.add_agent_chat_participant.assert_called_once()

@@ -102,6 +102,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         gateway_url: str = "http://localhost:10000",
         port: int = 10000,
         features: AdapterFeatures | None = None,
+        new_participant_settle_seconds: float = 3.0,
     ) -> None:
         """Initialize gateway adapter.
 
@@ -110,6 +111,14 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             api_key: API key for authentication (same as Agent.create()).
             gateway_url: Base URL for A2A endpoints exposed by this gateway.
             port: Port for HTTP server to listen on.
+            new_participant_settle_seconds: Pause after adding a peer to a room
+                and before the first message is posted, giving the peer's
+                execution context time to finish subscribing to the room. Only
+                the first message to a freshly-joined peer is affected; warm
+                rooms (where the peer is already a participant) never wait. This
+                shrinks the window in which the peer can discover that first
+                message through both its real-time feed and its catch-up poll
+                and reply to it more than once. Set to 0 to disable.
         """
         super().__init__(
             history_converter=GatewayHistoryConverter(),
@@ -117,6 +126,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         )
         self.gateway_url = gateway_url
         self.port = port
+        self._new_participant_settle_seconds = new_participant_settle_seconds
 
         # Direct REST client for room/message operations
         self._rest = AsyncRestClient(base_url=rest_url, api_key=api_key)
@@ -387,13 +397,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             room_id = response.data.id
 
             # Add target peer to room
-            await self._rest.agent_api_participants.add_agent_chat_participant(
-                chat_id=room_id,
-                participant=ParticipantRequest(
-                    participant_id=target_peer_id, role="member"
-                ),
-                request_options=DEFAULT_REQUEST_OPTIONS,
-            )
+            await self._add_participant(room_id, target_peer_id)
 
             context_id = context_id or str(uuid4())
             self._context_to_room[context_id] = room_id
@@ -411,13 +415,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
             # Same context, different peer → add to room (multi-agent conversation)
             if target_peer_id not in self._room_participants.get(room_id, set()):
-                await self._rest.agent_api_participants.add_agent_chat_participant(
-                    chat_id=room_id,
-                    participant=ParticipantRequest(
-                        participant_id=target_peer_id, role="member"
-                    ),
-                    request_options=DEFAULT_REQUEST_OPTIONS,
-                )
+                await self._add_participant(room_id, target_peer_id)
                 self._room_participants.setdefault(room_id, set()).add(target_peer_id)
 
                 logger.info(
@@ -428,6 +426,22 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 )
 
         return room_id, context_id
+
+    async def _add_participant(self, room_id: str, peer_id: str) -> None:
+        """Add a peer to a room, then let its execution context settle.
+
+        The settle pause runs only here, on the freshly-joined-peer path, so the
+        peer has a moment to finish subscribing to the room before the caller
+        posts the first message. Warm rooms never reach this method, so they
+        never wait. See ``new_participant_settle_seconds``.
+        """
+        await self._rest.agent_api_participants.add_agent_chat_participant(
+            chat_id=room_id,
+            participant=ParticipantRequest(participant_id=peer_id, role="member"),
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+        if self._new_participant_settle_seconds:
+            await asyncio.sleep(self._new_participant_settle_seconds)
 
     def _rehydrate(self, history: GatewaySessionState) -> None:
         """Restore session state from history.

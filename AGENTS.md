@@ -202,6 +202,15 @@ from band.adapters.a2a_gateway import A2AGatewayAdapter, GatewayServer
 adapter = A2AGatewayAdapter(port=10000)
 ```
 
+`new_participant_settle_seconds` (default `3.0`) pauses after a peer is freshly
+added to a room and before the first message is posted, giving the peer's
+execution context time to subscribe to the room. This narrows the window in
+which a slow or restarting peer can discover that first message through both its
+catch-up poll and its live feed and answer it more than once. Only the first
+message to a freshly-joined peer waits; warm rooms are unaffected. Set to `0` to
+disable. This is a mitigation, not a correctness guarantee; the durable fix is
+an exclusive server-side claim so an in-flight message can't be re-served.
+
 ### Key files
 
 | Purpose | Path |
