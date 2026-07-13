@@ -6,6 +6,7 @@ Tests the internal context mapping logic without hitting the real platform.
 from __future__ import annotations
 
 import asyncio
+from typing import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,24 +15,23 @@ from band.integrations.a2a.gateway import A2AGatewayAdapter
 from band_rest import Peer
 
 
-class TestA2AGatewayContextIdFlow:
-    """Unit tests for context_id persistence in A2A Gateway (mock-based)."""
+@pytest.fixture
+def make_gateway_adapter() -> Callable[..., A2AGatewayAdapter]:
+    """Factory for a gateway adapter with mocked REST calls.
 
-    @pytest.fixture
-    def gateway_adapter_with_mocks(self) -> A2AGatewayAdapter:
-        """Create gateway adapter with mocked REST client for testing."""
+    Returns a builder so each test picks its own settle window. The builder
+    stubs every REST call the room-resolution path touches, registers a
+    "weather" peer, and exposes ``_rooms_created`` (the ids handed out by
+    ``create_agent_chat``, in order) for assertions.
+    """
+
+    def build(settle_seconds: float = 0.0) -> A2AGatewayAdapter:
         adapter = A2AGatewayAdapter(
             rest_url="http://localhost:4000",
             api_key="test-key",
-            gateway_url="http://localhost:10000",
-            port=10000,
-            # These context-mapping tests don't exercise the settle window;
-            # disable it so they don't pause. The settle behaviour has its own
-            # tests below.
-            new_participant_settle_seconds=0.0,
+            new_participant_settle_seconds=settle_seconds,
         )
 
-        # Mock peer
         weather_peer = Peer(
             id="uuid-weather",
             name="Weather Agent",
@@ -43,10 +43,9 @@ class TestA2AGatewayContextIdFlow:
         adapter._peers = {"weather-agent": weather_peer}
         adapter._peers_by_uuid = {"uuid-weather": weather_peer}
 
-        # Track room creation
         rooms_created: list[str] = []
 
-        def track_room_creation(*args, **kwargs):
+        def track_room_creation(*args: object, **kwargs: object) -> MagicMock:
             room_id = f"room-{len(rooms_created) + 1}"
             rooms_created.append(room_id)
             response = MagicMock()
@@ -63,12 +62,18 @@ class TestA2AGatewayContextIdFlow:
 
         return adapter
 
+    return build
+
+
+class TestA2AGatewayContextIdFlow:
+    """Unit tests for context_id persistence in A2A Gateway (mock-based)."""
+
     @pytest.mark.asyncio
     async def test_same_context_id_twice_uses_same_room(
-        self, gateway_adapter_with_mocks: A2AGatewayAdapter
+        self, make_gateway_adapter: Callable[..., A2AGatewayAdapter]
     ) -> None:
         """Same contextId sent twice should reuse the same chat room."""
-        adapter = gateway_adapter_with_mocks
+        adapter = make_gateway_adapter()
 
         # First request with context_id="ctx-user-session"
         room_1, ctx_1 = await adapter._get_or_create_room(
@@ -88,10 +93,10 @@ class TestA2AGatewayContextIdFlow:
 
     @pytest.mark.asyncio
     async def test_different_context_ids_create_different_rooms(
-        self, gateway_adapter_with_mocks: A2AGatewayAdapter
+        self, make_gateway_adapter: Callable[..., A2AGatewayAdapter]
     ) -> None:
         """Different contextIds should create separate chat rooms."""
-        adapter = gateway_adapter_with_mocks
+        adapter = make_gateway_adapter()
 
         # First context
         room_a, ctx_a = await adapter._get_or_create_room(
@@ -111,10 +116,10 @@ class TestA2AGatewayContextIdFlow:
 
     @pytest.mark.asyncio
     async def test_same_context_different_peers_same_room_adds_peer(
-        self, gateway_adapter_with_mocks: A2AGatewayAdapter
+        self, make_gateway_adapter: Callable[..., A2AGatewayAdapter]
     ) -> None:
         """Same contextId with different peers should use same room, add peer."""
-        adapter = gateway_adapter_with_mocks
+        adapter = make_gateway_adapter()
 
         # Add second peer
         data_peer = Peer(
@@ -157,33 +162,10 @@ class TestFreshlyJoinedPeerSettle:
     never add a peer and so never wait.
     """
 
-    def _build_adapter(self, settle_seconds: float) -> A2AGatewayAdapter:
-        adapter = A2AGatewayAdapter(
-            rest_url="http://localhost:4000",
-            api_key="test-key",
-            new_participant_settle_seconds=settle_seconds,
-        )
-        peer = Peer(
-            id="uuid-weather",
-            name="Weather Agent",
-            type="Agent",
-            handle="test/weather-agent",
-            is_contact=False,
-            source="registry",
-        )
-        adapter._peers = {"weather-agent": peer}
-        adapter._peers_by_uuid = {"uuid-weather": peer}
-
-        response = MagicMock()
-        response.data = MagicMock(id="room-1")
-        adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
-            return_value=response
-        )
-        adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock()
-        return adapter
-
     @pytest.mark.asyncio
-    async def test_first_message_waits_until_fresh_peer_subscribes(self) -> None:
+    async def test_first_message_waits_until_fresh_peer_subscribes(
+        self, make_gateway_adapter: Callable[..., A2AGatewayAdapter]
+    ) -> None:
         """A fresh join must not return until the peer has had time to subscribe.
 
         Reproduction: the peer subscribes a short while after being added. With
@@ -203,7 +185,7 @@ class TestFreshlyJoinedPeerSettle:
             asyncio.get_running_loop().create_task(subscribe())
 
         # Settle window comfortably longer than the peer's subscribe time.
-        adapter = self._build_adapter(settle_seconds=0.5)
+        adapter = make_gateway_adapter(settle_seconds=0.5)
         adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock(
             side_effect=start_peer_subscription
         )
@@ -216,10 +198,12 @@ class TestFreshlyJoinedPeerSettle:
         )
 
     @pytest.mark.asyncio
-    async def test_warm_room_reuse_never_waits(self) -> None:
+    async def test_warm_room_reuse_never_waits(
+        self, make_gateway_adapter: Callable[..., A2AGatewayAdapter]
+    ) -> None:
         """Reusing a room where the peer is already a member must not settle."""
         # A settle this long would hang the test if the warm path waited.
-        adapter = self._build_adapter(settle_seconds=30.0)
+        adapter = make_gateway_adapter(settle_seconds=30.0)
         adapter._context_to_room["ctx-warm"] = "room-existing"
         adapter._room_participants["room-existing"] = {"uuid-weather"}
 
@@ -231,10 +215,12 @@ class TestFreshlyJoinedPeerSettle:
         adapter._rest.agent_api_participants.add_agent_chat_participant.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_zero_settle_returns_without_waiting(self) -> None:
+    async def test_zero_settle_returns_without_waiting(
+        self, make_gateway_adapter: Callable[..., A2AGatewayAdapter]
+    ) -> None:
         """A zero settle window opts out of the pause entirely."""
         # A peer that never signals readiness: proves the gateway does not wait.
-        adapter = self._build_adapter(settle_seconds=0.0)
+        adapter = make_gateway_adapter(settle_seconds=0.0)
 
         await asyncio.wait_for(
             adapter._get_or_create_room("ctx-fast", "uuid-weather"), timeout=1.0
@@ -243,7 +229,9 @@ class TestFreshlyJoinedPeerSettle:
         adapter._rest.agent_api_participants.add_agent_chat_participant.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_concurrent_requests_same_context_join_peer_once(self) -> None:
+    async def test_concurrent_requests_same_context_join_peer_once(
+        self, make_gateway_adapter: Callable[..., A2AGatewayAdapter]
+    ) -> None:
         """Concurrent requests in one conversation must join the peer only once.
 
         While the first request sits in the settle window, its peer join is not
@@ -251,7 +239,7 @@ class TestFreshlyJoinedPeerSettle:
         must wait for that join to finish rather than issue a duplicate add or
         post before the settle ends.
         """
-        adapter = self._build_adapter(settle_seconds=0.1)
+        adapter = make_gateway_adapter(settle_seconds=0.1)
         # Existing conversation whose room has no participants recorded yet.
         adapter._context_to_room["ctx"] = "room-1"
         adapter._room_participants["room-1"] = set()

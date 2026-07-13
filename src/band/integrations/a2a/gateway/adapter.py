@@ -383,14 +383,13 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     def _context_lock(self, context_id: str) -> asyncio.Lock:
         """Return the resolution lock for a context, creating it on first use.
 
-        Safe to call concurrently: there is no await between the lookup and the
-        insert, so under the single-threaded event loop it is atomic.
+        Same keyed-lock idiom as ``copilot_sdk``/``slack``: ``setdefault`` is
+        atomic under the single-threaded event loop (no await between lookup and
+        insert). No eviction is needed since contexts persist in
+        ``_context_to_room`` for the adapter's lifetime, so the lock map is
+        bounded by the same set of keys.
         """
-        lock = self._context_locks.get(context_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._context_locks[context_id] = lock
-        return lock
+        return self._context_locks.setdefault(context_id, asyncio.Lock())
 
     async def _get_or_create_room(
         self, context_id: str | None, target_peer_id: str
