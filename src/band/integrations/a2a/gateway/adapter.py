@@ -116,9 +116,9 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 execution context time to finish subscribing to the room. Only
                 the first message to a freshly-joined peer is affected; warm
                 rooms (where the peer is already a participant) never wait. This
-                shrinks the window in which the peer can discover that first
-                message through both its real-time feed and its catch-up poll
-                and reply to it more than once. Set to 0 to disable.
+                is a temporary mitigation, not an exactly-once guarantee:
+                durable prevention requires a platform-side exclusive message
+                claim. Set to 0 to disable.
         """
         super().__init__(
             history_converter=GatewayHistoryConverter(),
