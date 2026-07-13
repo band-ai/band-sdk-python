@@ -12,8 +12,12 @@ quality. They are deterministic by design (no `sleep`, no silence windows).
 | Path | What it is |
 |------|------------|
 | `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep), `running_provisioned_agent`, `ProvisionedAgent` |
-| `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, create/delete room, add/remove/list participants, list messages/events) |
+| `toolkit/user_ops.py` | `UserOps`: act as the test user (send message, `send_structured_mentions` / `send_mentioning_all`, create/delete room, add/remove/list participants, list messages/events) |
 | `toolkit/capture.py` | `ReplyCapture` (subscribe-before-send), `reply_capture` ctx, `wait_for_processed` (delivery-status barrier), `tool_calls()`/`thoughts()`/`errors()`/`tasks()`/`events()`/`memory(agent)` |
+| `toolkit/waits.py` | reply-presence waits without PROCESSED delivery status: `wait_for_reply_from`, `wait_for_replies_from`, `said_by` |
+| `toolkit/exchange.py` | run-scoped `marker()`, bounded `run_exchange`, ordered `MentionChainStep` / `MentionChainOutcome` |
+| `toolkit/visibility.py` | history visibility outcome types (`Seed`, `VisibilityOutcome`) for mention-scoped context probes |
+| `toolkit/discovery.py` | `owner_hub_room_ids` — rooms whose participants are exactly owner + agent |
 | `toolkit/judge.py` | `judge()` LLM-as-judge, `Verdict`, `format_transcript` |
 | `toolkit/assertions.py` | tolerant assertions: `assert_present`, `assert_at_least`, `assert_contains_any`, `assert_mentions` |
 | `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies), `ToolCalls`/`ToolCall` + `MemoryToolCalls` (tool calls; memory excluded by default), `Events`→`Thoughts`/`Errors`/`Tasks` (emitted events), `Memories`/`MemoryObservation` (stored memory, both layers); shared `tolerant_match` + `ContentAssertions` |
