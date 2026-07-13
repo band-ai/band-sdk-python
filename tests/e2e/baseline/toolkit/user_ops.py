@@ -8,9 +8,7 @@ method yet, so it uses a direct REST call (see ``delete_room``).
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol
 
 import httpx
 from band_rest import (
@@ -23,13 +21,6 @@ from band_rest import (
 )
 
 from band.core.types import MessageType
-
-
-class MentionTarget(Protocol):
-    """Anything with the id/name pair Band needs for structured mentions."""
-
-    id: str
-    name: str
 
 
 class UserOps:
@@ -63,49 +54,6 @@ class UserOps:
             ),
         )
         return response.data.id
-
-    async def send_structured_mentions(
-        self,
-        room_id: str,
-        content: str,
-        *,
-        mentions: Sequence[MentionTarget],
-    ) -> str:
-        """Send ``content`` with delivery mentions, without rewriting its text.
-
-        Band routes agent delivery from the structured ``mentions`` metadata.
-        Keeping ``content`` untouched lets scenarios distinguish platform
-        routing from a harness's optional textual-address parsing.
-        """
-        response = await self._client.human_api_messages.send_my_chat_message(
-            room_id,
-            message=ChatMessageRequest(
-                content=content,
-                mentions=[
-                    ChatMessageRequestMentionsItem(id=agent.id, name=agent.name)
-                    for agent in mentions
-                ],
-            ),
-        )
-        return response.data.id
-
-    async def send_mentioning_all(
-        self,
-        room_id: str,
-        content: str,
-        *,
-        mentions: Sequence[MentionTarget],
-    ) -> str:
-        """Send one user message @mentioning every agent in ``mentions``;
-        return the message id. Band delivers the message to each mentioned
-        agent. Mirrors ``send_message``'s convention (``@Name`` text prefixes
-        matching the structured mentions)."""
-        prefix = " ".join(f"@{agent.name}" for agent in mentions)
-        return await self.send_structured_mentions(
-            room_id,
-            f"{prefix} {content}",
-            mentions=mentions,
-        )
 
     async def add_participant(
         self, room_id: str, participant_id: str, *, role: str = "member"
