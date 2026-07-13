@@ -42,6 +42,10 @@ docker run --rm --env-file .env -p 127.0.0.1:8080:8080 copilot-band-acp
 uv run examples/acp/copilot_docker/colocated/client.py
 ```
 
+`client.py` uses `/` as Copilot's working directory by default because the ACP
+server runs in a container. Set `COPILOT_ACP_CWD` to another path only when it
+exists inside the Copilot container.
+
 Then message the `copilot_acp_agent` from a Band room.
 
 ## Design notes / gotchas (verified against the shipped tools)

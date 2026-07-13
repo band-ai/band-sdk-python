@@ -43,6 +43,10 @@ docker compose up --build # starts copilot (:8080) + band-mcp (internal :3000)
 uv run examples/acp/copilot_docker/compose/client.py
 ```
 
+`client.py` uses `/` as Copilot's working directory by default because the ACP
+server runs in a container. Set `COPILOT_ACP_CWD` to another path only when it
+exists inside the Copilot container.
+
 Then message the `copilot_acp_agent` from a Band room; Copilot handles the turn
 and calls Band tools via band-mcp.
 
