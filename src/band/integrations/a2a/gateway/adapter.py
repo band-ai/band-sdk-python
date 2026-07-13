@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, nullcontext
 from typing import ClassVar
 from uuid import uuid4
 
@@ -114,11 +115,12 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             new_participant_settle_seconds: Pause after adding a peer to a room
                 and before the first message is posted, giving the peer's
                 execution context time to finish subscribing to the room. Only
-                the first message to a freshly-joined peer is affected; warm
-                rooms (where the peer is already a participant) never wait. This
-                is a temporary mitigation, not an exactly-once guarantee:
-                durable prevention requires a platform-side exclusive message
-                claim. Set to 0 to disable.
+                a freshly-joined peer incurs this settle; a warm turn (the peer
+                is already a participant) adds no settle of its own, though it
+                can still wait behind an earlier concurrent turn in the same
+                context. This is a temporary mitigation, not an exactly-once
+                guarantee: durable prevention requires a platform-side exclusive
+                message claim. Set to 0 to disable.
         """
         super().__init__(
             history_converter=GatewayHistoryConverter(),
@@ -140,9 +142,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         self._context_to_room: dict[str, str] = {}
         self._room_participants: dict[str, set[str]] = {}
 
-        # Serializes room resolution per context, so concurrent requests in the
-        # same conversation share one peer join + settle instead of each adding
-        # the peer and posting into the unsettled window.
+        # Serializes turns per context end-to-end: Band correlates a peer's
+        # reply only by room, so a room holds at most one in-flight turn at a
+        # time for that correlation to be unambiguous. Concurrent turns in one
+        # conversation queue here instead of racing to register competing
+        # pending tasks or posting into an unsettled window.
         self._context_locks: dict[str, asyncio.Lock] = {}
 
         # Request/response correlation
@@ -267,16 +271,13 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         if is_session_bootstrap and history:
             self._rehydrate(history)
 
-        # Find pending task for this room
+        # Correlate with the room's in-flight turn, if any, and enqueue the
+        # event. The turn (in _handle_a2a_request) owns the pending entry's
+        # lifecycle and removes it when done, so we only enqueue here.
         pending = self._pending_tasks.get(room_id)
         if pending:
-            # Convert to A2A event and push to SSE queue
             event = self._translate_to_a2a(msg, pending.task)
             await pending.sse_queue.put(event)
-
-            # Clean up on terminal state
-            if event.final:
-                del self._pending_tasks[room_id]
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up resources for a room.
@@ -322,66 +323,69 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         Yields:
             TaskStatusUpdateEvent for SSE streaming.
         """
-        # Resolve peer from slug or UUID
         peer = self._resolve_peer(peer_id)
         if not peer:
             logger.error("Peer not found: %s", peer_id)
             return
 
-        # Use the peer's actual UUID for Band API calls
-        peer_uuid = peer.id
+        # A named context serializes all of its turns end-to-end: because Band
+        # correlates a peer's reply only by room, a room may hold exactly one
+        # in-flight turn at a time. Distinct contexts (and each None context, an
+        # unshared new conversation) run concurrently. The turn owns its pending
+        # entry and removes it on exit, whether it ends on a terminal event or is
+        # cancelled by a client disconnect.
+        async with self._turn_lock(message.context_id):
+            room_id, context_id = await self._resolve_room(message.context_id, peer.id)
 
-        # Get or create room for context
-        room_id, context_id = await self._get_or_create_room(
-            message.context_id, peer_uuid
-        )
+            sse_queue: asyncio.Queue[TaskStatusUpdateEvent] = asyncio.Queue()
+            self._pending_tasks[room_id] = PendingA2ATask(
+                task=self._create_task(context_id),
+                sse_queue=sse_queue,
+                peer_id=peer.id,
+            )
+            try:
+                # Persist the context mapping in history for later rehydration.
+                await self._emit_context_event(room_id, context_id)
+                await self._rest.agent_api_messages.create_agent_chat_message(
+                    chat_id=room_id,
+                    message=ChatMessageRequest(
+                        content=f"@{peer.name} {get_message_text(message) or ''}",
+                        mentions=[
+                            ChatMessageRequestMentionsItem(id=peer.id, name=peer.name)
+                        ],
+                    ),
+                    request_options=DEFAULT_REQUEST_OPTIONS,
+                )
+                logger.debug(
+                    "Sent message to peer %s (%s) in room %s (context=%s)",
+                    peer.name,
+                    peer.id,
+                    room_id,
+                    context_id,
+                )
 
-        # Create A2A task
-        task = self._create_task(context_id)
+                # Events are enqueued by on_message() as the peer replies.
+                while True:
+                    event = await sse_queue.get()
+                    yield event
+                    if event.final:
+                        break
+            finally:
+                self._pending_tasks.pop(room_id, None)
 
-        # Register pending task with SSE queue
-        sse_queue: asyncio.Queue[TaskStatusUpdateEvent] = asyncio.Queue()
-        self._pending_tasks[room_id] = PendingA2ATask(
-            task=task,
-            sse_queue=sse_queue,
-            peer_id=peer_uuid,
-        )
+    def _turn_lock(self, context_id: str | None) -> AbstractAsyncContextManager[None]:
+        """Serializer for a context's turns; a no-op for an unshared None context.
 
-        # Emit task event to track context mapping in history
-        await self._emit_context_event(room_id, context_id)
-
-        # Send message to Band via REST client
-        content = get_message_text(message) or ""
-
-        # Use peer name for mention
-        peer_name = peer.name
-
-        await self._rest.agent_api_messages.create_agent_chat_message(
-            chat_id=room_id,
-            message=ChatMessageRequest(
-                content=f"@{peer_name} {content}",
-                mentions=[ChatMessageRequestMentionsItem(id=peer_uuid, name=peer_name)],
-            ),
-            request_options=DEFAULT_REQUEST_OPTIONS,
-        )
-
-        logger.debug(
-            "Sent message to peer %s (%s) in room %s (context=%s)",
-            peer_name,
-            peer_uuid,
-            room_id,
-            context_id,
-        )
-
-        # Stream events from queue (populated by on_message())
-        while True:
-            event = await sse_queue.get()
-            yield event
-            if event.final:
-                break
+        A named context reuses one lock (see ``_context_lock``); a None context
+        is a brand-new conversation with its own fresh room, so it needs no
+        guard and must not share the lock keyed on ``None``.
+        """
+        if context_id is None:
+            return nullcontext()
+        return self._context_lock(context_id)
 
     def _context_lock(self, context_id: str) -> asyncio.Lock:
-        """Return the resolution lock for a context, creating it on first use.
+        """Return the turn lock for a context, creating it on first use.
 
         Same keyed-lock idiom as ``copilot_sdk``/``slack``: ``setdefault`` is
         atomic under the single-threaded event loop (no await between lookup and
@@ -391,10 +395,13 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         """
         return self._context_locks.setdefault(context_id, asyncio.Lock())
 
-    async def _get_or_create_room(
+    async def _resolve_room(
         self, context_id: str | None, target_peer_id: str
     ) -> tuple[str, str]:
-        """Get existing room for context or create a new one.
+        """Resolve the room for a context, creating it and joining the peer if new.
+
+        Callers reach this holding the context's turn lock (except for a None
+        context, which is inherently unshared).
 
         Args:
             context_id: A2A context ID (may be None for new conversations).
@@ -403,37 +410,17 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         Returns:
             Tuple of (room_id, context_id).
         """
-        # A None context is a brand-new conversation with nothing to share, so
-        # it needs no lock. A named context is serialized so concurrent requests
-        # in the same conversation resolve the room and join the peer once.
-        if context_id is None:
-            return await self._resolve_room(None, target_peer_id)
-        async with self._context_lock(context_id):
-            return await self._resolve_room(context_id, target_peer_id)
-
-    async def _resolve_room(
-        self, context_id: str | None, target_peer_id: str
-    ) -> tuple[str, str]:
-        """Resolve the room for a context, creating it and joining the peer if new.
-
-        Callers reach this holding the per-context lock (except for a None
-        context, which is inherently unshared).
-        """
-        # New or None context_id → create new room
         if context_id is None or context_id not in self._context_to_room:
-            # Create new room via REST
             response = await self._rest.agent_api_chats.create_agent_chat(
                 chat=ChatRoomRequest(),
                 request_options=DEFAULT_REQUEST_OPTIONS,
             )
             room_id = response.data.id
-
-            # Add target peer to room
-            await self._add_participant(room_id, target_peer_id)
-
             context_id = context_id or str(uuid4())
+            # Record the mapping before joining/settling so a turn cancelled
+            # mid-settle leaves a reusable room instead of an orphan.
             self._context_to_room[context_id] = room_id
-            self._room_participants[room_id] = {target_peer_id}
+            await self._add_participant(room_id, target_peer_id)
 
             logger.info(
                 "Created new room %s for context %s with peer %s",
@@ -442,13 +429,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 target_peer_id,
             )
         else:
-            # Existing context → use existing room
             room_id = self._context_to_room[context_id]
 
-            # Same context, different peer → add to room (multi-agent conversation)
+            # Same context, different peer → add to room (multi-agent conversation).
             if target_peer_id not in self._room_participants.get(room_id, set()):
                 await self._add_participant(room_id, target_peer_id)
-                self._room_participants.setdefault(room_id, set()).add(target_peer_id)
 
                 logger.info(
                     "Added peer %s to existing room %s (context=%s)",
@@ -460,23 +445,32 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         return room_id, context_id
 
     async def _add_participant(self, room_id: str, peer_id: str) -> None:
-        """Add a peer to a room, then let its execution context settle.
+        """Add a peer to a room, record membership, then let it settle.
 
-        The settle pause runs only here, on the freshly-joined-peer path, so the
-        peer has a moment to finish subscribing to the room before the caller
-        posts the first message. Warm rooms never reach this method, so they
-        never wait. See ``new_participant_settle_seconds``.
+        Membership is recorded the instant the REST add succeeds and before the
+        settle pause, so a turn cancelled during the pause does not lose the
+        join (which would otherwise make a retry re-add the peer). A warm turn
+        (peer already a participant) never calls this and so adds no settle of
+        its own, though it can still wait behind an earlier concurrent turn in
+        the same context. See ``new_participant_settle_seconds``.
         """
         await self._rest.agent_api_participants.add_agent_chat_participant(
             chat_id=room_id,
             participant=ParticipantRequest(participant_id=peer_id, role="member"),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
-        # Stopgap, not a real fix. The platform's message claim is not exclusive:
-        # a message in flight is still handed out to any poll, so a slow or
-        # restarting peer can pick up this first message more than once and reply
-        # twice. We can only narrow that window from here by pausing before the
-        # caller posts; the durable fix is an exclusive, owned claim server-side.
+        self._room_participants.setdefault(room_id, set()).add(peer_id)
+        await self._settle_new_participant()
+
+    async def _settle_new_participant(self) -> None:
+        """Pause after a fresh join so the peer can finish subscribing.
+
+        Stopgap, not a real fix. The platform's message claim is not exclusive:
+        a message in flight is still handed out to any poll, so a slow or
+        restarting peer can pick up the first message more than once and reply
+        twice. We can only narrow that window from here by pausing before the
+        caller posts; the durable fix is an exclusive, owned claim server-side.
+        """
         if self._new_participant_settle_seconds:
             await asyncio.sleep(self._new_participant_settle_seconds)
 

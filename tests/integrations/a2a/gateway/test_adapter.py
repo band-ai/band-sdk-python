@@ -316,43 +316,6 @@ class TestA2AGatewayAdapterOnMessage:
         assert event.task_id == "task-123"
         assert event.final is True  # text message = completed
 
-    @pytest.mark.asyncio
-    async def test_on_message_cleans_up_on_final_event(
-        self, adapter_with_mocks: A2AGatewayAdapter
-    ) -> None:
-        """Should clean up pending task on final event."""
-        tools = FakeAgentTools()
-        msg = make_platform_message("Done", room_id="room-123")
-
-        # Set up pending task
-        from band.integrations.a2a.gateway.types import PendingA2ATask
-        from a2a.types import Task, TaskStatus
-
-        sse_queue: asyncio.Queue = asyncio.Queue()
-        task = Task(
-            id="task-123",
-            context_id="ctx-123",
-            status=TaskStatus(state=TaskState.working),
-        )
-        adapter_with_mocks._pending_tasks["room-123"] = PendingA2ATask(
-            task=task,
-            sse_queue=sse_queue,
-            peer_id="weather",
-        )
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            GatewaySessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        # Pending task should be cleaned up
-        assert "room-123" not in adapter_with_mocks._pending_tasks
-
 
 class TestA2AGatewayAdapterRoomManagement:
     """Tests for room creation and management."""
@@ -360,7 +323,7 @@ class TestA2AGatewayAdapterRoomManagement:
     @pytest.fixture
     def adapter_with_mocks(self) -> A2AGatewayAdapter:
         """Create adapter with mocked REST client."""
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(new_participant_settle_seconds=0.0)
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
 
         # Mock create_agent_chat to return room with ID
@@ -374,13 +337,11 @@ class TestA2AGatewayAdapterRoomManagement:
         return adapter
 
     @pytest.mark.asyncio
-    async def test_get_or_create_room_new_context(
+    async def test_resolve_room_new_context(
         self, adapter_with_mocks: A2AGatewayAdapter
     ) -> None:
         """Should create new room for new context."""
-        room_id, context_id = await adapter_with_mocks._get_or_create_room(
-            None, "weather"
-        )
+        room_id, context_id = await adapter_with_mocks._resolve_room(None, "weather")
 
         assert room_id == "new-room-123"
         assert context_id is not None  # UUID generated
@@ -392,7 +353,7 @@ class TestA2AGatewayAdapterRoomManagement:
         adapter_with_mocks._rest.agent_api_participants.add_agent_chat_participant.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_or_create_room_existing_context(
+    async def test_resolve_room_existing_context(
         self, adapter_with_mocks: A2AGatewayAdapter
     ) -> None:
         """Should reuse existing room for known context."""
@@ -400,7 +361,7 @@ class TestA2AGatewayAdapterRoomManagement:
         adapter_with_mocks._context_to_room["existing-ctx"] = "existing-room"
         adapter_with_mocks._room_participants["existing-room"] = {"weather"}
 
-        room_id, context_id = await adapter_with_mocks._get_or_create_room(
+        room_id, context_id = await adapter_with_mocks._resolve_room(
             "existing-ctx", "weather"
         )
 
@@ -411,7 +372,7 @@ class TestA2AGatewayAdapterRoomManagement:
         adapter_with_mocks._rest.agent_api_chats.create_agent_chat.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_get_or_create_room_adds_new_participant(
+    async def test_resolve_room_adds_new_participant(
         self, adapter_with_mocks: A2AGatewayAdapter
     ) -> None:
         """Should add new participant to existing room."""
@@ -419,9 +380,7 @@ class TestA2AGatewayAdapterRoomManagement:
         adapter_with_mocks._context_to_room["ctx-1"] = "room-1"
         adapter_with_mocks._room_participants["room-1"] = {"other-peer"}
 
-        room_id, context_id = await adapter_with_mocks._get_or_create_room(
-            "ctx-1", "weather"
-        )
+        room_id, context_id = await adapter_with_mocks._resolve_room("ctx-1", "weather")
 
         assert room_id == "room-1"
         assert "weather" in adapter_with_mocks._room_participants["room-1"]
@@ -600,7 +559,7 @@ class TestGatewayContextIdRoomMapping:
     @pytest.fixture
     def adapter_with_tracking(self) -> A2AGatewayAdapter:
         """Create adapter with mocked REST client that tracks room creation."""
-        adapter = A2AGatewayAdapter()
+        adapter = A2AGatewayAdapter(new_participant_settle_seconds=0.0)
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
 
         # Track room creation with unique IDs
@@ -629,13 +588,13 @@ class TestGatewayContextIdRoomMapping:
         adapter = adapter_with_tracking
 
         # First request with context_id
-        room_id_1, ctx_1 = await adapter._get_or_create_room("ctx-user-123", "weather")
+        room_id_1, ctx_1 = await adapter._resolve_room("ctx-user-123", "weather")
         create_calls_after_first = (
             adapter._rest.agent_api_chats.create_agent_chat.call_count
         )
 
         # Second request with SAME context_id
-        room_id_2, ctx_2 = await adapter._get_or_create_room("ctx-user-123", "weather")
+        room_id_2, ctx_2 = await adapter._resolve_room("ctx-user-123", "weather")
         create_calls_after_second = (
             adapter._rest.agent_api_chats.create_agent_chat.call_count
         )
@@ -654,8 +613,8 @@ class TestGatewayContextIdRoomMapping:
         """Different context_ids should create different rooms."""
         adapter = adapter_with_tracking
 
-        room_id_1, ctx_1 = await adapter._get_or_create_room("ctx-first", "weather")
-        room_id_2, ctx_2 = await adapter._get_or_create_room("ctx-second", "weather")
+        room_id_1, ctx_1 = await adapter._resolve_room("ctx-first", "weather")
+        room_id_2, ctx_2 = await adapter._resolve_room("ctx-second", "weather")
 
         # Different rooms for different contexts
         assert room_id_1 != room_id_2
@@ -672,8 +631,8 @@ class TestGatewayContextIdRoomMapping:
         adapter = adapter_with_tracking
         adapter._peers["data"] = make_peer("data", "Data Agent")
 
-        room_id_1, _ = await adapter._get_or_create_room("ctx-multi-agent", "weather")
-        room_id_2, _ = await adapter._get_or_create_room("ctx-multi-agent", "data")
+        room_id_1, _ = await adapter._resolve_room("ctx-multi-agent", "weather")
+        room_id_2, _ = await adapter._resolve_room("ctx-multi-agent", "data")
 
         # Same room
         assert room_id_1 == room_id_2

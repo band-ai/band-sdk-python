@@ -206,10 +206,14 @@ adapter = A2AGatewayAdapter(port=10000)
 added to a room and before the first message is posted, giving the peer's
 execution context time to subscribe to the room. This narrows the window in
 which a slow or restarting peer can discover that first message through both its
-catch-up poll and its live feed and answer it more than once. Only the first
-message to a freshly-joined peer waits; warm rooms are unaffected. Set to `0` to
-disable. This is a mitigation, not a correctness guarantee; the durable fix is
-an exclusive server-side claim so an in-flight message can't be re-served.
+catch-up poll and its live feed and answer it more than once. Only a
+freshly-joined peer incurs this settle; a warm turn (the peer is already a
+participant) adds no settle of its own, though it can still wait behind an
+earlier concurrent turn in the same context, because turns within one context
+are serialized end-to-end (Band correlates a peer's reply only by room, so a
+room holds one in-flight turn at a time). Set to `0` to disable the settle. This
+is a mitigation, not a correctness guarantee; the durable fix is an exclusive
+server-side claim so an in-flight message can't be re-served.
 
 ### Key files
 

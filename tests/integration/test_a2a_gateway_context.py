@@ -62,7 +62,7 @@ class TestA2AGatewayContextIdWithPlatform:
         """Same context_id twice should route to same room with shared messages.
 
         Uses the session-scoped shared_room to avoid creating new rooms.
-        Pre-populates the adapter's context mapping so _get_or_create_room()
+        Pre-populates the adapter's context mapping so _resolve_room()
         finds the existing room instead of creating one.
         """
         # Get a peer to add to rooms
@@ -90,7 +90,7 @@ class TestA2AGatewayContextIdWithPlatform:
         adapter._room_participants[shared_room] = {peer.id}
 
         # ===== Step 1: First request with context_id =====
-        room_1, ctx_1 = await adapter._get_or_create_room(context_id, peer.id)
+        room_1, ctx_1 = await adapter._resolve_room(context_id, peer.id)
 
         await asyncio.sleep(0.5)  # Platform consistency
 
@@ -105,7 +105,7 @@ class TestA2AGatewayContextIdWithPlatform:
         msg1_id = msg1_response.data.id
 
         # ===== Step 2: Second request with SAME context_id =====
-        room_2, ctx_2 = await adapter._get_or_create_room(context_id, peer.id)
+        room_2, ctx_2 = await adapter._resolve_room(context_id, peer.id)
 
         # Verify same room
         assert room_1 == room_2, (
@@ -147,7 +147,7 @@ class TestA2AGatewayContextIdWithPlatform:
         """Same context_id with different peers should use same room, add all peers.
 
         Uses session-scoped shared_room to avoid creating new rooms.
-        Pre-populates context mapping and participant set so _get_or_create_room()
+        Pre-populates context mapping and participant set so _resolve_room()
         adds the second peer via _ensure_participant without creating a room.
         """
         # Get multiple peers
@@ -180,12 +180,12 @@ class TestA2AGatewayContextIdWithPlatform:
         adapter._room_participants[shared_room] = {peer_1.id, peer_2.id}
 
         # First peer - already mapped, should return shared_room
-        room_1, _ = await adapter._get_or_create_room(context_id, peer_1.id)
+        room_1, _ = await adapter._resolve_room(context_id, peer_1.id)
 
         await asyncio.sleep(0.3)
 
         # Second peer, same context - already in room
-        room_2, _ = await adapter._get_or_create_room(context_id, peer_2.id)
+        room_2, _ = await adapter._resolve_room(context_id, peer_2.id)
 
         # Verify same room
         assert room_1 == room_2, "Same context should use same room for different peers"
