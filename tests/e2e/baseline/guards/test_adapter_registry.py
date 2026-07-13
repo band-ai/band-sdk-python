@@ -2,8 +2,8 @@
 
 These prove the registry is self-consistent and that a newly-added adapter cannot
 be silently skipped: the folder scan over ``src/band/adapters/`` (minus the
-documented NON_AGENT_ADAPTERS bridges) must equal the registered set exactly. They construct
-nothing, so they run in any lane.
+documented ``NON_AGENT_ADAPTERS`` exclusions) must equal the registered set exactly.
+They construct nothing, so they run in any lane.
 """
 
 from __future__ import annotations

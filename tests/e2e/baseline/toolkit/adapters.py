@@ -1,19 +1,15 @@
 """Adapter discovery + generic construction for the baseline matrix (pytest-free).
 
-This is the one place that knows which framework adapters exist and how to build a
-ready-to-run instance of each. Tests never hard-code an adapter list: they iterate
+This is the E2E construction registry for the shared adapter identities declared
+in ``tests.baseline.adapter``. Tests never hard-code an adapter list: they iterate
 the registry, so L0-L4 scenarios and the smokes are written once and run across the
 whole matrix.
 
 Adding a framework
 ------------------
-Two edits: add an ``Adapter`` enum member here (value == the module name) and a
-decorated builder in ``builders`` (imported at the bottom of this module for its
-registration side-effect)::
-
-    class Adapter(StrEnum):
-        ...
-        MYFRAMEWORK = "myframework"
+Two edits: add an ``Adapter`` enum member in ``tests.baseline.adapter`` (value ==
+the module name) and a decorated builder in ``builders`` (imported at the bottom
+of this module for its registration side-effect)::
 
     # in builders.py:
     @adapter(Adapter.MYFRAMEWORK, requires=[Dep.OPENAI], supports=[Capability.MEMORY])
@@ -50,17 +46,14 @@ it, and ``ci_lanes`` imports it).
 
 from __future__ import annotations
 
-import pkgutil
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
-from enum import StrEnum
 from typing import Any
-
-import band.adapters
 
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability
 from band.runtime.custom_tools import CustomToolDef
+from tests.baseline.adapter import Adapter, NON_AGENT_ADAPTERS, discovered_agent_ids
 from tests.e2e.baseline.toolkit.tools import ToolSpec
 
 from tests.e2e.baseline.settings import BaselineSettings
@@ -71,30 +64,19 @@ from tests.e2e.baseline.toolkit.deps import (
     dep_lane,
 )
 
-
-class Adapter(StrEnum):
-    """Typed handle for a registered LLM-agent adapter.
-
-    Each member's *value* equals its module name under ``band.adapters`` so a test
-    references an adapter as ``Adapter.ANTHROPIC`` (no magic string) while the
-    registry, ``build_adapter`` and the discovery guard all key off the same value.
-    The guard enforces three-way parity: ``Adapter`` ⇔ registry ⇔ discovered modules.
-    """
-
-    ANTHROPIC = "anthropic"
-    CLAUDE_SDK = "claude_sdk"
-    COPILOT_SDK = "copilot_sdk"
-    LANGGRAPH = "langgraph"
-    PYDANTIC_AI = "pydantic_ai"
-    GEMINI = "gemini"
-    GOOGLE_ADK = "google_adk"
-    CREWAI = "crewai"
-    AGNO = "agno"
-    CREWAI_FLOW = "crewai_flow"
-    CODEX = "codex"
-    OPENCODE = "opencode"
-    COPILOT_ACP = "copilot_acp"
-    LETTA = "letta"
+__all__ = [
+    "Adapter",
+    "AdapterSpec",
+    "NON_AGENT_ADAPTERS",
+    "adapter",
+    "adapter_lane",
+    "assert_registry_covers_discovered",
+    "build_adapter",
+    "discovered_agent_ids",
+    "registered_ids",
+    "spec_for",
+    "specs",
+]
 
 
 # A builder turns settings (+ optional steering prompt / features) into a
@@ -202,29 +184,6 @@ def _reject_tools(adapter_id: Adapter, tools: list[ToolSpec] | None) -> None:
 # =============================================================================
 # Discovery: allow/deny over src/band/adapters/
 # =============================================================================
-
-# Non-agent adapters that the matrix deliberately excludes. Bridges expose Band to
-# another protocol rather than running an LLM agent (a2a/a2a_gateway/acp/slack);
-# parlant needs a running Parlant server + per-agent setup. Everything else under
-# ``band.adapters`` must be registered above.
-NON_AGENT_ADAPTERS: frozenset[str] = frozenset(
-    {"a2a", "a2a_gateway", "acp", "slack", "parlant"}
-)
-
-
-def discovered_agent_ids() -> set[str]:
-    """The LLM-agent adapter ids present in ``src/band/adapters/`` (minus NON_AGENT_ADAPTERS).
-
-    Scans module *names* only (``pkgutil`` does not import them), so an adapter
-    whose optional dependency is absent is still discovered and never breaks
-    collection.
-    """
-    names = {
-        module.name
-        for module in pkgutil.iter_modules(band.adapters.__path__)
-        if not module.name.startswith("_")
-    }
-    return names - NON_AGENT_ADAPTERS
 
 
 def registered_ids() -> set[str]:

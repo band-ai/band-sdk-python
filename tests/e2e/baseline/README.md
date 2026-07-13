@@ -214,7 +214,8 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | Path | What it is |
 |------|------------|
 | `toolkit/provisioning.py` | `ResourceManager` (provision/reap agents + rooms, orphan sweep, `track_running` reboot-race guard; `.peer(agent)` mints a `PeerActor`), `AdapterCell` (build / provision / running / run_as — the per-cell lifecycle object behind `agent`/`cell`), `running_agent` (run an already-provisioned identity — enter twice against one identity for a rejoin), `running_provisioned_agent` (provision + run, composes `running_agent`), `ProvisionedAgent` (`.adapter_id` records the cell/slot it came from), `PeerActor` (act as a peer agent — post one message as that agent via its own key; the Agent-API twin of `UserOps`, used for the L0/L4 `Echo` peer) |
-| `toolkit/adapters.py` | registry core: `Adapter` enum (the **one** source of adapter ids), the `@adapter` decorator + registry, `spec_for`, `build_adapter`, `specs`, `adapter_lane`, the discovery guard |
+| `tests/baseline/adapter.py` | shared `Adapter` enum and adapter discovery — the one source of adapter ids for offline and E2E baseline suites |
+| `toolkit/adapters.py` | E2E registry core: the `@adapter` decorator + registry, `spec_for`, `build_adapter`, `specs`, `adapter_lane`, and the registry/discovery guard |
 | `toolkit/builders.py` | the per-framework `@adapter` builder functions (one `_build_*` each); imported by `adapters.py` for the registration side-effect — no public API. Add a new adapter's builder here (see `ADDING_AN_ADAPTER.md`) |
 | `toolkit/ci_lanes.py` | the CI-lane partition + workflow-drift guards: `CILane`, `ci_lanes`, `hosting_lanes` (which lanes' `uv` extra can host a framework), `assert_every_adapter_has_a_ci_home`, `assert_workflow_lane_*` |
 | `toolkit/tools.py` | `ToolSpec` — define a custom tool **once** (input model + handler); the builders translate it to each framework's native form |
