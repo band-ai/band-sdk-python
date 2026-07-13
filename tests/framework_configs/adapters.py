@@ -233,6 +233,14 @@ def _pydantic_ai_factory(**kw: Any) -> Any:
     return PydanticAIAdapter(**kw)
 
 
+def _strands_factory(**kw: Any) -> Any:
+    from band.adapters.strands import StrandsAdapter
+
+    if "model" not in kw:
+        kw["model"] = _STRANDS_INJECTED_MODEL
+    return StrandsAdapter(**kw)
+
+
 def _parlant_factory(**kw: Any) -> Any:
     from band.adapters.parlant import ParlantAdapter
 
@@ -295,6 +303,11 @@ def _google_adk_factory(**kw: Any) -> Any:
 # without a real API key.  ``expected_initial_values["model"]`` then verifies
 # the factory injection, NOT a real adapter default.
 _PYDANTIC_AI_INJECTED_MODEL = "openai:gpt-5.4"
+
+# Strands likewise requires ``model``. A plain string is fine at construction
+# time: the adapter passes it through to Strands (which treats strings as
+# Bedrock model ids), and no client is created until the first message turn.
+_STRANDS_INJECTED_MODEL = "strands-conformance-model"
 
 
 def _build_anthropic_config() -> AdapterConfig:
@@ -557,6 +570,36 @@ def _build_pydantic_ai_config() -> AdapterConfig:
     )
 
 
+def _build_strands_config() -> AdapterConfig:
+    from band.adapters.strands import StrandsAdapter
+
+    return AdapterConfig(
+        framework_id="strands",
+        display_name="Strands",
+        adapter_factory=_strands_factory,
+        expected_initial_values={
+            # Injected by _strands_factory, not a real __init__ default.
+            # Verifies that the factory injection is stored correctly.
+            "model": _STRANDS_INJECTED_MODEL,
+            "system_prompt": _default_from_init(StrandsAdapter, "system_prompt"),
+            "custom_section": _default_from_init(StrandsAdapter, "custom_section"),
+        },
+        custom_kwargs={
+            "model": "custom-bedrock-model-id",
+            "system_prompt": "You are a helpful bot.",
+            "custom_section": "Be concise.",
+        },
+        custom_expected={
+            "model": "custom-bedrock-model-id",
+            "system_prompt": "You are a helpful bot.",
+            "custom_section": "Be concise.",
+        },
+        # on_started only renders the prompt and builds tool wrappers — no
+        # client/agent construction happens until the first message turn.
+        skip_on_started_conformance=False,
+    )
+
+
 def _build_parlant_config() -> AdapterConfig:
     from band.adapters.parlant import ParlantAdapter
 
@@ -772,6 +815,7 @@ _ADAPTER_CONFIG_BUILDERS: list[Callable[[], AdapterConfig]] = [
     _build_crewai_flow_config,
     _build_claude_sdk_config,
     _build_pydantic_ai_config,
+    _build_strands_config,
     _build_parlant_config,
     _build_codex_config,
     _build_letta_config,

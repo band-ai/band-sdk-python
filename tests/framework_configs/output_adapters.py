@@ -686,3 +686,83 @@ class SenderDictListAdapter(BaseDictListOutputAdapter):
             assert msg.get("sender_type") == sender_type, (
                 f"Expected sender_type={sender_type!r}, got {msg.get('sender_type')!r}"
             )
+
+
+class StrandsOutputAdapter:
+    """Adapter for Strands converter output (list of Converse Message dicts).
+
+    Each message is ``{"role": "user"|"assistant", "content": [blocks]}`` where a
+    block is ``{"text": ...}``, ``{"toolUse": ...}``, or ``{"toolResult": ...}``.
+    Batched tool blocks share one message, so indexed accessors operate on a
+    flattened (role, block) view (same approach as ``GeminiOutputAdapter``).
+    """
+
+    @staticmethod
+    def _flatten(result: list) -> list[tuple[str, dict[str, Any]]]:
+        """Return a flat list of (role, content_block) tuples."""
+        flat: list[tuple[str, dict[str, Any]]] = []
+        for message in result:
+            for block in message.get("content", []):
+                flat.append((message["role"], block))
+        return flat
+
+    def assert_result_type(self, result: list) -> None:
+        assert isinstance(result, list), f"Expected list, got {type(result).__name__}"
+
+    def result_length(self, result: list) -> int:
+        return len(self._flatten(result))
+
+    def get_content(self, result: list, index: int) -> str:
+        _role, block = self._flatten(result)[index]
+        if "text" in block:
+            return block["text"]
+        if "toolUse" in block:
+            return block["toolUse"].get("name", "")
+        if "toolResult" in block:
+            parts = [
+                item["text"]
+                for item in block["toolResult"].get("content", [])
+                if "text" in item
+            ]
+            return "\n".join(parts)
+        raise ValueError(f"No text/toolUse/toolResult content at index {index}")
+
+    def get_role(self, result: list, index: int) -> str:
+        role, _block = self._flatten(result)[index]
+        return role
+
+    def is_empty(self, result: list) -> bool:
+        return len(result) == 0
+
+    def content_contains(self, result: list, substring: str) -> bool:
+        for role, block in self._flatten(result):
+            if "text" in block and substring in block["text"]:
+                return True
+            if "toolUse" in block:
+                tool_use = block["toolUse"]
+                if substring in tool_use.get("name", ""):
+                    return True
+                if substring in str(tool_use.get("input", {})):
+                    return True
+            if "toolResult" in block:
+                for item in block["toolResult"].get("content", []):
+                    if "text" in item and substring in item["text"]:
+                        return True
+        return False
+
+    def assert_element_type(self, result: list, index: int, expected_role: str) -> None:
+        role = self.get_role(result, index)
+        assert role == expected_role, f"Expected role={expected_role!r}, got {role!r}"
+
+    def assert_sender_metadata(
+        self,
+        result: list,
+        index: int,
+        sender_name: str,
+        sender_type: str | None = None,
+    ) -> None:
+        raise NotImplementedError(
+            "StrandsOutputAdapter.assert_sender_metadata() is not supported. "
+            "Converse messages do not include sender metadata. "
+            "Ensure has_sender_metadata=False in the ConverterConfig."
+        )

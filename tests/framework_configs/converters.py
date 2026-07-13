@@ -130,6 +130,12 @@ def _google_adk_factory(**kw: Any) -> Any:
     return GoogleADKHistoryConverter(**kw)
 
 
+def _strands_factory(**kw: Any) -> Any:
+    from band.converters.strands import StrandsHistoryConverter
+
+    return StrandsHistoryConverter(**kw)
+
+
 # ---------------------------------------------------------------------------
 # Registry  (built lazily to avoid top-level converter imports)
 # ---------------------------------------------------------------------------
@@ -319,6 +325,23 @@ def _build_google_adk_config() -> ConverterConfig:
     )
 
 
+def _build_strands_config() -> ConverterConfig:
+    from tests.framework_configs.output_adapters import StrandsOutputAdapter
+
+    return ConverterConfig(
+        framework_id="strands",
+        display_name="Strands",
+        converter_factory=_strands_factory,
+        empty_result=[],
+        empty_sender_behavior=SenderBehavior.CONTENT_AS_IS,
+        missing_sender_behavior=SenderBehavior.CONTENT_AS_IS,
+        # Keeps own text as an assistant turn so restart rehydration shows the
+        # agent's prior replies (same contract as pydantic-ai).
+        includes_own_text_without_tool_events=True,
+        output_adapter=StrandsOutputAdapter(),
+    )
+
+
 _CONVERTER_CONFIG_BUILDERS: list[Callable[[], ConverterConfig]] = [
     _build_anthropic_config,
     _build_langchain_config,
@@ -329,6 +352,7 @@ _CONVERTER_CONFIG_BUILDERS: list[Callable[[], ConverterConfig]] = [
     _build_agno_config,
     _build_gemini_config,
     _build_google_adk_config,
+    _build_strands_config,
 ]
 
 

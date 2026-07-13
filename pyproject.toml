@@ -133,6 +133,9 @@ google_adk = [
 agno = [
     "agno>=2.6.0",
 ]
+strands = [
+    "strands-agents[openai]>=1.40,<2",
+]
 
 # dev extra includes ALL framework deps for testing EXCEPT crewai,
 # which conflicts with both parlant and pydantic-ai (see tool.uv.conflicts).
@@ -184,6 +187,8 @@ dev = [
     "google-adk>=1.0.0,<2",
     # Include Agno for testing
     "agno>=2.6.0",
+    # Include Strands Agents for testing
+    "strands-agents[openai]>=1.40,<2",
     # Include letta-client for testing
     "letta-client>=0.1.0",
     # Include bridge deps for testing

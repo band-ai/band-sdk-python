@@ -93,6 +93,7 @@ class Adapter(StrEnum):
     CODEX = "codex"
     OPENCODE = "opencode"
     LETTA = "letta"
+    STRANDS = "strands"
 
 
 # A builder turns settings (+ optional steering prompt / features) into a

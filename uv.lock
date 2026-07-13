@@ -463,6 +463,18 @@ wheels = [
 ]
 
 [[package]]
+name = "aws-bedrock-token-generator"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/fb/39/cf1c2e12bc5a84af0f96a546481213f81fa6e7927d2bbabd81758c6558ca/aws_bedrock_token_generator-1.1.0.tar.gz", hash = "sha256:95ccb07f63a91ac486561f6df05cc4e04784c8ff5086dc687ed9c5fd3ab1b5ba", size = 19123, upload-time = "2025-07-29T19:53:19.511Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f9/fd/745ece98870c3824d294bcdce5dc5e15381188a41bc80832c246b205e40e/aws_bedrock_token_generator-1.1.0-py3-none-any.whl", hash = "sha256:bd12854f7c7e52dde5d980d369379f12d0cc5f0855099d87f38688b0f9de5cd4", size = 10291, upload-time = "2025-07-29T19:53:18.704Z" },
+]
+
+[[package]]
 name = "backoff"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -607,6 +619,7 @@ dev = [
     { name = "ruff" },
     { name = "slack-sdk" },
     { name = "starlette" },
+    { name = "strands-agents", extra = ["openai"], marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai')" },
     { name = "thenvoi-testing-python" },
     { name = "uvicorn" },
     { name = "werkzeug" },
@@ -672,6 +685,9 @@ slack = [
     { name = "slack-sdk" },
     { name = "starlette" },
     { name = "uvicorn" },
+]
+strands = [
+    { name = "strands-agents", extra = ["openai"] },
 ]
 
 [package.metadata]
@@ -786,6 +802,8 @@ requires-dist = [
     { name = "starlette", marker = "extra == 'acp'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40.0" },
     { name = "starlette", marker = "extra == 'slack'", specifier = ">=0.40.0" },
+    { name = "strands-agents", extras = ["openai"], marker = "extra == 'dev'", specifier = ">=1.40,<2" },
+    { name = "strands-agents", extras = ["openai"], marker = "extra == 'strands'", specifier = ">=1.40,<2" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev'", specifier = "==0.1.4" },
     { name = "thenvoi-testing-python", marker = "extra == 'dev-crewai'", specifier = "==0.1.4" },
     { name = "uvicorn", marker = "extra == 'a2a-gateway'", specifier = ">=0.32.0" },
@@ -798,7 +816,7 @@ requires-dist = [
     { name = "werkzeug", marker = "extra == 'dev'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["logging", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "dev", "dev-crewai"]
+provides-extras = ["logging", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "strands", "dev", "dev-crewai"]
 
 [[package]]
 name = "bcrypt"
@@ -5692,17 +5710,194 @@ wheels = [
 
 [[package]]
 name = "opentelemetry-instrumentation"
+version = "0.55b1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "opentelemetry-api", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "opentelemetry-semantic-conventions", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "packaging", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "wrapt", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cb/69/d8995f229ddf4d98b9c85dd126aeca03dd1742f6dc5d3bc0d2f6dae1535c/opentelemetry_instrumentation-0.55b1.tar.gz", hash = "sha256:2dc50aa207b9bfa16f70a1a0571e011e737a9917408934675b89ef4d5718c87b", size = 28552, upload-time = "2025-06-10T08:58:15.312Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/60/7d/8ddfda1506c2fcca137924d5688ccabffa1aed9ec0955b7d0772de02cec3/opentelemetry_instrumentation-0.55b1-py3-none-any.whl", hash = "sha256:cbb1496b42bc394e01bc63701b10e69094e8564e281de063e4328d122cc7a97e", size = 31108, upload-time = "2025-06-10T08:57:14.355Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation"
 version = "0.59b0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+]
 dependencies = [
-    { name = "opentelemetry-api", version = "1.38.0", source = { registry = "https://pypi.org/simple" } },
-    { name = "opentelemetry-semantic-conventions", version = "0.59b0", source = { registry = "https://pypi.org/simple" } },
-    { name = "packaging" },
-    { name = "wrapt" },
+    { name = "opentelemetry-api", version = "1.38.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "opentelemetry-semantic-conventions", version = "0.59b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "packaging", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "wrapt", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/04/ed/9c65cd209407fd807fa05be03ee30f159bdac8d59e7ea16a8fe5a1601222/opentelemetry_instrumentation-0.59b0.tar.gz", hash = "sha256:6010f0faaacdaf7c4dff8aac84e226d23437b331dcda7e70367f6d73a7db1adc", size = 31544, upload-time = "2025-10-16T08:39:31.959Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/10/f5/7a40ff3f62bfe715dad2f633d7f1174ba1a7dd74254c15b2558b3401262a/opentelemetry_instrumentation-0.59b0-py3-none-any.whl", hash = "sha256:44082cc8fe56b0186e87ee8f7c17c327c4c2ce93bdbe86496e600985d74368ee", size = 33020, upload-time = "2025-10-16T08:38:31.463Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-threading"
+version = "0.55b1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14'",
+    "python_full_version == '3.13.*'",
+    "python_full_version < '3.13'",
+]
+dependencies = [
+    { name = "opentelemetry-api", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "opentelemetry-instrumentation", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "wrapt", marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e6/a2/470bbc9b7060372d6b183d999080c12a63fb459fc77b9be0ca15694ecabe/opentelemetry_instrumentation_threading-0.55b1.tar.gz", hash = "sha256:4ed68502e7ed017bfc10b1f9e508cc5ccaea0e46ac1010f7f2541ab9c6eacd92", size = 8767, upload-time = "2025-06-10T08:58:46.873Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/05/c9/183ad41a7ba0374030b3eab335ec6f3eff6acca057aba2b393183e18639e/opentelemetry_instrumentation_threading-0.55b1-py3-none-any.whl", hash = "sha256:f865542b32b219c8fd01deb03b8c3c9ba2eb3f0501ae303338403fd2242962c7", size = 9313, upload-time = "2025-06-10T08:58:02.884Z" },
+]
+
+[[package]]
+name = "opentelemetry-instrumentation-threading"
+version = "0.59b0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra == 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform == 'emscripten' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version >= '3.14' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version == '3.13.*' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+    "python_full_version < '3.13' and extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev' and extra != 'extra-8-band-sdk-dev-crewai' and extra != 'extra-8-band-sdk-parlant' and extra != 'extra-8-band-sdk-pydantic-ai'",
+]
+dependencies = [
+    { name = "opentelemetry-api", version = "1.38.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "opentelemetry-instrumentation", version = "0.59b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "wrapt", marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/82/7a/84e97d8992808197006e607ae410c2219bdbbc23d1289ba0c244d3220741/opentelemetry_instrumentation_threading-0.59b0.tar.gz", hash = "sha256:ce5658730b697dcbc0e0d6d13643a69fd8aeb1b32fa8db3bade8ce114c7975f3", size = 8770, upload-time = "2025-10-16T08:40:03.587Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/50/32d29076aaa1c91983cdd3ca8c6bb4d344830cd7d87a7c0fdc2d98c58509/opentelemetry_instrumentation_threading-0.59b0-py3-none-any.whl", hash = "sha256:76da2fc01fe1dccebff6581080cff9e42ac7b27cc61eb563f3c4435c727e8eca", size = 9313, upload-time = "2025-10-16T08:39:15.876Z" },
 ]
 
 [[package]]
@@ -6229,7 +6424,7 @@ dependencies = [
     { name = "openapi3-parser" },
     { name = "opentelemetry-api", version = "1.38.0", source = { registry = "https://pypi.org/simple" } },
     { name = "opentelemetry-exporter-otlp" },
-    { name = "opentelemetry-instrumentation" },
+    { name = "opentelemetry-instrumentation", version = "0.59b0", source = { registry = "https://pypi.org/simple" } },
     { name = "opentelemetry-sdk", version = "1.38.0", source = { registry = "https://pypi.org/simple" } },
     { name = "parlant-client" },
     { name = "python-dateutil" },
@@ -8422,6 +8617,39 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c4/68/79977123bb7be889ad680d79a40f339082c1978b5cfcf62c2d8d196873ac/starlette-0.52.1.tar.gz", hash = "sha256:834edd1b0a23167694292e94f597773bc3f89f362be6effee198165a35d62933", size = 2653702, upload-time = "2026-01-18T13:34:11.062Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/0d/13d1d239a25cbfb19e740db83143e95c772a1fe10202dda4b76792b114dd/starlette-0.52.1-py3-none-any.whl", hash = "sha256:0029d43eb3d273bc4f83a08720b4912ea4b071087a3b48db01b7c839f7954d74", size = 74272, upload-time = "2026-01-18T13:34:09.188Z" },
+]
+
+[[package]]
+name = "strands-agents"
+version = "1.47.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "boto3" },
+    { name = "botocore" },
+    { name = "docstring-parser" },
+    { name = "jsonschema" },
+    { name = "mcp", version = "1.26.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "mcp", version = "1.27.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "opentelemetry-api", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "opentelemetry-api", version = "1.38.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "opentelemetry-instrumentation-threading", version = "0.55b1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "opentelemetry-instrumentation-threading", version = "0.59b0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "opentelemetry-sdk", version = "1.34.1", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-crewai' or extra == 'extra-8-band-sdk-dev-crewai'" },
+    { name = "opentelemetry-sdk", version = "1.38.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-8-band-sdk-dev' or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-parlant') or (extra == 'extra-8-band-sdk-dev-crewai' and extra == 'extra-8-band-sdk-pydantic-ai') or (extra != 'extra-8-band-sdk-crewai' and extra != 'extra-8-band-sdk-dev-crewai')" },
+    { name = "pydantic" },
+    { name = "pyyaml" },
+    { name = "typing-extensions" },
+    { name = "watchdog" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2e/05/5eb8431ff340739b1c21b0da7d19ec9604b9c4953a1c4638df915321573c/strands_agents-1.47.0.tar.gz", hash = "sha256:97770cb6beb6e5fd1a58849f41201eb7edb43fd67ad3de6544ada2f342c2bcf0", size = 1157139, upload-time = "2026-07-10T14:45:05.809Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d0/cb/ceae892c5823bea9254160efc02a4553f2ced9d183676110c03c3a9ff0f3/strands_agents-1.47.0-py3-none-any.whl", hash = "sha256:1f6ce17404ff02079244ad7a4a180a2a7150546275e4b91187d71472ba8fe3f2", size = 600611, upload-time = "2026-07-10T14:45:03.942Z" },
+]
+
+[package.optional-dependencies]
+openai = [
+    { name = "aws-bedrock-token-generator" },
+    { name = "openai" },
 ]
 
 [[package]]

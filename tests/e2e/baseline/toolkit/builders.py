@@ -127,6 +127,32 @@ def _build_pydantic_ai(
     )
 
 
+@adapter(Adapter.STRANDS, requires=[Dep.OPENAI], supports=_LLM_TOOL_LOOP)
+def _build_strands(
+    s: BaselineSettings,
+    *,
+    prompt: str | None,
+    features: AdapterFeatures | None,
+    tools: list[ToolSpec] | None = None,
+) -> SimpleAdapter[Any]:
+    from strands.models.openai import OpenAIModel
+
+    from band.adapters.strands import StrandsAdapter
+
+    # Strands has no provider-prefix string shorthand (a bare string means a
+    # Bedrock model id), so the OpenAI provider is constructed explicitly.
+    api_key = s.llm_credentials.openai_api_key
+    return StrandsAdapter(
+        model=OpenAIModel(
+            client_args={"api_key": api_key} if api_key else None,
+            model_id=s.llm_models.openai_model,
+        ),
+        custom_section=prompt,
+        additional_tools=_custom_tool_defs(tools),
+        features=features,
+    )
+
+
 @adapter(Adapter.GEMINI, requires=[Dep.GOOGLE], supports=_LLM_TOOL_LOOP)
 def _build_gemini(
     s: BaselineSettings,
