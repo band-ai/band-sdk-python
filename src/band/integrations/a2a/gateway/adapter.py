@@ -140,6 +140,11 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         self._context_to_room: dict[str, str] = {}
         self._room_participants: dict[str, set[str]] = {}
 
+        # Serializes room resolution per context, so concurrent requests in the
+        # same conversation share one peer join + settle instead of each adding
+        # the peer and posting into the unsettled window.
+        self._context_locks: dict[str, asyncio.Lock] = {}
+
         # Request/response correlation
         self._pending_tasks: dict[str, PendingA2ATask] = {}  # room_id → task
         self._peer_discovery_retry_delays_seconds: tuple[float, ...] = (
@@ -375,6 +380,18 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             if event.final:
                 break
 
+    def _context_lock(self, context_id: str) -> asyncio.Lock:
+        """Return the resolution lock for a context, creating it on first use.
+
+        Safe to call concurrently: there is no await between the lookup and the
+        insert, so under the single-threaded event loop it is atomic.
+        """
+        lock = self._context_locks.get(context_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._context_locks[context_id] = lock
+        return lock
+
     async def _get_or_create_room(
         self, context_id: str | None, target_peer_id: str
     ) -> tuple[str, str]:
@@ -386,6 +403,22 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
 
         Returns:
             Tuple of (room_id, context_id).
+        """
+        # A None context is a brand-new conversation with nothing to share, so
+        # it needs no lock. A named context is serialized so concurrent requests
+        # in the same conversation resolve the room and join the peer once.
+        if context_id is None:
+            return await self._resolve_room(None, target_peer_id)
+        async with self._context_lock(context_id):
+            return await self._resolve_room(context_id, target_peer_id)
+
+    async def _resolve_room(
+        self, context_id: str | None, target_peer_id: str
+    ) -> tuple[str, str]:
+        """Resolve the room for a context, creating it and joining the peer if new.
+
+        Callers reach this holding the per-context lock (except for a None
+        context, which is inherently unshared).
         """
         # New or None context_id → create new room
         if context_id is None or context_id not in self._context_to_room:

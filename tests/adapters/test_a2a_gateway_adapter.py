@@ -241,3 +241,26 @@ class TestFreshlyJoinedPeerSettle:
         )
 
         adapter._rest.agent_api_participants.add_agent_chat_participant.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_requests_same_context_join_peer_once(self) -> None:
+        """Concurrent requests in one conversation must join the peer only once.
+
+        While the first request sits in the settle window, its peer join is not
+        yet recorded. A second concurrent request for the same context and peer
+        must wait for that join to finish rather than issue a duplicate add or
+        post before the settle ends.
+        """
+        adapter = self._build_adapter(settle_seconds=0.1)
+        # Existing conversation whose room has no participants recorded yet.
+        adapter._context_to_room["ctx"] = "room-1"
+        adapter._room_participants["room-1"] = set()
+
+        results = await asyncio.gather(
+            adapter._get_or_create_room("ctx", "uuid-weather"),
+            adapter._get_or_create_room("ctx", "uuid-weather"),
+        )
+
+        assert results == [("room-1", "ctx"), ("room-1", "ctx")]
+        adapter._rest.agent_api_participants.add_agent_chat_participant.assert_called_once()
+        assert adapter._room_participants["room-1"] == {"uuid-weather"}
