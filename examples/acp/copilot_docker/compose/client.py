@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[acp]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git", branch = "dev" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git"}
 # ///
 """
 Host-side Band SDK client for the Copilot Docker Compose example.
