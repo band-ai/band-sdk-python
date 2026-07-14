@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
+
+
+class PermissionOutcome(StrEnum):
+    """User-visible outcome recorded for an ACP permission request."""
+
+    APPROVED = "approved"
+    CANCELLED = "cancelled"
 
 
 @dataclass

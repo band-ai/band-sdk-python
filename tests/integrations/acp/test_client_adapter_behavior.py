@@ -52,7 +52,8 @@ async def test_text_suppressed_when_turn_posted_via_band_tool(fake_agent) -> Non
         reply = await session.send("question?")
 
     assert reply.texts == []
-    assert len(reply.tool_calls) == 1
+    assert reply.tool_calls == []
+    assert reply.tool_results == []
 
 
 @pytest.mark.asyncio
@@ -67,6 +68,8 @@ async def test_text_suppressed_for_prefixed_remote_band_mcp_tool(fake_agent) -> 
         reply = await session.send("question?")
 
     assert reply.texts == []
+    assert reply.tool_calls == []
+    assert reply.tool_results == []
 
 
 @pytest.mark.asyncio
@@ -135,6 +138,95 @@ async def test_permission_request_auto_approved(fake_agent) -> None:
     assert len(reply.permissions) == 1
     assert reply.permissions[0]["metadata"]["auto_allowed"] is True
     assert "done" in reply.texts  # the turn proceeded after approval
+
+
+@pytest.mark.asyncio
+async def test_band_mcp_reply_is_not_replayed_as_acp_tool_events(fake_agent) -> None:
+    """A room-visible Band message must not receive redundant ACP narration."""
+    fake_agent.will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        arguments={
+            "room_id": "room-1",
+            "content": "Reply from the agent",
+            "mentions": ["@pat"],
+        },
+    )
+
+    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+        reply = await session.send("send the reply", room="room-1")
+
+    assert [
+        (activity.kind, activity.message_type) for activity in reply.transcript
+    ] == [
+        ("message", None),
+        ("event", "task"),
+    ]
+    assert reply.transcript[0].content == "Reply from the agent"
+    assert reply.tool_calls == []
+    assert reply.tool_results == []
+
+
+@pytest.mark.asyncio
+async def test_band_mcp_event_is_not_replayed_as_acp_tool_events(fake_agent) -> None:
+    """A room-visible Band event must not receive redundant ACP narration."""
+    fake_agent.will_call_mcp_tool(
+        "tc-event",
+        "band_send_event",
+        arguments={
+            "room_id": "room-1",
+            "content": "Working on it",
+            "message_type": "thought",
+        },
+    )
+
+    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+        reply = await session.send("do the work", room="room-1")
+
+    assert [
+        (activity.kind, activity.message_type) for activity in reply.transcript
+    ] == [
+        ("event", "thought"),
+        ("event", "task"),
+    ]
+    assert reply.thoughts == ["Working on it"]
+    assert reply.tool_calls == []
+    assert reply.tool_results == []
+
+
+@pytest.mark.asyncio
+async def test_permissioned_band_mcp_turn_has_one_causal_transcript(fake_agent) -> None:
+    """Permission, tool execution, and visible reply must retain causal order."""
+    fake_agent.will_ask_permission(
+        tool_call_id="tc-message",
+        title="band_send_message",
+    ).will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        arguments={
+            "room_id": "room-1",
+            "content": "Reply from the agent",
+            "mentions": ["@pat"],
+        },
+    )
+
+    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+        reply = await session.send("send the reply", room="room-1")
+
+    assert [
+        (activity.kind, activity.message_type) for activity in reply.transcript
+    ] == [
+        ("event", "tool_call"),
+        ("event", "tool_result"),
+        ("message", None),
+        ("event", "task"),
+    ]
+    assert reply.transcript[0].metadata["permission_request"] is True
+    assert reply.transcript[0].metadata["tool_call_id"] == "tc-message"
+    assert reply.transcript[1].metadata["permission_request"] is True
+    assert reply.transcript[1].metadata["permission_outcome"] == "approved"
+    assert reply.transcript[1].metadata["tool_call_id"] == "tc-message"
+    assert reply.transcript[2].content == "Reply from the agent"
 
 
 @pytest.mark.asyncio

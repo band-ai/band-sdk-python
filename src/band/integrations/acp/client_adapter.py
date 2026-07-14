@@ -34,10 +34,13 @@ from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
 )
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import CollectedChunk, PermissionOutcome
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.mcp_server import LocalMCPServer
-from band.runtime.tools import is_room_posting_tool, iter_tool_definitions
+from band.runtime.tools import (
+    is_room_posting_tool,
+    iter_tool_definitions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +203,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             # Streaming text/thought deltas are coalesced into one chunk per run by
             # ACPCollectingClient, so one chunk here == one logical message/event.
             for chunk in chunks:
+                if chunk.metadata.get("self_reporting"):
+                    continue
                 match chunk.chunk_type:
                     case "text":
                         if chunk.content and not replied_in_room:
@@ -310,21 +315,35 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 option_id,
             )
 
+            permission_metadata = {
+                "permission_request": True,
+                "tool_name": tool_name,
+                "tool_call_id": tool_call_id,
+                "acp_session_id": session_id,
+                "auto_allowed": option_id is not None,
+            }
             await tools.send_event(
                 content=f"Permission requested: {tool_name}",
                 message_type="tool_call",
-                metadata={
-                    "permission_request": True,
-                    "tool_name": tool_name,
-                    "tool_call_id": tool_call_id,
-                    "acp_session_id": session_id,
-                    "auto_allowed": option_id is not None,
-                },
+                metadata=permission_metadata,
             )
 
             if option_id is None:
-                return cancel_permission()
-            return allow_permission(option_id)
+                permission_outcome = PermissionOutcome.CANCELLED
+                response = cancel_permission()
+            else:
+                permission_outcome = PermissionOutcome.APPROVED
+                response = allow_permission(option_id)
+
+            await tools.send_event(
+                content=f"Permission {permission_outcome.value}",
+                message_type="tool_result",
+                metadata={
+                    **permission_metadata,
+                    "permission_outcome": permission_outcome.value,
+                },
+            )
+            return response
 
         return handler
 

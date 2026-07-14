@@ -22,6 +22,7 @@ from band.runtime.tools import (
     append_mention_handles_hint,
     available_mention_handles,
     is_room_posting_tool,
+    is_self_reporting_tool,
 )
 
 
@@ -1393,3 +1394,28 @@ class TestIsRoomPostingTool:
     def test_no_substring_false_positive(self):
         """Only an exact or server-prefixed match counts, not any substring."""
         assert is_room_posting_tool("band_send_message_draft") is False
+
+
+class TestIsSelfReportingTool:
+    """Tools whose execution already creates visible room output."""
+
+    @pytest.mark.parametrize(
+        "tool_name",
+        [
+            "band_send_message",
+            "band_send_event",
+            "create_agent_chat_message",
+            "band-band_send_message",
+            "band-band_send_event",
+            "band-create_agent_chat_message",
+        ],
+    )
+    def test_self_reporting_names(self, tool_name: str) -> None:
+        assert is_self_reporting_tool(tool_name) is True
+
+    @pytest.mark.parametrize(
+        "tool_name",
+        ["band_lookup_peers", "get_weather", "band_send_message_draft"],
+    )
+    def test_non_self_reporting_names(self, tool_name: str) -> None:
+        assert is_self_reporting_tool(tool_name) is False

@@ -17,6 +17,7 @@ from band.integrations.acp.client_profiles import (
     NoopACPClientProfile,
 )
 from band.integrations.acp.types import CollectedChunk
+from band.runtime.tools import is_self_reporting_tool
 
 logger = logging.getLogger(__name__)
 
@@ -164,58 +165,86 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         self._profile = profile or NoopACPClientProfile()
         self._session_chunks: dict[str, list[CollectedChunk]] = {}
         self._permission_handlers: dict[str, PermissionHandler] = {}
+        self._self_reporting_call_ids: dict[str, set[str]] = {}
 
     async def session_update(
         self, session_id: str, update: object, **kwargs: object
     ) -> None:
         del kwargs
-        discriminator = getattr(update, "session_update", None)
-        chunk: CollectedChunk | None = None
+        chunk = self._chunk_from_update(session_id, update)
+        if chunk is not None:
+            self._append_chunk(session_id, chunk)
 
-        match discriminator:
+    def _chunk_from_update(
+        self, session_id: str, update: object
+    ) -> CollectedChunk | None:
+        """Parse one ACP session update without mutating the chunk buffer."""
+        match getattr(update, "session_update", None):
             case "agent_message_chunk":
-                text = self._extract_text_from_content(update)
-                chunk = CollectedChunk(chunk_type="text", content=text)
+                return self._text_chunk(update, "text")
             case "agent_thought_chunk":
-                text = self._extract_text_from_content(update)
-                chunk = CollectedChunk(chunk_type="thought", content=text)
+                return self._text_chunk(update, "thought")
             case "tool_call":
-                tool_call_id = getattr(update, "tool_call_id", "")
-                title = getattr(update, "title", "")
-                raw_input = getattr(update, "raw_input", None)
-                chunk = CollectedChunk(
-                    chunk_type="tool_call",
-                    content=title,
-                    metadata={
-                        "tool_call_id": tool_call_id,
-                        "raw_input": raw_input,
-                        "status": getattr(update, "status", "in_progress"),
-                    },
-                )
+                return self._tool_call_chunk(session_id, update)
             case "tool_call_update":
-                tool_call_id = getattr(update, "tool_call_id", "")
-                raw_output = getattr(update, "raw_output", "")
-                chunk = CollectedChunk(
-                    chunk_type="tool_result",
-                    content=str(raw_output) if raw_output else "",
-                    metadata={
-                        "tool_call_id": tool_call_id,
-                        "status": getattr(update, "status", "completed"),
-                    },
-                )
+                return self._tool_result_chunk(session_id, update)
             case "plan":
                 entries = getattr(update, "entries", [])
                 plan_text = "\n".join(
                     getattr(entry, "content", str(entry)) for entry in entries
                 )
-                chunk = CollectedChunk(chunk_type="plan", content=plan_text)
+                return CollectedChunk(chunk_type="plan", content=plan_text)
             case _:
                 text = self._extract_text_from_content(update)
-                if text:
-                    chunk = CollectedChunk(chunk_type="text", content=text)
+                return CollectedChunk(chunk_type="text", content=text) if text else None
 
-        if chunk is not None:
-            self._append_chunk(session_id, chunk)
+    def _text_chunk(self, update: object, chunk_type: str) -> CollectedChunk:
+        return CollectedChunk(
+            chunk_type=chunk_type,
+            content=self._extract_text_from_content(update),
+        )
+
+    def _tool_call_chunk(self, session_id: str, update: object) -> CollectedChunk:
+        tool_call_id = getattr(update, "tool_call_id", "")
+        title = getattr(update, "title", "")
+        self_reporting = is_self_reporting_tool(title)
+        metadata = {
+            "tool_call_id": tool_call_id,
+            "raw_input": getattr(update, "raw_input", None),
+            "status": getattr(update, "status", "in_progress"),
+        }
+        if self_reporting:
+            metadata["self_reporting"] = True
+            if tool_call_id:
+                self._self_reporting_call_ids.setdefault(session_id, set()).add(
+                    tool_call_id
+                )
+        return CollectedChunk(
+            chunk_type="tool_call",
+            content=title,
+            metadata=metadata,
+        )
+
+    def _tool_result_chunk(self, session_id: str, update: object) -> CollectedChunk:
+        tool_call_id = getattr(update, "tool_call_id", "")
+        status = getattr(update, "status", "completed")
+        self_reporting = tool_call_id in self._self_reporting_call_ids.get(
+            session_id, set()
+        )
+        metadata = {
+            "tool_call_id": tool_call_id,
+            "status": status,
+        }
+        if self_reporting:
+            metadata["self_reporting"] = True
+            if status in ("completed", "failed"):
+                self._self_reporting_call_ids[session_id].discard(tool_call_id)
+        raw_output = getattr(update, "raw_output", "")
+        return CollectedChunk(
+            chunk_type="tool_result",
+            content=str(raw_output) if raw_output else "",
+            metadata=metadata,
+        )
 
     # Chunk kinds that arrive as a stream of deltas for one logical message, so a
     # run of them is coalesced into a single chunk (agents emit one delta per token
@@ -265,6 +294,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     def reset_session(self, session_id: str) -> None:
         self._session_chunks.pop(session_id, None)
         self._permission_handlers.pop(session_id, None)
+        self._self_reporting_call_ids.pop(session_id, None)
 
     def get_collected_text(self, session_id: str | None = None) -> str:
         if session_id is not None:

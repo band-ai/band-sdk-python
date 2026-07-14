@@ -688,6 +688,13 @@ ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
+def _matches_tool_name(tool_name: str, names: frozenset[str]) -> bool:
+    """Match a native tool name or the ``<server>-<tool>`` MCP spelling."""
+    if tool_name in names:
+        return True
+    return tool_name.endswith(tuple(f"-{name}" for name in names))
+
+
 def is_room_posting_tool(tool_name: str) -> bool:
     """True when a successful call of ``tool_name`` posts a message to the room.
 
@@ -697,9 +704,7 @@ def is_room_posting_tool(tool_name: str) -> bool:
     uses them, and a miss only costs a duplicate reply (the pre-suppression
     behavior), never a wrong post. Extend here when such a backend is added.
     """
-    if tool_name in ROOM_POSTING_TOOL_NAMES:
-        return True
-    return tool_name.endswith(tuple(f"-{name}" for name in ROOM_POSTING_TOOL_NAMES))
+    return _matches_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES)
 
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.
@@ -1149,8 +1154,18 @@ def get_band_tool_category(name: str) -> str | None:
 # messages/events themselves), so adapters must not also report them as
 # tool_call/tool_result events. Adapters may extend this with local names.
 SELF_REPORTING_TOOL_NAMES: frozenset[str] = frozenset(
-    {"band_send_message", "band_send_event"}
+    {"band_send_message", "band_send_event", "create_agent_chat_message"}
 )
+
+
+def is_self_reporting_tool(tool_name: str) -> bool:
+    """True when executing ``tool_name`` already creates visible room output.
+
+    ACP and other MCP clients may prefix a server name (for example,
+    ``band-band_send_message``), so matching follows the same convention as
+    :func:`is_room_posting_tool`.
+    """
+    return _matches_tool_name(tool_name, SELF_REPORTING_TOOL_NAMES)
 
 
 def mcp_tool_names(names: frozenset[str]) -> list[str]:

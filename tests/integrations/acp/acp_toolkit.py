@@ -29,7 +29,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -52,6 +52,8 @@ from acp.schema import (
     PromptResponse,
     ToolCallUpdate,
 )
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
 from band.core.types import PlatformMessage
 from band.integrations.acp.client_adapter import ACPClientAdapter
@@ -60,6 +62,48 @@ from band.testing import FakeAgentTools
 
 PromptHandler = Callable[["FakeACPAgent", str], Awaitable[None]]
 _SESSION_EVENT_MARKER = "acp_client_session_id"  # the adapter's trailing task event
+
+
+@dataclass(frozen=True)
+class RoomActivity:
+    """One room write, retained in the order the adapter made it."""
+
+    kind: Literal["message", "event"]
+    content: str
+    message_type: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class TranscriptTools(FakeAgentTools):
+    """Fake tools that retain the complete order of room writes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.transcript: list[RoomActivity] = []
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
+        message = await super().send_message(content, mentions)
+        self.transcript.append(RoomActivity(kind="message", content=content))
+        return message
+
+    async def send_event(
+        self,
+        content: str,
+        message_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        event = await super().send_event(content, message_type, metadata)
+        self.transcript.append(
+            RoomActivity(
+                kind="event",
+                content=content,
+                message_type=message_type,
+                metadata=dict(metadata or {}),
+            )
+        )
+        return event
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +173,7 @@ class FakeACPAgent:
         self._custom: PromptHandler | None = None
         # Observability for assertions:
         self.sessions: list[dict[str, Any]] = []
+        self._mcp_servers_by_session: dict[str, list[Any]] = {}
         self.prompts: list[dict[str, Any]] = []
         self.permission_responses: list[Any] = []
         self.approved: bool | None = None
@@ -182,6 +227,31 @@ class FakeACPAgent:
         self._script.append(_action)
         return self
 
+    def will_call_mcp_tool(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        *,
+        arguments: dict[str, Any],
+        server: str = "band",
+    ) -> FakeACPAgent:
+        """Call an advertised MCP tool between ACP call and result updates."""
+
+        async def _action(a: FakeACPAgent, sid: str) -> None:
+            await a.emit(
+                sid, start_tool_call(tool_call_id, tool_name, raw_input=arguments)
+            )
+            result = await a.call_mcp_tool(
+                session_id=sid,
+                server=server,
+                tool_name=tool_name,
+                arguments=arguments,
+            )
+            await a.emit(sid, update_tool_call(tool_call_id, raw_output=result))
+
+        self._script.append(_action)
+        return self
+
     def will_plan(self, *steps: str) -> FakeACPAgent:
         self._script.append(
             lambda a, sid: a.emit(sid, update_plan([plan_entry(s) for s in steps]))
@@ -189,12 +259,16 @@ class FakeACPAgent:
         return self
 
     def will_ask_permission(
-        self, *, tool_call_id: str = "tc-1", allow_option_id: str = "allow-1"
+        self,
+        *,
+        tool_call_id: str = "tc-1",
+        title: str | None = None,
+        allow_option_id: str = "allow-1",
     ) -> FakeACPAgent:
         async def _action(a: FakeACPAgent, sid: str) -> None:
             resp = await a.ask_permission(
                 sid,
-                ToolCallUpdate(tool_call_id=tool_call_id),
+                ToolCallUpdate(tool_call_id=tool_call_id, title=title),
                 [
                     PermissionOption(
                         kind="allow_once", name="Allow", optionId=allow_option_id
@@ -228,6 +302,41 @@ class FakeACPAgent:
         self.permission_responses.append(resp)
         return resp
 
+    async def call_mcp_tool(
+        self,
+        *,
+        session_id: str,
+        server: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Call a named streamable-HTTP MCP server advertised for this session."""
+        server_config = next(
+            (
+                config
+                for config in self._mcp_servers_by_session[session_id]
+                if getattr(config, "name", None) == server
+            ),
+            None,
+        )
+        if server_config is None:
+            raise ValueError(f"MCP server {server!r} was not advertised")
+        if getattr(server_config, "type", None) != "http":
+            raise ValueError(f"MCP server {server!r} does not use streamable HTTP")
+
+        async with streamable_http_client(server_config.url) as (
+            read_stream,
+            write_stream,
+            _,
+        ):
+            async with ClientSession(read_stream, write_stream) as client:
+                await client.initialize()
+                result = await client.call_tool(tool_name, arguments)
+
+        if result.isError:
+            raise RuntimeError(f"MCP tool {tool_name!r} failed: {result.content}")
+        return result.structuredContent or result.content
+
     # -- acp.Agent protocol ------------------------------------------------------
 
     def on_connect(self, conn: AgentSideConnection) -> None:
@@ -252,6 +361,7 @@ class FakeACPAgent:
         self.sessions.append(
             {"session_id": sid, "cwd": cwd, "mcp_servers": list(mcp_servers or [])}
         )
+        self._mcp_servers_by_session[sid] = list(mcp_servers or [])
         return NewSessionResponse(session_id=sid)
 
     async def prompt(
@@ -273,6 +383,7 @@ class Reply:
 
     messages: list[dict[str, Any]] = field(default_factory=list)
     events: list[dict[str, Any]] = field(default_factory=list)
+    transcript: list[RoomActivity] = field(default_factory=list)
 
     def _events_of(self, message_type: str) -> list[dict[str, Any]]:
         return [e for e in self.events if e.get("message_type") == message_type]
@@ -324,7 +435,7 @@ class AcpSession:
 
     async def send(self, content: str, *, room: str = "room-1") -> Reply:
         """Deliver ``content`` to ``room`` and return what the adapter posted back."""
-        tools = FakeAgentTools()
+        tools = TranscriptTools()
         await self.adapter.on_message(
             _message(content, room),
             tools,
@@ -334,7 +445,11 @@ class AcpSession:
             is_session_bootstrap=False,
             room_id=room,
         )
-        return Reply(messages=tools.messages_sent, events=tools.events_sent)
+        return Reply(
+            messages=tools.messages_sent,
+            events=tools.events_sent,
+            transcript=tools.transcript,
+        )
 
     def session_id(self, room: str) -> str:
         return self.adapter._room_to_session[room]

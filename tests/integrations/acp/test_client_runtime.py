@@ -127,6 +127,34 @@ class TestACPCollectingClientCoalescing:
             "text",
         ]  # runs on either side stay distinct
 
+    @pytest.mark.asyncio
+    async def test_self_reporting_tool_result_keeps_render_suppression_metadata(
+        self,
+    ) -> None:
+        client = ACPCollectingClient()
+        tool_call = MagicMock(
+            session_update="tool_call",
+            tool_call_id="tc-message",
+            title="band_send_message",
+            raw_input={"content": "hello"},
+            status="in_progress",
+        )
+        tool_result = MagicMock(
+            session_update="tool_call_update",
+            tool_call_id="tc-message",
+            raw_output={"id": "msg-1"},
+            status="completed",
+        )
+
+        await client.session_update("s1", tool_call)
+        await client.session_update("s1", tool_result)
+
+        chunks = client.get_collected_chunks("s1")
+        assert [chunk.metadata.get("self_reporting") for chunk in chunks] == [
+            True,
+            True,
+        ]
+
 
 class TestACPRuntime:
     """Tests for ACP runtime subprocess orchestration."""

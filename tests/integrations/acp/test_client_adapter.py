@@ -753,10 +753,10 @@ class TestACPClientAdapterPermissionHandler:
         assert len(adapter_with_mocks._runtime._client._permission_handlers) > 0
 
     @pytest.mark.asyncio
-    async def test_permission_handler_posts_event(
+    async def test_permission_handler_posts_paired_events(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """Should post permission request event to platform."""
+        """Should render an approved permission request as a matched event pair."""
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
@@ -790,16 +790,24 @@ class TestACPClientAdapterPermissionHandler:
             room_id="room-123",
         )
 
-        # Should have posted a permission event
+        # A permission request is a tool interaction, so its transcript entry must
+        # be closed by a result carrying the same tool call id.
         perm_events = [
             e
             for e in tools.events_sent
             if e.get("metadata", {}).get("permission_request")
         ]
-        assert len(perm_events) == 1
+        assert [event["message_type"] for event in perm_events] == [
+            "tool_call",
+            "tool_result",
+        ]
+        assert all(
+            event["metadata"]["tool_call_id"] == "tc-perm-1" for event in perm_events
+        )
         assert perm_events[0]["metadata"]["tool_name"] == "write_file"
         assert perm_events[0]["metadata"]["auto_allowed"] is True
-        assert perm_events[0]["message_type"] == "tool_call"
+        assert perm_events[1]["content"] == "Permission approved"
+        assert perm_events[1]["metadata"]["permission_outcome"] == "approved"
 
     @pytest.mark.asyncio
     async def test_permission_handler_selects_allow_option(
@@ -879,6 +887,20 @@ class TestACPClientAdapterPermissionHandler:
         )
 
         assert captured_result == {"outcome": {"outcome": "cancelled"}}
+        perm_events = [
+            event
+            for event in tools.events_sent
+            if event.get("metadata", {}).get("permission_request")
+        ]
+        assert [event["message_type"] for event in perm_events] == [
+            "tool_call",
+            "tool_result",
+        ]
+        assert all(
+            event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
+        )
+        assert perm_events[1]["content"] == "Permission cancelled"
+        assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_permission_handler_uses_name_fallback(
@@ -916,8 +938,11 @@ class TestACPClientAdapterPermissionHandler:
             for e in tools.events_sent
             if e.get("metadata", {}).get("permission_request")
         ]
-        assert len(perm_events) == 1
-        assert perm_events[0]["metadata"]["tool_name"] == "bash"
+        assert [event["message_type"] for event in perm_events] == [
+            "tool_call",
+            "tool_result",
+        ]
+        assert all(event["metadata"]["tool_name"] == "bash" for event in perm_events)
 
 
 class TestACPClientAdapterCleanup:
