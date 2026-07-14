@@ -56,8 +56,9 @@ Then message the `copilot_acp_agent` from a Band room.
   server on a routable port — the endpoint `CopilotACPAdapter(host=…, port=…)` dials.
 - **Fresh process per connection.** `,fork` execs a new `copilot --acp` for each TCP
   connection, so a reconnect (e.g. an `ACPRuntime` respawn) lands on a process with no
-  prior in-memory sessions. Harmless here — Band rehydrates session state from room
-  history — but don't expect Copilot's native ACP session resume to survive a reconnect.
+  prior in-memory sessions. The SDK uses ACP's session-load capability before trusting
+  a persisted ID; unsupported or unavailable sessions get a fresh session before the
+  prompt is sent. Earlier Copilot conversation state is not resumed after a reconnect.
 - **Bind loopback.** The `docker run -p 127.0.0.1:8080:8080` above keeps the ACP port
   on the host loopback. Copilot here is unauthenticated and runs `--allow-all-tools`,
   so expose it off-host only behind your own auth.

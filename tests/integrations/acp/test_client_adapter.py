@@ -239,7 +239,19 @@ class TestACPClientAdapterLocalMcpConfig:
         assert "Band tools" in system_context
         assert "Current room_id: room-123" in system_context
         assert "Current requester name: Pat" in system_context
-        assert "must include room_id" in system_context
+        assert "Use each MCP tool's schema" in system_context
+
+    def test_build_system_context_defers_to_external_mcp_tool_schema(self) -> None:
+        """The room value is supplied without assuming a remote tool's field name."""
+        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter.agent_name = "ACP Bridge"
+        adapter.agent_description = "Bridge to ACP agents"
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        system_context = adapter._build_system_context("room-123", msg)
+
+        assert "Use each MCP tool's schema" in system_context
+        assert "must include room_id" not in system_context
 
 
 class TestACPClientAdapterOnStarted:
@@ -590,7 +602,11 @@ class TestACPClientAdapterOnMessage:
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        history = ACPClientSessionState(room_to_session={"room-abc": "session-abc"})
+        adapter_with_mocks._runtime._agent_supports_session_load = True
+        adapter_with_mocks._runtime._conn.load_session = AsyncMock(
+            return_value=object()
+        )
+        history = ACPClientSessionState(room_to_session={"room-123": "session-abc"})
 
         await adapter_with_mocks.on_message(
             msg,
@@ -602,7 +618,51 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        assert adapter_with_mocks._room_to_session["room-abc"] == "session-abc"
+        assert adapter_with_mocks._room_to_session["room-123"] == "session-abc"
+        adapter_with_mocks._runtime._conn.load_session.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_on_message_creates_new_session_when_persisted_session_cannot_load(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A rebooted ephemeral ACP agent creates a session before prompting."""
+        stale_session = "stale-session"
+        fresh_session = MagicMock(session_id="fresh-session")
+        adapter_with_mocks._runtime._conn.new_session = AsyncMock(
+            return_value=fresh_session
+        )
+        adapter_with_mocks._runtime._agent_supports_session_load = True
+        adapter_with_mocks._runtime._conn.load_session = AsyncMock(return_value=None)
+
+        async def prompt_new_session(**kwargs):
+            session_id = kwargs["session_id"]
+            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
+                CollectedChunk(chunk_type="text", content="Recovered reply")
+            ]
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(
+            side_effect=prompt_new_session
+        )
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(room_to_session={"room-123": stale_session}),
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        assert adapter_with_mocks._room_to_session["room-123"] == "fresh-session"
+        adapter_with_mocks._runtime._conn.new_session.assert_awaited_once()
+        adapter_with_mocks._runtime._conn.load_session.assert_awaited_once()
+        prompt_calls = adapter_with_mocks._runtime._conn.prompt.call_args_list
+        assert [call.kwargs["session_id"] for call in prompt_calls] == ["fresh-session"]
+        assert "[System Context]" in prompt_calls[0].kwargs["prompt"][0].text
+        assert tools.messages_sent[0]["content"] == "Recovered reply"
 
     @pytest.mark.asyncio
     async def test_on_message_error_sends_error_event(
