@@ -43,6 +43,10 @@ docker compose up --build # starts copilot (:8080) + band-mcp (internal :3000)
 uv run examples/acp/copilot_docker/compose/client.py
 ```
 
+`client.py` uses `/` as Copilot's working directory by default because the ACP
+server runs in a container. Set `COPILOT_ACP_CWD` to another path only when it
+exists inside the Copilot container.
+
 Then message the `copilot_acp_agent` from a Band room; Copilot handles the turn
 and calls Band tools via band-mcp.
 
@@ -55,8 +59,9 @@ and calls Band tools via band-mcp.
   `CopilotACPAdapter(host=…, port=…)` dials.
 - **Fresh process per connection.** `,fork` execs a new `copilot --acp` for each TCP
   connection, so a reconnect (e.g. an `ACPRuntime` respawn) lands on a process with no
-  prior in-memory sessions. Harmless here — Band rehydrates session state from room
-  history — but don't expect Copilot's native ACP session resume to survive a reconnect.
+  prior in-memory sessions. The SDK uses ACP's session-load capability before trusting
+  a persisted ID; unsupported or unavailable sessions get a fresh session before the
+  prompt is sent. Earlier Copilot conversation state is not resumed after a reconnect.
 - **Bind loopback.** `docker-compose.yml` publishes the ACP port as
   `127.0.0.1:8080:8080`: an unauthenticated, allow-all `copilot --acp` must not be
   reachable off-host. Widen it (behind your own auth) only for a remote SDK host.

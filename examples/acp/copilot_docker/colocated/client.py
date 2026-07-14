@@ -46,6 +46,8 @@ async def main() -> None:
     # Copilot's ACP server, published by the container.
     host = os.getenv("COPILOT_ACP_HOST", "localhost")
     port = int(os.getenv("COPILOT_ACP_PORT", "8080"))
+    # The TCP server runs in a container, so this must be a path it can access.
+    cwd = os.getenv("COPILOT_ACP_CWD", "/")
 
     # band-mcp's SSE endpoint as reachable BY COPILOT — the container's own loopback.
     band_mcp_sse_url = os.getenv("BAND_MCP_SSE_URL", "http://127.0.0.1:3000/sse")
@@ -53,6 +55,7 @@ async def main() -> None:
     config = CopilotACPAdapterConfig(
         host=host,
         port=port,
+        cwd=cwd,
         inject_band_tools=False,  # Copilot is remote; it can't reach our loopback MCP
         mcp_servers=[
             {"type": "sse", "name": "band", "url": band_mcp_sse_url, "headers": []}

@@ -10,7 +10,11 @@ from band.integrations.acp.client_runtime import ACPCollectingClient
 
 @dataclass
 class ACPClientSessionState:
-    """Session state for ACP client adapter rehydration."""
+    """Persisted room-to-session resume candidates for the ACP client adapter.
+
+    A session ID is owned by the remote ACP agent, so the adapter must validate it
+    with ACP ``session/load`` after reconnecting before it can be used for a prompt.
+    """
 
     room_to_session: dict[str, str] = field(default_factory=dict)
 

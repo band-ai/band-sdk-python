@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from acp.client.connection import ClientSideConnection
+from acp.exceptions import RequestError
 
 from band.integrations.acp.client_profiles import (
     CursorACPClientProfile,
@@ -136,7 +137,8 @@ class TestACPRuntime:
         mock_conn.initialize = AsyncMock(
             return_value=MagicMock(
                 agent_capabilities=MagicMock(
-                    mcp_capabilities=MagicMock(http=False, sse=True)
+                    load_session=True,
+                    mcp_capabilities=MagicMock(http=False, sse=True),
                 )
             )
         )
@@ -153,6 +155,7 @@ class TestACPRuntime:
 
         assert runtime._conn is mock_conn
         assert runtime._agent_mcp_transport == "sse"
+        assert runtime._agent_supports_session_load
         mock_conn.initialize.assert_awaited_once_with(protocol_version=1)
         mock_conn.authenticate.assert_awaited_once_with(method_id="cursor_login")
 
@@ -173,6 +176,67 @@ class TestACPRuntime:
         assert chunks == []
         mock_conn.new_session.assert_awaited_once_with(cwd="/tmp", mcp_servers=[])
         mock_conn.prompt.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_load_session_uses_only_a_declared_capability(self) -> None:
+        mock_conn = AsyncMock()
+        mock_conn.load_session = AsyncMock(return_value=MagicMock())
+        runtime = ACPRuntime(command=["codex"])
+        runtime._conn = mock_conn
+
+        assert not await runtime.load_session(
+            cwd="/tmp", session_id="sess-1", mcp_servers=[]
+        )
+        mock_conn.load_session.assert_not_awaited()
+
+        runtime._agent_supports_session_load = True
+        assert await runtime.load_session(
+            cwd="/tmp", session_id="sess-1", mcp_servers=[]
+        )
+        mock_conn.load_session.assert_awaited_once_with(
+            cwd="/tmp", session_id="sess-1", mcp_servers=[]
+        )
+
+    @pytest.mark.asyncio
+    async def test_load_session_handles_an_unavailable_persisted_session(self) -> None:
+        mock_conn = AsyncMock()
+        mock_conn.load_session = AsyncMock(
+            side_effect=RequestError(-32002, "Session sess-1 not found")
+        )
+        runtime = ACPRuntime(command=["codex"])
+        runtime._conn = mock_conn
+        runtime._agent_supports_session_load = True
+
+        assert not await runtime.load_session(
+            cwd="/tmp", session_id="sess-1", mcp_servers=[]
+        )
+
+    @pytest.mark.asyncio
+    async def test_load_session_timeout_is_treated_as_unavailable(self) -> None:
+        mock_conn = AsyncMock()
+        mock_conn.load_session = AsyncMock(side_effect=TimeoutError)
+        runtime = ACPRuntime(command=["codex"])
+        runtime._conn = mock_conn
+        runtime._agent_supports_session_load = True
+
+        with patch(
+            "band.integrations.acp.client_runtime.ACP_SESSION_LOAD_TIMEOUT_SECONDS",
+            0.01,
+        ):
+            assert not await runtime.load_session(
+                cwd="/tmp", session_id="sess-1", mcp_servers=[]
+            )
+
+    @pytest.mark.asyncio
+    async def test_load_session_propagates_non_session_errors(self) -> None:
+        mock_conn = AsyncMock()
+        mock_conn.load_session = AsyncMock(side_effect=RequestError.invalid_params())
+        runtime = ACPRuntime(command=["codex"])
+        runtime._conn = mock_conn
+        runtime._agent_supports_session_load = True
+
+        with pytest.raises(RequestError, match="Invalid params"):
+            await runtime.load_session(cwd="/tmp", session_id="sess-1", mcp_servers=[])
 
     @pytest.mark.asyncio
     async def test_start_cleans_up_failed_initialize(self) -> None:

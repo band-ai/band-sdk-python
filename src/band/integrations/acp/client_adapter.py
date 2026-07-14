@@ -169,13 +169,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         del participants_msg, contacts_msg
         await self._ensure_connection()
 
-        if is_session_bootstrap and history:
-            async with self._session_lock:
-                self._rehydrate(room_id, history)
-
         if self._inject_band_tools:
             async with self._session_lock:
                 self._room_tools[room_id] = tools
+
+        if is_session_bootstrap and history:
+            await self._load_persisted_session(room_id, history)
 
         session_id = await self._get_or_create_session(room_id)
         self._runtime.reset_session(session_id)
@@ -184,14 +183,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             self._make_permission_handler(tools, room_id),
         )
 
-        prompt_text = msg.content
-        async with self._session_lock:
-            needs_bootstrap = session_id not in self._bootstrapped_sessions
-            if needs_bootstrap:
-                self._bootstrapped_sessions.add(session_id)
-        if needs_bootstrap:
-            system_context = self._build_system_context(room_id, msg)
-            prompt_text = f"{system_context}\n\n{msg.content}"
+        prompt_text = await self._build_prompt_text(room_id, session_id, msg)
 
         try:
             chunks = await self._runtime.prompt(
@@ -397,7 +389,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             f"\n"
-            f"All Band tool calls must include room_id.\n"
+            f"Use each MCP tool's schema for its argument names. When a tool needs "
+            f"the current room, use the Current room_id value above.\n"
         )
 
         return f"[System Context]\n{system_prompt}\n{room_context}"
@@ -447,9 +440,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             if room_id in self._room_to_session:
                 return self._room_to_session[room_id]
 
-            mcp_servers: list[object] = list(self._mcp_servers)
-            if self._inject_band_tools:
-                mcp_servers.append(await self._get_or_start_band_mcp_server())
+            mcp_servers = await self._session_mcp_servers()
 
             session_id = await self._runtime.create_session(
                 cwd=self._cwd,
@@ -463,6 +454,31 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 len(mcp_servers),
             )
             return session_id
+
+    async def _session_mcp_servers(self) -> list[object]:
+        """The MCP configuration supplied when creating or loading a session."""
+        mcp_servers: list[object] = list(self._mcp_servers)
+        if self._inject_band_tools:
+            mcp_servers.append(await self._get_or_start_band_mcp_server())
+        return mcp_servers
+
+    async def _build_prompt_text(
+        self,
+        room_id: str,
+        session_id: str,
+        msg: PlatformMessage,
+    ) -> str:
+        """Add room context on the first prompt sent to an ACP session."""
+        async with self._session_lock:
+            needs_bootstrap = session_id not in self._bootstrapped_sessions
+            if needs_bootstrap:
+                self._bootstrapped_sessions.add(session_id)
+
+        if not needs_bootstrap:
+            return msg.content
+
+        system_context = self._build_system_context(room_id, msg)
+        return f"{system_context}\n\n{msg.content}"
 
     async def on_cleanup(self, room_id: str) -> None:
         async with self._session_lock:
@@ -499,21 +515,41 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         """Tear down now (used by the ``on_message`` error path); see ``cleanup_all``."""
         await self.cleanup_all()
 
-    def _rehydrate(self, room_id: str, history: ACPClientSessionState) -> None:
-        del room_id
-        for restored_room_id, session_id in history.room_to_session.items():
-            if restored_room_id not in self._room_to_session:
-                self._room_to_session[restored_room_id] = session_id
+    async def _load_persisted_session(
+        self,
+        room_id: str,
+        history: ACPClientSessionState,
+    ) -> None:
+        """Accept this room's persisted session ID only after ACP loads it."""
+        async with self._session_lock:
+            if room_id in self._room_to_session:
+                return
+            session_id = history.room_to_session.get(room_id)
+
+        if session_id is None:
+            return
+
+        loaded = await self._runtime.load_session(
+            cwd=self._cwd,
+            session_id=session_id,
+            mcp_servers=await self._session_mcp_servers(),
+        )
+        if not loaded:
+            logger.info(
+                "Persisted ACP session %s is unavailable for room %s; using a new session",
+                session_id,
+                room_id,
+            )
+            return
+
+        async with self._session_lock:
+            if room_id not in self._room_to_session:
+                self._room_to_session[room_id] = session_id
                 logger.debug(
-                    "Restored ACP client session mapping: %s -> %s",
-                    restored_room_id,
+                    "Loaded ACP session mapping: %s -> %s",
+                    room_id,
                     session_id,
                 )
-
-        logger.info(
-            "Rehydrated ACP client state: %d room-session mappings",
-            len(self._room_to_session),
-        )
 
     async def _ensure_connection(self) -> ACPConnectionProtocol:
         return await self._runtime.ensure_connection(
