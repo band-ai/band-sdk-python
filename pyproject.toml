@@ -154,7 +154,7 @@ dev = [
     "pytest-rerunfailures>=14.0.0",
     "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
-    "thenvoi-testing-python==0.1.4",
+    "band-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
     # Include pydantic-ai for testing
     "pydantic-ai-slim>=1.56.0",
@@ -223,7 +223,7 @@ dev-crewai = [
     "pytest-rerunfailures>=14.0.0",
     "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
-    "thenvoi-testing-python==0.1.4",
+    "band-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
     "crewai==1.14.3",
