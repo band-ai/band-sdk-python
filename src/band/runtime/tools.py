@@ -40,6 +40,29 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The Agent Events API enforces a hard cap on event content (see
+# thenvoi-platform's events_controller.ex `@content_max_length`) and rejects
+# anything larger with a 422 before it ever reaches the room. Event content
+# can be arbitrarily large in practice — e.g. an ACP tool_result mirroring a
+# large file, or a raw exception dump — so truncate defensively rather than
+# letting the send fail.
+_EVENT_CONTENT_MAX_LENGTH = 16384
+_EVENT_TRUNCATION_MARKER = "... [truncated]"
+
+
+def _truncate_event_content(content: str) -> str:
+    """Cut *content* down to ``_EVENT_CONTENT_MAX_LENGTH`` chars.
+
+    A no-op when *content* is already within the limit, so callers can run it
+    unconditionally rather than checking the length themselves first.
+    """
+    if len(content) <= _EVENT_CONTENT_MAX_LENGTH:
+        return content
+    return (
+        content[: _EVENT_CONTENT_MAX_LENGTH - len(_EVENT_TRUNCATION_MARKER)]
+        + _EVENT_TRUNCATION_MARKER
+    )
+
 
 def _normalize_handle(value: str) -> str:
     """Strip leading ``@`` so ``@alice`` and ``alice`` compare equal."""
@@ -1480,6 +1503,17 @@ class AgentTools(AgentToolsProtocol):
         from band.client.rest import ChatEventRequest
 
         logger.debug("Sending %s event to room %s", message_type, self.room_id)
+
+        original_length = len(content)
+        content = _truncate_event_content(content)
+        if len(content) != original_length:
+            logger.warning(
+                "Truncated oversized %s event content for room %s (%d chars > %d limit)",
+                message_type,
+                self.room_id,
+                original_length,
+                _EVENT_CONTENT_MAX_LENGTH,
+            )
 
         response = await self.rest.agent_api_events.create_agent_chat_event(
             chat_id=self.room_id,
