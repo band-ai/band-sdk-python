@@ -293,6 +293,22 @@ class TestStart:
                 mock_runtime.start.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_wires_control_hook_to_runtime(self, mock_link, mock_runtime):
+        """start() should route control signals to AgentRuntime.handle_control."""
+        mock_runtime.handle_control = AsyncMock()
+        with patch("band.runtime.platform_runtime.BandLink") as mock_link_class:
+            mock_link_class.return_value = mock_link
+            with patch(
+                "band.runtime.platform_runtime.AgentRuntime"
+            ) as mock_runtime_class:
+                mock_runtime_class.return_value = mock_runtime
+
+                runtime = PlatformRuntime(agent_id="agent-123", api_key="test-key")
+                await runtime.start(on_execute=AsyncMock())
+
+                assert mock_link.on_control == mock_runtime.handle_control
+
+    @pytest.mark.asyncio
     async def test_raises_on_missing_metadata(self, mock_link, mock_runtime):
         """Should raise if agent metadata response is empty."""
         mock_link.rest.agent_api_identity.get_agent_me = AsyncMock(

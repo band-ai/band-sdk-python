@@ -166,6 +166,11 @@ class PlatformRuntime:
             on_participant_removed=self._on_participant_removed,
         )
 
+        # Route preemptive control signals (interrupt/stop/play) to the runtime
+        # BEFORE starting (which connects the WebSocket), so the hook is live as
+        # soon as the agent_control channel is joined.
+        self._link.on_control = self._runtime.handle_control
+
         await self._runtime.start()
 
         # Set up contact event handling after WebSocket is connected

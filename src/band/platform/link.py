@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
         ContactAddedPayload,
         ContactRemovedPayload,
         SupersedePayload,
+        AgentControlPayload,
     )
 
 logger = logging.getLogger(__name__)
@@ -102,6 +104,12 @@ class BandLink:
         # Durable terminal disconnect reason for the current connection lifecycle.
         self._last_disconnect_reason: WebSocketDisconnectReason | None = None
 
+        # Preemptive control-signal hook (interrupt/stop/play). Set by the
+        # runtime. Invoked DIRECTLY from the WebSocket receive task — never via
+        # the serialized _event_queue — so a control signal can act on a cycle
+        # already in flight instead of queuing behind it.
+        self.on_control: Callable[[AgentControlPayload], Awaitable[None]] | None = None
+
     @property
     def is_connected(self) -> bool:
         return self._is_connected
@@ -146,6 +154,7 @@ class BandLink:
             await self._ws.join_agent_control_channel(
                 self.agent_id,
                 on_supersede=self._on_supersede,
+                on_control=self._on_control,
             )
         except Exception:
             await self._ws.__aexit__(None, None, None)
@@ -326,6 +335,22 @@ class BandLink:
             reason.correlation_id,
         )
         self._queue_event(WebSocketDisconnectedEvent(payload=reason))
+
+    async def _on_control(self, payload: "AgentControlPayload") -> None:
+        """Handle an ``agent.control`` push (interrupt/stop/play).
+
+        Invoked directly from the WebSocket receive task. Forwards to the
+        registered ``on_control`` hook WITHOUT touching the serialized event
+        queue, so the signal can preempt a cycle already in flight. If no hook
+        is registered, the push is a safe no-op.
+        """
+        if self.on_control is None:
+            logger.debug(
+                "agent.control received (mode=%s) but no on_control hook registered",
+                payload.mode,
+            )
+            return
+        await self.on_control(payload)
 
     async def _on_disconnected(self, error: Exception | None) -> None:
         """Handle PHX client disconnection."""

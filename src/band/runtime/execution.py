@@ -15,6 +15,7 @@ Crash Recovery:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections import OrderedDict
 from datetime import datetime, timezone
@@ -149,6 +150,30 @@ class Execution(Protocol):
         """
         ...
 
+    def interrupt(self, *, kind: str = "interrupt") -> bool:
+        """Abort the in-flight reasoning cycle for this room.
+
+        Called preemptively from the WebSocket receive task on an ``interrupt``
+        or ``stop`` control signal. ``AgentRuntime`` ``hasattr``-guards this, so
+        custom ``Execution`` implementations that omit it degrade to a no-op.
+        """
+        ...
+
+    def stop_room(self) -> None:
+        """Durably stop this room until a play signal.
+
+        Aborts the in-flight cycle and goes quiet. Trigger suppression is
+        platform-authoritative. ``AgentRuntime`` ``hasattr``-guards this.
+        """
+        ...
+
+    async def resume_room(self) -> None:
+        """Resume a stopped room (play): catch up rehydration-style via /next.
+
+        ``AgentRuntime`` ``hasattr``-guards this.
+        """
+        ...
+
 
 # Type for execution callback
 ExecutionHandler = Callable[["ExecutionContext", PlatformEvent], Awaitable[None]]
@@ -257,6 +282,26 @@ class ExecutionContext:
         # Pending system messages to inject (e.g., contact broadcasts)
         self._pending_system_messages: list[str] = []
         self._reconnect_sync_requested = False
+
+        # Per-cycle interrupt. The reasoning cycle runs as a child
+        # task so a control signal can abort just this turn without killing the
+        # room loop. ``_interrupt_kind`` is set by interrupt() on the receive
+        # task BEFORE cancelling the child, then read-and-cleared in the loop
+        # coroutine's cancel handler so it can't leak across cycles.
+        self._active_cycle_task: asyncio.Task[None] | None = None
+        self._interrupt_kind: str | None = None  # "interrupt" | "stop" | None
+
+        # Durable stop (play to resume). Trigger suppression is
+        # platform-authoritative (dispatch gated server-side, persists across
+        # reconnect); this flag is a PURE LOCAL EFFICIENCY CACHE — it pauses
+        # idle /next polling and short-circuits WS triggers while stopped to
+        # avoid /next->204 and mark->204/reply->403 churn. Not persisted.
+        self._stopped: bool = False
+
+        # Optional seam for clearing user-visible activity state ("reasoning…")
+        # when a cycle is interrupted/stopped. Filled by the activity-signal
+        # work; a no-op (None) here.
+        self._on_activity_clear: Callable[[], Awaitable[None]] | None = None
 
     @property
     def thread_id(self) -> str:
@@ -458,6 +503,14 @@ class ExecutionContext:
                     self.room_id,
                 )
 
+        # Cancel any in-flight cycle child task BEFORE cancelling the loop so it
+        # is not orphaned (the loop's await on it is not auto-cancelled when the
+        # loop task is cancelled). Capture the reference first because the loop's
+        # finally clears _active_cycle_task as it unwinds.
+        cycle_task = self._active_cycle_task
+        if cycle_task is not None and not cycle_task.done():
+            cycle_task.cancel()
+
         # Signal stop and cancel the task
         self._is_running = False
         self._process_loop_task.cancel()
@@ -466,6 +519,12 @@ class ExecutionContext:
         except asyncio.CancelledError:
             pass
         self._process_loop_task = None
+
+        # Drain the (now cancelled) cycle task so it does not leak as pending.
+        if cycle_task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await cycle_task
+        self._active_cycle_task = None
         return graceful
 
     async def _wait_for_idle(self, timeout: float) -> bool:
@@ -533,6 +592,71 @@ class ExecutionContext:
         """
         self.queue.put_nowait(_ResyncRequest())  # type: ignore[arg-type]  # Sentinel is intentionally not a PlatformEvent.
         logger.debug("ExecutionContext %s: Resync sentinel enqueued", self.room_id)
+
+    def interrupt(self, *, kind: str = "interrupt") -> bool:
+        """Abort the in-flight reasoning cycle, if any.
+
+        Called from the WebSocket receive task. The receive-side surface is
+        deliberately minimal — set a flag and cancel the child cycle task. All
+        message-status / dedupe bookkeeping happens in the loop coroutine's
+        cancel handler (``_run_cycle``), never here, so the two coroutines do
+        not race on shared state.
+
+        Args:
+            kind: ``"interrupt"`` (consume the message) or ``"stop"`` (leave it
+                actionable for replay on play). Distinguishes the two unwind
+                paths in ``_run_cycle``.
+
+        Returns:
+            True if a cycle was actually in flight and got cancelled. Between
+            cycles this is a clean no-op and does NOT set ``_interrupt_kind``
+            (which would otherwise mis-flag the next cycle).
+        """
+        task = self._active_cycle_task
+        if task is None or task.done():
+            return False
+        self._interrupt_kind = kind
+        task.cancel()
+        logger.info(
+            "ExecutionContext %s: %s requested, cancelling in-flight cycle",
+            self.room_id,
+            kind,
+        )
+        return True
+
+    def stop_room(self) -> None:
+        """Durable stop for this room: abort the in-flight cycle and
+        go quiet until a play signal.
+
+        The platform is authoritative on trigger suppression; ``_stopped`` is a
+        local efficiency cache only (pause idle /next polling, short-circuit WS
+        triggers). Called from the receive task — surface stays flag + cancel.
+        Leaves any in-flight message in 'processing' so the platform replays it
+        via /next on play.
+        """
+        self._stopped = True
+        self.interrupt(kind="stop")
+
+    async def resume_room(self) -> None:
+        """Resume a stopped room (play): clear the local stop flag and catch up
+        rehydration-style via /next, so callouts made while stopped are seen.
+
+        Clears ``_stopped`` BEFORE enqueuing the resync sentinel so the loop
+        does not skip the catch-up it just requested.
+        """
+        self._stopped = False
+        await self.request_resync()
+
+    async def _clear_activity(self) -> None:
+        """Invoke the optional activity-clear seam after an aborted cycle."""
+        if self._on_activity_clear is None:
+            return
+        try:
+            await self._on_activity_clear()
+        except Exception:
+            logger.exception(
+                "ExecutionContext %s: activity-clear hook failed", self.room_id
+            )
 
     # --- Participant management ---
 
@@ -892,6 +1016,13 @@ class ExecutionContext:
                         timeout=self.config.idle_resync_seconds,
                     )
                 except asyncio.TimeoutError:
+                    if self._stopped:
+                        # Efficiency: a stopped room would only get /next->204.
+                        logger.debug(
+                            "ExecutionContext %s: stopped, skipping idle /next poll",
+                            self.room_id,
+                        )
+                        continue
                     logger.debug(
                         "ExecutionContext %s: Idle for %ss, re-polling /next",
                         self.room_id,
@@ -901,6 +1032,15 @@ class ExecutionContext:
                     continue
 
                 if isinstance(event, _ResyncRequest):
+                    if self._stopped:
+                        # resume_room() clears _stopped before enqueuing its
+                        # sentinel, so a sentinel seen while stopped is a stale
+                        # reconnect resync — platform gate keeps us quiet anyway.
+                        logger.debug(
+                            "ExecutionContext %s: stopped, ignoring resync sentinel",
+                            self.room_id,
+                        )
+                        continue
                     logger.debug(
                         "ExecutionContext %s: Resync requested (post-reconnect)",
                         self.room_id,
@@ -1028,7 +1168,20 @@ class ExecutionContext:
         state on the server. The /next endpoint skips these messages, so the
         agent would never pick them up again. This method finds such messages
         and re-processes them by calling mark_processing (creates a new attempt).
+
+        Skipped while stopped: the stop path deliberately leaves the interrupted
+        message in 'processing', and a reconnect must not resurrect it through
+        the recovery sweep. The platform replays it via /next on play instead.
+        This keeps stop-survives-reconnect correct in the SDK without relying on
+        the platform gating the mark endpoint for this path.
         """
+        if self._stopped:
+            logger.debug(
+                "ExecutionContext %s: stopped, skipping stale-processing recovery",
+                self.room_id,
+            )
+            return True
+
         stale_messages = await self.link.get_stale_processing_messages(self.room_id)
         if not stale_messages:
             return True
@@ -1265,8 +1418,11 @@ class ExecutionContext:
                 ),
             )
 
-            # Call execution handler
-            await self._on_execute(self, event)
+            # Call execution handler as a cancellable cycle. A control
+            # signal can abort just this turn; when it does, status is handled
+            # inside _run_cycle and we advance without sending anything.
+            if not await self._run_cycle(event, msg_id):
+                return _BacklogProcessResult.ADVANCED
 
             # SUCCESS: Mark as processed on server
             durable_processed = await self.link.mark_processed(self.room_id, msg_id)
@@ -1328,6 +1484,80 @@ class ExecutionContext:
         for item in items:
             self.queue.put_nowait(item)
 
+    async def _invoke_handler(self, event: PlatformEvent) -> None:
+        """Coroutine wrapper around the execution handler so it can run as a
+        cancellable ``asyncio.Task`` (the handler is typed ``Awaitable``)."""
+        await self._on_execute(self, event)
+
+    async def _run_cycle(self, event: PlatformEvent, msg_id: str | None) -> bool:
+        """Run the execution handler as a cancellable child task.
+
+        Wrapping the cycle in its own task lets a control signal abort just this
+        turn (via ``interrupt()``) without cancelling the room's process loop.
+
+        Returns:
+            True if the cycle ran to completion (caller proceeds to mark the
+            message processed as usual). False if a control signal aborted the
+            cycle — message status has already been handled here and the caller
+            must send nothing further.
+
+        Raises:
+            asyncio.CancelledError: when the cancel was a genuine shutdown of
+            the loop task (``_interrupt_kind`` unset), so the loop's own handler
+            can exit. ``CancelledError`` is a ``BaseException`` subclass, so it
+            bypasses the callers' ``except Exception`` and reaches the loop's
+            ``except asyncio.CancelledError``; we only swallow it for an
+            interrupt/stop, never for shutdown.
+        """
+        self._active_cycle_task = asyncio.create_task(self._invoke_handler(event))
+        try:
+            await self._active_cycle_task
+            return True
+        except asyncio.CancelledError:
+            # Read-and-clear is atomic here (no await between the two lines).
+            # If two control signals raced before this ran, last-writer-wins on
+            # _interrupt_kind — benign, since re-cancelling a cancelling task is
+            # a no-op and both signals wanted the cycle dead.
+            kind = self._interrupt_kind
+            self._interrupt_kind = None
+            if kind is None:
+                # Shutdown cancel of the loop task propagating through the child
+                # await — let it propagate so the loop exits.
+                raise
+            # Interrupt/stop: drop all accumulated work, send nothing.
+            await self._clear_activity()
+            if kind == "interrupt" and msg_id:
+                # Consume the message so the idle /next resync does not
+                # re-return it (excludes-only-processed) and re-fire the cycle
+                # the user just interrupted. Mirror the success-path bookkeeping.
+                if await self.link.mark_processed(self.room_id, msg_id):
+                    self._retry_tracker.mark_success(msg_id)
+                    self._remember_processed_message(msg_id)
+                else:
+                    logger.warning(
+                        "ExecutionContext %s: durable mark_processed failed for "
+                        "interrupted message %s; idle resync may re-deliver it",
+                        self.room_id,
+                        msg_id,
+                    )
+            # For "stop" we deliberately leave the message in 'processing' so the
+            # platform replays it via /next on play; do not mark or remember.
+            #
+            # CROSS-SYSTEM INVARIANT: this replay depends on the platform's
+            # /next (Chat.get_next_actionable_message) excluding ONLY 'processed'
+            # — a 'processing' message must still be returned. If the platform
+            # ever also excludes 'processing', stopped messages are silently
+            # dropped on play. Covered by the stop->play replay test.
+            logger.info(
+                "ExecutionContext %s: cycle %s (message %s) — nothing sent",
+                self.room_id,
+                "interrupted" if kind == "interrupt" else "stopped",
+                msg_id,
+            )
+            return False
+        finally:
+            self._active_cycle_task = None
+
     async def _process_event(self, event: PlatformEvent) -> bool:
         """
         Process single event through execution callback.
@@ -1351,6 +1581,19 @@ class ExecutionContext:
                 logger.debug("Event %s processed successfully", event.type)
             finally:
                 self._set_state("idle")
+            return True
+
+        # While stopped, leave message triggers actionable for replay on play.
+        # Suppression is platform-authoritative; skipping here is a local
+        # efficiency short-circuit that avoids claiming/marking (mark->204) and
+        # never reaches the adapter (reply->403). The message is left untouched
+        # so /next replays it on play.
+        if self._stopped and isinstance(event, MessageEvent):
+            logger.debug(
+                "ExecutionContext %s: stopped, skipping message %s (left for replay)",
+                self.room_id,
+                event.payload.id if event.payload else None,
+            )
             return True
 
         payload = event.payload if isinstance(event, MessageEvent) else None
@@ -1463,8 +1706,11 @@ class ExecutionContext:
                 self.remove_participant(event.payload.id)
                 await self._notify_participant_removed(event)
 
-            # Call execution handler
-            await self._on_execute(self, event)
+            # Call execution handler as a cancellable cycle. A control
+            # signal can abort just this turn; when it does, status is handled
+            # inside _run_cycle and we send nothing further.
+            if not await self._run_cycle(event, msg_id):
+                return True
 
             # For messages: mark as processed on server
             if isinstance(event, MessageEvent) and msg_id:

@@ -22,6 +22,7 @@ from band.client.streaming.client import (
     ContactAddedPayload,
     ContactRemovedPayload,
     SupersedePayload,
+    AgentControlPayload,
 )
 from band.client.streaming.errors import WebSocketUpgradeError
 
@@ -42,4 +43,5 @@ __all__ = [
     "ContactAddedPayload",
     "ContactRemovedPayload",
     "SupersedePayload",
+    "AgentControlPayload",
 ]
