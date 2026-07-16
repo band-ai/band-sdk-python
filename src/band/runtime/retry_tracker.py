@@ -55,6 +55,14 @@ class MessageRetryTracker:
         """Clear tracking for successfully processed message."""
         self._attempts.pop(msg_id, None)
 
+    def discard_attempt(self, msg_id: str) -> None:
+        """Uncharge an attempt aborted by our own control signal (interrupt/stop).
+
+        A cycle cancelled by interrupt/stop never actually ran the handler, so
+        it must not count against the message's retry budget.
+        """
+        self._attempts.pop(msg_id, None)
+
     def mark_permanently_failed(self, msg_id: str) -> None:
         """Explicitly mark message as permanently failed."""
         self._failed.add(msg_id)

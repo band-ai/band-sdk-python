@@ -282,6 +282,41 @@ class TestStopRoomResumeRoom:
         assert ok is True
         assert executed == ["replayed-1"]
 
+    async def test_stop_does_not_poison_retry_budget(self, mock_link):
+        """A cycle aborted by stop must not count against the message's retry
+        budget — at the real default of one retry, the replayed backlog
+        message (delivered again via /next after play) must still reach the
+        handler instead of immediately landing in permanently_failed."""
+        started = asyncio.Event()
+        executed: list[str] = []
+        calls = {"n": 0}
+
+        async def on_execute(ctx, event):
+            calls["n"] += 1
+            started.set()
+            if calls["n"] == 1:
+                await asyncio.sleep(60)  # first attempt: hangs, gets stopped
+            executed.append(event.payload.id)
+
+        # Real default (SessionConfig().max_message_retries == 1) — no
+        # generous override, so a poisoned attempt count would trip this.
+        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+
+        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="p1")))
+        await started.wait()
+        ctx.stop_room()
+        assert await proc is True
+        mock_link.mark_processed.assert_not_awaited()
+
+        # Resume, then the platform replays the still-"processing" message via
+        # /next — same message id, now delivered through the backlog path.
+        started.clear()
+        result = await ctx._process_backlog_message(_backlog_message("p1"))
+
+        assert result == _BacklogProcessResult.ADVANCED
+        assert executed == ["p1"]  # handler actually ran this time
+        assert not ctx._retry_tracker.is_permanently_failed("p1")
+
 
 class TestBacklogInterrupt:
     async def test_interrupt_during_backlog_consumes_and_advances(self, mock_link):

@@ -1549,14 +1549,20 @@ class ExecutionContext:
                 # Shutdown cancel of the loop task propagating through the child
                 # await — let it propagate so the loop exits.
                 raise
-            # Interrupt/stop: drop all accumulated work, send nothing.
+            # Interrupt/stop: drop all accumulated work, send nothing. The
+            # handler never ran to completion, so uncharge the attempt
+            # `record_attempt` already billed before this cycle started —
+            # otherwise a message that's merely stopped/interrupted a couple
+            # of times gets poisoned into permanently_failed before it's ever
+            # actually attempted.
+            if msg_id:
+                self._retry_tracker.discard_attempt(msg_id)
             await self._clear_activity()
             if kind == "interrupt" and msg_id:
                 # Consume the message so the idle /next resync does not
                 # re-return it (excludes-only-processed) and re-fire the cycle
                 # the user just interrupted. Mirror the success-path bookkeeping.
                 if await self.link.mark_processed(self.room_id, msg_id):
-                    self._retry_tracker.mark_success(msg_id)
                     self._remember_processed_message(msg_id)
                 else:
                     logger.warning(
