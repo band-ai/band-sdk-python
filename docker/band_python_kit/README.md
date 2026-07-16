@@ -21,11 +21,11 @@ Docker, and a registered Band agent (its id and API key).
 docker build -f docker/band_python_kit/Dockerfile -t band-python-kit:local .
 docker save band-python-kit:local | sbx template load /dev/stdin
 
-# 2. Start your workspace from the example project.
+# 2. Start your workspace from the example project (see example/README.md).
 cp -r docker/band_python_kit/example ~/my-band-agent
 cd ~/my-band-agent
 #    - set agent.id in band.yaml
-#    - put your keys in .band/secrets.env (chmod 600; it is gitignored)
+#    - create .band/secrets.env from secrets.env.example (chmod 600)
 
 # 3. Create the sandbox — your agent starts immediately.
 sbx create --name my-band-agent \
@@ -33,23 +33,16 @@ sbx create --name my-band-agent \
   band-python-kit ~/my-band-agent
 ```
 
-Mention your agent in a Band room — it replies from inside the sandbox. The
-example echoes messages; swap `EchoAdapter` in `main.py` for any
-`band.adapters.*` framework adapter (LangGraph, Anthropic, CrewAI, ...) and
-add the matching `band-sdk` extra to your `pyproject.toml`.
+Mention your agent in a Band room — it replies from inside the sandbox. To
+make the example your own — swap the echo adapter for a real framework
+adapter, set up credentials — see
+[`example/README.md`](example/README.md).
 
 ## Your workspace
 
-```text
-my-band-agent/
-├── band.yaml            # agent identity, endpoints, paths (see example/)
-├── main.py              # your entrypoint — any program that runs a Band agent
-├── pyproject.toml       # your dependencies, including band-sdk
-├── uv.lock              # committed lock — resolution never happens at startup
-├── .gitignore           # must cover the credential file below
-└── .band/
-    └── secrets.env      # opt-in plaintext credentials (never commit)
-```
+Your workspace is a plain `uv` project plus `band.yaml`;
+[`example/`](example/README.md) is a complete template with the file map
+and authoring guide.
 
 The launcher runs `uv sync --locked` with the image's pinned `uv` into a
 sandbox-owned environment (never inside your mounted workspace, never into
@@ -74,11 +67,10 @@ override the file:
 
 `.band/secrets.env` is an explicit opt-in
 (`credentials.acknowledgePlaintextInSandbox: true` in `band.yaml`): the
-plaintext keys exist in both your workspace and the sandbox VM. The launcher
-enforces the guardrails — the file must be gitignored, never Git-tracked,
-owner-only (`chmod 600`), not a symlink, and may only define documented
-credential names. Values already present in the environment always win; the
-file only fills gaps. Never commit it.
+plaintext keys exist in both your workspace and the sandbox VM, and the
+launcher enforces the guardrails around the file. Setup and the accepted
+names: [`example/README.md`](example/README.md#credentials) and its
+`secrets.env.example`.
 
 ## How the launch works
 

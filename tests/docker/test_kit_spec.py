@@ -9,12 +9,14 @@ Docker-Sandbox-capable machines.
 from __future__ import annotations
 
 import importlib
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
+from dotenv import dotenv_values
 
-from band.docker.launcher import WorkspaceConfig
+from band.docker.launcher import CredentialName, WorkspaceConfig
 
 KIT_DIR = Path(__file__).parents[2] / "docker" / "band_python_kit"
 EXAMPLE_DIR = KIT_DIR / "example"
@@ -133,3 +135,19 @@ def test_example_workspace_satisfies_the_launcher_contract() -> None:
         config.runtime.log_path,
     ):
         assert value.startswith("/home/agent/"), value
+
+
+def test_example_secrets_template_names_match_documented_names() -> None:
+    """The shipped template must mention every documented credential name and
+    nothing else — the launcher rejects undocumented names at launch."""
+    template = EXAMPLE_DIR / "secrets.env.example"
+    active = set(dotenv_values(template))
+    commented = set(
+        re.findall(
+            r"^#\s*([A-Z][A-Z0-9_]*)=",
+            template.read_text(encoding="utf-8"),
+            re.MULTILINE,
+        )
+    )
+    assert "BAND_API_KEY" in active
+    assert active | commented == {name.value for name in CredentialName}
