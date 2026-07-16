@@ -44,6 +44,17 @@ With `pip`, use the same package spec:
 pip install "band-sdk[langgraph]"
 ```
 
+### Docker Sandboxes
+
+Building an agent for [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)?
+The repository includes a `band-python-kit` base image with the Band SDK in an
+isolated, read-only virtual environment, automatic sandbox proxy-CA trust
+wiring, and support for both arm64 and x86_64.
+
+See the [band-python-kit image guide](docker/band_python_kit/README.md) for
+build options, framework extras, image layout, and direct Docker usage. The
+declarative kit and published GHCR image are separate release deliverables.
+
 ---
 
 ## Quickstart
