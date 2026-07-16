@@ -14,15 +14,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from filelock import FileLock, Timeout
 
 from band.docker.launcher.config import AGENT_HOME
 from band.docker.launcher.errors import LaunchError
-
-if TYPE_CHECKING:
-    from band.docker.launcher.run import ResolvedLaunch
+from band.docker.launcher.launch import ResolvedLaunch
 
 logger = logging.getLogger(__name__)
 

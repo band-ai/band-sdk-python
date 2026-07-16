@@ -12,6 +12,8 @@ dropped to the non-root agent user. The flow, one module per concern:
 5. `run`       — assemble the above, then `os.execve` the customer
    entrypoint so signals reach customer code directly.
 
+`launch` holds the `ResolvedLaunch` model the phases hand to each other.
+
 Every failure is a :class:`LaunchError` naming its phase; no error, log
 line, or diagnostic ever contains secret values.
 """
@@ -31,9 +33,9 @@ from band.docker.launcher.credentials import (
     load_file_credentials,
 )
 from band.docker.launcher.errors import LaunchError
+from band.docker.launcher.launch import ResolvedLaunch
 from band.docker.launcher.run import (
     AGENT_UID,
-    ResolvedLaunch,
     build_child_environment,
     execute,
     main,

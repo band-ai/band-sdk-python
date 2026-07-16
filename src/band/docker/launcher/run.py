@@ -13,8 +13,6 @@ import logging
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict
-
 from band.docker.launcher.config import (
     AGENT_HOME,
     DEFAULT_CONFIG_FILENAME,
@@ -25,33 +23,13 @@ from band.docker.launcher.config import (
 )
 from band.docker.launcher.credentials import load_file_credentials
 from band.docker.launcher.errors import LaunchError
+from band.docker.launcher.launch import ResolvedLaunch
 from band.docker.launcher.paths import resolve_paths
 from band.docker.launcher.sync import sync_customer_environment
 
 logger = logging.getLogger(__name__)
 
 AGENT_UID = 1000
-
-
-class ResolvedLaunch(BaseModel):
-    """Everything the launch needs, fully resolved and validated."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    workspace: Path
-    project: Path
-    entrypoint: Path
-    environment_path: Path
-    state_path: Path
-    cache_path: Path
-    log_path: Path
-    uv_binary: Path
-    agent_id: str
-    rest_url: str
-    ws_url: str
-    # Name -> value for credentials resolved from the opt-in file. Never
-    # logged; merged into the child environment only.
-    file_credentials: dict[str, str] = {}
 
 
 def current_uid() -> int:
