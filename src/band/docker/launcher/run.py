@@ -21,7 +21,7 @@ from band.docker.launcher.config import (
     resolve_agent_id,
     resolve_endpoints,
 )
-from band.docker.launcher.credentials import load_file_credentials
+from band.docker.launcher.credentials import resolve_credentials
 from band.docker.launcher.errors import LaunchError
 from band.docker.launcher.launch import ResolvedLaunch
 from band.docker.launcher.paths import resolve_paths
@@ -67,9 +67,9 @@ def locate_config_path(env: LauncherEnv, workspace: Path) -> Path:
     return workspace / DEFAULT_CONFIG_FILENAME
 
 
-def require_band_api_key(env: LauncherEnv, file_credentials: dict[str, str]) -> None:
+def require_band_api_key(credentials: dict[str, str]) -> None:
     """The one credential the agent cannot start without."""
-    if not (env.band_api_key or file_credentials.get("BAND_API_KEY")):
+    if not credentials.get("BAND_API_KEY"):
         raise LaunchError(
             "credentials",
             "BAND_API_KEY missing: set it in the environment or provide it "
@@ -95,8 +95,8 @@ def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
     rest_url, ws_url = resolve_endpoints(config, env)
     agent_id = resolve_agent_id(config, env)
     paths = resolve_paths(config, env, workspace)
-    file_credentials = load_file_credentials(config, env, workspace)
-    require_band_api_key(env, file_credentials)
+    credentials = resolve_credentials(config, env, workspace)
+    require_band_api_key(credentials)
 
     return ResolvedLaunch(
         workspace=workspace,
@@ -105,14 +105,15 @@ def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
         agent_id=agent_id,
         rest_url=rest_url,
         ws_url=ws_url,
-        file_credentials=file_credentials,
+        credentials=credentials,
     )
 
 
 def build_child_environment(launch: ResolvedLaunch) -> dict[str, str]:
     """Construct the exact child environment. Never logged."""
     child = dict(os.environ)
-    child.update(launch.file_credentials)
+    # Canonical names, whatever casing or source validation accepted.
+    child.update(launch.credentials)
     child["BAND_AGENT_ID"] = launch.agent_id
     child["BAND_REST_URL"] = launch.rest_url
     child["BAND_WS_URL"] = launch.ws_url

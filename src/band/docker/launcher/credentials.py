@@ -292,3 +292,22 @@ def load_file_credentials(
         "Loaded %d credential value(s) from the workspace env file", len(resolved)
     )
     return resolved
+
+
+def resolve_credentials(
+    config: WorkspaceConfig, env: LauncherEnv, workspace: Path
+) -> dict[str, str]:
+    """Canonical name -> value for every credential the customer process
+    must see: the process environment first, the opt-in file filling gaps.
+
+    Validation accepts environment names case-insensitively (and library
+    callers may construct LauncherEnv programmatically), so inheriting the
+    raw environment cannot guarantee the child receives the documented
+    uppercase names — this mapping can."""
+    file_values = load_file_credentials(config, env, workspace)
+    env_values = env.model_dump()
+    return {
+        name.value: value
+        for name in CredentialName
+        if (value := env_values.get(name.lower()) or file_values.get(name))
+    }

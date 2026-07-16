@@ -31,6 +31,7 @@ from band.docker.launcher.config import (
 from band.docker.launcher.credentials import (
     CredentialName,
     load_file_credentials,
+    resolve_credentials,
 )
 from band.docker.launcher.errors import LaunchError
 from band.docker.launcher.launch import ResolvedLaunch
@@ -58,6 +59,7 @@ __all__ = [
     "load_file_credentials",
     "load_workspace_config",
     "main",
+    "resolve_credentials",
     "resolve_launch",
     "sync_customer_environment",
 ]

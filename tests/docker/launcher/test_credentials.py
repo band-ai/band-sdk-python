@@ -26,7 +26,7 @@ def enable(workspace: Workspace) -> None:
 
 def test_no_credentials_section_needs_env_key(workspace: Workspace) -> None:
     launch = resolve_launch(make_env(workspace))
-    assert launch.file_credentials == {}
+    assert launch.credentials == {"BAND_API_KEY": "test-band-key"}
 
 
 def test_band_api_key_required_from_somewhere(workspace: Workspace) -> None:
@@ -38,15 +38,18 @@ def test_file_fills_missing_band_api_key(workspace: Workspace) -> None:
     enable(workspace)
     write_credentials(workspace, "BAND_API_KEY=from-file\n")
     launch = resolve_launch(make_env(workspace, band_api_key=""))
-    assert launch.file_credentials == {"BAND_API_KEY": "from-file"}
+    assert launch.credentials == {"BAND_API_KEY": "from-file"}
 
 
 def test_process_env_wins_over_file(workspace: Workspace) -> None:
     enable(workspace)
     write_credentials(workspace, "BAND_API_KEY=from-file\nOPENAI_API_KEY=file-openai\n")
     launch = resolve_launch(make_env(workspace, band_api_key="from-env"))
-    # The env key wins; only the missing name is taken from the file.
-    assert launch.file_credentials == {"OPENAI_API_KEY": "file-openai"}
+    # The env key wins; the file only fills the missing name.
+    assert launch.credentials == {
+        "BAND_API_KEY": "from-env",
+        "OPENAI_API_KEY": "file-openai",
+    }
 
 
 def test_unsupported_source_rejected(workspace: Workspace) -> None:
@@ -170,7 +173,7 @@ def test_non_git_workspace_allowed(tmp_path: Path) -> None:
     write_config(workspace, enable_credentials(default_config(workspace)))
     write_credentials(workspace, "BAND_API_KEY=from-file\n")
     launch = resolve_launch(make_env(workspace, band_api_key=""))
-    assert launch.file_credentials == {"BAND_API_KEY": "from-file"}
+    assert launch.credentials == {"BAND_API_KEY": "from-file"}
 
 
 def test_non_git_workspace_without_ignore_rule_rejected(tmp_path: Path) -> None:

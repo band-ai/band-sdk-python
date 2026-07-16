@@ -37,7 +37,7 @@ def test_child_environment_exact(
 ) -> None:
     monkeypatch.setenv("UNRELATED_VAR", "preserved")
     launch = resolve_launch(make_env(workspace))
-    launch.file_credentials["OPENAI_API_KEY"] = "from-file"
+    launch.credentials["OPENAI_API_KEY"] = "from-file"
 
     child = build_child_environment(launch)
 
@@ -47,6 +47,19 @@ def test_child_environment_exact(
     assert child["HOME"] == AGENT_HOME
     assert child["OPENAI_API_KEY"] == "from-file"
     assert child["UNRELATED_VAR"] == "preserved"
+
+
+def test_validated_credential_reaches_child_under_canonical_name(
+    workspace: Workspace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A credential accepted by validation — case-insensitively from the
+    environment or via a programmatic LauncherEnv — must reach the child
+    under its documented uppercase name; inheriting the raw environment
+    alone cannot guarantee that (example main.py reads BAND_API_KEY)."""
+    monkeypatch.delenv("BAND_API_KEY", raising=False)
+    launch = resolve_launch(make_env(workspace, band_api_key="accepted-key"))
+    child = build_child_environment(launch)
+    assert child["BAND_API_KEY"] == "accepted-key"
 
 
 def test_execute_execs_customer_entrypoint(

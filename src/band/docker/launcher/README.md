@@ -44,7 +44,7 @@ from band.docker.launcher import LaunchError, ResolvedLaunch, resolve_launch
 
 assert callable(resolve_launch)
 assert issubclass(LaunchError, ValueError)
-assert "file_credentials" in ResolvedLaunch.model_fields
+assert "credentials" in ResolvedLaunch.model_fields
 ```
 
 ## Module map

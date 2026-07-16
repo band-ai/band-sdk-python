@@ -29,4 +29,6 @@ class ResolvedLaunch(BaseModel):
     ws_url: str
     # Name -> value for credentials resolved from the opt-in file. Never
     # logged; merged into the child environment only.
-    file_credentials: dict[str, str] = {}
+    # Canonical credential name -> value for the child environment: process
+    # environment first, the opt-in workspace file filling gaps.
+    credentials: dict[str, str] = {}
