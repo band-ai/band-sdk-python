@@ -242,7 +242,14 @@ class ACPNewSessionProtocol(Protocol):
 
 
 class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optional methods treated as abstract by pyrefly
-    """Generic ACP client that buffers session updates by session_id."""
+    """Generic ACP client that buffers session updates by session_id.
+
+    The ``acp`` transport runs each incoming notification as its own task, so
+    consecutive ``session_update``s execute concurrently. A per-session lock
+    serializes the ingest→sink path and the permission handler (which posts to
+    the same room mid-turn): lock waiters wake FIFO and the tasks start in
+    wire-arrival order, so room posts keep the stream's causal order.
+    """
 
     def __init__(self, profile: ACPClientProfile | None = None) -> None:
         self._profile = profile or NoopACPClientProfile()
@@ -258,6 +265,12 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         # per-session live sink that finalized chunks are posted to, in order.
         self._open_runs: dict[str, CollectedChunk] = {}
         self._sinks: dict[str, ChunkSink] = {}
+        # Never popped in reset_session: replacing a lock a straggler task still
+        # holds would let two tasks into the session's critical section.
+        self._session_locks: dict[str, asyncio.Lock] = {}
+
+    def _session_lock(self, session_id: str) -> asyncio.Lock:
+        return self._session_locks.setdefault(session_id, asyncio.Lock())
 
     async def session_update(
         self, session_id: str, update: object, **kwargs: object
@@ -265,7 +278,8 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         del kwargs
         chunk = self._chunk_from_update(update)
         if chunk is not None:
-            await self._ingest(session_id, chunk)
+            async with self._session_lock(session_id):
+                await self._ingest(session_id, chunk)
 
     def _chunk_from_update(self, update: object) -> CollectedChunk | None:
         """Parse one ACP session update without mutating the chunk buffer."""
@@ -460,11 +474,26 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         )
 
     async def _finalize(self, session_id: str, chunk: CollectedChunk) -> None:
-        """Buffer a finalized chunk and post it to the session's live sink, if any."""
+        """Buffer a finalized chunk and post it to the session's live sink, if any.
+
+        A sink failure is logged, not raised: the ``acp`` transport suppresses
+        notification-handler exceptions without a trace, so raising would lose
+        the failure. Narration is best-effort — the turn's reply still posts
+        (and fails loudly) from ``on_message``'s own task.
+        """
         self._session_chunks.setdefault(session_id, []).append(chunk)
         sink = self._sinks.get(session_id)
-        if sink is not None:
+        if sink is None:
+            return
+        try:
             await sink(chunk)
+        except Exception:
+            logger.exception(
+                "Failed to post %s chunk for ACP session %s to the room; "
+                "narration for this turn may be incomplete",
+                chunk.chunk_type,
+                session_id,
+            )
 
     def set_sink(self, session_id: str, sink: ChunkSink | None) -> None:
         if sink is None:
@@ -475,12 +504,13 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     async def flush(self, session_id: str) -> None:
         """Finalize anything still open at turn end: the coalesced run, then any
         tool result whose call never reported a terminal status."""
-        await self._close_open_run(session_id)
-        emitted = self._emitted_results.setdefault(session_id, set())
-        for call_id, canonical in self._result_chunks.get(session_id, {}).items():
-            if call_id not in emitted:
-                emitted.add(call_id)
-                await self._finalize(session_id, canonical)
+        async with self._session_lock(session_id):
+            await self._close_open_run(session_id)
+            emitted = self._emitted_results.setdefault(session_id, set())
+            for call_id, canonical in self._result_chunks.get(session_id, {}).items():
+                if call_id not in emitted:
+                    emitted.add(call_id)
+                    await self._finalize(session_id, canonical)
 
     @staticmethod
     def _result_key(chunk: CollectedChunk) -> tuple[bool, bool, int]:
@@ -500,12 +530,15 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     ) -> dict[str, object]:
         handler = self._permission_handlers.get(session_id)
         if handler:
-            return await handler(
-                options=options,
-                session_id=session_id,
-                tool_call=tool_call,
-                **kwargs,
-            )
+            # A denied request posts a tool_call/tool_result pair; the lock
+            # keeps the pair atomic between narration posts.
+            async with self._session_lock(session_id):
+                return await handler(
+                    options=options,
+                    session_id=session_id,
+                    tool_call=tool_call,
+                    **kwargs,
+                )
 
         logger.debug("Auto-cancelling permission request for session %s", session_id)
         return cancel_permission()
@@ -566,9 +599,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
 
         chunks = await self._profile.ext_notification(method, params)
         if chunks:
-            await self._close_open_run(session_id)
-            for chunk in chunks:
-                await self._finalize(session_id, chunk)
+            async with self._session_lock(session_id):
+                await self._close_open_run(session_id)
+                for chunk in chunks:
+                    await self._finalize(session_id, chunk)
 
     @staticmethod
     def _block_text(block: object) -> str:

@@ -57,7 +57,9 @@ class RoomTurnEmitter:
     runs). Every tool call is narrated (thought, tool_call, tool_result, plan) as
     it arrives — including Band messaging tools, so a call to ``band_send_message``
     shows its real ``tool_call``/``tool_result`` straddling the message it posts,
-    with no special-casing needed. The assistant's text reply is held until close,
+    with no special-casing needed. The ordering is enforced upstream by
+    ``ACPCollectingClient``'s per-session lock — ``emit`` is never entered
+    concurrently for one session. The assistant's text reply is held until close,
     because whether to relay it depends on whether the whole turn already posted
     via a Band tool — if so the text would duplicate the reply already in the room.
 

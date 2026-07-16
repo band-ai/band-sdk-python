@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -520,6 +521,130 @@ class TestACPCollectingClientCoalescing:
         assert (
             client.get_collected_chunks("s1")[-1].content == "partial result plus more"
         )
+
+
+class ConcurrencyProbe:
+    """An async context manager that records the peak number of tasks inside it.
+
+    Entering yields control once — as a real REST post would — so any
+    concurrently dispatched task gets the chance to enter and be counted.
+    A serialized code path keeps ``peak`` at 1.
+    """
+
+    def __init__(self) -> None:
+        self._active = 0
+        self.peak = 0
+
+    async def __aenter__(self) -> None:
+        self._active += 1
+        self.peak = max(self.peak, self._active)
+        await asyncio.sleep(0)
+
+    async def __aexit__(self, *exc: object) -> None:
+        self._active -= 1
+
+
+class TestACPCollectingClientSerialization:
+    """The acp transport runs each notification as its own task; the client must
+    serialize the per-session ingest→sink path so room posts keep causal order,
+    and must not lose a sink failure (the transport suppresses handler
+    exceptions without a trace)."""
+
+    @pytest.fixture
+    def probe(self) -> ConcurrencyProbe:
+        return ConcurrencyProbe()
+
+    @staticmethod
+    def _tool_call(title: str, call_id: str) -> MagicMock:
+        return MagicMock(
+            session_update="tool_call",
+            title=title,
+            tool_call_id=call_id,
+            raw_input=None,
+            status="in_progress",
+        )
+
+    @pytest.mark.asyncio
+    async def test_concurrently_dispatched_updates_post_in_arrival_order(
+        self, probe: ConcurrencyProbe
+    ) -> None:
+        """Notifications dispatched as concurrent tasks (the acp dispatcher's
+        behavior) must post to the sink one at a time, in wire-arrival order —
+        overlapping posts are concurrent REST calls that can commit out of order
+        in the room."""
+        client = ACPCollectingClient()
+        posted: list[str] = []
+
+        async def sink(chunk: CollectedChunk) -> None:
+            async with probe:
+                posted.append(chunk.content)
+
+        client.set_sink("s1", sink)
+
+        # Mimic DefaultMessageDispatcher._dispatch_notification: one task per
+        # notification, created in wire-arrival order.
+        await asyncio.gather(
+            *(
+                asyncio.create_task(
+                    client.session_update("s1", self._tool_call(f"tool-{i}", f"tc-{i}"))
+                )
+                for i in range(3)
+            )
+        )
+
+        assert probe.peak == 1  # posts never overlap
+        assert posted == ["tool-0", "tool-1", "tool-2"]  # arrival order preserved
+
+    @pytest.mark.asyncio
+    async def test_permission_handling_never_interleaves_with_narration_posts(
+        self, probe: ConcurrencyProbe
+    ) -> None:
+        """The permission handler may post a denied tool_call/tool_result pair to
+        the room; it must not interleave with in-flight narration posts."""
+        client = ACPCollectingClient()
+
+        async def sink(chunk: CollectedChunk) -> None:
+            async with probe:
+                pass
+
+        async def handler(**kwargs: object) -> dict[str, object]:
+            async with probe:
+                return {"outcome": {"outcome": "cancelled"}}
+
+        client.set_sink("s1", sink)
+        client.set_permission_handler("s1", handler)
+
+        await asyncio.gather(
+            client.session_update("s1", self._tool_call("tool-0", "tc-0")),
+            client.request_permission(
+                options=[], session_id="s1", tool_call=MagicMock()
+            ),
+        )
+
+        assert probe.peak == 1
+
+    @pytest.mark.asyncio
+    async def test_sink_failure_is_logged_and_keeps_the_chunk_buffered(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failed room post must not vanish: the acp transport suppresses
+        notification-handler exceptions silently, so the client logs the failure
+        itself and keeps ingesting (the chunk stays buffered for turn-end
+        collection)."""
+        client = ACPCollectingClient()
+
+        async def sink(chunk: CollectedChunk) -> None:
+            raise RuntimeError("REST post failed")
+
+        client.set_sink("s1", sink)
+
+        with caplog.at_level(logging.ERROR):
+            await client.session_update("s1", self._tool_call("tool-0", "tc-0"))
+
+        chunks = client.get_collected_chunks("s1")
+        assert [chunk.content for chunk in chunks] == ["tool-0"]
+        assert "Failed to post" in caplog.text
+        assert "REST post failed" in caplog.text
 
 
 class TestACPRuntime:
