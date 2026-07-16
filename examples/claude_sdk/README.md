@@ -46,7 +46,7 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key"
 
 ## Quick Start
 
-```python
+```python notest
 from band import Agent
 from band.adapters import ClaudeSDKAdapter
 
@@ -130,7 +130,7 @@ adapter = ClaudeSDKAdapter(
 
 Tools are defined as MCP stubs in the SDK. The actual execution happens via `AgentTools`:
 
-```python
+```text
 # MCP tool name -> AgentTools method
 "mcp__band__band_send_message" -> tools.send_message()
 "mcp__band__band_send_event" -> tools.send_event()

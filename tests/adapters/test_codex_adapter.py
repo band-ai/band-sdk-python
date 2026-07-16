@@ -2030,10 +2030,10 @@ class TestCodexAdapter:
         "tool_name",
         ["band_send_event", "band_send_message"],
     )
-    async def test_execution_reporting_suppressed_for_platform_output_tools(
+    async def test_execution_reporting_emitted_for_platform_output_tools(
         self, tool_name: str
     ) -> None:
-        """Platform tools that produce visible output should not emit reporting events."""
+        """Band messaging tools are reported like any other tool — no suppression."""
         events = [
             _event_request(
                 70,
@@ -2078,13 +2078,16 @@ class TestCodexAdapter:
         assert len(tools.tool_calls) == 1
         assert tools.tool_calls[0]["tool_name"] == tool_name
 
-        # But no tool_call/tool_result reporting events should be emitted
+        # And it's reported like any other tool call
         reporting_events = [
             e
             for e in tools.events_sent
             if e["message_type"] in {"tool_call", "tool_result"}
         ]
-        assert reporting_events == []
+        assert [e["message_type"] for e in reporting_events] == [
+            "tool_call",
+            "tool_result",
+        ]
 
 
 class TestItemCompletedForwarding:

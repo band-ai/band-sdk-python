@@ -70,8 +70,8 @@ Then message the `copilot_acp_agent` from a Band room.
 - **Auth model.** band-mcp holds one Band identity (its agent key); MCP clients
   present no credentials. Colocation keeps band-mcp bound to loopback and never
   published — it is unreachable from outside the container.
-- **Copilot auth.** The Copilot CLI authenticates from `GITHUB_TOKEN` /
-  `GH_TOKEN` / `COPILOT_GITHUB_TOKEN` **or** a stored `copilot login`. A container
+- **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
+  `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a stored `copilot login`. A container
   has no stored login, so set a token env (v2 fine-grained PAT with "Copilot
   Requests", or a Copilot/`gh` OAuth token — classic `ghp_` / Actions `ghs_`
   tokens are rejected).
@@ -79,8 +79,8 @@ Then message the `copilot_acp_agent` from a Band room.
   built-in tools run unattended in this isolated container (Band/MCP tools are
   auto-approved via the ACP handler). Drop the flag to gate built-in tools.
 - **Room routing.** band-mcp chat/message tools take a `chat_id` argument per call.
-- **Platform base URL.** band-mcp defaults to `https://app.thenvoi.com`;
-  `entrypoint.sh` points it at `BAND_REST_URL` (default `https://app.band.ai`).
+- **Platform base URL.** band-mcp (`BAND_BASE_URL`) defaults to `https://app.band.ai`;
+  `entrypoint.sh` points it at `BAND_REST_URL` (same default) via that variable.
 
 ## Compose vs colocated
 

@@ -41,25 +41,34 @@ async def test_streamed_text_deltas_become_one_message(fake_agent) -> None:
 
 
 @pytest.mark.asyncio
-async def test_text_suppressed_when_turn_posted_via_band_tool(fake_agent) -> None:
-    # Tool-first delivery (matches copilot_sdk / codex): the agent posted its reply
-    # with a Band messaging tool, so relaying its plain text too would put the
-    # answer in the room twice (and leak the agent's narration of the call).
+async def test_band_tool_call_suppresses_text_fallback(fake_agent) -> None:
+    # Detection-only: the ACP stream *reports* a completed band_send_message call,
+    # but the fake doesn't actually post — will_call_tool only emits the frames — so
+    # this pins the suppression decision (tool-first delivery, matching copilot_sdk /
+    # codex), not the post. The end-to-end "exactly one visible reply" outcome, where
+    # a real band-mcp tool posts, is covered by
+    # test_band_mcp_reply_is_not_replayed_as_acp_tool_events (inject_band_tools=True).
     fake_agent.will_say("Posting the answer to the room now.").will_call_tool(
         "tc-1", "band_send_message", result='{"id": "msg-1"}'
     )
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("question?")
 
+    # Fallback text suppressed, but the call is narrated like any other tool.
     assert reply.texts == []
-    assert len(reply.tool_calls) == 1
+    assert reply.outline == ["tool_call", "tool_result", "task"]
 
 
 @pytest.mark.asyncio
-async def test_text_suppressed_for_prefixed_remote_band_mcp_tool(fake_agent) -> None:
-    # A remote band-mcp server posts out-of-process, so the SDK never executes the
-    # tool itself; detection reads the ACP tool-call stream, where MCP clients may
-    # prefix the server name onto the tool name.
+async def test_prefixed_legacy_band_tool_call_suppresses_text_fallback(
+    fake_agent,
+) -> None:
+    # Detection-only, and necessarily so: a remote band-mcp posts out-of-process, so
+    # the SDK never executes the tool — detection reads the ACP tool-call stream,
+    # where an MCP client prefixes the server name onto the (legacy) tool name. The
+    # in-process LocalMCPServer advertises the SDK-native names, so this prefixed
+    # `band-create_agent_chat_message` spelling has no real-post equivalent; this
+    # test pins that is_room_posting_tool still matches it.
     fake_agent.will_call_tool(
         "tc-1", "band-create_agent_chat_message", result='{"id": "msg-1"}'
     ).will_say("Done — posted the answer.")
@@ -67,6 +76,7 @@ async def test_text_suppressed_for_prefixed_remote_band_mcp_tool(fake_agent) -> 
         reply = await session.send("question?")
 
     assert reply.texts == []
+    assert reply.outline == ["tool_call", "tool_result", "task"]
 
 
 @pytest.mark.asyncio
@@ -115,6 +125,50 @@ async def test_tool_call_and_result_relayed_as_events(fake_agent) -> None:
 
 
 @pytest.mark.asyncio
+async def test_streamed_tool_result_updates_collapse_into_one_event(fake_agent) -> None:
+    """One tool call reported over several ACP updates posts exactly one tool_result.
+
+    A real agent streams a call's result as a start plus a run of tool_call_updates
+    sharing an id — readable content-block frames, then a terminal frame carrying
+    only the structured ``rawOutput``. The room must see one result event with the
+    readable listing, not one event per frame and not the stringified dict.
+    """
+    listing = "AGENTS.md\nCHANGELOG.md\nsrc\ntests"
+    fake_agent.will_stream_tool_result(
+        "tc-ls",
+        "List repository root files",
+        text=listing,
+        raw_output={"content": listing, "shellId": 0, "exitCode": 0},
+    )
+
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("run ls", room="room-1")
+
+    assert len(reply.tool_results) == 1
+    assert reply.tool_results[0]["content"] == listing
+
+
+@pytest.mark.asyncio
+async def test_trailing_statusless_update_keeps_room_post_detected(fake_agent) -> None:
+    """A trailing status-less frame must not un-suppress the text fallback.
+
+    The agent posts via ``band_send_message`` (reported ``completed``) and then
+    emits one more ``tool_call_update`` with no status. Detection of the
+    room-posting call rides that ``completed`` status; if a later frame regresses
+    it to ``None`` the turn looks unposted and the agent's narration is relayed —
+    duplicating the reply already in the room.
+    """
+    fake_agent.will_call_tool_then_trailing_update(
+        "tc-1", "band_send_message", result='{"id": "msg-1"}'
+    ).will_say("I've posted the answer to the room.")
+
+    async with acp_adapter(fake_agent) as session:
+        reply = await session.send("question?", room="room-1")
+
+    assert reply.texts == []  # text suppressed: the room post was still detected
+
+
+@pytest.mark.asyncio
 async def test_plan_relayed_as_task_event(fake_agent) -> None:
     fake_agent.will_plan("step one", "step two")
     async with acp_adapter(fake_agent) as session:
@@ -125,16 +179,144 @@ async def test_plan_relayed_as_task_event(fake_agent) -> None:
 
 
 @pytest.mark.asyncio
-async def test_permission_request_auto_approved(fake_agent) -> None:
-    # The agent asks the client to approve a tool call mid-turn, then replies.
-    fake_agent.will_ask_permission(tool_call_id="tc-1").will_say("done")
+async def test_ordinary_tool_permission_granted_without_a_bubble(fake_agent) -> None:
+    """An ordinary tool's permission is auto-granted silently — no permission pair.
+
+    The tool's own tool_call/tool_result already show the call, so posting a
+    permission pair too would duplicate it in the room.
+    """
+    fake_agent.will_ask_permission(
+        tool_call_id="tc-1", title="band_lookup_peers"
+    ).will_say("done")
     async with acp_adapter(fake_agent) as session:
         reply = await session.send("do the thing")
 
-    assert fake_agent.approved is True  # the round-trip granted the allow option
-    assert len(reply.permissions) == 1
-    assert reply.permissions[0]["metadata"]["auto_allowed"] is True
+    assert fake_agent.approved is True  # the round-trip still granted the allow option
+    assert reply.permissions == []  # no duplicate permission pair for an ordinary tool
     assert "done" in reply.texts  # the turn proceeded after approval
+
+
+@pytest.mark.asyncio
+async def test_band_mcp_reply_is_narrated_around_the_message(fake_agent) -> None:
+    """A room-visible Band message still gets real ACP tool_call/tool_result
+    narration, straddling the message it posts — like any other tool call."""
+    fake_agent.will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        arguments={
+            "room_id": "room-1",
+            "content": "Reply from the agent",
+            "mentions": ["@pat"],
+        },
+    )
+
+    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+        reply = await session.send("send the reply", room="room-1")
+
+    assert reply.outline == ["tool_call", "message", "tool_result", "task"]
+    assert reply.texts == ["Reply from the agent"]
+    assert len(reply.tool_calls) == 1
+    assert len(reply.tool_results) == 1
+
+
+@pytest.mark.asyncio
+async def test_band_mcp_event_is_narrated_around_the_thought(fake_agent) -> None:
+    """A room-visible Band event still gets real ACP tool_call/tool_result
+    narration, straddling the event it posts — like any other tool call."""
+    fake_agent.will_call_mcp_tool(
+        "tc-event",
+        "band_send_event",
+        arguments={
+            "room_id": "room-1",
+            "content": "Working on it",
+            "message_type": "thought",
+        },
+    )
+
+    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+        reply = await session.send("do the work", room="room-1")
+
+    assert reply.outline == ["tool_call", "thought", "tool_result", "task"]
+    assert reply.thoughts == ["Working on it"]
+    assert len(reply.tool_calls) == 1
+    assert len(reply.tool_results) == 1
+
+
+@pytest.mark.asyncio
+async def test_permissioned_band_mcp_turn_has_one_causal_transcript(fake_agent) -> None:
+    """Permission, tool execution, and visible reply must retain causal order.
+
+    The permission grants silently (no synthetic pair — see
+    test_permission_handler_skips_pair_for_approved_band_send_message); the
+    call's own real tool_call/tool_result narration straddles the message
+    instead, so the room reads the same call -> reply -> result shape.
+    """
+    fake_agent.will_ask_permission(
+        tool_call_id="tc-message",
+        title="band_send_message",
+    ).will_call_mcp_tool(
+        "tc-message",
+        "band_send_message",
+        arguments={
+            "room_id": "room-1",
+            "content": "Reply from the agent",
+            "mentions": ["@pat"],
+        },
+    )
+
+    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+        reply = await session.send("send the reply", room="room-1")
+
+    assert reply.outline == ["tool_call", "message", "tool_result", "task"]
+    assert fake_agent.approved is True
+    assert reply.permissions == []
+    call, message, result, _task = reply.transcript
+    assert call.metadata["tool_call_id"] == "tc-message"
+    assert message.content == "Reply from the agent"
+    assert result.metadata["tool_call_id"] == "tc-message"
+
+
+@pytest.mark.asyncio
+async def test_turn_events_post_in_causal_order(fake_agent) -> None:
+    """Narration and the in-room reply keep the order they happened.
+
+    The reply-before-narration bug: a Band messaging tool posts to the room as it
+    runs (mid-turn), but narration used to be flushed only after the whole turn —
+    so it landed after the live events instead of where it happened. A turn that
+    thinks, calls an ordinary tool, then posts via band_send_message must render
+    thought → tool call/result (get_weather) → tool call → room message → tool
+    result → task, in that order (narration is not trailing at the end, and
+    band_send_message's own tool_call/tool_result straddle the message it posted,
+    same as any other tool call). The permission grants silently — see
+    test_permissioned_band_mcp_turn_has_one_causal_transcript.
+    """
+    fake_agent.will_think("Checking the weather first.").will_call_tool(
+        "tc-weather", "get_weather", raw_input={"city": "SF"}, result="72F"
+    ).will_ask_permission(
+        tool_call_id="tc-msg", title="band_send_message"
+    ).will_call_mcp_tool(
+        "tc-msg",
+        "band_send_message",
+        arguments={
+            "room_id": "room-1",
+            "content": "It's 72F in SF.",
+            "mentions": ["@pat"],
+        },
+    )
+
+    async with acp_adapter(fake_agent, inject_band_tools=True) as session:
+        reply = await session.send("weather in SF?", room="room-1")
+
+    assert reply.outline == [
+        "thought",
+        "tool_call",  # the ordinary get_weather tool
+        "tool_result",
+        "tool_call",  # band_send_message's own call, asked before posting the reply
+        "message",  # the band_send_message post
+        "tool_result",  # band_send_message's own result, lands after the message
+        "task",  # session bookkeeping, always last
+    ]
+    assert reply.texts == ["It's 72F in SF."]
 
 
 @pytest.mark.asyncio

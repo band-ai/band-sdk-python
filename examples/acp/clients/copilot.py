@@ -29,8 +29,8 @@ Prerequisites:
     1. GitHub Copilot CLI installed and on PATH:
        https://docs.github.com/en/copilot/how-tos/copilot-cli/set-up-copilot-cli
 
-    2. A Copilot-entitled GitHub token in the environment (Copilot reads
-       GITHUB_TOKEN / GH_TOKEN / COPILOT_GITHUB_TOKEN automatically):
+    2. A Copilot-entitled GitHub token in the environment (Copilot checks
+       COPILOT_GITHUB_TOKEN, then GH_TOKEN, then GITHUB_TOKEN):
        export GITHUB_TOKEN=...
 
     3. Set environment variables:

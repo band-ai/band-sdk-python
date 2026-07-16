@@ -45,7 +45,8 @@ class TestToolBridging:
         assert "tool_result" in event_types
 
     @pytest.mark.asyncio
-    async def test_silent_tools_not_reported(self):
+    async def test_band_send_message_tool_call_is_reported(self):
+        """band_send_message is reported like any other tool — no suppression."""
         client = FakeCopilotClient()
         adapter = await make_started_adapter(
             client, features=AdapterFeatures(emit={Emit.EXECUTION})
@@ -62,7 +63,9 @@ class TestToolBridging:
             )
         )
 
-        assert not [e for e in tools.events_sent if e["message_type"] == "tool_call"]
+        event_types = [e["message_type"] for e in tools.events_sent]
+        assert "tool_call" in event_types
+        assert "tool_result" in event_types
 
     @pytest.mark.asyncio
     async def test_no_execution_events_when_emit_disabled(self):

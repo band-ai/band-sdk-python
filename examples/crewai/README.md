@@ -350,7 +350,7 @@ Suggested prompts:
 
 A typical adapter configuration looks like this:
 
-```python
+```python notest
 adapter = CrewAIAdapter(
     model="gpt-5.4-mini",
     role="Research Assistant",

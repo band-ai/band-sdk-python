@@ -40,6 +40,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The Agent Events API enforces a hard cap on event content (see
+# thenvoi-platform's events_controller.ex `@content_max_length`) and rejects
+# anything larger with a 422 before it ever reaches the room; it also rejects
+# a blank string outright ("content can't be blank"). Event content can be
+# arbitrarily large or entirely absent in practice — e.g. an ACP tool_result
+# mirroring a large file, or a tool call whose result has no text
+# representation (a terminal- or diff-only ACP tool_call_update) — so guard
+# both ends defensively rather than letting the send fail.
+_EVENT_CONTENT_MAX_LENGTH = 16384
+_EVENT_TRUNCATION_MARKER = "... [truncated] ..."
+_EVENT_EMPTY_CONTENT_PLACEHOLDER = "(no content)"
+
+
+def _truncate_event_content(content: str) -> str:
+    """Cap *content* at ``_EVENT_CONTENT_MAX_LENGTH`` chars, keeping its head
+    and tail around a marker.
+
+    Both ends are preserved because the tail is often the informative part of a
+    truncated payload — the final lines of a raw error dump, or a trailing
+    status — which a head-only cut would silently drop. A no-op when *content*
+    is already within the limit, so callers can run it unconditionally rather
+    than checking the length themselves first.
+    """
+    if len(content) <= _EVENT_CONTENT_MAX_LENGTH:
+        return content
+    budget = _EVENT_CONTENT_MAX_LENGTH - len(_EVENT_TRUNCATION_MARKER)
+    head_len = budget // 2
+    tail_len = budget - head_len
+    return content[:head_len] + _EVENT_TRUNCATION_MARKER + content[-tail_len:]
+
 
 def _normalize_handle(value: str) -> str:
     """Strip leading ``@`` so ``@alice`` and ``alice`` compare equal."""
@@ -681,25 +711,34 @@ class ListMyPeersInput(BaseModel):
 # Tool names whose successful call posts a visible message into the room.
 # Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
 # fallback text relay once the turn has already replied in the room, so the
-# reply is delivered exactly once. Includes the standalone band-mcp server's
-# spelling, which remote agents call out-of-process.
+# reply is delivered exactly once. band-mcp 1.3.2+ advertises the SDK-native
+# ``band_send_message`` (its registrar reuses these SDK tool definitions), which
+# the ``<server>-`` prefix match already covers; ``create_agent_chat_message``
+# is the legacy band-mcp <=1.3.1 spelling, kept so older out-of-process servers
+# still match.
 ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
     {"band_send_message", "create_agent_chat_message"}
 )
+
+
+def _matches_tool_name(tool_name: str, names: frozenset[str]) -> bool:
+    """Match a native tool name or the ``<server>-<tool>`` MCP spelling."""
+    if tool_name in names:
+        return True
+    return tool_name.endswith(tuple(f"-{name}" for name in names))
 
 
 def is_room_posting_tool(tool_name: str) -> bool:
     """True when a successful call of ``tool_name`` posts a message to the room.
 
     Tolerates the one MCP naming convention seen in practice: a ``<server>-``
-    prefix (e.g. ``band-create_agent_chat_message``). Other spellings
+    prefix (e.g. ``band-band_send_message`` from band-mcp 1.3.2+, or the legacy
+    ``band-create_agent_chat_message`` from band-mcp <=1.3.1). Other spellings
     (``mcp__server__tool``, ``server.tool``) are not matched — no wired backend
     uses them, and a miss only costs a duplicate reply (the pre-suppression
     behavior), never a wrong post. Extend here when such a backend is added.
     """
-    if tool_name in ROOM_POSTING_TOOL_NAMES:
-        return True
-    return tool_name.endswith(tuple(f"-{name}" for name in ROOM_POSTING_TOOL_NAMES))
+    return _matches_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES)
 
 
 # Registry mapping tool names to their schemas and bound AgentTools methods.
@@ -1145,14 +1184,6 @@ def get_band_tool_category(name: str) -> str | None:
     return _TOOL_CATEGORIES.get(name)
 
 
-# Platform tools whose execution is already visible in the room (they post
-# messages/events themselves), so adapters must not also report them as
-# tool_call/tool_result events. Adapters may extend this with local names.
-SELF_REPORTING_TOOL_NAMES: frozenset[str] = frozenset(
-    {"band_send_message", "band_send_event"}
-)
-
-
 def mcp_tool_names(names: frozenset[str]) -> list[str]:
     """Convert base tool names to MCP-prefixed names for Claude SDK.
 
@@ -1480,6 +1511,25 @@ class AgentTools(AgentToolsProtocol):
         from band.client.rest import ChatEventRequest
 
         logger.debug("Sending %s event to room %s", message_type, self.room_id)
+
+        if not content:
+            logger.warning(
+                "Substituting placeholder for blank %s event content in room %s",
+                message_type,
+                self.room_id,
+            )
+            content = _EVENT_EMPTY_CONTENT_PLACEHOLDER
+
+        original_length = len(content)
+        content = _truncate_event_content(content)
+        if len(content) != original_length:
+            logger.warning(
+                "Truncated oversized %s event content for room %s (%d chars > %d limit)",
+                message_type,
+                self.room_id,
+                original_length,
+                _EVENT_CONTENT_MAX_LENGTH,
+            )
 
         response = await self.rest.agent_api_events.create_agent_chat_event(
             chat_id=self.room_id,
