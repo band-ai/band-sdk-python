@@ -48,6 +48,34 @@ keys exist in both your workspace and the sandbox VM. Never commit `.band/`.
 the matching `band-sdk` extra to `pyproject.toml`, and refresh the lock with
 `uv lock`.
 
+The whole change is three files. For Anthropic:
+
+```diff
+ # pyproject.toml — add the framework extra
+-dependencies = ["band-sdk>=1.1.0"]
++dependencies = ["band-sdk[anthropic]>=1.1.0"]
+```
+
+```diff
+ # main.py — swap the adapter (the EchoAdapter class and its imports can go)
+-from band.core.simple_adapter import SimpleAdapter
++from band.adapters.anthropic import AnthropicAdapter
+ ...
+     agent = Agent.create(
+-        adapter=EchoAdapter(),
++        adapter=AnthropicAdapter(system_prompt="You are a helpful Band agent."),
+```
+
+```diff
+ # .band/secrets.env — provide the backend key the adapter reads
+-# ANTHROPIC_API_KEY=
++ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Then `uv lock` and restart the sandbox. Every framework follows the same
+shape: the extra in `pyproject.toml`, the adapter in `main.py`, its key in
+the secrets file (or environment).
+
 Workspace edits apply live (the workspace is a mount); dependency changes
 take effect at the next sandbox restart, when the launcher re-syncs the
 lock. Kit-level changes need a recreate — see the
