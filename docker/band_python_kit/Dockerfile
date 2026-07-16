@@ -1,7 +1,17 @@
+# Fully-specific tag + manifest-list digest (multi-arch: resolves to the
+# correct linux/amd64 or linux/arm64 image automatically). The tag makes the
+# pin human-legible; the digest is what actually gets resolved — re-pin by
+# passing --build-arg to bump either, but always keep both in sync (the tag
+# is documentation, not an independent fallback).
+ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5
+
+# Named stage so the pinned uv image can be referenced by a fixed alias below
+# — COPY --from doesn't support ARG expansion directly.
+FROM ${UV_IMAGE} AS uv
+
 # ── Build stage ───────────────────────────────────────────────────────────
-# python:3.12-slim, 3.12.13-slim-trixie — manifest-list digest (multi-arch:
-# resolves to the correct linux/amd64 or linux/arm64 image automatically).
-FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28 AS builder
+FROM ${PYTHON_BASE_IMAGE} AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -9,8 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# uv 0.9.13 — manifest-list digest, copied as a pinned binary (no pip install).
-COPY --from=ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5 /uv /uvx /usr/local/bin/
+# uv, copied as a pinned binary (no pip install).
+COPY --from=uv /uv /uvx /usr/local/bin/
 
 WORKDIR /build
 COPY pyproject.toml uv.lock README.md ./
@@ -37,7 +47,7 @@ RUN if [ -n "$SDK_EXTRA" ]; then \
     fi
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
-FROM python:3.12-slim@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
+FROM ${PYTHON_BASE_IMAGE}
 
 ENV DEBIAN_FRONTEND=noninteractive
 
