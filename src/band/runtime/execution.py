@@ -1144,6 +1144,20 @@ class ExecutionContext:
                 if result == _BacklogProcessResult.RETRY_LATER:
                     return False
 
+                if self._stopped:
+                    # A stop control signal landed mid-cycle: the message was
+                    # deliberately left in 'processing' for replay on play, but
+                    # /next excludes only 'processed' messages, so the next
+                    # iteration would just re-fetch and fully re-run the very
+                    # cycle stop just aborted. Pause here instead; play's
+                    # resync will pick the message back up.
+                    logger.debug(
+                        "ExecutionContext %s: stopped mid-backlog-sync, "
+                        "pausing /next polling",
+                        self.room_id,
+                    )
+                    break
+
                 if self._retry_tracker.is_permanently_failed(next_msg.id):
                     logger.warning(
                         "ExecutionContext %s: Message %s permanently failed",
@@ -1265,6 +1279,17 @@ class ExecutionContext:
                         self.room_id,
                         caught_up,
                     )
+
+                if self._stopped:
+                    # See the matching guard in _synchronize_with_next: a stop
+                    # mid-cycle leaves the message 'processing' for replay, and
+                    # /next would just hand it straight back next iteration.
+                    logger.debug(
+                        "ExecutionContext %s: stopped mid-resync, pausing "
+                        "/next polling",
+                        self.room_id,
+                    )
+                    break
 
                 if self._retry_tracker.is_permanently_failed(next_msg.id):
                     break

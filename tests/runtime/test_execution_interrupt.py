@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from band.runtime.execution import ExecutionContext, _BacklogProcessResult
-from band.runtime.types import PlatformMessage
+from band.runtime.types import PlatformMessage, SessionConfig
 from tests.conftest import make_message_event
 
 
@@ -324,3 +324,61 @@ class TestBacklogInterrupt:
         assert result == _BacklogProcessResult.ADVANCED
         mock_link.mark_processed.assert_not_awaited()
         assert "bk2" not in ctx._processed_ids
+
+    async def test_stop_mid_resync_loop_does_not_reprocess(self, mock_link):
+        """A stop landing mid-cycle during ``_resync_pending_messages`` must not
+        be undone by the very next /next call in the same loop.
+
+        The platform's /next excludes only 'processed' messages, so a
+        'processing' message left behind by stop is returned again on the next
+        poll. If the enclosing loop doesn't notice ``_stopped``, it will
+        re-claim and fully run the very cycle stop just aborted -- silently
+        breaking the "stop -> goes quiet until play" contract.
+        """
+        processed_ids: set[str] = set()
+
+        async def fake_mark_processed(room_id, msg_id):
+            processed_ids.add(msg_id)
+            return True
+
+        mock_link.mark_processed = AsyncMock(side_effect=fake_mark_processed)
+
+        async def fake_get_next(room_id):
+            # Mirrors the real /next contract: keep returning the message until
+            # it's actually marked processed.
+            if "loop1" in processed_ids:
+                return None
+            return _backlog_message("loop1")
+
+        mock_link.get_next_message = AsyncMock(side_effect=fake_get_next)
+
+        started = asyncio.Event()
+        calls: list[str] = []
+
+        async def on_execute(ctx, event):
+            calls.append(event.payload.id)
+            started.set()
+            await asyncio.sleep(60)  # cancelled by stop_room() below
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link,
+            on_execute,
+            agent_id="agent-123",
+            # A high retry cap so the retry tracker can't itself block a second
+            # attempt -- the test must fail (or pass) on the _stopped guard
+            # alone, not be masked by the unrelated max-retries limit.
+            config=SessionConfig(max_message_retries=10),
+        )
+
+        resync_task = asyncio.create_task(ctx._resync_pending_messages())
+        await started.wait()
+
+        ctx.stop_room()
+        result = await asyncio.wait_for(resync_task, timeout=5)
+
+        assert result is True
+        # The adapter must not run a second time on the very next /next poll.
+        assert calls == ["loop1"]
+        mock_link.mark_processed.assert_not_awaited()
+        assert "loop1" not in ctx._processed_ids
