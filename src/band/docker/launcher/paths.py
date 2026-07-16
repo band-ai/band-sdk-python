@@ -1,10 +1,15 @@
-"""Path rules: every customer-configurable path is resolved and fenced.
+"""Path rules: customer-configurable paths are resolved and fenced.
 
 Workspace-relative paths (project, entrypoint, credential file) must stay
 inside their permitted root after resolving symlinks — traversal and link
 escapes fail the launch. Sandbox-owned runtime paths (venv, state, cache,
 logs) must be absolute and live *outside* both the mounted workspace (a
 direct mount is the host directory) and the immutable SDK home.
+
+The optional repository path is deliberately not fenced here: a repo may
+legitimately live inside the workspace or in sandbox-owned storage. It gets
+``band.docker.repo_init``'s own validation (absolute path, URL scheme)
+instead, applied fail-fast in ``run.resolve_launch``.
 """
 
 from __future__ import annotations
@@ -17,14 +22,17 @@ from band.docker.launcher.errors import LaunchError
 
 
 class ResolvedPaths(NamedTuple):
-    """Validated project, entrypoint, and sandbox-owned runtime paths."""
+    """Validated project, entrypoint, and sandbox-owned runtime paths.
+
+    Field names match ``ResolvedLaunch``'s so values flow through by name.
+    """
 
     project: Path
     entrypoint: Path
-    environment: Path
-    state: Path
-    cache: Path
-    log: Path
+    environment_path: Path
+    state_path: Path
+    cache_path: Path
+    log_path: Path
 
 
 def resolve_inside(base: Path, value: str, *, name: str, phase: str) -> Path:
@@ -77,31 +85,35 @@ def resolve_paths(
     # collapse the SDK-home fence to the current directory (Path("") == ".").
     sdk_home = Path(env.band_sdk_home or DEFAULT_SDK_HOME)
     forbidden = [(workspace, "the mounted workspace"), (sdk_home, "the SDK home")]
-    environment_path = require_outside(
-        Path(env.band_kit_environment_path or config.runtime.environment_path),
-        forbidden=forbidden,
-        name="runtime.environmentPath",
-    )
-    state_path = require_outside(
-        Path(env.band_kit_state_path or config.runtime.state_path),
-        forbidden=forbidden,
-        name="runtime.statePath",
-    )
-    cache_path = require_outside(
-        Path(env.band_kit_cache_path or config.runtime.cache_path),
-        forbidden=forbidden,
-        name="runtime.cachePath",
-    )
-    log_path = require_outside(
-        Path(env.band_kit_log_path or config.runtime.log_path),
-        forbidden=forbidden,
-        name="runtime.logPath",
-    )
-    return ResolvedPaths(
-        project=project,
-        entrypoint=entrypoint,
-        environment=environment_path,
-        state=state_path,
-        cache=cache_path,
-        log=log_path,
-    )
+    runtime = {
+        field: require_outside(
+            Path(override or configured), forbidden=forbidden, name=name
+        )
+        for field, override, configured, name in (
+            (
+                "environment_path",
+                env.band_kit_environment_path,
+                config.runtime.environment_path,
+                "runtime.environmentPath",
+            ),
+            (
+                "state_path",
+                env.band_kit_state_path,
+                config.runtime.state_path,
+                "runtime.statePath",
+            ),
+            (
+                "cache_path",
+                env.band_kit_cache_path,
+                config.runtime.cache_path,
+                "runtime.cachePath",
+            ),
+            (
+                "log_path",
+                env.band_kit_log_path,
+                config.runtime.log_path,
+                "runtime.logPath",
+            ),
+        )
+    }
+    return ResolvedPaths(project=project, entrypoint=entrypoint, **runtime)

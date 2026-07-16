@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -29,7 +28,7 @@ from band.docker.launcher.credentials import load_file_credentials
 from band.docker.launcher.errors import LaunchError
 from band.docker.launcher.paths import resolve_paths
 from band.docker.launcher.sync import sync_customer_environment
-from band.docker.repo_init import initialize_repo
+from band.docker.repo_init import initialize_repo, parse_repo_config
 
 logger = logging.getLogger(__name__)
 
@@ -111,16 +110,18 @@ def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
         repo = config.repo.model_dump()
         if env.band_kit_repository_path:
             repo["path"] = env.band_kit_repository_path
+        # Static repo defects (relative path, bad URL scheme) are config
+        # errors — surface them here, fail-fast, not after sync in the
+        # side-effect phase.
+        try:
+            parse_repo_config({"repo": repo})
+        except ValueError as exc:
+            raise LaunchError("config", str(exc)) from exc
         repo_config = repo
 
     return ResolvedLaunch(
         workspace=workspace,
-        project=paths.project,
-        entrypoint=paths.entrypoint,
-        environment_path=paths.environment,
-        state_path=paths.state,
-        cache_path=paths.cache,
-        log_path=paths.log,
+        **paths._asdict(),
         uv_binary=Path(env.band_sdk_uv),
         agent_id=agent_id,
         rest_url=rest_url,
@@ -171,25 +172,34 @@ def execute(launch: ResolvedLaunch) -> None:
     os.execve(str(interpreter), [str(interpreter), str(launch.entrypoint)], child_env)
 
 
-def configure_logging(log_path: Path | None = None) -> None:
-    """Stream diagnostics to stderr and, when available, the runtime log dir."""
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
-    if log_path is not None:
-        log_path.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_path / "launcher.log"))
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        handlers=handlers,
-        force=True,
-    )
+LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
+
+
+def configure_logging() -> None:
+    """Stream diagnostics to stderr (the startup dispatcher's log)."""
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+
+
+def add_log_file(log_path: Path) -> None:
+    """Mirror diagnostics into the configured runtime log directory."""
+    log_path.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path / "launcher.log")
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    logging.getLogger().addHandler(handler)
 
 
 def main() -> None:
     configure_logging()
+    # Correct the process-wide HOME once, at the boundary: the startup chain
+    # inherits root's HOME across the setpriv drop, and everything below —
+    # git subprocesses (credentials check, repo_init clone), uv, the customer
+    # process — must see the agent user's home. The explicit HOME entries in
+    # the sync/child environments stay as the contract for library callers
+    # that bypass main().
+    os.environ["HOME"] = AGENT_HOME
     try:
         launch = resolve_launch()
-        configure_logging(launch.log_path)
+        add_log_file(launch.log_path)
         execute(launch)
     except LaunchError as exc:
         logger.error("Launch failed: %s", exc)

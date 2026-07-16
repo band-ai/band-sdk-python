@@ -134,6 +134,16 @@ def test_repo_init_failure_is_a_launch_error(
         execute(launch)
 
 
+def test_static_repo_defect_fails_in_config_phase(workspace: Workspace) -> None:
+    """A relative repo.path is a config error at resolve time, not a
+    repo-init failure after credentials and sync checks."""
+    config = default_config(workspace)
+    config["repo"] = {"path": "relative/repo"}
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[config\].*absolute"):
+        resolve_launch(make_env(workspace))
+
+
 def test_repository_path_env_override(workspace: Workspace) -> None:
     config = default_config(workspace)
     config["repo"] = {"path": str(workspace.root)}

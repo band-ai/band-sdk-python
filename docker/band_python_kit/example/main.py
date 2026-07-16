@@ -11,24 +11,29 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import TYPE_CHECKING
 
 from band import Agent
 from band.core.simple_adapter import SimpleAdapter
 from band.runtime.shutdown import run_with_graceful_shutdown
 
+if TYPE_CHECKING:
+    from band.core.protocols import AgentToolsProtocol
+    from band.core.types import ChatMessage, PlatformMessage
+
 
 class EchoAdapter(SimpleAdapter[str]):
     async def on_message(
         self,
-        msg,
-        tools,
-        history,
-        participants_msg,
-        contacts_msg,
+        msg: PlatformMessage,
+        tools: AgentToolsProtocol,
+        history: list[ChatMessage],
+        participants_msg: str | None,
+        contacts_msg: str | None,
         *,
-        is_session_bootstrap,
-        room_id,
-    ):
+        is_session_bootstrap: bool,
+        room_id: str,
+    ) -> None:
         await tools.send_message(f"echo: {msg.content}", mentions=[msg.sender_id])
 
 

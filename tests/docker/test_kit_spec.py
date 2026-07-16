@@ -80,14 +80,21 @@ def test_launcher_module_referenced_by_kit_is_importable() -> None:
     importlib.import_module(module_name)
 
 
+# Copilot plan-variant wildcards: not observed in the smoke (which ran on an
+# individual-plan account) but required for business/enterprise accounts.
+PLAN_VARIANT_HOSTS = {
+    "*.individual.githubcopilot.com",
+    "*.business.githubcopilot.com",
+    "*.enterprise.githubcopilot.com",
+}
+
+
 def test_allowlist_matches_measured_minimal_set() -> None:
     allow = set(load_spec()["caps"]["network"]["allow"])
-    missing = REQUIRED_ALLOWLIST_HOSTS - allow
-    assert not missing, f"required hosts missing from the kit allowlist: {missing}"
-    reintroduced = EXCLUDED_HOSTS & allow
-    assert not reintroduced, (
-        f"hosts measured as unnecessary are back in the allowlist: {reintroduced}"
-    )
+    # Exact equality: any widening of the egress surface fails this test,
+    # not just reintroducing the specifically excluded hosts.
+    assert allow == REQUIRED_ALLOWLIST_HOSTS | PLAN_VARIANT_HOSTS
+    assert not (EXCLUDED_HOSTS & allow)
 
 
 def test_spec_defines_no_proxy_or_credential_entries() -> None:

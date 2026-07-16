@@ -13,6 +13,7 @@ import logging
 import os
 import subprocess
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from band.docker.launcher.config import AGENT_HOME
@@ -58,10 +59,11 @@ def sync_customer_environment(launch: ResolvedLaunch) -> None:
         sync_env["UV_PROJECT_ENVIRONMENT"] = str(launch.environment_path)
         sync_env["UV_CACHE_DIR"] = str(launch.cache_path)
         sync_env["HOME"] = AGENT_HOME
-        # Build the customer venv on the image's interpreter and fail clearly
-        # if the project's requires-python can't accept it — never let uv try
-        # to download a managed interpreter inside the egress-fenced sandbox.
-        sync_env["UV_PYTHON"] = sys.executable
+        # Build the customer venv on the image's base interpreter (the SDK
+        # venv's own base, not the venv python) and fail clearly if the
+        # project's requires-python can't accept it — never let uv try to
+        # download a managed interpreter inside the egress-fenced sandbox.
+        sync_env["UV_PYTHON"] = str(Path(sys.base_prefix) / "bin" / "python3")
         sync_env["UV_PYTHON_DOWNLOADS"] = "never"
         logger.info(
             "Synchronizing locked dependencies into %s", launch.environment_path

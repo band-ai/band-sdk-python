@@ -148,7 +148,7 @@ with `parlant`/`pydantic_ai`). Multi-arch builds work with
 | Path / env var | What it is |
 |---|---|
 | `$BAND_SDK_HOME` (`/opt/band`) | Root of the baked SDK install. Read-only to every user, including root, after build. |
-| `$BAND_SDK_PYTHON` (`/opt/band/venv/bin/python`) | Fixed interpreter for the Band SDK and launcher. **Not on `PATH`** — it can never shadow your project's own venv. |
+| `$BAND_SDK_PYTHON` (`/opt/band/venv/bin/python`) | Fixed interpreter for the Band SDK and launcher. **Not on `PATH`** — it can never shadow your project's own venv. Invoke the SDK only via this path. |
 | `$BAND_SDK_UV` (`/opt/band/bin/uv`) | The build's digest-pinned `uv`, used for the locked dependency sync. **Not on `PATH`**, read-only, never downloaded or upgraded at runtime. |
 | `agent` (uid 1000, `$HOME=/home/agent`) | The non-root user your agent runs as. |
 
@@ -165,8 +165,10 @@ as root. To verify the drop, inspect the process table (`docker top`, or
 
 `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` are baked in pointing at the
 *whole* system bundle so `httpx` (which otherwise trusts only its vendored
-certifi bundle) sees the proxy CA too. Never override them to a narrower
-CA file — public TLS verification must keep working alongside the proxy.
+certifi bundle) sees the proxy CA too; `websockets` already defaults to
+`ssl.create_default_context()` and needs no extra wiring. Never override
+them to a narrower CA file — public TLS verification must keep working
+alongside the proxy.
 When `PROXY_CA_CERT_B64` is unset (e.g. a plain `docker run` outside a
 sandbox), the install step is skipped and standard TLS verification applies.
 

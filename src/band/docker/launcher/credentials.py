@@ -63,34 +63,45 @@ def load_file_credentials(
     cred_path = resolve_inside(
         workspace, configured, name="credentials file", phase="credentials"
     )
-    # The pre-resolve path must not itself be a symlink even when its target
-    # stays inside the workspace: a link is an unexpected indirection for a
-    # secrets file.
+    # No component of the pre-resolve path below the workspace may be a
+    # symlink, even when the target stays inside the workspace: a link is an
+    # unexpected indirection for a secrets file.
     raw_path = (
         Path(configured) if Path(configured).is_absolute() else workspace / configured
     )
-    if raw_path.is_symlink():
-        raise LaunchError(
-            "credentials", f"credentials file must not be a symlink: {raw_path}"
-        )
+    for candidate in [raw_path, *raw_path.parents]:
+        if candidate == workspace:
+            break
+        if candidate.is_symlink():
+            raise LaunchError(
+                "credentials",
+                f"credentials file path must not traverse a symlink: {candidate}",
+            )
     if not cred_path.is_file():
         raise LaunchError("credentials", f"credentials file not found: {cred_path}")
 
-    mode = stat.S_IMODE(cred_path.stat().st_mode)
-    if mode & 0o077:
-        raise LaunchError(
-            "credentials",
-            f"credentials file must be owner-only (e.g. 600), got {mode:o}: "
-            f"{cred_path}",
-        )
-    _require_gitignored(cred_path, workspace)
+    try:
+        mode = stat.S_IMODE(cred_path.stat().st_mode)
+        if mode & 0o077:
+            raise LaunchError(
+                "credentials",
+                f"credentials file must be owner-only (e.g. 600), got {mode:o}: "
+                f"{cred_path}",
+            )
+        _require_gitignored(cred_path, workspace)
 
-    # dotenv_values parses without executing or shell-sourcing the file.
-    parsed = {
-        key: value
-        for key, value in dotenv_values(cred_path).items()
-        if value is not None
-    }
+        # dotenv_values parses without executing or shell-sourcing the file.
+        parsed = {
+            key: value
+            for key, value in dotenv_values(cred_path).items()
+            if value is not None
+        }
+    except OSError as exc:
+        # e.g. a host-uid-owned 600 file is unreadable to the agent user —
+        # keep the failure attributed to its phase.
+        raise LaunchError(
+            "credentials", f"credentials file is not readable: {exc}"
+        ) from exc
     unknown = sorted(set(parsed) - CREDENTIAL_ENV_NAMES)
     if unknown:
         raise LaunchError(
@@ -112,38 +123,53 @@ def load_file_credentials(
 
 
 def _require_gitignored(cred_path: Path, workspace: Path) -> None:
-    """Reject a Git-tracked credentials file; require it to be gitignored."""
+    """Reject a Git-tracked credentials file; require it to be gitignored.
+
+    Classifies the workspace first: outside a Git repository there is no
+    tracking risk and the check is skipped. Inside one, any unexpected git
+    failure fails the launch (closed) — a guard on plaintext secrets must
+    never be silently disabled by an unclassified error.
+    """
     # `-c safe.directory=<workspace>`: a bind-mounted workspace is often owned
     # by a different uid than the agent user, which trips Git's dubious-
-    # ownership guard (also exit 128) and would silently disable both checks.
+    # ownership guard and would otherwise make every call below fail.
     git = ["git", "-c", f"safe.directory={workspace}", "-C", str(workspace)]
-    tracked = subprocess.run(
-        [*git, "ls-files", "--error-unmatch", str(cred_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+
+    def run_git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [*git, *args], capture_output=True, text=True, check=False
+        )
+
+    inside = run_git("rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0:
+        logger.warning(
+            "Workspace is not a git repository; skipping gitignore check for "
+            "the credentials file"
+        )
+        return
+
+    tracked = run_git("ls-files", "--error-unmatch", str(cred_path))
     if tracked.returncode == 0:
         raise LaunchError(
             "credentials",
             f"credentials file is tracked by Git — never commit it: {cred_path}",
         )
+    if tracked.returncode != 1:
+        raise LaunchError(
+            "credentials",
+            "git could not determine the credentials file's tracked state: "
+            + (tracked.stderr or "").strip(),
+        )
 
-    ignored = subprocess.run(
-        [*git, "check-ignore", "-q", str(cred_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    ignored = run_git("check-ignore", "-q", str(cred_path))
     if ignored.returncode == 1:
-        # 1 = definitively not ignored (and, from above, not tracked either).
         raise LaunchError(
             "credentials",
             f"credentials file must be gitignored: {cred_path}",
         )
-    if ignored.returncode not in (0, 1):
-        # 128 = not a git repository: no tracking risk exists, allow it.
-        logger.warning(
-            "Workspace is not a git repository; skipping gitignore check for "
-            "the credentials file"
+    if ignored.returncode != 0:
+        raise LaunchError(
+            "credentials",
+            "git could not determine the credentials file's ignore state: "
+            + (ignored.stderr or "").strip(),
         )

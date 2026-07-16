@@ -81,15 +81,37 @@ def test_missing_file_rejected(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace))
 
 
-def test_symlinked_file_rejected(workspace: Workspace, tmp_path: Path) -> None:
+def test_symlinked_file_rejected_even_inside_workspace(
+    workspace: Workspace,
+) -> None:
+    """The dedicated symlink guard must fire even when the link's target
+    stays inside the workspace (containment alone would accept it)."""
     enable(workspace)
-    real = tmp_path / "real-secrets.env"
+    real = workspace.root / "real-secrets.env"
     real.write_text("BAND_API_KEY=x\n", encoding="utf-8")
     real.chmod(0o600)
     cred_dir = workspace.root / ".band"
     cred_dir.mkdir()
     (cred_dir / "secrets.env").symlink_to(real)
-    with pytest.raises(LaunchError, match=r"\[credentials\].*symlink"):
+    with pytest.raises(
+        LaunchError, match=r"\[credentials\].*must not traverse a symlink"
+    ):
+        resolve_launch(make_env(workspace))
+
+
+def test_symlinked_parent_dir_rejected(workspace: Workspace) -> None:
+    """A symlinked directory on the credentials path is the same unexpected
+    indirection as a symlinked leaf."""
+    enable(workspace)
+    hidden = workspace.root / "elsewhere"
+    hidden.mkdir()
+    secrets = hidden / "secrets.env"
+    secrets.write_text("BAND_API_KEY=x\n", encoding="utf-8")
+    secrets.chmod(0o600)
+    (workspace.root / ".band").symlink_to(hidden, target_is_directory=True)
+    with pytest.raises(
+        LaunchError, match=r"\[credentials\].*must not traverse a symlink"
+    ):
         resolve_launch(make_env(workspace))
 
 

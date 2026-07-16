@@ -71,11 +71,13 @@ def test_sync_invocation_exact(
     assert env["UV_PROJECT_ENVIRONMENT"] == str(launch.environment_path)
     assert env["UV_CACHE_DIR"] == str(launch.cache_path)
     assert env["HOME"] == AGENT_HOME
-    # The customer venv must build on the image's interpreter; uv must never
-    # try to download one inside the egress-fenced sandbox.
+    # The customer venv must build on the base interpreter (never the SDK
+    # venv python), and uv must never try to download one inside the
+    # egress-fenced sandbox.
     import sys
+    from pathlib import Path
 
-    assert env["UV_PYTHON"] == sys.executable
+    assert env["UV_PYTHON"] == str(Path(sys.base_prefix) / "bin" / "python3")
     assert env["UV_PYTHON_DOWNLOADS"] == "never"
 
 
