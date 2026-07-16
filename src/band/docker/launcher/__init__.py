@@ -27,7 +27,7 @@ from band.docker.launcher.config import (
     load_workspace_config,
 )
 from band.docker.launcher.credentials import (
-    CREDENTIAL_ENV_NAMES,
+    CredentialName,
     load_file_credentials,
 )
 from band.docker.launcher.errors import LaunchError
@@ -44,7 +44,7 @@ from band.docker.launcher.sync import sync_customer_environment
 __all__ = [
     "AGENT_HOME",
     "AGENT_UID",
-    "CREDENTIAL_ENV_NAMES",
+    "CredentialName",
     "DEFAULT_REST_URL",
     "DEFAULT_WS_URL",
     "LaunchError",
