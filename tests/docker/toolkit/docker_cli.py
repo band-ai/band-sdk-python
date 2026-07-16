@@ -96,19 +96,43 @@ class Container:
                 ["docker", "rm", "-f", name], capture_output=True, check=False
             )
 
-    def exec(self, command: str, *, timeout: int = 60) -> str:
-        """Run ``command`` via ``bash -c`` inside the container; return stripped stdout."""
+    def exec(self, command: str, *, user: str | None = None, timeout: int = 60) -> str:
+        """Run ``command`` via ``bash -c`` inside the container; return stripped stdout.
+
+        A fresh ``docker exec`` defaults to root regardless of what user the
+        container's entrypoint dropped its own PID 1 process to, so pass
+        ``user`` explicitly (e.g. ``"agent"``) to match that.
+        """
+        docker_command = ["docker", "exec"]
+        if user is not None:
+            docker_command += ["--user", user]
+        docker_command += [self.name, "bash", "-c", command]
         result = subprocess.run(
-            ["docker", "exec", self.name, "bash", "-c", command],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=timeout,
+            docker_command, capture_output=True, text=True, check=True, timeout=timeout
         )
         return result.stdout.strip()
 
+    def exec_background(self, command: str, *, user: str | None = None) -> None:
+        """Start ``command`` detached (``docker exec -d``) inside the container.
+
+        Fire-and-forget: for a process meant to keep running (e.g. an agent
+        listening on a websocket), not a command a caller waits on.
+        """
+        docker_command = ["docker", "exec", "-d"]
+        if user is not None:
+            docker_command += ["--user", user]
+        docker_command += [self.name, "bash", "-c", command]
+        subprocess.run(
+            docker_command, capture_output=True, text=True, check=True, timeout=10
+        )
+
     def run_python(
-        self, code: str, *, interpreter: str = "python3", timeout: int = 60
+        self,
+        code: str,
+        *,
+        interpreter: str = "python3",
+        user: str | None = None,
+        timeout: int = 60,
     ) -> str:
         """Run ``code`` via ``interpreter -c <code>`` inside the container.
 
@@ -117,4 +141,12 @@ class Container:
         ``interpreter`` is passed through unquoted so a shell variable (e.g.
         ``$BAND_SDK_PYTHON``) still expands.
         """
-        return self.exec(f"{interpreter} -c {shlex.quote(code)}", timeout=timeout)
+        return self.exec(
+            f"{interpreter} -c {shlex.quote(code)}", user=user, timeout=timeout
+        )
+
+    def run_python_background(
+        self, code: str, *, interpreter: str = "python3", user: str | None = None
+    ) -> None:
+        """Start ``code`` via ``interpreter -c <code>``, detached (see ``exec_background``)."""
+        self.exec_background(f"{interpreter} -c {shlex.quote(code)}", user=user)
