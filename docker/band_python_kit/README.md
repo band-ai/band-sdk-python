@@ -1,24 +1,135 @@
-# band-python-kit base image
+# Band Python kit for Docker Sandboxes
 
-Base image for the Band Docker Sandboxes kit: a customer's existing framework
-agent (LangGraph, CrewAI, Anthropic, etc.) boots inside a sandbox already
-connected to Band. This image provides the immutable Band SDK layer; the
-customer's own framework lives in a separate venv created at sandbox runtime
-(not part of this image).
+Run your Python agent on [Band](https://band.ai) inside a Docker
+[Sandbox](https://docs.docker.com/ai/sandboxes/): an isolated microVM with a
+default-deny egress allowlist, where your project's locked dependencies are
+installed automatically and your agent starts headlessly — no manual SDK
+installation, no host pollution.
 
-The publishing workflow is a separate release deliverable. This README covers
-building and running the image directly.
+Your workspace stays a plain `uv` project (`pyproject.toml` + committed
+`uv.lock`); the kit brings the Band SDK, the launcher, and the network
+policy. Tested with `sbx` v0.34.0.
 
-## Build
+## Quickstart
 
-Core SDK only, no framework extras:
+You need [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`),
+Docker, and a registered Band agent (its id and API key).
 
 ```bash
-docker build -f docker/band_python_kit/Dockerfile -t band-python-kit .
+# 1. Build the kit image and make it visible to the sandbox runtime
+#    (the sandbox VM cannot see host-local Docker images).
+docker build -f docker/band_python_kit/Dockerfile -t band-python-kit:local .
+docker save band-python-kit:local | sbx template load /dev/stdin
+
+# 2. Start your workspace from the example project.
+cp -r docker/band_python_kit/example ~/my-band-agent
+cd ~/my-band-agent
+#    - set agent.id in band.yaml
+#    - put your keys in .band/secrets.env (chmod 600; it is gitignored)
+
+# 3. Create the sandbox — your agent starts immediately.
+sbx create --name my-band-agent \
+  --kit /path/to/band-sdk-python/docker/band_python_kit \
+  band-python-kit ~/my-band-agent
 ```
 
-Bake in exactly one framework extra (e.g. for a kit variant dedicated to a
-single framework):
+Mention your agent in a Band room — it replies from inside the sandbox. The
+example echoes messages; swap `EchoAdapter` in `main.py` for any
+`band.adapters.*` framework adapter (LangGraph, Anthropic, CrewAI, ...) and
+add the matching `band-sdk` extra to your `pyproject.toml`.
+
+## Your workspace
+
+```text
+my-band-agent/
+├── band.yaml            # agent identity, endpoints, paths (see example/)
+├── main.py              # your entrypoint — any program that runs a Band agent
+├── pyproject.toml       # your dependencies, including band-sdk
+├── uv.lock              # committed lock — resolution never happens at startup
+├── .gitignore           # must cover the credential file below
+└── .band/
+    └── secrets.env      # opt-in plaintext credentials (never commit)
+```
+
+The launcher runs `uv sync --locked` with the image's pinned `uv` into a
+sandbox-owned environment (never inside your mounted workspace, never into
+the SDK's own venv), then executes your entrypoint with that environment's
+interpreter. A missing or stale `uv.lock` fails the launch with a clear
+error — update it with `uv lock` and recreate.
+
+### Configuration
+
+`band.yaml` is strict: unknown fields fail the launch. See
+`example/band.yaml` for the full annotated shape. Environment variables
+override the file:
+
+| Variable | Overrides |
+|---|---|
+| `BAND_AGENT_ID`, `BAND_API_KEY` | agent identity / key |
+| `BAND_REST_URL`, `BAND_WS_URL` | Band endpoints (default: production) |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` | LLM backend credentials |
+| `BAND_KIT_*_PATH` | each configurable path (config, project, entrypoint, credentials, environment, state, cache, log, repository) |
+
+### Credentials
+
+`.band/secrets.env` is an explicit opt-in
+(`credentials.acknowledgePlaintextInSandbox: true` in `band.yaml`): the
+plaintext keys exist in both your workspace and the sandbox VM. The launcher
+enforces the guardrails — the file must be gitignored, never Git-tracked,
+owner-only (`chmod 600`), not a symlink, and may only define documented
+credential names. Values already present in the environment always win; the
+file only fills gaps. Never commit it.
+
+## How the launch works
+
+At every sandbox start (creation and each restart — no attach session
+needed), the kit's startup command runs the image entrypoint as root to
+install the sandbox's per-session proxy CA, drops to the non-root `agent`
+user (uid 1000), and hands off to the Band launcher, which:
+
+1. loads `band.yaml` and environment overrides (strict validation),
+2. optionally loads missing credentials from your opt-in env file,
+3. validates every path (no traversal, no symlink escapes, runtime storage
+   outside the workspace and SDK venv),
+4. optionally initializes a configured repository,
+5. syncs your locked dependencies into the sandbox-owned environment, and
+6. replaces itself with your entrypoint (`os.execve`) — signals like
+   `sbx stop`'s SIGTERM reach your code directly (the example handles them
+   with `band.runtime.shutdown.run_with_graceful_shutdown`).
+
+Troubleshooting: startup output lands in `/var/log/sbx-kit-startup.log`
+inside the sandbox, launcher diagnostics under your configured
+`runtime.logPath`, and `sbx policy log <sandbox>` shows every allowed and
+blocked network request. Launch errors name their failing phase (`[config]`,
+`[credentials]`, `[paths]`, `[sync]`, ...) and never contain secret values.
+
+## Network access
+
+The kit allows only what the launch flow and the supported LLM backends
+(OpenAI, Anthropic/Claude, GitHub Copilot) need: Band, PyPI, and each
+backend's API hosts. Everything else is denied by the sandbox proxy.
+
+To reach an additional host — or a non-production Band deployment — grant it
+per sandbox instead of editing the kit:
+
+```bash
+sbx policy allow network --sandbox my-band-agent platform.dev.band.ai
+```
+
+Do not set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` yourself: the sandbox
+runtime manages them, and overriding them bypasses the network policy.
+
+Kit changes apply only at creation (`--kit` on `sbx create`); to pick up a
+modified kit, remove and recreate the sandbox. Do not rely on post-create
+`sbx kit add`: it applies files and startup commands but silently skips the
+kit's network and credential configuration.
+
+## Image reference
+
+### Build variants
+
+The default build bakes the core Band SDK only. To pre-bake one framework
+extra into the image (your workspace venv is unaffected either way):
 
 ```bash
 docker build -f docker/band_python_kit/Dockerfile \
@@ -27,87 +138,41 @@ docker build -f docker/band_python_kit/Dockerfile \
 ```
 
 `SDK_EXTRA` accepts any single extra from `pyproject.toml`'s
-`[project.optional-dependencies]` (`langgraph`, `anthropic`, `claude_sdk`,
-`crewai`, `pydantic_ai`, ...). Only one at a time: some extras conflict and
-cannot resolve into the same venv (`crewai` vs. `parlant`/`pydantic_ai` — see
-the Dependency Conflicts section of the repo's `CLAUDE.md`). Any framework not
-baked in here is installed into the customer's own venv at sandbox runtime,
-isolated from this one.
+`[project.optional-dependencies]`. One at a time — some extras have
+conflicting dependencies and cannot share a venv (e.g. `crewai` conflicts
+with `parlant`/`pydantic_ai`). Multi-arch builds work with
+`docker buildx build --platform linux/amd64,linux/arm64`.
 
-Multi-arch (arm64 + x86_64):
-
-```bash
-docker buildx build --platform linux/amd64,linux/arm64 \
-  -f docker/band_python_kit/Dockerfile -t band-python-kit .
-```
-
-## Image layout
+### Layout
 
 | Path / env var | What it is |
 |---|---|
-| `$BAND_SDK_HOME` (`/opt/band`) | Root of the baked SDK install. Read-only to every user, including root, after build (`chmod -R a-w`). |
-| `$BAND_SDK_PYTHON` (`/opt/band/venv/bin/python`) | Fixed, absolute interpreter for the Band SDK. **Not on `PATH`** — the SDK venv can never shadow the customer's own venv or interpreter. Invoke the SDK only via this path. |
-| `$BAND_SDK_UV` (`/opt/band/bin/uv`) | The build's digest-pinned `uv`, for the sandbox launcher's locked customer-venv sync at runtime. **Not on `PATH`**, read-only like the rest of `$BAND_SDK_HOME`; never downloaded or upgraded at runtime. |
-| `agent` (uid 1000, `$HOME=/home/agent`) | The non-root user every process ends up running as. Matches the sandbox's `$HOME`-mounted workspace convention. |
+| `$BAND_SDK_HOME` (`/opt/band`) | Root of the baked SDK install. Read-only to every user, including root, after build. |
+| `$BAND_SDK_PYTHON` (`/opt/band/venv/bin/python`) | Fixed interpreter for the Band SDK and launcher. **Not on `PATH`** — it can never shadow your project's own venv. |
+| `$BAND_SDK_UV` (`/opt/band/bin/uv`) | The build's digest-pinned `uv`, used for the locked dependency sync. **Not on `PATH`**, read-only, never downloaded or upgraded at runtime. |
+| `agent` (uid 1000, `$HOME=/home/agent`) | The non-root user your agent runs as. |
 
-## CA trust
+### CA trust and privilege drop
 
-Docker Sandboxes generates a per-session proxy CA and exposes it to the
-container as base64 in `PROXY_CA_CERT_B64`. The entrypoint:
+Docker Sandboxes generates a per-session proxy CA and passes it to the
+container as base64 in `PROXY_CA_CERT_B64`. The entrypoint decodes it into
+the system trust store (`update-ca-certificates` needs root, which is why
+the container starts as root) and then always drops to `agent` (uid 1000)
+via `setpriv` before executing anything else — nothing of yours ever runs
+as root. To verify the drop, inspect the process table (`docker top`, or
+`ps` inside the sandbox) rather than `docker exec ... whoami`: a fresh
+`exec` process defaults to root regardless of what PID 1 dropped to.
 
-1. Decodes `PROXY_CA_CERT_B64` (if set) into
-   `/usr/local/share/ca-certificates/sandbox-proxy-ca.crt` and runs
-   `update-ca-certificates` — this needs root, which is why the container
-   starts as root before dropping privileges (see below).
-2. Relies on `SSL_CERT_FILE`/`REQUESTS_CA_BUNDLE`, baked in as image `ENV`
-   and pointed at the system bundle
-   (`/etc/ssl/certs/ca-certificates.crt`) — this is what `httpx` needs,
-   since it trusts only its vendored `certifi` bundle by default and
-   ignores the system trust store otherwise. `websockets` already defaults
-   to `ssl.create_default_context()`, so it needs no extra wiring.
+`SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` are baked in pointing at the
+*whole* system bundle so `httpx` (which otherwise trusts only its vendored
+certifi bundle) sees the proxy CA too. Never override them to a narrower
+CA file — public TLS verification must keep working alongside the proxy.
+When `PROXY_CA_CERT_B64` is unset (e.g. a plain `docker run` outside a
+sandbox), the install step is skipped and standard TLS verification applies.
 
-Both are additive (pointed at the *whole* system bundle, not a narrowed,
-kit-private CA file) — never override these to trust only an internal CA;
-that breaks the credential proxy's own TLS termination path.
-
-If `PROXY_CA_CERT_B64` is unset (plain allowlisted egress, no credential
-injection), the entrypoint skips the install step entirely and every real,
-publicly-trusted upstream cert still verifies normally.
-
-## Privilege drop
-
-The container's default process starts as **root** — required for the CA
-install step above, which only root can perform. The entrypoint
-(`entrypoint.sh`) always ends by dropping to `agent` (uid 1000) via
-`setpriv` before `exec`-ing the real command:
+### Running the image directly
 
 ```bash
-exec setpriv --reuid=agent --regid=agent --init-groups -- "$@"
+docker run --rm band-python-kit:local \
+  bash -c '$BAND_SDK_PYTHON -c "import band; print(band.__version__)"'
 ```
-
-Nothing meant to run as the sandbox's agent user ever executes as root —
-verify with `docker top <container>`, not `docker exec ... whoami` (a fresh
-`docker exec` process defaults to root regardless of what PID 1 dropped to).
-
-## Run
-
-```bash
-docker run --rm band-python-kit bash -c '$BAND_SDK_PYTHON -c "import band; print(band.__version__)"'
-```
-
-With a proxy CA (mirrors what a real sandbox session sets):
-
-```bash
-docker run --rm -e PROXY_CA_CERT_B64="$(base64 -i proxy-ca.pem)" band-python-kit \
-  bash -c '$BAND_SDK_PYTHON -c "import httpx; print(httpx.get(\"https://your-injected-domain\").status_code)"'
-```
-
-## Out of scope here
-
-- **Customer venv creation** — created at sandbox runtime from the
-  workspace's own dependency declaration, not part of this image.
-- **`spec.yaml`** (`kind: sandbox`, `caps.network.allow`, credentials) — a
-  separate deliverable; this image is what it points at.
-- **`sbx kit validate` / `sbx run --kit`** — requires the `spec.yaml` above
-  and a real Docker Sandboxes-capable machine; not runnable in CI (no
-  nested virtualization on GitHub-hosted runners).
