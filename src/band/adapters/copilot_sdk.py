@@ -42,11 +42,7 @@ from band.runtime.custom_tools import (
     format_validation_error,
 )
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import (
-    SELF_REPORTING_TOOL_NAMES,
-    get_band_tool_category,
-    is_room_posting_tool,
-)
+from band.runtime.tools import get_band_tool_category, is_room_posting_tool
 
 try:
     from copilot import CopilotClient, PermissionHandler, Tool, ToolResult
@@ -690,10 +686,7 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 error="room inactive",
             )
 
-        should_report = (
-            Emit.EXECUTION in self.features.emit
-            and tool_name not in SELF_REPORTING_TOOL_NAMES
-        )
+        should_report = Emit.EXECUTION in self.features.emit
         if should_report:
             await self._report_tool_call(room_tools, invocation, arguments)
 

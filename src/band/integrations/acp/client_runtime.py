@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -16,13 +17,14 @@ from band.integrations.acp.client_profiles import (
     ACPClientProfile,
     NoopACPClientProfile,
 )
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import ChunkType, CollectedChunk, ToolStatus
 
 logger = logging.getLogger(__name__)
 
 ACP_STDIO_LIMIT_BYTES = 16 * 1024 * 1024
 ACP_SESSION_LOAD_TIMEOUT_SECONDS = 5.0
 PermissionHandler = Callable[..., Awaitable[dict[str, object]]]
+ChunkSink = Callable[[CollectedChunk], Awaitable[None]]
 MCPTransportKind = Literal["http", "sse"]
 
 # ACP grants a tool-call permission by *selecting one of the options the agent
@@ -76,6 +78,88 @@ def allow_permission(option_id: str) -> dict[str, object]:
 def cancel_permission() -> dict[str, object]:
     """An ACP ``RequestPermissionResponse`` cancelling the request."""
     return {"outcome": {"outcome": "cancelled"}}
+
+
+def _strict_json_equal(a: object, b: object) -> bool:
+    """JSON equality without Python's cross-type coercions.
+
+    ``==`` treats ``True == 1`` and ``1 == 1.0`` as equal, which would let two
+    genuinely different JSON payloads pass a duplicate-echo proof. Two values
+    are equal here only if their JSON types match too, recursively.
+    """
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(
+            _strict_json_equal(value, b[key]) for key, value in a.items()
+        )
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_strict_json_equal(x, y) for x, y in zip(a, b))
+    return a == b
+
+
+def _is_echo_of(content: str, readable: str, echo: dict[str, object]) -> bool:
+    """True when ``content`` is ``readable`` followed by one JSON re-encoding of
+    exactly ``echo`` -- the one proven duplicated-echo shape, never a guessed
+    one. The trailing segment is parsed, not string-compared, so the
+    re-encoding's separators/escaping don't matter.
+    """
+    if not content.startswith(readable):
+        return False
+    trailing = content[len(readable) :].strip()
+    try:
+        return _strict_json_equal(json.loads(trailing), echo)
+    except json.JSONDecodeError:
+        return False
+
+
+def _readable_rendering(content: str, structured: dict[str, object]) -> str | None:
+    """The prefix of ``content`` that renders ``structured``, else ``None``.
+
+    A FastMCP primitive wrap (``{"result": <string>}``) renders as the wrapped
+    string verbatim -- required non-empty, or the "rendering" is vacuous and
+    proves nothing; any other object renders as a leading JSON document that
+    parses equal to ``structured``.
+    """
+    result = structured.get("result")
+    if set(structured) == {"result"} and isinstance(result, str):
+        return result if result and content.startswith(result) else None
+    try:
+        leading_value, end = json.JSONDecoder().raw_decode(content)
+    except json.JSONDecodeError:
+        return None
+    return content[:end] if _strict_json_equal(leading_value, structured) else None
+
+
+def _unwrap_structured_result(
+    content: str, raw_output: object
+) -> tuple[str, dict[str, object]] | None:
+    """Recover a tool result's readable value from a duplicated structured echo.
+
+    An MCP bridge (observed: Copilot) can forward both a tool result's readable
+    text and its ``structuredContent`` companion into one text block. The echo
+    invariant, stated once: ``content`` is a readable rendering of
+    ``structuredContent`` (see ``_readable_rendering``) followed by exactly one
+    JSON re-encoding of ``structuredContent`` (see ``_is_echo_of``). On that
+    full proof, returns ``(readable, echo)`` -- the cleaned value plus the
+    payload proven appended, which the chunk records so a later frame
+    re-reporting the same duplicate is recognized by exactly that shape.
+
+    Returns ``None`` (leave ``content`` untouched) for anything less: a bridge
+    may synthesize a distinct human-facing ``content`` -- a summary, or prose
+    that merely quotes the structured value -- alongside a tool's real
+    structured result, and that legitimate text must never be clobbered just
+    because a shape matches or the value appears somewhere within it.
+    """
+    if not isinstance(raw_output, dict):
+        return None
+    structured = raw_output.get("structuredContent")
+    if not isinstance(structured, dict):
+        return None
+    readable = _readable_rendering(content, structured)
+    if readable is not None and _is_echo_of(content, readable, structured):
+        return readable, structured
+    return None
 
 
 def tcp_spawn_process(
@@ -164,74 +248,248 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
         self._profile = profile or NoopACPClientProfile()
         self._session_chunks: dict[str, list[CollectedChunk]] = {}
         self._permission_handlers: dict[str, PermissionHandler] = {}
+        # Per session, the canonical tool_result chunk for each tool_call_id, so a
+        # call's stream of tool_call_updates folds into one result, finalized once
+        # when the call reaches a terminal status (see _ingest_tool_result). Reset
+        # per turn in reset_session.
+        self._result_chunks: dict[str, dict[str, CollectedChunk]] = {}
+        self._emitted_results: dict[str, set[str]] = {}
+        # An open text/thought run being coalesced until the next boundary, and the
+        # per-session live sink that finalized chunks are posted to, in order.
+        self._open_runs: dict[str, CollectedChunk] = {}
+        self._sinks: dict[str, ChunkSink] = {}
 
     async def session_update(
         self, session_id: str, update: object, **kwargs: object
     ) -> None:
         del kwargs
-        discriminator = getattr(update, "session_update", None)
-        chunk: CollectedChunk | None = None
+        chunk = self._chunk_from_update(update)
+        if chunk is not None:
+            await self._ingest(session_id, chunk)
 
-        match discriminator:
+    def _chunk_from_update(self, update: object) -> CollectedChunk | None:
+        """Parse one ACP session update without mutating the chunk buffer."""
+        match getattr(update, "session_update", None):
             case "agent_message_chunk":
-                text = self._extract_text_from_content(update)
-                chunk = CollectedChunk(chunk_type="text", content=text)
+                return self._text_chunk(update, ChunkType.TEXT)
             case "agent_thought_chunk":
-                text = self._extract_text_from_content(update)
-                chunk = CollectedChunk(chunk_type="thought", content=text)
+                return self._text_chunk(update, ChunkType.THOUGHT)
             case "tool_call":
-                tool_call_id = getattr(update, "tool_call_id", "")
-                title = getattr(update, "title", "")
-                raw_input = getattr(update, "raw_input", None)
-                chunk = CollectedChunk(
-                    chunk_type="tool_call",
-                    content=title,
-                    metadata={
-                        "tool_call_id": tool_call_id,
-                        "raw_input": raw_input,
-                        "status": getattr(update, "status", "in_progress"),
-                    },
-                )
+                return self._tool_call_chunk(update)
             case "tool_call_update":
-                tool_call_id = getattr(update, "tool_call_id", "")
-                raw_output = getattr(update, "raw_output", "")
-                chunk = CollectedChunk(
-                    chunk_type="tool_result",
-                    content=str(raw_output) if raw_output else "",
-                    metadata={
-                        "tool_call_id": tool_call_id,
-                        "status": getattr(update, "status", "completed"),
-                    },
-                )
+                return self._tool_result_chunk(update)
             case "plan":
                 entries = getattr(update, "entries", [])
                 plan_text = "\n".join(
                     getattr(entry, "content", str(entry)) for entry in entries
                 )
-                chunk = CollectedChunk(chunk_type="plan", content=plan_text)
+                return CollectedChunk(chunk_type=ChunkType.PLAN, content=plan_text)
             case _:
                 text = self._extract_text_from_content(update)
-                if text:
-                    chunk = CollectedChunk(chunk_type="text", content=text)
+                return (
+                    CollectedChunk(chunk_type=ChunkType.TEXT, content=text)
+                    if text
+                    else None
+                )
 
-        if chunk is not None:
-            self._append_chunk(session_id, chunk)
+    def _text_chunk(self, update: object, chunk_type: str) -> CollectedChunk:
+        return CollectedChunk(
+            chunk_type=chunk_type,
+            content=self._extract_text_from_content(update),
+        )
+
+    def _tool_call_chunk(self, update: object) -> CollectedChunk:
+        tool_call_id = getattr(update, "tool_call_id", "")
+        title = getattr(update, "title", "")
+        metadata = {
+            "tool_call_id": tool_call_id,
+            "raw_input": getattr(update, "raw_input", None),
+            "status": getattr(update, "status", ToolStatus.IN_PROGRESS),
+        }
+        return CollectedChunk(
+            chunk_type=ChunkType.TOOL_CALL,
+            content=title,
+            metadata=metadata,
+        )
+
+    def _tool_result_chunk(self, update: object) -> CollectedChunk:
+        tool_call_id = getattr(update, "tool_call_id", "")
+        status = getattr(update, "status", ToolStatus.COMPLETED)
+        metadata = {
+            "tool_call_id": tool_call_id,
+            "status": status,
+        }
+        # Prefer the human-readable content blocks over ``rawOutput``. An agent's
+        # terminal update often carries the structured result object in
+        # ``rawOutput`` (e.g. Copilot's ``{'content': ..., 'contents': [...]}``),
+        # which stringifies into an unreadable dict; the content blocks hold the
+        # same output as plain text. Fall back to ``rawOutput`` only when there are
+        # no content blocks, so an agent that reports output *only* via
+        # ``rawOutput`` still surfaces it (a blank result keeps the placeholder
+        # guard). ``from_raw`` records the fallback so _merge_tool_result never
+        # overwrites clean text with a later raw-only frame.
+        content = self._extract_text_from_tool_content(getattr(update, "content", None))
+        from_raw = not content
+        echo: dict[str, object] | None = None
+        if from_raw:
+            raw_output = getattr(update, "raw_output", "")
+            content = str(raw_output) if raw_output else ""
+        else:
+            # ``rawOutput`` may still carry the least-processed copy of the same
+            # value under MCP's own ``structuredContent`` field (see
+            # _unwrap_structured_result); prefer it over the content blocks when
+            # recognizable, since a bridge that forwards both can duplicate a
+            # JSON-serialized string across them.
+            unwrapped = _unwrap_structured_result(
+                content, getattr(update, "raw_output", None)
+            )
+            if unwrapped is not None:
+                content, echo = unwrapped
+        return CollectedChunk(
+            chunk_type=ChunkType.TOOL_RESULT,
+            content=content,
+            metadata=metadata,
+            from_raw=from_raw,
+            echo=echo,
+        )
 
     # Chunk kinds that arrive as a stream of deltas for one logical message, so a
     # run of them is coalesced into a single chunk (agents emit one delta per token
     # or phrase). tool_call/tool_result/plan are discrete and never merged.
-    _COALESCED_CHUNK_TYPES = ("text", "thought")
+    _COALESCED_CHUNK_TYPES = (ChunkType.TEXT, ChunkType.THOUGHT)
 
-    def _append_chunk(self, session_id: str, chunk: CollectedChunk) -> None:
-        buffer = self._session_chunks.setdefault(session_id, [])
-        if (
-            buffer
-            and chunk.chunk_type in self._COALESCED_CHUNK_TYPES
-            and buffer[-1].chunk_type == chunk.chunk_type
-        ):
-            buffer[-1].content += chunk.content  # merge the streamed delta
+    async def _ingest(self, session_id: str, chunk: CollectedChunk) -> None:
+        """Route one parsed chunk through coalescing/collapse to the live sink.
+
+        Text/thought deltas coalesce into an open run, finalized at the next
+        boundary (a different chunk type, or turn end). tool_call and plan are
+        discrete and finalize at once. A tool_result folds its call's frames and
+        finalizes when the call reaches a terminal status. Finalizing a chunk both
+        buffers it (for get_collected_chunks) and posts it to the sink, in order.
+        """
+        if chunk.chunk_type in self._COALESCED_CHUNK_TYPES:
+            open_run = self._open_runs.get(session_id)
+            if open_run is not None and open_run.chunk_type == chunk.chunk_type:
+                open_run.content += chunk.content  # merge the streamed delta
+                return
+            await self._close_open_run(session_id)
+            self._open_runs[session_id] = chunk
+            return
+        await self._close_open_run(session_id)
+        if chunk.chunk_type == ChunkType.TOOL_RESULT:
+            await self._ingest_tool_result(session_id, chunk)
         else:
-            buffer.append(chunk)
+            await self._finalize(session_id, chunk)
+
+    async def _close_open_run(self, session_id: str) -> None:
+        """Finalize the open text/thought run, if any — a boundary was reached."""
+        run = self._open_runs.pop(session_id, None)
+        if run is not None:
+            await self._finalize(session_id, run)
+
+    async def _ingest_tool_result(self, session_id: str, chunk: CollectedChunk) -> None:
+        """Fold a tool_result frame into its call and finalize once, at terminal.
+
+        A call reports its result over several frames sharing a ``tool_call_id``
+        (partial content blocks, then a terminal frame often carrying only the
+        structured ``rawOutput``). They fold into one canonical result, finalized
+        the first time the call reports a terminal status. A frame with no id can't
+        be correlated, so it stands alone.
+        """
+        call_id = str(chunk.metadata.get("tool_call_id", ""))
+        if not call_id:
+            await self._finalize(session_id, chunk)
+            return
+        results = self._result_chunks.setdefault(session_id, {})
+        canonical = results.get(call_id)
+        if canonical is None:
+            results[call_id] = chunk
+            canonical = chunk
+        else:
+            self._fold_result(canonical, chunk)
+        emitted = self._emitted_results.setdefault(session_id, set())
+        terminal = canonical.metadata.get("status") in (
+            ToolStatus.COMPLETED,
+            ToolStatus.FAILED,
+        )
+        # Finalize exactly once, at the first terminal frame — the earliest point a
+        # live, causally-ordered post is correct (waiting for the true last frame
+        # would defer every tool_result to turn-end, out of order). A later frame
+        # still folds into ``canonical`` (so get_collected_chunks reflects it), but
+        # the room event was already posted: the events API is append-only, so we
+        # can neither edit it nor re-post without duplicating the narration. A
+        # post-terminal content revision therefore stays in the buffer only — an
+        # accepted trade-off of live emission, not a bug to "fix" by re-emitting.
+        if terminal and call_id not in emitted:
+            emitted.add(call_id)
+            await self._finalize(session_id, canonical)
+
+    def _fold_result(self, canonical: CollectedChunk, chunk: CollectedChunk) -> None:
+        """Fold a later frame into a call's canonical result.
+
+        The last *reported* status wins — ACP status is optional, so a frame that
+        omits it (status is None) must not regress a recorded "completed". A frame
+        that merely re-reports a cleaned canonical's proven duplicate — its
+        content is the cleaned value plus a re-encoding of exactly the recorded
+        ``CollectedChunk.echo`` payload — carries no new information and must not
+        regress the cleaned value; anything else, including a genuinely new
+        readable result, still replaces it. Otherwise ACP ``content`` replaces the
+        preceding content collection, so the latest readable frame wins even when
+        it is shorter (e.g. a long-running command's streamed "still running..."
+        progress text superseded by a short "OK"). A raw-only or empty frame,
+        which carries no such replacement semantics, falls back to ranking by
+        completeness (see _result_key).
+        """
+        incoming_status = chunk.metadata.get("status")
+        if incoming_status is not None:
+            canonical.metadata["status"] = incoming_status
+        if canonical.echo is not None and _is_echo_of(
+            chunk.content, canonical.content, canonical.echo
+        ):
+            best = canonical
+        elif chunk.content and not chunk.from_raw:
+            best = chunk
+        elif canonical.content and not canonical.from_raw:
+            best = canonical
+        else:
+            best = max(canonical, chunk, key=self._result_key)
+        canonical.content, canonical.from_raw, canonical.echo = (
+            best.content,
+            best.from_raw,
+            best.echo,
+        )
+
+    async def _finalize(self, session_id: str, chunk: CollectedChunk) -> None:
+        """Buffer a finalized chunk and post it to the session's live sink, if any."""
+        self._session_chunks.setdefault(session_id, []).append(chunk)
+        sink = self._sinks.get(session_id)
+        if sink is not None:
+            await sink(chunk)
+
+    def set_sink(self, session_id: str, sink: ChunkSink | None) -> None:
+        if sink is None:
+            self._sinks.pop(session_id, None)
+        else:
+            self._sinks[session_id] = sink
+
+    async def flush(self, session_id: str) -> None:
+        """Finalize anything still open at turn end: the coalesced run, then any
+        tool result whose call never reported a terminal status."""
+        await self._close_open_run(session_id)
+        emitted = self._emitted_results.setdefault(session_id, set())
+        for call_id, canonical in self._result_chunks.get(session_id, {}).items():
+            if call_id not in emitted:
+                emitted.add(call_id)
+                await self._finalize(session_id, canonical)
+
+    @staticmethod
+    def _result_key(chunk: CollectedChunk) -> tuple[bool, bool, int]:
+        """Rank the raw-only/empty frames ``_fold_result`` falls back to (neither
+        side is a readable-content replacement, so completeness decides): non-empty
+        beats empty, then the longer (more complete) frame.
+        """
+        has_text = bool(chunk.content)
+        return has_text, has_text and not chunk.from_raw, len(chunk.content)
 
     async def request_permission(  # type: ignore[override]  # ACP Client uses specific types; we widen to object
         self,
@@ -265,6 +523,10 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
     def reset_session(self, session_id: str) -> None:
         self._session_chunks.pop(session_id, None)
         self._permission_handlers.pop(session_id, None)
+        self._result_chunks.pop(session_id, None)
+        self._emitted_results.pop(session_id, None)
+        self._open_runs.pop(session_id, None)
+        self._sinks.pop(session_id, None)
 
     def get_collected_text(self, session_id: str | None = None) -> str:
         if session_id is not None:
@@ -275,7 +537,9 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
                 for session_chunks in self._session_chunks.values()
                 for chunk in session_chunks
             ]
-        return "".join(chunk.content for chunk in chunks if chunk.chunk_type == "text")
+        return "".join(
+            chunk.content for chunk in chunks if chunk.chunk_type == ChunkType.TEXT
+        )
 
     def get_collected_chunks(
         self, session_id: str | None = None
@@ -302,17 +566,44 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
 
         chunks = await self._profile.ext_notification(method, params)
         if chunks:
-            self._session_chunks.setdefault(session_id, []).extend(chunks)
+            await self._close_open_run(session_id)
+            for chunk in chunks:
+                await self._finalize(session_id, chunk)
+
+    @staticmethod
+    def _block_text(block: object) -> str:
+        """The ``text`` field of a single ACP content block, else ``""``.
+
+        Accepts either the parsed pydantic model (``.text``) or a raw dict.
+        """
+        text = getattr(block, "text", None)
+        if text is None and isinstance(block, dict):
+            text = block.get("text")
+        return str(text) if text else ""
 
     @staticmethod
     def _extract_text_from_content(update: object) -> str:
-        content = getattr(update, "content", None)
-        if content is None:
+        return ACPCollectingClient._block_text(getattr(update, "content", None))
+
+    @staticmethod
+    def _extract_text_from_tool_content(content: object) -> str:
+        """Join the inline text blocks of a ``tool_call_update``'s ``content`` list.
+
+        Unlike the single-block ``content`` on message/thought updates, a
+        ``ToolCallUpdate.content`` is a tagged-union list (``ContentToolCallContent``
+        | ``FileEditToolCallContent`` | ``TerminalToolCallContent``, discriminated
+        by ``type``); only ``"content"`` entries wrap a text block, so entries of
+        another ``type`` (file-edit diffs, terminal references) are skipped by
+        their explicit tag rather than by happening to lack a ``.content`` field.
+        """
+        if not isinstance(content, list):
             return ""
-        text = getattr(content, "text", None)
-        if text is None and isinstance(content, dict):
-            text = content.get("text", "")
-        return str(text) if text else ""
+        texts = [
+            ACPCollectingClient._block_text(getattr(item, "content", None))
+            for item in content
+            if getattr(item, "type", None) == "content"
+        ]
+        return "\n".join(text for text in texts if text)
 
 
 class ACPRuntime:
@@ -450,10 +741,22 @@ class ACPRuntime:
         return response is not None
 
     async def prompt(
-        self, *, session_id: str, prompt_text: str
+        self,
+        *,
+        session_id: str,
+        prompt_text: str,
+        on_chunk: ChunkSink | None = None,
     ) -> list[CollectedChunk]:
         conn = await self.ensure_connection(can_respawn=False)
-        await conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
+        if on_chunk is not None and self._client is not None:
+            self._client.set_sink(session_id, on_chunk)
+        try:
+            await conn.prompt(session_id=session_id, prompt=[text_block(prompt_text)])
+            if self._client is not None:
+                await self._client.flush(session_id)
+        finally:
+            if self._client is not None:
+                self._client.set_sink(session_id, None)
         return self.get_collected_chunks(session_id)
 
     def reset_session(self, session_id: str) -> None:

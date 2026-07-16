@@ -233,9 +233,10 @@ Two-layer pattern (mirrors A2A Gateway):
 | `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
 | `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
-| `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic), `tcp_spawn_process` (TCP connect seam) |
+| `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic) + `ACPCollectingClient` (session_update parsing / coalescing / collapse / live sink), `tcp_spawn_process` (TCP connect seam) |
+| `src/band/integrations/acp/room_emitter.py` | `RoomTurnEmitter` — posts a turn's chunks to the room in causal order; `turn_replied_in_room` (text-fallback suppression) |
 | `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
-| `src/band/integrations/acp/client_types.py` | `BandACPClient` — per-session chunk buffering |
+| `src/band/integrations/acp/client_types.py` | `BandACPClient` — thin `ACPCollectingClient` subclass |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
 | `src/band/integrations/acp/event_converter.py` | `EventConverter` — PlatformMessage -> ACP session_update chunks |
@@ -261,13 +262,27 @@ BAND_AGENT_ID=my-agent BAND_API_KEY=key band-acp
 4. `on_message()` receives peer response -> `EventConverter.convert()` -> `session_update` back to editor
 5. `on_cleanup(room_id)` -> removes all session state, unblocks pending prompts
 
-### Per-Session Buffers (Client Adapter)
+### Live, causally-ordered emission (Client Adapter)
 
-`BandACPClient` uses per-session chunk buffers (`_session_chunks: dict[str, list[CollectedChunk]]`) to allow concurrent rooms without global locking. Each session's buffer is reset before a prompt and read after. Consecutive streamed text/thought deltas are coalesced into one chunk at collection, so one chunk == one logical message.
+A turn's events must land in the room in the order they happened, because two things post **live, mid-turn**: a Band messaging tool's own room post (a remote/injected band-mcp calling REST as it runs), and a denied-permission pair. So `ACPCollectingClient` doesn't buffer-then-flush — it **streams** finalized chunks to a per-session live sink (`set_sink`) as `session_update`s arrive:
+
+- Consecutive text/thought deltas coalesce into one run, finalized at the next boundary or the turn-end `flush`.
+- A call's `tool_call_update` frames fold by `tool_call_id` into one result, finalized once the call reports a terminal status (`completed`/`failed`).
+- The buffer (`_session_chunks`) still accumulates the finalized chunks — the per-turn record `get_collected_chunks` returns, cleared each turn by `reset_session` (in-memory, not durable) and keyed per session so concurrent rooms don't need a global lock.
+
+`RoomTurnEmitter` (`room_emitter.py`) is the sink: it posts narration (thought/tool_call/tool_result/plan) live for **every** tool call — including Band messaging tools, with no suppression — and holds **only** the assistant text until close (the text-fallback decision needs the whole turn). `ACPRuntime.prompt(..., on_chunk=emitter.emit)` registers the sink and `flush`es at turn end.
 
 ### Reply Delivery (Client Adapter)
 
-Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the text is relayed as the reply. Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools.py`): the SDK's `band_send_message` plus the standalone band-mcp server's `create_agent_chat_message`. The siblings flip a flag when they execute the tool in-process; the ACP adapter instead reads the ACP tool-call stream (`tool_call` title + `completed` status), because its tools may execute out-of-process (remote band-mcp).
+Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the held text is relayed at turn close. The decision lives in `turn_replied_in_room()` (`room_emitter.py`), which reads the collected tool-call stream — the ACP adapter can't flip an in-process flag like the siblings, because its tools may execute out-of-process (remote band-mcp), so it matches `tool_call` title + `completed` status. Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools.py`): the SDK's `band_send_message` (also what band-mcp 1.3.2+ advertises, since its registrar reuses the SDK tool definitions) plus the legacy `create_agent_chat_message` spelling from band-mcp ≤1.3.1. This suppression is about the text fallback only — the call's own `tool_call`/`tool_result` narration (below) is never suppressed.
+
+### Tool narration (Client Adapter)
+
+Every tool call is narrated as `tool_call`/`tool_result`, including Band messaging tools (`band_send_message`/`band_send_event`) — there is no "self-reporting" special case. Because emission is live and causally ordered (above), a Band messaging tool's own room post lands *between* its `tool_call` and `tool_result` narration, so the room naturally reads `tool_call -> message -> tool_result` without any special-casing.
+
+### Permission pairing (Client Adapter)
+
+Auto-approval grants silently — no event posts for an approved request, ordinary or Band tool alike; the call's real `tool_call`/`tool_result` narration (above) is the visible record. Only a **denied** request posts a synthetic `tool_call`/`tool_result` pair (`RoomTurnEmitter.open_permission`), since the tool never runs and there is nothing else to show it happened.
 
 ### Optional Dependency
 
@@ -596,7 +611,7 @@ test, where the markdown-docs run actually executes it.
 - Never use `print()` — use `logging` with module-level `logger = logging.getLogger(__name__)`
 - Use `%s` placeholders in log messages for lazy evaluation
 - Use Pydantic v2 for data models; use `model_dump()` not `dict()`
-- Target Python 3.10+; use `list[str]` not `List[str]`, `str | None` not `Optional[str]`
+- Target Python 3.11+; use `list[str]` not `List[str]`, `str | None` not `Optional[str]`
 - Use async/await everywhere in async codebases; use `AsyncMock` for testing async methods
 - Catch `pydantic.ValidationError` separately from generic `Exception`
 - Use `raise ValueError(...)` for missing required config, not `logger.error()` + `sys.exit()`
@@ -605,6 +620,20 @@ test, where the markdown-docs run actually executes it.
   restate definitions (asserting dataclass defaults equal themselves, echoing a
   constant) or otherwise cannot fail for a real reason; they add maintenance
   cost without protection.
+- Write intent-oriented code: the reader should see *what* is meant, not decode
+  *how* it's done. Name for intent, keep flow obvious (guard clauses, `match`,
+  early returns over nested branches), and hide bookkeeping behind a small helper
+  or property with an intent-revealing name. In tests especially, assert on a
+  readable projection of the observable outcome, not raw internals — e.g.
+  `assert reply.outline == ["tool_call (permission)", "message", ...]` over a
+  hand-rolled comprehension pulling `message_type` out of each event dict.
+- Prefer a single source of truth for a value or closed vocabulary consumed in more
+  than one place: give it one definition — a constant, a `StrEnum`, or a small helper
+  — that every site references, rather than re-typing the same magic literal in a
+  producer and the consumer that reads it (a typo then fails silently). Keep genuinely
+  distinct vocabularies separate, though — don't merge two sets that only happen to
+  share some values today (e.g. the ACP `ChunkType` a chunk carries vs. the platform
+  `message_type` an event is posted under).
 - Comments should describe the code as it is, not narrate what changed between versions.
 
 ## Pre-Commit Checklist

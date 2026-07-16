@@ -6,6 +6,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from acp.helpers import update_agent_message_text
 
 from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
@@ -14,10 +15,25 @@ from band.integrations.acp.client_types import (
     ACPClientSessionState,
     BandACPClient,
 )
+from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import CollectedChunk
 from band.testing import FakeAgentTools
 
 from .conftest import make_platform_message
+
+
+def permission_events(tools: FakeAgentTools) -> list[dict[str, object]]:
+    """The permission tool_call/tool_result events the handler posted to the room."""
+    return [
+        event
+        for event in tools.events_sent
+        if (event.get("metadata") or {}).get("permission_request")
+    ]
+
+
+def event_types(events: list[dict[str, object]]) -> list[object]:
+    """The ordered ``message_type`` of each event — for asserting a pair's shape."""
+    return [event["message_type"] for event in events]
 
 
 class TestACPClientAdapterInit:
@@ -434,144 +450,6 @@ class TestACPClientAdapterOnMessage:
         assert call_kwargs["session_id"] == "acp-session-123"
 
     @pytest.mark.asyncio
-    async def test_on_message_posts_response(
-        self, adapter_with_mocks: ACPClientAdapter
-    ) -> None:
-        """Should post collected response back to Band room."""
-
-        # Make prompt() populate the per-session buffer (simulating session_update)
-        async def mock_prompt(**kwargs):
-            session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(chunk_type="text", content="The weather is sunny.")
-            ]
-
-        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
-
-        tools = FakeAgentTools()
-        msg = make_platform_message("Weather?", room_id="room-123")
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        # Should have sent message back
-        assert len(tools.messages_sent) > 0
-        assert tools.messages_sent[0]["content"] == "The weather is sunny."
-
-    @pytest.mark.asyncio
-    async def test_on_message_posts_thought_event(
-        self, adapter_with_mocks: ACPClientAdapter
-    ) -> None:
-        """Should post thought chunks as thought events."""
-
-        async def mock_prompt(**kwargs):
-            session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(chunk_type="thought", content="Let me think...")
-            ]
-
-        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
-
-        tools = FakeAgentTools()
-        msg = make_platform_message("Question?", room_id="room-123")
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        thought_events = [
-            e for e in tools.events_sent if e.get("message_type") == "thought"
-        ]
-        assert len(thought_events) == 1
-        assert thought_events[0]["content"] == "Let me think..."
-
-    @pytest.mark.asyncio
-    async def test_on_message_posts_tool_call_event(
-        self, adapter_with_mocks: ACPClientAdapter
-    ) -> None:
-        """Should post tool_call chunks as tool_call events."""
-
-        async def mock_prompt(**kwargs):
-            session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(
-                    chunk_type="tool_call",
-                    content="search",
-                    metadata={"tool_call_id": "tc-1"},
-                )
-            ]
-
-        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
-
-        tools = FakeAgentTools()
-        msg = make_platform_message("Find info", room_id="room-123")
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        tool_events = [
-            e for e in tools.events_sent if e.get("message_type") == "tool_call"
-        ]
-        assert len(tool_events) == 1
-        assert tool_events[0]["metadata"]["tool_call_id"] == "tc-1"
-
-    @pytest.mark.asyncio
-    async def test_on_message_posts_plan_as_task_event(
-        self, adapter_with_mocks: ACPClientAdapter
-    ) -> None:
-        """Should post plan chunks as task events."""
-
-        async def mock_prompt(**kwargs):
-            session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(chunk_type="plan", content="Step 1: Do stuff")
-            ]
-
-        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
-
-        tools = FakeAgentTools()
-        msg = make_platform_message("Plan it", room_id="room-123")
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        task_events = [
-            e
-            for e in tools.events_sent
-            if e.get("message_type") == "task"
-            and "acp_client_session_id" not in e.get("metadata", {})
-        ]
-        assert len(task_events) == 1
-        assert task_events[0]["content"] == "Step 1: Do stuff"
-
-    @pytest.mark.asyncio
     async def test_on_message_emits_task_event(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
@@ -636,9 +514,11 @@ class TestACPClientAdapterOnMessage:
 
         async def prompt_new_session(**kwargs):
             session_id = kwargs["session_id"]
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(chunk_type="text", content="Recovered reply")
-            ]
+            # Stream the reply through the live sink the adapter registers for the
+            # turn (as a real agent would), not a direct buffer poke.
+            await adapter_with_mocks._runtime._client.session_update(
+                session_id, update_agent_message_text("Recovered reply")
+            )
 
         adapter_with_mocks._runtime._conn.prompt = AsyncMock(
             side_effect=prompt_new_session
@@ -753,18 +633,23 @@ class TestACPClientAdapterPermissionHandler:
         assert len(adapter_with_mocks._runtime._client._permission_handlers) > 0
 
     @pytest.mark.asyncio
-    async def test_permission_handler_posts_event(
+    async def test_permission_handler_skips_pair_for_approved_band_send_message(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """Should post permission request event to platform."""
+        """An approved band_send_message grants silently, like any other tool.
+
+        Regression guard: band_send_message/band_send_event were formerly
+        special-cased ("self-reporting") to post a synthetic permission pair
+        since their execution events were suppressed. Now nothing is suppressed —
+        if the tool executes, its own real tool_call/tool_result narrate it, so no
+        pair should be posted here either.
+        """
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        # Simulate permission request during prompt
         async def mock_prompt(**kwargs):
-            # Trigger the permission handler directly
             tool_call = MagicMock()
-            tool_call.title = "write_file"
+            tool_call.title = "band_send_message"
             tool_call.tool_call_id = "tc-perm-1"
 
             result = await adapter_with_mocks._runtime._client.request_permission(
@@ -790,16 +675,50 @@ class TestACPClientAdapterPermissionHandler:
             room_id="room-123",
         )
 
-        # Should have posted a permission event
-        perm_events = [
-            e
-            for e in tools.events_sent
-            if e.get("metadata", {}).get("permission_request")
-        ]
-        assert len(perm_events) == 1
-        assert perm_events[0]["metadata"]["tool_name"] == "write_file"
-        assert perm_events[0]["metadata"]["auto_allowed"] is True
-        assert perm_events[0]["message_type"] == "tool_call"
+        assert permission_events(tools) == []
+
+    @pytest.mark.asyncio
+    async def test_permission_handler_skips_pair_for_approved_ordinary_tool(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """An approved ordinary tool grants without posting a permission pair.
+
+        The tool's own tool_call/tool_result already show the call, so a pair
+        would duplicate it in the room. The grant is still returned to the agent.
+        """
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        async def mock_prompt(**kwargs):
+            tool_call = MagicMock()
+            tool_call.title = "write_file"
+            tool_call.tool_call_id = "tc-perm-1"
+
+            result = await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"}
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+            # The grant is still returned even though no pair is posted.
+            assert result == {
+                "outcome": {"outcome": "selected", "optionId": "allow-once"}
+            }
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert permission_events(tools) == []
 
     @pytest.mark.asyncio
     async def test_permission_handler_selects_allow_option(
@@ -879,6 +798,13 @@ class TestACPClientAdapterPermissionHandler:
         )
 
         assert captured_result == {"outcome": {"outcome": "cancelled"}}
+        perm_events = permission_events(tools)
+        assert event_types(perm_events) == ["tool_call", "tool_result"]
+        assert all(
+            event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
+        )
+        assert perm_events[1]["content"] == "Permission cancelled"
+        assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_permission_handler_uses_name_fallback(
@@ -911,13 +837,9 @@ class TestACPClientAdapterPermissionHandler:
             room_id="room-123",
         )
 
-        perm_events = [
-            e
-            for e in tools.events_sent
-            if e.get("metadata", {}).get("permission_request")
-        ]
-        assert len(perm_events) == 1
-        assert perm_events[0]["metadata"]["tool_name"] == "bash"
+        perm_events = permission_events(tools)
+        assert event_types(perm_events) == ["tool_call", "tool_result"]
+        assert all(event["metadata"]["tool_name"] == "bash" for event in perm_events)
 
 
 class TestACPClientAdapterCleanup:
@@ -1208,7 +1130,7 @@ class TestResolveLauncher:
 
 
 class TestTurnRepliedInRoom:
-    """`_turn_replied_in_room`: detect a room post from the ACP tool-call stream.
+    """`turn_replied_in_room`: detect a room post from the ACP tool-call stream.
 
     ACP has no structured tool-name field and tools may run out-of-process, so the
     adapter reads the collected chunk stream. These lock the id-correlation edges.
@@ -1227,7 +1149,7 @@ class TestTurnRepliedInRoom:
                 status="completed",
             )
         ]
-        assert ACPClientAdapter._turn_replied_in_room(chunks)
+        assert turn_replied_in_room(chunks)
 
     def test_posting_call_correlated_to_completed_result_counts(self) -> None:
         # The tool_call arrives before its terminal status; the completed result seals it.
@@ -1240,7 +1162,7 @@ class TestTurnRepliedInRoom:
             ),
             self._chunk("tool_result", "", tool_call_id="tc-1", status="completed"),
         ]
-        assert ACPClientAdapter._turn_replied_in_room(chunks)
+        assert turn_replied_in_room(chunks)
 
     def test_empty_ids_do_not_cross_match(self) -> None:
         # A not-yet-completed posting call with NO id and a completed NON-posting result
@@ -1250,7 +1172,7 @@ class TestTurnRepliedInRoom:
             self._chunk("tool_call", "band_send_message", status="in_progress"),
             self._chunk("tool_result", "", status="completed"),
         ]
-        assert not ACPClientAdapter._turn_replied_in_room(chunks)
+        assert not turn_replied_in_room(chunks)
 
     def test_non_posting_tool_never_counts(self) -> None:
         chunks = [
@@ -1258,4 +1180,4 @@ class TestTurnRepliedInRoom:
                 "tool_call", "get_weather", tool_call_id="tc-1", status="completed"
             )
         ]
-        assert not ACPClientAdapter._turn_replied_in_room(chunks)
+        assert not turn_replied_in_room(chunks)

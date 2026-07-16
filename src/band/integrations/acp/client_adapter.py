@@ -34,10 +34,10 @@ from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
 )
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.mcp_server import LocalMCPServer
-from band.runtime.tools import is_room_posting_tool, iter_tool_definitions
+from band.runtime.tools import iter_tool_definitions
 
 logger = logging.getLogger(__name__)
 
@@ -178,53 +178,33 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         session_id = await self._get_or_create_session(room_id)
         self._runtime.reset_session(session_id)
-        self._runtime.set_permission_handler(
-            session_id,
-            self._make_permission_handler(tools, room_id),
-        )
 
         prompt_text = await self._build_prompt_text(room_id, session_id, msg)
+        sender_name = msg.sender_name or msg.sender_id or "Unknown"
+        mentions = [{"id": msg.sender_id, "name": sender_name}]
 
+        # The emitter posts the turn's events live, in the order the ACP stream
+        # delivers them (see RoomTurnEmitter), so narration stays interleaved with
+        # the permission pair and any in-room tool post. On a clean turn its
+        # __aexit__ relays the held text (if not already posted) and the session
+        # bookkeeping event; on failure it posts nothing and the error is handled
+        # below.
         try:
-            chunks = await self._runtime.prompt(
+            async with RoomTurnEmitter(
+                tools,
+                mentions=mentions,
                 session_id=session_id,
-                prompt_text=prompt_text,
-            )
-            sender_name = msg.sender_name or msg.sender_id or "Unknown"
-            mentions = [{"id": msg.sender_id, "name": sender_name}]
-            # Reply delivery is tool-first with a text fallback, like the other
-            # bridge adapters (copilot_sdk / codex): if the turn already posted
-            # via a Band messaging tool, relaying its plain text too would
-            # duplicate the reply (and leak the agent's narration of the call).
-            replied_in_room = self._turn_replied_in_room(chunks)
-            # Streaming text/thought deltas are coalesced into one chunk per run by
-            # ACPCollectingClient, so one chunk here == one logical message/event.
-            for chunk in chunks:
-                match chunk.chunk_type:
-                    case "text":
-                        if chunk.content and not replied_in_room:
-                            await tools.send_message(
-                                content=chunk.content,
-                                mentions=mentions,
-                            )
-                    case "thought":
-                        await tools.send_event(
-                            content=chunk.content,
-                            message_type="thought",
-                            metadata=chunk.metadata,
-                        )
-                    case "tool_call" | "tool_result":
-                        await tools.send_event(
-                            content=chunk.content,
-                            message_type=chunk.chunk_type,
-                            metadata=chunk.metadata,
-                        )
-                    case "plan":
-                        await tools.send_event(
-                            content=chunk.content,
-                            message_type="task",
-                            metadata=chunk.metadata,
-                        )
+                room_id=room_id,
+            ) as emitter:
+                self._runtime.set_permission_handler(
+                    session_id,
+                    self._make_permission_handler(emitter, room_id),
+                )
+                await self._runtime.prompt(
+                    session_id=session_id,
+                    prompt_text=prompt_text,
+                    on_chunk=emitter.emit,
+                )
         except Exception as e:
             logger.exception("ACP agent error: %s", e)
             await self.stop()
@@ -233,54 +213,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 message_type="error",
                 metadata={"acp_error": str(e)},
             )
-            return
-
-        await tools.send_event(
-            content="ACP client session",
-            message_type="task",
-            metadata={
-                "acp_client_session_id": session_id,
-                "acp_client_room_id": room_id,
-            },
-        )
-
-    @staticmethod
-    def _turn_replied_in_room(chunks: list[CollectedChunk]) -> bool:
-        """True when the turn posted to the room via a Band messaging tool.
-
-        Unlike copilot_sdk / codex, which execute Band tools in-process and flip
-        a flag at execution time, ACP tool calls may run out-of-process (a remote
-        band-mcp server the SDK never sees execute). The ACP session-update
-        stream is the one record of the turn that covers both, so detection
-        matches the collected tool-call chunks by their reported title (ACP has
-        no structured tool-name field). A room-posting call counts once it (or
-        its result update) reports ``completed`` — a failed post must not
-        suppress the text fallback, or the turn goes silent.
-        """
-        posting_call_ids: set[str] = set()
-        for chunk in chunks:
-            metadata = chunk.metadata or {}
-            call_id = str(metadata.get("tool_call_id", ""))
-            if chunk.chunk_type == "tool_call" and is_room_posting_tool(chunk.content):
-                if metadata.get("status") == "completed":
-                    return True
-                # Correlate with a later result only by a real id. An empty id
-                # (a missing tool_call_id) would match any other id-less result —
-                # e.g. a non-posting tool's — and falsely suppress the text
-                # fallback, silencing the turn.
-                if call_id:
-                    posting_call_ids.add(call_id)
-            elif (
-                chunk.chunk_type == "tool_result"
-                and call_id in posting_call_ids
-                and metadata.get("status") == "completed"
-            ):
-                return True
-        return False
 
     def _make_permission_handler(
         self,
-        tools: AgentToolsProtocol,
+        emitter: RoomTurnEmitter,
         room_id: str,
     ) -> PermissionHandler:
         async def handler(
@@ -310,21 +246,21 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 option_id,
             )
 
-            await tools.send_event(
-                content=f"Permission requested: {tool_name}",
-                message_type="tool_call",
-                metadata={
-                    "permission_request": True,
-                    "tool_name": tool_name,
-                    "tool_call_id": tool_call_id,
-                    "acp_session_id": session_id,
-                    "auto_allowed": option_id is not None,
-                },
-            )
+            if option_id is not None:
+                return allow_permission(option_id)
 
-            if option_id is None:
-                return cancel_permission()
-            return allow_permission(option_id)
+            # A denied request never runs the tool, so there is no execution
+            # frame to show it happened — post a synthetic tool_call/tool_result
+            # pair as the only record. An approved request grants silently: if
+            # the tool then executes, its own real tool_call/tool_result narrate
+            # it like any other tool (no pair needed).
+            await emitter.open_permission(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                session_id=session_id,
+                outcome="cancelled",
+            )
+            return cancel_permission()
 
         return handler
 

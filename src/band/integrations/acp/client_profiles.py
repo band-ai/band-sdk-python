@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
-from band.integrations.acp.types import CollectedChunk
+from band.integrations.acp.types import ChunkType, CollectedChunk
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ class CursorACPClientProfile:
                 if lines:
                     return [
                         CollectedChunk(
-                            chunk_type="plan",
+                            chunk_type=ChunkType.PLAN,
                             content="\n".join(lines),
                         )
                     ]
@@ -102,7 +102,7 @@ class CursorACPClientProfile:
             if result:
                 return [
                     CollectedChunk(
-                        chunk_type="text",
+                        chunk_type=ChunkType.TEXT,
                         content=f"[Task completed] {result}",
                     )
                 ]

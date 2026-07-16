@@ -18,6 +18,7 @@ the generic ``ReplyCapture.events``).
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime
 from typing import ClassVar
@@ -89,6 +90,15 @@ class Events(ContentAssertions, list[ChatMessage]):
             and not is_usage_event(message.metadata)
         )
 
+    def containing(self, text: str) -> Events:
+        """Return a same-class subset of events whose content contains ``text``
+        (exact substring). Re-wrapped so the assertions stay available -- the
+        events analogue of ``ToolCalls.named``. Use it to scope an assertion to
+        one tool's events when a turn also narrates unrelated ones (e.g. an
+        agent backend's internal tools).
+        """
+        return type(self)(event for event in self if text in event.content)
+
     def present(self) -> bool:
         """True if any event of this type was captured."""
         return len(self) > 0
@@ -104,6 +114,25 @@ class Events(ContentAssertions, list[ChatMessage]):
         )
         if not self:
             raise AssertionError(f"expected {label}, but none were emitted")
+
+    def assert_json_content(self) -> None:
+        """Assert every captured event's content is one well-formed JSON document.
+
+        For a tool whose output is JSON (e.g. a Band platform tool's response),
+        the emitted event must carry that payload exactly once -- a duplicated
+        echo (the same payload concatenated twice, in any encoding) fails
+        ``json.loads`` with "Extra data" and is reported with the offending
+        content. Passes vacuously on an empty collection, so pair with a
+        presence check (``assert_present`` / ``assert_at_least``).
+        """
+        for event in self:
+            try:
+                json.loads(event.content)
+            except json.JSONDecodeError as error:
+                raise AssertionError(
+                    f"expected event content to be a single well-formed JSON "
+                    f"document, but parsing failed ({error}):\n{event.content}"
+                ) from error
 
 
 class Thoughts(Events):

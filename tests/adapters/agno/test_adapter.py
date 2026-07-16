@@ -404,9 +404,10 @@ class TestEmitExecution:
         assert result_payload["output"] == "ok"
         assert result_payload["is_error"] is False
 
-    async def test_self_reporting_tools_are_not_re_emitted(
+    async def test_band_send_message_tool_call_is_reported(
         self, make_started_adapter, sample_platform_message, tools
     ):
+        """band_send_message is reported like any other tool call — no suppression."""
         events = tool_events(tool_execution("band_send_message"))
         adapter, _ = await make_started_adapter(
             features=AdapterFeatures(emit={Emit.EXECUTION}), events=events
@@ -422,7 +423,8 @@ class TestEmitExecution:
             room_id="room-1",
         )
 
-        assert tools.events_sent == []
+        types = [e["message_type"] for e in tools.events_sent]
+        assert types == ["tool_call", "tool_result"]
 
     async def test_no_events_without_execution_emit(
         self, make_started_adapter, sample_platform_message, tools

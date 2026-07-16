@@ -10,9 +10,9 @@ set -euo pipefail
 # band-mcp on loopback. Its SSE transport rejects requests (HTTP 421) unless the
 # caller's Host is allow-listed; Copilot dials localhost/127.0.0.1 here.
 export ALLOWED_HOSTS='["localhost:*","127.0.0.1:*"]'
-export THENVOI_BASE_URL="${BAND_REST_URL:-https://app.band.ai}"
+export BAND_BASE_URL="${BAND_REST_URL:-https://app.band.ai}"
 
-/opt/band-mcp/bin/thenvoi-mcp --transport sse --host 127.0.0.1 --port 3000 &
+/opt/band-mcp/bin/band-mcp --transport sse --host 127.0.0.1 --port 3000 &
 MCP_PID=$!
 trap 'kill "$MCP_PID" 2>/dev/null || true' EXIT
 

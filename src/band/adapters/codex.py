@@ -47,7 +47,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
-from band.runtime.tools import SELF_REPORTING_TOOL_NAMES, is_room_posting_tool
+from band.runtime.tools import is_room_posting_tool
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -58,12 +58,8 @@ ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
 _REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
-# Shared platform set plus codex-local slash commands, which also surface
-# their outcome in the room themselves.
-_SILENT_REPORTING_TOOLS: frozenset[str] = SELF_REPORTING_TOOL_NAMES | {
-    "setmodel",
-    "setreasoning",
-}
+# Codex-local slash commands, which surface their outcome in the room themselves.
+_SILENT_REPORTING_TOOLS: frozenset[str] = frozenset({"setmodel", "setreasoning"})
 
 # Slash commands recognised by _extract_local_command().
 _LOCAL_COMMANDS: frozenset[str] = frozenset(
@@ -1316,8 +1312,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             call_id = str(params.get("callId") or "")
             tool_call_succeeded = False
 
-            # Don't emit reporting for platform tools that already produce
-            # visible output (messages/events) — reporting them is redundant.
+            # Don't emit reporting for codex-local slash commands — they already
+            # surface their outcome in the room themselves.
             should_report = (
                 Emit.EXECUTION in self.features.emit
                 and tool_name not in _SILENT_REPORTING_TOOLS
