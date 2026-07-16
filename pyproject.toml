@@ -269,6 +269,7 @@ markers = [
     "requires_api: marks tests as requiring real API credentials (skipped in CI)",
     "e2e: marks tests as end-to-end (requires live services)",
     "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
+    "docker_build: builds/runs a real Docker image via subprocess (requires a local Docker daemon; skipped unless DOCKER_TESTS_ENABLED=true, including in CI, which has Docker but shouldn't pay this cost by default)",
 ]
 
 [tool.uv]
