@@ -42,14 +42,32 @@ _SENDER_PATTERN = re.compile(r"^\[(?P<sender>[^\]]+)\]:\s*(?P<text>.*)$", re.DOT
 _MENTION_TOKEN_PATTERN = re.compile(r"@\[\[[^\]]+\]\]\s*")
 
 
+def _parse_latest_message(message: Any) -> tuple[str, str]:
+    """Split the adapter's ``"[sender]: content"`` format back into parts.
+
+    The adapter formats each platform message this way (see
+    ``PlatformMessage.format_for_llm``) before appending it to
+    ``state["messages"]``.
+    """
+    match = _SENDER_PATTERN.match(str(message.content))
+    sender = match.group("sender") if match else "there"
+    text = match.group("text") if match else str(message.content)
+    # Strip raw "@[[uuid]]" mention tokens before echoing: the echoed text
+    # isn't registered in this reply's `mentions` list, so an unresolved
+    # token would render as "@Unknown" in the chat UI.
+    text = _MENTION_TOKEN_PATTERN.sub("", text).strip()
+    return sender, text
+
+
+def _build_reply(text: str) -> str:
+    return "pong" if "ping" in text.lower() else f"You said: {text}"
+
+
 def build_no_llm_graph_factory() -> Any:
     """Build a graph_factory whose only node is deterministic Python logic.
 
-    The adapter formats each platform message as ``"[sender]: content"``
-    (see ``PlatformMessage.format_for_llm``) before appending it to
-    ``state["messages"]``. The node below parses that prefix back out to
-    know who to @mention, then calls ``band_send_message`` directly — no
-    model, no ``bind_tools``, no ``ToolNode``.
+    The single node calls ``band_send_message`` directly — no model, no
+    ``bind_tools``, no ``ToolNode``.
     """
     checkpointer = InMemorySaver()
 
@@ -57,19 +75,11 @@ def build_no_llm_graph_factory() -> Any:
         send_message = next(t for t in band_tools if t.name == "band_send_message")
 
         async def reply(state: MessagesState) -> dict[str, list[Any]]:
-            last = state["messages"][-1]
-            match = _SENDER_PATTERN.match(str(last.content))
-            sender = match.group("sender") if match else "there"
-            text = match.group("text") if match else str(last.content)
-            # Strip raw "@[[uuid]]" mention tokens before echoing: the echoed
-            # text isn't registered in this reply's `mentions` list, so an
-            # unresolved token would render as "@Unknown" in the chat UI.
-            text = _MENTION_TOKEN_PATTERN.sub("", text).strip()
-
-            reply_text = "pong" if "ping" in text.lower() else f"You said: {text}"
-            await send_message.ainvoke(
-                {"content": f"{reply_text}", "mentions": [sender]}
-            )
+            if not state["messages"]:
+                return {"messages": []}
+            sender, text = _parse_latest_message(state["messages"][-1])
+            reply_text = _build_reply(text)
+            await send_message.ainvoke({"content": reply_text, "mentions": [sender]})
             return {"messages": []}
 
         builder = StateGraph(MessagesState)
