@@ -21,10 +21,11 @@ from band.docker.launcher.config import (
     resolve_agent_id,
     resolve_endpoints,
 )
+from band.docker.launcher.bootstrap import bootstrap_repository
 from band.docker.launcher.credentials import resolve_credentials
 from band.docker.launcher.errors import LaunchError
 from band.docker.launcher.launch import ResolvedLaunch
-from band.docker.launcher.paths import resolve_paths
+from band.docker.launcher.paths import require_project_materialized, resolve_paths
 from band.docker.launcher.sync import sync_customer_environment
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,7 @@ def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
         rest_url=rest_url,
         ws_url=ws_url,
         credentials=credentials,
+        repo=config.repo,
     )
 
 
@@ -123,7 +125,11 @@ def build_child_environment(launch: ResolvedLaunch) -> dict[str, str]:
 
 
 def execute(launch: ResolvedLaunch) -> None:
-    """Side-effect phases: the locked sync and the final exec."""
+    """Side-effect phases: repository bootstrap, the locked sync, the exec."""
+    bootstrap_repository(launch)
+    # With a repo section the project only exists after bootstrap, so its
+    # existence check runs here instead of at resolve time.
+    require_project_materialized(launch.project, launch.entrypoint)
     sync_customer_environment(launch)
 
     interpreter = launch.environment_path / "bin" / "python"

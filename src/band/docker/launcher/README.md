@@ -28,10 +28,15 @@ authoring guide); the SDK imports nothing from it.
    workspace env file, after the `GUARDS` checklist in
    [`credentials.py`](credentials.py) passes. The process environment
    always wins; values are never logged.
-4. **`sync`** — `uv sync --locked` with the image's pinned uv into a
+4. **`repo`** — optionally materialize the project from Git (reuses
+   `band.docker.repo_init`: clone-or-validate under a file lock, optional
+   context indexing). The clone destination is always the fenced project
+   path — never configured separately — and must be a workspace
+   subdirectory; state/context live under the runtime state path.
+5. **`sync`** — `uv sync --locked` with the image's pinned uv into a
    sandbox-owned venv, serialized under a file lock. No lockfile, no
    launch — resolution never happens at startup.
-5. **`run`** — assemble the above into a `ResolvedLaunch`, then
+6. **`run`** — assemble the above into a `ResolvedLaunch`, then
    `os.execve` the customer entrypoint with the customer venv's
    interpreter, so signals reach customer code directly.
 
@@ -54,6 +59,7 @@ assert "credentials" in ResolvedLaunch.model_fields
 | `config.py` | `band.yaml` models (strict) + `LauncherEnv` overrides |
 | `paths.py` | path resolution and fencing rules |
 | `credentials.py` | opt-in secrets file and its guard checklist |
+| `bootstrap.py` | optional repository bootstrap via `repo_init` |
 | `sync.py` | locked dependency sync via the pinned uv |
 | `run.py` | phase assembly, child environment, exec, `main()` |
 | `launch.py` | `ResolvedLaunch` — the model the phases hand around |

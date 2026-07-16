@@ -17,10 +17,11 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.docker.launcher.errors import LaunchError
+from band.docker.repo_init import is_https_url, is_ssh_url
 
 DEFAULT_CONFIG_FILENAME = "band.yaml"
 DEFAULT_REST_URL = "https://app.band.ai"
@@ -49,6 +50,52 @@ class ProjectSection(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     path: str = "."
+
+
+class RepoSection(BaseModel):
+    """Optional repository bootstrap: the project is cloned into the fenced
+    project path before dependency sync instead of arriving with the mount."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    url: str
+    branch: str | None = None
+    index: bool = False
+
+    @field_validator("url")
+    @classmethod
+    def url_must_be_supported(cls, value: str) -> str:
+        """A structurally complete SSH/HTTPS remote with no embedded secrets.
+
+        A blank URL must not slip through: repo_init normalizes it to None
+        and would silently fall into its URL-less local-only mode. Host and
+        path must parse so a malformed remote fails here, not at git time.
+        Userinfo tokens are rejected outright — band.yaml is a committed
+        file, and repo_init logs the URL and embeds it in git error text.
+        """
+        cleaned = value.strip()
+        if not (is_ssh_url(cleaned) or is_https_url(cleaned)):
+            raise ValueError(
+                "must be an SSH (git@… / ssh://…) or https:// repository URL"
+            )
+        if cleaned.startswith("git@"):
+            host, sep, path = cleaned.removeprefix("git@").partition(":")
+            if not (host and sep and path):
+                raise ValueError("an SCP-form SSH remote must look like git@host:path")
+            return cleaned
+        parts = urlsplit(cleaned)
+        _ = parts.port  # force the lazy port parse
+        if not parts.hostname or len(parts.path) <= 1:
+            raise ValueError("must include a host and a repository path")
+        # ssh://git@host/… is the canonical SSH login user, not a secret;
+        # everything else in userinfo is a credential and never belongs in
+        # band.yaml — use the environment or the opt-in credential file.
+        if parts.password or (parts.scheme == "https" and parts.username):
+            raise ValueError(
+                "must not embed credentials; use the environment or the "
+                "opt-in credential file"
+            )
+        return cleaned
 
 
 class CredentialsSection(BaseModel):
@@ -82,6 +129,7 @@ class WorkspaceConfig(BaseModel):
     agent: AgentSection = AgentSection()
     band: BandSection = BandSection()
     project: ProjectSection = ProjectSection()
+    repo: RepoSection | None = None
     credentials: CredentialsSection | None = None
     runtime: RuntimeSection
 
@@ -138,13 +186,17 @@ def load_workspace_config(config_path: Path) -> WorkspaceConfig:
 
 
 def require_url(value: str, *, scheme: str, name: str) -> str:
-    """A structurally valid endpoint: the right scheme AND a host, so a bad
-    URL fails this phase instead of the first connect after the sync."""
+    """A structurally valid endpoint: the right scheme AND a hostname, so a
+    bad URL fails this phase instead of the first connect after the sync."""
     try:
         parts = urlsplit(value)
+        # netloc is truthy for host-less forms like "https://:443" and
+        # "wss://user@" — only hostname proves a host. Reading port forces
+        # its lazy parse so "https://host:not-a-port" fails here too.
+        hostname, _ = parts.hostname, parts.port
     except ValueError as exc:
         raise LaunchError("config", f"{name} is not a valid URL: {value!r}") from exc
-    if parts.scheme != scheme or not parts.netloc:
+    if parts.scheme != scheme or not hostname:
         raise LaunchError(
             "config", f"{name} must be a {scheme}:// URL with a host, got {value!r}"
         )

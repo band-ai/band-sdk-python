@@ -101,6 +101,17 @@ def write_credentials(workspace: Workspace, content: str, *, mode: int = 0o600) 
     return cred_path
 
 
+def enable_repo(
+    config: dict[str, Any],
+    url: str = "https://github.com/example/agent-project.git",
+    **fields: Any,
+) -> dict[str, Any]:
+    """Add a repo section and point the project at its clone subdirectory."""
+    config["repo"] = {"url": url, **fields}
+    config["project"] = {"path": "app"}
+    return config
+
+
 def enable_credentials(config: dict[str, Any]) -> dict[str, Any]:
     config["credentials"] = {
         "source": "workspace-env-file",

@@ -8,8 +8,10 @@ dropped to the non-root agent user. The flow, one module per concern:
 2. `paths`     — resolve and fence every configurable path.
 3. `credentials` — optionally fill missing keys from the opt-in workspace
    env file, with its safety checks.
-4. `sync`      — `uv sync --locked` into a sandbox-owned venv, under a lock.
-5. `run`       — assemble the above, then `os.execve` the customer
+4. `bootstrap` — optionally materialize the project from Git into the
+   fenced project path (reuses `band.docker.repo_init`).
+5. `sync`      — `uv sync --locked` into a sandbox-owned venv, under a lock.
+6. `run`       — assemble the above, then `os.execve` the customer
    entrypoint so signals reach customer code directly.
 
 `launch` holds the `ResolvedLaunch` model the phases hand to each other.
@@ -20,11 +22,13 @@ line, or diagnostic ever contains secret values.
 
 from __future__ import annotations
 
+from band.docker.launcher.bootstrap import bootstrap_repository
 from band.docker.launcher.config import (
     AGENT_HOME,
     DEFAULT_REST_URL,
     DEFAULT_WS_URL,
     LauncherEnv,
+    RepoSection,
     WorkspaceConfig,
     load_workspace_config,
 )
@@ -52,8 +56,10 @@ __all__ = [
     "DEFAULT_WS_URL",
     "LaunchError",
     "LauncherEnv",
+    "RepoSection",
     "ResolvedLaunch",
     "WorkspaceConfig",
+    "bootstrap_repository",
     "build_child_environment",
     "execute",
     "load_file_credentials",

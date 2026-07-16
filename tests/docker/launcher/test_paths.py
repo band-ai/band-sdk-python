@@ -8,7 +8,7 @@ import pytest
 
 from band.docker.launcher import LaunchError, resolve_launch
 
-from .fakes import Workspace, default_config, make_env, write_config
+from .fakes import Workspace, default_config, enable_repo, make_env, write_config
 
 
 def test_project_traversal_rejected(workspace: Workspace) -> None:
@@ -45,6 +45,34 @@ def test_entrypoint_outside_project_rejected(workspace: Workspace) -> None:
 def test_missing_entrypoint_rejected(workspace: Workspace) -> None:
     (workspace.root / "main.py").unlink()
     with pytest.raises(LaunchError, match=r"\[paths\].*entrypoint"):
+        resolve_launch(make_env(workspace))
+
+
+def test_repo_mode_defers_project_existence(workspace: Workspace) -> None:
+    """With a repo section the project materializes at bootstrap — resolve
+    must fence the paths but not require them to exist yet."""
+    write_config(workspace, enable_repo(default_config(workspace)))
+    launch = resolve_launch(make_env(workspace))
+    assert launch.project == workspace.root.resolve() / "app"
+    assert not launch.project.exists()
+
+
+def test_repo_mode_still_rejects_project_escape(workspace: Workspace) -> None:
+    """Deferring existence must not defer the containment fence."""
+    config = enable_repo(default_config(workspace))
+    config["project"]["path"] = "../outside"
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[paths\].*escapes"):
+        resolve_launch(make_env(workspace))
+
+
+def test_repo_mode_rejects_workspace_root_project(workspace: Workspace) -> None:
+    """The root holds band.yaml (non-empty, not a repo) — repo_init could
+    never clone into it, so fail with a clear error instead."""
+    config = enable_repo(default_config(workspace))
+    config["project"]["path"] = "."
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[repo\].*subdirectory"):
         resolve_launch(make_env(workspace))
 
 

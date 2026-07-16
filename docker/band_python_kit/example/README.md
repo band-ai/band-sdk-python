@@ -80,3 +80,13 @@ Workspace edits apply live (the workspace is a mount); dependency changes
 take effect at the next sandbox restart, when the launcher re-syncs the
 lock. Kit-level changes need a recreate — see the
 [kit README](../README.md#network-access).
+
+## Start from a repository
+
+Instead of shipping the project in the workspace, the launcher can clone
+it at startup: keep only `band.yaml` (and `.band/secrets.env`) at the
+workspace root, set `project.path` to a subdirectory (e.g. `app`), and
+uncomment the annotated `repo:` block in `band.yaml` with your HTTPS
+repository URL. The clone must contain the usual project shape
+(`main.py`, `pyproject.toml`, committed `uv.lock`). On restart the
+existing checkout is validated and reused, never re-cloned.

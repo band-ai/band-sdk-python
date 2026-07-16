@@ -53,22 +53,40 @@ def require_outside(
     return resolved
 
 
-def resolve_paths(
-    config: WorkspaceConfig, env: LauncherEnv, workspace: Path
-) -> ResolvedPaths:
-    """Resolve and validate project, entrypoint, and runtime paths."""
-    project = resolve_inside(
-        workspace, config.project.path, name="project path", phase="paths"
-    )
+def require_project_materialized(project: Path, entrypoint: Path) -> None:
+    """The project and entrypoint must exist on disk — at resolve time for a
+    mounted project, or right after bootstrap for a cloned one."""
     if not project.is_dir():
         raise LaunchError("paths", f"project path is not a directory: {project}")
-
-    entrypoint = resolve_inside(
-        project, config.agent.entrypoint, name="entrypoint", phase="paths"
-    )
     if not entrypoint.is_file():
         raise LaunchError(
             "paths", f"entrypoint is not a file inside the project: {entrypoint}"
+        )
+
+
+def resolve_paths(
+    config: WorkspaceConfig, env: LauncherEnv, workspace: Path
+) -> ResolvedPaths:
+    """Resolve and validate project, entrypoint, and runtime paths.
+
+    Containment fencing is pure path math and always runs here. Existence is
+    checked here only for a mounted project; with a ``repo`` section the
+    project materializes at bootstrap, and ``execute`` re-checks it then.
+    """
+    project = resolve_inside(
+        workspace, config.project.path, name="project path", phase="paths"
+    )
+    entrypoint = resolve_inside(
+        project, config.agent.entrypoint, name="entrypoint", phase="paths"
+    )
+    if config.repo is None:
+        require_project_materialized(project, entrypoint)
+    elif project == workspace.resolve():
+        # The workspace root holds band.yaml, so it is non-empty and not a
+        # repository — repo_init could never clone into it.
+        raise LaunchError(
+            "repo",
+            "project.path must be a subdirectory of the workspace when repo.url is set",
         )
 
     # `or DEFAULT_SDK_HOME`: a present-but-empty BAND_SDK_HOME must not

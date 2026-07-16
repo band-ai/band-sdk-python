@@ -83,8 +83,11 @@ user (uid 1000), and hands off to the Band launcher, which:
 2. optionally loads missing credentials from your opt-in env file,
 3. validates every path (no traversal, no symlink escapes, runtime storage
    outside the workspace and SDK venv),
-4. syncs your locked dependencies into the sandbox-owned environment, and
-5. replaces itself with your entrypoint (`os.execve`) — signals like
+4. optionally clones your project from Git into the project path (the
+   `repo:` section in `band.yaml` — see the annotated example; existing
+   checkouts are validated and reused, never re-cloned),
+5. syncs your locked dependencies into the sandbox-owned environment, and
+6. replaces itself with your entrypoint (`os.execve`) — signals like
    `sbx stop`'s SIGTERM reach your code directly (the example handles them
    with `band.runtime.shutdown.run_with_graceful_shutdown`).
 
@@ -92,7 +95,8 @@ Troubleshooting: startup output lands in `/var/log/sbx-kit-startup.log`
 inside the sandbox, launcher diagnostics under your configured
 `runtime.logPath`, and `sbx policy log <sandbox>` shows every allowed and
 blocked network request. Launch errors name their failing phase (`[config]`,
-`[credentials]`, `[paths]`, `[sync]`, ...) and never contain secret values.
+`[credentials]`, `[paths]`, `[repo]`, `[sync]`, ...) and never contain
+secret values.
 
 ## Network access
 

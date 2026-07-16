@@ -14,6 +14,18 @@ band:
 project:
   path: .
 
+# Optional: materialize the project from Git instead of shipping it in the
+# workspace. The repository is cloned into project.path at startup (before
+# dependency sync), so set project.path to a subdirectory (e.g. `app`) —
+# the workspace root holds this file. On restart an existing checkout is
+# validated and reused, never re-cloned. HTTPS URLs are the sandbox path
+# (SSH needs ~/.ssh, which sandboxes don't mount); non-GitHub hosts need
+# `sbx policy allow network`.
+# repo:
+#   url: https://github.com/your-org/your-agent-project.git
+#   branch: main    # optional
+#   index: false    # optional: write context index files under statePath
+
 # Opt-in temporary credential custody: the launcher fills credentials that
 # are missing from the environment from this gitignored, owner-only (600)
 # dotenv file — create it from secrets.env.example. The acknowledgement is

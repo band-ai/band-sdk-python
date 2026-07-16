@@ -10,6 +10,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from band.docker.launcher.config import RepoSection
+
 
 class ResolvedLaunch(BaseModel):
     """Everything the launch needs, fully resolved and validated."""
@@ -27,8 +29,9 @@ class ResolvedLaunch(BaseModel):
     agent_id: str
     rest_url: str
     ws_url: str
-    # Name -> value for credentials resolved from the opt-in file. Never
-    # logged; merged into the child environment only.
     # Canonical credential name -> value for the child environment: process
-    # environment first, the opt-in workspace file filling gaps.
+    # environment first, the opt-in workspace file filling gaps. Never logged.
     credentials: dict[str, str] = {}
+    # Optional repository bootstrap; the clone destination is always the
+    # fenced project path above, never configured separately.
+    repo: RepoSection | None = None
