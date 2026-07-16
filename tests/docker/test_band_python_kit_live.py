@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.docker.toolkit.docker_cli import BUILD_TIMEOUT_S
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent
@@ -25,10 +26,16 @@ from tests.toolkit.timeouts import backstop_timeout
 
 # tests/e2e/baseline/conftest.py auto-applies effective_timeout() to every
 # test under its own directory; this test lives in tests/docker/, outside
-# that scope, so the same backstop has to be applied explicitly here. Extra
-# margin (vs. the default 60s) covers docker build/run/exec overhead on top
-# of a normal in-process live turn.
-_LIVE_TEST_TIMEOUT = backstop_timeout(BaselineSettings().e2e_timeout, extra_s=90)
+# that scope, so the same backstop has to be applied explicitly here. This
+# test also depends on the same session-scoped image-build fixture as the
+# sibling pin test — if this file is selected alone on a machine with no
+# cached layers, that build runs under *this* test's timeout, so it needs
+# the same BUILD_TIMEOUT_S ceiling added on top of the live-turn budget
+# (not just the turn budget alone, which was the bug: a cold build could
+# get killed long before Image.build()'s own 600s allowance was reached).
+_LIVE_TEST_TIMEOUT = BUILD_TIMEOUT_S + backstop_timeout(
+    BaselineSettings().e2e_timeout, extra_s=90
+)
 
 
 @pytest.mark.docker_build

@@ -95,8 +95,13 @@ RUN chmod -R a-w ${BAND_SDK_HOME}
 # added to PATH, so it can never shadow the customer's own venv at runtime.
 ENV BAND_SDK_PYTHON=${BAND_SDK_HOME}/venv/bin/python
 
-COPY docker/band_python_kit/entrypoint.sh ${BAND_SDK_HOME}/entrypoint.sh
-RUN chmod +x ${BAND_SDK_HOME}/entrypoint.sh
+# Fixed system path, deliberately NOT under ${BAND_SDK_HOME}: ENTRYPOINT's
+# exec-form JSON array is one of the few Dockerfile instructions Docker does
+# NOT substitute ARG/ENV into, so a literal path is unavoidable here — keep
+# it independent of the configurable SDK home rather than letting a
+# --build-arg BAND_SDK_HOME override silently break container startup.
+COPY docker/band_python_kit/entrypoint.sh /usr/local/bin/band-entrypoint.sh
+RUN chmod +x /usr/local/bin/band-entrypoint.sh
 
 RUN useradd -m -u 1000 -s /bin/bash agent
 ENV HOME=/home/agent
@@ -105,5 +110,5 @@ WORKDIR /home/agent
 # Container starts as root: the entrypoint decodes the sandbox's per-session
 # proxy CA (only root can update the system trust store), then drops to the
 # non-root "agent" user via setpriv before handing off to CMD.
-ENTRYPOINT ["/opt/band/entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/band-entrypoint.sh"]
 CMD ["bash"]

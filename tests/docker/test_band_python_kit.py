@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.docker.toolkit.docker_cli import Container
+from tests.docker.toolkit.docker_cli import BUILD_TIMEOUT_S, Container
 
 SDK_PYTHON = "$BAND_SDK_PYTHON"
 
@@ -19,9 +19,9 @@ CONFLICTING_HTTPX_VERSION = "0.13.3"
 
 # The repo-wide 30s pytest-timeout default (pyproject.toml) covers fixture
 # setup too, so it bounds the session-scoped image build — well under
-# Image.build()'s own 600s subprocess timeout, on a machine with no cached
-# layers. 660 = that 600s ceiling + margin for the rest of this test's body.
-_BUILD_TEST_TIMEOUT = 660
+# Image.build()'s own BUILD_TIMEOUT_S, on a machine with no cached layers.
+# +60 margin for the rest of this test's (fast) body.
+_BUILD_TEST_TIMEOUT = BUILD_TIMEOUT_S + 60
 
 
 @pytest.mark.docker_build

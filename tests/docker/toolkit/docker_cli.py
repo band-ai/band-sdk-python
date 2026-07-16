@@ -20,6 +20,11 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BAND_PYTHON_KIT_DOCKERFILE = REPO_ROOT / "docker" / "band_python_kit" / "Dockerfile"
 
+# Image.build()'s own subprocess timeout, and the ceiling any test using it
+# needs to add into its own @pytest.mark.timeout on top of the rest of its
+# body's budget — named so the two can't drift apart again.
+BUILD_TIMEOUT_S = 600
+
 
 @dataclass(frozen=True)
 class Image:
@@ -47,7 +52,9 @@ class Image:
         for key, value in (build_args or {}).items():
             command += ["--build-arg", f"{key}={value}"]
         command.append(str(REPO_ROOT))
-        subprocess.run(command, capture_output=True, text=True, check=True, timeout=600)
+        subprocess.run(
+            command, capture_output=True, text=True, check=True, timeout=BUILD_TIMEOUT_S
+        )
         try:
             yield cls(tag)
         finally:
