@@ -12,6 +12,7 @@ import pytest
 from tests.docker.toolkit.docker_cli import BUILD_TIMEOUT_S, Container
 
 SDK_PYTHON = "$BAND_SDK_PYTHON"
+SDK_UV = "$BAND_SDK_UV"
 
 # Ancient enough to be a real, meaningful API break against the SDK venv's
 # own httpx (0.28.1 as of writing) — not just a different patch version.
@@ -22,6 +23,21 @@ CONFLICTING_HTTPX_VERSION = "0.13.3"
 # Image.build()'s own BUILD_TIMEOUT_S, on a machine with no cached layers.
 # +60 margin for the rest of this test's (fast) body.
 _BUILD_TEST_TIMEOUT = BUILD_TIMEOUT_S + 60
+
+
+@pytest.mark.docker_build
+@pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
+def test_pinned_uv_available_in_runtime_image(
+    band_python_kit_container: Container,
+) -> None:
+    """The runtime image must carry the build's pinned uv at $BAND_SDK_UV —
+    the sandbox launcher runs it for locked customer-venv sync and must never
+    download uv at runtime. Runs as the non-root agent user, the launcher's
+    actual uid after the entrypoint's privilege drop."""
+    version = band_python_kit_container.exec(f'"{SDK_UV}" --version', user="agent")
+    assert version.startswith("uv "), (
+        f"expected {SDK_UV} to run and report a version, got {version!r}"
+    )
 
 
 @pytest.mark.docker_build

@@ -89,11 +89,19 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
 # point (band-acp, band-trigger, ...) pointing at the deleted builder path.
 ENV BAND_SDK_HOME=${BAND_SDK_HOME}
 COPY --from=builder ${BAND_SDK_HOME}/venv ${BAND_SDK_HOME}/venv
+# Same digest-pinned uv as the build stage, for the sandbox launcher's locked
+# customer-venv sync (`uv sync --locked`) at runtime. Lives under the
+# read-only SDK home and stays off PATH for the same reason as
+# BAND_SDK_PYTHON: the customer's own tooling must never be shadowed.
+COPY --from=uv /uv ${BAND_SDK_HOME}/bin/uv
 RUN chmod -R a-w ${BAND_SDK_HOME}
 
 # Fixed, absolute interpreter path for launching the SDK. Deliberately not
 # added to PATH, so it can never shadow the customer's own venv at runtime.
 ENV BAND_SDK_PYTHON=${BAND_SDK_HOME}/venv/bin/python
+# Fixed, absolute path to the pinned uv binary; the launcher must use this
+# and never download or upgrade uv at runtime.
+ENV BAND_SDK_UV=${BAND_SDK_HOME}/bin/uv
 
 # Fixed system path, deliberately NOT under ${BAND_SDK_HOME}: ENTRYPOINT's
 # exec-form JSON array is one of the few Dockerfile instructions Docker does

@@ -47,6 +47,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 |---|---|
 | `$BAND_SDK_HOME` (`/opt/band`) | Root of the baked SDK install. Read-only to every user, including root, after build (`chmod -R a-w`). |
 | `$BAND_SDK_PYTHON` (`/opt/band/venv/bin/python`) | Fixed, absolute interpreter for the Band SDK. **Not on `PATH`** — the SDK venv can never shadow the customer's own venv or interpreter. Invoke the SDK only via this path. |
+| `$BAND_SDK_UV` (`/opt/band/bin/uv`) | The build's digest-pinned `uv`, for the sandbox launcher's locked customer-venv sync at runtime. **Not on `PATH`**, read-only like the rest of `$BAND_SDK_HOME`; never downloaded or upgraded at runtime. |
 | `agent` (uid 1000, `$HOME=/home/agent`) | The non-root user every process ends up running as. Matches the sandbox's `$HOME`-mounted workspace convention. |
 
 ## CA trust
