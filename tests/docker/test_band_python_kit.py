@@ -24,20 +24,18 @@ def test_conflicting_customer_pin_does_not_break_sdk_venv(
 ) -> None:
     """A conflicting dep pin in a second, customer-simulating venv must not
     affect the baked SDK venv's own transport deps or ability to import."""
-    container = band_python_kit_container
-
-    baseline_httpx = container.run_python(
+    baseline_httpx = band_python_kit_container.run_python(
         "import httpx; print(httpx.__version__)", interpreter=SDK_PYTHON
     )
     assert baseline_httpx, "expected the baked SDK venv to report an httpx version"
 
     # Simulate the customer venv INT-978's launcher creates at sandbox
     # runtime, with a deliberately ancient, conflicting httpx pin.
-    container.exec(
+    band_python_kit_container.exec(
         "python3 -m venv /tmp/customer-venv && "
         f"/tmp/customer-venv/bin/pip install --quiet 'httpx=={CONFLICTING_HTTPX_VERSION}'"
     )
-    customer_httpx = container.run_python(
+    customer_httpx = band_python_kit_container.run_python(
         "import httpx; print(httpx.__version__)",
         interpreter="/tmp/customer-venv/bin/python",
     )
@@ -48,7 +46,7 @@ def test_conflicting_customer_pin_does_not_break_sdk_venv(
 
     # The baked SDK venv must be completely unaffected: same httpx version,
     # SDK still importable.
-    sdk_httpx_after = container.run_python(
+    sdk_httpx_after = band_python_kit_container.run_python(
         "import httpx; print(httpx.__version__)", interpreter=SDK_PYTHON
     )
     assert sdk_httpx_after == baseline_httpx, (
@@ -56,7 +54,7 @@ def test_conflicting_customer_pin_does_not_break_sdk_venv(
         f"{baseline_httpx!r}, got {sdk_httpx_after!r}"
     )
 
-    band_version = container.run_python(
+    band_version = band_python_kit_container.run_python(
         "import band; print(band.__version__)", interpreter=SDK_PYTHON
     )
     assert band_version, "band must still import from the SDK venv"
