@@ -1575,9 +1575,19 @@ class ExecutionContext:
             try:
                 if self._reconnect_sync_requested:
                     self._reconnect_sync_requested = False
-                    while not await self._synchronize_with_next():
-                        self._set_state("idle")
-                        await asyncio.sleep(self.config.idle_resync_seconds)
+                    if self._stopped:
+                        # Efficiency: a stopped room's /next is guaranteed 204
+                        # (platform-authoritative gate) — skip locally instead
+                        # of making a call known to come back empty, same as
+                        # the idle-timeout and resync-sentinel paths.
+                        logger.debug(
+                            "ExecutionContext %s: stopped, skipping reconnect /next sync",
+                            self.room_id,
+                        )
+                    else:
+                        while not await self._synchronize_with_next():
+                            self._set_state("idle")
+                            await asyncio.sleep(self.config.idle_resync_seconds)
                 logger.debug("Event %s processed successfully", event.type)
             finally:
                 self._set_state("idle")

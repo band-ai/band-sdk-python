@@ -189,6 +189,10 @@ class TestStopSurvivesReconnect:
         link.mark_processing.assert_not_awaited()
         # Recovery sweep (the gate-bypassing path) was skipped locally.
         link.get_stale_processing_messages.assert_not_awaited()
+        # Efficiency: the reconnect sync must short-circuit on _stopped locally,
+        # same as the idle-timeout and resync-sentinel paths, instead of making
+        # a /next call that's guaranteed to come back empty.
+        link.get_next_message.assert_not_awaited()
 
 
 class TestGracefulDegradation:
