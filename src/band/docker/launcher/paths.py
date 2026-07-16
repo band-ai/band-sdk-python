@@ -6,10 +6,6 @@ escapes fail the launch. Sandbox-owned runtime paths (venv, state, cache,
 logs) must be absolute and live *outside* both the mounted workspace (a
 direct mount is the host directory) and the immutable SDK home.
 
-The optional repository path is deliberately not fenced here: a repo may
-legitimately live inside the workspace or in sandbox-owned storage. It gets
-``band.docker.repo_init``'s own validation (absolute path, URL scheme)
-instead, applied fail-fast in ``run.resolve_launch``.
 """
 
 from __future__ import annotations
@@ -62,19 +58,13 @@ def resolve_paths(
 ) -> ResolvedPaths:
     """Resolve and validate project, entrypoint, and runtime paths."""
     project = resolve_inside(
-        workspace,
-        env.band_kit_project_path or config.project.path,
-        name="project path",
-        phase="paths",
+        workspace, config.project.path, name="project path", phase="paths"
     )
     if not project.is_dir():
         raise LaunchError("paths", f"project path is not a directory: {project}")
 
     entrypoint = resolve_inside(
-        project,
-        env.band_kit_entrypoint_path or config.agent.entrypoint,
-        name="entrypoint",
-        phase="paths",
+        project, config.agent.entrypoint, name="entrypoint", phase="paths"
     )
     if not entrypoint.is_file():
         raise LaunchError(
@@ -86,34 +76,16 @@ def resolve_paths(
     sdk_home = Path(env.band_sdk_home or DEFAULT_SDK_HOME)
     forbidden = [(workspace, "the mounted workspace"), (sdk_home, "the SDK home")]
     runtime = {
-        field: require_outside(
-            Path(override or configured), forbidden=forbidden, name=name
-        )
-        for field, override, configured, name in (
+        field: require_outside(Path(configured), forbidden=forbidden, name=name)
+        for field, configured, name in (
             (
                 "environment_path",
-                env.band_kit_environment_path,
                 config.runtime.environment_path,
                 "runtime.environmentPath",
             ),
-            (
-                "state_path",
-                env.band_kit_state_path,
-                config.runtime.state_path,
-                "runtime.statePath",
-            ),
-            (
-                "cache_path",
-                env.band_kit_cache_path,
-                config.runtime.cache_path,
-                "runtime.cachePath",
-            ),
-            (
-                "log_path",
-                env.band_kit_log_path,
-                config.runtime.log_path,
-                "runtime.logPath",
-            ),
+            ("state_path", config.runtime.state_path, "runtime.statePath"),
+            ("cache_path", config.runtime.cache_path, "runtime.cachePath"),
+            ("log_path", config.runtime.log_path, "runtime.logPath"),
         )
     }
     return ResolvedPaths(project=project, entrypoint=entrypoint, **runtime)

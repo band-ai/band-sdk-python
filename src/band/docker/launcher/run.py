@@ -2,10 +2,9 @@
 
 `resolve_launch` performs every check that can fail fast (identity, config,
 paths, credentials) and returns a fully validated `ResolvedLaunch`.
-`execute` then does the work with side effects — optional repository
-initialization, the locked dependency sync — and finally replaces this
-process with the customer entrypoint via `os.execve`, so signals (e.g.
-SIGTERM from `sbx stop`) reach customer code directly.
+`execute` then does the side-effect work — the locked dependency sync — and
+finally replaces this process with the customer entrypoint via `os.execve`,
+so signals (e.g. SIGTERM from `sbx stop`) reach customer code directly.
 """
 
 from __future__ import annotations
@@ -28,7 +27,6 @@ from band.docker.launcher.credentials import load_file_credentials
 from band.docker.launcher.errors import LaunchError
 from band.docker.launcher.paths import resolve_paths
 from band.docker.launcher.sync import sync_customer_environment
-from band.docker.repo_init import initialize_repo, parse_repo_config
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +49,6 @@ class ResolvedLaunch(BaseModel):
     agent_id: str
     rest_url: str
     ws_url: str
-    repo_config: dict[str, object] | None = None
     # Name -> value for credentials resolved from the opt-in file. Never
     # logged; merged into the child environment only.
     file_credentials: dict[str, str] = {}
@@ -105,20 +102,6 @@ def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
     if not env.band_sdk_uv:
         raise LaunchError("sync", "BAND_SDK_UV is not set — image contract broken")
 
-    repo_config: dict[str, object] | None = None
-    if config.repo is not None:
-        repo = config.repo.model_dump()
-        if env.band_kit_repository_path:
-            repo["path"] = env.band_kit_repository_path
-        # Static repo defects (relative path, bad URL scheme) are config
-        # errors — surface them here, fail-fast, not after sync in the
-        # side-effect phase.
-        try:
-            parse_repo_config({"repo": repo})
-        except ValueError as exc:
-            raise LaunchError("config", str(exc)) from exc
-        repo_config = repo
-
     return ResolvedLaunch(
         workspace=workspace,
         **paths._asdict(),
@@ -126,7 +109,6 @@ def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
         agent_id=agent_id,
         rest_url=rest_url,
         ws_url=ws_url,
-        repo_config=repo_config,
         file_credentials=file_credentials,
     )
 
@@ -144,18 +126,7 @@ def build_child_environment(launch: ResolvedLaunch) -> dict[str, str]:
 
 
 def execute(launch: ResolvedLaunch) -> None:
-    """Side-effect phases: repo init, locked sync, and the final exec."""
-    if launch.repo_config is not None:
-        try:
-            initialize_repo(
-                {"repo": launch.repo_config},
-                agent_key=launch.agent_id,
-                state_dir=launch.state_path,
-                context_dir=launch.state_path / "context",
-            )
-        except ValueError as exc:
-            raise LaunchError("repo-init", str(exc)) from exc
-
+    """Side-effect phases: the locked sync and the final exec."""
     sync_customer_environment(launch)
 
     interpreter = launch.environment_path / "bin" / "python"

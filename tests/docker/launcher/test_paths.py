@@ -85,31 +85,3 @@ def test_relative_runtime_path_rejected(workspace: Workspace) -> None:
     write_config(workspace, config)
     with pytest.raises(LaunchError, match=r"\[paths\].*absolute"):
         resolve_launch(make_env(workspace))
-
-
-def test_project_env_override_wins(workspace: Workspace) -> None:
-    subdir = workspace.root / "svc"
-    subdir.mkdir()
-    (subdir / "main.py").write_text("print('svc')\n", encoding="utf-8")
-    (subdir / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
-    (subdir / "uv.lock").write_text("# lock\n", encoding="utf-8")
-    launch = resolve_launch(make_env(workspace, band_kit_project_path="svc"))
-    assert launch.project == subdir.resolve()
-    assert launch.entrypoint == (subdir / "main.py").resolve()
-
-
-def test_runtime_env_overrides_win(workspace: Workspace, tmp_path: Path) -> None:
-    alt = tmp_path / "alt-runtime"
-    launch = resolve_launch(
-        make_env(
-            workspace,
-            band_kit_environment_path=str(alt / "venv"),
-            band_kit_state_path=str(alt / "state"),
-            band_kit_cache_path=str(alt / "cache"),
-            band_kit_log_path=str(alt / "logs"),
-        )
-    )
-    assert launch.environment_path == alt / "venv"
-    assert launch.state_path == alt / "state"
-    assert launch.cache_path == alt / "cache"
-    assert launch.log_path == alt / "logs"

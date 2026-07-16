@@ -1,4 +1,4 @@
-"""Child environment construction, repo-init passthrough, and the final exec."""
+"""Child environment construction and the final exec."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from band.docker.launcher import (
     resolve_launch,
 )
 
-from .fakes import Workspace, default_config, make_env, write_config
+from .fakes import Workspace, make_env
 
 
 @pytest.fixture
@@ -82,77 +82,6 @@ def test_missing_customer_interpreter_rejected(
     launch = resolve_launch(make_env(workspace))
     with pytest.raises(LaunchError, match=r"\[exec\].*interpreter"):
         execute(launch)
-
-
-def test_repo_init_receives_configured_paths(
-    workspace: Workspace, monkeypatch: pytest.MonkeyPatch, no_sync: None
-) -> None:
-    config = default_config(workspace)
-    config["repo"] = {"path": str(workspace.root), "index": False}
-    write_config(workspace, config)
-    launch = resolve_launch(make_env(workspace))
-    make_customer_interpreter(launch.environment_path)
-
-    captured: dict[str, Any] = {}
-
-    def fake_initialize_repo(config: dict[str, Any], **kwargs: Any) -> None:
-        captured["config"] = config
-        captured.update(kwargs)
-
-    monkeypatch.setattr(launcher_run, "initialize_repo", fake_initialize_repo)
-    monkeypatch.setattr(os, "execve", lambda *a: None)
-    monkeypatch.setattr(os, "chdir", lambda p: None)
-
-    execute(launch)
-
-    assert captured["config"] == {
-        "repo": {
-            "path": str(workspace.root),
-            "url": None,
-            "branch": None,
-            "index": False,
-        }
-    }
-    assert captured["agent_key"] == "agent-123"
-    assert captured["state_dir"] == launch.state_path
-    assert captured["context_dir"] == launch.state_path / "context"
-
-
-def test_repo_init_failure_is_a_launch_error(
-    workspace: Workspace, monkeypatch: pytest.MonkeyPatch, no_sync: None
-) -> None:
-    config = default_config(workspace)
-    config["repo"] = {"path": "/nonexistent/repo"}
-    write_config(workspace, config)
-    launch = resolve_launch(make_env(workspace))
-
-    def failing_initialize_repo(*args: Any, **kwargs: Any) -> None:
-        raise ValueError("repo.path does not exist")
-
-    monkeypatch.setattr(launcher_run, "initialize_repo", failing_initialize_repo)
-    with pytest.raises(LaunchError, match=r"\[repo-init\].*does not exist"):
-        execute(launch)
-
-
-def test_static_repo_defect_fails_in_config_phase(workspace: Workspace) -> None:
-    """A relative repo.path is a config error at resolve time, not a
-    repo-init failure after credentials and sync checks."""
-    config = default_config(workspace)
-    config["repo"] = {"path": "relative/repo"}
-    write_config(workspace, config)
-    with pytest.raises(LaunchError, match=r"\[config\].*absolute"):
-        resolve_launch(make_env(workspace))
-
-
-def test_repository_path_env_override(workspace: Workspace) -> None:
-    config = default_config(workspace)
-    config["repo"] = {"path": str(workspace.root)}
-    write_config(workspace, config)
-    launch = resolve_launch(
-        make_env(workspace, band_kit_repository_path="/mnt/other-repo")
-    )
-    assert launch.repo_config is not None
-    assert launch.repo_config["path"] == "/mnt/other-repo"
 
 
 def test_main_exits_nonzero_on_launch_error(

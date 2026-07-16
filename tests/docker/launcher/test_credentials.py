@@ -170,18 +170,6 @@ def test_undocumented_names_rejected(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace))
 
 
-def test_credentials_path_env_override(workspace: Workspace) -> None:
-    enable(workspace)
-    alt = workspace.root / "alt.env"
-    alt.write_text("BAND_API_KEY=alt-file\n", encoding="utf-8")
-    alt.chmod(0o600)
-    (workspace.root / ".gitignore").write_text("alt.env\n", encoding="utf-8")
-    launch = resolve_launch(
-        make_env(workspace, band_api_key="", band_kit_credentials_path="alt.env")
-    )
-    assert launch.file_credentials == {"BAND_API_KEY": "alt-file"}
-
-
 def test_error_messages_never_contain_values(workspace: Workspace) -> None:
     enable(workspace)
     write_credentials(

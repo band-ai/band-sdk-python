@@ -59,7 +59,7 @@ def load_file_credentials(
             "workspace and the sandbox VM",
         )
 
-    configured = env.band_kit_credentials_path or section.path
+    configured = section.path
     cred_path = resolve_inside(
         workspace, configured, name="credentials file", phase="credentials"
     )

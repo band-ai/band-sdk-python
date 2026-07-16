@@ -49,17 +49,6 @@ class ProjectSection(BaseModel):
     path: str = "."
 
 
-class RepoSection(BaseModel):
-    """Mirrors ``band.docker.repo_init.RepoConfig``'s accepted fields."""
-
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
-
-    path: str
-    url: str | None = None
-    branch: str | None = None
-    index: bool = False
-
-
 class CredentialsSection(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -88,7 +77,6 @@ class WorkspaceConfig(BaseModel):
     agent: AgentSection = AgentSection()
     band: BandSection = BandSection()
     project: ProjectSection = ProjectSection()
-    repo: RepoSection | None = None
     credentials: CredentialsSection | None = None
     runtime: RuntimeSection
 
@@ -114,16 +102,9 @@ class LauncherEnv(BaseSettings):
     gh_token: str = ""
     github_token: str = ""
 
-    # Path overrides.
+    # The one path override: where to find band.yaml. Every other path is
+    # workspace configuration — band.yaml owns it.
     band_kit_config_path: str = ""
-    band_kit_credentials_path: str = ""
-    band_kit_project_path: str = ""
-    band_kit_entrypoint_path: str = ""
-    band_kit_repository_path: str = ""
-    band_kit_environment_path: str = ""
-    band_kit_state_path: str = ""
-    band_kit_cache_path: str = ""
-    band_kit_log_path: str = ""
 
     # Image / sandbox-runtime contract values.
     workspace_dir: str = ""

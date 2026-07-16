@@ -68,7 +68,7 @@ override the file:
 | `BAND_AGENT_ID`, `BAND_API_KEY` | agent identity / key |
 | `BAND_REST_URL`, `BAND_WS_URL` | Band endpoints (default: production) |
 | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `COPILOT_GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_TOKEN` | LLM backend credentials |
-| `BAND_KIT_*_PATH` | each configurable path (config, project, entrypoint, credentials, environment, state, cache, log, repository) |
+| `BAND_KIT_CONFIG_PATH` | where to find `band.yaml` (every other path is configured inside it) |
 
 ### Credentials
 
@@ -91,9 +91,8 @@ user (uid 1000), and hands off to the Band launcher, which:
 2. optionally loads missing credentials from your opt-in env file,
 3. validates every path (no traversal, no symlink escapes, runtime storage
    outside the workspace and SDK venv),
-4. optionally initializes a configured repository,
-5. syncs your locked dependencies into the sandbox-owned environment, and
-6. replaces itself with your entrypoint (`os.execve`) — signals like
+4. syncs your locked dependencies into the sandbox-owned environment, and
+5. replaces itself with your entrypoint (`os.execve`) — signals like
    `sbx stop`'s SIGTERM reach your code directly (the example handles them
    with `band.runtime.shutdown.run_with_graceful_shutdown`).
 
