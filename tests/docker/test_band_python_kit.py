@@ -11,8 +11,6 @@ import pytest
 
 from tests.docker.toolkit.docker_cli import Container
 
-pytestmark = pytest.mark.docker_build
-
 SDK_PYTHON = "$BAND_SDK_PYTHON"
 
 # Ancient enough to be a real, meaningful API break against the SDK venv's
@@ -20,6 +18,7 @@ SDK_PYTHON = "$BAND_SDK_PYTHON"
 CONFLICTING_HTTPX_VERSION = "0.13.3"
 
 
+@pytest.mark.docker_build
 def test_conflicting_customer_pin_does_not_break_sdk_venv(
     band_python_kit_container: Container,
 ) -> None:
