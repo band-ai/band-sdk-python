@@ -6,8 +6,8 @@ connected to Band. This image provides the immutable Band SDK layer; the
 customer's own framework lives in a separate venv created at sandbox runtime
 (not part of this image).
 
-Publishes to `ghcr.io/thenvoi/band-python-kit` (see INT-979 for the publish
-workflow). This README covers building and running the image directly.
+The publishing workflow is a separate release deliverable. This README covers
+building and running the image directly.
 
 ## Build
 

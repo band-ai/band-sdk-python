@@ -70,8 +70,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # bundle and never see certs update-ca-certificates adds at sandbox runtime.
 # git + openssh-client: band.docker.repo_init (always in the baked venv, part
 # of core band-sdk) shells out to git for clone/checkout/rev-parse and to
-# ssh-keygen for SSH host-key verification — both needed here since this
-# image is what INT-978's launcher runs repo_init from, not a later layer.
+# ssh-keygen for SSH host-key verification — both are needed in the base
+# runtime image because repo initialization runs directly inside it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \

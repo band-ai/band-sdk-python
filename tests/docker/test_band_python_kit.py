@@ -36,8 +36,8 @@ def test_conflicting_customer_pin_does_not_break_sdk_venv(
     )
     assert baseline_httpx, "expected the baked SDK venv to report an httpx version"
 
-    # Simulate the customer venv INT-978's launcher creates at sandbox
-    # runtime, with a deliberately ancient, conflicting httpx pin.
+    # Simulate the customer venv created at sandbox runtime, with a
+    # deliberately ancient, conflicting httpx pin.
     band_python_kit_container.exec(
         "python3 -m venv /tmp/customer-venv && "
         f"/tmp/customer-venv/bin/pip install --quiet 'httpx=={CONFLICTING_HTTPX_VERSION}'"
