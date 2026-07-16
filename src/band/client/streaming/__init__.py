@@ -9,6 +9,7 @@ Usage:
 from band.client.streaming.client import (
     WebSocketClient,
     WebSocketDisconnectReason,
+    DeliveryStatus,
     MessageCreatedPayload,
     RoomAddedPayload,
     RoomRemovedPayload,
@@ -30,6 +31,7 @@ __all__ = [
     "WebSocketClient",
     "WebSocketDisconnectReason",
     "WebSocketUpgradeError",
+    "DeliveryStatus",
     "MessageCreatedPayload",
     "RoomAddedPayload",
     "RoomRemovedPayload",

@@ -50,7 +50,13 @@ except ImportError:
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.claude_sdk import (
     ClaudeSDKHistoryConverter,
     ClaudeSDKSessionState,
@@ -69,6 +75,7 @@ from band.runtime.custom_tools import CustomToolDef
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
+    MCP_TOOL_PREFIX,
     MEMORY_TOOL_NAMES,
     iter_tool_definitions,
     mcp_tool_names,
@@ -177,7 +184,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     PermissionMode = Literal["default", "acceptEdits", "plan", "bypassPermissions"]
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS}
+        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -195,6 +202,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         history_converter: ClaudeSDKHistoryConverter | None = None,
         additional_tools: list[CustomToolDef] | None = None,
         cwd: str | None = None,
+        setting_sources: list[str] | None = None,
         # Chat-based approval flow (opt-in)
         approval_mode: ApprovalMode | None = None,
         approval_text_notifications: bool = True,
@@ -318,6 +326,14 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         if cwd and not Path(cwd).is_dir():
             raise ValueError(f"cwd does not exist or is not a directory: {cwd}")
         self.cwd = cwd
+        # Which host settings the CLI loads (skills/subagents/settings from
+        # ~/.claude and ./.claude). Default isolates the bridged agent so its
+        # capabilities are defined here, not by whatever config sits on the host
+        # (the source of Windows-vs-Linux tool drift). Pass e.g. ["user", "project"]
+        # to opt back into host config.
+        self.setting_sources: list[str] = (
+            list(setting_sources) if setting_sources is not None else []
+        )
 
         # Chat-based approval config
         self.approval_mode: ApprovalMode | None = approval_mode
@@ -385,6 +401,19 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             mcp_servers={"band": self._mcp_server},
             allowed_tools=self._mcp_backend.allowed_tools,
             permission_mode=self.permission_mode,
+            # Isolate the bridged agent from ambient Claude Code config (default []).
+            # Left at the SDK default, setting_sources loads the host's user + project
+            # settings (~/.claude and ./.claude): filesystem skills and subagents then
+            # surface as `Skill`/`Agent` tools, and the enlarged toolset trips
+            # ToolSearch, which withholds tool definitions (including our `mcp__band__*`
+            # tools) behind a search step — so on a CI runner with a global Claude Code
+            # install the model wandered through ToolSearch/Bash/Agent/Skill instead of
+            # calling the Band tool. Loading no host config keeps the tool set lean, so
+            # ToolSearch does not engage and the Band tools stay directly in context.
+            # Configurable via the constructor for callers who want their host config.
+            # cast: the public param is list[str]; the SDK types it as a list of the
+            # "user"/"project"/"local" literals. The CLI validates the values.
+            setting_sources=cast("Any", self.setting_sources),
         )
 
         # Add extended thinking if configured
@@ -586,10 +615,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         # Build message with context
         messages_to_send = []
 
-        # Include historical context on first message
+        # Include historical context on first message. Frame it as authoritative
+        # memory, not a passive quote: under the claude_code preset the model treats a
+        # "previous context" aside weakly, so a fact another participant stated (or that
+        # you stated) while you were offline gets missed on recall. Tell it plainly this
+        # is its own memory of the room and to answer from it.
         if is_session_bootstrap and self._session_context.get(room_id):
             messages_to_send.append(
-                f"[Previous conversation context:]\n{self._session_context[room_id]}"
+                "Your memory of this room so far — real earlier messages from you and "
+                "from other participants and agents, including ones sent while you were "
+                "offline. Treat these as facts you know and answer questions about the "
+                f"conversation directly from them:\n"
+                f"{self._session_context[room_id]}"
             )
 
         # Inject participants message if changed
@@ -682,10 +719,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                     )
 
                     elif isinstance(block, ToolUseBlock):
+                        # Bare name for the cross-adapter tool_call record (the SDK
+                        # namespaces our tools mcp__band__*; see _semantic_tool_name).
+                        tool_name = self._semantic_tool_name(block.name)
                         logger.info(
                             "Room %s: Tool call: %s with %s...",
                             room_id,
-                            block.name,
+                            tool_name,
                             str(block.input)[:100],
                         )
                         if Emit.EXECUTION in self.features.emit:
@@ -693,7 +733,7 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "name": block.name,
+                                            "name": tool_name,
                                             "args": block.input,
                                             "tool_call_id": block.id,
                                         }
@@ -758,7 +798,26 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                 room_id,
                                 e,
                             )
+                # The ResultMessage carries the turn's total usage (the SDK runs
+                # its own tool loop internally, so this is already aggregated).
+                await self.emit_usage(tools, self._usage_from_result(sdk_message))
                 break
+
+    @staticmethod
+    def _usage_from_result(sdk_message: ResultMessage) -> TurnUsage:
+        """Map a Claude SDK ``ResultMessage.usage`` (raw API dict) onto TurnUsage.
+
+        Raw per the TurnUsage convention: the Claude API's ``input_tokens``
+        excludes cached tokens (reported separately in the cache fields).
+        ``usage`` may be absent; ``from_mapping`` yields empty usage then.
+        """
+        return TurnUsage.from_mapping(
+            getattr(sdk_message, "usage", None),
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read_input_tokens",
+            cache_write="cache_creation_input_tokens",
+        )
 
     # --- Copied from BandClaudeSDKAgent._cleanup_session ---
     async def on_cleanup(self, room_id: str) -> None:
@@ -800,6 +859,18 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
     # Chat-based approval flow
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _semantic_tool_name(sdk_tool_name: str) -> str:
+        """The bare tool name for platform/user-facing records.
+
+        claude_sdk exposes band + custom tools through an in-process MCP server, so
+        the Claude Agent SDK namespaces them as ``mcp__band__<tool>``. The platform
+        ``tool_call`` event and the approval UX are cross-adapter, semantic records
+        where every other adapter uses the bare name, so strip our own server's
+        prefix (``MCP_TOOL_PREFIX``). Any external MCP server's tools stay namespaced.
+        """
+        return sdk_tool_name.removeprefix(MCP_TOOL_PREFIX)
+
     def _make_can_use_tool(self, room_id: str) -> CanUseTool:
         """Return a room-bound ``can_use_tool`` callback for the Claude SDK."""
 
@@ -808,6 +879,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
             tool_input: dict[str, Any],
             context: ToolPermissionContext,
         ) -> PermissionResultAllow | PermissionResultDeny:
+            # The SDK passes the MCP-namespaced name; use the bare name everywhere
+            # this approval surfaces to the user (summary, notifications, logs).
+            tool_name = self._semantic_tool_name(tool_name)
             summary = self._approval_summary(tool_name, tool_input)
             # Capture the sender now so it doesn't get overwritten by
             # messages arriving while we wait for a decision.

@@ -1,0 +1,23 @@
+name: "Set up E2E environment"
+description: >-
+  Shared setup for the E2E jobs: configure git for HTTPS GitHub access and
+  install uv (with cache) plus the project's Python. uv manages Python via
+  UV_PYTHON, so no separate actions/setup-python step is needed. The caller must
+  run actions/checkout first (this is a local composite action, resolved from the
+  checked-out workspace).
+
+runs:
+  using: composite
+  steps:
+    - name: Configure git to use HTTPS for GitHub
+      shell: bash
+      run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+    - name: Install uv (with cache) and Python
+      uses: astral-sh/setup-uv@v7
+      with:
+        enable-cache: true
+        cache-dependency-glob: "**/pyproject.toml"
+        # Sets UV_PYTHON so `uv sync` / `uv run` use this interpreter — replaces a
+        # separate actions/setup-python step.
+        python-version: '3.12'

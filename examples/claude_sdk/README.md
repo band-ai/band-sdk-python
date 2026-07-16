@@ -28,7 +28,7 @@ claude --version
 
 ```bash
 # Install with claude_sdk extras
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[claude_sdk]"
+uv add "git+https://github.com/band-ai/band-sdk-python.git[claude_sdk]"
 
 # Or from repository
 uv sync --extra claude_sdk
@@ -101,11 +101,13 @@ Features:
 Enable extended thinking for complex reasoning tasks:
 
 ```python
+from band.core.types import AdapterFeatures, Emit
+
 adapter = ClaudeSDKAdapter(
     model="opus",
     fallback_model="sonnet",
     max_thinking_tokens=10000,  # Enable extended thinking
-    enable_execution_reporting=True,
+    features=AdapterFeatures(emit={Emit.EXECUTION}),
 )
 ```
 

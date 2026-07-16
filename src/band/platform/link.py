@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 from band.client.rest import AsyncRestClient, DEFAULT_REQUEST_OPTIONS
 from band.client.streaming import WebSocketClient, WebSocketDisconnectReason
 from band.runtime.types import PlatformMessage
-from thenvoi_rest.core.api_error import ApiError
+from band_rest.core.api_error import ApiError
 
 from .event import (
     MessageEvent,
@@ -109,6 +109,11 @@ class BandLink:
         # the serialized _event_queue — so a control signal can act on a cycle
         # already in flight instead of queuing behind it.
         self.on_control: Callable[[AgentControlPayload], Awaitable[None]] | None = None
+
+        # Debounce flag for activity-report failures: keep-alive runs at a few
+        # seconds per room, so a down endpoint would otherwise flood the log on
+        # every refresh. Log the first failure and the recovery, suppress repeats.
+        self._activity_report_failing = False
 
     @property
     def is_connected(self) -> bool:
@@ -573,6 +578,55 @@ class BandLink:
             return False
         return True
 
+    async def report_activity(
+        self, room_id: str, working: bool, *, timeout_seconds: int = 2
+    ) -> bool:
+        """
+        Report the agent's boolean working state for a room's execution.
+
+        Sends ``working: true`` while a reasoning cycle is active (refreshed on a
+        keep-alive cadence) and ``working: false`` when it ends. Failures are
+        swallowed and returned as ``False`` — the platform's TTL is the backstop,
+        so activity reporting must never break message processing.
+
+        The call is time-bounded by ``timeout_seconds`` (a per-POST deadline, not
+        the client default) so a slow/half-open endpoint can never wedge the
+        reasoning loop's teardown or stall the keep-alive. Retries are disabled:
+        a dropped keep-alive is re-sent on the next cadence tick, and a dropped
+        ``false`` is cleared by the platform TTL, so retrying only adds latency.
+        """
+        try:
+            await self.rest.agent_api_activity.report_agent_chat_activity(
+                chat_id=room_id,
+                working=working,
+                request_options={
+                    "timeout_in_seconds": timeout_seconds,
+                    "max_retries": 0,
+                },
+            )
+        except Exception as e:
+            if not self._activity_report_failing:
+                self._activity_report_failing = True
+                logger.warning(
+                    "Failed to report activity (working=%s) for room %s: %s; "
+                    "suppressing repeat warnings until recovery",
+                    working,
+                    room_id,
+                    e,
+                )
+            else:
+                logger.debug(
+                    "Activity report still failing (working=%s) for room %s: %s",
+                    working,
+                    room_id,
+                    e,
+                )
+            return False
+        if self._activity_report_failing:
+            self._activity_report_failing = False
+            logger.info("Activity reporting recovered for room %s", room_id)
+        return True
+
     async def get_next_message(self, room_id: str) -> PlatformMessage | None:
         """
         Get the next actionable message for a room from the server.
@@ -605,7 +659,7 @@ class BandLink:
             logger.warning("Failed to get next message: %s", e)
             raise
 
-        if response.data is None:
+        if response is None or response.data is None:
             return None
 
         item = response.data

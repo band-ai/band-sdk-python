@@ -16,8 +16,8 @@ import asyncio
 import logging
 
 import pytest
-from thenvoi_rest import AsyncRestClient, ChatMessageRequest, ChatRoomRequest
-from thenvoi_rest.types import (
+from band_rest import AsyncRestClient, ChatMessageRequest, ChatRoomRequest
+from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
     ParticipantRequest,
 )

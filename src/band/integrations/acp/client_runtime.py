@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Literal, Protocol, cast
 
-from acp import spawn_agent_process, text_block
+from acp import connect_to_agent, spawn_agent_process, text_block
+from acp.exceptions import RequestError
 from acp.interfaces import Client
 
 from band.integrations.acp.client_profiles import (
@@ -20,8 +21,106 @@ from band.integrations.acp.types import CollectedChunk
 logger = logging.getLogger(__name__)
 
 ACP_STDIO_LIMIT_BYTES = 16 * 1024 * 1024
+ACP_SESSION_LOAD_TIMEOUT_SECONDS = 5.0
 PermissionHandler = Callable[..., Awaitable[dict[str, object]]]
 MCPTransportKind = Literal["http", "sse"]
+
+# ACP grants a tool-call permission by *selecting one of the options the agent
+# offered* (each carries an ``optionId`` and a ``kind``); the on-wire response is
+# ``{"outcome": {"outcome": "selected", "optionId": ...}}`` or
+# ``{"outcome": {"outcome": "cancelled"}}`` (see ``acp.schema`` AllowedOutcome /
+# DeniedOutcome). There is no ``"allowed"`` literal — emitting one makes a
+# spec-strict agent (e.g. codex-acp) fail to parse the response and abort the turn.
+_ALLOW_OPTION_KINDS = ("allow_once", "allow_always")
+
+
+def select_allow_option_id(options: object) -> str | None:
+    """The ``optionId`` of an allow option offered in a permission request, else None.
+
+    Prefers the least-privilege ``allow_once`` over ``allow_always``. Returns None
+    when the agent offered no allow option, so the caller cancels rather than
+    guessing (selecting a reject option would silently deny). Accepts the ACP
+    ``PermissionOption`` objects or plain dicts.
+    """
+    if not isinstance(options, (list, tuple)):
+        return None
+    candidates: list[tuple[object, str]] = []
+    for option in options:
+        if isinstance(option, dict):
+            kind = option.get("kind")
+            # Coalesce the camelCase (wire/JSON) and snake_case spellings on
+            # *absence*, not falsiness — an explicit (if empty) id must not fall
+            # through to the alias and get dropped.
+            option_id = option.get("optionId")
+            if option_id is None:
+                option_id = option.get("option_id")
+        else:
+            kind = getattr(option, "kind", None)
+            option_id = getattr(option, "option_id", None)
+            if option_id is None:
+                option_id = getattr(option, "optionId", None)
+        if option_id is not None:
+            candidates.append((kind, str(option_id)))
+    for preferred in _ALLOW_OPTION_KINDS:
+        for kind, option_id in candidates:
+            if kind == preferred:
+                return option_id
+    return None
+
+
+def allow_permission(option_id: str) -> dict[str, object]:
+    """An ACP ``RequestPermissionResponse`` selecting (granting) ``option_id``."""
+    return {"outcome": {"outcome": "selected", "optionId": option_id}}
+
+
+def cancel_permission() -> dict[str, object]:
+    """An ACP ``RequestPermissionResponse`` cancelling the request."""
+    return {"outcome": {"outcome": "cancelled"}}
+
+
+def tcp_spawn_process(
+    host: str,
+    port: int,
+    *,
+    limit: int = ACP_STDIO_LIMIT_BYTES,
+) -> Callable[..., AbstractAsyncContextManager[tuple[object, object]]]:
+    """Build a ``spawn_process`` callable that connects to an ACP server over TCP.
+
+    Drop-in for the stdio ``spawn_agent_process`` seam in :class:`ACPRuntime`: the
+    runtime dials *into* an already-running ACP server (e.g. ``copilot --acp --port
+    N`` in a container) instead of spawning a subprocess. The returned callable
+    accepts and ignores the subprocess-shaped args the runtime forwards (the
+    command executable/args and ``transport_kwargs``) — host/port are captured
+    here — so no core change to ``ACPRuntime.start`` is needed.
+    """
+
+    @asynccontextmanager
+    async def _connect(
+        client: Client,
+        *_command: object,
+        env: dict[str, str] | None = None,
+        transport_kwargs: dict[str, object] | None = None,
+    ) -> AsyncIterator[tuple[object, object]]:
+        del _command, env, transport_kwargs  # subprocess-only; unused for TCP
+        reader, writer = await asyncio.open_connection(host, port, limit=limit)
+        # connect_to_agent argument order is (client, input_stream=writer,
+        # output_stream=reader) and it type-guards writer: StreamWriter /
+        # reader: StreamReader. Unlike spawn_agent_process it does no cleanup,
+        # so we close the connection and transport ourselves.
+        conn = connect_to_agent(client, writer, reader)
+        try:
+            yield conn, writer
+        finally:
+            try:
+                await conn.close()
+            finally:
+                writer.close()
+                try:
+                    await writer.wait_closed()
+                except Exception:
+                    logger.debug("Error awaiting TCP writer close", exc_info=True)
+
+    return _connect
 
 
 class ACPConnectionProtocol(Protocol):
@@ -32,6 +131,14 @@ class ACPConnectionProtocol(Protocol):
     async def authenticate(self, *, method_id: str) -> object: ...
 
     async def new_session(self, *, cwd: str, mcp_servers: list[object]) -> object: ...
+
+    async def load_session(
+        self,
+        *,
+        cwd: str,
+        session_id: str,
+        mcp_servers: list[object],
+    ) -> object: ...
 
     async def prompt(self, *, session_id: str, prompt: list[object]) -> object: ...
 
@@ -108,7 +215,23 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
                     chunk = CollectedChunk(chunk_type="text", content=text)
 
         if chunk is not None:
-            self._session_chunks.setdefault(session_id, []).append(chunk)
+            self._append_chunk(session_id, chunk)
+
+    # Chunk kinds that arrive as a stream of deltas for one logical message, so a
+    # run of them is coalesced into a single chunk (agents emit one delta per token
+    # or phrase). tool_call/tool_result/plan are discrete and never merged.
+    _COALESCED_CHUNK_TYPES = ("text", "thought")
+
+    def _append_chunk(self, session_id: str, chunk: CollectedChunk) -> None:
+        buffer = self._session_chunks.setdefault(session_id, [])
+        if (
+            buffer
+            and chunk.chunk_type in self._COALESCED_CHUNK_TYPES
+            and buffer[-1].chunk_type == chunk.chunk_type
+        ):
+            buffer[-1].content += chunk.content  # merge the streamed delta
+        else:
+            buffer.append(chunk)
 
     async def request_permission(  # type: ignore[override]  # ACP Client uses specific types; we widen to object
         self,
@@ -127,7 +250,7 @@ class ACPCollectingClient(Client):  # type: ignore[misc]  # ACP Client has optio
             )
 
         logger.debug("Auto-cancelling permission request for session %s", session_id)
-        return {"outcome": {"outcome": "cancelled"}}
+        return cancel_permission()
 
     def set_permission_handler(
         self,
@@ -217,6 +340,7 @@ class ACPRuntime:
         ) = None
         self._stop_lock = asyncio.Lock()
         self._agent_mcp_transport: MCPTransportKind = "http"
+        self._agent_supports_session_load = False
 
     async def start(self, *, respawn: bool = False) -> None:
         """Spawn or respawn the ACP agent subprocess."""
@@ -230,8 +354,10 @@ class ACPRuntime:
             AbstractAsyncContextManager[tuple[ACPConnectionProtocol, object]],
             self._spawn_process(
                 self._client,
-                self._command[0],
-                *self._command[1:],
+                # Splat the whole command: stdio forwards executable + args, while
+                # a TCP transport passes an empty command (host/port live in the
+                # injected spawn_process closure) and receives no positional args.
+                *self._command,
                 env=self._env,
                 transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
             ),
@@ -241,6 +367,7 @@ class ACPRuntime:
             self._conn, _ = await ctx.__aenter__()
             init_response = await self._conn.initialize(protocol_version=1)
             self._agent_mcp_transport = self._select_mcp_transport(init_response)
+            self._agent_supports_session_load = self._select_session_load(init_response)
             if self._auth_method:
                 await self._conn.authenticate(method_id=self._auth_method)
                 logger.info("Authenticated with method: %s", self._auth_method)
@@ -250,7 +377,12 @@ class ACPRuntime:
         except Exception:
             await self._cleanup_failed_start(ctx, "init failure")
             raise
-        logger.info("Connected to ACP agent: %s", " ".join(self._command))
+        # A connect-only transport (e.g. TCP) carries no command; describe it
+        # rather than logging a blank suffix.
+        logger.info(
+            "Connected to ACP agent: %s",
+            " ".join(self._command) or "<injected transport>",
+        )
 
     async def ensure_connection(self, *, can_respawn: bool) -> ACPConnectionProtocol:
         async with self._stop_lock:
@@ -275,6 +407,47 @@ class ACPRuntime:
             await conn.new_session(cwd=cwd, mcp_servers=mcp_servers),
         )
         return session.session_id
+
+    async def load_session(
+        self,
+        *,
+        cwd: str,
+        session_id: str,
+        mcp_servers: list[object],
+    ) -> bool:
+        """Load a persisted ACP session when the connected agent supports it.
+
+        ACP session IDs are meaningful only to the agent process that owns them.
+        A successful ``session/load`` is therefore the boundary where a persisted ID
+        becomes usable on this connection. An unsupported, unavailable, or slow load
+        returns ``False`` so callers can create a fresh session without blocking a turn.
+        """
+        if not self._agent_supports_session_load:
+            return False
+
+        conn = await self.ensure_connection(can_respawn=False)
+        try:
+            response = await asyncio.wait_for(
+                conn.load_session(
+                    cwd=cwd,
+                    session_id=session_id,
+                    mcp_servers=mcp_servers,
+                ),
+                timeout=ACP_SESSION_LOAD_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "ACP session %s did not load within %s seconds",
+                session_id,
+                ACP_SESSION_LOAD_TIMEOUT_SECONDS,
+            )
+            return False
+        except RequestError as error:
+            if not self._is_missing_session_error(error):
+                raise
+            logger.info("ACP session %s is no longer available", session_id)
+            return False
+        return response is not None
 
     async def prompt(
         self, *, session_id: str, prompt_text: str
@@ -307,6 +480,7 @@ class ACPRuntime:
             self._ctx = None
             self._conn = None
             self._client = None
+            self._agent_supports_session_load = False
         if ctx is None:
             return
         try:
@@ -325,6 +499,7 @@ class ACPRuntime:
             logger.exception("Error cleaning up ACP subprocess after %s", reason)
         self._ctx = None
         self._conn = None
+        self._agent_supports_session_load = False
 
     @staticmethod
     def _select_mcp_transport(init_response: object) -> MCPTransportKind:
@@ -337,3 +512,15 @@ class ACPRuntime:
             return "sse"
 
         return "http"
+
+    @staticmethod
+    def _select_session_load(init_response: object) -> bool:
+        capabilities = getattr(init_response, "agent_capabilities", None)
+        return getattr(capabilities, "load_session", False) is True
+
+    @staticmethod
+    def _is_missing_session_error(error: RequestError) -> bool:
+        """Whether an ACP ``session/load`` failure means the session is absent."""
+        return error.code == -32002 or (
+            "session" in str(error).lower() and "not found" in str(error).lower()
+        )

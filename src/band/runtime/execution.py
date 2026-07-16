@@ -31,6 +31,7 @@ from typing import (
 )
 
 from band.client.rest import DEFAULT_REQUEST_OPTIONS
+from band.client.streaming import DeliveryStatus
 from band.platform.event import (
     MessageEvent,
     ParticipantAddedEvent,
@@ -50,6 +51,7 @@ from .types import (
 )
 from .retry_tracker import MessageRetryTracker
 from ._context_serialization import context_item_to_dict
+from .working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
     from band.platform.link import BandLink
@@ -237,6 +239,18 @@ class ExecutionContext:
         self._on_participant_removed = on_participant_removed
         self.hub_room_id = hub_room_id
 
+        # Per-room boolean working-state reporter. Disabled for the contact-hub
+        # room: it's internal housekeeping, not a peer-facing conversation, so no
+        # counterpart watches a "Reasoning…" indicator there.
+        self._working_reporter = WorkingStateReporter(
+            self._report_working_state,
+            keep_alive_seconds=self.config.working_keep_alive_seconds,
+            max_working_state_seconds=self.config.max_working_state_seconds,
+            enabled=(
+                self.config.enable_working_state and self.room_id != self.hub_room_id
+            ),
+        )
+
         # Per-room state
         self.queue: asyncio.Queue[PlatformEvent] = asyncio.Queue()
         self.state: Literal["starting", "idle", "processing"] = "starting"
@@ -339,6 +353,11 @@ class ExecutionContext:
         return self._participants.copy()
 
     @property
+    def agent_id(self) -> str | None:
+        """This agent's own ID, used to exclude itself from mention lists."""
+        return self._agent_id
+
+    @property
     def is_llm_initialized(self) -> bool:
         """Check if LLM has been initialized with system prompt."""
         return self._llm_initialized
@@ -391,11 +410,14 @@ class ExecutionContext:
 
     def _message_processed_for_agent(self, message_id: str, metadata: Any) -> bool:
         """Check whether platform metadata says this agent processed a message."""
-        if self._delivery_status_for_agent(metadata) == "processed":
+        if self._delivery_status_for_agent(metadata) == DeliveryStatus.PROCESSED:
             return True
 
         context_metadata = self._context_message_metadata(message_id)
-        return self._delivery_status_for_agent(context_metadata) == "processed"
+        return (
+            self._delivery_status_for_agent(context_metadata)
+            == DeliveryStatus.PROCESSED
+        )
 
     def _remember_processed_message(self, message_id: str) -> None:
         """Track a processed message ID in the local LRU dedupe cache."""
@@ -525,6 +547,11 @@ class ExecutionContext:
             with contextlib.suppress(asyncio.CancelledError):
                 await cycle_task
         self._active_cycle_task = None
+
+        # Defensively clear any lingering working-state keep-alive so a removed
+        # room can't leak its refresh task. Idempotent: a no-op if not active
+        # (the per-cycle finally normally clears it already).
+        await self._working_reporter.stop()
         return graceful
 
     async def _wait_for_idle(self, timeout: float) -> bool:
@@ -1011,10 +1038,15 @@ class ExecutionContext:
                     self.queue.qsize(),
                 )
                 try:
-                    event = await asyncio.wait_for(
-                        self.queue.get(),
-                        timeout=self.config.idle_resync_seconds,
-                    )
+                    # asyncio.timeout() (not wait_for): wait_for wraps the
+                    # awaitable in a child task, and on Python 3.11 cancelling
+                    # this loop while it is parked there can be lost — the cancel
+                    # is recorded but never delivered, wedging shutdown (a routine
+                    # race on the Windows Proactor loop). asyncio.timeout() arms a
+                    # timer on the current task instead, so an external cancel
+                    # propagates directly into `queue.get()`.
+                    async with asyncio.timeout(self.config.idle_resync_seconds):
+                        event = await self.queue.get()
                 except asyncio.TimeoutError:
                     if self._stopped:
                         # Efficiency: a stopped room would only get /next->204.
@@ -1365,7 +1397,10 @@ class ExecutionContext:
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
 
         try:
-            if self._delivery_status_for_agent(msg.metadata) == "processed":
+            if (
+                self._delivery_status_for_agent(msg.metadata)
+                == DeliveryStatus.PROCESSED
+            ):
                 logger.info(
                     "Skipping stale /next message %s in room %s because it is already processed",
                     msg_id,
@@ -1443,9 +1478,12 @@ class ExecutionContext:
                 ),
             )
 
-            # Call execution handler as a cancellable cycle. A control
-            # signal can abort just this turn; when it does, status is handled
-            # inside _run_cycle and we advance without sending anything.
+            # Call execution handler as a cancellable cycle (backlog messages
+            # are always reasoning cycles, so the working signal is always
+            # reported via _execute_message_cycle inside _invoke_handler). A
+            # control signal can abort just this turn; when it does, status is
+            # handled inside _run_cycle and we advance without sending
+            # anything.
             if not await self._run_cycle(event, msg_id):
                 return _BacklogProcessResult.ADVANCED
 
@@ -1511,8 +1549,39 @@ class ExecutionContext:
 
     async def _invoke_handler(self, event: PlatformEvent) -> None:
         """Coroutine wrapper around the execution handler so it can run as a
-        cancellable ``asyncio.Task`` (the handler is typed ``Awaitable``)."""
-        await self._on_execute(self, event)
+        cancellable ``asyncio.Task`` (the handler is typed ``Awaitable``).
+
+        Message-driven cycles are bracketed by the working-state signal via
+        ``_execute_message_cycle``; participant add/remove events are
+        housekeeping and skip it.
+        """
+        if isinstance(event, MessageEvent):
+            await self._execute_message_cycle(event)
+        else:
+            await self._on_execute(self, event)
+
+    async def _report_working_state(self, working: bool) -> bool:
+        """Report the room's boolean working state (wired into the reporter)."""
+        return await self.link.report_activity(
+            self.room_id,
+            working,
+            timeout_seconds=self.config.working_request_timeout_seconds,
+        )
+
+    async def _execute_message_cycle(self, event: PlatformEvent) -> None:
+        """Run the adapter for a message reasoning cycle, bracketed by the
+        working-state signal.
+
+        ``start()`` emits working:true (+ keep-alive); ``stop()`` in the finally
+        emits the authoritative working:false on success, exception, and cancel —
+        mirroring the ``_set_state('idle')`` placement. The reporter is a no-op
+        when disabled or for the hub room, so call sites need no extra gating.
+        """
+        await self._working_reporter.start()
+        try:
+            await self._on_execute(self, event)
+        finally:
+            await self._working_reporter.stop()
 
     async def _run_cycle(self, event: PlatformEvent, msg_id: str | None) -> bool:
         """Run the execution handler as a cancellable child task.
@@ -1747,9 +1816,11 @@ class ExecutionContext:
                 self.remove_participant(event.payload.id)
                 await self._notify_participant_removed(event)
 
-            # Call execution handler as a cancellable cycle. A control
-            # signal can abort just this turn; when it does, status is handled
-            # inside _run_cycle and we send nothing further.
+            # Call execution handler as a cancellable cycle. A control signal
+            # can abort just this turn; when it does, status is handled inside
+            # _run_cycle and we send nothing further. Only message-driven
+            # cycles report the working signal (see _invoke_handler);
+            # participant add/remove events are housekeeping and skip it.
             if not await self._run_cycle(event, msg_id):
                 return True
 

@@ -13,31 +13,23 @@ from typing import Any
 
 from langchain_core.tools import StructuredTool
 
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
 from band.core.types import AdapterFeatures, Capability
+from band.runtime.custom_tools import (
+    CustomToolDef,
+    execute_custom_tool,
+    get_custom_tool_name,
+)
 from band.runtime.tools import (
-    CHAT_TOOL_NAMES,
-    CONTACT_TOOL_NAMES,
-    MEMORY_TOOL_NAMES,
     format_tool_validation_error,
+    get_band_tool_category,
     get_tool_description,
     iter_tool_definitions,
 )
 
 logger = logging.getLogger(__name__)
-
-
-_TOOL_CATEGORIES: dict[str, str] = {
-    **{name: "chat" for name in CHAT_TOOL_NAMES},
-    **{name: "contacts" for name in CONTACT_TOOL_NAMES},
-    **{name: "memory" for name in MEMORY_TOOL_NAMES},
-}
-
-
-def get_langgraph_tool_category(name: str) -> str | None:
-    """Return the AdapterFeatures category for a LangGraph platform tool."""
-    return _TOOL_CATEGORIES.get(name)
 
 
 def agent_tools_to_langchain(
@@ -97,7 +89,7 @@ def agent_tools_to_langchain(
         definitions,
         features,
         get_name=lambda definition: definition.name,
-        get_category=lambda definition: get_langgraph_tool_category(definition.name),
+        get_category=lambda definition: get_band_tool_category(definition.name),
     )
 
     platform_tools: list[Any] = []
@@ -113,6 +105,8 @@ def agent_tools_to_langchain(
         ) -> Any:
             try:
                 return await tools.execute_tool_call(_tool_name, kwargs)
+            except (BandToolError, ValueError) as e:
+                return str(e)
             except Exception:
                 # Tool errors feed back into the LLM transcript and may be
                 # relayed to chat. Keep the message generic; the full
@@ -142,3 +136,56 @@ def agent_tools_to_langchain(
         )
 
     return platform_tools
+
+
+def custom_tool_defs_to_langchain(tools: list[CustomToolDef]) -> list[StructuredTool]:
+    """Convert band ``CustomToolDef`` tuples to LangChain ``StructuredTool``s.
+
+    Lets the LangGraph adapter accept the SDK's portable custom-tool form —
+    ``(InputModel, handler)`` — the same shape every other adapter takes, rather
+    than only ready-made LangChain tools. Each tuple becomes a StructuredTool whose
+    schema is the ``InputModel`` and whose body validates + runs the handler via
+    ``execute_custom_tool`` (which handles sync and async handlers alike).
+    """
+    langchain_tools: list[StructuredTool] = []
+    for input_model, handler in tools:
+        name = get_custom_tool_name(input_model)
+        description = input_model.__doc__ or f"Execute {name}"
+
+        async def execute_custom(
+            *,
+            _tool: CustomToolDef = (input_model, handler),
+            _name: str = name,
+            **kwargs: Any,
+        ) -> Any:
+            try:
+                return await execute_custom_tool(_tool, kwargs)
+            except ValueError as e:
+                # Bad-argument / validation errors feed back to the LLM to retry.
+                return str(e)
+            except Exception:
+                # Keep the message generic; the full traceback (paths, secrets)
+                # only lives in the agent log — see agent_tools_to_langchain.
+                logger.exception("Error executing custom tool %s", _name)
+                return f"Error executing {_name}: see agent logs."
+
+        def on_validation_error(error: Any, *, _name: str = name) -> str:
+            # Schema validation runs before the coroutine; feed bad args back to the
+            # LLM (to retry) via the shared formatter, so the wording matches the
+            # band-tool path (agent_tools_to_langchain) exactly.
+            return format_tool_validation_error(_name, error)
+
+        execute_custom.__name__ = f"{name}_wrapper"
+        execute_custom.__doc__ = description
+
+        langchain_tools.append(
+            StructuredTool.from_function(
+                coroutine=execute_custom,
+                name=name,
+                description=description,
+                args_schema=input_model,
+                handle_validation_error=on_validation_error,
+            )
+        )
+
+    return langchain_tools

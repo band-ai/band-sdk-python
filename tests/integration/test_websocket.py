@@ -12,9 +12,9 @@ import logging
 
 import pytest
 
-from thenvoi_rest import ChatMessageRequest, ChatRoomRequest
-from thenvoi_rest.core.api_error import ApiError
-from thenvoi_rest.types import (
+from band_rest import ChatMessageRequest, ChatRoomRequest
+from band_rest.core.api_error import ApiError
+from band_rest.types import (
     ChatMessageRequestMentionsItem as Mention,
     ParticipantRequest,
 )

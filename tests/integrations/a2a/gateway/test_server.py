@@ -15,7 +15,7 @@ from a2a.types import (
 from starlette.testclient import TestClient
 
 from band.integrations.a2a.gateway.server import GatewayServer
-from thenvoi_rest import Peer
+from band_rest import Peer
 
 
 def make_peer(peer_id: str, name: str, description: str = "") -> Peer:

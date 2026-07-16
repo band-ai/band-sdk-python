@@ -1,0 +1,342 @@
+"""Logging configuration helpers for Band SDK applications."""
+
+from __future__ import annotations
+
+import importlib.util
+import logging
+import logging.config
+import sys
+from collections.abc import Mapping, Sequence
+from typing import Any, Literal, TypeAlias
+
+from band.core.exceptions import BandConfigError
+
+LoggingStyle: TypeAlias = Literal["standard", "rich", "json"]
+LogLevel: TypeAlias = int | str
+LogStream: TypeAlias = Literal["stderr", "stdout"]
+LoggingConfig: TypeAlias = dict[str, Any]
+
+_STANDARD_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+_JSON_DEFAULT_FIELDS = ("asctime", "levelname", "name", "message")
+_JSON_RENAME_FIELDS = {
+    "asctime": "timestamp",
+    "levelname": "level",
+    "name": "logger",
+}
+
+
+def build_logging_config(
+    level: LogLevel = logging.INFO,
+    *,
+    style: LoggingStyle = "standard",
+    root_level: LogLevel = logging.WARNING,
+    stream: LogStream = "stderr",
+    datefmt: str = "%Y-%m-%d %H:%M:%S",
+    extra_loggers: Mapping[str, LogLevel] | None = None,
+    json_fields: Sequence[str] | None = None,
+    static_fields: Mapping[str, Any] | None = None,
+) -> LoggingConfig:
+    """Build a normalized ``logging.config.dictConfig`` dictionary.
+
+    The default keeps noisy dependencies at WARNING while enabling Band SDK
+    logs at INFO. Applications can inspect, modify, then apply the returned
+    dict themselves, or call :func:`configure_logging`.
+
+    Args:
+        level: Logging level for the ``band`` logger. Accepts logging constants
+            like ``logging.INFO`` or names like ``"INFO"``.
+        style: Output style: ``"standard"``, ``"rich"``, or ``"json"``.
+            ``"rich"`` and ``"json"`` require ``band-sdk[logging]``.
+        root_level: Root logger level for non-Band loggers.
+        stream: Console stream: ``"stderr"`` or ``"stdout"``.
+        datefmt: Timestamp format used by standard, Rich, and JSON output.
+        extra_loggers: Optional logger-name to level mapping, for example
+            ``{"httpx": "WARNING"}``.
+        json_fields: LogRecord field names to include in JSON output.
+        static_fields: Fixed fields added to every JSON record.
+
+    Examples:
+        ``build_logging_config()``
+        ``build_logging_config(style="json", stream="stdout")``
+        ``build_logging_config(level="DEBUG", extra_loggers={"httpx": "WARNING"})``
+    """
+    normalized_style = _normalize_style(style)
+    normalized_stream = _normalize_stream(stream)
+    band_level = _normalize_level(level, name="level")
+    normalized_root_level = _normalize_level(root_level, name="root_level")
+
+    formatter_name = "console"
+    match normalized_style:
+        case "standard":
+            handler, formatters = _build_standard_config(
+                formatter_name=formatter_name,
+                stream=normalized_stream,
+                datefmt=datefmt,
+            )
+        case "rich":
+            handler, formatters = _build_rich_config(
+                formatter_name=formatter_name,
+                stream=normalized_stream,
+                datefmt=datefmt,
+            )
+        case "json":
+            handler, formatters = _build_json_config(
+                formatter_name=formatter_name,
+                stream=normalized_stream,
+                datefmt=datefmt,
+                json_fields=json_fields,
+                static_fields=static_fields,
+            )
+        case _:
+            raise AssertionError(f"Unexpected logging style: {normalized_style!r}")
+
+    loggers = _build_logger_configs(
+        level=band_level,
+        extra_loggers=extra_loggers,
+    )
+
+    # Keep existing application loggers alive; SDK helpers should not silently
+    # disable logging configured by the host process.
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": formatters,
+        "handlers": {
+            "console": handler,
+        },
+        "root": {
+            "level": normalized_root_level,
+            "handlers": ["console"],
+        },
+        "loggers": loggers,
+    }
+
+
+def configure_logging(
+    level: LogLevel = logging.INFO,
+    *,
+    style: LoggingStyle = "standard",
+    root_level: LogLevel = logging.WARNING,
+    stream: LogStream = "stderr",
+    datefmt: str = "%Y-%m-%d %H:%M:%S",
+    extra_loggers: Mapping[str, LogLevel] | None = None,
+    json_fields: Sequence[str] | None = None,
+    static_fields: Mapping[str, Any] | None = None,
+) -> LoggingConfig:
+    """Build and apply Band's logging configuration.
+
+    Returns the applied ``dictConfig`` dictionary so callers can inspect the
+    exact configuration.
+
+    Common forms:
+        ``configure_logging()``
+        ``configure_logging(style="rich")``
+        ``configure_logging(style="json", stream="stdout")``
+        ``configure_logging(level="DEBUG", extra_loggers={"httpx": "WARNING"})``
+
+    See :func:`build_logging_config` for all supported options.
+    """
+    config = build_logging_config(
+        level,
+        style=style,
+        root_level=root_level,
+        stream=stream,
+        datefmt=datefmt,
+        extra_loggers=extra_loggers,
+        json_fields=json_fields,
+        static_fields=static_fields,
+    )
+    logging.config.dictConfig(config)
+    return config
+
+
+def _build_logger_configs(
+    *,
+    level: LogLevel,
+    extra_loggers: Mapping[str, LogLevel] | None,
+) -> dict[str, LoggingConfig]:
+    # Band logs are opt-in at INFO by default; unrelated dependencies stay at
+    # the root level unless callers explicitly list them in extra_loggers.
+    loggers: dict[str, LoggingConfig] = {
+        "band": {
+            "level": level,
+            "propagate": True,
+        }
+    }
+
+    if not extra_loggers:
+        return loggers
+
+    for logger_name, logger_level in extra_loggers.items():
+        if not logger_name:
+            raise ValueError("extra_loggers keys must be non-empty logger names")
+        loggers[logger_name] = {
+            "level": _normalize_level(
+                logger_level,
+                name=f"extra_loggers[{logger_name!r}]",
+            ),
+            "propagate": True,
+        }
+
+    return loggers
+
+
+def _build_standard_config(
+    *,
+    formatter_name: str,
+    stream: LogStream,
+    datefmt: str,
+) -> tuple[LoggingConfig, dict[str, LoggingConfig]]:
+    handler: LoggingConfig = {
+        "class": "logging.StreamHandler",
+        "formatter": formatter_name,
+        "stream": f"ext://sys.{stream}",
+    }
+    formatters = {
+        formatter_name: {
+            "format": _STANDARD_FORMAT,
+            "datefmt": datefmt,
+        }
+    }
+    return handler, formatters
+
+
+def _build_rich_config(
+    *,
+    formatter_name: str,
+    stream: LogStream,
+    datefmt: str,
+) -> tuple[LoggingConfig, dict[str, LoggingConfig]]:
+    _require_optional_package("rich", style="rich", extra="logging")
+    # Rich needs a factory because stdout/stderr and date formatting are passed
+    # through its Console/RichHandler constructors, not a plain StreamHandler.
+    handler: LoggingConfig = {
+        "()": "band.logging_config._build_rich_handler",
+        "formatter": formatter_name,
+        "stream": stream,
+        "datefmt": datefmt,
+    }
+    formatters = {
+        formatter_name: {
+            "format": "%(message)s",
+            "datefmt": datefmt,
+        }
+    }
+    return handler, formatters
+
+
+def _build_json_config(
+    *,
+    formatter_name: str,
+    stream: LogStream,
+    datefmt: str,
+    json_fields: Sequence[str] | None,
+    static_fields: Mapping[str, Any] | None,
+) -> tuple[LoggingConfig, dict[str, LoggingConfig]]:
+    # The formatter path uses the v3 submodule; check that exact import so older
+    # python-json-logger installs fail with our actionable BandConfigError.
+    _require_optional_package(
+        "pythonjsonlogger.json",
+        style="json",
+        extra="logging",
+        package_name="python-json-logger>=3.0.0",
+    )
+    fields = tuple(json_fields or _JSON_DEFAULT_FIELDS)
+    _validate_json_fields(fields)
+    handler: LoggingConfig = {
+        "class": "logging.StreamHandler",
+        "formatter": formatter_name,
+        "stream": f"ext://sys.{stream}",
+    }
+    json_formatter: LoggingConfig = {
+        "()": "pythonjsonlogger.json.JsonFormatter",
+        "format": " ".join(f"%({field})s" for field in fields),
+        "datefmt": datefmt,
+        "rename_fields": {
+            field: renamed
+            for field, renamed in _JSON_RENAME_FIELDS.items()
+            if field in fields
+        },
+    }
+    if static_fields:
+        json_formatter["static_fields"] = dict(static_fields)
+    return handler, {formatter_name: json_formatter}
+
+
+def _build_rich_handler(*, stream: LogStream, datefmt: str) -> logging.Handler:
+    from rich.console import Console
+    from rich.logging import RichHandler
+
+    # Do not let Rich default to stderr when callers requested stdout.
+    output = sys.stdout if stream == "stdout" else sys.stderr
+    return RichHandler(
+        console=Console(file=output),
+        rich_tracebacks=True,
+        markup=False,
+        show_path=False,
+        log_time_format=datefmt,
+    )
+
+
+def _normalize_style(style: str) -> LoggingStyle:
+    if not isinstance(style, str):
+        raise ValueError("style must be one of: standard, rich, json")
+    normalized = style.lower()
+    if normalized not in {"standard", "rich", "json"}:
+        raise ValueError("style must be one of: standard, rich, json")
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_stream(stream: str) -> LogStream:
+    if not isinstance(stream, str):
+        raise ValueError("stream must be one of: stderr, stdout")
+    normalized = stream.lower()
+    if normalized not in {"stderr", "stdout"}:
+        raise ValueError("stream must be one of: stderr, stdout")
+    return normalized  # type: ignore[return-value]
+
+
+def _normalize_level(level: LogLevel, *, name: str) -> LogLevel:
+    if isinstance(level, bool):
+        raise ValueError(f"{name} must be an int or logging level name")
+    if isinstance(level, int):
+        if level < 0:
+            raise ValueError(f"{name} must be a non-negative logging level")
+        return level
+    if isinstance(level, str):
+        normalized = level.upper()
+        if normalized in logging.getLevelNamesMapping():
+            return normalized
+        raise ValueError(f"{name} must be a valid logging level")
+    raise ValueError(f"{name} must be an int or logging level name")
+
+
+def _validate_json_fields(fields: Sequence[str]) -> None:
+    if not fields:
+        raise ValueError("json_fields must contain at least one field")
+    for field in fields:
+        if not field or not isinstance(field, str):
+            raise ValueError("json_fields must contain non-empty strings")
+
+
+def _require_optional_package(
+    import_name: str,
+    *,
+    style: str,
+    extra: str,
+    package_name: str | None = None,
+) -> None:
+    # find_spec imports the parent package for a dotted name, so an entirely
+    # missing dependency raises ModuleNotFoundError instead of returning None.
+    # Treat both "missing parent" and "missing submodule" as not installed.
+    try:
+        spec = importlib.util.find_spec(import_name)
+    except ModuleNotFoundError:
+        spec = None
+    if spec is not None:
+        return
+    dependency = package_name or import_name
+    raise BandConfigError(
+        f"Logging style {style!r} requires optional dependency {dependency!r}. "
+        f"Install it with: pip install 'band-sdk[{extra}]'"
+    )

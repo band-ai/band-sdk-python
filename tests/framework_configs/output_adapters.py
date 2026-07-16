@@ -14,10 +14,12 @@ __all__ = [
     "OutputAdapter",
     "BaseDictListOutputAdapter",
     "ClaudeSDKOutputAdapter",
+    "CopilotSDKOutputAdapter",
     "DictListOutputAdapter",
     "GoogleADKOutputAdapter",
     "LangChainOutputAdapter",
     "PydanticAIOutputAdapter",
+    "AgnoOutputAdapter",
     "GeminiOutputAdapter",
     "StringOutputAdapter",
     "SenderDictListAdapter",
@@ -176,6 +178,63 @@ class LangChainOutputAdapter:
         raise NotImplementedError(
             "LangChainOutputAdapter.assert_sender_metadata() is not supported. "
             "LangChain messages do not include sender metadata. "
+            "Ensure has_sender_metadata=False in the ConverterConfig."
+        )
+
+
+class AgnoOutputAdapter:
+    """Adapter for Agno converter output (list of agno Message objects)."""
+
+    def assert_result_type(self, result: list) -> None:
+        assert isinstance(result, list), f"Expected list, got {type(result).__name__}"
+
+    def result_length(self, result: list) -> int:
+        return len(result)
+
+    def get_content(self, result: list, index: int) -> str:
+        return result[index].content or ""
+
+    def get_role(self, result: list, index: int) -> str:
+        return result[index].role
+
+    def is_empty(self, result: list) -> bool:
+        return len(result) == 0
+
+    def content_contains(self, result: list, substring: str) -> bool:
+        for msg in result:
+            if msg.content and substring in str(msg.content):
+                return True
+            if getattr(msg, "tool_name", None) and substring in msg.tool_name:
+                return True
+            for tc in getattr(msg, "tool_calls", None) or []:
+                fn = tc.get("function", {})
+                if substring in fn.get("name", "") or substring in str(
+                    fn.get("arguments", "")
+                ):
+                    return True
+        return False
+
+    def assert_element_type(self, result: list, index: int, expected_role: str) -> None:
+        from agno.models.message import Message
+
+        msg = result[index]
+        assert isinstance(msg, Message), (
+            f"Expected agno Message, got {type(msg).__name__}"
+        )
+        assert msg.role == expected_role, (
+            f"Expected role {expected_role!r}, got {msg.role!r}"
+        )
+
+    def assert_sender_metadata(
+        self,
+        result: list,
+        index: int,
+        sender_name: str,
+        sender_type: str | None = None,
+    ) -> None:
+        raise NotImplementedError(
+            "AgnoOutputAdapter.assert_sender_metadata() is not supported. "
+            "Agno messages do not include sender metadata. "
             "Ensure has_sender_metadata=False in the ConverterConfig."
         )
 
@@ -551,6 +610,20 @@ class ClaudeSDKOutputAdapter(OutputAdapter):
         sender_type: str | None = None,
     ) -> None:
         self._inner.assert_sender_metadata(result.text, index, sender_name, sender_type)
+
+
+class CopilotSDKOutputAdapter(ClaudeSDKOutputAdapter):
+    """Adapter for CopilotSDK converter output (:class:`CopilotSDKSessionState`).
+
+    Same flat-string shape as ClaudeSDK — only the session-state type differs.
+    """
+
+    def assert_result_type(self, result: Any) -> None:
+        from band.converters.copilot_sdk import CopilotSDKSessionState
+
+        assert isinstance(result, CopilotSDKSessionState), (
+            f"Expected CopilotSDKSessionState, got {type(result).__name__}"
+        )
 
 
 class GoogleADKOutputAdapter(BaseDictListOutputAdapter):

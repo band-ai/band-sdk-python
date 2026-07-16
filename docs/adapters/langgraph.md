@@ -122,6 +122,8 @@ adapter = LangGraphAdapter(graph_factory=graph_factory)
 
 `llm`, `my_tools`, and `checkpointer` are your application objects. Keep `band_tools` in the graph if the graph should reply to Band rooms, add participants, create chats, or use other Band collaboration tools.
 
+`graph_factory` does not require an LLM at all: the factory only needs to return a compiled graph, so a node can be plain deterministic Python that calls a Band tool (e.g. `band_send_message.ainvoke(...)`) directly instead of routing through model tool-calling. See `examples/langgraph/11_no_llm_graph.py`.
+
 ### Static Graph
 
 Use `graph=` only for a fully self-contained compiled graph. Static graphs do not receive the generated Band tools, do not get `additional_tools` merged in by the adapter, and do not receive the adapter's generated system prompt. If a static graph needs to send room messages, build the Band tool integration into the graph yourself.
@@ -249,3 +251,6 @@ See [examples/langgraph/](../../examples/langgraph/) for runnable scripts.
 | `06_delegate_to_sql_agent.py` | Delegate database queries to a SQL expert. |
 | `07_tom_agent.py` | Run one side of the Tom/Jerry multi-agent demo. |
 | `08_jerry_agent.py` | Run the other side of the Tom/Jerry demo. |
+| `09_research_ops_orchestrator.py` | Build a multi-node operations graph with platform events and subgraph delegation. |
+| `10_memory_tool_usage.py` | Enable durable Band memory tools for a graph. |
+| `11_no_llm_graph.py` | Build a fully deterministic graph with `graph_factory` and no LLM at all. |

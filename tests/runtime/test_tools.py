@@ -19,6 +19,9 @@ from band.runtime.tools import (
     GetParticipantsInput,
     CreateChatroomInput,
     _matches_identifier,
+    append_mention_handles_hint,
+    available_mention_handles,
+    is_room_posting_tool,
 )
 
 
@@ -464,6 +467,24 @@ class TestAgentToolsSendMessage:
         assert len(message.mentions) == 1
         assert message.mentions[0].id == "user-1"
         assert message.mentions[0].handle == "@user-one"
+
+    async def test_send_message_empty_mentions_excludes_self(
+        self, mock_rest_client, participants
+    ):
+        """The empty-mentions error lists other participants but not the agent
+        itself — an agent can't @mention itself."""
+        from band.core.exceptions import BandToolError
+
+        tools = AgentTools(
+            "room-123", mock_rest_client, participants, agent_id="user-2"
+        )
+
+        with pytest.raises(BandToolError) as exc_info:
+            await tools.send_message("Hello!", mentions=[])
+
+        message = str(exc_info.value)
+        assert "@user-one" in message
+        assert "@user-two" not in message
 
     async def test_send_message_unknown_mention_raises(
         self, mock_rest_client, participants
@@ -971,6 +992,23 @@ class TestAgentToolsSchemas:
         assert "band_send_message" in tool_names
         assert "band_list_contacts" in tool_names
 
+    def test_schemas_drop_numeric_bounds(self, mock_rest_client):
+        """Pydantic Field(ge=.., le=..) renders minimum/maximum, which some
+        providers reject on integer params; the schemas must omit them while the
+        models still enforce the bounds at execution."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        schemas = tools.get_tool_schemas("openai", include_memory=True)
+
+        page_size = next(
+            s["function"]["parameters"]["properties"]["page_size"]
+            for s in schemas
+            if s["function"]["name"] == "band_lookup_peers"
+        )
+        assert "minimum" not in page_size
+        assert "maximum" not in page_size
+        assert page_size["type"] == "integer"
+
 
 class TestAgentToolsExecuteToolCall:
     """Test execute_tool_call dispatch."""
@@ -1092,8 +1130,8 @@ class TestEmptyMentionsValidation:
         with pytest.raises(BandToolError, match="@user-one"):
             await tools.send_message("Hello!", mentions=[])
 
-    async def test_uses_name_when_no_handle(self, mock_rest_client):
-        """Should fall back to participant name when handle is missing."""
+    async def test_omits_participant_without_handle(self, mock_rest_client):
+        """Should omit handle-less participants — they can't be @mentioned."""
         from band.core.exceptions import BandToolError
 
         participants = [
@@ -1101,8 +1139,16 @@ class TestEmptyMentionsValidation:
         ]
         tools = AgentTools("room-123", mock_rest_client, participants)
 
-        with pytest.raises(BandToolError, match="User One"):
+        with pytest.raises(
+            BandToolError, match="At least one mention is required"
+        ) as exc_info:
             await tools.send_message("Hello!", mentions=[])
+
+        # Name must not be offered as a mention target — only real handles are.
+        assert "User One" not in str(exc_info.value)
+        # With no mentionable handles there is nothing to suggest, so the error
+        # carries no handle list rather than an empty one.
+        assert "Available handles:" not in str(exc_info.value)
 
     async def test_no_error_when_mentions_provided(
         self, mock_rest_client, participants
@@ -1170,6 +1216,32 @@ class TestMentionResolution:
 class TestHandleMentionResolution:
     """Test handle-based mention resolution."""
 
+    def test_available_mention_handles_excludes_self_and_missing_handles(self):
+        """Available handle hints should include only mentionable room handles."""
+        participants = [
+            {"id": "user-1", "name": "User One", "handle": "@user-one"},
+            {"id": "self", "name": "Self", "handle": "@self"},
+            {"id": "user-3", "name": "No Handle", "handle": None},
+        ]
+
+        assert available_mention_handles(participants, agent_id="self") == ["@user-one"]
+
+    def test_append_mention_handles_hint_is_idempotent(self):
+        """An error already carrying the hint is returned unchanged, so the same
+        error can pass through multiple adapter enrichers without doubling."""
+        enriched = append_mention_handles_hint(
+            "At least one mention is required", ["@alice"]
+        )
+        assert enriched.count("Available handles:") == 1
+
+        twice = append_mention_handles_hint(enriched, ["@alice"])
+        assert twice == enriched
+
+    def test_append_mention_handles_hint_no_handles_is_noop(self):
+        """With no mentionable handles there is nothing to suggest."""
+        error = "At least one mention is required"
+        assert append_mention_handles_hint(error, []) == error
+
     def test_resolve_by_handle(self, mock_rest_client, participants):
         """Should resolve mentions by handle."""
         tools = AgentTools("room-123", mock_rest_client, participants)
@@ -1212,11 +1284,17 @@ class TestHandleMentionResolution:
 
     def test_resolve_unknown_handle_raises(self, mock_rest_client, participants):
         """Should raise for unknown handle."""
-        tools = AgentTools("room-123", mock_rest_client, participants)
+        tools = AgentTools(
+            "room-123", mock_rest_client, participants, agent_id="user-2"
+        )
 
         # @ prefix is stripped during normalization
-        with pytest.raises(ValueError, match="Unknown participant 'unknown'"):
+        with pytest.raises(ValueError, match="Unknown participant 'unknown'") as exc:
             tools._resolve_mentions(["@unknown"])
+
+        message = str(exc.value)
+        assert "@user-one" in message
+        assert "@user-two" not in message
 
     def test_resolve_participant_without_handle(self, mock_rest_client):
         """Should resolve by name when participant has no handle."""
@@ -1291,3 +1369,27 @@ class TestToolInputModels:
         """CreateChatroomInput should work without task_id."""
         model = CreateChatroomInput()
         assert model.task_id is None
+
+
+class TestIsRoomPostingTool:
+    """Which tool calls count as having replied in the room."""
+
+    def test_sdk_injected_tool(self):
+        assert is_room_posting_tool("band_send_message") is True
+
+    def test_standalone_band_mcp_tool(self):
+        assert is_room_posting_tool("create_agent_chat_message") is True
+
+    def test_mcp_server_prefixed_names(self):
+        """MCP clients may prefix the server name onto the tool name."""
+        assert is_room_posting_tool("band-band_send_message") is True
+        assert is_room_posting_tool("band-create_agent_chat_message") is True
+
+    def test_non_posting_tools(self):
+        assert is_room_posting_tool("band_send_event") is False
+        assert is_room_posting_tool("band_lookup_peers") is False
+        assert is_room_posting_tool("get_weather") is False
+
+    def test_no_substring_false_positive(self):
+        """Only an exact or server-prefixed match counts, not any substring."""
+        assert is_room_posting_tool("band_send_message_draft") is False

@@ -375,6 +375,62 @@ class TestOnMessage:
 
         mock_crewai_agent.kickoff_async.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_replays_history_on_followup_turn(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """A non-bootstrap turn must replay accumulated in-session history.
+
+        The SDK hydrates ``/context`` only at bootstrap; every later turn arrives
+        with ``history=[]`` and ``is_session_bootstrap=False``, so the adapter owns
+        the running conversation. Guards against re-gating the history block behind
+        ``is_session_bootstrap`` (which silently breaks in-session recall — the
+        agent would only ever see the current message).
+        """
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        # Turn 1 (bootstrap): states something the agent must recall later.
+        await adapter.on_message(
+            msg=sample_message,  # content="Hello, agent!"
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        # Turn 2 (follow-up, NOT bootstrap): a fresh message, empty SDK history.
+        followup = PlatformMessage(
+            id="msg-124",
+            room_id="room-123",
+            content="What did I say earlier?",
+            sender_id="user-456",
+            sender_type="User",
+            sender_name="Alice",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        await adapter.on_message(
+            msg=followup,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        # The second kickoff must carry the prior turn as replayed context, not
+        # just the current message.
+        second_call_messages = mock_crewai_agent.kickoff_async.call_args_list[1][0][0]
+        blob = "\n".join(m["content"] for m in second_call_messages)
+        assert "[Previous conversation:]" in blob
+        assert "Hello, agent!" in blob  # turn-1 content replayed to the model
+
 
 class TestOnCleanup:
     @pytest.mark.asyncio
@@ -536,6 +592,51 @@ class TestErrorHandling:
         adapter._crewai_agent = mock_crewai_agent
 
         # Must NOT raise — the reply already went out.
+        await adapter.on_message(
+            msg=sample_message,
+            tools=mock_tools,
+            history=[],
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        # No error event posted to the room.
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_suppresses_empty_final_answer_after_tool_only_turn(
+        self, CrewAIAdapter, sample_message, mock_tools, mock_crewai_agent
+    ):
+        """An empty final answer after a tool-only turn (no reply) is non-fatal.
+
+        When the user instructs the agent to run a tool and NOT send a message
+        (e.g. "store this memory, don't reply"), the agent does its work and has
+        nothing left to say — CrewAI then raises ValueError("Invalid response
+        from LLM call - None or empty.") on its forced final-answer step. Because
+        a tool already executed successfully this turn, that empty answer is
+        benign: no error event, no re-raise.
+        """
+        import importlib
+
+        module = importlib.import_module("band.adapters.crewai")
+
+        async def _kickoff(_messages):
+            # Simulate a non-reply tool (e.g. band_store_memory) having succeeded
+            # earlier this turn — tool_executed flips, replied does not.
+            tracker = module._reply_tracker_var.get()
+            if tracker is not None:
+                tracker.tool_executed = True
+            raise ValueError("Invalid response from LLM call - None or empty.")
+
+        mock_crewai_agent.kickoff_async = AsyncMock(side_effect=_kickoff)
+
+        adapter = CrewAIAdapter()
+        await adapter.on_started("TestBot", "Test bot")
+        adapter._crewai_agent = mock_crewai_agent
+
+        # Must NOT raise — the tool work already happened.
         await adapter.on_message(
             msg=sample_message,
             tools=mock_tools,

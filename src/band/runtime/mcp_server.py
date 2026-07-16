@@ -14,6 +14,7 @@ from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http import StreamableHTTPServerTransport
 from mcp.types import Tool
 from pydantic import BaseModel
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -28,6 +29,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.tools import (
     ToolDefinition,
+    append_available_mention_handles,
     iter_tool_definitions,
     validate_tool_arguments,
 )
@@ -91,6 +93,28 @@ def _filter_to_agent_surface(
             continue
         filtered.append(definition)
     return filtered
+
+
+def _enrich_send_message_error(
+    definition: ToolDefinition,
+    tools: AgentToolsProtocol,
+    error: ValueError | BandToolError,
+) -> ValueError | BandToolError:
+    """Return the error with available mention handles appended.
+
+    For ``band_send_message`` failures, returns a new error of the same type
+    whose message lists the handles the agent may retry with; for any other
+    tool the original error is returned unchanged.
+    """
+    if definition.name != "band_send_message":
+        return error
+
+    message = append_available_mention_handles(
+        str(error),
+        tools.participants,
+        getattr(tools, "agent_id", None),
+    )
+    return type(error)(message)
 
 
 def build_band_mcp_tool_registrations(
@@ -164,8 +188,11 @@ def _build_builtin_registration(
     method = getattr(agent_tools, definition.method_name)
 
     async def execute(arguments: dict[str, Any]) -> Any:
-        call_args = validate_tool_arguments(definition.name, input_model, arguments)
-        return await method(**call_args)
+        try:
+            call_args = validate_tool_arguments(definition.name, input_model, arguments)
+            return await method(**call_args)
+        except (ValueError, BandToolError) as error:
+            raise _enrich_send_message_error(definition, agent_tools, error) from error
 
     return MCPToolRegistration(
         name=definition.name,
@@ -187,13 +214,16 @@ def _build_resolved_builtin_registration(
         if tools is None:
             raise ValueError(f"No tools available for room {room_id}")
 
-        call_args = validate_tool_arguments(
-            definition.name,
-            input_model,
-            {key: value for key, value in arguments.items() if key != "room_id"},
-        )
-        method = getattr(tools, definition.method_name)
-        return await method(**call_args)
+        try:
+            call_args = validate_tool_arguments(
+                definition.name,
+                input_model,
+                {key: value for key, value in arguments.items() if key != "room_id"},
+            )
+            method = getattr(tools, definition.method_name)
+            return await method(**call_args)
+        except (ValueError, BandToolError) as error:
+            raise _enrich_send_message_error(definition, tools, error) from error
 
     return MCPToolRegistration(
         name=definition.name,
@@ -279,7 +309,13 @@ def _serialize_tool_result(result: Any) -> dict[str, Any]:
 
 
 class LocalMCPServer:
-    """A local localhost-only MCP server with SSE and streamable HTTP endpoints."""
+    """A local MCP server with SSE and streamable HTTP endpoints.
+
+    Binds to loopback by default. An explicit non-loopback ``host`` (e.g.
+    ``"0.0.0.0"``) is allowed for callers whose MCP client runs in a container
+    and reaches back over the docker bridge — but it exposes the agent's tools
+    to the local network, so only opt in on an isolated/trusted host.
+    """
 
     def __init__(
         self,
@@ -293,8 +329,6 @@ class LocalMCPServer:
         http_path: str = LOCAL_MCP_HTTP_PATH,
         message_path: str = LOCAL_MCP_MESSAGE_PATH,
     ) -> None:
-        if host != LOCAL_MCP_HOST:
-            raise ValueError(f"LocalMCPServer only supports host={LOCAL_MCP_HOST}")
         if port_min > port_max:
             raise ValueError("port_min must be less than or equal to port_max")
 

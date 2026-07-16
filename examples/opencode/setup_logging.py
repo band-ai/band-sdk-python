@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import logging
-import sys
+
+from band import configure_logging
 
 
 def setup_logging(level: int = logging.INFO) -> None:
     """Configure logging for examples."""
-    logging.basicConfig(
+    configure_logging(
         level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        stream=sys.stdout,
+        stream="stdout",
+        root_level=level,
+        extra_loggers={"httpx": logging.WARNING},
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)

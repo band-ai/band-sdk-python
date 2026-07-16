@@ -2,16 +2,33 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import TYPE_CHECKING, Any, TypeVar
+from enum import Enum, StrEnum
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol, HistoryConverter
 
 T = TypeVar("T")
+
+
+class MessageType(StrEnum):
+    """Canonical ``message_type`` values used across platform history and events."""
+
+    TEXT = "text"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    THOUGHT = "thought"
+    ERROR = "error"
+    TASK = "task"
+    USAGE = "usage"
+
+
+# Subset of message types accepted by ``band_send_event`` — the non-history
+# event kinds. Derived from MessageType so the taxonomy stays single-sourced.
+EventMessageType = Literal[MessageType.THOUGHT, MessageType.ERROR, MessageType.TASK]
 
 
 class Capability(str, Enum):
@@ -33,6 +50,197 @@ class Emit(str, Enum):
     EXECUTION = "execution"
     THOUGHTS = "thoughts"
     TASK_EVENTS = "task_events"
+    USAGE = "usage"
+
+
+def _as_int(value: object) -> int:
+    """Coerce a usage field to an int; anything non-int (None, missing) → 0."""
+    return value if isinstance(value, int) else 0
+
+
+@dataclass(frozen=True)
+class TurnUsage:
+    """Token usage for a single agent turn, framework-agnostic.
+
+    Each adapter maps its response object's usage fields onto these four
+    dimensions (see the per-adapter table in the cost/token plan). A turn that
+    makes several LLM calls (a tool loop) sums the per-call usage into one
+    ``TurnUsage`` via ``+`` before emitting, so the record reflects the whole
+    turn, not the last call.
+
+    Zero is a valid value for any single dimension (a framework may not report
+    it); ``is_empty`` is the "nothing was reported at all" signal that gates
+    emission — an adapter that cannot observe usage never emits, and the toolkit
+    records N-A rather than a misleading all-zero record.
+    """
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+
+    # Convention: each field is the provider's *raw* reported value — no folding.
+    # Whether cache is already counted inside ``input_tokens`` is provider-specific
+    # (Anthropic/Claude SDK report input EXCLUDING cache; OpenAI/Gemini/LangChain
+    # report input INCLUDING it; OpenCode reports cache as additive) — and a
+    # single adapter can hit multiple providers, so no cross-provider "input always
+    # includes cache" normalization is possible without per-provider logic. Treat
+    # ``cache_read_tokens`` / ``cache_write_tokens`` as informational, and use
+    # ``input_tokens + cache_read_tokens + cache_write_tokens`` as the robust
+    # measure of total prompt size. (A first-class, provider-normalized cost model
+    # is out of scope here; consumers have the raw fields.)
+
+    def __add__(self, other: TurnUsage) -> TurnUsage:
+        """Sum two per-call usages (used to aggregate across a tool loop)."""
+        return TurnUsage(
+            input_tokens=self.input_tokens + other.input_tokens,
+            output_tokens=self.output_tokens + other.output_tokens,
+            cache_read_tokens=self.cache_read_tokens + other.cache_read_tokens,
+            cache_write_tokens=self.cache_write_tokens + other.cache_write_tokens,
+        )
+
+    @property
+    def total_tokens(self) -> int:
+        """``input_tokens + output_tokens`` as raw-reported. Note this is NOT
+        cache-normalized across providers (for providers that report cache
+        separately from input it excludes cache); see the convention above."""
+        return self.input_tokens + self.output_tokens
+
+    @property
+    def is_empty(self) -> bool:
+        """True when no dimension was reported — the signal to skip emission."""
+        return not (
+            self.input_tokens
+            or self.output_tokens
+            or self.cache_read_tokens
+            or self.cache_write_tokens
+        )
+
+    def to_dict(self) -> dict[str, int]:
+        """Serialize the four token counts for the usage event's metadata."""
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+        }
+
+    @classmethod
+    def _build(
+        cls,
+        get: Callable[[str], object],
+        *,
+        input: str,
+        output: str,
+        cache_read: str | None,
+        cache_write: str | None,
+        reasoning: str | None,
+    ) -> TurnUsage:
+        """Shared core of from_object/from_mapping: read the named fields via
+        ``get`` and coerce each to a non-negative int. Values are passed through
+        raw (no cache folding) per the class convention.
+
+        ``reasoning`` is for providers that report reasoning/thinking tokens
+        *disjointly* from output (codex, opencode, whose own totals are
+        ``input + output + reasoning``): when named, it is folded into
+        ``output_tokens`` so this four-field schema stays consistent with the
+        providers that already count reasoning inside output (Anthropic thinking,
+        OpenAI completion tokens). Leave it ``None`` when output already includes
+        reasoning, to avoid double-counting."""
+        return cls(
+            input_tokens=_as_int(get(input)),
+            output_tokens=_as_int(get(output))
+            + (_as_int(get(reasoning)) if reasoning else 0),
+            cache_read_tokens=_as_int(get(cache_read)) if cache_read else 0,
+            cache_write_tokens=_as_int(get(cache_write)) if cache_write else 0,
+        )
+
+    @classmethod
+    def from_object(
+        cls,
+        src: object,
+        *,
+        input: str,
+        output: str,
+        cache_read: str | None = None,
+        cache_write: str | None = None,
+        reasoning: str | None = None,
+    ) -> TurnUsage:
+        """Build from a usage *object*, reading the named attributes.
+
+        The framework-specific attribute names are passed in; each is coerced to
+        a non-negative int (missing/non-int → 0). ``src=None`` (usage absent on
+        the response) yields an empty ``TurnUsage`` — so an adapter's mapper is a
+        one-liner over ``getattr(response, "...", None)`` with no guard of its own.
+
+        Pass ``reasoning`` only when the provider reports reasoning tokens
+        disjointly from output (see :meth:`_build`); it is folded into
+        ``output_tokens``.
+        """
+        if src is None:
+            return cls()
+        return cls._build(
+            lambda name: getattr(src, name, 0),
+            input=input,
+            output=output,
+            cache_read=cache_read,
+            cache_write=cache_write,
+            reasoning=reasoning,
+        )
+
+    @classmethod
+    def from_mapping(
+        cls,
+        data: object,
+        *,
+        input: str,
+        output: str,
+        cache_read: str | None = None,
+        cache_write: str | None = None,
+        reasoning: str | None = None,
+    ) -> TurnUsage:
+        """Build from a usage *mapping* (dict), reading the named keys.
+
+        The mapping-source twin of :meth:`from_object`; a non-mapping ``data``
+        (e.g. usage absent) yields an empty ``TurnUsage``. Pass ``reasoning`` only
+        when the provider reports reasoning tokens disjointly from output (see
+        :meth:`_build`); it is folded into ``output_tokens``.
+        """
+        if not isinstance(data, Mapping):
+            return cls()
+        return cls._build(
+            lambda name: data.get(name, 0),
+            input=input,
+            output=output,
+            cache_read=cache_read,
+            cache_write=cache_write,
+            reasoning=reasoning,
+        )
+
+
+# Usage rides an already-accepted ``task`` event's free-form metadata (the path
+# codex already proves) rather than a dedicated ``usage`` message_type: the
+# backend's message_type whitelist rejects unknown types today, so a first-class
+# ``usage`` type would need a platform change + deploy first. Emit and read both
+# key off these two constants, so when the platform gains a ``usage`` type this
+# is a one-line flip (``USAGE_EVENT_TYPE = MessageType.USAGE``) — the discriminator
+# key is what a read filters on to tell a usage-bearing task event apart from a
+# lifecycle one.
+USAGE_EVENT_TYPE: MessageType = MessageType.TASK
+USAGE_METADATA_KEY: str = "band_usage"
+
+
+def is_usage_event(metadata: object) -> bool:
+    """Whether an event's ``metadata`` marks it as a usage record (see
+    ``SimpleAdapter.emit_usage``).
+
+    Because usage currently rides ``USAGE_EVENT_TYPE`` (a ``task`` event) rather
+    than a dedicated type, every ``task``-event consumer that should NOT treat
+    usage as a lifecycle task calls this to skip it — the single source of truth
+    for "is this a usage event", so a new consumer has one guard to reuse instead
+    of re-deriving the ``band_usage`` check. It would be retired if usage ever
+    became a first-class ``usage`` message_type."""
+    return isinstance(metadata, Mapping) and USAGE_METADATA_KEY in metadata
 
 
 @dataclass(frozen=True)

@@ -99,9 +99,11 @@ adapter = AnthropicAdapter(
 Enable visibility into tool calls:
 
 ```python
+from band.core.types import AdapterFeatures, Emit
+
 adapter = AnthropicAdapter(
     model="claude-sonnet-4-5-20250929",
-    enable_execution_reporting=True,  # Shows tool calls in chat
+    features=AdapterFeatures(emit={Emit.EXECUTION}),  # Shows tool calls in chat
 )
 ```
 

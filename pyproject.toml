@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "band-sdk"
-version = "0.2.11"
+version = "1.1.0"
 description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,14 +22,20 @@ classifiers = [
 ]
 
 dependencies = [
-    "thenvoi-client-rest==0.0.7",
+    "band-client-rest==0.0.10",
     "phoenix-channels-python-client>=0.2.1",
     "python-dotenv>=1.2.2",
+    "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
     "cryptography>=46.0.5",
+    "filelock>=3.12",  # Cross-platform advisory file lock for repo init (Docker runners)
 ]
 
 [project.optional-dependencies]
+logging = [
+    "python-json-logger>=3.0.0",
+    "rich>=14.0.0",
+]
 codex = [
     "websockets>=13.0",
 ]
@@ -38,6 +44,7 @@ opencode = [
 ]
 letta = [
     "letta-client>=0.1.0",
+    "mcp>=1.25.0",
 ]
 pydantic-ai = [
     "pydantic-ai-slim[anthropic]>=1.56.0",
@@ -60,8 +67,13 @@ langgraph = [
 claude_sdk = [
     "claude-agent-sdk>=0.1.16",  # Requires Node.js 20+ and @anthropic-ai/claude-code CLI
 ]
+copilot_sdk = [
+    "github-copilot-sdk>=1.0.5",  # Bundles/downloads the Copilot CLI runtime; needs GitHub Copilot auth
+]
 parlant = [
-    "parlant>=3.0.0",
+    # Floor at 3.3.2: older versions stall the in-process server's post-preamble
+    # message generation (event-loop starvation).
+    "parlant>=3.3.2",
     "openai>=1.0.0",
     "werkzeug>=3.1.6",
 ]
@@ -126,6 +138,9 @@ agentcore_runtime = [
 google_adk = [
     "google-adk>=1.0.0,<2",
 ]
+agno = [
+    "agno>=2.6.0",
+]
 
 # dev extra includes ALL framework deps for testing EXCEPT crewai,
 # which conflicts with both parlant and pydantic-ai (see tool.uv.conflicts).
@@ -137,8 +152,9 @@ dev = [
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
+    "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
-    "thenvoi-testing-python==0.1.4",
+    "band-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
     # Include pydantic-ai for testing
     "pydantic-ai-slim>=1.56.0",
@@ -146,6 +162,8 @@ dev = [
     "anthropic>=0.75.0",
     # Include claude_sdk for testing
     "claude-agent-sdk>=0.1.16",
+    # Include copilot_sdk for testing
+    "github-copilot-sdk>=1.0.5",
     # Include langgraph for testing
     "langchain>=1.0.0",
     "langchain-core>=1.2.11",
@@ -163,8 +181,8 @@ dev = [
     "uvicorn>=0.32.0",
     # Include a2a_gateway_demo deps for testing
     "click>=8.0.0",
-    # Include parlant for testing
-    "parlant>=3.0.0",
+    # Include parlant for testing (see the parlant extra for why >=3.3.2)
+    "parlant>=3.3.2",
     "werkzeug>=3.1.6",
     # Include ACP deps for testing
     "agent-client-protocol>=0.9.0",
@@ -175,11 +193,17 @@ dev = [
     "google-genai>=1.43.0",
     # Include google-adk for testing
     "google-adk>=1.0.0,<2",
+    # Include Agno for testing
+    "agno>=2.6.0",
+    # Include letta-client for testing
+    "letta-client>=0.1.0",
     # Include bridge deps for testing
     "aiohttp>=3.9,<4",
     "python-dotenv>=1.2.2",
     # Include bridge_agentcore deps for testing
     "boto3>=1.35.0",
+    # Pretty E2E test output
+    "rich>=13.0.0",
     # Development tools
     "pre-commit>=3.0.0",
     "ruff>=0.8.0",
@@ -197,14 +221,20 @@ dev-crewai = [
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "pytest-rerunfailures>=14.0.0",
+    "tenacity>=8.0.0",
     "pytest-timeout>=2.4.0",
-    "thenvoi-testing-python==0.1.4",
+    "band-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
     "crewai==1.14.3",
     "openai>=2.0.0",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
+    # Anthropic client: the baseline E2E conftest imports it at module load and
+    # the LLM judge needs it. A thin client (pydantic <3), so no crewai conflict.
+    "anthropic>=0.75.0",
+    # Pretty E2E test output
+    "rich>=13.0.0",
     # Development tools
     "ruff>=0.8.0",
     "pyrefly>=0.18.0",
@@ -224,6 +254,7 @@ package-dir = {"" = "src"}
 include-package-data = true
 
 [tool.setuptools.package-data]
+"band" = ["py.typed"]
 "band.integrations.slack" = ["templates/*.yaml"]
 
 [tool.pytest.ini_options]
@@ -237,6 +268,7 @@ timeout = 30
 markers = [
     "requires_api: marks tests as requiring real API credentials (skipped in CI)",
     "e2e: marks tests as end-to-end (requires live services)",
+    "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
 ]
 
 [tool.uv]

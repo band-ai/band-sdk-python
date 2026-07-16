@@ -126,6 +126,10 @@ class GracefulShutdown:
         self.on_signal = on_signal
         self._shutdown_event: asyncio.Event | None = None
         self._original_handlers: dict[int, Any] = {}
+        self._loop: asyncio.AbstractEventLoop | None = None
+        # Signals registered via signal.signal() rather than
+        # loop.add_signal_handler() — the Windows fallback path.
+        self._signal_module_sigs: set[int] = set()
         self._registered = False
         self._shutting_down = (
             False  # Guard against race between signal check and task creation
@@ -145,21 +149,39 @@ class GracefulShutdown:
             return
 
         loop = asyncio.get_running_loop()
+        self._loop = loop
         self._shutdown_event = asyncio.Event()
 
-        # Register for SIGINT (Ctrl+C) and SIGTERM
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            self._original_handlers[sig] = signal.getsignal(sig)
-            loop.add_signal_handler(sig, self._handle_signal, sig)
-
-        # On Unix, also handle SIGHUP
+        # SIGINT (Ctrl+C) and SIGTERM everywhere; SIGHUP only where it exists
+        # (absent on Windows).
+        sigs = [signal.SIGINT, signal.SIGTERM]
         if hasattr(signal, "SIGHUP"):
-            sig = signal.SIGHUP
+            sigs.append(signal.SIGHUP)
+
+        for sig in sigs:
             self._original_handlers[sig] = signal.getsignal(sig)
-            loop.add_signal_handler(sig, self._handle_signal, sig)
+            try:
+                loop.add_signal_handler(sig, self._handle_signal, sig)
+            except NotImplementedError:
+                # Windows: the Proactor loop has no add_signal_handler. Fall back
+                # to signal.signal() and hop back onto the loop thread. SIGTERM on
+                # Windows only fires for os.kill(pid, SIGTERM); console close
+                # (CTRL_CLOSE_EVENT) is not delivered as a Python signal.
+                signal.signal(sig, self._handle_os_signal)
+                self._signal_module_sigs.add(sig)
 
         self._registered = True
         logger.debug("Graceful shutdown signal handlers registered")
+
+    def _handle_os_signal(self, signum: int, _frame: Any) -> None:
+        """signal.signal() handler (Windows fallback).
+
+        Runs in the main thread, so it bounces onto the event loop thread to
+        keep _handle_signal's loop interactions (create_task, Event.set) safe.
+        """
+        loop = self._loop
+        if loop is not None:
+            loop.call_soon_threadsafe(self._handle_signal, signum)
 
     def unregister_signals(self) -> None:
         """
@@ -173,12 +195,20 @@ class GracefulShutdown:
         loop = asyncio.get_running_loop()
 
         for sig in list(self._original_handlers.keys()):
-            try:
-                loop.remove_signal_handler(sig)
-            except (ValueError, NotImplementedError):
-                pass  # Signal handler was already removed or not supported
+            if sig in self._signal_module_sigs:
+                # Windows fallback: restore the original signal.signal() handler.
+                try:
+                    signal.signal(sig, self._original_handlers[sig])
+                except (ValueError, OSError, TypeError):
+                    pass
+            else:
+                try:
+                    loop.remove_signal_handler(sig)
+                except (ValueError, NotImplementedError):
+                    pass  # Signal handler was already removed or not supported
 
         self._original_handlers.clear()
+        self._signal_module_sigs.clear()
         self._registered = False
         logger.debug("Graceful shutdown signal handlers unregistered")
 

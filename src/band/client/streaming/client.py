@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from enum import StrEnum
 import logging
 import random
-from typing import Literal
+from typing import Any, Literal
 
 from phoenix_channels_python_client.client import (
     PHXChannelsClient,
@@ -48,13 +49,36 @@ class Mention(BaseModel):
     name: str | None = None
 
 
+class DeliveryStatus(StrEnum):
+    """Per-recipient delivery state for a message (the platform's authoritative,
+    LLM-independent processing signal).
+
+    Mirrors the backend's allowed values. The lifecycle for a recipient is
+    ``DELIVERED -> PROCESSING -> PROCESSED | FAILED``. ``FAILED`` is **not**
+    terminal: the platform retries failed messages (bounded by max retries), so
+    a message may cycle ``FAILED -> PROCESSING`` again before reaching
+    ``PROCESSED``. ``PROCESSED`` is the only success terminal.
+    """
+
+    DELIVERED = "delivered"
+    PROCESSING = "processing"
+    PROCESSED = "processed"
+    FAILED = "failed"
+
+
 class MessageMetadata(BaseModel):
-    """Metadata within message_created payload."""
+    """Metadata within message_created / message_updated payloads."""
 
     model_config = ConfigDict(extra="allow")
 
     mentions: list[Mention] = []
     status: str | None = None
+    # Per-recipient delivery state, populated on `message_updated` as recipients
+    # process the message. Keyed by recipient (agent) id; each value carries a
+    # ``status`` (see ``DeliveryStatus``) plus ``current_attempt`` and an
+    # ``attempts`` list. This is the same signal the runtime uses to dedup
+    # already-handled messages.
+    delivery_status: dict[str, Any] | None = None
 
 
 class MessageCreatedPayload(BaseModel):
@@ -81,7 +105,7 @@ class RoomAddedPayload(BaseModel):
     """Payload for room_added events.
 
     Required/optional fields aligned with the Fern-generated ChatRoom model
-    (thenvoi_rest.types.chat_room.ChatRoom). The WebSocket may include
+    (band_rest.types.chat_room.ChatRoom). The WebSocket may include
     additional fields which are captured by ``extra="allow"``.
     """
 
@@ -252,6 +276,9 @@ class SupersedePayload(BaseModel):
 
 _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
     "message_created": MessageCreatedPayload,
+    # `message_updated` shares the message_created shape; the delivery-state
+    # transitions live in ``metadata.delivery_status``.
+    "message_updated": MessageCreatedPayload,
     "room_added": RoomAddedPayload,
     "room_removed": RoomRemovedPayload,
     "room_deleted": RoomDeletedPayload,
@@ -472,13 +499,26 @@ class WebSocketClient:
         self,
         chat_room_id: str,
         on_message_created: Callable[[MessageCreatedPayload], Awaitable[None]],
+        on_message_updated: Callable[[MessageCreatedPayload], Awaitable[None]]
+        | None = None,
     ):
-        """Subscribe to chat room topic for message events with async callback"""
+        """Subscribe to chat room topic for message events with async callbacks.
+
+        ``on_message_updated`` is optional; when provided it receives
+        ``message_updated`` events (e.g. delivery-status transitions). Omit it to
+        ignore those events as before.
+        """
         topic = f"chat_room:{chat_room_id}"
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
+        handlers: dict[str, Callable[[MessageCreatedPayload], Awaitable[None]]] = {
+            "message_created": on_message_created
+        }
+        if on_message_updated is not None:
+            handlers["message_updated"] = on_message_updated
+
         async def message_handler(message):
-            await self._handle_events(message, {"message_created": on_message_created})
+            await self._handle_events(message, handlers)
 
         return await self._require_client().subscribe_to_topic(topic, message_handler)
 

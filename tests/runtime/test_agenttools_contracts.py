@@ -88,8 +88,8 @@ class TestBandToolErrorImport:
         with pytest.raises(BandToolError, match="At least one mention"):
             raise BandToolError(
                 "At least one mention is required. "
-                "Available participants: ['@alice']. "
-                "Please retry with mentions specifying who this message is for."
+                "Available handles: ['@alice']. "
+                "Use participant handles from the list."
             )
 
 

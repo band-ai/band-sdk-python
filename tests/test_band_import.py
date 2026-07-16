@@ -4,15 +4,30 @@ import importlib.util
 
 
 def test_band_import_surface_exposes_agent_and_link() -> None:
-    from band import Agent, BandLink
+    from band import (
+        Agent,
+        BandLink,
+        LogLevel,
+        LoggingConfig,
+        LoggingStyle,
+        LogStream,
+        build_logging_config,
+        configure_logging,
+    )
 
     assert Agent.__name__ == "Agent"
     assert BandLink.__name__ == "BandLink"
+    assert LogLevel is not None
+    assert LoggingConfig is not None
+    assert LoggingStyle is not None
+    assert LogStream is not None
+    assert build_logging_config.__name__ == "build_logging_config"
+    assert configure_logging.__name__ == "configure_logging"
 
 
 def test_legacy_root_package_is_not_available() -> None:
     # The SDK package is `band`; the bare legacy root must not ship in-tree.
-    # `thenvoi_rest` / `thenvoi_testing` are legitimate external pip
+    # `band_rest` / `thenvoi_testing` are legitimate external pip
     # dependencies (the Fern-generated REST client and test tooling), so they
     # are intentionally importable.
     legacy_root = "then" + "voi"

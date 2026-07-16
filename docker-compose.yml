@@ -22,6 +22,7 @@ services:
     command: ["uv", "run", "--extra", "langgraph", "python", "examples/langgraph/01_simple_agent.py"]
 
   langgraph-02-custom-tools:
+    profiles: ["all"]
     build:
       <<: *common-build
       target: langgraph
@@ -32,6 +33,7 @@ services:
     command: ["uv", "run", "--extra", "langgraph", "python", "examples/langgraph/02_custom_tools.py"]
 
   langgraph-03-custom-personality:
+    profiles: ["all"]
     build:
       <<: *common-build
       target: langgraph
@@ -43,6 +45,7 @@ services:
 
   # LangGraph Examples - Composition (04-06)
   langgraph-04-calculator:
+    profiles: ["all"]
     build:
       <<: *common-build
       target: langgraph
@@ -53,6 +56,7 @@ services:
     command: ["uv", "run", "--extra", "langgraph", "python", "examples/langgraph/04_calculator_as_tool.py"]
 
   langgraph-05-rag:
+    profiles: ["all"]
     build:
       <<: *common-build
       target: langgraph
@@ -63,6 +67,7 @@ services:
     command: ["uv", "run", "--extra", "langgraph", "python", "examples/langgraph/05_rag_as_tool.py"]
 
   langgraph-06-sql-agent:
+    profiles: ["all"]
     build:
       <<: *common-build
       target: langgraph
@@ -73,6 +78,7 @@ services:
     command: ["uv", "run", "--extra", "langgraph", "python", "examples/langgraph/06_delegate_to_sql_agent.py"]
 
   langgraph-09-research-ops:
+    profiles: ["all"]
     build:
       <<: *common-build
       target: langgraph
@@ -81,4 +87,3 @@ services:
     volumes:
       - ./agent_config.yaml:/app/agent_config.yaml
     command: ["uv", "run", "--extra", "langgraph", "python", "examples/langgraph/09_research_ops_orchestrator.py"]
-

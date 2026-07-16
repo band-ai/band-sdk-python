@@ -7,7 +7,7 @@
 # ]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Run Band SDK agents using the composition pattern.
@@ -502,13 +502,11 @@ async def run_codex_agent(
             codex_ws_url=codex_ws_url,
             custom_section=custom_section,
             include_base_instructions=True,
-            enable_task_events=True,
             emit_turn_task_markers=codex_turn_task_markers,
-            enable_execution_reporting=False,
-            emit_thought_events=False,
             fallback_send_agent_text=True,
             experimental_api=True,
-        )
+        ),
+        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
     )
 
     agent = Agent.create(

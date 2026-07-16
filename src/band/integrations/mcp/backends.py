@@ -9,6 +9,9 @@ from typing_extensions import TypeAliasType
 
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.mcp_server import (
+    LOCAL_MCP_HOST,
+    LOCAL_MCP_PORT_MAX,
+    LOCAL_MCP_PORT_MIN,
     LocalMCPServer,
     build_resolved_band_mcp_tool_registrations,
 )
@@ -55,8 +58,17 @@ async def create_band_mcp_backend(
     additional_tools: list[CustomToolDef] | None = None,
     get_participant_handles: Any | None = None,
     tool_result_hook: Any | None = None,
+    host: str = LOCAL_MCP_HOST,
+    port_min: int = LOCAL_MCP_PORT_MIN,
+    port_max: int = LOCAL_MCP_PORT_MAX,
 ) -> BandMCPBackend:
-    """Create a shared Band MCP backend for the requested transport."""
+    """Create a shared Band MCP backend for the requested transport.
+
+    ``host`` sets the local server's bind interface for the http/sse kinds
+    (ignored for ``sdk``); see ``LocalMCPServer`` for the non-loopback caveat.
+    ``port_min=0`` requests an OS-assigned ephemeral port — race-free and
+    never reused, for callers whose MCP client dials across a network proxy.
+    """
     resolved_tools = list(additional_tools or [])
     allowed_tools = _build_allowed_tools(tool_definitions, resolved_tools)
 
@@ -86,6 +98,9 @@ async def create_band_mcp_backend(
             additional_tools=resolved_tools,
             tool_definitions=tool_definitions,
         ),
+        host=host,
+        port_min=port_min,
+        port_max=port_max,
     )
     await local_server.start()
     return BandMCPBackend(

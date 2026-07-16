@@ -18,6 +18,7 @@ Install the extra you need::
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING
 
 # Type-only imports for static analysis (pyrefly, mypy, etc.)
@@ -36,6 +37,10 @@ if TYPE_CHECKING:
     )
     from band.converters.claude_sdk import (
         ClaudeSDKHistoryConverter as ClaudeSDKHistoryConverter,
+    )
+    from band.converters.copilot_sdk import (
+        CopilotSDKHistoryConverter as CopilotSDKHistoryConverter,
+        CopilotSDKSessionState as CopilotSDKSessionState,
     )
     from band.converters.parlant import (
         ParlantHistoryConverter as ParlantHistoryConverter,
@@ -64,6 +69,10 @@ if TYPE_CHECKING:
     from band.converters.acp_client import (
         ACPClientHistoryConverter as ACPClientHistoryConverter,
     )
+    from band.converters.agno import (
+        AgnoHistoryConverter as AgnoHistoryConverter,
+        AgnoMessages as AgnoMessages,
+    )
     from band.converters.gemini import (
         GeminiHistoryConverter as GeminiHistoryConverter,
         GeminiMessages as GeminiMessages,
@@ -84,6 +93,8 @@ __all__ = [
     "PydanticAIHistoryConverter",
     "PydanticAIMessages",
     "ClaudeSDKHistoryConverter",
+    "CopilotSDKHistoryConverter",
+    "CopilotSDKSessionState",
     "ParlantHistoryConverter",
     "ParlantMessages",
     "CrewAIHistoryConverter",
@@ -95,6 +106,8 @@ __all__ = [
     "CodexHistoryConverter",
     "ACPServerHistoryConverter",
     "ACPClientHistoryConverter",
+    "AgnoHistoryConverter",
+    "AgnoMessages",
     "GeminiHistoryConverter",
     "GeminiMessages",
     "GoogleADKHistoryConverter",
@@ -103,115 +116,42 @@ __all__ = [
 ]
 
 
+# Submodule (under band.converters) providing each lazily imported name.
+_LAZY_IMPORTS: dict[str, str] = {
+    "LangChainHistoryConverter": "langchain",
+    "LangChainMessages": "langchain",
+    "AnthropicHistoryConverter": "anthropic",
+    "AnthropicMessages": "anthropic",
+    "PydanticAIHistoryConverter": "pydantic_ai",
+    "PydanticAIMessages": "pydantic_ai",
+    "ClaudeSDKHistoryConverter": "claude_sdk",
+    "CopilotSDKHistoryConverter": "copilot_sdk",
+    "CopilotSDKSessionState": "copilot_sdk",
+    "ParlantHistoryConverter": "parlant",
+    "ParlantMessages": "parlant",
+    "CrewAIHistoryConverter": "crewai",
+    "CrewAIMessages": "crewai",
+    "CrewAIFlowStateConverter": "crewai_flow",
+    "CrewAIFlowSessionState": "crewai_flow",
+    "A2AHistoryConverter": "a2a",
+    "GatewayHistoryConverter": "a2a_gateway",
+    "CodexHistoryConverter": "codex",
+    "ACPServerHistoryConverter": "acp_server",
+    "ACPClientHistoryConverter": "acp_client",
+    "AgnoHistoryConverter": "agno",
+    "AgnoMessages": "agno",
+    "GeminiHistoryConverter": "gemini",
+    "GeminiMessages": "gemini",
+    "GoogleADKHistoryConverter": "google_adk",
+    "GoogleADKMessages": "google_adk",
+    "OpencodeHistoryConverter": "opencode",
+}
+
+
 def __getattr__(name: str) -> type:
     """Lazy import converters to avoid loading optional dependencies."""
-    if name in ("LangChainHistoryConverter", "LangChainMessages"):
-        from band.converters.langchain import (
-            LangChainHistoryConverter,
-            LangChainMessages,
-        )
-
-        if name == "LangChainHistoryConverter":
-            return LangChainHistoryConverter
-        return LangChainMessages
-
-    elif name in ("AnthropicHistoryConverter", "AnthropicMessages"):
-        from band.converters.anthropic import (
-            AnthropicHistoryConverter,
-            AnthropicMessages,
-        )
-
-        if name == "AnthropicHistoryConverter":
-            return AnthropicHistoryConverter
-        return AnthropicMessages
-
-    elif name in ("PydanticAIHistoryConverter", "PydanticAIMessages"):
-        from band.converters.pydantic_ai import (
-            PydanticAIHistoryConverter,
-            PydanticAIMessages,
-        )
-
-        if name == "PydanticAIHistoryConverter":
-            return PydanticAIHistoryConverter
-        return PydanticAIMessages
-
-    elif name == "ClaudeSDKHistoryConverter":
-        from band.converters.claude_sdk import ClaudeSDKHistoryConverter
-
-        return ClaudeSDKHistoryConverter
-
-    elif name in ("ParlantHistoryConverter", "ParlantMessages"):
-        from band.converters.parlant import (
-            ParlantHistoryConverter,
-            ParlantMessages,
-        )
-
-        if name == "ParlantHistoryConverter":
-            return ParlantHistoryConverter
-        return ParlantMessages
-
-    elif name in ("CrewAIHistoryConverter", "CrewAIMessages"):
-        from band.converters.crewai import (
-            CrewAIHistoryConverter,
-            CrewAIMessages,
-        )
-
-        if name == "CrewAIHistoryConverter":
-            return CrewAIHistoryConverter
-        return CrewAIMessages
-
-    elif name in ("CrewAIFlowStateConverter", "CrewAIFlowSessionState"):
-        from band.converters.crewai_flow import (
-            CrewAIFlowSessionState,
-            CrewAIFlowStateConverter,
-        )
-
-        if name == "CrewAIFlowStateConverter":
-            return CrewAIFlowStateConverter
-        return CrewAIFlowSessionState
-
-    elif name == "A2AHistoryConverter":
-        from band.converters.a2a import A2AHistoryConverter
-
-        return A2AHistoryConverter
-
-    elif name == "GatewayHistoryConverter":
-        from band.converters.a2a_gateway import GatewayHistoryConverter
-
-        return GatewayHistoryConverter
-    elif name == "CodexHistoryConverter":
-        from band.converters.codex import CodexHistoryConverter
-
-        return CodexHistoryConverter
-    elif name in ("GeminiHistoryConverter", "GeminiMessages"):
-        from band.converters.gemini import GeminiHistoryConverter, GeminiMessages
-
-        if name == "GeminiHistoryConverter":
-            return GeminiHistoryConverter
-        return GeminiMessages
-
-    elif name == "ACPServerHistoryConverter":
-        from band.converters.acp_server import ACPServerHistoryConverter
-
-        return ACPServerHistoryConverter
-
-    elif name == "ACPClientHistoryConverter":
-        from band.converters.acp_client import ACPClientHistoryConverter
-
-        return ACPClientHistoryConverter
-
-    elif name in ("GoogleADKHistoryConverter", "GoogleADKMessages"):
-        from band.converters.google_adk import (
-            GoogleADKHistoryConverter,
-            GoogleADKMessages,
-        )
-
-        if name == "GoogleADKHistoryConverter":
-            return GoogleADKHistoryConverter
-        return GoogleADKMessages
-    elif name == "OpencodeHistoryConverter":
-        from band.converters.opencode import OpencodeHistoryConverter
-
-        return OpencodeHistoryConverter
-
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name = _LAZY_IMPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(f".{module_name}", __name__)
+    return getattr(module, name)

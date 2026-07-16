@@ -402,17 +402,25 @@ class TestCodexAdapter:
     async def test_fallback_text_not_suppressed_when_send_message_tool_fails(
         self,
     ) -> None:
-        """Fallback agent text should still be delivered when send_message fails."""
+        """Fallback agent text should still be delivered when send_message fails.
+
+        The failure is a non-raising ok=False (bad args / API error) — the case the
+        plain execute_tool_call would misread as success and wrongly suppress.
+        """
+        from band.runtime.tools import ToolCallOutcome
 
         class SendMessageFailureTools(ToolSchemaFakeTools):
-            async def execute_tool_call(
+            async def execute_tool_call_structured(
                 self, tool_name: str, arguments: dict[str, Any]
-            ) -> Any:
-                call = {"tool_name": tool_name, "arguments": arguments}
-                self.tool_calls.append(call)
+            ) -> ToolCallOutcome:
+                self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
                 if tool_name == "band_send_message":
-                    raise RuntimeError("send failed")
-                return {"status": "ok"}
+                    return ToolCallOutcome(
+                        value="Error executing band_send_message: send failed",
+                        ok=False,
+                        error_message="send failed",
+                    )
+                return await super().execute_tool_call_structured(tool_name, arguments)
 
         events = [
             _event_request(
@@ -3492,26 +3500,23 @@ class TestHistoryInjection:
 
     @pytest.mark.asyncio
     async def test_tool_call_validation_error_returns_friendly_message(self) -> None:
-        """A ValidationError during tool dispatch returns a user-friendly error."""
-        from pydantic import ValidationError as PydanticValidationError
+        """A base-tool arg-validation failure returns a user-friendly error.
+
+        AgentTools catches base-tool validation INSIDE execute_tool_call_structured and
+        returns ok=False with a friendly message (it does not raise), so the adapter
+        surfaces it via the ok=False path.
+        """
+        from band.runtime.tools import ToolCallOutcome
 
         class ValidationErrorTools(ToolSchemaFakeTools):
-            async def execute_tool_call(
+            async def execute_tool_call_structured(
                 self, tool_name: str, arguments: dict[str, Any]
-            ) -> Any:
-                call = {"tool_name": tool_name, "arguments": arguments}
-                self.tool_calls.append(call)
-                # Trigger a real Pydantic ValidationError
-                raise PydanticValidationError.from_exception_data(
-                    "band_send_message",
-                    [
-                        {
-                            "type": "missing",
-                            "loc": ("content",),
-                            "msg": "Field required",
-                            "input": arguments,
-                        }
-                    ],
+            ) -> ToolCallOutcome:
+                self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
+                return ToolCallOutcome(
+                    value="Invalid arguments for band_send_message: content: Field required",
+                    ok=False,
+                    error_message="content: Field required",
                 )
 
         events = [
@@ -4942,6 +4947,39 @@ class TestCodexTypes:
         meta = usage.to_metadata()
         assert meta["codex_input_tokens"] == 1000
         assert "1,700" in usage.format_summary()
+
+    def test_codex_token_usage_update_current_schema(self) -> None:
+        """The current app-server schema nests cumulative counters under
+        ``tokenUsage.total`` and names reasoning ``reasoningOutputTokens``."""
+        from band.integrations.codex.types import CodexTokenUsage
+
+        usage = CodexTokenUsage()
+        usage.update(
+            {
+                "threadId": "t-1",
+                "turnId": "turn-1",
+                "tokenUsage": {
+                    "total": {
+                        "totalTokens": 14822,
+                        "inputTokens": 14725,
+                        "cachedInputTokens": 2432,
+                        "outputTokens": 97,
+                        "reasoningOutputTokens": 59,
+                    },
+                    "last": {
+                        "totalTokens": 14822,
+                        "inputTokens": 14725,
+                        "outputTokens": 97,
+                        "reasoningOutputTokens": 59,
+                    },
+                    "modelContextWindow": 258400,
+                },
+            }
+        )
+        assert usage.input_tokens == 14725
+        assert usage.output_tokens == 97
+        assert usage.reasoning_tokens == 59
+        assert usage.total_tokens == 14822
 
     def test_config_new_flags_default_false(self) -> None:
         """All new config flags default to False (except structured_errors=True)."""

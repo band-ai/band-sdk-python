@@ -8,13 +8,29 @@ message history management, tool execution, custom tools, and error handling.
 """
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
 
 from band.adapters.anthropic import AnthropicAdapter
-from band.core.types import PlatformMessage
+from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
+from tests.adapters.usage_events import sent_usage_payloads
+
+
+def make_usage(inp: int, out: int) -> SimpleNamespace:
+    """Anthropic-shaped usage stub (cache fields zeroed).
+
+    One home for the provider's usage field spelling so a rename is a
+    single edit.
+    """
+    return SimpleNamespace(
+        input_tokens=inp,
+        output_tokens=out,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
 
 
 @pytest.fixture
@@ -317,6 +333,217 @@ class TestToolExecution:
 
         assert "Failed to send tool_call event: 403 Forbidden" in caplog.text
         assert "Failed to send tool_result event: 403 Forbidden" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_usage_from_response_maps_and_sums(self):
+        """`_usage_from_response` maps Anthropic usage raw; TurnUsage `+` sums a loop.
+
+        Raw per the convention: Anthropic's input_tokens excludes cache (reported
+        separately), so it's passed through, not folded.
+        """
+        first = MagicMock()
+        first.usage = MagicMock(
+            input_tokens=100,
+            output_tokens=20,
+            cache_read_input_tokens=5,
+            cache_creation_input_tokens=3,
+        )
+        second = MagicMock()
+        second.usage = MagicMock(
+            input_tokens=130,
+            output_tokens=8,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        )
+        total = AnthropicAdapter._usage_from_response(
+            first
+        ) + AnthropicAdapter._usage_from_response(second)
+        assert total == TurnUsage(
+            input_tokens=230,
+            output_tokens=28,
+            cache_read_tokens=5,
+            cache_write_tokens=3,
+        )
+
+    @pytest.mark.asyncio
+    async def test_emits_usage_event_when_enabled(self, mock_tools):
+        """With Emit.USAGE on, a non-empty TurnUsage rides a task event's metadata."""
+        from band.core.types import USAGE_EVENT_TYPE, USAGE_METADATA_KEY
+
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+
+        await adapter.emit_usage(
+            mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
+        )
+
+        mock_tools.send_event.assert_awaited_once()
+        _, kwargs = mock_tools.send_event.call_args
+        assert kwargs["message_type"] == USAGE_EVENT_TYPE
+        payload = kwargs["metadata"][USAGE_METADATA_KEY]
+        assert payload["input_tokens"] == 100
+        assert payload["output_tokens"] == 20
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_usage_when_feature_off(self, mock_tools):
+        """Without Emit.USAGE, emit_usage is a no-op (no event)."""
+        adapter = AnthropicAdapter()  # no emit features
+        await adapter.emit_usage(
+            mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
+        )
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_does_not_emit_empty_usage(self, mock_tools):
+        """An all-zero TurnUsage is skipped even with the feature on (no false zero)."""
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        await adapter.emit_usage(mock_tools, TurnUsage())
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_usage_emit_failure_does_not_crash(self, mock_tools):
+        """A send_event failure during usage emit is swallowed (best-effort)."""
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        mock_tools.send_event.side_effect = Exception("403 Forbidden")
+        # Should not raise.
+        await adapter.emit_usage(
+            mock_tools, TurnUsage(input_tokens=100, output_tokens=20)
+        )
+
+    @pytest.mark.asyncio
+    async def test_usage_emit_skipped_during_task_cancellation(self, mock_tools):
+        """A cancelled turn must not fire usage I/O from its finally: teardown
+        (shutdown, a turn timeout) would otherwise block on a REST call, and a
+        CancelledError raised mid-send could skip later cleanup."""
+        import asyncio
+
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+        started = asyncio.Event()
+
+        async def turn() -> None:
+            try:
+                started.set()
+                await asyncio.sleep(30)
+            finally:
+                await adapter.emit_usage(
+                    mock_tools, TurnUsage(input_tokens=1, output_tokens=1)
+                )
+
+        task = asyncio.create_task(turn())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        mock_tools.send_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_emits_summed_usage_across_tool_loop(
+        self, sample_message, mock_tools
+    ):
+        """A multi-call tool loop emits ONE usage event carrying the SUM.
+
+        The turn makes two model calls (a tool_use round then a final answer);
+        the emitted usage must be call1 + call2, proving the adapter accumulates
+        across the loop rather than reporting only the first or last call. This
+        is the deterministic summing proof the live smoke can't give (it never
+        sees the per-call intermediates).
+        """
+        from anthropic.types import TextBlock, ToolUseBlock
+
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+
+        # Call 1: a tool_use round (continues the loop). Call 2: the final answer.
+        resp1 = SimpleNamespace(
+            stop_reason="tool_use",
+            content=[
+                ToolUseBlock(
+                    type="tool_use",
+                    id="tool-1",
+                    name="band_send_message",
+                    input={"content": "hi"},
+                )
+            ],
+            usage=make_usage(100, 20),
+        )
+        resp2 = SimpleNamespace(
+            stop_reason="end_turn",
+            content=[TextBlock(type="text", text="Hello!")],
+            usage=make_usage(130, 8),
+        )
+
+        mock_tools.execute_tool_call.return_value = {"status": "success"}
+        call_anthropic = AsyncMock(side_effect=[resp1, resp2])
+        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
+            await adapter.on_message(
+                msg=sample_message,
+                tools=mock_tools,
+                history=[],
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-123",
+            )
+
+        # Exactly two model calls were made (the loop ran twice).
+        assert call_anthropic.call_count == 2
+        # Find the single usage event and assert it carries the SUM (230/28),
+        # not just the first (100/20) or last (130/8) call.
+        usage_payloads = sent_usage_payloads(mock_tools)
+        assert usage_payloads == [
+            {
+                "input_tokens": 230,
+                "output_tokens": 28,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], f"expected one summed usage event, got {usage_payloads}"
+
+    @pytest.mark.asyncio
+    async def test_emits_accumulated_usage_when_loop_fails_midway(
+        self, sample_message, mock_tools
+    ):
+        """A tool loop that raises after a successful call still emits that
+        call's usage: tokens spent before the failure were still spent. The
+        exception still propagates (the turn is marked failed)."""
+        from anthropic.types import ToolUseBlock
+
+        adapter = AnthropicAdapter(features=AdapterFeatures(emit={Emit.USAGE}))
+
+        resp1 = SimpleNamespace(
+            stop_reason="tool_use",
+            content=[
+                ToolUseBlock(
+                    type="tool_use",
+                    id="tool-1",
+                    name="band_send_message",
+                    input={"content": "hi"},
+                )
+            ],
+            usage=make_usage(100, 20),
+        )
+
+        mock_tools.execute_tool_call.return_value = {"status": "success"}
+        call_anthropic = AsyncMock(side_effect=[resp1, RuntimeError("boom")])
+        with patch.object(adapter, "_call_anthropic", new=call_anthropic):
+            with pytest.raises(RuntimeError, match="boom"):
+                await adapter.on_message(
+                    msg=sample_message,
+                    tools=mock_tools,
+                    history=[],
+                    participants_msg=None,
+                    contacts_msg=None,
+                    is_session_bootstrap=True,
+                    room_id="room-123",
+                )
+
+        usage_payloads = sent_usage_payloads(mock_tools)
+        assert usage_payloads == [
+            {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        ], f"expected the first call's usage to be emitted, got {usage_payloads}"
 
     @pytest.mark.asyncio
     async def test_handles_tool_error(self, mock_tools):

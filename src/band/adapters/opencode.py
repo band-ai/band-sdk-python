@@ -14,12 +14,18 @@ from typing import ClassVar, Any, Literal
 
 import httpx
 
-from band.converters._utils import optional_str
+from band.converters.helpers import optional_str
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
@@ -79,6 +85,10 @@ class _RoomState:
     pending_question: _PendingQuestion | None = None
     last_error_message: str | None = None
     persisted_session_id: str | None = None
+    # Per-assistant-message usage for the current turn (last-write-wins per id,
+    # since message.updated streams repeatedly). Summed across messages at turn
+    # end — a tool loop produces several assistant messages.
+    usage_by_message: dict[str, TurnUsage] = field(default_factory=dict)
 
 
 @dataclass
@@ -131,7 +141,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.TASK_EVENTS}
+        {Emit.EXECUTION, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -264,9 +274,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             raise RuntimeError("OpenCode client is not initialized")
 
         try:
-            session_id, created, restored_missing_session = await self._ensure_session(
-                room_state, history
-            )
+            session_id, created = await self._ensure_session(room_state, history)
             if Emit.TASK_EVENTS in self.features.emit and (
                 room_state.persisted_session_id != session_id or is_session_bootstrap
             ):
@@ -276,6 +284,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 )
 
             self._begin_turn(room_state, sender_id=msg.sender_id)
+            # Snapshot THIS turn's state before the prompt await: prompt_async
+            # can span the whole turn (session.idle may arrive mid-POST), and a
+            # message racing in during that window would _begin_turn again;
+            # reading room_state afterwards would wire this turn's watch task
+            # to the wrong turn's future and usage dict.
+            release_future = room_state.turn_release_future
+            turn_future = room_state.turn_future
+            usage_by_message = room_state.usage_by_message
             try:
                 await client.prompt_async(
                     session_id,
@@ -283,11 +299,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         msg,
                         participants_msg,
                         contacts_msg,
-                        replay_messages=(
-                            history.replay_messages
-                            if restored_missing_session
-                            else None
-                        ),
+                        # A newly-created server session holds no prior context, so
+                        # seed it with the converted in-session history. This covers
+                        # both the 404-recovery case and a fresh session created
+                        # because no prior id was recoverable — e.g. turn 2 of an
+                        # in-session exchange after the in-memory session id was lost.
+                        # Without this the model sees only the latest message and
+                        # answers "I don't recall". A reused session (created is
+                        # False) already holds the history server-side, so we must
+                        # not replay and double it.
+                        replay_messages=(history.replay_messages if created else None),
                     ),
                     system=self._system_prompt,
                     model=self._build_model_payload(),
@@ -295,38 +316,31 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     variant=self.config.variant,
                 )
             except Exception:
-                self._clear_turn_state(room_state)
+                self._clear_turn_state(room_state, expected_future=turn_future)
                 raise
 
-            release_future = room_state.turn_release_future
-            turn_future = room_state.turn_future
             turn_task = asyncio.create_task(
-                self._watch_turn_completion(room_state, room_id, turn_future)
+                self._watch_turn_completion(
+                    room_state,
+                    room_id,
+                    turn_future,
+                    usage_by_message,
+                )
             )
-            room_state.turn_task = turn_task
+            # Register the watcher only while this turn is still current; a
+            # superseded turn's task must not clobber (or be cancelled through)
+            # the next turn's ambient pointer.
+            if room_state.turn_future is turn_future:
+                room_state.turn_task = turn_task
 
             if release_future is not None:
                 await release_future
             if turn_future is not None and turn_future.done():
                 await turn_task
-        except asyncio.TimeoutError:
-            logger.warning(
-                "OpenCode turn timed out for room %s (session=%s)",
-                room_id,
-                room_state.session_id,
-            )
-            if self._client and room_state.session_id:
-                try:
-                    await self._client.abort_session(room_state.session_id)
-                except Exception:
-                    logger.exception(
-                        "Failed to abort timed-out OpenCode session %s",
-                        room_state.session_id,
-                    )
-            await tools.send_event(
-                "OpenCode timed out before completing the turn.",
-                "error",
-            )
+        # NOTE: the turn timeout is owned solely by _watch_turn_completion (via
+        # asyncio.wait_for), which aborts the session and emits the error event.
+        # Nothing awaited here re-raises asyncio.TimeoutError, so on_message has no
+        # timeout handler of its own.
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenCode request failed for room %s", room_id)
             await tools.send_event(
@@ -524,6 +538,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 if info.get("role") == "assistant":
                     if message_id:
                         room_state.assistant_message_ids.add(message_id)
+                        if Emit.USAGE in self.features.emit:
+                            usage = self._usage_from_info(info)
+                            if not usage.is_empty:
+                                room_state.usage_by_message[message_id] = usage
                     error = info.get("error")
                     if error:
                         room_state.last_error_message = self._format_opencode_error(
@@ -846,13 +864,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     async def _ensure_session(
         self, room_state: _RoomState, history: OpencodeSessionState
-    ) -> tuple[str, bool, bool]:
+    ) -> tuple[str, bool]:
         if self._client is None:
             raise RuntimeError("OpenCode client is not initialized")
 
         restored_session_id = room_state.session_id or history.session_id
         created = False
-        restored_missing_session = False
 
         if restored_session_id:
             try:
@@ -868,7 +885,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     title=self._build_session_title(room_state.room_id),
                 )
                 created = True
-                restored_missing_session = True
             session_id = str(session["id"])
         else:
             session = await self._client.create_session(
@@ -883,7 +899,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             room_state.session_id = session_id
             self._room_by_session[session_id] = room_state.room_id
 
-        return session_id, created, restored_missing_session
+        return session_id, created
 
     def _begin_turn(self, room_state: _RoomState, *, sender_id: str | None) -> None:
         loop = asyncio.get_running_loop()
@@ -896,6 +912,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state.assistant_part_types.clear()
         room_state.reported_tool_calls.clear()
         room_state.reported_tool_results.clear()
+        # A fresh dict, not .clear(): the previous turn's watch task drains the
+        # dict instance it captured, so a new turn must not empty it out from
+        # under a still-pending _emit_turn_usage (same snapshot idea as passing
+        # turn_future into _watch_turn_completion).
+        room_state.usage_by_message = {}
         room_state.last_error_message = None
 
     async def _watch_turn_completion(
@@ -903,6 +924,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state: _RoomState,
         room_id: str,
         turn_future: asyncio.Future[None] | None,
+        usage_by_message: dict[str, TurnUsage],
     ) -> None:
         if turn_future is None:
             return
@@ -928,9 +950,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     "OpenCode timed out before completing the turn.",
                     "error",
                 )
+            # Tokens spent before the timeout were still spent — emit them, same
+            # as the success path (best-effort; no-op if none captured).
+            await self._emit_turn_usage(room_state, usage_by_message)
             self._release_turn_wait(room_state)
         else:
             await self._deliver_fallback_text(room_state)
+            await self._emit_turn_usage(room_state, usage_by_message)
             self._release_turn_wait(room_state)
         finally:
             self._clear_turn_state(
@@ -1022,6 +1048,61 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             mentions=room_state.pending_mentions,
         )
         room_state.pending_mentions = []
+
+    async def _emit_turn_usage(
+        self,
+        room_state: _RoomState,
+        usage_by_message: dict[str, TurnUsage],
+    ) -> None:
+        """Sum the turn's per-assistant-message usage and emit it.
+
+        Takes the turn-owned dict captured by the watch task (not
+        ``room_state.usage_by_message``, which a new turn may have replaced by
+        the time this runs). A no-op when usage reporting is off
+        (``Emit.USAGE`` absent) or nothing was captured: the base
+        ``emit_usage`` skips an empty total. A live OpenCode server reports
+        ``tokens`` on each assistant ``info``; mocked/offline runs don't, so
+        the total is simply empty there.
+        """
+        if room_state.tools is None:
+            return
+        total = sum(usage_by_message.values(), TurnUsage())
+        await self.emit_usage(room_state.tools, total)
+
+    @staticmethod
+    def _usage_from_info(info: dict[str, Any]) -> TurnUsage:
+        """Map an OpenCode assistant ``info.tokens`` onto TurnUsage.
+
+        Read defensively off the raw event dict (OpenCode's payloads are not
+        modeled in this integration): the server reports
+        ``tokens: {input, output, reasoning, cache: {read, write}}``. A missing
+        or malformed ``tokens`` yields empty usage.
+
+        OpenCode reports reasoning tokens *disjointly* from output (its own total
+        is ``input + output + reasoning + cache``), so fold reasoning into
+        ``output_tokens`` — otherwise reasoning-heavy turns undercount, and this
+        stays consistent with providers that already count reasoning inside output.
+        """
+        tokens = info.get("tokens")
+        if not isinstance(tokens, dict):
+            return TurnUsage()
+        cache = tokens.get("cache")
+        cache = cache if isinstance(cache, dict) else {}
+        flat = {
+            "input": tokens.get("input"),
+            "output": tokens.get("output"),
+            "reasoning": tokens.get("reasoning"),
+            "cache_read": cache.get("read"),
+            "cache_write": cache.get("write"),
+        }
+        return TurnUsage.from_mapping(
+            flat,
+            input="input",
+            output="output",
+            reasoning="reasoning",
+            cache_read="cache_read",
+            cache_write="cache_write",
+        )
 
     async def _report_tool_call(
         self,

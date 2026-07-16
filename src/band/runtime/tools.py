@@ -28,6 +28,8 @@ from band.core.memory_types import (
     validate_subject_scope,
 )
 from band.core.protocols import AgentToolsProtocol
+from band.core.tool_filter import sanitize_tool_schema
+from band.core.types import EventMessageType
 
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
@@ -75,6 +77,50 @@ def _matches_identifier(entity: dict[str, Any] | Any, identifier: str) -> bool:
     return False
 
 
+def available_mention_handles(
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> list[str]:
+    """Return room handles this agent may mention, excluding itself."""
+    return [
+        handle
+        for participant in participants
+        if (handle := _entity_field(participant, "handle"))
+        and (agent_id is None or _entity_field(participant, "id") != agent_id)
+    ]
+
+
+# Single marker for the available-handles hint. Used both to render the hint and
+# to detect it, so the producer and the idempotency guard can never drift apart.
+_AVAILABLE_HANDLES_MARKER = "Available handles:"
+
+
+def append_mention_handles_hint(error: str, handles: list[str]) -> str:
+    """Append a retryable handles hint to a tool error when handles are known.
+
+    Idempotent: an error that already carries the hint is returned unchanged, so
+    the same error can flow through multiple adapter enrichers without doubling
+    the handle list.
+    """
+    if not handles or _AVAILABLE_HANDLES_MARKER in error:
+        return error
+    return (
+        f"{error}. {_AVAILABLE_HANDLES_MARKER} {handles}. "
+        "Use participant handles from the list."
+    )
+
+
+def append_available_mention_handles(
+    error: str,
+    participants: list[dict[str, Any] | Any],
+    agent_id: str | None = None,
+) -> str:
+    """Append retryable mention handles to a tool error when available."""
+    return append_mention_handles_hint(
+        error, available_mention_handles(participants, agent_id)
+    )
+
+
 @dataclass(frozen=True)
 class ToolDefinition:
     """Metadata for a built-in Band tool."""
@@ -120,9 +166,7 @@ class SendEventInput(BaseModel):
     """
 
     content: str = Field(..., description="Human-readable event content")
-    message_type: Literal["thought", "error", "task"] = Field(
-        ..., description="Type of event"
-    )
+    message_type: EventMessageType = Field(..., description="Type of event")
     metadata: dict[str, Any] | None = Field(
         None, description="Optional structured data for the event"
     )
@@ -634,6 +678,30 @@ class ListMyPeersInput(BaseModel):
     page_size: int | None = Field(None, description="Items per page (optional).")
 
 
+# Tool names whose successful call posts a visible message into the room.
+# Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
+# fallback text relay once the turn has already replied in the room, so the
+# reply is delivered exactly once. Includes the standalone band-mcp server's
+# spelling, which remote agents call out-of-process.
+ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
+    {"band_send_message", "create_agent_chat_message"}
+)
+
+
+def is_room_posting_tool(tool_name: str) -> bool:
+    """True when a successful call of ``tool_name`` posts a message to the room.
+
+    Tolerates the one MCP naming convention seen in practice: a ``<server>-``
+    prefix (e.g. ``band-create_agent_chat_message``). Other spellings
+    (``mcp__server__tool``, ``server.tool``) are not matched — no wired backend
+    uses them, and a miss only costs a duplicate reply (the pre-suppression
+    behavior), never a wrong post. Extend here when such a backend is added.
+    """
+    if tool_name in ROOM_POSTING_TOOL_NAMES:
+        return True
+    return tool_name.endswith(tuple(f"-{name}" for name in ROOM_POSTING_TOOL_NAMES))
+
+
 # Registry mapping tool names to their schemas and bound AgentTools methods.
 TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "band_send_message": ToolDefinition(
@@ -928,6 +996,29 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Read-only / informational agent tools - explicitly listed (not derived by a
+# name heuristic) because misclassifying a write tool as read-only would weaken
+# the benign-empty-answer suppression in the crewai/pydantic-ai adapters. These
+# tools only *fetch* state; running one is not a terminal action and does not
+# constitute a reply, so a turn that runs only these and then yields an empty
+# final answer is a genuine no-response failure, not benign noise.
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "band_get_participants",
+        "band_lookup_peers",
+        "band_list_contacts",
+        "band_list_contact_requests",
+        "band_list_memories",
+        "band_get_memory",
+    }
+)
+
+# Event-emitting tools are observational, not terminal work: band_send_event posts a
+# thought/error/task event (narration/status) — not a chat reply or a durable requested
+# action. Like read-only tools, a turn that only sends an event and then yields an empty
+# final answer is a genuine no-response failure, not benign (see is_terminal_success).
+EVENT_TOOL_NAMES: frozenset[str] = frozenset({"band_send_event"})
+
 # Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
 # ``surface="human"`` side of the registry. Used by iter_tool_definitions()
 # to apply the ``include_memory`` filter uniformly across both surfaces.
@@ -960,12 +1051,68 @@ HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 # Derived from TOOL_MODELS — single source of truth
 ALL_TOOL_NAMES: frozenset[str] = frozenset(TOOL_MODELS.keys())
 
+
+def band_tool_errored(tool_name: str | None, content: Any) -> bool:
+    """Whether a Band tool call failed, by its wrapper's error convention.
+
+    Band tool wrappers catch exceptions and return a string starting with
+    ``"Error "``. Only known Band tools follow this convention (custom tools do not),
+    so it is checked for ``ALL_TOOL_NAMES`` members only. (crewai detects failure
+    differently — via its JSON ``status`` envelope — and does not use this helper.)
+    """
+    return (
+        tool_name in ALL_TOOL_NAMES
+        and isinstance(content, str)
+        and content.startswith("Error ")
+    )
+
+
+def is_terminal_success(
+    tool_name: str | None,
+    *,
+    succeeded: bool,
+    custom_terminal: bool = False,
+) -> bool:
+    """Whether a finished tool call counts as terminal productive work.
+
+    Single source of truth shared by the crewai / pydantic-ai adapters to decide
+    whether an empty final model response is *benign* (the agent already did its
+    work this turn) or a genuine no-response failure. Terminal work is:
+
+    * a Band tool that is not read-only, not observational, and did not fail, or
+    * a custom tool the caller declares terminal (``custom_terminal=True``).
+
+    Read-only Band tools (``READ_ONLY_TOOL_NAMES``) never count — fetching state is
+    not a terminal action. Observational tools (``EVENT_TOOL_NAMES`` — band_send_event
+    posts a thought/error/task event) don't count either: emitting narration/status is
+    not a chat reply or a durable requested action. Custom tools are **not** terminal
+    by default: the SDK cannot know whether a bare custom tool is a lookup or a
+    side-effecting action, so it fails loud — an empty final after only an undeclared
+    custom tool surfaces as a no-response error rather than being silently swallowed.
+    A custom tool that genuinely completes the turn opts in (see
+    ``runtime.custom_tools.is_marked_terminal``).
+    """
+    if not succeeded:
+        return False
+    if tool_name in READ_ONLY_TOOL_NAMES or tool_name in EVENT_TOOL_NAMES:
+        return False
+    if tool_name in ALL_TOOL_NAMES:
+        return True
+    return custom_terminal
+
+
 # Fail fast on typos — catch at import time, not in a test run.
 # Use explicit checks instead of ``assert`` so they are not stripped by -O.
 if MEMORY_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown memory tools: {MEMORY_TOOL_NAMES - ALL_TOOL_NAMES}")
 if CONTACT_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown contact tools: {CONTACT_TOOL_NAMES - ALL_TOOL_NAMES}")
+if READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES:
+    raise ValueError(
+        f"Unknown read-only tools: {READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES}"
+    )
+if EVENT_TOOL_NAMES - ALL_TOOL_NAMES:
+    raise ValueError(f"Unknown event tools: {EVENT_TOOL_NAMES - ALL_TOOL_NAMES}")
 
 # Human-surface registry membership is validated against TOOL_DEFINITIONS
 # (not TOOL_MODELS, which stays agent-only for back-compat).
@@ -983,6 +1130,27 @@ if HUMAN_CONTACT_TOOL_NAMES - _ALL_DEFINITION_NAMES:
 BASE_TOOL_NAMES: frozenset[str] = ALL_TOOL_NAMES - MEMORY_TOOL_NAMES
 CHAT_TOOL_NAMES: frozenset[str] = BASE_TOOL_NAMES - CONTACT_TOOL_NAMES
 MCP_TOOL_PREFIX: str = "mcp__band__"
+
+# AdapterFeatures category for each platform tool name. Shared across adapters
+# so include_categories filtering is consistent (chat/contacts/memory).
+_TOOL_CATEGORIES: dict[str, str] = {
+    **{name: "chat" for name in CHAT_TOOL_NAMES},
+    **{name: "contacts" for name in CONTACT_TOOL_NAMES},
+    **{name: "memory" for name in MEMORY_TOOL_NAMES},
+}
+
+
+def get_band_tool_category(name: str) -> str | None:
+    """Return the AdapterFeatures category ("chat"/"contacts"/"memory") for a tool."""
+    return _TOOL_CATEGORIES.get(name)
+
+
+# Platform tools whose execution is already visible in the room (they post
+# messages/events themselves), so adapters must not also report them as
+# tool_call/tool_result events. Adapters may extend this with local names.
+SELF_REPORTING_TOOL_NAMES: frozenset[str] = frozenset(
+    {"band_send_message", "band_send_event"}
+)
 
 
 def mcp_tool_names(names: frozenset[str]) -> list[str]:
@@ -1156,6 +1324,7 @@ class AgentTools(AgentToolsProtocol):
         participants: list[dict[str, Any]] | None = None,
         *,
         hub_room_id: str | None = None,
+        agent_id: str | None = None,
     ):
         """
         Initialize AgentTools for a specific room.
@@ -1176,12 +1345,22 @@ class AgentTools(AgentToolsProtocol):
         self.rest = rest
         self._participants = participants or []
         self._hub_room_id = hub_room_id
+        self._agent_id = agent_id
         self._ctx: ExecutionContext | None = None
+
+    @property
+    def agent_id(self) -> str | None:
+        """This agent's own ID, used to exclude itself from mention lists."""
+        return self._agent_id
 
     @property
     def participants(self) -> list[dict[str, Any]]:
         """Return a shallow copy of the cached participant list."""
         return list(self._participants)
+
+    def available_mention_handles(self) -> list[str]:
+        """Return handles this agent may @mention in the current room."""
+        return available_mention_handles(self.participants, self._agent_id)
 
     @classmethod
     def from_context(cls, ctx: "ExecutionContext") -> "AgentTools":
@@ -1201,6 +1380,7 @@ class AgentTools(AgentToolsProtocol):
             ctx.link.rest,
             ctx.participants,
             hub_room_id=getattr(ctx, "hub_room_id", None),
+            agent_id=ctx.agent_id,
         )
         tools._ctx = ctx
         return tools
@@ -1231,10 +1411,14 @@ class AgentTools(AgentToolsProtocol):
             ChatMessageRequestMentionsItem,
         )
 
-        # Deprecation warning for dict-style mentions
-        if mentions and isinstance(mentions[0], dict):
+        # Deprecation warning for dict-style mentions WITHOUT an id: those
+        # lean on name/handle resolution, which list[str] does better.
+        # Id-bearing dicts are adapter-supplied ground truth (the message's
+        # own sender_id) — the one shape that can never miss the
+        # participants cache — and stay first-class.
+        if any(isinstance(m, dict) and not m.get("id") for m in mentions or []):
             warnings.warn(
-                "Passing mentions as list[dict] is deprecated. "
+                "Passing mentions as list[dict] without an 'id' is deprecated. "
                 "Use list[str] with handles instead.",
                 DeprecationWarning,
                 stacklevel=2,
@@ -1245,13 +1429,15 @@ class AgentTools(AgentToolsProtocol):
         # Validate mentions are not empty — API requires ≥1 mention.
         # Return a helpful error so the LLM can retry with proper mentions.
         if not resolved_mentions:
-            participant_names = [
-                p.get("handle") or p["name"] for p in self._participants
-            ]
+            # Build the error through the shared hint so it carries the canonical
+            # "Available handles:" marker. Adapter enrichers (CrewAI, MCP, Claude
+            # SDK) re-run the same hint on this error and rely on its idempotency
+            # to avoid listing the handles twice.
             raise BandToolError(
-                "At least one mention is required. "
-                f"Available participants: {participant_names}. "
-                "Please retry with mentions specifying who this message is for."
+                append_mention_handles_hint(
+                    "At least one mention is required",
+                    self.available_mention_handles(),
+                )
             )
 
         logger.debug("Sending message to room %s", self.room_id)
@@ -1827,7 +2013,7 @@ class AgentTools(AgentToolsProtocol):
             Fern Memory model (Pydantic). Serialized to dict by
             execute_tool_call() at the adapter boundary.
         """
-        from band.client.rest import MemoryCreateRequest
+        from band.client.rest import AgentMemoryCreateRequest
 
         validate_memory_type_for_system(system, type)
         validate_subject_scope(MemoryStoreScope(scope), subject_id)
@@ -1853,7 +2039,7 @@ class AgentTools(AgentToolsProtocol):
         if metadata is not None:
             memory_kwargs["metadata"] = metadata
         response = await self.rest.agent_api_memories.create_agent_memory(
-            memory=MemoryCreateRequest(**memory_kwargs),
+            memory=AgentMemoryCreateRequest(**memory_kwargs),
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         if not response.data:
@@ -1973,10 +2159,12 @@ class AgentTools(AgentToolsProtocol):
                 participant = id_to_participant.get(identifier)
 
             if not participant:
-                available_handles = list(handle_to_participant.keys())
+                # Offer only real, mentionable handles to retry with: @-prefixed,
+                # excluding self and handle-less participants (not the raw lookup keys).
+                available_handles = self.available_mention_handles()
                 raise ValueError(
                     f"Unknown participant '{identifier}'. "
-                    f"Available handles: {available_handles}"
+                    f"{_AVAILABLE_HANDLES_MARKER} {available_handles}"
                 )
 
             resolved.append(
@@ -2074,6 +2262,12 @@ class AgentTools(AgentToolsProtocol):
             schema = definition.input_model.model_json_schema()
             # Remove Pydantic-specific keys
             schema.pop("title", None)
+            # Pydantic Field(ge=..., le=...) renders as JSON-Schema minimum/maximum,
+            # which some providers reject on integer params (e.g. Gemini, and
+            # Anthropic-backed Agno). Dropped for every format/adapter on purpose,
+            # not just the strict providers: the bounds stay enforced at execution
+            # via model_validate, so advertising them buys nothing.
+            schema = sanitize_tool_schema(schema, drop_numeric_bounds=True)
 
             if format == "openai":
                 tools.append(
@@ -2242,7 +2436,7 @@ class HumanTools:
 
     async def register_my_agent(self, name: str, description: str) -> Any:
         """Register a new remote agent owned by the user."""
-        from thenvoi_rest import AgentRegisterRequest
+        from band_rest import AgentRegisterRequest
 
         logger.debug("Registering my agent: name=%s", name)
         agent_request = AgentRegisterRequest(name=name, description=description)
@@ -2266,7 +2460,7 @@ class HumanTools:
 
     async def create_my_chat_room(self, task_id: str | None = None) -> Any:
         """Create a new chat room with the user as owner."""
-        from thenvoi_rest import CreateMyChatRoomRequestChat
+        from band_rest import CreateMyChatRoomRequestChat
 
         logger.debug("Creating my chat room: task_id=%s", task_id)
         chat_request = (
@@ -2301,7 +2495,7 @@ class HumanTools:
         self, recipient_handle: str, message: str | None = None
     ) -> Any:
         """Send a contact request to another user."""
-        from thenvoi_rest import CreateContactRequestRequestContactRequest
+        from band_rest import CreateContactRequestRequestContactRequest
 
         logger.debug("Creating contact request to: %s", recipient_handle)
         kwargs: dict[str, Any] = {"recipient_handle": recipient_handle}
@@ -2446,7 +2640,7 @@ class HumanTools:
         MCP handler output verbatim (no exception raised) so the
         observable tool-surface error shape is preserved.
         """
-        from thenvoi_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
+        from band_rest import ChatMessageRequest, ChatMessageRequestMentionsItem
 
         recipient_names = [
             name.strip().lower() for name in recipients.split(",") if name.strip()
@@ -2530,7 +2724,7 @@ class HumanTools:
         Returns ``f"Added participant: {participant_id}"`` (discards the
         Fern response body) to match today's MCP handler output verbatim.
         """
-        from thenvoi_rest import ParticipantRequest
+        from band_rest import ParticipantRequest
 
         logger.debug(
             "Adding my chat participant: chat_id=%s, participant_id=%s, role=%s",

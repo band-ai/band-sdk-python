@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from band.core.types import AgentInput
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
+    from band.runtime.tools import ToolCallOutcome
 
 T = TypeVar("T")
 
@@ -131,6 +132,18 @@ class AgentToolsProtocol(Protocol):
 
     async def execute_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """Execute a tool call by name with validated arguments."""
+        ...
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        """Execute a tool call, returning a structured outcome (value + ``ok`` flag).
+
+        Prefer this over :meth:`execute_tool_call` when the caller must branch on
+        success/failure: a base tool that fails without raising (bad args, API error)
+        reports it via ``ok=False`` rather than a raised exception, and the plain
+        variant discards that signal.
+        """
         ...
 
     # Contact management tools

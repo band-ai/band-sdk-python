@@ -1,0 +1,113 @@
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["band-sdk[acp]"]
+#
+# [tool.uv.sources]
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
+# ///
+"""
+Cursor ACP Client - Use Cursor's AI agent from Band.
+
+Spawns Cursor's CLI agent (`cursor agent acp`) as a subprocess and bridges it
+to the Band platform. Messages from Band rooms are forwarded to Cursor,
+and Cursor's responses (including tool calls, plans, and streaming text) are
+posted back to the room.
+
+Note: Cursor IDE does NOT yet support connecting to remote ACP agents (i.e.,
+you cannot add Band as an agent inside Cursor's UI). This integration works
+the other direction — Band spawns Cursor's agent as a backend.
+
+For the reverse direction (IDE connects to Band), see:
+- JetBrains: examples/acp/servers/jetbrains.py
+- Zed: examples/acp/servers/basic.py
+- Any ACP client: band-acp CLI
+
+Architecture:
+    Band Platform (message arrives in room)
+      -> ACPClientAdapter
+        -> Cursor ACP subprocess
+          -> Cursor CLI Agent (with Band MCP tools injected)
+            -> session_update responses streamed back
+        -> Posts response to Band room
+
+Prerequisites:
+    1. Cursor CLI installed and authenticated:
+       cursor agent login
+       # OR set CURSOR_API_KEY / CURSOR_AUTH_TOKEN environment variable
+
+    2. Set environment variables:
+       - BAND_API_KEY: Your Band API key (required for tool injection)
+
+    3. Optionally configure:
+       - CURSOR_API_KEY: Cursor API key (alternative to `cursor agent login`)
+       - ACP_AGENT_CWD: Working directory for Cursor sessions (default: .)
+
+Run with:
+    uv run examples/acp/clients/cursor.py
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from dotenv import load_dotenv
+
+from setup_logging import setup_logging
+from band import Agent
+from band.adapters import ACPClientAdapter
+from band.integrations.acp.client_profiles import CursorACPClientProfile
+
+setup_logging()
+logger = logging.getLogger(__name__)
+
+
+async def main() -> None:
+    load_dotenv()
+
+    ws_url = os.getenv("BAND_WS_URL", "wss://app.band.ai/api/v1/socket/websocket")
+    rest_url = os.getenv("BAND_REST_URL", "https://app.band.ai")
+    # Working directory for Cursor sessions
+    cwd = os.getenv("ACP_AGENT_CWD", ".")
+
+    # Cursor authentication environment — passed to the subprocess
+    cursor_env: dict[str, str] = {}
+    cursor_api_key = os.getenv("CURSOR_API_KEY")
+    cursor_auth_token = os.getenv("CURSOR_AUTH_TOKEN")
+    if cursor_api_key:
+        cursor_env["CURSOR_API_KEY"] = cursor_api_key
+    if cursor_auth_token:
+        cursor_env["CURSOR_AUTH_TOKEN"] = cursor_auth_token
+
+    # Create adapter that spawns Cursor's ACP agent.
+    # - auth_method="cursor_login" authenticates using your Cursor login
+    # - Band tools are injected through a local localhost-only MCP server
+    adapter = ACPClientAdapter(
+        command=[os.path.expanduser("~/.local/bin/agent"), "acp"],
+        cwd=cwd,
+        env=cursor_env or None,
+        rest_url=rest_url,
+        inject_band_tools=True,
+        auth_method="cursor_login",
+        profile=CursorACPClientProfile(),
+    )
+
+    # Create and start agent
+    agent = Agent.from_config(
+        "cursor_agent",
+        adapter=adapter,
+        ws_url=ws_url,
+        rest_url=rest_url,
+    )
+
+    logger.info("Starting Cursor ACP client bridge...")
+    logger.info("Messages from Band will be forwarded to Cursor's agent.")
+    await agent.run()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

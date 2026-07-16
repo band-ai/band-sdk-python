@@ -49,16 +49,28 @@ from band.core.memory_types import (
     validate_memory_type_for_system,
     validate_subject_scope,
 )
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.tool_filter import filter_tool_schemas
-from band.core.types import AdapterFeatures, Capability, Emit
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    EventMessageType,
+    MessageType,
+)
 from band.integrations.crewai.runtime import run_async
 from band.runtime.custom_tools import (
     CustomToolDef,
     execute_custom_tool,
     get_custom_tool_name,
+    is_marked_terminal,
 )
-from band.runtime.tools import get_tool_description
+from band.runtime.tools import (
+    append_available_mention_handles,
+    get_tool_description,
+    is_terminal_success,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +103,17 @@ _SEND_MESSAGE_TOOL = "band_send_message"
 
 @dataclass
 class ReplyTracker:
-    """Mutable per-turn marker shared (by reference) with the tool wrappers.
+    """Mutable per-turn markers shared (by reference) with the tool wrappers.
 
-    Set to ``True`` once ``band_send_message`` succeeds so an adapter can tell
-    a benign "empty final answer" from CrewAI (the reply already went out via the
-    tool) apart from a genuine no-response failure.
+    ``replied`` flips once ``band_send_message`` succeeds; ``tool_executed`` flips
+    once *any* tool succeeds. Together they let an adapter tell a benign "empty
+    final answer" from CrewAI — emitted after the agent already did its work, via
+    a reply or any other tool (e.g. a memory store on a turn instructed not to
+    message) — apart from a genuine no-response failure where nothing happened.
     """
 
     replied: bool = False
+    tool_executed: bool = False
 
 
 @dataclass(frozen=True)
@@ -158,7 +173,7 @@ class EmitExecutionReporter:
             return
         try:
             await tools.send_event(
-                content=json.dumps({"tool": tool_name, "input": input_data}),
+                content=json.dumps({"name": tool_name, "args": input_data}),
                 message_type="tool_call",
             )
         except Exception as e:
@@ -174,9 +189,10 @@ class EmitExecutionReporter:
         if Emit.EXECUTION not in self._features.emit:
             return
         try:
-            key = "error" if is_error else "result"
             await tools.send_event(
-                content=json.dumps({"tool": tool_name, key: result}),
+                content=json.dumps(
+                    {"name": tool_name, "output": result, "is_error": is_error}
+                ),
                 message_type="tool_result",
             )
         except Exception as e:
@@ -234,6 +250,7 @@ def _execute_tool(
     get_context: Callable[[], CrewAIToolContext | None],
     reporter: CrewAIToolReporter,
     fallback_loop: asyncio.AbstractEventLoop | None,
+    custom_terminal: bool = False,
 ) -> str:
     """Execute a tool with common error handling and reporting.
 
@@ -256,19 +273,40 @@ def _execute_tool(
             return await coro_factory(tools)
         except Exception as e:
             error_msg = str(e)
+            if tool_name == _SEND_MESSAGE_TOOL and isinstance(
+                e, (ValueError, BandToolError)
+            ):
+                error_msg = append_available_mention_handles(
+                    error_msg,
+                    tools.participants,
+                    getattr(tools, "agent_id", None),
+                )
             logger.error("%s failed in room %s: %s", tool_name, room_id, error_msg)
             await reporter.report_result(tools, tool_name, error_msg, is_error=True)
             return json.dumps({"status": "error", "message": error_msg})
 
     result = run_async(_execute(), fallback_loop=fallback_loop)
 
-    # Record that the agent delivered a user-facing reply this turn so the
-    # adapter can treat CrewAI's "empty final answer" ValueError as benign
-    # (the reply already went out) instead of a genuine no-response failure.
-    if tool_name == _SEND_MESSAGE_TOOL and context.reply_tracker is not None:
+    # Record that the agent did productive work this turn so the adapter can treat
+    # CrewAI's "empty final answer" ValueError as benign (the work already
+    # happened) instead of a genuine no-response failure. ``replied`` is the
+    # stricter signal (a user-facing reply went out via band_send_message);
+    # ``tool_executed`` covers any successful *terminal* tool — a non-read-only
+    # band tool, or a custom tool that opted in via ``band_terminal`` — so a
+    # tool-only turn (e.g. a memory store the user told the agent not to follow
+    # with a message) is also benign. Read-only band tools and undeclared custom
+    # tools do NOT count: an empty answer after only those is a genuine
+    # no-response failure (fail-loud). ``is_terminal_success`` is the single
+    # source of truth, shared with the pydantic-ai adapter.
+    if context.reply_tracker is not None:
         try:
             if json.loads(result).get("status") == "success":
-                context.reply_tracker.replied = True
+                if is_terminal_success(
+                    tool_name, succeeded=True, custom_terminal=custom_terminal
+                ):
+                    context.reply_tracker.tool_executed = True
+                if tool_name == _SEND_MESSAGE_TOOL:
+                    context.reply_tracker.replied = True
         except (json.JSONDecodeError, AttributeError, TypeError):
             pass
 
@@ -281,7 +319,7 @@ def _execute_tool(
 class _SendMessageInput(BaseModel):
     content: str = Field(..., description="The message content to send")
     mentions: str = Field(
-        default="[]",
+        ...,
         description='JSON array of participant handles to @mention (e.g., \'["@john", "@john/weather-agent"]\')',
     )
 
@@ -297,8 +335,8 @@ class _SendMessageInput(BaseModel):
 
 class _SendEventInput(BaseModel):
     content: str = Field(..., description="Human-readable event content")
-    message_type: Literal["thought", "error", "task"] = Field(
-        default="thought",
+    message_type: EventMessageType = Field(
+        default=MessageType.THOUGHT,
         description="Type of event: 'thought', 'error', or 'task'",
     )
     metadata: dict[str, Any] | None = Field(
@@ -963,13 +1001,19 @@ def _make_custom_tools(
 
     crewai_tools: list[BaseTool] = []
 
-    def _exec(tool_name: str, factory: Callable[[AgentToolsProtocol], Any]) -> str:
+    def _exec(
+        tool_name: str,
+        factory: Callable[[AgentToolsProtocol], Any],
+        *,
+        custom_terminal: bool = False,
+    ) -> str:
         return _execute_tool(
             tool_name=tool_name,
             coro_factory=factory,
             get_context=get_context,
             reporter=reporter,
             fallback_loop=fallback_loop,
+            custom_terminal=custom_terminal,
         )
 
     for input_model, func in custom_tools:
@@ -984,6 +1028,9 @@ def _make_custom_tools(
         ) -> BaseTool:
             _tool_name = tool_name_param
             _tool_desc = tool_desc_param
+            # Only a custom tool that opts in (band_terminal=True) lets an empty
+            # final answer be treated as benign; undeclared customs fail loud.
+            _terminal = is_marked_terminal(handler)
 
             class CustomCrewAITool(BaseTool):
                 name: str = _tool_name  # type: ignore[misc]
@@ -1014,7 +1061,7 @@ def _make_custom_tools(
                             )
                             return json.dumps({"status": "error", "message": error_msg})
 
-                    return _exec(_tool_name, execute)
+                    return _exec(_tool_name, execute, custom_terminal=_terminal)
 
             return CustomCrewAITool()
 

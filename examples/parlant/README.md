@@ -16,7 +16,7 @@ Parlant provides:
 ### Install with Parlant support
 
 ```bash
-uv add "git+https://github.com/thenvoi/thenvoi-sdk-python.git[parlant]"
+uv add "git+https://github.com/band-ai/band-sdk-python.git[parlant]"
 ```
 
 **Or from repository:**

@@ -6,12 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.core.exceptions import BandToolError
 from band.core.types import AdapterFeatures, Capability
-from band.integrations.langgraph.langchain_tools import (
-    agent_tools_to_langchain,
-    get_langgraph_tool_category,
-)
-from band.runtime.tools import iter_tool_definitions
+from band.integrations.langgraph.langchain_tools import agent_tools_to_langchain
+from band.runtime.tools import get_band_tool_category, iter_tool_definitions
 
 
 def _mock_agent_tools() -> MagicMock:
@@ -95,7 +93,7 @@ class TestLangGraphToolFilters:
                 include_memory=True,
                 include_contacts=True,
             )
-            if get_langgraph_tool_category(definition.name) is None
+            if get_band_tool_category(definition.name) is None
         ]
 
         assert missing == []
@@ -130,3 +128,20 @@ class TestLangGraphSendMessageTool:
             "band_send_message",
             {"content": "hello", "mentions": ["00000000-0000-0000-0000-000000000001"]},
         )
+
+    @pytest.mark.asyncio
+    async def test_send_message_tool_surfaces_retryable_tool_errors(self) -> None:
+        agent_tools = _mock_agent_tools()
+        agent_tools.execute_tool_call.side_effect = BandToolError(
+            "At least one mention is required. Available handles: ['@alice']"
+        )
+        send_message = next(
+            tool
+            for tool in agent_tools_to_langchain(agent_tools)
+            if tool.name == "band_send_message"
+        )
+
+        result = await send_message.ainvoke({"content": "hello", "mentions": []})
+
+        assert "At least one mention is required" in result
+        assert "@alice" in result

@@ -1,9 +1,9 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[codex]"]
+# dependencies = ["band-sdk[codex,logging]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Basic Codex adapter agent example.
@@ -45,6 +45,7 @@ from dotenv import load_dotenv
 from setup_logging import setup_logging
 from band import Agent
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.types import AdapterFeatures, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -125,10 +126,10 @@ async def main() -> None:
             personality="pragmatic",
             custom_section=custom_section,
             include_base_instructions=True,
-            enable_task_events=True,
             emit_turn_task_markers=_env_bool("CODEX_TURN_TASK_MARKERS", False),
             fallback_send_agent_text=True,
-        )
+        ),
+        features=AdapterFeatures(emit={Emit.TASK_EVENTS}),
     )
 
     agent = Agent.from_config(

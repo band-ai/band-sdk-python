@@ -4,9 +4,9 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 ## Core Features
 
-1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode)
+1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno)
 2. A2A protocol support: Bridge to remote A2A agents and expose Band peers as A2A endpoints
-3. ACP integration: Editor-facing server and subprocess client adapters (Cursor, Codex, Claude Code)
+3. ACP integration: Editor-facing server and client adapters over stdio or TCP (Cursor, Codex, Claude Code, GitHub Copilot)
 4. Platform tools for chat, contacts, and memory management
 5. WebSocket + REST transport: Real-time messaging with REST API fallback
 
@@ -224,7 +224,7 @@ Two-layer pattern (mirrors A2A Gateway):
 | Platform Bridge | `BandACPServerAdapter` | `ACPClientAdapter` |
 
 **Server**: Editor -> ACP -> `ACPServer` -> `BandACPServerAdapter` -> Band REST/WS -> Peers
-**Client**: Band room message -> `ACPClientAdapter` -> spawned subprocess (Codex, Claude Code, etc.)
+**Client**: Band room message -> `ACPClientAdapter` -> stdio subprocess **or** TCP connection (Codex, Claude Code, Cursor, GitHub Copilot, etc.)
 
 ### Key Files
 
@@ -232,7 +232,9 @@ Two-layer pattern (mirrors A2A Gateway):
 |------|---------|
 | `src/band/integrations/acp/server.py` | `ACPServer` — ACP Agent subclass handling JSON-RPC |
 | `src/band/integrations/acp/server_adapter.py` | `BandACPServerAdapter` — REST client, room/session mapping |
-| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — spawns remote ACP agent subprocess |
+| `src/band/integrations/acp/client_adapter.py` | `ACPClientAdapter` — drives a remote ACP agent over stdio-spawn or TCP-connect |
+| `src/band/integrations/acp/client_runtime.py` | `ACPRuntime` (transport-agnostic), `tcp_spawn_process` (TCP connect seam) |
+| `src/band/adapters/copilot_acp.py` | `CopilotACPAdapter` — thin `ACPClientAdapter` for the GitHub Copilot CLI |
 | `src/band/integrations/acp/client_types.py` | `BandACPClient` — per-session chunk buffering |
 | `src/band/integrations/acp/router.py` | `AgentRouter` — slash commands and mode-based routing |
 | `src/band/integrations/acp/push_handler.py` | `ACPPushHandler` — unsolicited session_update notifications |
@@ -261,7 +263,11 @@ BAND_AGENT_ID=my-agent BAND_API_KEY=key band-acp
 
 ### Per-Session Buffers (Client Adapter)
 
-`BandACPClient` uses per-session chunk buffers (`_session_chunks: dict[str, list[CollectedChunk]]`) to allow concurrent rooms without global locking. Each session's buffer is reset before a prompt and read after.
+`BandACPClient` uses per-session chunk buffers (`_session_chunks: dict[str, list[CollectedChunk]]`) to allow concurrent rooms without global locking. Each session's buffer is reset before a prompt and read after. Consecutive streamed text/thought deltas are coalesced into one chunk at collection, so one chunk == one logical message.
+
+### Reply Delivery (Client Adapter)
+
+Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the text is relayed as the reply. Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools.py`): the SDK's `band_send_message` plus the standalone band-mcp server's `create_agent_chat_message`. The siblings flip a flag when they execute the tool in-process; the ACP adapter instead reads the ACP tool-call stream (`tool_call` title + `completed` status), because its tools may execute out-of-process (remote band-mcp).
 
 ### Optional Dependency
 
@@ -271,6 +277,43 @@ acp = ["agent-client-protocol"]
 ```
 
 Install with: `pip install band-sdk[acp]` or `uv add band-sdk[acp]`
+
+### Client transports (stdio / TCP)
+
+`ACPClientAdapter` selects a transport at construction; both flow through `ACPRuntime`'s
+injectable `spawn_process` seam, so the runtime and downstream code are transport-agnostic.
+
+- **stdio** (default): pass `command=[...]` to spawn the agent as a subprocess
+  (`acp.spawn_agent_process`).
+- **TCP**: pass `host=` + `port=` to connect to an already-running ACP server
+  (`tcp_spawn_process` → `asyncio.open_connection` → `acp.connect_to_agent`). Use for an
+  ACP agent in a remote/containerized environment.
+- Exactly one of `{command, (host, port)}` is required (validated in `__init__`).
+- Advanced: inject a custom `spawn_process` (e.g. `docker exec -i … copilot --acp`, ssh,
+  or a fake in tests). Tests inject a fake through this seam rather than patching module
+  globals (see `tests/integrations/acp/conftest.py::FakeSpawn` / the `make_acp_transport`
+  fixture).
+
+### GitHub Copilot CLI backend
+
+`CopilotACPAdapter` (`src/band/adapters/copilot_acp.py`) drives `copilot --acp` through
+`ACPClientAdapter`. Copilot speaks vanilla ACP (no `copilot/*` extension methods → no custom
+profile). Auth is flexible — an env token (`COPILOT_GITHUB_TOKEN`>`GH_TOKEN`>`GITHUB_TOKEN`),
+a stored `copilot login`, `gh`, or BYOK; for stdio pass any of it via the config `env`
+(`github_token` is a convenience for `GITHUB_TOKEN`), unset to use the ambient login.
+Registered in the baseline matrix under the `backends` lane (gated on the CLI only, like
+codex — auth is out-of-band); excluded from framework-conformance as a bridge.
+
+- stdio example: `examples/acp/clients/copilot.py`.
+- Copilot-in-a-container over TCP + Band tools via a `band-mcp` (SSE) server:
+  `examples/acp/copilot_docker/compose/` (separate services) and
+  `examples/acp/copilot_docker/colocated/` (single container). Both use
+  `inject_band_tools=False` + an explicit `mcp_servers` SSE URL, since a remote Copilot
+  can't reach the SDK host's loopback `LocalMCPServer`.
+- Copilot in a Docker **microVM sandbox** ([`sbx`](https://docs.docker.com/ai/sandboxes/))
+  over stdio (`sbx exec -i <sandbox> copilot --acp`): `examples/acp/copilot_sandbox/` —
+  isolation + a host-side secret proxy (token never enters the VM). Uses the ordinary
+  stdio transport; auth is out-of-band via `sbx secret set -g github`.
 
 ## REST Client OMIT vs Null
 
@@ -312,10 +355,15 @@ tests/
 ├── runtime/        # Runtime tests
 ├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
-│   ├── adapters/   # Per-adapter smoke & tool execution tests
-│   └── scenarios/  # Cross-cutting scenarios (context persistence, room isolation)
+│   └── baseline/   # The only E2E suite: reusable toolkit + smokes (see baseline/README.md)
 └── conftest.py     # Shared fixtures
 ```
+
+Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
+— it documents the reusable baseline toolkit (provisioning, user ops, reply
+capture, judge, assertions, fixtures) so you reuse it instead of rebuilding it.
+To wire a new framework adapter into the matrix, follow
+`tests/e2e/baseline/ADDING_AN_ADAPTER.md`.
 
 ## Commands
 
@@ -343,6 +391,10 @@ E2E_TESTS_ENABLED=true uv run pytest tests/e2e/ -v -s --no-cov
 
 # Run E2E tests for a single adapter
 E2E_TESTS_ENABLED=true uv run pytest tests/e2e/ -k langgraph -v -s --no-cov
+
+# Run the baseline toolkit smokes (provision their own agents; only need
+# BAND_API_KEY_USER — see tests/e2e/baseline/README.md)
+E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v -s --no-cov
 
 # Linting and formatting
 uv run ruff check .
@@ -375,16 +427,30 @@ resolves each in a separate fork.
 
 - `BAND_REST_URL`: REST API URL (default: https://app.band.ai)
 - `BAND_WS_URL`: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
-- `BAND_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages
+- `BAND_API_KEY_USER`: User API key for E2E WebSocket observer and trigger messages (the only Band key the baseline toolkit needs — it provisions its own agents)
+- `BAND_API_KEY_USER_2`: Optional second user key, for baseline smokes exercising two-user interaction
 - `OPENAI_API_KEY`: OpenAI API key (for LangGraph examples)
 - `ANTHROPIC_API_KEY`: Anthropic API key (for Anthropic/Claude SDK examples)
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
+- `GITHUB_TOKEN`: A Copilot-entitled GitHub token for the `copilot_sdk` and `copilot_acp` adapters' runtime auth (BYOK inference reuses `ANTHROPIC_API_KEY`). Optional when a stored `copilot login` is present; used for headless/CI. Read by the baseline toolkit's `tests/e2e/baseline/settings.py`
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
-- `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-4o-mini`)
-- `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (default: `claude-3-haiku-20240307`)
-- `E2E_TIMEOUT`: Response timeout in seconds for E2E tests (default: `30`)
+- `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
+- `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
+- `E2E_JUDGE_MODEL`: Anthropic model for the baseline LLM judge (default: falls back to `E2E_ANTHROPIC_MODEL`; must support structured outputs)
+- `E2E_TIMEOUT`: Per-turn response timeout in seconds for E2E tests (default: `120`; a slow test can add headroom with `@pytest.mark.timeout(extra=n)`)
+
+Baseline lane scoping (see `tests/e2e/baseline/README.md`):
+
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and authenticates via a stored `copilot login` or a Copilot-entitled `GITHUB_TOKEN`; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+
+Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
+
+- `BAND_E2E_AUTOCLEAN`: Reap provisioned agents + rooms on teardown (default: `true`; set `false` to keep resources for debugging a failing run)
+- `BAND_E2E_ORPHAN_SWEEP`: Sweep leftover agents from crashed prior runs at session start (default: `true`)
+- `BAND_E2E_ORPHAN_MAX_AGE_MINUTES`: Only sweep agents older than this, so a concurrent run is never reaped mid-flight (default: `120`)
+- `BAND_E2E_SCORECARD_JSON`: Write this run's adapter×test scorecard (pass/fail/skip + N/A reasons) as JSON to this path at session end (default: empty = don't emit). CI sets one path per lane; a final job merges them (see `tests/e2e/baseline/scorecard.py` and the Scorecard section of the baseline README)
 
 ## Adding a New Framework Integration
 
@@ -392,7 +458,7 @@ When adding a new framework adapter and converter, follow this TDD workflow. Use
 
 ### Phase 1: Scaffold Source Files
 
-1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters._tool_parsing import parse_tool_call, parse_tool_result`.
+1. Create converter at `src/band/converters/<framework>.py` — class `{Framework}HistoryConverter` with stub `convert()`, `set_agent_name()`, `__init__(*, agent_name=None)`. Use `from band.converters.parsing import parse_tool_call, parse_tool_result`.
 2. Create adapter at `src/band/adapters/<framework>.py` — class `{Framework}Adapter` extending `SimpleAdapter[T]` with `__init__` params: `model`, `custom_section`, `enable_execution_reporting`, `history_converter`. Stub `on_message`, `on_started`, `on_cleanup`.
 3. If the framework needs an external SDK, add an optional dependency group in `pyproject.toml`.
 
@@ -457,7 +523,7 @@ Every example file must include PEP 723 inline script metadata at the top for st
 # dependencies = ["band-sdk[<extra>]"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Brief description of what this example does.
@@ -479,10 +545,54 @@ Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anth
 - All `async def main()` functions must have `-> None` return type hint
 - Always include `from __future__ import annotations` as first import
 
+## Documentation Testing (markdown snippets)
+
+Tracked `.md` files (except `examples/`) run in CI as tests via `pytest-markdown-docs`
+— so `python` snippets in the docs must stay correct and runnable, not rot:
+
+```bash
+# What CI runs (ci.yml):
+uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+# One file, verbose, while iterating:
+uv run pytest --markdown-docs path/to/FILE.md --no-cov -v
+```
+
+Fence conventions (the language tag after the opening ```` ``` ````):
+
+- ` ```python ` — **executed**. The block is a test: top-level `assert`s are the
+  checks; any unhandled exception fails CI.
+- ` ```python notest ` — **not executed** (collected out). Use only for illustrative
+  pseudo-code, placeholder names (`MyframeworkAdapter`, `MYPROVIDER`), or snippets
+  that genuinely need a live platform/LLM.
+- ` ```python fixture:<name> ` — executed with the named pytest fixture injected into
+  the block's namespace (precedent: `fixture:client`, `fixture:agent_config_path`).
+  The fixture is resolved from the nearest `conftest.py`.
+
+**Prefer runnable over `notest`.** If a snippet only needs importable symbols (types,
+enums, helpers), drop `notest` and add a small `assert` so a rename breaks the doc.
+Reach for `fixture:` when it needs a constructed object (a client, a config path).
+
+**Gotcha — snippets under `tests/e2e/**` skip in CI.** That tree's conftest skips
+every collected item (code fences included) unless `E2E_TESTS_ENABLED=true`, and the
+CI markdown-docs step does **not** set it. So a `python` block in an E2E doc silently
+*skips* in CI and protects nothing — worse than honest `notest`. Keep E2E-doc snippets
+`notest`; if you want a runnable check of E2E-adjacent symbols (e.g. "these registry
+helpers still exist"), put it in a doc **outside** `tests/e2e/**` or in a real unit
+test, where the markdown-docs run actually executes it.
+
 ## Coding Standards
 
 - Always use type hints for function parameters and return types
 - Use `from __future__ import annotations` as the first import in every file
+- No underscores in file names or class names: modules get a clean single word
+  (`helpers.py`, not `_utils.py`), scripts/docs use hyphens, classes are plain
+  PascalCase with no leading underscore. Exception: patterns a tool requires,
+  e.g. pytest's `test_*.py` / `conftest.py`.
+- Never read configuration with `os.environ` / `os.getenv` — define a
+  `pydantic-settings` `BaseSettings` class (field name == env var name,
+  `SettingsConfigDict(extra="ignore", case_sensitive=False)`) and read its
+  fields; see `tests/e2e/baseline/settings.py` for the canonical pattern
+- Prefer `match`/`case` over long `if`/`elif` chains that dispatch on one value
 - Never use `print()` — use `logging` with module-level `logger = logging.getLogger(__name__)`
 - Use `%s` placeholders in log messages for lazy evaluation
 - Use Pydantic v2 for data models; use `model_dump()` not `dict()`
@@ -491,6 +601,11 @@ Replace `<extra>` with the appropriate framework extra (e.g., `langgraph`, `anth
 - Catch `pydantic.ValidationError` separately from generic `Exception`
 - Use `raise ValueError(...)` for missing required config, not `logger.error()` + `sys.exit()`
 - Never put issue-tracker references in code — no Linear issue IDs (e.g. `INT-123`), Linear URLs, or ticket numbers in comments, docstrings, or strings. Explain the *why* in plain terms instead. (Branch names, commit messages, and PR descriptions may reference issues.)
+- Test what really matters — behavior that can break. Don't write tests that
+  restate definitions (asserting dataclass defaults equal themselves, echoing a
+  constant) or otherwise cannot fail for a real reason; they add maintenance
+  cost without protection.
+- Comments should describe the code as it is, not narrate what changed between versions.
 
 ## Pre-Commit Checklist
 

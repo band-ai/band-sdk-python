@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 try:
@@ -9,6 +10,7 @@ try:
         ModelRequest,
         ModelResponse,
         RetryPromptPart,
+        TextPart,
         ToolCallPart,
         ToolReturnPart,
         UserPromptPart,
@@ -20,8 +22,11 @@ except ImportError as e:
     ) from e
 
 from band.core.protocols import HistoryConverter
+from band.core.types import MessageType
 
-from ._tool_parsing import parse_tool_call, parse_tool_result
+from .parsing import parse_tool_call, parse_tool_result
+
+logger = logging.getLogger(__name__)
 
 # Type alias for Pydantic AI messages (can be requests or responses)
 PydanticAIMessages = list[ModelRequest | ModelResponse]
@@ -61,7 +66,9 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
     - other agents' messages → ModelRequest with UserPromptPart (with [name] prefix)
     - tool_call → ModelResponse with ToolCallPart
     - tool_result → ModelRequest with ToolReturnPart (or RetryPromptPart if is_error=True)
-    - this agent's text messages → skipped (redundant with tool results)
+    - this agent's text messages → ModelResponse with TextPart
+      (dropped when emitted mid tool call, where it would split the
+      ToolCallPart from its ToolReturnPart)
 
     Tool events are stored in platform as JSON:
     - tool_call: {"name": "...", "args": {...}, "tool_call_id": "..."}
@@ -73,15 +80,15 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
         Initialize converter.
 
         Args:
-            agent_name: Name of this agent. Messages from this agent are skipped
-                       (they're redundant with tool results). Messages from other
-                       agents are included as ModelRequest.
+            agent_name: Name of this agent. Messages from this agent are preserved
+                       as ModelResponse. Messages from other agents are included
+                       as ModelRequest.
         """
         self._agent_name = agent_name
 
     def set_agent_name(self, name: str) -> None:
         """
-        Set agent name so converter knows which messages to skip.
+        Set agent name so the converter can recognize this agent's own messages.
 
         Args:
             name: Name of this agent
@@ -101,67 +108,119 @@ class PydanticAIHistoryConverter(HistoryConverter[PydanticAIMessages]):
             message_type = hist.get("message_type", "text")
             content = hist.get("content", "")
 
-            if message_type == "tool_call":
-                # Flush pending tool results before starting new tool calls
-                _flush_pending_tool_results(messages, pending_tool_results)
-
-                # Parse tool call JSON and collect for batching
-                parsed = parse_tool_call(content)
-                if parsed:
-                    tool_call_part = ToolCallPart(
-                        tool_name=parsed.name,
-                        args=parsed.args,
-                        tool_call_id=parsed.tool_call_id,
+            match message_type:
+                case MessageType.TOOL_CALL:
+                    self._handle_tool_call(
+                        content, messages, pending_tool_calls, pending_tool_results
                     )
-                    pending_tool_calls.append(tool_call_part)
-
-            elif message_type == "tool_result":
-                # Flush pending tool calls first (tool results follow tool calls)
-                _flush_pending_tool_calls(messages, pending_tool_calls)
-
-                # Parse tool result JSON and collect for batching
-                parsed = parse_tool_result(content)
-                if parsed:
-                    if parsed.is_error:
-                        # Use RetryPromptPart for error results
-                        tool_result_part: ToolReturnPart | RetryPromptPart = (
-                            RetryPromptPart(
-                                content=parsed.output,
-                                tool_name=parsed.name,
-                                tool_call_id=parsed.tool_call_id,
-                            )
-                        )
-                    else:
-                        # Use ToolReturnPart for successful results
-                        tool_result_part = ToolReturnPart(
-                            tool_name=parsed.name,
-                            content=parsed.output,
-                            tool_call_id=parsed.tool_call_id,
-                        )
-                    pending_tool_results.append(tool_result_part)
-
-            elif message_type == "text":
-                # Flush pending tool calls and results first
-                _flush_pending_tool_calls(messages, pending_tool_calls)
-                _flush_pending_tool_results(messages, pending_tool_results)
-
-                role = hist.get("role", "user")
-                sender_name = hist.get("sender_name", "")
-
-                if role == "assistant" and sender_name == self._agent_name:
-                    # Skip THIS agent's text (redundant with tool results)
-                    continue
-                else:
-                    # User messages AND other agents' messages
-                    formatted_content = (
-                        f"[{sender_name}]: {content}" if sender_name else content
+                case MessageType.TOOL_RESULT:
+                    self._handle_tool_result(
+                        content, messages, pending_tool_calls, pending_tool_results
                     )
-                    messages.append(
-                        ModelRequest(parts=[UserPromptPart(content=formatted_content)])
+                case MessageType.TEXT:
+                    self._handle_text(
+                        hist,
+                        content,
+                        messages,
+                        pending_tool_calls,
+                        pending_tool_results,
                     )
+                case MessageType.THOUGHT | MessageType.ERROR | MessageType.TASK:
+                    # Known platform-internal types intentionally excluded from
+                    # LLM history.
+                    pass
+                case _:
+                    logger.warning("Unknown message_type in history: %s", message_type)
 
         # Flush any remaining pending tool calls and results
         _flush_pending_tool_calls(messages, pending_tool_calls)
         _flush_pending_tool_results(messages, pending_tool_results)
 
         return messages
+
+    def _handle_tool_call(
+        self,
+        content: str,
+        messages: PydanticAIMessages,
+        pending_tool_calls: list[ToolCallPart],
+        pending_tool_results: list[ToolReturnPart | RetryPromptPart],
+    ) -> None:
+        """Collect a tool call for batching, flushing any pending results first."""
+        _flush_pending_tool_results(messages, pending_tool_results)
+
+        parsed = parse_tool_call(content)
+        if parsed:
+            pending_tool_calls.append(
+                ToolCallPart(
+                    tool_name=parsed.name,
+                    args=parsed.args,
+                    tool_call_id=parsed.tool_call_id,
+                )
+            )
+
+    def _handle_tool_result(
+        self,
+        content: str,
+        messages: PydanticAIMessages,
+        pending_tool_calls: list[ToolCallPart],
+        pending_tool_results: list[ToolReturnPart | RetryPromptPart],
+    ) -> None:
+        """Collect a tool result for batching, flushing the calls it answers first."""
+        _flush_pending_tool_calls(messages, pending_tool_calls)
+
+        parsed = parse_tool_result(content)
+        if not parsed:
+            return
+
+        if parsed.is_error:
+            # Use RetryPromptPart for error results
+            tool_result_part: ToolReturnPart | RetryPromptPart = RetryPromptPart(
+                content=parsed.output,
+                tool_name=parsed.name,
+                tool_call_id=parsed.tool_call_id,
+            )
+        else:
+            # Use ToolReturnPart for successful results
+            tool_result_part = ToolReturnPart(
+                tool_name=parsed.name,
+                content=parsed.output,
+                tool_call_id=parsed.tool_call_id,
+            )
+        pending_tool_results.append(tool_result_part)
+
+    def _handle_text(
+        self,
+        hist: dict[str, Any],
+        content: str,
+        messages: PydanticAIMessages,
+        pending_tool_calls: list[ToolCallPart],
+        pending_tool_results: list[ToolReturnPart | RetryPromptPart],
+    ) -> None:
+        """Append a text turn: own text as ModelResponse, others as ModelRequest."""
+        role = hist.get("role", "user")
+        sender_name = hist.get("sender_name", "")
+        is_own = (
+            role == "assistant" and self._agent_name and sender_name == self._agent_name
+        )
+
+        # Own platform text while a tool call is unresolved is usually the side
+        # effect of band_send_message. Replaying it here would split the
+        # ToolCallPart from its ToolReturnPart, which providers reject.
+        if is_own and pending_tool_calls:
+            return
+
+        # Flush pending tool calls and results first
+        _flush_pending_tool_calls(messages, pending_tool_calls)
+        _flush_pending_tool_results(messages, pending_tool_results)
+
+        if is_own:
+            # Preserve own text so restart rehydration knows the agent already replied.
+            messages.append(ModelResponse(parts=[TextPart(content=content)]))
+        else:
+            # User messages AND other agents' messages
+            formatted_content = (
+                f"[{sender_name}]: {content}" if sender_name else content
+            )
+            messages.append(
+                ModelRequest(parts=[UserPromptPart(content=formatted_content)])
+            )
