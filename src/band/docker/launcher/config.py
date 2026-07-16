@@ -13,6 +13,8 @@ production defaults (endpoints only) → fail.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
+from urllib.parse import urlsplit
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -73,7 +75,10 @@ class WorkspaceConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    schema_version: str = Field(alias="schemaVersion")
+    # The one schema version this launcher implements. A file declaring any
+    # other version was written for different semantics and must not be
+    # interpreted with this model.
+    schema_version: Literal["1"] = Field(alias="schemaVersion")
     agent: AgentSection = AgentSection()
     band: BandSection = BandSection()
     project: ProjectSection = ProjectSection()
@@ -132,15 +137,28 @@ def load_workspace_config(config_path: Path) -> WorkspaceConfig:
         raise LaunchError("config", f"invalid {config_path}: {details}") from exc
 
 
+def require_url(value: str, *, scheme: str, name: str) -> str:
+    """A structurally valid endpoint: the right scheme AND a host, so a bad
+    URL fails this phase instead of the first connect after the sync."""
+    try:
+        parts = urlsplit(value)
+    except ValueError as exc:
+        raise LaunchError("config", f"{name} is not a valid URL: {value!r}") from exc
+    if parts.scheme != scheme or not parts.netloc:
+        raise LaunchError(
+            "config", f"{name} must be a {scheme}:// URL with a host, got {value!r}"
+        )
+    return value
+
+
 def resolve_endpoints(config: WorkspaceConfig, env: LauncherEnv) -> tuple[str, str]:
     """Resolve REST/WS URLs: env override → band.yaml → production defaults."""
     rest = env.band_rest_url or config.band.rest_url or DEFAULT_REST_URL
     ws = env.band_ws_url or config.band.ws_url or DEFAULT_WS_URL
-    if not rest.startswith("https://"):
-        raise LaunchError("config", f"BAND_REST_URL must be https://, got {rest!r}")
-    if not ws.startswith("wss://"):
-        raise LaunchError("config", f"BAND_WS_URL must be wss://, got {ws!r}")
-    return rest, ws
+    return (
+        require_url(rest, scheme="https", name="BAND_REST_URL"),
+        require_url(ws, scheme="wss", name="BAND_WS_URL"),
+    )
 
 
 def resolve_agent_id(config: WorkspaceConfig, env: LauncherEnv) -> str:

@@ -44,6 +44,16 @@ def test_unknown_nested_field_rejected(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace))
 
 
+def test_unsupported_schema_version_rejected(workspace: Workspace) -> None:
+    """A file declaring another schema version was written for different
+    semantics and must not be interpreted with this launcher's model."""
+    config = default_config(workspace)
+    config["schemaVersion"] = "2"
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[config\].*schemaVersion"):
+        resolve_launch(make_env(workspace))
+
+
 def test_missing_runtime_section_rejected(workspace: Workspace) -> None:
     config = default_config(workspace)
     del config["runtime"]
@@ -99,6 +109,18 @@ def test_non_https_rest_url_rejected(workspace: Workspace) -> None:
 def test_non_wss_ws_url_rejected(workspace: Workspace) -> None:
     with pytest.raises(LaunchError, match=r"\[config\].*wss"):
         resolve_launch(make_env(workspace, band_ws_url="ws://insecure.test"))
+
+
+def test_rest_url_without_host_rejected(workspace: Workspace) -> None:
+    """A scheme with no host must fail the config phase, not the first
+    connect attempt after the dependency sync."""
+    with pytest.raises(LaunchError, match=r"\[config\].*host"):
+        resolve_launch(make_env(workspace, band_rest_url="https://"))
+
+
+def test_ws_url_without_host_rejected(workspace: Workspace) -> None:
+    with pytest.raises(LaunchError, match=r"\[config\].*host"):
+        resolve_launch(make_env(workspace, band_ws_url="wss://"))
 
 
 def test_missing_agent_id_rejected(workspace: Workspace) -> None:

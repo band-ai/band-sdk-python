@@ -155,12 +155,33 @@ def test_unignored_file_rejected(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace))
 
 
+def test_corrupt_git_metadata_fails_closed(workspace: Workspace) -> None:
+    """A git failure that is not the not-a-repository verdict (here: corrupt
+    metadata) must fail the launch, never silently skip the tracking guards."""
+    enable(workspace)
+    write_credentials(workspace, "BAND_API_KEY=x\n")
+    (workspace.root / ".git" / "config").write_text("[[[garbage\n", encoding="utf-8")
+    with pytest.raises(LaunchError, match=r"\[credentials\].*could not determine"):
+        resolve_launch(make_env(workspace))
+
+
 def test_non_git_workspace_allowed(tmp_path: Path) -> None:
     workspace = make_workspace(tmp_path, git=False)
     write_config(workspace, enable_credentials(default_config(workspace)))
     write_credentials(workspace, "BAND_API_KEY=from-file\n")
     launch = resolve_launch(make_env(workspace, band_api_key=""))
     assert launch.file_credentials == {"BAND_API_KEY": "from-file"}
+
+
+def test_non_git_workspace_without_ignore_rule_rejected(tmp_path: Path) -> None:
+    """Even before `git init`, the ignore rule must already exist — a later
+    init would otherwise leave the secrets one `git add .` from a commit."""
+    workspace = make_workspace(tmp_path, git=False)
+    (workspace.root / ".gitignore").unlink()
+    write_config(workspace, enable_credentials(default_config(workspace)))
+    write_credentials(workspace, "BAND_API_KEY=x\n")
+    with pytest.raises(LaunchError, match=r"\[credentials\].*gitignored"):
+        resolve_launch(make_env(workspace, band_api_key=""))
 
 
 def test_undocumented_names_rejected(workspace: Workspace) -> None:

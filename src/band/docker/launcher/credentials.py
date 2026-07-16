@@ -12,8 +12,10 @@ gaps) and are never logged.
 from __future__ import annotations
 
 import logging
+import os
 import stat
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from enum import StrEnum
 from functools import cached_property
@@ -113,9 +115,19 @@ def run_git(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
     `-c safe.directory=<workspace>`: a bind-mounted workspace is often owned
     by a different uid than the agent user, which trips Git's dubious-
     ownership guard and would otherwise make every git call here fail.
+
+    `LC_ALL=C` keeps git's diagnostics untranslated: the not-a-repository
+    verdict shares its exit code (128) with every other fatal git error and
+    is recognizable only by message text.
     """
     command = ["git", "-c", f"safe.directory={workspace}", "-C", str(workspace), *args]
-    return subprocess.run(command, capture_output=True, text=True, check=False)
+    return subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "LC_ALL": "C"},
+    )
 
 
 def require_never_tracked(secrets: SecretsFile) -> None:
@@ -136,9 +148,11 @@ def require_never_tracked(secrets: SecretsFile) -> None:
         )
 
 
-def require_gitignored(secrets: SecretsFile) -> None:
+def require_gitignored(secrets: SecretsFile, *git_options: str) -> None:
     """An unignored secrets file is one `git add .` away from a leak."""
-    ignored = run_git(secrets.workspace, "check-ignore", "-q", str(secrets.path))
+    ignored = run_git(
+        secrets.workspace, *git_options, "check-ignore", "-q", str(secrets.path)
+    )
     if ignored.returncode == 1:
         raise LaunchError(
             "credentials",
@@ -152,19 +166,54 @@ def require_gitignored(secrets: SecretsFile) -> None:
         )
 
 
-def is_gitignored_and_never_tracked(secrets: SecretsFile) -> None:
-    """Outside a Git repository there is no tracking risk and the check is
-    skipped. Inside one, any unexpected git failure fails the launch
-    (closed) — this guard must never be silently disabled."""
-    inside = run_git(secrets.workspace, "rev-parse", "--is-inside-work-tree")
-    if inside.returncode != 0:
-        logger.warning(
-            "Workspace is not a git repository; skipping gitignore check for "
-            "the credentials file"
+def require_gitignored_before_init(secrets: SecretsFile) -> None:
+    """No repository yet, but the ignore rule must already exist — a later
+    `git init` + `git add .` would otherwise commit the plaintext file. A
+    scratch git dir lets check-ignore evaluate the workspace's ignore rules
+    without initializing anything inside the workspace."""
+    with tempfile.TemporaryDirectory(prefix="band-launcher-scratch-git-") as scratch:
+        repo = Path(scratch) / "repo"
+        created = run_git(secrets.workspace, "init", "-q", str(repo))
+        if created.returncode != 0:
+            raise LaunchError(
+                "credentials",
+                "git could not evaluate the workspace ignore rules: "
+                + (created.stderr or "").strip(),
+            )
+        require_gitignored(
+            secrets,
+            "--git-dir",
+            str(repo / ".git"),
+            "--work-tree",
+            str(secrets.workspace),
         )
+
+
+# Git's own verdict for a genuinely non-repo directory — the only outcome
+# allowed to relax this guard (to the pre-init ignore-rule check). Any other
+# failure fails closed.
+NOT_A_REPOSITORY = "not a git repository"
+
+
+def is_gitignored_and_never_tracked(secrets: SecretsFile) -> None:
+    """Inside a repository, the file must be gitignored and untracked.
+    Outside one, nothing can be tracked yet, but the ignore rule is still
+    required so a later `git init` cannot expose the file. Any other outcome
+    — git unable to answer (corrupt or unreadable metadata) — fails the
+    launch (closed); this guard must never be silently disabled."""
+    inside = run_git(secrets.workspace, "rev-parse", "--is-inside-work-tree")
+    if inside.returncode == 0 and inside.stdout.strip() == "true":
+        require_never_tracked(secrets)
+        require_gitignored(secrets)
         return
-    require_never_tracked(secrets)
-    require_gitignored(secrets)
+    if NOT_A_REPOSITORY in (inside.stderr or "").lower():
+        require_gitignored_before_init(secrets)
+        return
+    detail = (inside.stderr or inside.stdout).strip() or f"exit {inside.returncode}"
+    raise LaunchError(
+        "credentials",
+        f"git could not determine whether the workspace is a repository: {detail}",
+    )
 
 
 def defines_only_documented_names(secrets: SecretsFile) -> None:
