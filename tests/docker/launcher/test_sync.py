@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import subprocess
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
+from filelock import Timeout
 
 from band.docker.launcher import (
     AGENT_HOME,
@@ -74,9 +77,6 @@ def test_sync_invocation_exact(
     # The customer venv must build on the base interpreter (never the SDK
     # venv python), and uv must never try to download one inside the
     # egress-fenced sandbox.
-    import sys
-    from pathlib import Path
-
     assert env["UV_PYTHON"] == str(Path(sys.base_prefix) / "bin" / "python3")
     assert env["UV_PYTHON_DOWNLOADS"] == "never"
 
@@ -96,14 +96,13 @@ def test_sync_lock_contention_times_out_cleanly(
 ) -> None:
     """A held dependency-sync lock surfaces as a clear phase error, and the
     sync command is never attempted."""
-    import filelock
 
     class HeldLock:
         def __init__(self, path: str) -> None:
             self.path = path
 
         def acquire(self, timeout: float | None = None) -> None:
-            raise filelock.Timeout(self.path)
+            raise Timeout(self.path)
 
         def release(self) -> None:  # pragma: no cover - never reached
             raise AssertionError("release without acquire")
@@ -111,7 +110,7 @@ def test_sync_lock_contention_times_out_cleanly(
     launch = resolve_launch(make_env(workspace))
     fake = FakeRun()
     monkeypatch.setattr(launcher_sync.subprocess, "run", fake)
-    monkeypatch.setattr(filelock, "FileLock", HeldLock)
+    monkeypatch.setattr(launcher_sync, "FileLock", HeldLock)
 
     with pytest.raises(LaunchError, match=r"\[sync\].*timed out.*lock"):
         sync_customer_environment(launch)

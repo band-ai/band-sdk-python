@@ -13,6 +13,7 @@ from band.docker.launcher import (
     load_workspace_config,
     resolve_launch,
 )
+from band.docker.launcher import run as launcher_run
 
 from .fakes import Workspace, default_config, make_env, write_config
 
@@ -123,8 +124,6 @@ def test_missing_workspace_dir_rejected(workspace: Workspace) -> None:
 def test_wrong_uid_rejected(
     workspace: Workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from band.docker.launcher import run as launcher_run
-
     monkeypatch.setattr(launcher_run, "current_uid", lambda: 0)
     with pytest.raises(LaunchError, match=r"\[identity\].*uid 1000"):
         resolve_launch(make_env(workspace))
