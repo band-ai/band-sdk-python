@@ -67,7 +67,6 @@ def build_no_llm_graph_factory() -> Any:
             text = _MENTION_TOKEN_PATTERN.sub("", text).strip()
 
             reply_text = "pong" if "ping" in text.lower() else f"You said: {text}"
-            print(f"Replying to {sender}: {reply_text}")
             await send_message.ainvoke(
                 {"content": f"{reply_text}", "mentions": [sender]}
             )
