@@ -22,7 +22,11 @@ from typing import Callable
 
 from dotenv import dotenv_values
 
-from band.docker.launcher.config import LauncherEnv, WorkspaceConfig
+from band.docker.launcher.config import (
+    CredentialsSection,
+    LauncherEnv,
+    WorkspaceConfig,
+)
 from band.docker.launcher.errors import LaunchError
 from band.docker.launcher.paths import resolve_inside
 
@@ -103,38 +107,22 @@ def has_owner_only_permissions(secrets: SecretsFile) -> None:
         )
 
 
-def is_gitignored_and_never_tracked(secrets: SecretsFile) -> None:
-    """A committed secrets file leaks with every clone.
+def run_git(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run git against the workspace, tolerating a foreign-uid bind mount.
 
-    Outside a Git repository there is no tracking risk and the check is
-    skipped. Inside one, any unexpected git failure fails the launch
-    (closed) — this guard must never be silently disabled.
+    `-c safe.directory=<workspace>`: a bind-mounted workspace is often owned
+    by a different uid than the agent user, which trips Git's dubious-
+    ownership guard and would otherwise make every git call here fail.
     """
-    # `-c safe.directory=<workspace>`: a bind-mounted workspace is often owned
-    # by a different uid than the agent user, which trips Git's dubious-
-    # ownership guard and would otherwise make every call below fail.
-    git = [
-        "git",
-        "-c",
-        f"safe.directory={secrets.workspace}",
-        "-C",
-        str(secrets.workspace),
-    ]
+    command = ["git", "-c", f"safe.directory={workspace}", "-C", str(workspace), *args]
+    return subprocess.run(command, capture_output=True, text=True, check=False)
 
-    def run_git(*args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            [*git, *args], capture_output=True, text=True, check=False
-        )
 
-    inside = run_git("rev-parse", "--is-inside-work-tree")
-    if inside.returncode != 0:
-        logger.warning(
-            "Workspace is not a git repository; skipping gitignore check for "
-            "the credentials file"
-        )
-        return
-
-    tracked = run_git("ls-files", "--error-unmatch", str(secrets.path))
+def require_never_tracked(secrets: SecretsFile) -> None:
+    """A committed secrets file leaks with every clone."""
+    tracked = run_git(
+        secrets.workspace, "ls-files", "--error-unmatch", str(secrets.path)
+    )
     if tracked.returncode == 0:
         raise LaunchError(
             "credentials",
@@ -147,7 +135,10 @@ def is_gitignored_and_never_tracked(secrets: SecretsFile) -> None:
             + (tracked.stderr or "").strip(),
         )
 
-    ignored = run_git("check-ignore", "-q", str(secrets.path))
+
+def require_gitignored(secrets: SecretsFile) -> None:
+    """An unignored secrets file is one `git add .` away from a leak."""
+    ignored = run_git(secrets.workspace, "check-ignore", "-q", str(secrets.path))
     if ignored.returncode == 1:
         raise LaunchError(
             "credentials",
@@ -159,6 +150,21 @@ def is_gitignored_and_never_tracked(secrets: SecretsFile) -> None:
             "git could not determine the credentials file's ignore state: "
             + (ignored.stderr or "").strip(),
         )
+
+
+def is_gitignored_and_never_tracked(secrets: SecretsFile) -> None:
+    """Outside a Git repository there is no tracking risk and the check is
+    skipped. Inside one, any unexpected git failure fails the launch
+    (closed) — this guard must never be silently disabled."""
+    inside = run_git(secrets.workspace, "rev-parse", "--is-inside-work-tree")
+    if inside.returncode != 0:
+        logger.warning(
+            "Workspace is not a git repository; skipping gitignore check for "
+            "the credentials file"
+        )
+        return
+    require_never_tracked(secrets)
+    require_gitignored(secrets)
 
 
 def defines_only_documented_names(secrets: SecretsFile) -> None:
@@ -181,13 +187,8 @@ GUARDS: tuple[Callable[[SecretsFile], None], ...] = (
 )
 
 
-def load_file_credentials(
-    config: WorkspaceConfig, env: LauncherEnv, workspace: Path
-) -> dict[str, str]:
-    """Return name -> value for documented credentials missing from the env."""
-    section = config.credentials
-    if section is None:
-        return {}
+def require_explicit_opt_in(section: CredentialsSection) -> None:
+    """Plaintext custody is never implicit: supported source + acknowledgement."""
     if section.source != "workspace-env-file":
         raise LaunchError(
             "credentials",
@@ -202,7 +203,10 @@ def load_file_credentials(
             "workspace and the sandbox VM",
         )
 
-    secrets = SecretsFile.locate(workspace, section.path)
+
+def guarded_secrets_file(workspace: Path, configured: str) -> SecretsFile:
+    """Locate the file and enforce every guard before its values are used."""
+    secrets = SecretsFile.locate(workspace, configured)
     for guard in GUARDS:
         try:
             guard(secrets)
@@ -212,14 +216,29 @@ def load_file_credentials(
             raise LaunchError(
                 "credentials", f"credentials file is not readable: {exc}"
             ) from exc
+    return secrets
 
+
+def missing_from_environment(secrets: SecretsFile, env: LauncherEnv) -> dict[str, str]:
+    """Existing process environment always wins; the file only fills gaps."""
     env_values = env.model_dump()
-    resolved = {
+    return {
         name: value
         for name, value in secrets.values.items()
-        # Existing process environment always wins; the file only fills gaps.
         if not env_values.get(name.lower())
     }
+
+
+def load_file_credentials(
+    config: WorkspaceConfig, env: LauncherEnv, workspace: Path
+) -> dict[str, str]:
+    """Return name -> value for documented credentials missing from the env."""
+    section = config.credentials
+    if section is None:
+        return {}
+    require_explicit_opt_in(section)
+    secrets = guarded_secrets_file(workspace, section.path)
+    resolved = missing_from_environment(secrets, env)
     logger.info(
         "Loaded %d credential value(s) from the workspace env file", len(resolved)
     )

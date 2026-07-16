@@ -59,10 +59,8 @@ def current_uid() -> int:
     return os.getuid()
 
 
-def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
-    """Fail-fast phases: identity, config, endpoints, paths, credentials."""
-    env = env or LauncherEnv()
-
+def require_agent_uid() -> None:
+    """The launcher must run after the base entrypoint's privilege drop."""
     uid = current_uid()
     if uid != AGENT_UID:
         raise LaunchError(
@@ -71,6 +69,9 @@ def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
             f"privilege drop), got uid {uid}",
         )
 
+
+def resolve_workspace(env: LauncherEnv) -> Path:
+    """The sandbox runtime's mounted workspace, verified to exist."""
     if not env.workspace_dir:
         raise LaunchError(
             "config", "WORKSPACE_DIR is not set — is this a Docker Sandbox?"
@@ -78,34 +79,51 @@ def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
     workspace = Path(env.workspace_dir).resolve()
     if not workspace.is_dir():
         raise LaunchError("config", f"workspace does not exist: {workspace}")
+    return workspace
 
-    config_path = (
-        Path(env.band_kit_config_path)
-        if env.band_kit_config_path
-        else workspace / DEFAULT_CONFIG_FILENAME
-    )
-    config = load_workspace_config(config_path)
 
-    rest_url, ws_url = resolve_endpoints(config, env)
-    agent_id = resolve_agent_id(config, env)
-    paths = resolve_paths(config, env, workspace)
-    file_credentials = load_file_credentials(config, env, workspace)
+def locate_config_path(env: LauncherEnv, workspace: Path) -> Path:
+    """Honor the one supported path override, else the workspace default."""
+    if env.band_kit_config_path:
+        return Path(env.band_kit_config_path)
+    return workspace / DEFAULT_CONFIG_FILENAME
 
-    api_key = env.band_api_key or file_credentials.get("BAND_API_KEY", "")
-    if not api_key:
+
+def require_band_api_key(env: LauncherEnv, file_credentials: dict[str, str]) -> None:
+    """The one credential the agent cannot start without."""
+    if not (env.band_api_key or file_credentials.get("BAND_API_KEY")):
         raise LaunchError(
             "credentials",
             "BAND_API_KEY missing: set it in the environment or provide it "
             "via the configured workspace env file",
         )
 
+
+def resolve_uv_binary(env: LauncherEnv) -> Path:
+    """The image's pinned uv, required by the image contract."""
     if not env.band_sdk_uv:
         raise LaunchError("sync", "BAND_SDK_UV is not set — image contract broken")
+    return Path(env.band_sdk_uv)
+
+
+def resolve_launch(env: LauncherEnv | None = None) -> ResolvedLaunch:
+    """Fail-fast phases: identity, config, endpoints, paths, credentials."""
+    env = env or LauncherEnv()
+
+    require_agent_uid()
+    workspace = resolve_workspace(env)
+    config = load_workspace_config(locate_config_path(env, workspace))
+
+    rest_url, ws_url = resolve_endpoints(config, env)
+    agent_id = resolve_agent_id(config, env)
+    paths = resolve_paths(config, env, workspace)
+    file_credentials = load_file_credentials(config, env, workspace)
+    require_band_api_key(env, file_credentials)
 
     return ResolvedLaunch(
         workspace=workspace,
         **paths._asdict(),
-        uv_binary=Path(env.band_sdk_uv),
+        uv_binary=resolve_uv_binary(env),
         agent_id=agent_id,
         rest_url=rest_url,
         ws_url=ws_url,
@@ -143,19 +161,28 @@ def execute(launch: ResolvedLaunch) -> None:
     os.execve(str(interpreter), [str(interpreter), str(launch.entrypoint)], child_env)
 
 
-LOG_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
+def launcher_formatter() -> logging.Formatter:
+    """The one shape of every launcher diagnostic line, on every handler:
+    str.format-style fields with ISO 8601 timestamps."""
+    return logging.Formatter(
+        "{asctime} {name} {levelname} {message}",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
+        style="{",
+    )
 
 
 def configure_logging() -> None:
     """Stream diagnostics to stderr (the startup dispatcher's log)."""
-    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+    handler = logging.StreamHandler()
+    handler.setFormatter(launcher_formatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
 
 
 def add_log_file(log_path: Path) -> None:
     """Mirror diagnostics into the configured runtime log directory."""
     log_path.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(log_path / "launcher.log")
-    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.setFormatter(launcher_formatter())
     logging.getLogger().addHandler(handler)
 
 
