@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 import pytest
 
 from tests.docker.toolkit.docker_cli import BAND_PYTHON_KIT_DOCKERFILE, Container, Image
+from tests.docker.toolkit.live_agent import live_containerized_echo_agent
 
 # Re-exported (not just imported) so pytest can find them as fixtures — mirrors
 # tests/integration/conftest.py's re-export of tests/conftest_integration.py.
@@ -21,6 +22,8 @@ from tests.e2e.baseline.fixtures.platform import (  # noqa: F401
     resource_manager,
     user_ops,
 )
+from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 
 
 @pytest.fixture(scope="session")
@@ -39,3 +42,20 @@ def band_python_kit_container(band_python_kit_image: Image) -> Iterator[Containe
         band_python_kit_image, name_prefix="band-python-kit-test"
     ) as container:
         yield container
+
+
+@pytest.fixture
+async def live_containerized_agent(
+    band_python_kit_image: Image,
+    resource_manager: ResourceManager,  # noqa: F811 -- pytest fixture injection, not the import above
+    baseline_settings: BaselineSettings,  # noqa: F811 -- same
+) -> AsyncIterator[tuple[ProvisionedAgent, str]]:
+    """A real agent's echo process, running in a real container, plus the
+    room it's in — yields ``(agent, room_id)`` for a test to send a turn to."""
+    async with live_containerized_echo_agent(
+        band_python_kit_image,
+        resource_manager,
+        baseline_settings,
+        label="live-container",
+    ) as result:
+        yield result

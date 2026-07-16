@@ -5,6 +5,9 @@
 # is documentation, not an independent fallback).
 ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5
+# Shared by both stages so the venv is built at the exact absolute path it
+# will live at in the runtime image — see UV_PROJECT_ENVIRONMENT below.
+ARG BAND_SDK_HOME=/opt/band
 
 # Named stage so the pinned uv image can be referenced by a fixed alias below
 # — COPY --from doesn't support ARG expansion directly.
@@ -12,6 +15,7 @@ FROM ${UV_IMAGE} AS uv
 
 # ── Build stage ───────────────────────────────────────────────────────────
 FROM ${PYTHON_BASE_IMAGE} AS builder
+ARG BAND_SDK_HOME
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -40,6 +44,12 @@ RUN sed -i '/^\[tool\.uv\.sources\]/,/^\[/{ /^\[tool\.uv\.sources\]/d; /^\[/!d; 
 # resolve into the same venv. Any other framework is the customer's own
 # venv, created at sandbox runtime, isolated from this one.
 ARG SDK_EXTRA=""
+# Build the venv directly at its final runtime path (not e.g. ./.venv, then
+# relocated by COPY below): console-script shebangs bake in an absolute
+# interpreter path at install time, so copying an already-built venv to a
+# different path leaves every entry point (band-acp, band-trigger, ...)
+# pointing at the deleted builder path.
+ENV UV_PROJECT_ENVIRONMENT=${BAND_SDK_HOME}/venv
 RUN if [ -n "$SDK_EXTRA" ]; then \
       uv sync --locked --no-dev --no-editable --extra "$SDK_EXTRA"; \
     else \
@@ -48,6 +58,7 @@ RUN if [ -n "$SDK_EXTRA" ]; then \
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
 FROM ${PYTHON_BASE_IMAGE}
+ARG BAND_SDK_HOME
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -71,9 +82,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 
-# Immutable SDK venv, outside the customer's writable workspace ($HOME).
-ENV BAND_SDK_HOME=/opt/band
-COPY --from=builder /build/.venv ${BAND_SDK_HOME}/venv
+# Immutable SDK venv, outside the customer's writable workspace ($HOME). Copied
+# from the exact same absolute path it was built at (see UV_PROJECT_ENVIRONMENT
+# in the builder stage) — console-script shebangs bake in an absolute
+# interpreter path, so copying to a *different* path would leave every entry
+# point (band-acp, band-trigger, ...) pointing at the deleted builder path.
+ENV BAND_SDK_HOME=${BAND_SDK_HOME}
+COPY --from=builder ${BAND_SDK_HOME}/venv ${BAND_SDK_HOME}/venv
 RUN chmod -R a-w ${BAND_SDK_HOME}
 
 # Fixed, absolute interpreter path for launching the SDK. Deliberately not

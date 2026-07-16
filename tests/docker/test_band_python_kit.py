@@ -17,8 +17,15 @@ SDK_PYTHON = "$BAND_SDK_PYTHON"
 # own httpx (0.28.1 as of writing) — not just a different patch version.
 CONFLICTING_HTTPX_VERSION = "0.13.3"
 
+# The repo-wide 30s pytest-timeout default (pyproject.toml) covers fixture
+# setup too, so it bounds the session-scoped image build — well under
+# Image.build()'s own 600s subprocess timeout, on a machine with no cached
+# layers. 660 = that 600s ceiling + margin for the rest of this test's body.
+_BUILD_TEST_TIMEOUT = 660
+
 
 @pytest.mark.docker_build
+@pytest.mark.timeout(_BUILD_TEST_TIMEOUT)
 def test_conflicting_customer_pin_does_not_break_sdk_venv(
     band_python_kit_container: Container,
 ) -> None:
