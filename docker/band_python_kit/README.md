@@ -41,8 +41,8 @@ Docker, and a registered Band agent (its id and API key).
 docker build -f docker/band_python_kit/Dockerfile -t band-python-kit:local .
 docker save band-python-kit:local | sbx template load /dev/stdin
 
-# 2. Start your workspace from the example project (see example/README.md).
-cp -r docker/band_python_kit/example ~/my-band-agent
+# 2. Start your workspace from the echo-agent starter (see echo-agent/README.md).
+cp -r docker/band_python_kit/echo-agent ~/my-band-agent
 cd ~/my-band-agent
 #    - set agent.id in band.yaml
 #    - create .band/secrets.env from secrets.env.example (chmod 600)
@@ -54,15 +54,15 @@ sbx create --name my-band-agent \
 ```
 
 Mention your agent in a Band room — it replies from inside the sandbox. To
-make the example your own — swap the echo adapter for a real framework
-adapter, set up credentials — see
-[`example/README.md`](example/README.md).
+make the echo-agent starter your own — swap the echo adapter for a real
+framework adapter and set up credentials — see
+[`echo-agent/README.md`](echo-agent/README.md).
 
 ## Your workspace
 
-Your workspace is a plain `uv` project plus `band.yaml`;
-[`example/`](example/README.md) is a complete template with the file map
-and authoring guide.
+Your workspace is a plain `uv` project plus `band.yaml`; the
+[`echo-agent/`](echo-agent/README.md) starter is a complete template with
+the file map and authoring guide.
 
 The launcher runs `uv sync --locked` with the image's pinned `uv` into a
 sandbox-owned environment (never inside your mounted workspace, never into
@@ -73,7 +73,7 @@ error — update it with `uv lock` and recreate.
 ### Configuration
 
 `band.yaml` is strict: unknown fields fail the launch. See
-`example/band.yaml` for the full annotated shape. Environment variables
+`echo-agent/band.yaml` for the full annotated shape. Environment variables
 override the file:
 
 | Variable | Overrides |
@@ -89,7 +89,7 @@ override the file:
 (`credentials.acknowledgePlaintextInSandbox: true` in `band.yaml`): the
 plaintext keys exist in both your workspace and the sandbox VM, and the
 launcher enforces the guardrails around the file. Setup and the accepted
-names: [`example/README.md`](example/README.md#credentials) and its
+names: [`echo-agent/README.md`](echo-agent/README.md#credentials) and its
 `secrets.env.example`.
 
 ## How the launch works
@@ -104,12 +104,13 @@ user (uid 1000), and hands off to the Band launcher, which:
 3. validates every path (no traversal, no symlink escapes, runtime storage
    outside the workspace and SDK venv),
 4. optionally clones your project from Git into the project path (the
-   `repo:` section in `band.yaml` — see the annotated example; existing
+   `repo:` section in `band.yaml` — see the annotated echo-agent starter;
+   existing
    checkouts are validated and reused, never re-cloned),
 5. syncs your locked dependencies into the sandbox-owned environment, and
 6. replaces itself with your entrypoint (`os.execve`) — signals like
-   `sbx stop`'s SIGTERM reach your code directly (the example handles them
-   with `band.runtime.shutdown.run_with_graceful_shutdown`).
+   `sbx stop`'s SIGTERM reach your code directly (the echo-agent starter
+   handles them with `band.runtime.shutdown.run_with_graceful_shutdown`).
 
 Troubleshooting: startup output lands in `/var/log/sbx-kit-startup.log`
 inside the sandbox, launcher diagnostics under your configured

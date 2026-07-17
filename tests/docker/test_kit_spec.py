@@ -1,4 +1,4 @@
-"""The kit spec and example workspace stay coherent with the launcher contract.
+"""The kit spec and echo-agent starter stay coherent with the launcher contract.
 
 Pure file/contract checks — no Docker daemon and no sbx CLI needed, so these
 run in the ordinary unit suite. `sbx kit validate` itself is a manual step
@@ -19,7 +19,7 @@ from dotenv import dotenv_values
 from band.docker.launcher import CredentialName, WorkspaceConfig
 
 KIT_DIR = Path(__file__).parents[2] / "docker" / "band_python_kit"
-EXAMPLE_DIR = KIT_DIR / "example"
+ECHO_AGENT_DIR = KIT_DIR / "echo-agent"
 
 # Hosts the launch flow was measured to need (see the kit spec's comments):
 # Band, locked dependency sync, and each supported LLM backend.
@@ -108,22 +108,22 @@ def test_spec_defines_no_proxy_or_credential_entries() -> None:
     assert "credentials" not in spec
 
 
-def test_example_workspace_satisfies_the_launcher_contract() -> None:
-    raw = yaml.safe_load((EXAMPLE_DIR / "band.yaml").read_text(encoding="utf-8"))
+def test_echo_agent_workspace_satisfies_the_launcher_contract() -> None:
+    raw = yaml.safe_load((ECHO_AGENT_DIR / "band.yaml").read_text(encoding="utf-8"))
     config = WorkspaceConfig.model_validate(raw)
 
-    assert (EXAMPLE_DIR / config.agent.entrypoint).is_file()
-    assert (EXAMPLE_DIR / "pyproject.toml").is_file()
-    assert (EXAMPLE_DIR / "uv.lock").is_file(), (
-        "the example must ship a committed lock — unlocked resolution is not supported"
+    assert (ECHO_AGENT_DIR / config.agent.entrypoint).is_file()
+    assert (ECHO_AGENT_DIR / "pyproject.toml").is_file()
+    assert (ECHO_AGENT_DIR / "uv.lock").is_file(), (
+        "the echo-agent starter must ship a committed lock — unlocked resolution is not supported"
     )
 
     credentials = config.credentials
     assert credentials is not None
     assert credentials.acknowledge_plaintext_in_sandbox is True
-    # The configured credential path must be covered by the example's
+    # The configured credential path must be covered by the echo-agent starter's
     # .gitignore so a copied workspace never commits secrets.
-    gitignore = (EXAMPLE_DIR / ".gitignore").read_text(encoding="utf-8")
+    gitignore = (ECHO_AGENT_DIR / ".gitignore").read_text(encoding="utf-8")
     assert credentials.path.split("/")[0] + "/" in gitignore
 
     # Runtime paths must be sandbox-owned: outside the workspace mount and
@@ -137,10 +137,10 @@ def test_example_workspace_satisfies_the_launcher_contract() -> None:
         assert value.startswith("/home/agent/"), value
 
 
-def test_example_secrets_template_names_match_documented_names() -> None:
+def test_echo_agent_secrets_template_names_match_documented_names() -> None:
     """The shipped template must mention every documented credential name and
     nothing else — the launcher rejects undocumented names at launch."""
-    template = EXAMPLE_DIR / "secrets.env.example"
+    template = ECHO_AGENT_DIR / "secrets.env.example"
     active = set(dotenv_values(template))
     commented = set(
         re.findall(

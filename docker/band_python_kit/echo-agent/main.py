@@ -1,4 +1,4 @@
-"""Minimal Band agent for the band-python-kit example workspace.
+"""Minimal Band agent for the band-python-kit echo-agent starter workspace.
 
 The kit's launcher execs this file with the workspace's own locked venv
 interpreter; Band identity, endpoints, and credentials arrive as environment

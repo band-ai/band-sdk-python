@@ -12,7 +12,8 @@ $BAND_SDK_PYTHON -m band.docker.launcher
 
 It is not an API for application code: customers configure it entirely
 through the workspace's `band.yaml` (see the kit README and the
-[example workspace](../../../../docker/band_python_kit/example/) for the
+[echo-agent starter workspace](../../../../docker/band_python_kit/echo-agent/)
+for the
 authoring guide); the SDK imports nothing from it.
 
 ## What it does

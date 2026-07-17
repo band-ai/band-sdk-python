@@ -1,9 +1,9 @@
-# Example workspace
+# Echo-agent starter workspace
 
-A complete, runnable workspace for the [Band Python kit](../README.md): an
-echo agent you can copy and grow into a real one. Building the kit image and
-creating the sandbox is the kit README's quickstart; this page covers the
-workspace itself.
+A complete, runnable starter workspace for the
+[Band Python kit](../README.md): an echo agent you can copy and grow into a
+real one. Building the kit image and creating the sandbox is the kit README's
+quickstart; this page covers the workspace itself.
 
 ## Files
 

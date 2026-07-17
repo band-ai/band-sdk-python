@@ -55,7 +55,7 @@ Choose the guide that matches what you need:
 
 - [Run an agent with the kit](docker/band_python_kit/README.md) — customer
   quickstart, configuration, credentials, and sandbox behavior.
-- [Customize the example workspace](docker/band_python_kit/example/README.md)
+- [Customize the echo-agent starter workspace](docker/band_python_kit/echo-agent/README.md)
   — adapt `main.py`, dependencies, or start from a repository.
 - [Understand or maintain the launcher](src/band/docker/launcher/README.md)
   — internal launch phases, safety rules, and module map.
