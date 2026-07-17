@@ -105,8 +105,7 @@ user (uid 1000), and hands off to the Band launcher, which:
    outside the workspace and SDK venv),
 4. optionally clones your project from Git into the project path (the
    `repo:` section in `band.yaml` — see the annotated echo-agent starter;
-   existing
-   checkouts are validated and reused, never re-cloned),
+   existing checkouts are validated and reused, never re-cloned),
 5. syncs your locked dependencies into the sandbox-owned environment, and
 6. replaces itself with your entrypoint (`os.execve`) — signals like
    `sbx stop`'s SIGTERM reach your code directly (the echo-agent starter
