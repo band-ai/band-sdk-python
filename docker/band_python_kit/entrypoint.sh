@@ -9,7 +9,16 @@ set -euo pipefail
 # The proxy CA is session-generated per sandbox, so it can only be installed
 # at container start, not baked into the image. Runs while still root.
 if [[ -n "${PROXY_CA_CERT_B64:-}" ]]; then
-  base64 -d <<<"${PROXY_CA_CERT_B64}" > /usr/local/share/ca-certificates/sandbox-proxy-ca.crt
+  ca_path=/usr/local/share/ca-certificates/sandbox-proxy-ca.crt
+  base64 -d <<<"${PROXY_CA_CERT_B64}" > "${ca_path}"
+  # A base64 payload that decodes cleanly but isn't a PEM certificate would be
+  # silently skipped by update-ca-certificates, leaving trust unwired and
+  # every TLS call failing with an opaque error deep in the sandbox. Validate
+  # up front and fail loud instead. (Invalid base64 already fails under -e.)
+  if ! openssl x509 -noout -in "${ca_path}" >/dev/null 2>&1; then
+    echo "[band-python-kit] ERROR: PROXY_CA_CERT_B64 did not decode to a valid PEM certificate" >&2
+    exit 1
+  fi
   update-ca-certificates >/dev/null
 fi
 

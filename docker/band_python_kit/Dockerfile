@@ -17,7 +17,8 @@ FROM ${UV_IMAGE} AS uv
 FROM ${PYTHON_BASE_IMAGE} AS builder
 ARG BAND_SDK_HOME
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Build-only: ARG (not ENV) so it doesn't persist in any image env.
+ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
@@ -34,7 +35,11 @@ COPY src ./src
 RUN git config --global --add url."https://github.com/".insteadOf "git@github.com:" \
     && git config --global --add url."https://github.com/".insteadOf "ssh://git@github.com/"
 
-# Strip host-specific [tool.uv.sources] overrides so uv resolves from the registry.
+# Defensive guard — a no-op against the committed pyproject.toml, which has no
+# [tool.uv.sources] section. Strips any such section a developer's local
+# override might introduce so it can't leak a filesystem/git source path into
+# the image build; `uv sync --locked` below then resolves from the registry
+# (and fails loud on a stale lock rather than pulling from a local source).
 RUN sed -i '/^\[tool\.uv\.sources\]/,/^\[/{ /^\[tool\.uv\.sources\]/d; /^\[/!d; }' pyproject.toml
 
 # Core-only by default: this venv is baked once and never touched again.
@@ -60,7 +65,8 @@ RUN if [ -n "$SDK_EXTRA" ]; then \
 FROM ${PYTHON_BASE_IMAGE}
 ARG BAND_SDK_HOME
 
-ENV DEBIAN_FRONTEND=noninteractive
+# Build-only: ARG (not ENV) so it doesn't leak into the final runtime image env.
+ARG DEBIAN_FRONTEND=noninteractive
 
 # ca-certificates provides the system trust store that the sandbox's
 # session-generated proxy CA is installed into at runtime. No proxy env vars
@@ -72,11 +78,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 # of core band-sdk) shells out to git for clone/checkout/rev-parse and to
 # ssh-keygen for SSH host-key verification — both are needed in the base
 # runtime image because repo initialization runs directly inside it.
+# util-linux: provides setpriv, which entrypoint.sh uses to drop from root to
+# the non-root agent user. Essential in trixie-slim (so present today), but
+# install it explicitly so container startup doesn't silently break on a base
+# bump that stops shipping it.
+# openssl: entrypoint.sh validates the decoded proxy CA with `openssl x509`
+# before trusting it, so the CLI must be present in the runtime image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     git \
     openssh-client \
+    openssl \
+    util-linux \
     && rm -rf /var/lib/apt/lists/*
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \

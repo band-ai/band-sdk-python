@@ -17,10 +17,24 @@ no "later, real" turn to defer replying to.
 from __future__ import annotations
 
 import asyncio
-import os
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.core.simple_adapter import SimpleAdapter
+
+
+class EchoAgentSettings(BaseSettings):
+    """Container-injected config. pydantic-settings is a core band-sdk
+    dependency, so it's present in the image's core-only venv that runs this
+    script via ``$BAND_SDK_PYTHON -c <source>``."""
+
+    model_config = SettingsConfigDict(env_prefix="BAND_", case_sensitive=False)
+
+    agent_id: str  # BAND_AGENT_ID
+    api_key: str  # BAND_API_KEY
+    ws_url: str  # BAND_WS_URL
+    rest_url: str  # BAND_REST_URL
 
 
 class EchoAdapter(SimpleAdapter[str]):
@@ -39,12 +53,13 @@ class EchoAdapter(SimpleAdapter[str]):
 
 
 async def main() -> None:
+    settings = EchoAgentSettings()
     agent = Agent.create(
         adapter=EchoAdapter(),
-        agent_id=os.environ["BAND_AGENT_ID"],
-        api_key=os.environ["BAND_API_KEY"],
-        ws_url=os.environ["BAND_WS_URL"],
-        rest_url=os.environ["BAND_REST_URL"],
+        agent_id=settings.agent_id,
+        api_key=settings.api_key,
+        ws_url=settings.ws_url,
+        rest_url=settings.rest_url,
     )
     await agent.run()
 
