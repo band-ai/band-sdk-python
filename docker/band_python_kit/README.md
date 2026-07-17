@@ -10,6 +10,26 @@ Your workspace stays a plain `uv` project (`pyproject.toml` + committed
 `uv.lock`); the kit brings the Band SDK, the launcher, and the network
 policy. Tested with `sbx` v0.34.0.
 
+## Why use this kit?
+
+It turns adopting Band into a small application task instead of an
+infrastructure project. You bring your agent code, its locked Python
+dependencies, and your Band credentials. The kit provides the SDK, a
+repeatable startup process, and sandbox network safeguards.
+
+There are two separate Python environments inside the sandbox:
+
+- The kit environment runs the stable launcher. It validates configuration,
+  prepares the agent environment, and reports startup failures.
+- Your agent environment contains the dependencies from your project's
+  `uv.lock` and runs your `main.py`.
+
+This means changing your agent's adapter or packages cannot overwrite the
+launcher that starts it. If a dependency update fails, the launcher is still
+available to show the error and rebuild the agent environment on the next
+start. Your host workspace remains source code and configuration rather than
+a collection of sandbox-created virtualenv files, caches, and logs.
+
 ## Quickstart
 
 You need [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`),
