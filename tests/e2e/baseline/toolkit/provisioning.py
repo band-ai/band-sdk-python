@@ -100,6 +100,23 @@ class ProvisionedAgent:
     adapter_id: str | None = None
 
 
+def user_rest_client(settings: BaselineSettings) -> AsyncRestClient:
+    """A user-authenticated REST client — the test-driver/observer identity.
+
+    The one construction of the user client, shared by the pytest fixture
+    (``baseline_user_client``) and pytest-free callers (e.g. the sandbox
+    staging smoke's ``probe.py``), so the two can never drift. Like
+    ``agent_rest_client`` below, the Fern client wraps an httpx pool with no
+    public close hook and is left to be reclaimed at event-loop teardown.
+    """
+    if not settings.credentials.api_key_user:
+        raise ValueError("BAND_API_KEY_USER is required for the user REST client")
+    return AsyncRestClient(
+        api_key=settings.credentials.api_key_user,
+        base_url=settings.endpoints.rest_url,
+    )
+
+
 def agent_rest_client(
     agent: ProvisionedAgent, settings: BaselineSettings
 ) -> AsyncRestClient:
