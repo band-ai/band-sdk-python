@@ -69,19 +69,30 @@ def pytest_ignore_collect(collection_path: Path) -> bool | None:
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Skip e2e-marked tests unless explicitly enabled.
+    """Skip e2e- and docker_build-marked tests unless explicitly enabled.
 
     tests/e2e/ gates itself through its own conftest; this covers
     e2e-marked tests living elsewhere (e.g. the codex ACP protocol
     tests), which spawn real backends and must never ride a normal
     unit run.
+
+    docker_build-marked tests shell out to a real `docker build`/`docker
+    run` — CI runners do have a Docker daemon (unlike the nested
+    virtualization sbx tests need), so a plain Docker-availability check
+    isn't enough to keep them off CI; they need the same explicit opt-in
+    as e2e tests.
     """
-    if os.environ.get("E2E_TESTS_ENABLED") == "true":
-        return
-    skip = pytest.mark.skip(reason="set E2E_TESTS_ENABLED=true to run e2e tests")
+    e2e_enabled = os.environ.get("E2E_TESTS_ENABLED") == "true"
+    docker_enabled = os.environ.get("DOCKER_TESTS_ENABLED") == "true"
+    skip_e2e = pytest.mark.skip(reason="set E2E_TESTS_ENABLED=true to run e2e tests")
+    skip_docker = pytest.mark.skip(
+        reason="set DOCKER_TESTS_ENABLED=true to run docker_build tests"
+    )
     for item in items:
-        if item.get_closest_marker("e2e"):
-            item.add_marker(skip)
+        if not e2e_enabled and item.get_closest_marker("e2e"):
+            item.add_marker(skip_e2e)
+        if not docker_enabled and item.get_closest_marker("docker_build"):
+            item.add_marker(skip_docker)
 
 
 @pytest.fixture(autouse=True)
