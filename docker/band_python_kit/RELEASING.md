@@ -48,7 +48,7 @@ human owns triage of their failures and of the rebuild scan reports.
 | When | What runs | Result |
 |---|---|---|
 | On every band-sdk release | `release.yml` → `publish-kit` (calls `kit-publish.yml`) | Fresh image + kit publish at `X.Y.Z`, floating tags moved. |
-| Weekly, Mondays 05:00 UTC | `kit-image-rebuild.yml` (schedule) | Rebuilds the latest released version **only if** a pinned base has a newer digest or the published image has a fixable HIGH/CRITICAL; publishes `X.Y.Z-rN`, moves floating tags, opens a digest-pin bump PR. A no-change week publishes nothing. |
+| Weekly, Mondays 05:00 UTC | `kit-image-rebuild.yml` (schedule) | Rebuilds the latest released version **only if** a pinned base has a newer digest than `main`'s Dockerfile pins, or the currently published image (`X.Y.Z-rN` when rebuilt, else `X.Y.Z`) has a fixable HIGH/CRITICAL; publishes the next `X.Y.Z-rN`, moves floating tags, opens a digest-pin bump PR. A no-change week publishes nothing. **Merge the bump PR promptly**: `main`'s pins are the comparison ledger, so while the PR sits unmerged the next scheduled run re-detects the same digest delta and rebuilds redundantly. |
 | Ad hoc (critical CVE) | `kit-image-rebuild.yml` via `workflow_dispatch` (`force: true`, `reason:`) | Same as weekly but unconditional; the reason is recorded in the run log. |
 
 **How customers learn a new tag exists:** the floating tags move (documented

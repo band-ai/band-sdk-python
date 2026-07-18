@@ -32,6 +32,12 @@ on:
 permissions:
   contents: read
 
+# An overlapping dispatch + schedule run would both resolve the same next -rN
+# and collide on the push; queue them instead (never cancel a publish mid-run).
+concurrency:
+  group: kit-image-rebuild
+  cancel-in-progress: false
+
 env:
   IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
   DOCKERFILE: docker/band_python_kit/Dockerfile
@@ -46,17 +52,22 @@ jobs:
       rebuild: ${{ steps.gate.outputs.rebuild }}
       reason: ${{ steps.gate.outputs.reason }}
       version: ${{ steps.readver.outputs.version }}
-      rversion: ${{ steps.rn.outputs.rversion }}
+      rversion: ${{ steps.tags.outputs.rversion }}
       tag: ${{ steps.readver.outputs.tag }}
       major: ${{ steps.readver.outputs.major }}
       python_ref: ${{ steps.bases.outputs.python_ref }}
       uv_ref: ${{ steps.bases.outputs.uv_ref }}
+      base_changed: ${{ steps.bases.outputs.base_changed }}
+      scanned_tag: ${{ steps.tags.outputs.current_tag }}
+      cve_count: ${{ steps.findings.outputs.count }}
     steps:
-      - name: Check out main (release manifest lives here)
+      - name: Check out main
         uses: actions/checkout@v6
-        # The build itself happens at the released tag, checked out by the
-        # reusable workflow; here we only need the manifest and the tag's
-        # Dockerfile.
+        # main carries both inputs of the decision: the release manifest (which
+        # version is current) and the pinning ledger (the Dockerfile digest
+        # ARGs, kept truthful by this workflow's own bump PRs). The build
+        # itself happens at the released tag, checked out by the reusable
+        # workflow.
 
       - name: Read version from the release manifest
         id: readver
@@ -66,19 +77,19 @@ jobs:
           echo "tag=band-sdk-v${version}" >> "$GITHUB_OUTPUT"
           echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
 
-      - name: Check out the released tag's Dockerfile
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ steps.readver.outputs.tag }}
-          path: released
-
-      - name: Compare pinned base digests with the current upstream digests
+      - name: Compare the pinning ledger with the current upstream digests
         id: bases
         run: |
           set -euo pipefail
+          # Pins are read from MAIN's Dockerfile (the ledger the bump PR keeps
+          # truthful), not the released tag's: the tag is immutable, so its
+          # pins go permanently stale after the first rebuild and comparing
+          # against them would re-trigger a rebuild every week forever. Until
+          # a rebuild's bump PR is merged, the ledger lags and the next
+          # scheduled run may rebuild redundantly — merge bump PRs promptly.
           pinned() {
             # $1 = ARG name. Prints the committed "image:tag@digest" pin.
-            grep -E "^ARG $1=" "released/$DOCKERFILE" | sed -E "s/^ARG $1=//"
+            grep -E "^ARG $1=" "$DOCKERFILE" | sed -E "s/^ARG $1=//"
           }
           current() {
             # $1 = a pin. Prints the same image ref with its live upstream digest.
@@ -109,26 +120,77 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check whether this version's image has been published
+      - name: Resolve the currently published tag and the next -rN suffix
+        id: tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.readver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # One listing answers both questions: which tag is the *currently
+          # published* state of this version (X.Y.Z-rMax, or bare X.Y.Z when
+          # never rebuilt) — the tag the CVE scan must target — and what the
+          # next free rebuild suffix is.
+          endpoint='/orgs/band-ai/packages/container/band-python-kit%2Fimage/versions'
+          set +e
+          tags="$(gh api --paginate "$endpoint" --jq '.[].metadata.container.tags[]' 2>listing-err.txt)"
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            if grep -q "HTTP 404" listing-err.txt; then
+              tags="" # package not created yet — the first publish starts at -r1
+            else
+              # Any other listing failure must fail loudly: defaulting to an
+              # empty list would reset the counter and re-mint an existing
+              # immutable -rN tag.
+              cat listing-err.txt >&2
+              exit $rc
+            fi
+          fi
+          max=0
+          while IFS= read -r t; do
+            case "$t" in
+              "${VERSION}-r"*)
+                n="${t##*-r}"
+                if [ "$n" -gt "$max" ] 2>/dev/null; then max="$n"; fi
+                ;;
+            esac
+          done <<< "$tags"
+          if [ "$max" -gt 0 ]; then
+            current_tag="${VERSION}-r${max}"
+          else
+            current_tag="${VERSION}"
+          fi
+          echo "current_tag=${current_tag}" >> "$GITHUB_OUTPUT"
+          echo "rversion=${VERSION}-r$((max + 1))" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether the current tag is pullable
         id: published
         run: |
           # First scheduled run can predate the first publish; that is a normal
           # skip, distinct from a scan failure.
           if docker buildx imagetools inspect \
-              "${IMAGE_NAME}:${{ steps.readver.outputs.version }}" >/dev/null 2>&1; then
+              "${IMAGE_NAME}:${{ steps.tags.outputs.current_tag }}" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # exit-code stays 0: findings are read from the JSON report below, so a
-      # nonzero exit here is a real scan failure (registry, DB download, ...)
-      # and fails this job loudly instead of masquerading as a CVE hit.
+      # Scans the newest published state of this version (see the tags step) —
+      # scanning bare X.Y.Z after an -rN fixed its CVEs would re-find them and
+      # rebuild forever. exit-code stays 0: findings are read from the JSON
+      # report below, so a nonzero exit here is a real scan failure (registry,
+      # DB download, ...) and fails this job loudly instead of masquerading as
+      # a CVE hit. TRIVY_USERNAME/PASSWORD because trivy authenticates via its
+      # own env, not the docker login above (per the action's README).
       - name: Scan the published image
         if: ${{ steps.published.outputs.exists == 'true' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         with:
-          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.readver.outputs.version }}
+          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.current_tag }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           format: json
@@ -165,44 +227,6 @@ jobs:
           [ -n "$reason" ] || reason="no-change"
           echo "rebuild=${rebuild}" >> "$GITHUB_OUTPUT"
           echo "reason=${reason}" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve the next -rN suffix
-        id: rn
-        if: ${{ steps.gate.outputs.rebuild == 'true' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.readver.outputs.version }}
-        run: |
-          set -euo pipefail
-          # List existing image tags and find the highest N already published for
-          # this version, so the new rebuild tag is the next free X.Y.Z-rN.
-          endpoint='/orgs/band-ai/packages/container/band-python-kit%2Fimage/versions'
-          set +e
-          tags="$(gh api --paginate "$endpoint" --jq '.[].metadata.container.tags[]' 2>listing-err.txt)"
-          rc=$?
-          set -e
-          if [ $rc -ne 0 ]; then
-            if grep -q "HTTP 404" listing-err.txt; then
-              tags="" # package not created yet — the first publish starts at -r1
-            else
-              # Any other listing failure must fail loudly: defaulting to an
-              # empty list would reset the counter and re-mint an existing
-              # immutable -rN tag.
-              cat listing-err.txt >&2
-              exit $rc
-            fi
-          fi
-          max=0
-          while IFS= read -r t; do
-            case "$t" in
-              "${VERSION}-r"*)
-                n="${t##*-r}"
-                if [ "$n" -gt "$max" ] 2>/dev/null; then max="$n"; fi
-                ;;
-            esac
-          done <<< "$tags"
-          next=$((max + 1))
-          echo "rversion=${VERSION}-r${next}" >> "$GITHUB_OUTPUT"
 
   rebuild:
     needs: [decide]
@@ -282,11 +306,15 @@ jobs:
     steps:
       - name: Write the run summary
         run: |
-          echo "## Kit image rebuild" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Version:** ${{ needs.decide.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Rebuild:** ${{ needs.decide.outputs.rebuild }} (${{ needs.decide.outputs.reason }})" >> "$GITHUB_STEP_SUMMARY"
-          echo "**New tag:** ${{ needs.decide.outputs.rversion || '—' }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**python base:** ${{ needs.decide.outputs.python_ref }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**uv image:** ${{ needs.decide.outputs.uv_ref }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "**Publish result:** ${{ needs.rebuild.result }}" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Kit image rebuild"
+            echo ""
+            echo "**Version:** ${{ needs.decide.outputs.version }} (published as \`${{ needs.decide.outputs.scanned_tag || 'nothing yet' }}\`)"
+            echo "**Rebuild:** ${{ needs.decide.outputs.rebuild }} (${{ needs.decide.outputs.reason }})"
+            echo "**Base digests moved:** ${{ needs.decide.outputs.base_changed }}"
+            echo "**Fixable HIGH/CRITICAL in the published image:** ${{ needs.decide.outputs.cve_count || 'not scanned (image not published)' }}"
+            echo "**Published this run:** ${{ needs.decide.outputs.rebuild == 'true' && needs.decide.outputs.rversion || 'nothing (no change)' }}"
+            echo "**python base:** ${{ needs.decide.outputs.python_ref }}"
+            echo "**uv image:** ${{ needs.decide.outputs.uv_ref }}"
+            echo "**Publish result:** ${{ needs.rebuild.result }}"
+          } >> "$GITHUB_STEP_SUMMARY"
