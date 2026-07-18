@@ -10,8 +10,9 @@ extra to pyproject.toml to run a real LLM agent.
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import TYPE_CHECKING
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.core.simple_adapter import SimpleAdapter
@@ -20,6 +21,18 @@ from band.runtime.shutdown import run_with_graceful_shutdown
 if TYPE_CHECKING:
     from band.core.protocols import AgentToolsProtocol
     from band.core.types import ChatMessage, PlatformMessage
+
+
+class EchoAgentSettings(BaseSettings):
+    """Band identity and endpoints, injected by the launcher as BAND_* env
+    vars. A missing variable fails loud with a clear validation error."""
+
+    model_config = SettingsConfigDict(env_prefix="BAND_", case_sensitive=False)
+
+    agent_id: str  # BAND_AGENT_ID
+    api_key: str  # BAND_API_KEY
+    ws_url: str  # BAND_WS_URL
+    rest_url: str  # BAND_REST_URL
 
 
 class EchoAdapter(SimpleAdapter[str]):
@@ -38,12 +51,13 @@ class EchoAdapter(SimpleAdapter[str]):
 
 
 async def main() -> None:
+    settings = EchoAgentSettings()
     agent = Agent.create(
         adapter=EchoAdapter(),
-        agent_id=os.environ["BAND_AGENT_ID"],
-        api_key=os.environ["BAND_API_KEY"],
-        ws_url=os.environ["BAND_WS_URL"],
-        rest_url=os.environ["BAND_REST_URL"],
+        agent_id=settings.agent_id,
+        api_key=settings.api_key,
+        ws_url=settings.ws_url,
+        rest_url=settings.rest_url,
     )
     # Signals reach this process directly (the launcher execs into it), so
     # SIGTERM from `sbx stop` shuts the agent down gracefully.

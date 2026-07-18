@@ -52,8 +52,8 @@ The whole change is three files. For Anthropic:
 
 ```diff
  # pyproject.toml — add the framework extra
--dependencies = ["band-sdk>=1.1.0"]
-+dependencies = ["band-sdk[anthropic]>=1.1.0"]
+-dependencies = ["band-sdk>=1.1.0", "pydantic-settings>=2.0.0"]
++dependencies = ["band-sdk[anthropic]>=1.1.0", "pydantic-settings>=2.0.0"]
 ```
 
 ```diff
