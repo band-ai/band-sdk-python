@@ -76,47 +76,92 @@ jobs:
         id: bases
         run: |
           set -euo pipefail
-          changed="false"
-          resolve() {
-            # $1 = ARG name. Prints "tag@currentdigest" and sets *_changed.
-            local pin
-            pin="$(grep -E "^ARG $1=" "released/$DOCKERFILE" | sed -E "s/^ARG $1=//")"
-            local image="${pin%@*}"
-            local pinned_digest="${pin##*@}"
-            local current_digest
-            current_digest="$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')"
-            if [ "$current_digest" != "$pinned_digest" ]; then
-              changed="true"
-            fi
-            echo "${image}@${current_digest}"
+          pinned() {
+            # $1 = ARG name. Prints the committed "image:tag@digest" pin.
+            grep -E "^ARG $1=" "released/$DOCKERFILE" | sed -E "s/^ARG $1=//"
           }
-          python_ref="$(resolve PYTHON_BASE_IMAGE)"
-          uv_ref="$(resolve UV_IMAGE)"
+          current() {
+            # $1 = a pin. Prints the same image ref with its live upstream digest.
+            local image="${1%@*}"
+            echo "${image}@$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')"
+          }
+          python_pin="$(pinned PYTHON_BASE_IMAGE)"
+          uv_pin="$(pinned UV_IMAGE)"
+          python_ref="$(current "$python_pin")"
+          uv_ref="$(current "$uv_pin")"
+          # Compared here in the parent shell — a flag set inside a function
+          # called via command substitution would die with its subshell.
+          changed="false"
+          if [ "$python_ref" != "$python_pin" ] || [ "$uv_ref" != "$uv_pin" ]; then
+            changed="true"
+          fi
           echo "python_ref=${python_ref}" >> "$GITHUB_OUTPUT"
           echo "uv_ref=${uv_ref}" >> "$GITHUB_OUTPUT"
           echo "base_changed=${changed}" >> "$GITHUB_OUTPUT"
 
-      - name: Scan the published image for fixable HIGH/CRITICAL
-        id: scan
-        continue-on-error: true # a not-yet-published image (first run) is not a failure
+      # The published image may still be private (packages start private and the
+      # public flip is a post-first-publish step), so authenticate before
+      # inspecting or scanning it.
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether this version's image has been published
+        id: published
+        run: |
+          # First scheduled run can predate the first publish; that is a normal
+          # skip, distinct from a scan failure.
+          if docker buildx imagetools inspect \
+              "${IMAGE_NAME}:${{ steps.readver.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # exit-code stays 0: findings are read from the JSON report below, so a
+      # nonzero exit here is a real scan failure (registry, DB download, ...)
+      # and fails this job loudly instead of masquerading as a CVE hit.
+      - name: Scan the published image
+        if: ${{ steps.published.outputs.exists == 'true' }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE_NAME }}:${{ steps.readver.outputs.version }}
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: "1" # nonzero when a fixable HIGH/CRITICAL is found
+          format: json
+          output: trivy-report.json
+
+      - name: Count fixable HIGH/CRITICAL findings
+        id: findings
+        if: ${{ steps.published.outputs.exists == 'true' }}
+        run: |
+          set -euo pipefail
+          count="$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy-report.json)"
+          if [ "$count" -gt 0 ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
 
       - name: Decide whether to rebuild
         id: gate
+        env:
+          # Env-var indirection: a dispatch input interpolated into the script
+          # text would be a shell-injection vector.
+          FORCE_REASON: ${{ github.event.inputs.reason }}
         run: |
           base_changed="${{ steps.bases.outputs.base_changed }}"
-          scan_found="${{ steps.scan.outcome == 'failure' }}"
+          scan_found="${{ steps.findings.outputs.found }}" # empty when unpublished/skipped
           forced="${{ github.event.inputs.force }}"
           reason=""
           rebuild="false"
           if [ "$base_changed" = "true" ]; then rebuild="true"; reason="${reason}base-digest-changed "; fi
           if [ "$scan_found" = "true" ]; then rebuild="true"; reason="${reason}fixable-high-critical "; fi
-          if [ "$forced" = "true" ]; then rebuild="true"; reason="${reason}forced(${{ github.event.inputs.reason }}) "; fi
+          if [ "$forced" = "true" ]; then rebuild="true"; reason="${reason}forced(${FORCE_REASON}) "; fi
           [ -n "$reason" ] || reason="no-change"
           echo "rebuild=${rebuild}" >> "$GITHUB_OUTPUT"
           echo "reason=${reason}" >> "$GITHUB_OUTPUT"
@@ -131,9 +176,22 @@ jobs:
           set -euo pipefail
           # List existing image tags and find the highest N already published for
           # this version, so the new rebuild tag is the next free X.Y.Z-rN.
-          tags="$(gh api --paginate \
-            '/orgs/band-ai/packages/container/band-python-kit%2Fimage/versions' \
-            --jq '.[].metadata.container.tags[]' 2>/dev/null || true)"
+          endpoint='/orgs/band-ai/packages/container/band-python-kit%2Fimage/versions'
+          set +e
+          tags="$(gh api --paginate "$endpoint" --jq '.[].metadata.container.tags[]' 2>listing-err.txt)"
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            if grep -q "HTTP 404" listing-err.txt; then
+              tags="" # package not created yet — the first publish starts at -r1
+            else
+              # Any other listing failure must fail loudly: defaulting to an
+              # empty list would reset the counter and re-mint an existing
+              # immutable -rN tag.
+              cat listing-err.txt >&2
+              exit $rc
+            fi
+          fi
           max=0
           while IFS= read -r t; do
             case "$t" in
@@ -203,11 +261,19 @@ jobs:
           git config user.email "release-bot@band.ai"
           git switch -c "$branch"
           git commit -am "chore: bump band-python-kit base digests (${RVERSION} rebuild)"
-          git push -u origin "$branch" --force-with-lease
-          gh pr create \
-            --title "chore: bump band-python-kit base digests (${RVERSION})" \
-            --body "Keeps the committed pinning ledger truthful after the ${RVERSION} CVE rebuild moved \`latest\`/\`${{ needs.decide.outputs.major }}\` onto fresh base digests." \
-            --head "$branch"
+          # Plain --force: the branch is bot-owned with deterministic per-run
+          # content, and a re-run must simply overwrite the previous attempt.
+          # (--force-with-lease is rejected as stale here — the fresh checkout
+          # has no remote-tracking ref for the branch to lease against.)
+          git push -u origin "$branch" --force
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --title "chore: bump band-python-kit base digests (${RVERSION})" \
+              --body "Keeps the committed pinning ledger truthful after the ${RVERSION} CVE rebuild moved \`latest\`/\`${{ needs.decide.outputs.major }}\` onto fresh base digests." \
+              --head "$branch"
+          else
+            echo "PR for ${branch} already open; the push updated it."
+          fi
 
   report:
     needs: [decide, rebuild, bump-pins]

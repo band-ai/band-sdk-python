@@ -159,6 +159,35 @@ def test_echo_agent_secrets_template_names_match_documented_names() -> None:
     assert active | commented == {name.value for name in CredentialName}
 
 
+def test_dockerfile_wires_the_quarantine_cutoff_into_every_uv_sync() -> None:
+    """The release pipeline's supply-chain gate is the UV_EXCLUDE_NEWER build
+    arg. uv silently ignores an absent flag, so a refactor that drops the
+    wiring from a `uv sync` branch leaves release builds green while the gate
+    degrades to decorative — pin the wiring here, where it can fail loudly."""
+    dockerfile = (KIT_DIR / "Dockerfile").read_text(encoding="utf-8")
+
+    # The arg must exist and default to empty (local builds resolve untouched).
+    assert re.search(r'^ARG UV_EXCLUDE_NEWER=""$', dockerfile, re.MULTILINE)
+    # It must feed the flag the release workflow's cutoff rides in on.
+    assert "--exclude-newer $UV_EXCLUDE_NEWER" in dockerfile
+
+    # And every dependency sync must carry the flag variable — both the
+    # SDK_EXTRA branch and the core-only branch. (Invocations only; comment
+    # lines also mention `uv sync`.)
+    sync_invocations = [
+        line
+        for line in dockerfile.splitlines()
+        if "uv sync" in line and not line.strip().startswith("#")
+    ]
+    assert len(sync_invocations) >= 2, (
+        "expected both uv sync branches in the Dockerfile"
+    )
+    for line in sync_invocations:
+        assert "$EXCLUDE_NEWER_ARGS" in line, (
+            f"sync without the quarantine flag: {line.strip()}"
+        )
+
+
 # ── scripts/stamp-kit-spec.py (release-time image-pin helper) ────────────────
 
 _IMAGE_REF = "ghcr.io/band-ai/band-python-kit/image:1.2.0"

@@ -47,7 +47,14 @@ brew install docker/tap/sbx && sbx login
 #    instead of pasting — run `sbx settings get kit.allowedSources` first.
 sbx settings set kit.allowedSources '["docker.io/","ghcr.io/band-ai/"]'
 
-# 3. Start your workspace from the echo-agent starter (see echo-agent/README.md):
+# 3. Create your workspace from the echo-agent starter, extracted from the
+#    matching release tarball (no repo checkout needed; same <X.Y.Z> as the
+#    kit tag below). See echo-agent/README.md for the workspace guide.
+mkdir -p ~/my-band-agent
+curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags/band-sdk-v<X.Y.Z>" \
+  | tar -xz --strip-components=4 -C ~/my-band-agent \
+      "band-sdk-python-band-sdk-v<X.Y.Z>/docker/band_python_kit/echo-agent"
+#    Then, in ~/my-band-agent:
 #    - set agent.id in band.yaml
 #    - create .band/secrets.env from secrets.env.example (chmod 600)
 

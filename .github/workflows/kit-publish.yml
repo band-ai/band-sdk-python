@@ -142,13 +142,8 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-
-      - name: Install PyYAML (stamp helper dependency)
-        run: python -m pip install --quiet pyyaml
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Install ORAS
         uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
@@ -163,7 +158,9 @@ jobs:
       - name: Stamp the distribution spec (image -> digest-pinned ref)
         run: |
           mkdir -p staging
-          python scripts/stamp-kit-spec.py \
+          # --no-project: the helper needs only pyyaml, not the SDK's whole
+          # locked environment.
+          uv run --no-project --with pyyaml scripts/stamp-kit-spec.py \
             --spec docker/band_python_kit/spec.yaml \
             --image-ref "${IMAGE_NAME}:${{ inputs.version }}" \
             --digest "${{ needs.image.outputs.digest }}" \

@@ -132,6 +132,12 @@ jobs:
           # The bootstrap pins the release tarball by full component-prefixed
           # tag (band-sdk-vX.Y.Z, not vX.Y.Z).
           sed -i -E "s|band-sdk-v[0-9]+\.[0-9]+\.[0-9]+|${new_tag}|g" "$bootstrap"
+          # A regex miss must not read as "already pinned": if the pin format
+          # ever changes, fail loudly instead of silently never bumping again.
+          if ! grep -qF "$new_tag" "$bootstrap"; then
+            echo "::error::no band-sdk-vX.Y.Z pin found in ${bootstrap} — its pin format changed and this bump job needs updating"
+            exit 1
+          fi
           if git diff --quiet; then
             echo "add-band already pinned to ${new_tag}; nothing to do."
             exit 0
@@ -141,12 +147,20 @@ jobs:
           git config user.email "release-bot@band.ai"
           git switch -c "$branch"
           git commit -am "chore: bump band-python-kit to ${new_tag}"
-          git push -u origin "$branch" --force-with-lease
-          gh pr create \
-            --repo band-ai/add-band \
-            --head "$branch" \
-            --title "chore: bump band-python-kit to ${new_tag}" \
-            --body "Automated pin bump following the ${new_tag} band-sdk release. Merging is a human step (add-band CI validates the entry)."
+          # Plain --force: the branch is bot-owned with deterministic per-run
+          # content, and a release re-run must simply overwrite the previous
+          # attempt. (--force-with-lease is rejected as stale here — the fresh
+          # checkout has no remote-tracking ref for the branch to lease against.)
+          git push -u origin "$branch" --force
+          if [ -z "$(gh pr list --repo band-ai/add-band --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --repo band-ai/add-band \
+              --head "$branch" \
+              --title "chore: bump band-python-kit to ${new_tag}" \
+              --body "Automated pin bump following the ${new_tag} band-sdk release. Merging is a human step (add-band CI validates the entry)."
+          else
+            echo "PR for ${branch} already open; the push updated it."
+          fi
 
   summary:
     needs: [release, publish-band, publish-kit, bump-add-band]
