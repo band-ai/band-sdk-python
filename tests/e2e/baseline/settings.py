@@ -9,11 +9,11 @@ required to run. Add a new subclass + nested field as new concerns appear
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from tests.paths import ENV_TEST_FILE
 
 # Load .env.test into os.environ (idempotent, non-overriding) so the framework
 # LLM SDKs (anthropic, openai, google-genai) that read their provider keys
@@ -21,7 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # only populates this module's own fields, not ``os.environ``, so the SDKs — and
 # any adapter/model the toolkit builds — need this explicit load. Imported before
 # any fixture constructs a client or adapter, so keys are present in time.
-load_dotenv(Path(__file__).parents[3] / ".env.test", override=False)
+load_dotenv(ENV_TEST_FILE, override=False)
 
 
 class BandEndpoints(BaseSettings):

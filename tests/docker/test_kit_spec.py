@@ -19,8 +19,8 @@ import yaml
 from dotenv import dotenv_values
 
 from band.docker.launcher import CredentialName, WorkspaceConfig
+from tests.paths import KIT_DIR
 
-KIT_DIR = Path(__file__).parents[2] / "docker" / "band_python_kit"
 ECHO_AGENT_DIR = KIT_DIR / "echo-agent"
 
 # Hosts the launch flow was measured to need (see the kit spec's comments):

@@ -23,7 +23,6 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -34,6 +33,8 @@ from band_rest.core.api_error import ApiError
 from band_rest.types import ParticipantRequest
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
 from thenvoi_testing.settings import BaseTestSettings
+
+from tests.paths import ENV_TEST_FILE
 
 if TYPE_CHECKING:
     from _pytest.config.argparsing import Parser
@@ -98,7 +99,7 @@ def is_no_clean_mode(request: pytest.FixtureRequest | None = None) -> bool:
 class TestSettings(BaseTestSettings):
     """Settings for integration tests, loaded from .env.test."""
 
-    _env_file_path = Path(__file__).parent.parent / ".env.test"
+    _env_file_path = ENV_TEST_FILE
 
     band_api_key: str = ""
     band_api_key_2: str = ""
@@ -112,8 +113,7 @@ class TestSettings(BaseTestSettings):
 # Load .env.test into os.environ so skip_without_env() markers (which check
 # os.environ at definition time) see the credentials.  override=False ensures
 # explicitly-set env vars take precedence.
-_ENV_TEST_PATH = Path(__file__).parent.parent / ".env.test"
-load_dotenv(_ENV_TEST_PATH, override=False)
+load_dotenv(ENV_TEST_FILE, override=False)
 
 # Load settings from .env.test
 test_settings = TestSettings()

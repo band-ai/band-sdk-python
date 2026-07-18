@@ -17,8 +17,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-BAND_PYTHON_KIT_DOCKERFILE = REPO_ROOT / "docker" / "band_python_kit" / "Dockerfile"
+from tests.paths import KIT_DIR, REPO_ROOT
+
+BAND_PYTHON_KIT_DOCKERFILE = KIT_DIR / "Dockerfile"
 
 # Image.build()'s own subprocess timeout, and the ceiling any test using it
 # needs to add into its own @pytest.mark.timeout on top of the rest of its

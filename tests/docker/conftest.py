@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 from collections.abc import AsyncIterator, Iterator
-from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -27,8 +26,7 @@ from tests.e2e.baseline.fixtures.platform import (  # noqa: F401
 )
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
-
-_REPO_ROOT = Path(__file__).parents[2]
+from tests.paths import REPO_ROOT
 
 
 def load_script_module(relative_path: str, module_name: str) -> ModuleType:
@@ -38,7 +36,7 @@ def load_script_module(relative_path: str, module_name: str) -> ModuleType:
     naming rule), so they can't be reached with a plain ``import``. Load them by
     path for off-runner unit testing of their logic.
     """
-    path = _REPO_ROOT / relative_path
+    path = REPO_ROOT / relative_path
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"could not load {relative_path}")

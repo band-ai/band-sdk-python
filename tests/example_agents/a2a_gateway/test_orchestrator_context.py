@@ -9,18 +9,13 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
+from tests.paths import EXAMPLES_ROOT
 from unittest.mock import AsyncMock
 
 import pytest
 
 # Add demo_orchestrator to path (from tests/example_agents/a2a_gateway/)
-demo_orchestrator_path = (
-    Path(__file__).parent.parent.parent.parent
-    / "examples"
-    / "a2a_gateway"
-    / "demo_orchestrator"
-)
+demo_orchestrator_path = EXAMPLES_ROOT / "a2a_gateway" / "demo_orchestrator"
 sys.path.insert(0, str(demo_orchestrator_path))
 
 # Set dummy OpenAI API key for testing (model won't be called)

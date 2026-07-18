@@ -16,7 +16,7 @@ import asyncio
 import importlib.util
 import os
 import sys
-from pathlib import Path
+from tests.paths import EXAMPLES_ROOT
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -25,12 +25,7 @@ from fastapi import HTTPException
 
 from band.runtime.oneshot import OneShotEnvelopeError
 
-_CONTAINER_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "examples"
-    / "agentcore"
-    / "agentcore_llm_server.py"
-)
+_CONTAINER_PATH = EXAMPLES_ROOT / "agentcore" / "agentcore_llm_server.py"
 
 
 def _load_container_module():
