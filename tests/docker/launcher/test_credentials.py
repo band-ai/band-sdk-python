@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,16 @@ from .fakes import (
     make_workspace,
     write_config,
     write_credentials,
+)
+
+# has_owner_only_permissions enforces POSIX mode bits (stat().st_mode & 0o077).
+# Windows chmod/stat can't represent group/other bits — a non-read-only file
+# always reports 666 — so the guard always fires there regardless of the
+# requested mode. The guard only ever runs inside the Linux sandbox container
+# in production, so this is a real platform gap, not something to work around.
+requires_posix_permission_bits = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="has_owner_only_permissions needs real POSIX mode bits",
 )
 
 
@@ -34,6 +45,7 @@ def test_band_api_key_required_from_somewhere(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace, band_api_key=""))
 
 
+@requires_posix_permission_bits
 def test_file_fills_missing_band_api_key(workspace: Workspace) -> None:
     enable(workspace)
     write_credentials(workspace, "BAND_API_KEY=from-file\n")
@@ -41,6 +53,7 @@ def test_file_fills_missing_band_api_key(workspace: Workspace) -> None:
     assert launch.credentials == {"BAND_API_KEY": "from-file"}
 
 
+@requires_posix_permission_bits
 def test_process_env_wins_over_file(workspace: Workspace) -> None:
     enable(workspace)
     write_credentials(workspace, "BAND_API_KEY=from-file\nOPENAI_API_KEY=file-openai\n")
@@ -137,6 +150,7 @@ def test_traversal_outside_workspace_rejected(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace))
 
 
+@requires_posix_permission_bits
 def test_git_tracked_file_rejected(workspace: Workspace) -> None:
     enable(workspace)
     cred_path = write_credentials(workspace, "BAND_API_KEY=x\n")
@@ -150,6 +164,7 @@ def test_git_tracked_file_rejected(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace))
 
 
+@requires_posix_permission_bits
 def test_unignored_file_rejected(workspace: Workspace) -> None:
     (workspace.root / ".gitignore").write_text("# nothing\n", encoding="utf-8")
     enable(workspace)
@@ -158,6 +173,7 @@ def test_unignored_file_rejected(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace))
 
 
+@requires_posix_permission_bits
 def test_corrupt_git_metadata_fails_closed(workspace: Workspace) -> None:
     """A git failure that is not the not-a-repository verdict (here: corrupt
     metadata) must fail the launch, never silently skip the tracking guards."""
@@ -168,6 +184,7 @@ def test_corrupt_git_metadata_fails_closed(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace))
 
 
+@requires_posix_permission_bits
 def test_non_git_workspace_allowed(tmp_path: Path) -> None:
     workspace = make_workspace(tmp_path, git=False)
     write_config(workspace, enable_credentials(default_config(workspace)))
@@ -176,6 +193,7 @@ def test_non_git_workspace_allowed(tmp_path: Path) -> None:
     assert launch.credentials == {"BAND_API_KEY": "from-file"}
 
 
+@requires_posix_permission_bits
 def test_non_git_workspace_without_ignore_rule_rejected(tmp_path: Path) -> None:
     """Even before `git init`, the ignore rule must already exist — a later
     init would otherwise leave the secrets one `git add .` from a commit."""
@@ -187,6 +205,7 @@ def test_non_git_workspace_without_ignore_rule_rejected(tmp_path: Path) -> None:
         resolve_launch(make_env(workspace, band_api_key=""))
 
 
+@requires_posix_permission_bits
 def test_undocumented_names_rejected(workspace: Workspace) -> None:
     enable(workspace)
     write_credentials(workspace, "BAND_API_KEY=x\nAWS_SECRET_ACCESS_KEY=nope\n")
