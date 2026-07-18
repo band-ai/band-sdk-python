@@ -11,11 +11,14 @@
 # push -> pull -> `--kit` roundtrip must be proven once against the pinned CLI
 # before the first real release relies on it.
 #
-# NOTE (action pinning): third-party actions (docker/*, oras-project/*) are
-# pinned to full commit SHAs per GitHub's hardening guidance for
-# packages-publishing workflows, with the human-readable version in a trailing
-# comment. GitHub-owned actions/* stay on version tags, matching the rest of the
-# repo's workflows.
+# NOTE (action pinning): every action in the kit publish/rebuild workflows is
+# pinned to a full commit SHA per GitHub's hardening guidance for
+# packages-publishing workflows (tags are movable refs; a SHA is immutable),
+# with the human-readable version in a trailing comment that Dependabot/
+# Renovate understand when PRing bumps. Pre-existing pins in release.yml's
+# release/publish-band jobs (release-please, setup-uv, pypi-publish) are left
+# on tags — re-pinning long-standing release infrastructure is a separate
+# decision.
 
 name: kit-publish
 
@@ -99,7 +102,7 @@ jobs:
       digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout the release ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ inputs.ref }}
 
@@ -153,7 +156,7 @@ jobs:
             ${{ inputs.extra-build-args }}
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -168,7 +171,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout the release ref
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ inputs.ref }}
 
