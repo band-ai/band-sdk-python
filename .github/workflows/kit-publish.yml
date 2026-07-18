@@ -212,8 +212,13 @@ jobs:
       - name: Push the kit artifact
         working-directory: staging
         run: |
+          # The source annotation is what links the kit package to this repo on
+          # GHCR — the image gets linkage from its Dockerfile LABEL, but an
+          # ORAS-assembled artifact carries no labels, only manifest
+          # annotations.
           oras push "${KIT_NAME}:${{ inputs.version }}" \
             --artifact-type application/vnd.docker.sandbox.kit.v2 \
+            --annotation "org.opencontainers.image.source=https://github.com/band-ai/band-sdk-python" \
             --config spec.yaml:application/vnd.docker.sandbox.kit.v2.spec+yaml \
             empty-layer.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip
 

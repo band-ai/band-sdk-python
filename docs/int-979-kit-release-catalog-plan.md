@@ -576,6 +576,40 @@ testing off-runner. A hyphenated filename can't be imported with a plain
 (small conftest helper) — decided up front so it doesn't surprise
 mid-implementation. `scripts/` does not exist yet; this creates it.
 
+## Status (2026-07-18 — implementation on this branch)
+
+**Track A is fully implemented, reviewed, and hardened on this branch.** The
+only Track A remainder is the local quarantine-gate proof (#12), which needs
+a Docker daemon (the implementation environment had none). Track B stays
+blocked on the org-admin GHCR prerequisites (#13 — requested from the org
+admin via Slack) and the merge sequencing.
+
+Done beyond the written plan, in the same commits:
+
+- A full code review (8 finder angles + verification) surfaced and fixed 10
+  findings; the biggest were in the rebuild workflow's decide job (a subshell
+  bug that made the base-digest trigger dead, scan-failure/CVE conflation,
+  registry auth, shell injection on a dispatch input, fail-loud `-rN`
+  resolution) plus review passes over kit-publish.yml/release.yml (rehearsal
+  `workflow_dispatch` path — without it the pre-first-release rehearsal was
+  impossible; shared `kit-ghcr-publish` concurrency so release and rebuild
+  can't race the floating tags; least-privilege on `bump-add-band`).
+- The rebuild's comparison ledger is **main's** Dockerfile pins (not the
+  released tag's, which would re-trigger forever), and the scan targets the
+  **currently published** `X.Y.Z(-rN)`, per this plan's own wording.
+- Pre-publish CVE pass: pip-audit over the image's exact locked set found and
+  fixed cryptography (GHSA-537c-gmf6-5ccf), idna (CVE-2026-45409), and
+  pydantic-settings (GHSA-4xgf-cpjx-pc3j); the `PYTHON_BASE_IMAGE` digest pin
+  was refreshed (upstream had moved). Rationale recorded in the commit: `-rN`
+  rebuilds keep the lock, so Python-dep CVEs only ship out via lock bump +
+  release — the first publish must start clean.
+- Supply-chain hardening: every action in the kit workflows SHA-pinned
+  (current versions verified against upstream docs); Dependabot groups action
+  bumps into one weekly PR and now also watches the echo-agent starter's
+  `uv.lock` (previously unowned).
+- Docs aligned (root README, echo-agent README, RELEASING.md rehearsal
+  procedure); repo-anchored test paths centralized in `tests/paths.py`.
+
 ## Implementation todo (ordered, GHCR blocker noted)
 
 GHCR access blocks the *tail* of this list, not the start — the repo-side
@@ -585,28 +619,44 @@ publish) and is ordered by its own internal dependencies.
 
 **Track A — start immediately, no GHCR/merge dependency:**
 
-1. Dockerfile: add `UV_EXCLUDE_NEWER` quarantine arg, wired into both
-   `uv sync --locked` branches.
-2. Dockerfile: add static OCI labels (source, licenses, title, description).
-3. `spec.yaml`: bump `schemaVersion` `"1"` → `"2"`; update the drift test.
-4. `scripts/stamp-kit-spec.py` helper + unit tests.
-5. New reusable `.github/workflows/kit-publish.yml` (build→attest→stamp→push).
-6. `release.yml`: add `publish-kit-image` + `publish-kit-artifact` jobs.
-7. Verify `sbx` CLI runs on ubuntu GitHub runners, or wire the ORAS fallback.
-8. `release.yml`: add the `bump-add-band` job.
-9. New `.github/workflows/kit-image-rebuild.yml` (weekly CVE rebuild).
-10. Write `docker/band_python_kit/RELEASING.md`.
-11. Rewrite `docker/band_python_kit/README.md` quickstart to the published path.
-12. Run the quarantine gate proof locally (fail on a stale cutoff, pass on
+1. ✅ Dockerfile: add `UV_EXCLUDE_NEWER` quarantine arg, wired into both
+   `uv sync --locked` branches (wiring pinned by a mutation-tested drift
+   test in `tests/docker/test_kit_spec.py`).
+2. ✅ Dockerfile: add static OCI labels (source, licenses, title, description).
+3. ✅ `spec.yaml`: bump `schemaVersion` `"1"` → `"2"`; update the drift test.
+4. ✅ `scripts/stamp-kit-spec.py` helper + unit tests (library + the CLI
+   contract the workflow invokes).
+5. ✅ New reusable `.github/workflows/kit-publish.yml` (build→attest→stamp→
+   push), plus a `workflow_dispatch` trigger for the pre-first-release
+   rehearsal (`move-floating` defaults false on dispatch).
+6. ✅ `release.yml`: add the kit publish call (`publish-kit`, via the
+   reusable workflow) — image and kit artifact are jobs inside it.
+7. ⚠️ `sbx`-on-runner remains unverified; the ORAS fallback was **promoted to
+   primary** (media types per contrib's `spec/OCI-v2.md`; single empty
+   tar+gzip layer). The push→pull→`--kit` roundtrip proof (open item #1) is
+   still owed before the first release relies on it, and this drops the
+   plan's `sbx kit validate` staging gate (the stamp helper's parse guards
+   partially substitute).
+8. ✅ `release.yml`: add the `bump-add-band` job (App-token, fail-loud on a
+   sed miss, no-op until the add-band entry exists).
+9. ✅ New `.github/workflows/kit-image-rebuild.yml` (weekly CVE rebuild).
+10. ✅ Write `docker/band_python_kit/RELEASING.md`.
+11. ✅ Rewrite `docker/band_python_kit/README.md` quickstart to the published
+    path (workspace scaffolded from the release tarball — no repo checkout).
+12. ❌ Run the quarantine gate proof locally (fail on a stale cutoff, pass on
     the real now−7d cutoff) — plain `docker build`, no registry needed.
+    **Still owed**: needs a Docker daemon; run together with open item #7's
+    pinned-uv reproduction and record in the PR test plan.
 
 **— GHCR blocker line — everything below needs org-admin access, then a real
 publish (which itself needs the PR merged to `dev`, then `main`) —**
 
 13. 🔒 Confirm the GHCR org-admin prerequisites are done (package creation +
-    GitHub App installed on `add-band`) — requested from the org admin on
-    the ticket.
-14. 🔒 Post-merge release rehearsal via `workflow_dispatch` — blocked by #13.
+    GitHub App installed on `add-band`) — **requested from the org admin**
+    (Slack, 2026-07-18).
+14. 🔒 Post-merge release rehearsal — now concretely: dispatch `kit-publish`
+    with a throwaway version (e.g. `0.0.0-rc1`), `move-floating: false`; see
+    RELEASING.md. Blocked by #13.
 15. 🔒 Flip both GHCR packages to public (one-way) — blocked by #14.
 16. 🔒 Clean-machine acceptance proof (live) — blocked by #14 (needs a real
     published tag).
@@ -720,7 +770,7 @@ the flow is environment-agnostic by configuration.
 
 ## Open verification during implementation
 
-1. **`sbx` CLI on ubuntu runners for registry-only ops** (`kit validate`,
+1. **[open — ORAS now primary]** **`sbx` CLI on ubuntu runners for registry-only ops** (`kit validate`,
    `kit push` — no VM needed in principle; Linux binary availability via
    `docker/sbx-releases` unconfirmed). ORAS fallback is fully specified (see
    "Fallback" above: exact media types, single empty tar+gzip layer for our
@@ -728,59 +778,59 @@ the flow is environment-agnostic by configuration.
    thing left to prove there is that ORAS emits the empty layer correctly and
    a push→pull→`--kit` roundtrip consumes clean. Last resort: the documented
    maintainer-laptop runbook.
-2. **schemaVersion "2" end-to-end on v0.34.0**: local `--kit <dir>` create,
+2. **[open]** **schemaVersion "2" end-to-end on v0.34.0**: local `--kit <dir>` create,
    `kit push` → `kit pull` roundtrip, OCI-ref consume; plus revalidating the
    spec after adding `version`/`sourceURL`/`licenses`.
-3. **Whether v0.34.0 `sbx kit push` self-pins the image digest** (contrib's
+3. **[moot while ORAS is primary — we stamp explicitly]** **Whether v0.34.0 `sbx kit push` self-pins the image digest** (contrib's
    skill doc says it rewrites to distribution form; undocumented for this
    CLI version). We stamp explicitly either way — this only decides whether
    the stamp is belt-and-braces or load-bearing.
-4. **Anonymous public-GHCR pulls** by the sandbox VM (`sandbox.image`) and
+4. **[open — after the visibility flip]** **Anonymous public-GHCR pulls** by the sandbox VM (`sandbox.image`) and
    by `--kit` resolution (docs say pulls fall back to anonymous; v0.34.0
    rejected *local-only* image refs with 403 — a public GHCR ref must be
    proven once).
-5. **Kit-package repo linkage on CLI push** (Actions auto-links only
+5. **[mitigated — verify on first publish]** **Kit-package repo linkage on CLI push**: the ORAS push now sets the `org.opencontainers.image.source` manifest annotation for GHCR linkage. Original concern (Actions auto-links only
    token-pushed packages; the kit artifact may need a manual link /
    visibility flip).
-6. **Contrib TCK/e2e viability for a headless, workspace-dependent kit** —
+6. **[open — with the contrib PR]** **Contrib TCK/e2e viability for a headless, workspace-dependent kit** —
    run their harness locally early; adjust (`testdata/tck.yaml`, README
    caveats) based on what it actually exercises.
-7. **Quarantine gate on the image's pinned uv 0.9.13** (probes ran on
+7. **[open — run with todo #12]** **Quarantine gate on the image's pinned uv 0.9.13** (probes ran on
    0.11.19): reproduce the `--locked` + `--exclude-newer` failure/pass pair
    with the pinned binary, or bump the uv pin in the same PR.
-8. **`sbx login` flow wording** for the quickstart (ticket lists it; confirm
+8. **[open — check at the acceptance proof]** **`sbx login` flow wording** for the quickstart (ticket lists it; confirm
    the current CLI's sign-in behavior on the pinned version).
-9. **Floating-tag repush ergonomics** for the kit artifact (`sbx kit push`
+9. **[resolved — `oras tag` re-tags, no repeat push]** **Floating-tag repush ergonomics** for the kit artifact (`sbx kit push`
    twice vs `crane`/`oras tag`) — pick whichever is idempotent.
-10. **First-publish org permissions** (zero band-ai packages currently): confirm
+10. **[requested — Slack to org admin, 2026-07-18]** **First-publish org permissions** (zero band-ai packages currently): confirm
     with an org admin that workflow `GITHUB_TOKEN` package creation is
     allowed and public visibility is permitted. Requested on the ticket from
     the org admin; a **hard pre-merge gate** (see "One-time GHCR setup").
-11. **Attestation-laden image index consumability**:
+11. **[open]** **Attestation-laden image index consumability**:
     `provenance: mode=max` + `sbom: true` turns the pushed image into an
     OCI index carrying attestation manifests. Prove the sandbox VM's image
     puller tolerates it **early** with a throwaway attested image — under
     the plan's ordering this would otherwise surface only at the final
     clean-machine proof.
-12. **Quarantine gate breadth**: confirm `uv sync --locked --exclude-newer`
+12. **[open — run with item #7; RELEASING.md already words the benign trip]** **Quarantine gate breadth**: confirm `uv sync --locked --exclude-newer`
     trips on a fresh **dev-only** locked package (whole-lock validation) —
     expected yes; informs RELEASING.md's benign-trip wording. Run together
     with item #7's pinned-uv reproduction.
-13. **Floating-tag freshness under kit caching**: v0.34.0 caches OCI kits —
+13. **[open]** **Floating-tag freshness under kit caching**: v0.34.0 caches OCI kits —
     confirm `--kit …:latest` re-resolves on sandbox re-create rather than
     serving a stale cached artifact. The CVE-cadence story ("customers on
     latest pick up rebuilds on re-create") depends on this.
-14. **Combined `name:tag@digest` ref for the stamped `sandbox.image`**:
+14. **[open — the stamp emits the combined form today]** **Combined `name:tag@digest` ref for the stamped `sandbox.image`**:
     confirm sbx accepts the combined form; if not, stamp digest-only.
-15. **`AGENT` positional resolution from an OCI kit ref**: `sbx create …
+15. **[open]** **`AGENT` positional resolution from an OCI kit ref**: `sbx create …
     band-python-kit <ws>` is verified for local-dir kits only, and
     `sbx create --help` shows `AGENT` is normally a fixed built-in list —
     make item #2's OCI-consume roundtrip exercise the same positional path.
-16. **ORAS plan B and the missing `_kit_<tag>` GC anchor**: `sbx kit push`
+16. **[open — now load-bearing: ORAS is the primary push path]** **ORAS and the missing `_kit_<tag>` GC anchor**: `sbx kit push`
     emits it, ORAS wouldn't — likely harmless on GHCR (the image is
     independently tagged in its own package) but confirm nothing on the
     pull path expects it.
-17. **GitHub App installation on `band-ai/add-band`** (for the automated
+17. **[requested — same Slack ask as #10]** **GitHub App installation on `band-ai/add-band`** (for the automated
     bump PR): confirm installed with `contents: write` +
     `pull-requests: write`, or bundle the ask with the GHCR org-admin
     request.
