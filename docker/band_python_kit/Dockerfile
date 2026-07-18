@@ -3,7 +3,7 @@
 # pin human-legible; the digest is what actually gets resolved — re-pin by
 # passing --build-arg to bump either, but always keep both in sync (the tag
 # is documentation, not an independent fallback).
-ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
+ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5
 # Shared by both stages so the venv is built at the exact absolute path it
 # will live at in the runtime image — see UV_PROJECT_ENVIRONMENT below.
