@@ -96,10 +96,18 @@ def is_no_clean_mode(request: pytest.FixtureRequest | None = None) -> bool:
 # =============================================================================
 
 
-class TestSettings(BaseTestSettings):
-    """Settings for integration tests, loaded from .env.test."""
+# Load .env.test into os.environ, once, for every consumer: skip_without_env()
+# markers check os.environ at definition time, and TestSettings below reads its
+# fields from the same environment (pydantic's env source), so no second
+# env_file load inside the settings class is needed. override=False ensures
+# explicitly-set env vars take precedence — the same winner pydantic's
+# env-over-env_file priority would pick.
+load_dotenv(ENV_TEST_FILE, override=False)
 
-    _env_file_path = ENV_TEST_FILE
+
+class TestSettings(BaseTestSettings):
+    """Settings for integration tests, read from the environment
+    (`.env.test` is loaded into ``os.environ`` above)."""
 
     band_api_key: str = ""
     band_api_key_2: str = ""
@@ -110,12 +118,6 @@ class TestSettings(BaseTestSettings):
     test_agent_id_2: str = ""
 
 
-# Load .env.test into os.environ so skip_without_env() markers (which check
-# os.environ at definition time) see the credentials.  override=False ensures
-# explicitly-set env vars take precedence.
-load_dotenv(ENV_TEST_FILE, override=False)
-
-# Load settings from .env.test
 test_settings = TestSettings()
 
 
