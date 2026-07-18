@@ -63,11 +63,11 @@ jobs:
     steps:
       - name: Check out main
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-        # main carries both inputs of the decision: the release manifest (which
-        # version is current) and the pinning ledger (the Dockerfile digest
-        # ARGs, kept truthful by this workflow's own bump PRs). The build
-        # itself happens at the released tag, checked out by the reusable
-        # workflow.
+        # main (the default branch a scheduled run checks out) carries the
+        # release manifest — which version is actually released. The pinning
+        # ledger is read from dev below (where this workflow's bump PRs land,
+        # per the repo's PRs-over-dev convention), and the build itself
+        # happens at the released tag, checked out by the reusable workflow.
 
       - name: Read version from the release manifest
         id: readver
@@ -81,15 +81,21 @@ jobs:
         id: bases
         run: |
           set -euo pipefail
-          # Pins are read from MAIN's Dockerfile (the ledger the bump PR keeps
-          # truthful), not the released tag's: the tag is immutable, so its
-          # pins go permanently stale after the first rebuild and comparing
-          # against them would re-trigger a rebuild every week forever. Until
-          # a rebuild's bump PR is merged, the ledger lags and the next
-          # scheduled run may rebuild redundantly — merge bump PRs promptly.
+          # Pins are read from DEV's Dockerfile: the repo convention is PRs
+          # against dev (main receives them via the promote workflow), so dev
+          # is where the bump PR below lands and the only branch on which the
+          # ledger heals promptly. Comparing against a released tag's pins
+          # would re-trigger forever (tags are immutable); comparing against
+          # main's would re-trigger until the next promote. Until a rebuild's
+          # bump PR is merged to dev, the next scheduled run may rebuild
+          # redundantly — merge bump PRs promptly.
+          # FETCH_HEAD, not origin/dev: actions/checkout configures a
+          # single-ref fetch refspec, so the remote-tracking ref may not be
+          # written by this fetch.
+          git fetch --quiet --depth=1 origin dev
           pinned() {
             # $1 = ARG name. Prints the committed "image:tag@digest" pin.
-            grep -E "^ARG $1=" "$DOCKERFILE" | sed -E "s/^ARG $1=//"
+            git show "FETCH_HEAD:$DOCKERFILE" | grep -E "^ARG $1=" | sed -E "s/^ARG $1=//"
           }
           current() {
             # $1 = a pin. Prints the same image ref with its live upstream digest.
@@ -266,9 +272,13 @@ jobs:
           client-id: ${{ secrets.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
-      - name: Checkout main
+      # Cut from and PR against dev — the repo convention (PRs over dev, main
+      # receives them via the promote workflow). This is also what the decide
+      # job's ledger comparison reads, so merging the PR quiesces the trigger.
+      - name: Checkout dev
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
+          ref: dev
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Open the digest-pin bump PR
@@ -298,6 +308,7 @@ jobs:
           git push -u origin "$branch" --force
           if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
             gh pr create \
+              --base dev \
               --title "chore: bump band-python-kit base digests (${RVERSION})" \
               --body "Keeps the committed pinning ledger truthful after the ${RVERSION} CVE rebuild moved \`latest\`/\`${{ needs.decide.outputs.major }}\` onto fresh base digests." \
               --head "$branch"

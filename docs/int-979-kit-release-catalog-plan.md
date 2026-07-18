@@ -594,9 +594,11 @@ Done beyond the written plan, in the same commits:
   `workflow_dispatch` path — without it the pre-first-release rehearsal was
   impossible; shared `kit-ghcr-publish` concurrency so release and rebuild
   can't race the floating tags; least-privilege on `bump-add-band`).
-- The rebuild's comparison ledger is **main's** Dockerfile pins (not the
-  released tag's, which would re-trigger forever), and the scan targets the
-  **currently published** `X.Y.Z(-rN)`, per this plan's own wording.
+- The rebuild's comparison ledger is **dev's** Dockerfile pins (not the
+  released tag's, which would re-trigger forever, and not main's, which only
+  heals on promote — dev is where the bump PR lands per the repo's
+  PRs-over-dev convention), and the scan targets the **currently published**
+  `X.Y.Z(-rN)`, per this plan's own wording.
 - Pre-publish CVE pass: pip-audit over the image's exact locked set found and
   fixed cryptography (GHSA-537c-gmf6-5ccf), idna (CVE-2026-45409), and
   pydantic-settings (GHSA-4xgf-cpjx-pc3j); the `PYTHON_BASE_IMAGE` digest pin
