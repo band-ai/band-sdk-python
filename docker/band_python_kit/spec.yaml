@@ -1,4 +1,9 @@
-schemaVersion: "1"
+# schemaVersion "2" selects sbx's OCI v2 kit artifact format (tar+gzip layer,
+# spec in the manifest config blob, standard OCI annotations) for
+# `sbx kit push`, with v0.34.0's streaming/caching support. It changes only
+# the packaging on push — no spec-field differences from "1" — and passes
+# `sbx kit validate` unchanged on the pinned CLI.
+schemaVersion: "2"
 kind: sandbox
 name: band-python-kit
 displayName: Band Python Agent

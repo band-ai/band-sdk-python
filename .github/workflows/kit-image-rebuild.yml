@@ -1,0 +1,226 @@
+# Weekly (and on-demand) CVE rebuild of the latest released band-python-kit.
+#
+# Rebuilds the currently-released version from its immutable tag when — and only
+# when — there is a real reason to: a pinned base image has a newer digest, the
+# published image has fixable HIGH/CRITICAL vulnerabilities, or a human forces
+# it. On a real rebuild it publishes an immutable `X.Y.Z-rN` tag, moves the
+# floating tags, republishes the kit artifact against the new image digest (all
+# through the shared kit-publish.yml pipeline), and opens a PR bumping the
+# committed Dockerfile digest pins so the repo never lies about what `latest` is
+# built from. A no-change week publishes nothing.
+#
+# NOTE: like the release publish jobs, this workflow can only be exercised once
+# it is on the default branch and the GHCR packages exist — see
+# docker/band_python_kit/RELEASING.md.
+
+name: kit-image-rebuild
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if no base digest changed and no fixable CVE
+        type: boolean
+        default: false
+      reason:
+        description: Why this ad-hoc rebuild is being run (recorded in the run log)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
+  DOCKERFILE: docker/band_python_kit/Dockerfile
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      rebuild: ${{ steps.gate.outputs.rebuild }}
+      reason: ${{ steps.gate.outputs.reason }}
+      version: ${{ steps.readver.outputs.version }}
+      rversion: ${{ steps.rn.outputs.rversion }}
+      tag: ${{ steps.readver.outputs.tag }}
+      major: ${{ steps.readver.outputs.major }}
+      python_ref: ${{ steps.bases.outputs.python_ref }}
+      uv_ref: ${{ steps.bases.outputs.uv_ref }}
+    steps:
+      - name: Check out main (release manifest lives here)
+        uses: actions/checkout@v6
+        # The build itself happens at the released tag, checked out by the
+        # reusable workflow; here we only need the manifest and the tag's
+        # Dockerfile.
+
+      - name: Read version from the release manifest
+        id: readver
+        run: |
+          version="$(jq -r '."."' .release-please-manifest.json)"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=band-sdk-v${version}" >> "$GITHUB_OUTPUT"
+          echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the released tag's Dockerfile
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.readver.outputs.tag }}
+          path: released
+
+      - name: Compare pinned base digests with the current upstream digests
+        id: bases
+        run: |
+          set -euo pipefail
+          changed="false"
+          resolve() {
+            # $1 = ARG name. Prints "tag@currentdigest" and sets *_changed.
+            local pin
+            pin="$(grep -E "^ARG $1=" "released/$DOCKERFILE" | sed -E "s/^ARG $1=//")"
+            local image="${pin%@*}"
+            local pinned_digest="${pin##*@}"
+            local current_digest
+            current_digest="$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')"
+            if [ "$current_digest" != "$pinned_digest" ]; then
+              changed="true"
+            fi
+            echo "${image}@${current_digest}"
+          }
+          python_ref="$(resolve PYTHON_BASE_IMAGE)"
+          uv_ref="$(resolve UV_IMAGE)"
+          echo "python_ref=${python_ref}" >> "$GITHUB_OUTPUT"
+          echo "uv_ref=${uv_ref}" >> "$GITHUB_OUTPUT"
+          echo "base_changed=${changed}" >> "$GITHUB_OUTPUT"
+
+      - name: Scan the published image for fixable HIGH/CRITICAL
+        id: scan
+        continue-on-error: true # a not-yet-published image (first run) is not a failure
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.readver.outputs.version }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1" # nonzero when a fixable HIGH/CRITICAL is found
+
+      - name: Decide whether to rebuild
+        id: gate
+        run: |
+          base_changed="${{ steps.bases.outputs.base_changed }}"
+          scan_found="${{ steps.scan.outcome == 'failure' }}"
+          forced="${{ github.event.inputs.force }}"
+          reason=""
+          rebuild="false"
+          if [ "$base_changed" = "true" ]; then rebuild="true"; reason="${reason}base-digest-changed "; fi
+          if [ "$scan_found" = "true" ]; then rebuild="true"; reason="${reason}fixable-high-critical "; fi
+          if [ "$forced" = "true" ]; then rebuild="true"; reason="${reason}forced(${{ github.event.inputs.reason }}) "; fi
+          [ -n "$reason" ] || reason="no-change"
+          echo "rebuild=${rebuild}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the next -rN suffix
+        id: rn
+        if: ${{ steps.gate.outputs.rebuild == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.readver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # List existing image tags and find the highest N already published for
+          # this version, so the new rebuild tag is the next free X.Y.Z-rN.
+          tags="$(gh api --paginate \
+            '/orgs/band-ai/packages/container/band-python-kit%2Fimage/versions' \
+            --jq '.[].metadata.container.tags[]' 2>/dev/null || true)"
+          max=0
+          while IFS= read -r t; do
+            case "$t" in
+              "${VERSION}-r"*)
+                n="${t##*-r}"
+                if [ "$n" -gt "$max" ] 2>/dev/null; then max="$n"; fi
+                ;;
+            esac
+          done <<< "$tags"
+          next=$((max + 1))
+          echo "rversion=${VERSION}-r${next}" >> "$GITHUB_OUTPUT"
+
+  rebuild:
+    needs: [decide]
+    if: ${{ needs.decide.outputs.rebuild == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/kit-publish.yml
+    with:
+      ref: ${{ needs.decide.outputs.tag }}
+      version: ${{ needs.decide.outputs.rversion }}
+      major: ${{ needs.decide.outputs.major }}
+      move-floating: true
+      # The committed pins are defaults, not ceilings: rebuild against the fresh
+      # upstream base digests, keeping the same uv.lock and quarantine gate.
+      extra-build-args: |
+        PYTHON_BASE_IMAGE=${{ needs.decide.outputs.python_ref }}
+        UV_IMAGE=${{ needs.decide.outputs.uv_ref }}
+
+  bump-pins:
+    needs: [decide, rebuild]
+    if: ${{ needs.decide.outputs.rebuild == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open the digest-pin bump PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PYTHON_REF: ${{ needs.decide.outputs.python_ref }}
+          UV_REF: ${{ needs.decide.outputs.uv_ref }}
+          RVERSION: ${{ needs.decide.outputs.rversion }}
+        run: |
+          set -euo pipefail
+          # Rewrite the pinned base-image ARGs to the digests this rebuild used.
+          sed -i -E "s#^(ARG PYTHON_BASE_IMAGE=).*#\1${PYTHON_REF}#" "$DOCKERFILE"
+          sed -i -E "s#^(ARG UV_IMAGE=).*#\1${UV_REF}#" "$DOCKERFILE"
+          if git diff --quiet; then
+            echo "pins already current; no bump PR needed."
+            exit 0
+          fi
+          branch="chore/rebuild-pins-${RVERSION}"
+          git config user.name "band-release-bot"
+          git config user.email "release-bot@band.ai"
+          git switch -c "$branch"
+          git commit -am "chore: bump band-python-kit base digests (${RVERSION} rebuild)"
+          git push -u origin "$branch" --force-with-lease
+          gh pr create \
+            --title "chore: bump band-python-kit base digests (${RVERSION})" \
+            --body "Keeps the committed pinning ledger truthful after the ${RVERSION} CVE rebuild moved \`latest\`/\`${{ needs.decide.outputs.major }}\` onto fresh base digests." \
+            --head "$branch"
+
+  report:
+    needs: [decide, rebuild, bump-pins]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write the run summary
+        run: |
+          echo "## Kit image rebuild" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Version:** ${{ needs.decide.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Rebuild:** ${{ needs.decide.outputs.rebuild }} (${{ needs.decide.outputs.reason }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "**New tag:** ${{ needs.decide.outputs.rversion || '—' }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**python base:** ${{ needs.decide.outputs.python_ref }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**uv image:** ${{ needs.decide.outputs.uv_ref }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Publish result:** ${{ needs.rebuild.result }}" >> "$GITHUB_STEP_SUMMARY"

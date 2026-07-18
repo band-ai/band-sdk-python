@@ -49,16 +49,30 @@ RUN sed -i '/^\[tool\.uv\.sources\]/,/^\[/{ /^\[tool\.uv\.sources\]/d; /^\[/!d; 
 # resolve into the same venv. Any other framework is the customer's own
 # venv, created at sandbox runtime, isolated from this one.
 ARG SDK_EXTRA=""
+# Supply-chain quarantine (release builds only). When the release workflow
+# passes an RFC 3339 cutoff, `uv sync --locked` re-resolves against it and
+# fails if any locked package was published after the cutoff — a
+# freshly-poisoned dependency cannot enter the published image until it has
+# aged past the window (see docker/band_python_kit/RELEASING.md). This is a
+# CI-only build arg, never `[tool.uv] exclude-newer` in pyproject.toml (that
+# would be recorded into uv.lock and break `uv lock --check` for every dev who
+# doesn't pass the same flag). Empty by default, so local developer builds
+# resolve exactly as before.
+ARG UV_EXCLUDE_NEWER=""
 # Build the venv directly at its final runtime path (not e.g. ./.venv, then
 # relocated by COPY below): console-script shebangs bake in an absolute
 # interpreter path at install time, so copying an already-built venv to a
 # different path leaves every entry point (band-acp, band-trigger, ...)
 # pointing at the deleted builder path.
 ENV UV_PROJECT_ENVIRONMENT=${BAND_SDK_HOME}/venv
-RUN if [ -n "$SDK_EXTRA" ]; then \
-      uv sync --locked --no-dev --no-editable --extra "$SDK_EXTRA"; \
+RUN EXCLUDE_NEWER_ARGS=""; \
+    if [ -n "$UV_EXCLUDE_NEWER" ]; then \
+      EXCLUDE_NEWER_ARGS="--exclude-newer $UV_EXCLUDE_NEWER"; \
+    fi; \
+    if [ -n "$SDK_EXTRA" ]; then \
+      uv sync --locked --no-dev --no-editable --extra "$SDK_EXTRA" $EXCLUDE_NEWER_ARGS; \
     else \
-      uv sync --locked --no-dev --no-editable; \
+      uv sync --locked --no-dev --no-editable $EXCLUDE_NEWER_ARGS; \
     fi
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
@@ -95,6 +109,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+# Static OCI labels. GHCR uses org.opencontainers.image.source to link a
+# package to its repository (and, from there, to its build provenance). The
+# Actions-pushed image links automatically via GITHUB_TOKEN, but a CLI/manual
+# push and the kit OCI artifact only inherit the linkage from this label — so
+# bake it in rather than relying on the pusher. Dynamic, per-build labels
+# (version, revision, created) are added by docker/metadata-action at build
+# time and are deliberately not hardcoded here.
+LABEL org.opencontainers.image.source="https://github.com/band-ai/band-sdk-python" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.title="band-python-kit" \
+      org.opencontainers.image.description="Run a locked Python agent workspace on Band inside a Docker Sandbox microVM."
 
 # Immutable SDK venv, outside the customer's writable workspace ($HOME). Copied
 # from the exact same absolute path it was built at (see UV_PROJECT_ENVIRONMENT

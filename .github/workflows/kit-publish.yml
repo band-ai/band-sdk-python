@@ -1,0 +1,193 @@
+# Reusable pipeline that builds, attests, and publishes both band-python-kit
+# artifacts to GHCR: the multi-arch sandbox image and the OCI kit artifact whose
+# spec pins that image by digest. Shared (workflow_call) by release.yml (on a
+# band-sdk release) and kit-image-rebuild.yml (weekly CVE rebuild) so the two
+# never drift into separate copies.
+#
+# NOTE (open verification, see docker/band_python_kit/RELEASING.md): the kit
+# artifact is pushed with ORAS assembling the OCI v2 manifest by hand — the
+# `sbx` CLI's availability on ubuntu runners is unconfirmed, and the ORAS shape
+# is fully specified (artifactType, config media type, single empty layer). A
+# push -> pull -> `--kit` roundtrip must be proven once against the pinned CLI
+# before the first real release relies on it.
+#
+# NOTE (action pinning): these publish jobs use version-tag pins for
+# consistency with the rest of the repo's workflows. GitHub's guidance for
+# packages-publishing workflows is to pin third-party actions to full commit
+# SHAs; doing so here is a recommended hardening follow-up.
+
+name: kit-publish
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to check out and build from (e.g. band-sdk-vX.Y.Z)
+        required: true
+        type: string
+      version:
+        description: Bare artifact/image tag (e.g. 1.2.0 or 1.2.0-r1)
+        required: true
+        type: string
+      major:
+        description: Major version for the floating <major> tag (e.g. 1)
+        required: true
+        type: string
+      move-floating:
+        description: Also move the `latest` and `<major>` floating tags
+        required: false
+        default: true
+        type: boolean
+      extra-build-args:
+        description: |
+          Newline-separated extra --build-arg entries (e.g. fresh base-image
+          digests for a CVE rebuild). Appended after the computed quarantine
+          cutoff.
+        required: false
+        default: ""
+        type: string
+    outputs:
+      image-digest:
+        description: Digest of the pushed multi-arch image
+        value: ${{ jobs.image.outputs.digest }}
+
+env:
+  IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
+  KIT_NAME: ghcr.io/band-ai/band-python-kit
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Checkout the release ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up QEMU (arm64 emulation)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          # The trigger is a push to main (not a tag event), so tags are
+          # composed from the caller's version input, never derived from the
+          # git ref.
+          tags: |
+            type=raw,value=${{ inputs.version }}
+            type=raw,value=${{ inputs.major }},enable=${{ inputs.move-floating }}
+            type=raw,value=latest,enable=${{ inputs.move-floating }}
+
+      - name: Compute supply-chain quarantine cutoff (now - 7 days)
+        id: cutoff
+        run: echo "value=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push (multi-arch, attested)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/band_python_kit/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          # The quarantine cutoff fails the build if any locked package is
+          # younger than 7 days. Extra args (fresh base digests on a rebuild)
+          # follow it.
+          build-args: |
+            UV_EXCLUDE_NEWER=${{ steps.cutoff.outputs.value }}
+            ${{ inputs.extra-build-args }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  kit:
+    needs: [image]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout the release ref
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install PyYAML (stamp helper dependency)
+        run: python -m pip install --quiet pyyaml
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@v1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stamp the distribution spec (image -> digest-pinned ref)
+        run: |
+          mkdir -p staging
+          python scripts/stamp-kit-spec.py \
+            --spec docker/band_python_kit/spec.yaml \
+            --image-ref "${IMAGE_NAME}:${{ inputs.version }}" \
+            --digest "${{ needs.image.outputs.digest }}" \
+            --output staging/spec.yaml
+          echo "── stamped sandbox.image ──"
+          grep 'image:' staging/spec.yaml
+
+      - name: Assemble the OCI v2 kit artifact
+        working-directory: staging
+        run: |
+          # Our kit ships no files/ (behavioral mixin: network + startup only),
+          # but the OCI v2 manifest still requires exactly one layer — an empty
+          # tar+gzip, not zero layers.
+          tar -czf empty-layer.tar.gz --files-from /dev/null
+
+      - name: Push the kit artifact
+        working-directory: staging
+        run: |
+          oras push "${KIT_NAME}:${{ inputs.version }}" \
+            --artifact-type application/vnd.docker.sandbox.kit.v2 \
+            --config spec.yaml:application/vnd.docker.sandbox.kit.v2.spec+yaml \
+            empty-layer.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip
+
+      - name: Move floating kit tags
+        if: ${{ inputs.move-floating }}
+        working-directory: staging
+        run: |
+          oras tag "${KIT_NAME}:${{ inputs.version }}" "${{ inputs.major }}" latest

@@ -75,9 +75,82 @@ jobs:
       - name: Publish band-sdk to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
 
-  summary:
-    needs: [release, publish-band]
+  # Publish the kit image + OCI kit artifact to GHCR. Independent of
+  # publish-band: a kit-publish failure (e.g. a quarantine-gate trip) must not
+  # block the PyPI release, which is why this is a sibling job, not a step.
+  publish-kit:
+    needs: [release]
     if: needs.release.outputs.release_created == 'true'
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/kit-publish.yml
+    with:
+      ref: ${{ needs.release.outputs.tag_name }}
+      version: ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}
+      major: ${{ needs.release.outputs.major }}
+      move-floating: true
+
+  # After a successful kit publish, open an automated PR against band-ai/add-band
+  # bumping the catalog bootstrap's pinned release tag. Uses the existing GitHub
+  # App (GITHUB_TOKEN can't open cross-repo PRs, and Actions-token-authored PRs
+  # don't trigger CI). Requires the App installed on band-ai/add-band; inert
+  # (skips) until the add-band catalog entry itself exists.
+  bump-add-band:
+    needs: [release, publish-kit]
+    if: needs.release.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token (scoped to add-band)
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: band-ai
+          repositories: add-band
+
+      - name: Checkout add-band
+        uses: actions/checkout@v6
+        with:
+          repository: band-ai/add-band
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open the pinned-tag bump PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}
+        run: |
+          bootstrap="band-python-kit/bootstrap.sh"
+          if [ ! -f "$bootstrap" ]; then
+            echo "add-band band-python-kit entry not present yet; nothing to bump."
+            exit 0
+          fi
+          new_tag="band-sdk-v${VERSION}"
+          # The bootstrap pins the release tarball by full component-prefixed
+          # tag (band-sdk-vX.Y.Z, not vX.Y.Z).
+          sed -i -E "s|band-sdk-v[0-9]+\.[0-9]+\.[0-9]+|${new_tag}|g" "$bootstrap"
+          if git diff --quiet; then
+            echo "add-band already pinned to ${new_tag}; nothing to do."
+            exit 0
+          fi
+          branch="chore/bump-band-python-kit-${VERSION}"
+          git config user.name "band-release-bot"
+          git config user.email "release-bot@band.ai"
+          git switch -c "$branch"
+          git commit -am "chore: bump band-python-kit to ${new_tag}"
+          git push -u origin "$branch" --force-with-lease
+          gh pr create \
+            --repo band-ai/add-band \
+            --head "$branch" \
+            --title "chore: bump band-python-kit to ${new_tag}" \
+            --body "Automated pin bump following the ${new_tag} band-sdk release. Merging is a human step (add-band CI validates the entry)."
+
+  summary:
+    needs: [release, publish-band, publish-kit, bump-add-band]
+    if: ${{ always() && needs.release.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Publish release summary
@@ -86,3 +159,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** ${{ needs.release.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact | Outcome |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| PyPI (band-sdk) | ${{ needs.publish-band.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GHCR kit image + artifact | ${{ needs.publish-kit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| add-band pin bump PR | ${{ needs.bump-add-band.result }} |" >> $GITHUB_STEP_SUMMARY

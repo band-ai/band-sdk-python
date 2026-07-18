@@ -11,8 +11,10 @@ from __future__ import annotations
 import importlib
 import re
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
+import pytest
 import yaml
 from dotenv import dotenv_values
 
@@ -52,6 +54,10 @@ def load_spec() -> dict[str, Any]:
 
 def test_spec_is_a_sandbox_kit_with_stable_identity() -> None:
     spec = load_spec()
+    # schemaVersion "2" selects sbx's OCI v2 kit artifact format on push. The
+    # value is a string in the spec; pin it so a downgrade to legacy ZIP
+    # packaging (or an unquoted YAML int) is caught here.
+    assert spec["schemaVersion"] == "2"
     assert spec["kind"] == "sandbox"
     # The kit name doubles as the `sbx create` agent positional — renaming it
     # breaks every documented launch command.
@@ -151,3 +157,73 @@ def test_echo_agent_secrets_template_names_match_documented_names() -> None:
     )
     assert "BAND_API_KEY" in active
     assert active | commented == {name.value for name in CredentialName}
+
+
+# ── scripts/stamp-kit-spec.py (release-time image-pin helper) ────────────────
+
+_IMAGE_REF = "ghcr.io/band-ai/band-python-kit/image:1.2.0"
+_DIGEST = "sha256:" + "a" * 64
+
+
+def test_stamp_pins_sandbox_image_by_digest(stamp_kit_spec: ModuleType) -> None:
+    stamped = stamp_kit_spec.stamp_spec_file(KIT_DIR / "spec.yaml", _IMAGE_REF, _DIGEST)
+    result = yaml.safe_load(stamped)
+    assert result["sandbox"]["image"] == f"{_IMAGE_REF}@{_DIGEST}"
+
+
+def test_stamp_keeps_every_non_image_field_byte_identical(
+    stamp_kit_spec: ModuleType,
+) -> None:
+    original = (KIT_DIR / "spec.yaml").read_text(encoding="utf-8")
+    stamped = stamp_kit_spec.stamp_spec_text(original, _IMAGE_REF, _DIGEST)
+
+    orig_lines = original.splitlines()
+    stamped_lines = stamped.splitlines()
+    assert len(orig_lines) == len(stamped_lines)
+
+    # Exactly one line differs, and it is the sandbox.image line.
+    diffs = [(o, s) for o, s in zip(orig_lines, stamped_lines) if o != s]
+    assert len(diffs) == 1
+    old_line, new_line = diffs[0]
+    assert old_line.strip().startswith("image:")
+    assert new_line.strip() == f"image: {_IMAGE_REF}@{_DIGEST}"
+
+    # And the parsed spec matches the original in every field except the image.
+    orig_spec = yaml.safe_load(original)
+    stamped_spec = yaml.safe_load(stamped)
+    orig_spec["sandbox"]["image"] = stamped_spec["sandbox"]["image"]
+    assert orig_spec == stamped_spec
+
+
+@pytest.mark.parametrize(
+    "bad_digest",
+    [
+        "deadbeef",  # no algorithm prefix
+        "sha256:deadbeef",  # too short
+        "sha256:" + "a" * 63,  # off by one
+        "sha256:" + "a" * 65,  # off by one the other way
+        "sha256:" + "A" * 64,  # uppercase hex
+        "sha256:" + "g" * 64,  # non-hex character
+        "sha512:" + "a" * 64,  # unsupported algorithm
+        "",
+    ],
+)
+def test_stamp_rejects_malformed_digests(
+    stamp_kit_spec: ModuleType, bad_digest: str
+) -> None:
+    with pytest.raises(ValueError):
+        stamp_kit_spec.validate_digest(bad_digest)
+    with pytest.raises(ValueError):
+        stamp_kit_spec.stamp_spec_file(KIT_DIR / "spec.yaml", _IMAGE_REF, bad_digest)
+
+
+def test_stamp_accepts_a_wellformed_digest(stamp_kit_spec: ModuleType) -> None:
+    # A valid digest must not raise — guards against an over-strict regex.
+    stamp_kit_spec.validate_digest(_DIGEST)
+
+
+def test_stamp_rejects_a_spec_without_a_sandbox_image(
+    stamp_kit_spec: ModuleType,
+) -> None:
+    with pytest.raises(ValueError):
+        stamp_kit_spec.stamp_spec_text("kind: sandbox\nname: x\n", _IMAGE_REF, _DIGEST)
