@@ -11,10 +11,11 @@
 # push -> pull -> `--kit` roundtrip must be proven once against the pinned CLI
 # before the first real release relies on it.
 #
-# NOTE (action pinning): these publish jobs use version-tag pins for
-# consistency with the rest of the repo's workflows. GitHub's guidance for
-# packages-publishing workflows is to pin third-party actions to full commit
-# SHAs; doing so here is a recommended hardening follow-up.
+# NOTE (action pinning): third-party actions (docker/*, oras-project/*) are
+# pinned to full commit SHAs per GitHub's hardening guidance for
+# packages-publishing workflows, with the human-readable version in a trailing
+# comment. GitHub-owned actions/* stay on version tags, matching the rest of the
+# repo's workflows.
 
 name: kit-publish
 
@@ -73,13 +74,13 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - name: Set up QEMU (arm64 emulation)
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -87,7 +88,7 @@ jobs:
 
       - name: Compute image tags
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         with:
           images: ${{ env.IMAGE_NAME }}
           # The trigger is a push to main (not a tag event), so tags are
@@ -104,7 +105,7 @@ jobs:
 
       - name: Build and push (multi-arch, attested)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: docker/band_python_kit/Dockerfile
@@ -122,7 +123,7 @@ jobs:
             ${{ inputs.extra-build-args }}
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -150,10 +151,10 @@ jobs:
         run: python -m pip install --quiet pyyaml
 
       - name: Install ORAS
-        uses: oras-project/setup-oras@v1
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}

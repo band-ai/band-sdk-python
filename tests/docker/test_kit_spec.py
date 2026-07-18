@@ -227,3 +227,20 @@ def test_stamp_rejects_a_spec_without_a_sandbox_image(
 ) -> None:
     with pytest.raises(ValueError):
         stamp_kit_spec.stamp_spec_text("kind: sandbox\nname: x\n", _IMAGE_REF, _DIGEST)
+
+
+def test_stamp_refuses_a_spec_with_ambiguous_image_lines(
+    stamp_kit_spec: ModuleType,
+) -> None:
+    # If the spec ever grows a second `image:` line, the byte-preserving edit
+    # must refuse rather than silently rewrite the wrong one — a mis-stamp here
+    # could, e.g., corrupt the network allowlist instead of the image ref.
+    ambiguous = (
+        "kind: sandbox\n"
+        "sandbox:\n"
+        "  image: band-python-kit:local\n"
+        "somethingElse:\n"
+        "  image: unrelated:tag\n"
+    )
+    with pytest.raises(ValueError, match="exactly one"):
+        stamp_kit_spec.stamp_spec_text(ambiguous, _IMAGE_REF, _DIGEST)
