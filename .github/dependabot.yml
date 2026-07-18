@@ -15,7 +15,9 @@ updates:
     reviewers:
       - "band/integrations-team"
 
-  # GitHub Actions
+  # GitHub Actions. Dependabot resolves SHA-pinned actions (the kit publish
+  # workflows pin full commit SHAs with a trailing version comment) the same
+  # as tag pins, and updates both the hash and the comment in its PRs.
   - package-ecosystem: "github-actions"
     directory: "/"
     target-branch: "dev"
@@ -26,3 +28,9 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    # One combined weekly PR instead of a PR per action — keeps the SHA-pin
+    # maintenance to a single review.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
