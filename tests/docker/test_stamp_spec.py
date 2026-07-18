@@ -49,7 +49,7 @@ def test_stamp_keeps_every_non_image_field_byte_identical() -> None:
     assert new_line.strip() == f"image: {IMAGE_REF}@{DIGEST}"
 
     # And the stamped output still parses to the original spec in every field
-    # except the image (guards the stamp format itself staying valid YAML).
+    # except the image — guards that the stamped line is still valid YAML.
     original_spec = yaml.safe_load(original)
     stamped_spec = yaml.safe_load(stamped)
     original_spec["sandbox"]["image"] = stamped_spec["sandbox"]["image"]
@@ -72,6 +72,8 @@ def test_stamp_keeps_every_non_image_field_byte_identical() -> None:
 def test_stamp_rejects_malformed_digests(bad_digest: str) -> None:
     with pytest.raises(ValueError):
         stamp.validate_digest(bad_digest)
+    # Also through the stamping path: proves validation is invoked there,
+    # not merely defined. Don't "deduplicate" this assert away.
     with pytest.raises(ValueError):
         stamp.stamp_spec_file(SPEC_PATH, IMAGE_REF, bad_digest)
 

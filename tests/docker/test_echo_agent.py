@@ -37,10 +37,11 @@ def test_starter_credentials_are_opt_in_and_gitignored() -> None:
     credentials = load_workspace_config().credentials
     assert credentials is not None
     assert credentials.acknowledge_plaintext_in_sandbox is True
-    # The configured credential path must be covered by the starter's
-    # .gitignore so a copied workspace never commits secrets.
+    # The credential file's directory must be gitignored so a copied
+    # workspace never commits secrets.
+    credentials_dir = credentials.path.split("/")[0] + "/"
     gitignore = (ECHO_AGENT_DIR / ".gitignore").read_text(encoding="utf-8")
-    assert credentials.path.split("/")[0] + "/" in gitignore
+    assert credentials_dir in gitignore
 
 
 def test_starter_runtime_paths_are_sandbox_owned() -> None:

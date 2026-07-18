@@ -129,7 +129,7 @@ def test_dockerfile_wires_the_quarantine_cutoff_into_every_uv_sync() -> None:
 
     # The arg must exist and default to empty (local builds resolve untouched).
     assert re.search(r'^ARG UV_EXCLUDE_NEWER=""$', dockerfile, re.MULTILINE)
-    # It must feed the flag the release workflow's cutoff rides in on.
+    # It must feed the flag that carries the release workflow's cutoff.
     assert "--exclude-newer $UV_EXCLUDE_NEWER" in dockerfile
 
     # And every dependency sync must carry the flag variable — both the
