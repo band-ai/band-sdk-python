@@ -35,9 +35,7 @@ pytestmark = pytest.mark.requires_api
 class LettaLiveSettings(BaseSettings):
     """Live-test knobs (field name == env var, see module docstring)."""
 
-    model_config = SettingsConfigDict(
-        env_file=".env.test", extra="ignore", case_sensitive=False
-    )
+    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
     letta_base_url: str = "http://localhost:8283"
     letta_api_key: str = ""
