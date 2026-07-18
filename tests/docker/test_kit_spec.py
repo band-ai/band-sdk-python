@@ -246,9 +246,29 @@ def test_stamp_rejects_malformed_digests(
         stamp_kit_spec.stamp_spec_file(KIT_DIR / "spec.yaml", _IMAGE_REF, bad_digest)
 
 
-def test_stamp_accepts_a_wellformed_digest(stamp_kit_spec: ModuleType) -> None:
-    # A valid digest must not raise — guards against an over-strict regex.
-    stamp_kit_spec.validate_digest(_DIGEST)
+def test_stamp_cli_matches_the_publish_workflow_invocation(
+    stamp_kit_spec: ModuleType, tmp_path: Path
+) -> None:
+    """kit-publish.yml runs the script through main() with these exact flags;
+    the library-level tests can't catch a renamed flag or broken --output
+    writing, so pin the CLI contract the release actually uses."""
+    output = tmp_path / "spec.yaml"
+    exit_code = stamp_kit_spec.main(
+        [
+            "--spec",
+            str(KIT_DIR / "spec.yaml"),
+            "--image-ref",
+            _IMAGE_REF,
+            "--digest",
+            _DIGEST,
+            "--output",
+            str(output),
+        ]
+    )
+    assert exit_code == 0
+    assert output.read_text(encoding="utf-8") == stamp_kit_spec.stamp_spec_file(
+        KIT_DIR / "spec.yaml", _IMAGE_REF, _DIGEST
+    )
 
 
 def test_stamp_rejects_a_spec_without_a_sandbox_image(
