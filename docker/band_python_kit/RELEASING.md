@@ -155,9 +155,11 @@ there is no pre-merge rehearsal):
 2. GitHub App installed on `band-ai/add-band` (`contents: write` +
    `pull-requests: write`) for the automated bump PR.
 3. Merge this workflow to the default branch.
-4. Rehearsal `workflow_dispatch` (or a temporary prerelease tag) exercising the
-   full pipeline; verify repo linkage, attestations, and both tag sets on the
-   GHCR package pages.
+4. Rehearsal: dispatch the `kit-publish` workflow directly (Actions →
+   kit-publish → Run workflow) with a real git ref, a throwaway version like
+   `0.0.0-rc1`, and `move-floating` left at its dispatch default of **false**
+   so `latest`/`<major>` are untouched. Verify repo linkage, attestations, and
+   both tag sets on the GHCR package pages, then delete the rehearsal tags.
 5. First real release publishes for real.
 6. Flip both packages (`band-python-kit`, `band-python-kit/image`) to **public**
    (one-way) once the layout is confirmed.

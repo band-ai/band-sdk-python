@@ -236,6 +236,12 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+    # Shared with release.yml's publish-kit: both move the floating tags, so
+    # two concurrent publishes could leave `latest` pointing at whichever
+    # finished last. Queue, never cancel a publish mid-run.
+    concurrency:
+      group: kit-ghcr-publish
+      cancel-in-progress: false
     uses: ./.github/workflows/kit-publish.yml
     with:
       ref: ${{ needs.decide.outputs.tag }}

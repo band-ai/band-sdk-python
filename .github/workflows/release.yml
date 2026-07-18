@@ -86,6 +86,12 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+    # Shared with the weekly rebuild's call of the same pipeline: both move the
+    # floating tags, so two concurrent publishes could leave `latest` pointing
+    # at whichever finished last. Queue, never cancel a publish mid-run.
+    concurrency:
+      group: kit-ghcr-publish
+      cancel-in-progress: false
     uses: ./.github/workflows/kit-publish.yml
     with:
       ref: ${{ needs.release.outputs.tag_name }}
@@ -102,6 +108,9 @@ jobs:
     needs: [release, publish-kit]
     if: needs.release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
+    # Everything here runs on the App token; don't inherit the workflow's
+    # write-scoped GITHUB_TOKEN permissions this job never uses.
+    permissions: {}
     steps:
       - name: Generate GitHub App Token (scoped to add-band)
         id: app-token

@@ -51,6 +51,36 @@ on:
       image-digest:
         description: Digest of the pushed multi-arch image
         value: ${{ jobs.image.outputs.digest }}
+  # The rehearsal path (see RELEASING.md): after this lands on the default
+  # branch, dispatch with a throwaway version (e.g. 0.0.0-rc1) to exercise the
+  # full build->attest->stamp->push pipeline before the first real release
+  # fires it. move-floating defaults to FALSE here — a rehearsal must never
+  # move `latest`/<major>. Both trigger types feed the same `inputs` context,
+  # so the jobs below are trigger-agnostic.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to check out and build from (e.g. band-sdk-vX.Y.Z)
+        required: true
+        type: string
+      version:
+        description: Bare artifact/image tag (e.g. 0.0.0-rc1 for a rehearsal)
+        required: true
+        type: string
+      major:
+        description: Major version for the floating <major> tag (e.g. 1)
+        required: true
+        type: string
+      move-floating:
+        description: Also move the `latest` and `<major>` floating tags
+        required: false
+        default: false
+        type: boolean
+      extra-build-args:
+        description: Newline-separated extra --build-arg entries
+        required: false
+        default: ""
+        type: string
 
 env:
   IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
