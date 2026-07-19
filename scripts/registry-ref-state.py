@@ -2,10 +2,11 @@
 """Classify an OCI registry reference as existing or absent via ORAS.
 
 Only the OCI Distribution Specification's ``MANIFEST_UNKNOWN`` and
-``NAME_UNKNOWN`` responses mean that a reference is absent. Authentication,
-authorization, rate-limit, transport, and other registry failures are errors;
-publish workflows must stop instead of treating them as permission to overwrite
-an immutable tag.
+``NAME_UNKNOWN`` responses mean that a reference is absent. ORAS 1.3.1 also
+renders a registry's absent-manifest response as ``failed to find ...: not
+found``; that exact form is accepted. Authentication, authorization, rate-limit,
+transport, and other registry failures are errors; publish workflows must stop
+instead of treating them as permission to overwrite an immutable tag.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from typing import Literal
 RegistryState = Literal["absent", "exists"]
 
 ABSENT_ERROR = re.compile(
-    r"(?:\bMANIFEST_UNKNOWN\b|\bNAME_UNKNOWN\b|\bmanifest unknown\b|\bname unknown\b)",
+    r"(?:\bMANIFEST_UNKNOWN\b|\bNAME_UNKNOWN\b|\bmanifest unknown\b|\bname unknown\b|failed to find .+: not found\s*$)",
     re.IGNORECASE,
 )
 

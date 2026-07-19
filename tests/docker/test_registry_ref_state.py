@@ -33,6 +33,7 @@ def test_existing_reference(monkeypatch: pytest.MonkeyPatch) -> None:
         '{"errors":[{"code":"MANIFEST_UNKNOWN"}]}',
         "Error response from registry: name unknown",
         '{"errors":[{"code":"NAME_UNKNOWN"}]}',
+        'Error response from registry: failed to find "registry.example/image:missing": registry.example/image:missing: not found',
     ],
 )
 def test_spec_defined_absence(monkeypatch: pytest.MonkeyPatch, error: str) -> None:
@@ -50,6 +51,7 @@ def test_spec_defined_absence(monkeypatch: pytest.MonkeyPatch, error: str) -> No
         "too many requests",
         "dial tcp: connection refused",
         "context deadline exceeded",
+        "resource not found while resolving a network endpoint",
     ],
 )
 def test_registry_and_transport_failures_fail_closed(
