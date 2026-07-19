@@ -653,10 +653,10 @@ publish) and is ordered by its own internal dependencies.
 **— GHCR blocker line — everything below needs org-admin access, then a real
 publish (which itself needs the PR merged to `dev`, then `main`) —**
 
-13. 🔒 Confirm the GHCR org-admin prerequisites are done — requested from
-    the org admin (Slack, 2026-07-18). **App installed on `add-band` ✅
-    (2026-07-19); the package-creation setting is still pending** and remains
-    the hard pre-merge gate.
+13. ✅ GHCR org-admin prerequisites done (2026-07-19): package creation
+    enabled for the org **and** the App installed on `add-band`. The
+    pre-merge gate is cleared — items below are now blocked only on the
+    merge/promote sequence.
 14. 🔒 Post-merge release rehearsal — now concretely: dispatch `kit-publish`
     with a throwaway version (e.g. `0.0.0-rc1`), `move-floating: false`; see
     RELEASING.md. Blocked by #13.
@@ -805,7 +805,7 @@ the flow is environment-agnostic by configuration.
    the current CLI's sign-in behavior on the pinned version).
 9. **[resolved — `oras tag` re-tags, no repeat push]** **Floating-tag repush ergonomics** for the kit artifact (`sbx kit push`
    twice vs `crane`/`oras tag`) — pick whichever is idempotent.
-10. **[still pending — requested 2026-07-18, not yet done]** **First-publish org permissions** (zero band-ai packages currently): confirm
+10. **[done — org setting enabled 2026-07-19]** **First-publish org permissions** (zero band-ai packages currently): confirm
     with an org admin that workflow `GITHUB_TOKEN` package creation is
     allowed and public visibility is permitted. Requested on the ticket from
     the org admin; a **hard pre-merge gate** (see "One-time GHCR setup").
