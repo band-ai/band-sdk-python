@@ -139,9 +139,7 @@ async def main() -> None:
     CONFIG_PATH.write_text(f"{CONFIG_HEADER}\n{body}", encoding="utf-8")
     logger.info("\nWrote combined config: %s", CONFIG_PATH.name)
 
-    CLEANUP_PATH.write_text(
-        "".join(f"{a['id']}\n" for a in created), encoding="utf-8"
-    )
+    CLEANUP_PATH.write_text("".join(f"{a['id']}\n" for a in created), encoding="utf-8")
     logger.info("Agent IDs saved to %s for cleanup", CLEANUP_PATH.name)
 
     logger.info("\n=== Summary ===")
