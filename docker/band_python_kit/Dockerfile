@@ -4,7 +4,12 @@
 # passing --build-arg to bump either, but always keep both in sync (the tag
 # is documentation, not an independent fallback).
 ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5
+# uv >= 0.11 is required by the quarantine gate: on 0.9.x, `uv sync --locked
+# --exclude-newer <date>` discards the lockfile and re-resolves ("Ignoring
+# existing lockfile due to addition of timestamp cutoff"), failing --locked on
+# every build regardless of package age. 0.11.19 validates the existing lock
+# against the cutoff instead (proven live in the pre-merge smoke run).
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.19@sha256:b46b03ddfcfbf8f547af7e9eaefdf8a39c8cebcba7c98858d3162bd28cf536f6
 # Shared by both stages so the venv is built at the exact absolute path it
 # will live at in the runtime image — see UV_PROJECT_ENVIRONMENT below.
 ARG BAND_SDK_HOME=/opt/band

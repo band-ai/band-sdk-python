@@ -44,8 +44,14 @@ jobs:
             echo "::error::build succeeded despite a 2020 cutoff — the quarantine gate is not wired"
             exit 1
           fi
-          grep -i "exclude.newer\|published after" build.log || true
-          echo "quarantine gate tripped as designed"
+          # The failure must be the gate itself ("X was published after the
+          # exclude newer time"), not an unrelated build error — the first
+          # smoke run "passed" on a uv semantics failure exactly this way.
+          grep -i "published after" build.log || {
+            echo "::error::build failed, but not with the published-after-cutoff error — wrong failure mode"
+            exit 1
+          }
+          echo "quarantine gate tripped for the right reason"
 
   publish:
     permissions:

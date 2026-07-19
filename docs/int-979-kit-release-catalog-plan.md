@@ -798,7 +798,7 @@ the flow is environment-agnostic by configuration.
 6. **[open — with the contrib PR]** **Contrib TCK/e2e viability for a headless, workspace-dependent kit** —
    run their harness locally early; adjust (`testdata/tck.yaml`, README
    caveats) based on what it actually exercises.
-7. **[open — run with todo #12]** **Quarantine gate on the image's pinned uv 0.9.13** (probes ran on
+7. **[resolved — pin bumped to 0.11.19]** **Quarantine gate on the image's pinned uv 0.9.13**: the pre-merge smoke proved 0.9.13 discards the lockfile under `--exclude-newer` (fails every gated build); the Dockerfile now pins the probed 0.11.19, whose validate-against-cutoff behavior the design assumes. Original concern (probes ran on
    0.11.19): reproduce the `--locked` + `--exclude-newer` failure/pass pair
    with the pinned binary, or bump the uv pin in the same PR.
 8. **[open — check at the acceptance proof]** **`sbx login` flow wording** for the quickstart (ticket lists it; confirm
