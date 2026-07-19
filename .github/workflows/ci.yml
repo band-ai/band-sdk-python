@@ -3,6 +3,10 @@ name: CI
 on:
   pull_request:
     branches: [dev, main]
+  # TEMPORARY: validate the hardened release changes while PR #446 is stacked
+  # on a feature branch. Remove after this validation run.
+  push:
+    branches: [feat/kit-release-engineering-publish-band-python-kit-ca-INT-979]
 
 jobs:
 
