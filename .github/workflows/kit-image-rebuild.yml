@@ -18,10 +18,6 @@ name: kit-image-rebuild
 on:
   schedule:
     - cron: "0 5 * * 1" # Mondays 05:00 UTC
-  # TEMPORARY: exercise the fail-closed decision path from the stacked PR.
-  # Remove after this validation run.
-  push:
-    branches: [feat/kit-release-engineering-publish-band-python-kit-ca-INT-979]
   workflow_dispatch:
     inputs:
       force:
