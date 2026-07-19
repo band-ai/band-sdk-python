@@ -1,0 +1,133 @@
+name: TEMP kit release validation
+
+on:
+  push:
+    branches: [feat/kit-release-engineering-publish-band-python-kit-ca-INT-979]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
+  KIT_NAME: ghcr.io/band-ai/band-python-kit
+  SMOKE_TAG: 0.0.0-smoke.4
+
+jobs:
+  ghcr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify image and kit through authenticated registry APIs
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_NAME}:${SMOKE_TAG}"
+          kit_ref="${KIT_NAME}:${SMOKE_TAG}"
+
+          oras repo tags "$IMAGE_NAME" | tee image-tags.txt
+          grep -qxF "$SMOKE_TAG" image-tags.txt
+          oras repo tags "$KIT_NAME" | tee kit-tags.txt
+          grep -qxF "$SMOKE_TAG" kit-tags.txt
+
+          image_digest="$(docker buildx imagetools inspect "$image_ref" --format '{{.Manifest.Digest}}')"
+          test "$image_digest" = "sha256:f66b290661897e2c37035376c01fc50072411869069fbd34f15e914db210b928"
+          docker buildx imagetools inspect "$image_ref" --format '{{json .Image}}' > image.json
+          jq -e '[.manifest.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]' image.json
+
+          oras manifest fetch "$kit_ref" > kit-manifest.json
+          jq -e '
+            .schemaVersion == 2 and
+            .artifactType == "application/vnd.docker.sandbox.kit.v2" and
+            .config.mediaType == "application/vnd.docker.sandbox.kit.v2.spec+yaml" and
+            (.layers | length) == 1 and
+            .layers[0].mediaType == "application/vnd.oci.image.layer.v1.tar+gzip"
+          ' kit-manifest.json
+          mkdir kit-pull
+          oras pull "$kit_ref" --output kit-pull
+          grep -qF "${IMAGE_NAME}@${image_digest}" kit-pull/spec.yaml
+
+      - name: Verify GitHub provenance attestation and signer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh attestation verify "oci://${IMAGE_NAME}:${SMOKE_TAG}" \
+            --repo band-ai/band-sdk-python \
+            --signer-workflow band-ai/band-sdk-python/.github/workflows/kit-publish.yml \
+            --format json --jq 'length' | grep -qxE '[1-9][0-9]*'
+
+  trivy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Scan the published smoke image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.SMOKE_TAG }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: trivy-report.json
+
+      - name: Validate the Trivy report contract
+        run: |
+          set -euo pipefail
+          jq -e '.SchemaVersion and (.Results | type == "array")' trivy-report.json
+          count="$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy-report.json)"
+          echo "Fixable HIGH/CRITICAL findings: ${count}"
+
+  app-token-current-repo:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Generate GitHub App token for this repository
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Verify read access without mutation
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: test "$(gh api repos/band-ai/band-sdk-python --jq .full_name)" = "band-ai/band-sdk-python"
+
+  app-token-add-band:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Generate GitHub App token scoped to add-band
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: band-ai
+          repositories: add-band
+
+      - name: Verify cross-repository read access without mutation
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: test "$(gh api repos/band-ai/add-band --jq .full_name)" = "band-ai/add-band"
