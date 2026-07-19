@@ -1,0 +1,104 @@
+# ── TEMPORARY — DELETE BEFORE MERGING PR #446 ────────────────────────────────
+# Pre-merge smoke of the kit publish pipeline. workflow_dispatch only works
+# once a workflow is on the default branch, but `on: push` runs from any
+# branch that carries the file — so this caller exercises the REAL reusable
+# pipeline (.github/workflows/kit-publish.yml, same commit) ahead of the
+# merge, publishing throwaway 0.0.0-smoke.N versions with floating tags off.
+#
+# What it proves live: the org's new package-creation permission, GHCR login
+# and package creation, the multi-arch attested build, the 7-day quarantine
+# gate (both halves: the publish build passes the real cutoff; the
+# quarantine-proof job asserts a stale cutoff FAILS the build), the stamp
+# step, the ORAS kit push, and a pull-side verification of the published
+# artifacts.
+#
+# Cleanup when deleting this file: remove the 0.0.0-smoke.* versions from
+# both GHCR packages (they are private; harmless until then).
+
+name: kit-publish-smoke
+
+on:
+  push:
+    branches: [feat/kit-release-engineering-publish-band-python-kit-ca-INT-979]
+
+permissions:
+  contents: read
+
+jobs:
+  # Track A item 12: the failing half of the quarantine proof. A build with a
+  # cutoff that predates every locked package MUST fail; a green docker build
+  # here means the gate is decorative and this job fails loudly.
+  quarantine-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Build with a stale cutoff and expect the gate to trip
+        run: |
+          set -uo pipefail
+          if docker build \
+              --target builder \
+              --build-arg UV_EXCLUDE_NEWER=2020-01-01T00:00:00Z \
+              -f docker/band_python_kit/Dockerfile \
+              . 2>&1 | tee build.log; then
+            echo "::error::build succeeded despite a 2020 cutoff — the quarantine gate is not wired"
+            exit 1
+          fi
+          grep -i "exclude.newer\|published after" build.log || true
+          echo "quarantine gate tripped as designed"
+
+  publish:
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    uses: ./.github/workflows/kit-publish.yml
+    with:
+      ref: ${{ github.sha }}
+      version: 0.0.0-smoke.${{ github.run_number }}
+      major: "0"
+      move-floating: false
+
+  # Pull-side verification: the published kit must be consumable and pin the
+  # image that was actually pushed (part of the push→pull roundtrip proof).
+  verify:
+    needs: [publish]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    env:
+      VERSION: 0.0.0-smoke.${{ github.run_number }}
+      IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
+      KIT_NAME: ghcr.io/band-ai/band-python-kit
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+
+      - name: Image is pullable and matches the digest the pipeline reported
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE_NAME}:${VERSION}" | tee image-index.txt
+          actual="$(docker buildx imagetools inspect "${IMAGE_NAME}:${VERSION}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          expected="${{ needs.publish.outputs.image-digest }}"
+          [ "$actual" = "$expected" ] || { echo "::error::digest mismatch: pushed=$expected pulled=$actual"; exit 1; }
+          # Both architectures present in the index.
+          grep -q "linux/amd64" image-index.txt && grep -q "linux/arm64" image-index.txt
+
+      - name: Kit artifact has the OCI v2 shape and pins that exact image
+        run: |
+          set -euo pipefail
+          oras manifest fetch "${KIT_NAME}:${VERSION}" | tee kit-manifest.json
+          grep -q '"application/vnd.docker.sandbox.kit.v2"' kit-manifest.json
+          grep -q '"application/vnd.docker.sandbox.kit.v2.spec+yaml"' kit-manifest.json
+          grep -q '"application/vnd.oci.image.layer.v1.tar+gzip"' kit-manifest.json
+          oras manifest fetch-config "${KIT_NAME}:${VERSION}" | tee kit-spec.yaml
+          grep -q "image: ${IMAGE_NAME}:${VERSION}@${{ needs.publish.outputs.image-digest }}" kit-spec.yaml
+          echo "kit spec pins the published image by digest ✓"
