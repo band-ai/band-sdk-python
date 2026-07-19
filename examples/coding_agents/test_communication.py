@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Test inter-agent communication between planner and reviewer.
 
-Creates a chat room, adds all 3 agents, sends a test message,
-and verifies delivery by checking container logs.
+Creates a chat room, adds the reviewer, sends a test message mentioning it,
+and lists the room messages so you can confirm delivery.
+
+Reads credentials from the combined agent_config.yaml written by
+create_agents.py.
 
 Usage:
     python test_communication.py
@@ -26,8 +29,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 SCRIPT_DIR = Path(__file__).parent
 
 
-def load_agent_config(filename: str) -> dict:
-    """Load agent config from YAML file."""
+def load_config_file(filename: str) -> dict:
+    """Load a YAML config file from the script directory."""
     path = SCRIPT_DIR / filename
     with open(path) as f:
         return yaml.safe_load(f)
@@ -42,9 +45,10 @@ async def main() -> None:
         ParticipantRequest,
     )
 
-    # Load agent configs
-    planner = load_agent_config("planner.yaml")
-    reviewer = load_agent_config("reviewer.yaml")
+    # Load agent configs from the combined file create_agents.py writes
+    config = load_config_file("agent_config.yaml")
+    planner = config["planner"]
+    reviewer = config["reviewer"]
 
     base_url = os.environ.get("BAND_REST_URL", "https://app.band.ai")
 

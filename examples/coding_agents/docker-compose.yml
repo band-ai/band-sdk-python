@@ -8,8 +8,8 @@
 # Use `docker compose down -v` to remove them.
 #
 # Usage:
-#   cp .env.example .env                            # Configure credentials
-#   cp agent_config.yaml.example agent_config.yaml  # Configure all agents
+#   cp .env.example .env                            # Add your LLM API keys
+#   BAND_API_KEY=band_u_... python create_agents.py # Register agents + write agent_config.yaml
 #   docker compose build
 #   docker compose up -d
 #   docker compose logs -f
@@ -35,6 +35,7 @@ x-codex: &codex-base
     PHOENIX_CHANNELS_CLIENT_WHEEL: ${PHOENIX_CHANNELS_CLIENT_WHEEL:-}
   volumes: &codex-volumes
     - ./agent_config.yaml:/app/agent_config.yaml:ro
+    - ./prompts:/app/prompts:ro
     - shared_repo:/workspace/repo
     - shared_notes:/workspace/notes
     - shared_state:/workspace/state

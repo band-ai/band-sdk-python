@@ -163,6 +163,9 @@ examples/claude_sdk_docker/reviewer.yaml
 examples/claude_sdk_docker/implementer.yaml
 examples/claude_sdk_docker/.agent_ids.txt
 !examples/claude_sdk_docker/example_agent.yaml
+examples/coding_agents/.agent_ids.txt
+examples/coding_agents/planner.yaml
+examples/coding_agents/reviewer.yaml
 
 # Parlant local data (sessions, cache, databases)
 parlant-data/
