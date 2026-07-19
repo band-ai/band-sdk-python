@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -34,10 +33,7 @@ def _load_container_module() -> ModuleType:
     os.environ.setdefault("BAND_AGENT_ID", "test-agent")
     os.environ.setdefault("BAND_API_KEY", "test-key")
     os.environ.setdefault("ANTHROPIC_API_KEY", "test-anthropic")
-    module = load_script_module(_CONTAINER_PATH, "agentcore_llm_server")
-    # Registered so intra-module references (e.g. pickling, repr) resolve.
-    sys.modules["agentcore_llm_server"] = module
-    return module
+    return load_script_module(_CONTAINER_PATH, "agentcore_llm_server")
 
 
 container = _load_container_module()

@@ -4,12 +4,7 @@
 # passing --build-arg to bump either, but always keep both in sync (the tag
 # is documentation, not an independent fallback).
 ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
-# uv >= 0.11 is required by the quarantine gate: on 0.9.x, `uv sync --locked
-# --exclude-newer <date>` discards the lockfile and re-resolves ("Ignoring
-# existing lockfile due to addition of timestamp cutoff"), failing --locked on
-# every build regardless of package age. 0.11.19 validates the existing lock
-# against the cutoff instead (proven live in the pre-merge smoke run).
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.11.19@sha256:b46b03ddfcfbf8f547af7e9eaefdf8a39c8cebcba7c98858d3162bd28cf536f6
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5
 # Shared by both stages so the venv is built at the exact absolute path it
 # will live at in the runtime image — see UV_PROJECT_ENVIRONMENT below.
 ARG BAND_SDK_HOME=/opt/band
@@ -54,30 +49,22 @@ RUN sed -i '/^\[tool\.uv\.sources\]/,/^\[/{ /^\[tool\.uv\.sources\]/d; /^\[/!d; 
 # resolve into the same venv. Any other framework is the customer's own
 # venv, created at sandbox runtime, isolated from this one.
 ARG SDK_EXTRA=""
-# Supply-chain quarantine (release builds only). When the release workflow
-# passes an RFC 3339 cutoff, `uv sync --locked` re-resolves against it and
-# fails if any locked package was published after the cutoff — a
-# freshly-poisoned dependency cannot enter the published image until it has
-# aged past the window (see docker/band_python_kit/RELEASING.md). This is a
-# CI-only build arg, never `[tool.uv] exclude-newer` in pyproject.toml (that
-# would be recorded into uv.lock and break `uv lock --check` for every dev who
-# doesn't pass the same flag). Empty by default, so local developer builds
-# resolve exactly as before.
-ARG UV_EXCLUDE_NEWER=""
+# Supply-chain quarantine note: the release pipeline enforces a minimum public
+# age on every locked package BEFORE this build runs (scripts/check-lock-age.py
+# in kit-publish.yml, reading the upload-times recorded in uv.lock). It is
+# deliberately not an in-build `--exclude-newer` flag: a cutoff makes uv treat
+# the committed lock itself as outdated, failing `--locked` on every build
+# (astral-sh/uv#18775; reproduced on uv 0.9.13 and 0.11.19).
 # Build the venv directly at its final runtime path (not e.g. ./.venv, then
 # relocated by COPY below): console-script shebangs bake in an absolute
 # interpreter path at install time, so copying an already-built venv to a
 # different path leaves every entry point (band-acp, band-trigger, ...)
 # pointing at the deleted builder path.
 ENV UV_PROJECT_ENVIRONMENT=${BAND_SDK_HOME}/venv
-RUN EXCLUDE_NEWER_ARGS=""; \
-    if [ -n "$UV_EXCLUDE_NEWER" ]; then \
-      EXCLUDE_NEWER_ARGS="--exclude-newer $UV_EXCLUDE_NEWER"; \
-    fi; \
-    if [ -n "$SDK_EXTRA" ]; then \
-      uv sync --locked --no-dev --no-editable --extra "$SDK_EXTRA" $EXCLUDE_NEWER_ARGS; \
+RUN if [ -n "$SDK_EXTRA" ]; then \
+      uv sync --locked --no-dev --no-editable --extra "$SDK_EXTRA"; \
     else \
-      uv sync --locked --no-dev --no-editable $EXCLUDE_NEWER_ARGS; \
+      uv sync --locked --no-dev --no-editable; \
     fi
 
 # ── Runtime stage ─────────────────────────────────────────────────────────

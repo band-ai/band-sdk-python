@@ -1,20 +1,19 @@
-"""Drift checks: the kit ships exactly the contract that was reviewed.
+"""Drift checks: the kit spec ships exactly the contract that was reviewed.
 
-Covers the kit spec (identity, headless launch shape, network allowlist, no
-credential plumbing) and the Dockerfile's supply-chain quarantine wiring.
+Identity, headless launch shape, network allowlist, no credential plumbing.
 Pure file/contract checks — no Docker daemon and no sbx CLI needed, so these
 run in the ordinary unit suite. `sbx kit validate` itself is a manual step
 (recorded in the kit README) because the sandbox CLI only exists on
 Docker-Sandbox-capable machines.
 
 The echo-agent starter's contract lives in test_echo_agent.py; the release
-stamp helper's tests in test_stamp_spec.py.
+stamp helper's tests in test_stamp_spec.py; the supply-chain quarantine
+gate's in test_lock_age.py.
 """
 
 from __future__ import annotations
 
 import importlib
-import re
 from typing import Any
 
 import yaml
@@ -109,34 +108,3 @@ def test_spec_defines_no_proxy_or_credential_entries() -> None:
     env_vars = spec.get("environment", {}).get("variables", {})
     assert not {k for k in env_vars if k.upper().endswith("_PROXY")}
     assert "credentials" not in spec
-
-
-def uv_sync_invocations(dockerfile: str) -> list[str]:
-    """The Dockerfile's actual `uv sync` command lines (comments excluded)."""
-    return [
-        line
-        for line in dockerfile.splitlines()
-        if "uv sync" in line and not line.strip().startswith("#")
-    ]
-
-
-def test_dockerfile_wires_the_quarantine_cutoff_into_every_uv_sync() -> None:
-    """The release pipeline's supply-chain gate is the UV_EXCLUDE_NEWER build
-    arg. uv silently ignores an absent flag, so a refactor that drops the
-    wiring from a `uv sync` branch leaves release builds green while the gate
-    degrades to decorative — pin the wiring here, where it can fail loudly."""
-    dockerfile = (KIT_DIR / "Dockerfile").read_text(encoding="utf-8")
-
-    # The arg must exist and default to empty (local builds resolve untouched).
-    assert re.search(r'^ARG UV_EXCLUDE_NEWER=""$', dockerfile, re.MULTILINE)
-    # It must feed the flag that carries the release workflow's cutoff.
-    assert "--exclude-newer $UV_EXCLUDE_NEWER" in dockerfile
-
-    # And every dependency sync must carry the flag variable — both the
-    # SDK_EXTRA branch and the core-only branch.
-    invocations = uv_sync_invocations(dockerfile)
-    assert len(invocations) >= 2, "expected both uv sync branches in the Dockerfile"
-    for line in invocations:
-        assert "$EXCLUDE_NEWER_ARGS" in line, (
-            f"sync without the quarantine flag: {line.strip()}"
-        )

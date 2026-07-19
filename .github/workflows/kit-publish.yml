@@ -45,11 +45,18 @@ on:
       extra-build-args:
         description: |
           Newline-separated extra --build-arg entries (e.g. fresh base-image
-          digests for a CVE rebuild). Appended after the computed quarantine
-          cutoff.
+          digests for a CVE rebuild).
         required: false
         default: ""
         type: string
+      quarantine-max-age-days:
+        description: |
+          Minimum public age (days) required of every locked package. Lowering
+          it below 7 is the documented emergency override — the value used is
+          recorded in the run's inputs.
+        required: false
+        default: 7
+        type: number
     outputs:
       image-digest:
         description: Digest of the pushed multi-arch image
@@ -84,6 +91,11 @@ on:
         required: false
         default: ""
         type: string
+      quarantine-max-age-days:
+        description: Minimum public age (days) of every locked package
+        required: false
+        default: 7
+        type: number
 
 env:
   IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
@@ -132,9 +144,13 @@ jobs:
             type=raw,value=${{ inputs.major }},enable=${{ inputs.move-floating }}
             type=raw,value=latest,enable=${{ inputs.move-floating }}
 
-      - name: Compute supply-chain quarantine cutoff (now - 7 days)
-        id: cutoff
-        run: echo "value=$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      # The gate runs BEFORE the build and reads only the committed lock's
+      # recorded upload-times — deterministic, no resolution, no index access.
+      # (An in-build `uv sync --exclude-newer` cannot work: the cutoff makes
+      # uv treat the committed lock as outdated on every build; proven live,
+      # see scripts/check-lock-age.py and RELEASING.md.)
+      - name: Supply-chain quarantine gate
+        run: python3 scripts/check-lock-age.py --lock uv.lock --max-age-days "${{ inputs.quarantine-max-age-days }}"
 
       - name: Build and push (multi-arch, attested)
         id: build
@@ -148,12 +164,9 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true
-          # The quarantine cutoff fails the build if any locked package is
-          # younger than 7 days. Extra args (fresh base digests on a rebuild)
-          # follow it.
-          build-args: |
-            UV_EXCLUDE_NEWER=${{ steps.cutoff.outputs.value }}
-            ${{ inputs.extra-build-args }}
+          # Extra args carry fresh base digests on a CVE rebuild; empty on a
+          # plain release (the committed pins are the defaults).
+          build-args: ${{ inputs.extra-build-args }}
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4

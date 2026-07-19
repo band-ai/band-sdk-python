@@ -7,8 +7,8 @@
 #
 # What it proves live: the org's new package-creation permission, GHCR login
 # and package creation, the multi-arch attested build, the 7-day quarantine
-# gate (both halves: the publish build passes the real cutoff; the
-# quarantine-proof job asserts a stale cutoff FAILS the build), the stamp
+# gate (both halves: the publish job runs the real gate; the quarantine-proof
+# job asserts an ancient cutoff fails it for the right reason), the stamp
 # step, the ORAS kit push, and a pull-side verification of the published
 # artifacts.
 #
@@ -25,33 +25,32 @@ permissions:
   contents: read
 
 jobs:
-  # Track A item 12: the failing half of the quarantine proof. A build with a
-  # cutoff that predates every locked package MUST fail; a green docker build
-  # here means the gate is decorative and this job fails loudly.
+  # Track A item 12: both halves of the quarantine proof against the real
+  # checker. An ancient cutoff must FAIL with the published-after error (not
+  # any other failure — the first smoke run "passed" on an unrelated uv error
+  # exactly that way), and the real 7-day window must PASS on the committed,
+  # fully-aged lock.
   quarantine-proof:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
-      - name: Build with a stale cutoff and expect the gate to trip
+      - name: Ancient cutoff must fail with the quarantine error
         run: |
           set -uo pipefail
-          if docker build \
-              --target builder \
-              --build-arg UV_EXCLUDE_NEWER=2020-01-01T00:00:00Z \
-              -f docker/band_python_kit/Dockerfile \
-              . 2>&1 | tee build.log; then
-            echo "::error::build succeeded despite a 2020 cutoff — the quarantine gate is not wired"
+          if python3 scripts/check-lock-age.py --lock uv.lock --cutoff 2020-01-01T00:00:00Z 2> gate.log; then
+            echo "::error::gate passed despite a 2020 cutoff — it is decorative"
             exit 1
           fi
-          # The failure must be the gate itself ("X was published after the
-          # exclude newer time"), not an unrelated build error — the first
-          # smoke run "passed" on a uv semantics failure exactly this way.
-          grep -i "published after" build.log || {
-            echo "::error::build failed, but not with the published-after-cutoff error — wrong failure mode"
+          grep -q "published .* after the quarantine cutoff" gate.log || {
+            echo "::error::gate failed, but not with the published-after error"
+            cat gate.log
             exit 1
           }
-          echo "quarantine gate tripped for the right reason"
+          echo "gate tripped for the right reason"
+
+      - name: Real 7-day window must pass on the committed lock
+        run: python3 scripts/check-lock-age.py --lock uv.lock --max-age-days 7
 
   publish:
     permissions:

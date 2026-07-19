@@ -621,9 +621,11 @@ publish) and is ordered by its own internal dependencies.
 
 **Track A — start immediately, no GHCR/merge dependency:**
 
-1. ✅ Dockerfile: add `UV_EXCLUDE_NEWER` quarantine arg, wired into both
-   `uv sync --locked` branches (wiring pinned by a mutation-tested drift
-   test in `tests/docker/test_kit_spec.py`).
+1. ✅→♻️ Dockerfile `UV_EXCLUDE_NEWER` arg: implemented, then **removed** —
+   the pre-merge smoke proved the in-build mechanism fails every gated build
+   (see open item #7). The gate is now `scripts/check-lock-age.py`, run by
+   kit-publish.yml before the build (unit-tested in
+   `tests/docker/test_lock_age.py`, including a wiring pin on the workflow).
 2. ✅ Dockerfile: add static OCI labels (source, licenses, title, description).
 3. ✅ `spec.yaml`: bump `schemaVersion` `"1"` → `"2"`; update the drift test.
 4. ✅ `scripts/stamp-kit-spec.py` helper + unit tests (library + the CLI
@@ -645,10 +647,10 @@ publish) and is ordered by its own internal dependencies.
 10. ✅ Write `docker/band_python_kit/RELEASING.md`.
 11. ✅ Rewrite `docker/band_python_kit/README.md` quickstart to the published
     path (workspace scaffolded from the release tarball — no repo checkout).
-12. ❌ Run the quarantine gate proof locally (fail on a stale cutoff, pass on
-    the real now−7d cutoff) — plain `docker build`, no registry needed.
-    **Still owed**: needs a Docker daemon; run together with open item #7's
-    pinned-uv reproduction and record in the PR test plan.
+12. ✅ Quarantine gate proof — ran **live in CI** (the temporary pre-merge
+    smoke workflow): an ancient cutoff fails with the published-after error,
+    the real 7-day window passes on the committed lock. No Docker daemon
+    needed under the redesigned gate; also covered by unit tests.
 
 **— GHCR blocker line — everything below needs org-admin access, then a real
 publish (which itself needs the PR merged to `dev`, then `main`) —**
@@ -798,7 +800,7 @@ the flow is environment-agnostic by configuration.
 6. **[open — with the contrib PR]** **Contrib TCK/e2e viability for a headless, workspace-dependent kit** —
    run their harness locally early; adjust (`testdata/tck.yaml`, README
    caveats) based on what it actually exercises.
-7. **[resolved — pin bumped to 0.11.19]** **Quarantine gate on the image's pinned uv 0.9.13**: the pre-merge smoke proved 0.9.13 discards the lockfile under `--exclude-newer` (fails every gated build); the Dockerfile now pins the probed 0.11.19, whose validate-against-cutoff behavior the design assumes. Original concern (probes ran on
+7. **[resolved — gate redesigned]** **Quarantine gate on the image's pinned uv 0.9.13**: the pre-merge smoke proved the in-build `--exclude-newer` mechanism fails EVERY gated build on both 0.9.13 and 0.11.19 (the cutoff makes uv treat the committed lock as outdated — astral-sh/uv#18775). The gate now runs before the build as `scripts/check-lock-age.py`, checking the upload-times recorded in `uv.lock` directly; the uv pin stays at the INT-978-validated 0.9.13. Original concern (probes ran on
    0.11.19): reproduce the `--locked` + `--exclude-newer` failure/pass pair
    with the pinned binary, or bump the uv pin in the same PR.
 8. **[open — check at the acceptance proof]** **`sbx login` flow wording** for the quickstart (ticket lists it; confirm
@@ -815,7 +817,7 @@ the flow is environment-agnostic by configuration.
     puller tolerates it **early** with a throwaway attested image — under
     the plan's ordering this would otherwise surface only at the final
     clean-machine proof.
-12. **[open — run with item #7; RELEASING.md already words the benign trip]** **Quarantine gate breadth**: confirm `uv sync --locked --exclude-newer`
+12. **[resolved — whole-lock by construction]** **Quarantine gate breadth**: the redesigned gate reads every artifact in the lock, dev deps included; RELEASING.md words the benign-trip case. Original concern: confirm `uv sync --locked --exclude-newer`
     trips on a fresh **dev-only** locked package (whole-lock validation) —
     expected yes; informs RELEASING.md's benign-trip wording. Run together
     with item #7's pinned-uv reproduction.

@@ -58,23 +58,30 @@ summary (base digest deltas, scan results, what was published and why).
 
 ## Supply-chain quarantine gate
 
-The image build runs `uv sync --locked` with a `--exclude-newer` cutoff of
-**now − 7 days** (RFC 3339), passed as the `UV_EXCLUDE_NEWER` build arg by the
-publish pipeline. `uv sync --locked` re-resolves the entire universal lockfile
-against that cutoff and **fails** if any locked package was published inside the
-window. A freshly-poisoned dependency therefore cannot enter a published image
-until it has aged past a week (or the lock is explicitly pinned back). Nothing is
-installed on failure.
+Before the image build, the publish pipeline runs
+`scripts/check-lock-age.py`, which reads the PEP 700 `upload-time` uv records
+in `uv.lock` for **every** locked artifact and fails if any was published
+less than **7 days** ago (`quarantine-max-age-days` input, default 7). A
+freshly-poisoned dependency therefore cannot enter a published image until it
+has aged past a week. The check is deterministic — no resolution, no index
+access, the committed lock is the single input — and it fails in seconds,
+before any build minutes are spent. An artifact with no recorded upload-time
+also fails the gate (an undatable source must not slip through silently).
 
-This cutoff is a **CI-only build arg**, never `[tool.uv] exclude-newer` in
-`pyproject.toml` (uv records that into `uv.lock`, which would break
-`uv lock --check` for every developer who doesn't pass the same flag). Local
-developer builds pass no cutoff and behave exactly as before.
+**Why not `uv sync --exclude-newer` inside the build:** proven live during
+the pre-merge smoke runs — passing a cutoff makes uv treat the committed
+lockfile itself as outdated ("Resolving despite existing lockfile due to
+addition of global exclude newer"), so `--locked` fails on **every** gated
+build regardless of package age, on both uv 0.9.13 and 0.11.19
+(astral-sh/uv#18775 documents the underlying option-tracking). The lock's own
+recorded upload-times give the same policy exactly, without fighting uv.
+Local developer builds are untouched — the gate lives in the workflow, not
+the Dockerfile.
 
 ### What a gate failure means
 
-Because `uv sync --locked` validates the **whole** lockfile, the gate can trip
-on a fresh **dev-only** dependency bump (pytest, ruff, …) that never enters the
+The check covers the **whole** lockfile, so the gate can trip on a fresh
+**dev-only** dependency bump (pytest, ruff, …) that never enters the
 image — not only on a poisoned runtime dependency. Benign trips are therefore
 expected. A trip leaves a **split release**: the PyPI publish (`publish-band`, an
 independent job) has already succeeded, but no kit artifacts were produced.
@@ -85,10 +92,11 @@ independent job) has already succeeded, but no kit artifacts were produced.
   GitHub's **"Re-run failed jobs"** on the release run. The cutoff is recomputed
   as now − 7 days at re-run time, so the same release heals without a new version
   number — no retag, no re-release.
-- **Can't wait (justified override).** Re-run the publish with a shortened window
-  via `workflow_dispatch`, supplying the required justification string. The
-  override is visible in the run log, never silent. Use this only for a real
-  time-critical release; the default is to wait.
+- **Can't wait (justified override).** Dispatch the `kit-publish` workflow
+  with a lowered `quarantine-max-age-days` input. The value used is recorded
+  in the run's inputs, never silent; state the reason in the release PR or
+  channel. Use this only for a real time-critical release; the default is to
+  wait.
 
 ## Supported `sbx` version
 
@@ -117,12 +125,12 @@ If both CI paths are unavailable, a maintainer can publish from a
 Docker-Sandbox-capable laptop:
 
 1. Check out the release tag: `git checkout band-sdk-vX.Y.Z`.
-2. Build and push the multi-arch image:
+2. Run the quarantine gate, then build and push the multi-arch image:
    ```bash
+   python3 scripts/check-lock-age.py --lock uv.lock --max-age-days 7
    docker buildx build \
      -f docker/band_python_kit/Dockerfile \
      --platform linux/amd64,linux/arm64 \
-     --build-arg UV_EXCLUDE_NEWER="$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)" \
      -t ghcr.io/band-ai/band-python-kit/image:X.Y.Z \
      -t ghcr.io/band-ai/band-python-kit/image:<major> \
      -t ghcr.io/band-ai/band-python-kit/image:latest \
