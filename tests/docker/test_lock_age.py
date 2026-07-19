@@ -97,8 +97,8 @@ wheels = [{ url = "https://example/undated-1.0.0-py3-none-any.whl" }]
 
 
 def test_cli_matches_the_publish_workflow_invocation(tmp_path: Path) -> None:
-    """kit-publish.yml runs the gate through main() with --lock/--max-age-days
-    (and the smoke uses --cutoff); pin the CLI contract and the exit codes."""
+    """kit-publish.yml runs the gate through main() with --lock/--max-age-days;
+    pin that CLI contract (plus the --cutoff form) and the exit codes."""
     lock = tmp_path / "uv.lock"
     lock.write_text(SYNTHETIC_LOCK, encoding="utf-8")
     assert gate.main(["--lock", str(lock), "--cutoff", "2026-07-12T00:00:00Z"]) == 1

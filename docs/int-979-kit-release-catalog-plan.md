@@ -612,6 +612,35 @@ Done beyond the written plan, in the same commits:
 - Docs aligned (root README, echo-agent README, RELEASING.md rehearsal
   procedure); repo-anchored test paths centralized in `tests/paths.py`.
 
+### Pre-merge live smoke (2026-07-19 — temporary workflow, now deleted)
+
+A temporary `kit-publish-smoke.yml` (on: push to this branch) ran the real
+reusable pipeline pre-merge, since `workflow_dispatch` needs the default
+branch. Four runs:
+
+- **Runs 1–2 (failed, by design of the investigation):** disproved the
+  in-build `--exclude-newer` quarantine mechanism on uv 0.9.13 *and* 0.11.19
+  — every gated build fails because the cutoff invalidates the committed
+  lock. This drove the gate redesign to `scripts/check-lock-age.py` (item #1).
+- **Run 3 (green):** full pipeline end to end — quarantine gate (ancient
+  cutoff fails with the published-after error; real 7-day window passes),
+  first-ever band-ai GHCR packages created, multi-arch (amd64+arm64) build
+  with provenance/SBOM attestation, spec stamped with the pushed digest,
+  ORAS kit push, and a verify job (digest match, both architectures in the
+  index, OCI v2 kit media types, spec pins `image:<version>@<digest>`).
+- **Run 4 (green):** validated the review-driven guards live — the floating
+  stale-move guard ran and correctly suppressed floating tags for the
+  non-current smoke version (the kit "Move floating tags" step reported
+  SKIPPED), and both immutable-tag guards (image + kit) ran clean on fresh
+  tags.
+
+The smoke workflow was deleted after run 4 per its own header contract.
+**Cleanup owed:** the private GHCR packages still hold `0.0.0-smoke.3` and
+`0.0.0-smoke.4` versions on both `band-python-kit` and
+`band-python-kit/image` — delete them via the package-settings UI (or
+together with the rehearsal-tag cleanup in Track B #14). Harmless while the
+packages are private.
+
 ## Implementation todo (ordered, GHCR blocker noted)
 
 GHCR access blocks the *tail* of this list, not the start — the repo-side
