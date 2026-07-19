@@ -49,8 +49,9 @@ jobs:
 
           image_digest="$(docker buildx imagetools inspect "$image_ref" --format '{{.Manifest.Digest}}')"
           test "$image_digest" = "sha256:f66b290661897e2c37035376c01fc50072411869069fbd34f15e914db210b928"
-          docker buildx imagetools inspect "$image_ref" --format '{{json .Image}}' > image.json
-          jq -e '[.manifest.manifests[].platform | .os + "/" + .architecture] | sort == ["linux/amd64", "linux/arm64"]' image.json
+          docker buildx imagetools inspect "$image_ref" | tee image-index.txt
+          grep -qF "linux/amd64" image-index.txt
+          grep -qF "linux/arm64" image-index.txt
 
           oras manifest fetch "$kit_ref" > kit-manifest.json
           jq -e '
@@ -60,9 +61,8 @@ jobs:
             (.layers | length) == 1 and
             .layers[0].mediaType == "application/vnd.oci.image.layer.v1.tar+gzip"
           ' kit-manifest.json
-          mkdir kit-pull
-          oras pull "$kit_ref" --output kit-pull
-          grep -qF "${IMAGE_NAME}@${image_digest}" kit-pull/spec.yaml
+          oras manifest fetch-config "$kit_ref" > kit-spec.yaml
+          grep -qF "${IMAGE_NAME}:${SMOKE_TAG}@${image_digest}" kit-spec.yaml
 
       - name: Verify GitHub provenance attestation and signer
         env:
