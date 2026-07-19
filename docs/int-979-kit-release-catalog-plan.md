@@ -653,9 +653,10 @@ publish) and is ordered by its own internal dependencies.
 **— GHCR blocker line — everything below needs org-admin access, then a real
 publish (which itself needs the PR merged to `dev`, then `main`) —**
 
-13. 🔒 Confirm the GHCR org-admin prerequisites are done (package creation +
-    GitHub App installed on `add-band`) — **requested from the org admin**
-    (Slack, 2026-07-18).
+13. 🔒 Confirm the GHCR org-admin prerequisites are done — requested from
+    the org admin (Slack, 2026-07-18). **App installed on `add-band` ✅
+    (2026-07-19); the package-creation setting is still pending** and remains
+    the hard pre-merge gate.
 14. 🔒 Post-merge release rehearsal — now concretely: dispatch `kit-publish`
     with a throwaway version (e.g. `0.0.0-rc1`), `move-floating: false`; see
     RELEASING.md. Blocked by #13.
@@ -804,7 +805,7 @@ the flow is environment-agnostic by configuration.
    the current CLI's sign-in behavior on the pinned version).
 9. **[resolved — `oras tag` re-tags, no repeat push]** **Floating-tag repush ergonomics** for the kit artifact (`sbx kit push`
    twice vs `crane`/`oras tag`) — pick whichever is idempotent.
-10. **[requested — Slack to org admin, 2026-07-18]** **First-publish org permissions** (zero band-ai packages currently): confirm
+10. **[still pending — requested 2026-07-18, not yet done]** **First-publish org permissions** (zero band-ai packages currently): confirm
     with an org admin that workflow `GITHUB_TOKEN` package creation is
     allowed and public visibility is permitted. Requested on the ticket from
     the org admin; a **hard pre-merge gate** (see "One-time GHCR setup").
@@ -832,7 +833,7 @@ the flow is environment-agnostic by configuration.
     emits it, ORAS wouldn't — likely harmless on GHCR (the image is
     independently tagged in its own package) but confirm nothing on the
     pull path expects it.
-17. **[requested — same Slack ask as #10]** **GitHub App installation on `band-ai/add-band`** (for the automated
+17. **[done — installed 2026-07-19]** **GitHub App installation on `band-ai/add-band`** (for the automated
     bump PR): confirm installed with `contents: write` +
     `pull-requests: write`, or bundle the ask with the GHCR org-admin
     request.
