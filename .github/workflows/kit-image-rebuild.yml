@@ -126,25 +126,28 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+
       - name: Resolve the currently published tag and the next -rN suffix
         id: tags
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.readver.outputs.version }}
         run: |
           set -euo pipefail
           # One listing answers both questions: which tag is the *currently
           # published* state of this version (X.Y.Z-rMax, or bare X.Y.Z when
           # never rebuilt) — the tag the CVE scan must target — and what the
-          # next free rebuild suffix is.
-          endpoint='/orgs/band-ai/packages/container/band-python-kit%2Fimage/versions'
+          # next free rebuild suffix is. Listed straight from the registry
+          # (same auth as every other step) rather than the GitHub packages
+          # REST API — one auth surface, no URL-encoded package names.
           set +e
-          tags="$(gh api --paginate "$endpoint" --jq '.[].metadata.container.tags[]' 2>listing-err.txt)"
+          tags="$(oras repo tags "$IMAGE_NAME" 2>listing-err.txt)"
           rc=$?
           set -e
           if [ $rc -ne 0 ]; then
-            if grep -q "HTTP 404" listing-err.txt; then
-              tags="" # package not created yet — the first publish starts at -r1
+            if grep -qiE "not found|name unknown|denied" listing-err.txt; then
+              tags="" # package not created yet — nothing published
             else
               # Any other listing failure must fail loudly: defaulting to an
               # empty list would reset the counter and re-mint an existing
@@ -221,7 +224,9 @@ jobs:
           # Env-var indirection: a dispatch input interpolated into the script
           # text would be a shell-injection vector.
           FORCE_REASON: ${{ github.event.inputs.reason }}
+          VERSION: ${{ steps.readver.outputs.version }}
         run: |
+          published="${{ steps.published.outputs.exists }}"
           base_changed="${{ steps.bases.outputs.base_changed }}"
           scan_found="${{ steps.findings.outputs.found }}" # empty when unpublished/skipped
           forced="${{ github.event.inputs.force }}"
@@ -230,6 +235,14 @@ jobs:
           if [ "$base_changed" = "true" ]; then rebuild="true"; reason="${reason}base-digest-changed "; fi
           if [ "$scan_found" = "true" ]; then rebuild="true"; reason="${reason}fixable-high-critical "; fi
           if [ "$forced" = "true" ]; then rebuild="true"; reason="${reason}forced(${FORCE_REASON}) "; fi
+          # A version that was never published cannot be REbuilt — the initial
+          # X.Y.Z belongs to the release workflow alone. Absolute: overrides
+          # base-digest changes and force, or the first scheduled run would
+          # mint X.Y.Z-r1 with no X.Y.Z underneath it.
+          if [ "$published" != "true" ]; then
+            rebuild="false"
+            reason="skip: ${VERSION:-version} not yet published — initial publish belongs to the release workflow"
+          fi
           [ -n "$reason" ] || reason="no-change"
           echo "rebuild=${rebuild}" >> "$GITHUB_OUTPUT"
           echo "reason=${reason}" >> "$GITHUB_OUTPUT"

@@ -40,6 +40,13 @@ Customers who pin `X.Y.Z` get a frozen artifact. Customers who ride
 `latest`/`<major>` pick up CVE rebuilds when they re-create their sandbox. The
 kit artifact mirrors image tags one-to-one.
 
+Immutability and ordering are **enforced by the pipeline**, not just policy:
+the publish refuses to overwrite an existing version tag (image and kit), and
+floating tags only move after re-checking that the version being published is
+still the current release — a rebuild that waited in the publish queue behind
+a newer release publishes its immutable `-rN` tag but leaves `latest`/`<major>`
+alone.
+
 ## Cadence and ownership
 
 The **Integrations team** owns the cadence. The workflows run unattended; a
@@ -48,7 +55,7 @@ human owns triage of their failures and of the rebuild scan reports.
 | When | What runs | Result |
 |---|---|---|
 | On every band-sdk release | `release.yml` → `publish-kit` (calls `kit-publish.yml`) | Fresh image + kit publish at `X.Y.Z`, floating tags moved. |
-| Weekly, Mondays 05:00 UTC | `kit-image-rebuild.yml` (schedule) | Rebuilds the latest released version **only if** a pinned base has a newer digest than `dev`'s Dockerfile pins, or the currently published image (`X.Y.Z-rN` when rebuilt, else `X.Y.Z`) has a fixable HIGH/CRITICAL; publishes the next `X.Y.Z-rN`, moves floating tags, opens a digest-pin bump PR **against `dev`** (the repo convention — `main` receives it via the promote workflow). A no-change week publishes nothing. **Merge the bump PR promptly**: `dev`'s pins are the comparison ledger, so while the PR sits unmerged the next scheduled run re-detects the same digest delta and rebuilds redundantly. |
+| Weekly, Mondays 05:00 UTC | `kit-image-rebuild.yml` (schedule) | Rebuilds the latest released version **only if** a pinned base has a newer digest than `dev`'s Dockerfile pins, or the currently published image (`X.Y.Z-rN` when rebuilt, else `X.Y.Z`) has a fixable HIGH/CRITICAL; publishes the next `X.Y.Z-rN`, moves floating tags, opens a digest-pin bump PR **against `dev`**; skips entirely (even when forced) if the version was never published — the initial `X.Y.Z` belongs to the release workflow (the repo convention — `main` receives it via the promote workflow). A no-change week publishes nothing. **Merge the bump PR promptly**: `dev`'s pins are the comparison ledger, so while the PR sits unmerged the next scheduled run re-detects the same digest delta and rebuilds redundantly. |
 | Ad hoc (critical CVE) | `kit-image-rebuild.yml` via `workflow_dispatch` (`force: true`, `reason:`) | Same as weekly but unconditional; the reason is recorded in the run log. |
 
 **How customers learn a new tag exists:** the floating tags move (documented
@@ -91,7 +98,12 @@ independent job) has already succeeded, but no kit artifacts were produced.
 - **Wait it out (default).** Once the young package has aged past 7 days, use
   GitHub's **"Re-run failed jobs"** on the release run. The cutoff is recomputed
   as now − 7 days at re-run time, so the same release heals without a new version
-  number — no retag, no re-release.
+  number — no retag, no re-release. Always **re-run failed jobs only**: a full
+  re-run of a partially-successful publish stops at the immutable-tag guard for
+  whatever was already pushed (by design — that guard is what makes the tag
+  policy real). If an artifact is truly half-published (e.g. pushed but its
+  attestation failed), deleting that partial tag is a deliberate manual step
+  before re-running.
 - **Can't wait (justified override).** Dispatch the `kit-publish` workflow
   with a lowered `quarantine-max-age-days` input. The value used is recorded
   in the run's inputs, never silent; state the reason in the release PR or
@@ -167,7 +179,14 @@ there is no pre-merge rehearsal):
    kit-publish → Run workflow) with a real git ref, a throwaway version like
    `0.0.0-rc1`, and `move-floating` left at its dispatch default of **false**
    so `latest`/`<major>` are untouched. Verify repo linkage, attestations, and
-   both tag sets on the GHCR package pages, then delete the rehearsal tags.
+   both tag sets on the GHCR package pages. **Required before the first real
+   release:** from a Docker-Sandbox machine, consume the rehearsal kit —
+   `sbx create --kit ghcr.io/band-ai/band-python-kit:0.0.0-rc1 band-python-kit
+   <workspace>` — proving the ORAS-assembled artifact end to end (CI verifies
+   the manifest shape and a registry pull, but only `sbx` itself proves
+   consumption). Then delete the rehearsal tags. Note: re-dispatching the same
+   rehearsal version stops at the immutable-tag guard — bump the rc number or
+   delete the previous rehearsal tags first.
 5. First real release publishes for real.
 6. Flip both packages (`band-python-kit`, `band-python-kit/image`) to **public**
    (one-way) once the layout is confirmed.

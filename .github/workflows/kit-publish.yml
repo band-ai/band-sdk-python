@@ -112,6 +112,7 @@ jobs:
       id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
+      floating: ${{ steps.floating.outputs.move }}
     steps:
       - name: Checkout the release ref
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -131,6 +132,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A queued rebuild can acquire the publish slot after a newer release
+      # already published: the concurrency group serializes writes but cannot
+      # prevent stale ones. Re-read the release manifest now and only move the
+      # floating tags if this version is still the current release.
+      - name: Guard floating tags against stale moves
+        id: floating
+        run: |
+          set -euo pipefail
+          move="${{ inputs.move-floating }}"
+          if [ "$move" = "true" ]; then
+            git fetch --quiet --depth=1 origin main
+            current="$(git show FETCH_HEAD:.release-please-manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["."])')"
+            base="${{ inputs.version }}"; base="${base%%-r*}"
+            if [ "$base" != "$current" ]; then
+              echo "::notice::skipping floating tags: publishing ${base} but the current release is ${current}"
+              move="false"
+            fi
+          fi
+          echo "move=${move}" >> "$GITHUB_OUTPUT"
+
       - name: Compute image tags
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
@@ -141,8 +162,8 @@ jobs:
           # git ref.
           tags: |
             type=raw,value=${{ inputs.version }}
-            type=raw,value=${{ inputs.major }},enable=${{ inputs.move-floating }}
-            type=raw,value=latest,enable=${{ inputs.move-floating }}
+            type=raw,value=${{ inputs.major }},enable=${{ steps.floating.outputs.move }}
+            type=raw,value=latest,enable=${{ steps.floating.outputs.move }}
 
       # The gate runs BEFORE the build and reads only the committed lock's
       # recorded upload-times — deterministic, no resolution, no index access.
@@ -151,6 +172,18 @@ jobs:
       # see scripts/check-lock-age.py and RELEASING.md.)
       - name: Supply-chain quarantine gate
         run: python3 scripts/check-lock-age.py --lock uv.lock --max-age-days "${{ inputs.quarantine-max-age-days }}"
+
+      # X.Y.Z / X.Y.Z-rN tags are immutable by policy; the registry does not
+      # enforce that, so refuse here. Recovery from a partial publish re-runs
+      # only the FAILED jobs (the missing artifact); a full re-run or a
+      # mistaken dispatch of an existing version stops at this guard.
+      - name: Refuse to overwrite an immutable tag
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "${IMAGE_NAME}:${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::${IMAGE_NAME}:${{ inputs.version }} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md before deliberately deleting a partial tag"
+            exit 1
+          fi
 
       - name: Build and push (multi-arch, attested)
         id: build
@@ -222,6 +255,14 @@ jobs:
           # tar+gzip, not zero layers.
           tar -czf empty-layer.tar.gz --files-from /dev/null
 
+      - name: Refuse to overwrite an immutable kit tag
+        run: |
+          set -euo pipefail
+          if oras manifest fetch "${KIT_NAME}:${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "::error::${KIT_NAME}:${{ inputs.version }} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md"
+            exit 1
+          fi
+
       - name: Push the kit artifact
         working-directory: staging
         run: |
@@ -236,7 +277,7 @@ jobs:
             empty-layer.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip
 
       - name: Move floating kit tags
-        if: ${{ inputs.move-floating }}
+        if: ${{ needs.image.outputs.floating == 'true' }}
         working-directory: staging
         run: |
           oras tag "${KIT_NAME}:${{ inputs.version }}" "${{ inputs.major }}" latest
