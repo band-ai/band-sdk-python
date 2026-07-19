@@ -36,7 +36,7 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Release Please
-        uses: googleapis/release-please-action@v5
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -64,7 +64,7 @@ jobs:
         run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Install dependencies
         run: uv sync --all-groups
@@ -73,7 +73,7 @@ jobs:
         run: uv build
 
       - name: Publish band-sdk to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
 
   # Publish the kit image + OCI kit artifact to GHCR. Independent of
   # publish-band: a kit-publish failure (e.g. a quarantine-gate trip) must not
@@ -92,6 +92,7 @@ jobs:
     concurrency:
       group: kit-ghcr-publish
       cancel-in-progress: false
+      queue: max
     uses: ./.github/workflows/kit-publish.yml
     with:
       ref: ${{ needs.release.outputs.tag_name }}

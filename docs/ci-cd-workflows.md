@@ -76,8 +76,9 @@ Triggered on push to `main` (i.e. after a promotion PR merges).
 5. `summary` reports every artifact's outcome.
 
 Related: `kit-image-rebuild.yml` (weekly CVE rebuild of the published kit
-image) and `docker/band_python_kit/RELEASING.md` (tag policy, quarantine
-gate, rehearsal and recovery runbook).
+image), `kit-publish-manual.yml` (serialized manual recovery/rehearsal), and
+`docker/band_python_kit/RELEASING.md` (tag policy, quarantine gate, rehearsal
+and recovery runbook).
 
 ## Promotion Workflow
 

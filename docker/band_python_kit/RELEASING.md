@@ -42,10 +42,14 @@ kit artifact mirrors image tags one-to-one.
 
 Immutability and ordering are **enforced by the pipeline**, not just policy:
 the publish refuses to overwrite an existing version tag (image and kit), and
-floating tags only move after re-checking that the version being published is
-still the current release — a rebuild that waited in the publish queue behind
-a newer release publishes its immutable `-rN` tag but leaves `latest`/`<major>`
-alone.
+registry authentication/transport failures fail closed instead of masquerading
+as an absent tag. Floating tags only move after the immutable image, GitHub
+provenance attestation, and immutable kit all succeed, followed by a re-check
+that the version being published is still the current release. A rebuild that
+waited in the publish queue behind a newer release publishes its immutable
+`-rN` tag but leaves `latest`/`<major>` alone. Release, rebuild, and manual
+entrypoints share one FIFO publish queue (`queue: max`), so a later pending run
+cannot evict an earlier one.
 
 ## Cadence and ownership
 
@@ -57,6 +61,7 @@ human owns triage of their failures and of the rebuild scan reports.
 | On every band-sdk release | `release.yml` → `publish-kit` (calls `kit-publish.yml`) | Fresh image + kit publish at `X.Y.Z`, floating tags moved. |
 | Weekly, Mondays 05:00 UTC | `kit-image-rebuild.yml` (schedule) | Rebuilds the latest released version **only if** a pinned base has a newer digest than `dev`'s Dockerfile pins, or the currently published image (`X.Y.Z-rN` when rebuilt, else `X.Y.Z`) has a fixable HIGH/CRITICAL; publishes the next `X.Y.Z-rN`, moves floating tags, opens a digest-pin bump PR **against `dev`**; skips entirely (even when forced) if the version was never published — the initial `X.Y.Z` belongs to the release workflow (the repo convention — `main` receives it via the promote workflow). A no-change week publishes nothing. **Merge the bump PR promptly**: `dev`'s pins are the comparison ledger, so while the PR sits unmerged the next scheduled run re-detects the same digest delta and rebuilds redundantly. |
 | Ad hoc (critical CVE) | `kit-image-rebuild.yml` via `workflow_dispatch` (`force: true`, `reason:`) | Same as weekly but unconditional; the reason is recorded in the run log. |
+| Manual publish/rehearsal | `kit-publish-manual.yml` via `workflow_dispatch` | Calls the same pipeline under the same publish lock. Rehearsals leave `move-floating` false; emergency recovery can opt in after review. |
 
 **How customers learn a new tag exists:** the floating tags move (documented
 semantics above), rebuild tags appear on the GHCR package pages, the catalog
@@ -104,11 +109,11 @@ independent job) has already succeeded, but no kit artifacts were produced.
   policy real). If an artifact is truly half-published (e.g. pushed but its
   attestation failed), deleting that partial tag is a deliberate manual step
   before re-running.
-- **Can't wait (justified override).** Dispatch the `kit-publish` workflow
-  with a lowered `quarantine-max-age-days` input. The value used is recorded
-  in the run's inputs, never silent; state the reason in the release PR or
-  channel. Use this only for a real time-critical release; the default is to
-  wait.
+- **Can't wait (justified override).** Dispatch `kit-publish-manual` with the
+  release tag/version, `move-floating: true`, and a lowered
+  `quarantine-max-age-days` input. The value used is recorded in the run's
+  inputs, never silent; state the reason in the release PR or channel. Use this
+  only for a real time-critical release; the default is to wait.
 
 ## Supported `sbx` version
 
@@ -124,12 +129,14 @@ The CI kit push is currently assembled with **ORAS** rather than `sbx kit push`,
 because `sbx`'s availability on ubuntu runners is unconfirmed. The ORAS manifest
 is fully specified (`artifactType: application/vnd.docker.sandbox.kit.v2`, config
 media type `application/vnd.docker.sandbox.kit.v2.spec+yaml`, one empty
-`application/vnd.oci.image.layer.v1.tar+gzip` layer). Before the first real
-release relies on it, prove a push → pull → `--kit` roundtrip against the pinned
-CLI. If `sbx` does run on the runner, swapping the ORAS step for `sbx kit push`
-is a drop-in change. Note that `sbx kit push` also emits a sibling GC-anchor tag
-(`_kit_<tag>`) that ORAS does not — harmless on GHCR (the image is independently
-tagged in its own package), but confirm nothing on the pull path depends on it.
+`application/vnd.oci.image.layer.v1.tar+gzip` layer). The GHCR smoke artifact was
+pulled and inspected with `sbx` v0.34.0, then consumed by
+`sbx create --kit <ghcr-ref>`; the sandbox started, imported `band`, and was
+removed successfully. This closes the first-release roundtrip prerequisite.
+If `sbx` becomes available on the runner, swapping the ORAS step for
+`sbx kit push` remains an option. Note that `sbx kit push` also emits a sibling
+GC-anchor tag (`_kit_<tag>`) that ORAS does not; the proven OCI-ref consumption
+path does not depend on it.
 
 ## Manual publish runbook (fallback)
 
@@ -144,8 +151,6 @@ Docker-Sandbox-capable laptop:
      -f docker/band_python_kit/Dockerfile \
      --platform linux/amd64,linux/arm64 \
      -t ghcr.io/band-ai/band-python-kit/image:X.Y.Z \
-     -t ghcr.io/band-ai/band-python-kit/image:<major> \
-     -t ghcr.io/band-ai/band-python-kit/image:latest \
      --push .
    ```
 3. Capture the pushed digest and stamp the distribution spec:
@@ -157,9 +162,12 @@ Docker-Sandbox-capable laptop:
      --digest sha256:<digest> \
      --output staging/spec.yaml
    ```
-4. Validate and push the kit: `sbx kit validate staging` then
-   `sbx kit push staging ghcr.io/band-ai/band-python-kit:X.Y.Z`, and move the
-   floating tags.
+4. Validate and push the immutable kit: `sbx kit validate staging` then
+   `sbx kit push staging ghcr.io/band-ai/band-python-kit:X.Y.Z`.
+5. Only after both immutable artifacts and provenance verification succeed,
+   move the kit's floating tags and retag the immutable image manifest. Keep
+   this ordering: the kit pins the immutable image digest, so an interrupted
+   final retag never points a kit at a missing image.
 
 ## One-time GHCR setup
 
@@ -175,16 +183,16 @@ there is no pre-merge rehearsal):
 2. GitHub App installed on `band-ai/add-band` (`contents: write` +
    `pull-requests: write`) for the automated bump PR.
 3. Merge this workflow to the default branch.
-4. Rehearsal: dispatch the `kit-publish` workflow directly (Actions →
-   kit-publish → Run workflow) with a real git ref, a throwaway version like
-   `0.0.0-rc1`, and `move-floating` left at its dispatch default of **false**
+4. Rehearsal: dispatch `kit-publish-manual` (Actions → kit-publish-manual →
+   Run workflow) with a real git ref, a throwaway version like `0.0.0-rc1`, and
+   `move-floating` left at its dispatch default of **false**
    so `latest`/`<major>` are untouched. Verify repo linkage, attestations, and
-   both tag sets on the GHCR package pages. **Required before the first real
-   release:** from a Docker-Sandbox machine, consume the rehearsal kit —
+   both tag sets on the GHCR package pages. From a Docker-Sandbox machine,
+   consume the rehearsal kit —
    `sbx create --kit ghcr.io/band-ai/band-python-kit:0.0.0-rc1 band-python-kit
-   <workspace>` — proving the ORAS-assembled artifact end to end (CI verifies
-   the manifest shape and a registry pull, but only `sbx` itself proves
-   consumption). Then delete the rehearsal tags. Note: re-dispatching the same
+   <workspace>` — revalidating the already-proven ORAS end-to-end path against
+   the currently supported `sbx`. Then delete the rehearsal tags. Note:
+   re-dispatching the same
    rehearsal version stops at the immutable-tag guard — bump the rc number or
    delete the previous rehearsal tags first.
 5. First real release publishes for real.

@@ -4,21 +4,15 @@
 # band-sdk release) and kit-image-rebuild.yml (weekly CVE rebuild) so the two
 # never drift into separate copies.
 #
-# NOTE (open verification, see docker/band_python_kit/RELEASING.md): the kit
-# artifact is pushed with ORAS assembling the OCI v2 manifest by hand — the
-# `sbx` CLI's availability on ubuntu runners is unconfirmed, and the ORAS shape
-# is fully specified (artifactType, config media type, single empty layer). A
-# push -> pull -> `--kit` roundtrip must be proven once against the pinned CLI
-# before the first real release relies on it.
+# The ORAS-assembled OCI v2 shape and a GHCR pull -> `sbx create --kit`
+# roundtrip are validated against sbx v0.34.0; see RELEASING.md. Revalidate on
+# every sbx upgrade because the kit surface is experimental.
 #
 # NOTE (action pinning): every action in the kit publish/rebuild workflows is
 # pinned to a full commit SHA per GitHub's hardening guidance for
 # packages-publishing workflows (tags are movable refs; a SHA is immutable),
 # with the human-readable version in a trailing comment that Dependabot/
-# Renovate understand when PRing bumps. Pre-existing pins in release.yml's
-# release/publish-band jobs (release-please, setup-uv, pypi-publish) are left
-# on tags — re-pinning long-standing release infrastructure is a separate
-# decision.
+# Renovate understand when PRing bumps.
 
 name: kit-publish
 
@@ -61,42 +55,6 @@ on:
       image-digest:
         description: Digest of the pushed multi-arch image
         value: ${{ jobs.image.outputs.digest }}
-  # The rehearsal path (see RELEASING.md): after this lands on the default
-  # branch, dispatch with a throwaway version (e.g. 0.0.0-rc1) to exercise the
-  # full build->attest->stamp->push pipeline before the first real release
-  # fires it. move-floating defaults to FALSE here — a rehearsal must never
-  # move `latest`/<major>. Both trigger types feed the same `inputs` context,
-  # so the jobs below are trigger-agnostic.
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: Git ref to check out and build from (e.g. band-sdk-vX.Y.Z)
-        required: true
-        type: string
-      version:
-        description: Bare artifact/image tag (e.g. 0.0.0-rc1 for a rehearsal)
-        required: true
-        type: string
-      major:
-        description: Major version for the floating <major> tag (e.g. 1)
-        required: true
-        type: string
-      move-floating:
-        description: Also move the `latest` and `<major>` floating tags
-        required: false
-        default: false
-        type: boolean
-      extra-build-args:
-        description: Newline-separated extra --build-arg entries
-        required: false
-        default: ""
-        type: string
-      quarantine-max-age-days:
-        description: Minimum public age (days) of every locked package
-        required: false
-        default: 7
-        type: number
-
 env:
   IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
   KIT_NAME: ghcr.io/band-ai/band-python-kit
@@ -112,7 +70,6 @@ jobs:
       id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
-      floating: ${{ steps.floating.outputs.move }}
     steps:
       - name: Checkout the release ref
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -125,32 +82,15 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
 
+      - name: Install ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+
       - name: Log in to GHCR
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      # A queued rebuild can acquire the publish slot after a newer release
-      # already published: the concurrency group serializes writes but cannot
-      # prevent stale ones. Re-read the release manifest now and only move the
-      # floating tags if this version is still the current release.
-      - name: Guard floating tags against stale moves
-        id: floating
-        run: |
-          set -euo pipefail
-          move="${{ inputs.move-floating }}"
-          if [ "$move" = "true" ]; then
-            git fetch --quiet --depth=1 origin main
-            current="$(git show FETCH_HEAD:.release-please-manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["."])')"
-            base="${{ inputs.version }}"; base="${base%%-r*}"
-            if [ "$base" != "$current" ]; then
-              echo "::notice::skipping floating tags: publishing ${base} but the current release is ${current}"
-              move="false"
-            fi
-          fi
-          echo "move=${move}" >> "$GITHUB_OUTPUT"
 
       - name: Compute image tags
         id: meta
@@ -160,10 +100,7 @@ jobs:
           # The trigger is a push to main (not a tag event), so tags are
           # composed from the caller's version input, never derived from the
           # git ref.
-          tags: |
-            type=raw,value=${{ inputs.version }}
-            type=raw,value=${{ inputs.major }},enable=${{ steps.floating.outputs.move }}
-            type=raw,value=latest,enable=${{ steps.floating.outputs.move }}
+          tags: type=raw,value=${{ inputs.version }}
 
       # The gate runs BEFORE the build and reads only the committed lock's
       # recorded upload-times — deterministic, no resolution, no index access.
@@ -180,7 +117,8 @@ jobs:
       - name: Refuse to overwrite an immutable tag
         run: |
           set -euo pipefail
-          if docker buildx imagetools inspect "${IMAGE_NAME}:${{ inputs.version }}" >/dev/null 2>&1; then
+          state="$(python3 scripts/registry-ref-state.py "${IMAGE_NAME}:${{ inputs.version }}")"
+          if [ "$state" = "exists" ]; then
             echo "::error::${IMAGE_NAME}:${{ inputs.version }} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md before deliberately deleting a partial tag"
             exit 1
           fi
@@ -258,7 +196,8 @@ jobs:
       - name: Refuse to overwrite an immutable kit tag
         run: |
           set -euo pipefail
-          if oras manifest fetch "${KIT_NAME}:${{ inputs.version }}" >/dev/null 2>&1; then
+          state="$(python3 scripts/registry-ref-state.py "${KIT_NAME}:${{ inputs.version }}")"
+          if [ "$state" = "exists" ]; then
             echo "::error::${KIT_NAME}:${{ inputs.version }} already exists and version tags are immutable — re-run only failed jobs, or see RELEASING.md"
             exit 1
           fi
@@ -276,8 +215,71 @@ jobs:
             --config spec.yaml:application/vnd.docker.sandbox.kit.v2.spec+yaml \
             empty-layer.tar.gz:application/vnd.oci.image.layer.v1.tar+gzip
 
-      - name: Move floating kit tags
-        if: ${{ needs.image.outputs.floating == 'true' }}
-        working-directory: staging
+  # Floating tags are the commit point: neither moves until both immutable
+  # artifacts exist and the image's GitHub provenance attestation succeeded.
+  # The caller-level concurrency lock covers this entire reusable workflow.
+  floating:
+    needs: [image, kit]
+    if: ${{ inputs.move-floating }}
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout the release ref
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A queued rebuild can acquire the publish slot after a newer release
+      # already published. Re-read main at the commit point and leave floating
+      # tags untouched when this immutable version is stale.
+      - name: Guard floating tags against stale moves
+        id: current
         run: |
-          oras tag "${KIT_NAME}:${{ inputs.version }}" "${{ inputs.major }}" latest
+          set -euo pipefail
+          git fetch --quiet --depth=1 origin main
+          current="$(git show FETCH_HEAD:.release-please-manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["."])')"
+          base="${{ inputs.version }}"; base="${base%%-r*}"
+          move="true"
+          if [ "$base" != "$current" ]; then
+            echo "::notice::skipping floating tags: publishing ${base} but the current release is ${current}"
+            move="false"
+          fi
+          echo "move=${move}" >> "$GITHUB_OUTPUT"
+
+      - name: Move floating tags after the complete publish
+        if: ${{ steps.current.outputs.move == 'true' }}
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE_NAME}:${{ inputs.version }}"
+          kit_ref="${KIT_NAME}:${{ inputs.version }}"
+
+          # Re-verify both immutable sources at the commit point. The helper
+          # fails closed on auth/network errors; an unexpected absence is also
+          # fatal because the producing jobs already succeeded.
+          [ "$(python3 scripts/registry-ref-state.py "$image_ref")" = "exists" ]
+          [ "$(python3 scripts/registry-ref-state.py "$kit_ref")" = "exists" ]
+
+          # Move the kit first. If the image retag then fails, kit consumers are
+          # still safe because its spec pins the already-published image digest;
+          # a re-run idempotently completes the image tags.
+          oras tag "$kit_ref" "${{ inputs.major }}" latest
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:${{ inputs.major }}" \
+            --tag "${IMAGE_NAME}:latest" \
+            "$image_ref"

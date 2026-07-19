@@ -37,6 +37,7 @@ permissions:
 concurrency:
   group: kit-image-rebuild
   cancel-in-progress: false
+  queue: max
 
 env:
   IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
@@ -146,7 +147,7 @@ jobs:
           rc=$?
           set -e
           if [ $rc -ne 0 ]; then
-            if grep -qiE "not found|name unknown|denied" listing-err.txt; then
+            if grep -qiE "name unknown|NAME_UNKNOWN" listing-err.txt; then
               tags="" # package not created yet — nothing published
             else
               # Any other listing failure must fail loudly: defaulting to an
@@ -178,8 +179,9 @@ jobs:
         run: |
           # First scheduled run can predate the first publish; that is a normal
           # skip, distinct from a scan failure.
-          if docker buildx imagetools inspect \
-              "${IMAGE_NAME}:${{ steps.tags.outputs.current_tag }}" >/dev/null 2>&1; then
+          state="$(python3 scripts/registry-ref-state.py \
+            "${IMAGE_NAME}:${{ steps.tags.outputs.current_tag }}")"
+          if [ "$state" = "exists" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -261,6 +263,7 @@ jobs:
     concurrency:
       group: kit-ghcr-publish
       cancel-in-progress: false
+      queue: max
     uses: ./.github/workflows/kit-publish.yml
     with:
       ref: ${{ needs.decide.outputs.tag }}
