@@ -764,7 +764,7 @@ requires-dist = [
     { name = "openai", marker = "extra == 'pydantic-ai'", specifier = ">=1.0.0" },
     { name = "parlant", marker = "extra == 'dev'", specifier = ">=3.3.2" },
     { name = "parlant", marker = "extra == 'parlant'", specifier = ">=3.3.2" },
-    { name = "phoenix-channels-python-client", specifier = ">=0.2.1" },
+    { name = "phoenix-channels-python-client", git = "https://github.com/thenvoi/phoenix-channels-python-client-alpha.git?branch=feat%2Fws-handshake-additional-headers" },
     { name = "pillow", marker = "extra == 'crewai'", specifier = ">=12.1.1" },
     { name = "pillow", marker = "extra == 'dev-crewai'", specifier = ">=12.1.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
@@ -6367,13 +6367,9 @@ wheels = [
 [[package]]
 name = "phoenix-channels-python-client"
 version = "0.2.1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/thenvoi/phoenix-channels-python-client-alpha.git?branch=feat%2Fws-handshake-additional-headers#0a09478492d155eace910200075b1165fbfd6013" }
 dependencies = [
     { name = "websockets" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/53/dbabc21137c7f9657d5f02ac020aa1fab97747a409b393dca9a1ba752945/phoenix_channels_python_client-0.2.1.tar.gz", hash = "sha256:a5ff329d4ed0ce850c3568e39ec29beaf82540d18016d4934837374a612151a1", size = 29245, upload-time = "2026-04-12T12:46:38.53Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/06/1a37e48ead532b123ed71c5a5e4fd78d4fc93c11622887f41e18d14fedb6/phoenix_channels_python_client-0.2.1-py3-none-any.whl", hash = "sha256:24606551dfbcae35f3052f1573091c25b4da1deded4d6f62d171ff2820ed8ad4", size = 23930, upload-time = "2026-04-12T12:46:39.593Z" },
 ]
 
 [[package]]

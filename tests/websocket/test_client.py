@@ -483,21 +483,23 @@ async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
 
 @asynccontextmanager
 async def upgrade_peer():
-    """In-process WebSocket peer that captures the first upgrade request's query.
+    """In-process WebSocket peer that captures the first upgrade request.
 
-    Accepts the connection and records the query params only — it speaks no
-    Phoenix and imitates no proxy. Its sole job is to observe the real wire shape
-    the SDK and its dependency produce on connect. Entered inside the test so the
-    server shares the test's event loop. Yields ``(ws_url, query)``, where
-    ``query`` is a future resolved with the parsed query params.
+    Accepts the connection and records the query params and handshake headers —
+    it speaks no Phoenix and imitates no proxy. Its sole job is to observe the
+    real wire shape the SDK and its dependency produce on connect. Entered inside
+    the test so the server shares the test's event loop. Yields
+    ``(ws_url, upgrade)``, where ``upgrade`` is a future resolved with
+    ``(query_params, headers)``.
     """
-    query: asyncio.Future[dict[str, list[str]]] = (
+    upgrade: asyncio.Future[tuple[dict[str, list[str]], Headers]] = (
         asyncio.get_running_loop().create_future()
     )
 
     async def handler(conn: ServerConnection) -> None:
-        if not query.done():
-            query.set_result(parse_qs(urlsplit(conn.request.path).query))
+        if not upgrade.done():
+            query = parse_qs(urlsplit(conn.request.path).query)
+            upgrade.set_result((query, conn.request.headers))
         await conn.wait_closed()
 
     # Bind and connect on 127.0.0.1 explicitly: "localhost" on a dual-stack host
@@ -505,21 +507,23 @@ async def upgrade_peer():
     # picking one socket's port then resolving "localhost" can hit the other.
     async with serve(handler, "127.0.0.1", 0) as server:
         port = next(iter(server.sockets)).getsockname()[1]
-        yield f"ws://127.0.0.1:{port}/socket/websocket", query
+        yield f"ws://127.0.0.1:{port}/socket/websocket", upgrade
 
 
-async def test_upgrade_carries_api_key_vsn_and_agent_id():
-    """The proxy-managed sentinel rides the existing api_key query parameter on
-    the real upgrade, alongside vsn and agent_id — the request shape the sandbox
-    proxy injects the real header onto. Also locks that query shape so Phase B's
-    header-auth work can't silently drop it."""
-    async with upgrade_peer() as (ws_url, query):
+async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
+    """The proxy-managed sentinel rides both the `api_key` query parameter and
+    the `x-api-key` handshake header on the real upgrade (alongside vsn and
+    agent_id). The header is what the sandbox proxy substitutes and the platform
+    authenticates off (with precedence); the query is retained for back-compat."""
+    async with upgrade_peer() as (ws_url, upgrade):
         async with WebSocketClient(ws_url, PROXY_MANAGED_API_KEY, "agent-xyz"):
-            params = await asyncio.wait_for(query, timeout=5)
+            params, headers = await asyncio.wait_for(upgrade, timeout=5)
 
     assert params["api_key"] == [PROXY_MANAGED_API_KEY]
     assert params["agent_id"] == ["agent-xyz"]
     assert params.get("vsn")  # protocol version retained alongside the sentinel
+    # Phase B: the sentinel also rides the x-api-key handshake header.
+    assert headers["x-api-key"] == PROXY_MANAGED_API_KEY
 
 
 # --- Valid payload tests ---
