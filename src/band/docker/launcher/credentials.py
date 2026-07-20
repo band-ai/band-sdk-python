@@ -288,6 +288,11 @@ def load_file_credentials(
     if section is None or section.source is not CredentialSource.WORKSPACE_ENV_FILE:
         return {}
     require_explicit_opt_in(section)
+    logger.warning(
+        "credentials.source 'workspace-env-file' is the less-secure custody tier: "
+        "plaintext keys live in both the workspace and the sandbox VM. Prefer "
+        "'proxy-managed', where the real keys never enter the VM."
+    )
     if section.path is None:  # guaranteed by CredentialsSection; fail closed
         raise LaunchError(
             "credentials", "credentials.path is required for the workspace env file"

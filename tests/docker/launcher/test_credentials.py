@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -100,6 +101,26 @@ def test_proxy_managed_source_rejects_a_path(workspace: Workspace) -> None:
     write_config(workspace, config)
     with pytest.raises(LaunchError, match=r"\[config\].*path"):
         resolve_launch(make_env(workspace, band_api_key="proxy-managed"))
+
+
+@requires_posix_permission_bits
+def test_workspace_env_file_warns_it_is_less_secure(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    enable(workspace)
+    write_credentials(workspace, "BAND_API_KEY=from-file\n")
+    with caplog.at_level(logging.WARNING):
+        resolve_launch(make_env(workspace, band_api_key=""))
+    assert any("less-secure" in record.message for record in caplog.records)
+
+
+def test_proxy_managed_does_not_warn(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    write_config(workspace, enable_proxy_managed(default_config(workspace)))
+    with caplog.at_level(logging.WARNING):
+        resolve_launch(make_env(workspace, band_api_key="proxy-managed"))
+    assert not any("less-secure" in record.message for record in caplog.records)
 
 
 def test_workspace_env_file_requires_a_path(workspace: Workspace) -> None:
