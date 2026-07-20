@@ -8,7 +8,7 @@ installation, no host pollution.
 
 Your workspace stays a plain `uv` project (`pyproject.toml` + committed
 `uv.lock`); the kit brings the Band SDK, the launcher, and the network
-policy. Tested with `sbx` v0.34.0.
+policy. Tested with `sbx` v0.35.0.
 
 ## Why use this kit?
 

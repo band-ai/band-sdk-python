@@ -101,10 +101,21 @@ def test_allowlist_matches_measured_minimal_set() -> None:
     assert not (EXCLUDED_HOSTS & allow)
 
 
-def test_spec_defines_no_proxy_or_credential_entries() -> None:
+def test_spec_credential_injection_declares_no_baked_secrets() -> None:
     spec = load_spec()
-    # Proxy vars are runtime-owned (overriding them bypasses policy), and
-    # credential injection belongs to the later proxy-custody milestone.
+    # Proxy vars are runtime-owned (overriding them bypasses policy).
     env_vars = spec.get("environment", {}).get("variables", {})
     assert not {k for k in env_vars if k.upper().endswith("_PROXY")}
-    assert "credentials" not in spec
+
+    # Proxy-managed injection is declared, but the kit must never bake a secret
+    # VALUE — only the env-var name and the non-secret domain/header/format rules.
+    creds = spec.get("credentials", [])
+    assert creds, "proxy-managed credential injection must be declared"
+    injected_domains: set[str] = set()
+    for entry in creds:
+        api_key = entry["apiKey"]
+        assert set(api_key) <= {"name", "inject"}, api_key
+        for rule in api_key["inject"]:
+            assert set(rule) <= {"domain", "header", "format"}, rule
+            injected_domains.add(rule["domain"])
+    assert {"app.band.ai", "api.openai.com", "api.anthropic.com"} <= injected_domains
