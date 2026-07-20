@@ -54,24 +54,23 @@ caps:
       - "*.business.githubcopilot.com"
       - "*.enterprise.githubcopilot.com"
 
-# Proxy-managed credential injection for Band (kit-spec v2). app.band.ai is not
-# one of sbx's built-in credential services, so the kit declares it: the real
-# Band key stays on the host (provisioned with `sbx secret`), the VM holds only a
-# sentinel in BAND_API_KEY, and the proxy writes the X-API-Key header on every
-# request to app.band.ai — REST and the WebSocket upgrade alike. Applies only
-# under `sbx create --kit`.
+# Credential injection is NOT declared here — it is provisioned host-side, per
+# deployment, so the operator controls which Band host is targeted (prod
+# `app.band.ai`, `platform.dev.band.ai`, staging, self-hosted, …) rather than the
+# kit baking one in:
 #
-# LLM provider keys are deliberately NOT declared here: OpenAI, Anthropic, Google,
-# etc. are built-in sbx services. The customer provisions the one their agent uses
-# with `sbx secret set -g <provider>` (e.g. anthropic, openai) — no kit change,
-# and the key never enters the VM. See the README "Credentials" section.
-credentials:
-  - apiKey:
-      name: BAND_API_KEY
-      inject:
-        - domain: app.band.ai
-          header: X-API-Key
-          format: "%s"
+#   sbx secret set-custom -g --host '**.band.ai' \
+#     --env BAND_API_KEY --placeholder proxy-managed --value <band-key>
+#
+# The VM then holds only the sentinel; the proxy supplies the real key on the
+# wire (verified: the Band host presents an "O=Docker Sandboxes" MITM cert). A
+# `**.band.ai` wildcard follows whichever Band deployment `BAND_REST_URL` points
+# at. LLM provider keys are built-in sbx services — `sbx secret set -g <provider>`
+# (anthropic, openai, …). See the README "Credential custody" section.
+#
+# (A kit-declared `credentials[].apiKey.inject[]` block was tried but crashes
+# `sbx create` on sbx 0.35.0 despite passing `sbx kit validate` — tracked
+# upstream; host-side `set-custom` is the working, controllable path.)
 
 agentContext: |
   This workspace contains a Python agent launched by the Band Sandbox kit.

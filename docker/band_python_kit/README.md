@@ -97,12 +97,16 @@ sees a sentinel. Requires `sbx create --kit`.
   ```bash
   sbx secret set -g anthropic        # or openai, google, groq, mistral, …
   ```
-- **Band** is provisioned host-side so the kit's proxy injection can supply it on
-  every request to `app.band.ai` (REST and the WebSocket upgrade):
+- **Band** is provisioned host-side. The `**.band.ai` wildcard follows whichever
+  Band deployment you point the agent at via `BAND_REST_URL` (prod `app.band.ai`,
+  `platform.dev.band.ai`, staging, …) — the endpoint config is the control knob:
   ```bash
-  sbx secret set-custom -g --host app.band.ai \
+  sbx secret set-custom -g --host '**.band.ai' \
     --env BAND_API_KEY --placeholder proxy-managed --value <your-band-key>
   ```
+  The proxy then supplies the real key on outbound requests to that host (verified:
+  the Band host presents an `O=Docker Sandboxes` MITM cert inside the sandbox). For
+  a non-`band.ai` (self-hosted) deployment, use its host with `--host`.
 
 **Env-file tier — laptop-equivalent, less secure.** The opt-in `.band/secrets.env`
 file puts plaintext keys in both your workspace and the sandbox VM

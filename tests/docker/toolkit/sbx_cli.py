@@ -27,9 +27,11 @@ CREATE_TIMEOUT_S = 600
 EXEC_TIMEOUT_S = 120
 
 # The issuer a credential-injected (MITM) TLS connection presents inside a
-# sandbox — the never-in-VM proof asserts the Band host shows this, confirming
-# the request rode the injection path rather than a plain tunnel.
-PROXY_CA_ISSUER = "Docker Sandboxes Proxy CA"
+# sandbox — the never-in-VM proof asserts the Band host's cert shows this,
+# confirming the request rode the injection path rather than a plain tunnel.
+# Verified live: the injected cert reads `subject: O=Docker Sandboxes; CN=<host>`,
+# `issuer: ... Docker Sandboxes Proxy CA`, so this substring matches either line.
+PROXY_CA_MARKER = "Docker Sandboxes"
 
 
 def sbx_available() -> bool:
@@ -94,15 +96,18 @@ class Sandbox:
         """
         return self.exec(f"tr '\\0' '\\n' < /proc/{pid}/environ")
 
-    def band_host_cert_issuer(self, host: str = "app.band.ai") -> str:
-        """The TLS cert issuer the sandbox sees for ``host`` (via openssl).
+    def band_host_cert(self, host: str) -> str:
+        """The TLS cert subject+issuer the sandbox sees for ``host`` — **through
+        the sandbox proxy**.
 
-        Under credential injection this is the Docker Sandboxes Proxy CA;
-        compare against ``PROXY_CA_ISSUER``.
+        curl honors ``HTTPS_PROXY``, so it sees the injection MITM cert. A raw
+        ``openssl s_client -connect`` would connect *directly*, bypass the proxy,
+        and show the real upstream cert — hiding the injection (verified the hard
+        way). Under injection the output contains ``PROXY_CA_MARKER``.
         """
         return self.exec(
-            f"echo | openssl s_client -connect {host}:443 -servername {host} "
-            "2>/dev/null | openssl x509 -noout -issuer"
+            f"curl -sv --max-time 15 https://{host}/ 2>&1 "
+            "| grep -iE 'subject:|issuer:' | head -2"
         )
 
     def real_secret_absent(self, secret: str, *, search_paths: Sequence[str]) -> bool:

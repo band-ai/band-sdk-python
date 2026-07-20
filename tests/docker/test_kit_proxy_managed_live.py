@@ -17,19 +17,21 @@ Runs only on a Docker-Sandbox-capable host (nested virtualization) with the
 Gated behind BOTH ``sandbox`` (SANDBOX_TESTS_ENABLED=true) and ``e2e``
 (E2E_TESTS_ENABLED=true); skipped on every ordinary/CI run.
 
-Status: scaffold. The absence and cert-issuer proofs are complete; the
-provisioning fixture (`proxy_managed_sandbox`) has one live-only seam flagged
-below — the secret→credential binding — to confirm on first live execution.
+Status: scaffold. The wildcard `**.band.ai` injection is verified live (the Band
+host presents an "O=Docker Sandboxes" MITM cert through the proxy). The absence
+and cert-path proofs are wired; the REST+WS room round-trip is flagged for first
+live execution.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from urllib.parse import urlsplit
 
 import pytest
 
 from band.credentials import PROXY_MANAGED_API_KEY
-from tests.docker.toolkit.sbx_cli import PROXY_CA_ISSUER, Sandbox, sbx_available
+from tests.docker.toolkit.sbx_cli import PROXY_CA_MARKER, Sandbox, sbx_available
 from tests.paths import KIT_DIR
 
 pytestmark = [pytest.mark.sandbox, pytest.mark.e2e]
@@ -39,11 +41,15 @@ pytestmark = [pytest.mark.sandbox, pytest.mark.e2e]
 def proxy_managed_sandbox() -> Iterator[Sandbox]:
     """A running sandbox created from the kit under proxy-managed custody.
 
-    Live-only seam to confirm on first execution: the Band key must be
-    provisioned host-side (``sbx secret set-custom --host app.band.ai``) so the
-    kit's `credentials[].apiKey.inject[]` has a value to inject. The exact
-    secret→credential binding is the one piece `sbx kit validate` can't verify
-    (it is lenient), so validate it here against a real sandbox.
+    Prerequisite (host-side, per deployment — this is the controllable knob):
+    provision the Band key for the target host before running, e.g.::
+
+        sbx secret set-custom -g --host '**.band.ai' \\
+            --env BAND_API_KEY --placeholder proxy-managed --value <band-key>
+
+    The kit does not bake a `credentials` block (the kit-declared form crashes
+    `sbx create` on 0.35.0); injection is host-side `set-custom`, verified live to
+    flip the Band host's TLS to the Docker Sandboxes MITM cert.
     """
     if not sbx_available():
         pytest.skip("sbx CLI not on PATH")
@@ -70,9 +76,12 @@ def test_real_band_key_never_enters_the_vm(
 
 
 def test_band_host_rides_the_injection_path(proxy_managed_sandbox: Sandbox) -> None:
-    """The Band host's cert issuer proves the MITM/injection path is active."""
-    issuer = proxy_managed_sandbox.band_host_cert_issuer("app.band.ai")
-    assert PROXY_CA_ISSUER in issuer, issuer
+    """The Band host's cert (through the proxy) proves the injection path is active."""
+    from tests.e2e.baseline.settings import BaselineSettings
+
+    host = urlsplit(BaselineSettings().rest_url).hostname or "app.band.ai"
+    cert = proxy_managed_sandbox.band_host_cert(host)
+    assert PROXY_CA_MARKER in cert, cert
 
 
 @pytest.mark.skip(

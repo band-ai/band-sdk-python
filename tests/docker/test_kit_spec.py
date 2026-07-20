@@ -104,31 +104,16 @@ def test_allowlist_matches_measured_minimal_set() -> None:
     assert not (EXCLUDED_HOSTS & allow)
 
 
-def test_spec_credential_injection_declares_no_baked_secrets() -> None:
+def test_spec_bakes_no_credentials_or_proxy_vars() -> None:
     spec = load_spec()
     # Proxy vars are runtime-owned (overriding them bypasses policy).
     env_vars = spec.get("environment", {}).get("variables", {})
     assert not {k for k in env_vars if k.upper().endswith("_PROXY")}
-
-    # Proxy-managed injection is declared, but the kit must never bake a secret
-    # VALUE — only the env-var name and the non-secret domain/header/format rules.
-    creds = spec.get("credentials", [])
-    assert creds, "proxy-managed credential injection must be declared"
-    injected_domains: set[str] = set()
-    for entry in creds:
-        api_key = entry["apiKey"]
-        assert set(api_key) <= {"name", "inject"}, api_key
-        for rule in api_key["inject"]:
-            assert set(rule) <= {"domain", "header", "format"}, rule
-            injected_domains.add(rule["domain"])
-    # Band is a custom service sbx doesn't know, so the kit declares it.
-    assert "app.band.ai" in injected_domains
-    # LLM providers are built-in sbx services — the customer provisions them with
-    # `sbx secret set -g <provider>`; declaring them here would duplicate and
-    # override sbx's own authoritative definitions.
-    assert not ({"api.openai.com", "api.anthropic.com"} & injected_domains), (
-        "OpenAI/Anthropic are built-in sbx services — don't declare them in the kit"
-    )
+    # Credential injection is provisioned host-side per deployment (via
+    # `sbx secret set-custom --host`), so the operator controls the target Band
+    # host — the kit bakes no `credentials` block. (A kit-declared
+    # `credentials[].apiKey.inject[]` also crashes `sbx create` on 0.35.0.)
+    assert "credentials" not in spec
 
 
 def test_kit_docs_placeholder_matches_the_sdk_sentinel() -> None:
