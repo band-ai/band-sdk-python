@@ -76,6 +76,11 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
       - name: Set up QEMU (arm64 emulation)
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
 

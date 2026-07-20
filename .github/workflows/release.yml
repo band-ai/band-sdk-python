@@ -36,6 +36,8 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Release Please
+        # Commit-pinned to prevent mutable release tags from changing the
+        # release workflow; Dependabot updates this SHA with each v5 release.
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         id: release
         with:
