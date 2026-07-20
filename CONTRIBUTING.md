@@ -57,7 +57,10 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
 
 1. **Create a feature branch**
 
+   Branch off `main` (the single long-lived trunk):
+
    ```bash
+   git checkout main && git pull
    git checkout -b feat/your-feature-name
    # or
    git checkout -b fix/your-bug-fix
@@ -112,7 +115,7 @@ Thank you for your interest in contributing to the Band Python SDK! This documen
 
 7. **Submit a pull request**
 
-   Push your branch and open a PR against the `dev` branch.
+   Push your branch and open a PR against the `main` branch.
 
 ## Code Style Guidelines
 
@@ -237,11 +240,17 @@ PR titles are validated by CI - PRs with invalid titles will fail the check.
 
 ## Release Process
 
-This project uses [Release Please](https://github.com/googleapis/release-please) for automated releases. Releases follow [Semantic Versioning](https://semver.org/):
+This project uses [Release Please](https://github.com/googleapis/release-please) for automated releases on a single trunk (`main`) — there is no separate release branch to promote to. Releases follow [Semantic Versioning](https://semver.org/):
 
 - **MAJOR**: Breaking changes
 - **MINOR**: New backward-compatible features
 - **PATCH**: Bug fixes
+
+Every merge to `main` updates a standing **release PR** (the version bump +
+CHANGELOG) that Release Please maintains; nothing publishes until a maintainer
+merges that release PR. Merging it tags the release and triggers `release.yml`,
+which publishes `band-sdk` to PyPI and the sandbox kit to GHCR. See
+[`docs/ci-cd-workflows.md`](docs/ci-cd-workflows.md) for the full flow.
 
 ## Getting Help
 
