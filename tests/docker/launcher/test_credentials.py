@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from band.docker.launcher import LaunchError, resolve_launch
+from band.credentials import PROXY_MANAGED_API_KEY
+from band.docker.launcher import CredentialSource, LaunchError, resolve_launch
 
 from .fakes import (
     Workspace,
@@ -86,21 +87,26 @@ def test_proxy_managed_source_needs_no_file_or_ack(workspace: Workspace) -> None
     # and it passes through verbatim for the Band and LLM keys alike.
     launch = resolve_launch(
         make_env(
-            workspace, band_api_key="proxy-managed", openai_api_key="proxy-managed"
+            workspace,
+            band_api_key=PROXY_MANAGED_API_KEY,
+            openai_api_key=PROXY_MANAGED_API_KEY,
         )
     )
     assert launch.credentials == {
-        "BAND_API_KEY": "proxy-managed",
-        "OPENAI_API_KEY": "proxy-managed",
+        "BAND_API_KEY": PROXY_MANAGED_API_KEY,
+        "OPENAI_API_KEY": PROXY_MANAGED_API_KEY,
     }
 
 
 def test_proxy_managed_source_rejects_a_path(workspace: Workspace) -> None:
     config = default_config(workspace)
-    config["credentials"] = {"source": "proxy-managed", "path": ".band/secrets.env"}
+    config["credentials"] = {
+        "source": CredentialSource.PROXY_MANAGED.value,
+        "path": ".band/secrets.env",
+    }
     write_config(workspace, config)
     with pytest.raises(LaunchError, match=r"\[config\].*path"):
-        resolve_launch(make_env(workspace, band_api_key="proxy-managed"))
+        resolve_launch(make_env(workspace, band_api_key=PROXY_MANAGED_API_KEY))
 
 
 @requires_posix_permission_bits
@@ -119,7 +125,7 @@ def test_proxy_managed_does_not_warn(
 ) -> None:
     write_config(workspace, enable_proxy_managed(default_config(workspace)))
     with caplog.at_level(logging.WARNING):
-        resolve_launch(make_env(workspace, band_api_key="proxy-managed"))
+        resolve_launch(make_env(workspace, band_api_key=PROXY_MANAGED_API_KEY))
     assert not any("less-secure" in record.message for record in caplog.records)
 
 

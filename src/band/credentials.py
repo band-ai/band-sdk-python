@@ -9,10 +9,14 @@ from __future__ import annotations
 # supplies the real key makes the request authenticated. Every other deployment
 # must pass a genuine Band API key.
 #
-# This is the importable, documented value for Python callers; it does not
-# dedupe the kit's own declarations (its ``spec.yaml`` / ``sbx secret
-# --placeholder``, which are YAML/shell and can't import it), which must carry
-# the same string by agreement.
+# This module is the single origin of the sentinel for Python callers. The
+# YAML/shell mirrors (the kit ``sbx secret --placeholder`` docs) can't import it,
+# so a guard test (``tests/docker/test_kit_spec.py``) asserts they equal this
+# value — drift fails CI rather than diverging silently.
+#
+# Distinct from ``band.docker.launcher.config.CredentialSource.PROXY_MANAGED``,
+# the custody-*mode* name a ``band.yaml`` selects (``credentials.source``): same
+# spelling, different concept, kept as separate constants on purpose.
 PROXY_MANAGED_API_KEY = "proxy-managed"
 
 __all__ = ["PROXY_MANAGED_API_KEY"]

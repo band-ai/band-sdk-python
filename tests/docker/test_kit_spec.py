@@ -1,7 +1,8 @@
 """Drift checks: the kit spec ships exactly the contract that was reviewed.
 
-Identity, headless launch shape, network allowlist, no credential plumbing.
-Pure file/contract checks — no Docker daemon and no sbx CLI needed, so these
+Identity, headless launch shape, network allowlist, and credential injection
+(Band only; no baked secrets). Pure file/contract checks — no Docker daemon and
+no sbx CLI needed, so these
 run in the ordinary unit suite. `sbx kit validate` itself is a manual step
 (recorded in the kit README) because the sandbox CLI only exists on
 Docker-Sandbox-capable machines.
@@ -14,10 +15,12 @@ gate's in test_lock_age.py.
 from __future__ import annotations
 
 import importlib
+import re
 from typing import Any
 
 import yaml
 
+from band.credentials import PROXY_MANAGED_API_KEY
 from tests.paths import KIT_DIR
 
 # Hosts the launch flow was measured to need (see the kit spec's comments):
@@ -126,3 +129,18 @@ def test_spec_credential_injection_declares_no_baked_secrets() -> None:
     assert not ({"api.openai.com", "api.anthropic.com"} & injected_domains), (
         "OpenAI/Anthropic are built-in sbx services — don't declare them in the kit"
     )
+
+
+def test_kit_docs_placeholder_matches_the_sdk_sentinel() -> None:
+    """The `sbx secret set-custom --placeholder` value in the shipped kit docs
+    must equal the SDK's PROXY_MANAGED_API_KEY — the single origin of the
+    sentinel. YAML/shell can't import the constant, so this guard fails CI if a
+    doc mirror drifts from it."""
+    docs = [KIT_DIR / "README.md", KIT_DIR / "echo-agent" / "README.md"]
+    placeholders: set[str] = set()
+    for doc in docs:
+        placeholders |= set(
+            re.findall(r"--placeholder\s+(\S+)", doc.read_text(encoding="utf-8"))
+        )
+    assert placeholders, "expected at least one --placeholder in the kit docs"
+    assert placeholders == {PROXY_MANAGED_API_KEY}, placeholders

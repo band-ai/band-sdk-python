@@ -112,6 +112,10 @@ class CredentialSource(StrEnum):
     ``workspace-env-file`` keeps plaintext keys in the workspace and the VM;
     ``proxy-managed`` keeps only sentinels in the VM while a trusted host-side
     proxy injects the real keys on the wire.
+
+    ``PROXY_MANAGED`` here is the custody-mode *name*, distinct from the sentinel
+    api-key *value* ``band.credentials.PROXY_MANAGED_API_KEY`` — same spelling,
+    different concept.
     """
 
     WORKSPACE_ENV_FILE = "workspace-env-file"
@@ -132,9 +136,9 @@ class CredentialsSection(BaseModel):
     @model_validator(mode="after")
     def path_matches_source(self) -> CredentialsSection:
         if self.source is CredentialSource.WORKSPACE_ENV_FILE and not self.path:
-            raise ValueError("path is required for source 'workspace-env-file'")
+            raise ValueError(f"path is required for source '{self.source}'")
         if self.source is CredentialSource.PROXY_MANAGED and self.path is not None:
-            raise ValueError("path is not used with source 'proxy-managed'")
+            raise ValueError(f"path is not used with source '{self.source}'")
         return self
 
 
