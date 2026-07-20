@@ -23,7 +23,23 @@ shows how to target another Band deployment.
 
 ## Credentials
 
-Create the opt-in credential file from the template:
+**Preferred — proxy-managed (real keys never enter the VM).** `band.yaml`
+ships with `credentials.source: proxy-managed`. Store your keys on the host and
+a trusted proxy injects them; the sandbox sees only a sentinel. See the kit
+README's [Credential custody](../README.md#credential-custody):
+
+```bash
+# LLM provider (built-in sbx services — pick the one your agent uses):
+sbx secret set -g anthropic          # or openai, google, groq, mistral, …
+# Band key (custom host):
+sbx secret set-custom -g --host app.band.ai \
+  --env BAND_API_KEY --placeholder proxy-managed --value <your-band-key>
+```
+
+**Fallback — plaintext env file (laptop-equivalent, less secure).** The keys
+live in both your workspace and the sandbox VM, and the launcher **warns at
+startup**. To opt in, switch `band.yaml`'s `credentials` block to the
+`workspace-env-file` source (shown there), then:
 
 ```bash
 mkdir -p .band
@@ -31,15 +47,9 @@ cp secrets.env.example .band/secrets.env
 chmod 600 .band/secrets.env    # the launcher rejects wider permissions
 ```
 
-Fill in `BAND_API_KEY` and uncomment the LLM keys your agent uses. Only the
-documented names in the template are accepted — anything else fails the
-launch. Values already present in the process environment always win; the
-file only fills gaps.
-
-The launcher enforces the guardrails (gitignored, never Git-tracked,
-owner-only, no symlinks), and `band.yaml`'s
-`credentials.acknowledgePlaintextInSandbox: true` records that the plaintext
-keys exist in both your workspace and the sandbox VM. Never commit `.band/`.
+Only the documented names in the template are accepted; the launcher enforces
+the guardrails (gitignored, never Git-tracked, owner-only, no symlinks). Values
+already in the environment win; the file only fills gaps. Never commit `.band/`.
 
 ## Make it yours
 
@@ -66,15 +76,15 @@ The whole change is three files. For Anthropic:
 +        adapter=AnthropicAdapter(system_prompt="You are a helpful Band agent."),
 ```
 
-```diff
- # .band/secrets.env — provide the backend key the adapter reads
--# ANTHROPIC_API_KEY=
-+ANTHROPIC_API_KEY=sk-ant-...
+```bash
+# provide the backend key the adapter reads (proxy-managed — never in the VM)
+sbx secret set -g anthropic
 ```
 
 Then `uv lock` and restart the sandbox. Every framework follows the same
-shape: the extra in `pyproject.toml`, the adapter in `main.py`, its key in
-the secrets file (or environment).
+shape: the extra in `pyproject.toml`, the adapter in `main.py`, and its
+provider key stored with `sbx secret set -g <provider>` (or, on the fallback
+tier, in `.band/secrets.env`).
 
 Workspace edits apply live (the workspace is a mount); dependency changes
 take effect at the next sandbox restart, when the launcher re-syncs the

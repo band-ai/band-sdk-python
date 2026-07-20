@@ -13,7 +13,7 @@ import re
 import yaml
 from dotenv import dotenv_values
 
-from band.docker.launcher import CredentialName, WorkspaceConfig
+from band.docker.launcher import CredentialName, CredentialSource, WorkspaceConfig
 from tests.paths import KIT_DIR
 
 ECHO_AGENT_DIR = KIT_DIR / "echo-agent"
@@ -33,15 +33,21 @@ def test_starter_ships_a_complete_locked_workspace() -> None:
     )
 
 
-def test_starter_credentials_are_opt_in_and_gitignored() -> None:
+def test_starter_defaults_to_proxy_managed_custody() -> None:
+    # The starter ships the secure tier by default: no plaintext file, no
+    # acknowledgement — the real keys never enter the VM.
     credentials = load_workspace_config().credentials
     assert credentials is not None
-    assert credentials.acknowledge_plaintext_in_sandbox is True
-    # The credential file's directory must be gitignored so a copied
-    # workspace never commits secrets.
-    credentials_dir = credentials.path.split("/")[0] + "/"
+    assert credentials.source is CredentialSource.PROXY_MANAGED
+    assert credentials.path is None
+    assert credentials.acknowledge_plaintext_in_sandbox is False
+
+
+def test_starter_gitignores_the_fallback_secrets_dir() -> None:
+    # Even on the plaintext fallback tier, a copied workspace must never commit
+    # secrets, so `.band/` stays gitignored.
     gitignore = (ECHO_AGENT_DIR / ".gitignore").read_text(encoding="utf-8")
-    assert credentials_dir in gitignore
+    assert ".band/" in gitignore
 
 
 def test_starter_runtime_paths_are_sandbox_owned() -> None:

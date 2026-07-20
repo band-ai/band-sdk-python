@@ -26,15 +26,20 @@ project:
 #   branch: main    # optional
 #   index: false    # optional: write context index files under statePath
 
-# Opt-in temporary credential custody: the launcher fills credentials that
-# are missing from the environment from this gitignored, owner-only (600)
-# dotenv file — create it from secrets.env.example. The acknowledgement is
-# required because the plaintext keys exist in both the host workspace and
-# the sandbox VM.
+# Credential custody. Default: proxy-managed — the real keys stay on the host
+# (provisioned with `sbx secret`; see the kit README) and the VM sees only a
+# sentinel. Nothing else to declare here.
 credentials:
-  source: workspace-env-file
-  path: .band/secrets.env
-  acknowledgePlaintextInSandbox: true
+  source: proxy-managed
+
+# Fallback tier (laptop-equivalent, LESS SECURE): a plaintext dotenv file whose
+# keys live in both the workspace and the sandbox VM; the launcher warns when
+# it's used. To opt in, replace the block above with:
+#   credentials:
+#     source: workspace-env-file
+#     path: .band/secrets.env
+#     acknowledgePlaintextInSandbox: true
+# Create the file from secrets.env.example (gitignored, chmod 600).
 
 # Sandbox-owned storage: must live outside the mounted workspace (a direct
 # mount is the host directory — a Linux venv written there would pollute the

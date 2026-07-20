@@ -85,14 +85,30 @@ deployment, override the endpoints in `band.yaml` (or via `BAND_REST_URL` /
 sbx policy allow network --sandbox my-band-agent platform.dev.band.ai
 ```
 
-### Credential custody (v0.1)
+### Credential custody
 
-Credentials are supplied through the opt-in `.band/secrets.env` file
-(`credentials.acknowledgePlaintextInSandbox: true`). This is **laptop-equivalent
-custody**: the plaintext keys exist in your workspace and inside the sandbox VM.
-Proxy-injected credentials that never enter the VM come in a later release.
-Treat the keys as you would any local `.env`: git-ignored, `chmod 600`, rotated
-if leaked.
+Two tiers — prefer the first.
+
+**Injection tier — real keys never enter the VM.** A trusted host-side proxy
+holds the real keys and writes them onto outbound requests; the sandbox only ever
+sees a sentinel. Requires `sbx create --kit`.
+
+- **LLM providers** are built-in `sbx` services — store the one your agent uses:
+  ```bash
+  sbx secret set -g anthropic        # or openai, google, groq, mistral, …
+  ```
+- **Band** is provisioned host-side so the kit's proxy injection can supply it on
+  every request to `app.band.ai` (REST and the WebSocket upgrade):
+  ```bash
+  sbx secret set-custom -g --host app.band.ai \
+    --env BAND_API_KEY --placeholder proxy-managed --value <your-band-key>
+  ```
+
+**Env-file tier — laptop-equivalent, less secure.** The opt-in `.band/secrets.env`
+file puts plaintext keys in both your workspace and the sandbox VM
+(`credentials.acknowledgePlaintextInSandbox: true`); the launcher **warns at
+startup** when this tier is active. Treat the file as any local `.env`:
+git-ignored, `chmod 600`, rotated if leaked. Prefer the injection tier.
 
 ## Your workspace
 
@@ -121,12 +137,12 @@ override the file:
 
 ### Credentials
 
-`.band/secrets.env` is an explicit opt-in
-(`credentials.acknowledgePlaintextInSandbox: true` in `band.yaml`): the
-plaintext keys exist in both your workspace and the sandbox VM, and the
-launcher enforces the guardrails around the file. Setup and the accepted
-names: [`echo-agent/README.md`](echo-agent/README.md#credentials) and its
-`secrets.env.example`.
+See [Credential custody](#credential-custody) for the two tiers and the
+`sbx secret` commands. The env-file (fallback) tier's setup and accepted names
+live in [`echo-agent/README.md`](echo-agent/README.md#credentials) and its
+`secrets.env.example`; the launcher enforces that file's guardrails (gitignored,
+never Git-tracked, owner-only, no symlinks) and warns that it is the less-secure
+tier.
 
 ## How the launch works
 
