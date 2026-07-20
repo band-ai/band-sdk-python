@@ -84,15 +84,21 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     e2e_enabled = os.environ.get("E2E_TESTS_ENABLED") == "true"
     docker_enabled = os.environ.get("DOCKER_TESTS_ENABLED") == "true"
+    sandbox_enabled = os.environ.get("SANDBOX_TESTS_ENABLED") == "true"
     skip_e2e = pytest.mark.skip(reason="set E2E_TESTS_ENABLED=true to run e2e tests")
     skip_docker = pytest.mark.skip(
         reason="set DOCKER_TESTS_ENABLED=true to run docker_build tests"
+    )
+    skip_sandbox = pytest.mark.skip(
+        reason="set SANDBOX_TESTS_ENABLED=true to run sbx sandbox tests"
     )
     for item in items:
         if not e2e_enabled and item.get_closest_marker("e2e"):
             item.add_marker(skip_e2e)
         if not docker_enabled and item.get_closest_marker("docker_build"):
             item.add_marker(skip_docker)
+        if not sandbox_enabled and item.get_closest_marker("sandbox"):
+            item.add_marker(skip_sandbox)
 
 
 @pytest.fixture(autouse=True)
