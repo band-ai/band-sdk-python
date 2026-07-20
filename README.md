@@ -71,11 +71,12 @@ The declarative kit and published GHCR image are separate release deliverables.
 When a sandbox is configured for proxy-managed credentials, the agent never
 holds the real Band API key: it passes the literal `proxy-managed` (exported as
 `band.credentials.PROXY_MANAGED_API_KEY`) as its `api_key`, and a trusted
-host-side proxy swaps in the real credential on the outbound request — replacing
-the REST `X-API-Key` header and injecting it on the WebSocket upgrade, where the
-sentinel rides the existing `api_key` query parameter. The sentinel is a
-non-secret placeholder, not a credential, and authenticates nothing on its own.
-Any deployment without such a proxy must pass a genuine Band API key.
+host-side proxy swaps in the real credential on the outbound request. The SDK
+passes that value unchanged: REST sends it in `X-API-Key`, while the current
+WebSocket transport sends it in the upgrade's `api_key` query parameter. A
+proxy-managed deployment must support both credential locations; otherwise it
+must use a genuine Band API key. The sentinel is a non-secret placeholder, not
+a credential, and authenticates nothing on its own.
 
 See the kit's [credential custody](docker/band_python_kit/README.md#credential-custody-v01)
 for how credentials are supplied today.
