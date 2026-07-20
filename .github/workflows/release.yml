@@ -24,19 +24,21 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
       - name: Generate GitHub App Token
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
           client-id: ${{ secrets.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Release Please
-        uses: googleapis/release-please-action@v5
+        # Commit-pinned to prevent mutable release tags from changing the
+        # release workflow; Dependabot updates this SHA with each v5 release.
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5
         id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -51,12 +53,12 @@ jobs:
     environment: release
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
@@ -64,7 +66,7 @@ jobs:
         run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Install dependencies
         run: uv sync --all-groups
@@ -73,11 +75,108 @@ jobs:
         run: uv build
 
       - name: Publish band-sdk to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+
+  # Publish the kit image + OCI kit artifact to GHCR. Independent of
+  # publish-band: a kit-publish failure (e.g. a quarantine-gate trip) must not
+  # block the PyPI release, which is why this is a sibling job, not a step.
+  publish-kit:
+    needs: [release]
+    if: needs.release.outputs.release_created == 'true'
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    # Shared with the weekly rebuild's call of the same pipeline: both move the
+    # floating tags, so two concurrent publishes could leave `latest` pointing
+    # at whichever finished last. Queue, never cancel a publish mid-run.
+    concurrency:
+      group: kit-ghcr-publish
+      cancel-in-progress: false
+      queue: max
+    uses: ./.github/workflows/kit-publish.yml
+    with:
+      ref: ${{ needs.release.outputs.tag_name }}
+      version: ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}
+      major: ${{ needs.release.outputs.major }}
+      move-floating: true
+
+  # After a successful kit publish, open an automated PR against band-ai/add-band
+  # bumping the catalog bootstrap's pinned release tag. Uses the existing GitHub
+  # App (GITHUB_TOKEN can't open cross-repo PRs, and Actions-token-authored PRs
+  # don't trigger CI). Requires the App installed on band-ai/add-band; inert
+  # (skips) until the add-band catalog entry itself exists.
+  bump-add-band:
+    needs: [release, publish-kit]
+    if: needs.release.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    # Everything here runs on the App token; don't inherit the workflow's
+    # write-scoped GITHUB_TOKEN permissions this job never uses.
+    permissions: {}
+    steps:
+      - name: Generate GitHub App Token (scoped to add-band)
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: band-ai
+          repositories: add-band
+
+      - name: Checkout add-band
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          repository: band-ai/add-band
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open the pinned-tag bump PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}
+        run: |
+          bootstrap="band-python-kit/bootstrap.sh"
+          if [ ! -f "$bootstrap" ]; then
+            echo "add-band band-python-kit entry not present yet; nothing to bump."
+            exit 0
+          fi
+          new_tag="band-sdk-v${VERSION}"
+          # The bootstrap pins the release tarball by full component-prefixed
+          # tag (band-sdk-vX.Y.Z, not vX.Y.Z).
+          sed -i -E "s|band-sdk-v[0-9]+\.[0-9]+\.[0-9]+|${new_tag}|g" "$bootstrap"
+          # A regex miss must not read as "already pinned": if the pin format
+          # ever changes, fail loudly instead of silently never bumping again.
+          if ! grep -qF "$new_tag" "$bootstrap"; then
+            echo "::error::no band-sdk-vX.Y.Z pin found in ${bootstrap} — its pin format changed and this bump job needs updating"
+            exit 1
+          fi
+          if git diff --quiet; then
+            echo "add-band already pinned to ${new_tag}; nothing to do."
+            exit 0
+          fi
+          branch="chore/bump-band-python-kit-${VERSION}"
+          git config user.name "band-release-bot"
+          git config user.email "release-bot@band.ai"
+          git switch -c "$branch"
+          git commit -am "chore: bump band-python-kit to ${new_tag}"
+          # Plain --force: the branch is bot-owned with deterministic per-run
+          # content, and a release re-run must simply overwrite the previous
+          # attempt. (--force-with-lease is rejected as stale here — the fresh
+          # checkout has no remote-tracking ref for the branch to lease against.)
+          git push -u origin "$branch" --force
+          if [ -z "$(gh pr list --repo band-ai/add-band --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --repo band-ai/add-band \
+              --head "$branch" \
+              --title "chore: bump band-python-kit to ${new_tag}" \
+              --body "Automated pin bump following the ${new_tag} band-sdk release. Merging is a human step (add-band CI validates the entry)."
+          else
+            echo "PR for ${branch} already open; the push updated it."
+          fi
 
   summary:
-    needs: [release, publish-band]
-    if: needs.release.outputs.release_created == 'true'
+    needs: [release, publish-band, publish-kit, bump-add-band]
+    if: ${{ always() && needs.release.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Publish release summary
@@ -86,3 +185,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}" >> $GITHUB_STEP_SUMMARY
           echo "**Tag:** ${{ needs.release.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Artifact | Outcome |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| PyPI (band-sdk) | ${{ needs.publish-band.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GHCR kit image + artifact | ${{ needs.publish-kit.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| add-band pin bump PR | ${{ needs.bump-add-band.result }} |" >> $GITHUB_STEP_SUMMARY

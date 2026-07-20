@@ -1,0 +1,46 @@
+schemaVersion: "1"
+
+agent:
+  id: replace-with-agent-id
+  entrypoint: main.py
+
+# Production endpoints. For another Band deployment (e.g. dev), override
+# here or via BAND_REST_URL / BAND_WS_URL, and grant the host to the sandbox:
+#   sbx policy allow network --sandbox <name> <host>
+band:
+  restUrl: https://app.band.ai
+  wsUrl: wss://app.band.ai/api/v1/socket/websocket
+
+project:
+  path: .
+
+# Optional: materialize the project from Git instead of shipping it in the
+# workspace. The repository is cloned into project.path at startup (before
+# dependency sync), so set project.path to a subdirectory (e.g. `app`) —
+# the workspace root holds this file. On restart an existing checkout is
+# validated and reused, never re-cloned. HTTPS URLs are the sandbox path
+# (SSH needs ~/.ssh, which sandboxes don't mount); non-GitHub hosts need
+# `sbx policy allow network`.
+# repo:
+#   url: https://github.com/your-org/your-agent-project.git
+#   branch: main    # optional
+#   index: false    # optional: write context index files under statePath
+
+# Opt-in temporary credential custody: the launcher fills credentials that
+# are missing from the environment from this gitignored, owner-only (600)
+# dotenv file — create it from secrets.env.example. The acknowledgement is
+# required because the plaintext keys exist in both the host workspace and
+# the sandbox VM.
+credentials:
+  source: workspace-env-file
+  path: .band/secrets.env
+  acknowledgePlaintextInSandbox: true
+
+# Sandbox-owned storage: must live outside the mounted workspace (a direct
+# mount is the host directory — a Linux venv written there would pollute the
+# host) and outside the immutable SDK venv.
+runtime:
+  environmentPath: /home/agent/.local/share/band-kit/venv
+  statePath: /home/agent/.local/share/band-kit/state
+  cachePath: /home/agent/.local/share/band-kit/cache
+  logPath: /home/agent/.local/share/band-kit/logs

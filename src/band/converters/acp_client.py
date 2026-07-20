@@ -14,10 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
-    """Extracts room_id to session_id mappings from platform history.
+    """Extracts room-to-session resume candidates from platform history.
 
-    Scans platform history for ACP client-specific metadata to rebuild
-    the mapping between Band room_ids and remote ACP session_ids.
+    Scans platform history for ACP client-specific metadata. The adapter validates
+    each candidate with the connected ACP agent before reusing it.
 
     The converter looks for messages with metadata containing:
     - acp_client_session_id: The remote ACP agent's session identifier
@@ -31,7 +31,7 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
             raw: Platform history from format_history_for_llm().
 
         Returns:
-            ACPClientSessionState with room_to_session mappings.
+            ACPClientSessionState with room-to-session resume candidates.
         """
         # Runtime import to avoid circular import at module load time
         from band.integrations.acp.client_types import ACPClientSessionState
@@ -46,7 +46,7 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
             if session_id and room_id:
                 room_to_session[room_id] = session_id
                 logger.debug(
-                    "Restored ACP client session mapping: %s -> %s",
+                    "Found persisted ACP session candidate: %s -> %s",
                     room_id,
                     session_id,
                 )
@@ -54,7 +54,7 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
         state = ACPClientSessionState(room_to_session=room_to_session)
 
         logger.debug(
-            "Converted ACP client history: %d room-session mappings",
+            "Converted ACP client history: %d room-session candidates",
             len(room_to_session),
         )
 

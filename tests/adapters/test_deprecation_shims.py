@@ -212,11 +212,11 @@ class TestUniversalBooleanShims:
         assert Emit.TASK_EVENTS not in adapter.features.emit
 
     def test_codex_supported_features_surface(self) -> None:
-        """SUPPORTED_EMIT advertises the three Codex-supported emit channels."""
+        """SUPPORTED_EMIT advertises the Codex-supported emit channels."""
         from band.adapters.codex import CodexAdapter
 
         assert CodexAdapter.SUPPORTED_EMIT == frozenset(
-            {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS}
+            {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
         )
 
 
@@ -356,6 +356,28 @@ class TestLettaApiKeyShim:
 
         with pytest.raises(BandConfigError, match="Cannot pass both"):
             LettaAdapterConfig(provider_key="new-key", api_key="old-key")
+
+
+class TestLettaMCPKwargShim:
+    """Legacy Letta MCP kwargs must populate the nested MCP config."""
+
+    def test_legacy_mcp_kwargs_warn_and_populate_external_config(self) -> None:
+        from band.adapters.letta import LettaAdapterConfig
+
+        with pytest.warns(
+            DeprecationWarning,
+            match="mcp_server_url.*mcp_server_name.*mcp=LettaMCPConfig",
+        ):
+            config = LettaAdapterConfig(
+                mcp_server_url="http://mcp:9000/sse",
+                mcp_server_name="legacy-band",
+            )
+
+        assert config.mcp.mode == "external"
+        assert config.mcp.server_url == "http://mcp:9000/sse"
+        assert config.mcp.server_name == "legacy-band"
+        assert config.mcp_server_url is None
+        assert config.mcp_server_name is None
 
 
 class TestOpencodeDeprecationShims:

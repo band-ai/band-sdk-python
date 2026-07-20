@@ -264,21 +264,35 @@ class CodexTokenUsage:
         the previous one — so a full replacement is correct here.
         Per-turn deltas are recomputed as ``cumulative - anchor`` so that
         multi-event turns accumulate correctly.
+
+        The app-server nests the counters as
+        ``{"tokenUsage": {"total": {...cumulative...}, "last": {...this
+        request...}}}`` with the keys ``inputTokens`` / ``outputTokens`` /
+        ``reasoningOutputTokens`` / ``totalTokens``. We read the cumulative
+        ``total`` block. Older/flat shapes (a top-level ``usage`` object, or
+        the counters at the root) are still accepted so a protocol rollback
+        doesn't silently zero the counts.
         """
-        usage = params.get("usage") or params
+        token_usage = params.get("tokenUsage")
+        if isinstance(token_usage, dict):
+            # Current schema: cumulative counters live under tokenUsage.total.
+            usage = token_usage.get("total") or token_usage.get("last") or {}
+        else:
+            # Back-compat: flat usage object, or counters at the top level.
+            usage = params.get("usage") or params
         if not isinstance(usage, dict):
             return
 
-        def _get(key_camel: str, key_snake: str) -> int:
-            val = usage.get(key_camel)
-            if val is None:
-                val = usage.get(key_snake)
-            if val is None:
-                return 0
-            try:
-                return int(val)
-            except (ValueError, TypeError):
-                return 0
+        def _get(*keys: str) -> int:
+            """First present key across schema variants, coerced to int."""
+            for key in keys:
+                val = usage.get(key)
+                if val is not None:
+                    try:
+                        return int(val)
+                    except (ValueError, TypeError):
+                        return 0
+            return 0
 
         prev_input = self.input_tokens
         prev_output = self.output_tokens
@@ -287,16 +301,13 @@ class CodexTokenUsage:
 
         new_input = _get("inputTokens", "input_tokens")
         new_output = _get("outputTokens", "output_tokens")
-        new_reasoning = _get("reasoningTokens", "reasoning_tokens")
-        total = usage.get("totalTokens")
-        if total is None:
-            total = usage.get("total_tokens")
-        if total is not None:
-            try:
-                new_total = int(total)
-            except (ValueError, TypeError):
-                new_total = new_input + new_output + new_reasoning
-        else:
+        # Newer codex names reasoning ``reasoningOutputTokens``; keep the older
+        # ``reasoningTokens`` / snake variants as fallbacks.
+        new_reasoning = _get(
+            "reasoningOutputTokens", "reasoningTokens", "reasoning_tokens"
+        )
+        new_total = _get("totalTokens", "total_tokens")
+        if new_total == 0:
             new_total = new_input + new_output + new_reasoning
 
         # Cumulative counters should never go backwards.  Late events from a
@@ -339,6 +350,21 @@ class CodexTokenUsage:
             0, self.reasoning_tokens - self._turn_anchor_reasoning
         )
         self.turn_total_tokens = max(0, self.total_tokens - self._turn_anchor_total)
+
+        # Counts only (no content) — safe to log, useful for diagnosing a
+        # schema drift that would otherwise silently zero usage.
+        logger.debug(
+            "codex token usage (cumulative): input=%d output=%d reasoning=%d "
+            "total=%d; this turn: input=%d output=%d reasoning=%d total=%d",
+            self.input_tokens,
+            self.output_tokens,
+            self.reasoning_tokens,
+            self.total_tokens,
+            self.turn_input_tokens,
+            self.turn_output_tokens,
+            self.turn_reasoning_tokens,
+            self.turn_total_tokens,
+        )
 
     def reset_turn_deltas(self) -> None:
         """Anchor per-turn deltas to the current cumulatives.

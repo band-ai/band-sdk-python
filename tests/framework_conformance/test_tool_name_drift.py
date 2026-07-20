@@ -19,7 +19,6 @@ for individual names.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import pytest
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
@@ -35,9 +34,10 @@ from band.runtime.tools import (
 if _HAS_CLAUDE_SDK:
     from band.integrations.claude_sdk.tools import build_band_sdk_tools
 
-_SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "band"
-if not _SRC_ROOT.is_dir():
-    raise FileNotFoundError(f"Source root not found: {_SRC_ROOT}")
+from tests.paths import SRC_ROOT
+
+if not SRC_ROOT.is_dir():
+    raise FileNotFoundError(f"Source root not found: {SRC_ROOT}")
 
 
 def _extract_tool_names(source: str) -> set[str]:
@@ -67,7 +67,7 @@ def _extract_tool_names(source: str) -> set[str]:
 class TestClaudeSDKAdapterToolDrift:
     """Claude SDK adapter (adapters/claude_sdk.py) must cover all tools."""
 
-    _FILE = _SRC_ROOT / "adapters" / "claude_sdk.py"
+    _FILE = SRC_ROOT / "adapters" / "claude_sdk.py"
 
     def test_derives_base_tools_from_central_registry(self):
         """Verify the adapter imports BASE_TOOL_NAMES instead of hardcoding."""
@@ -106,7 +106,7 @@ class TestClaudeSDKAdapterToolDrift:
 class TestClaudeSDKIntegrationToolDrift:
     """Claude SDK integration (integrations/claude_sdk/tools.py) — chat tools only."""
 
-    _FILE = _SRC_ROOT / "integrations" / "claude_sdk" / "tools.py"
+    _FILE = SRC_ROOT / "integrations" / "claude_sdk" / "tools.py"
 
     def test_derives_tool_list_from_central_registry(self):
         """Verify BAND_CHAT_TOOLS is derived from CHAT_TOOL_NAMES."""
@@ -126,7 +126,7 @@ class TestClaudeSDKIntegrationToolDrift:
 class TestClaudeSDKPromptsToolDrift:
     """Claude SDK prompts (integrations/claude_sdk/prompts.py) — chat tools only."""
 
-    _FILE = _SRC_ROOT / "integrations" / "claude_sdk" / "prompts.py"
+    _FILE = SRC_ROOT / "integrations" / "claude_sdk" / "prompts.py"
 
     def test_all_chat_tools_documented_in_prompt(self):
         """Every chat tool is mentioned in the system prompt template."""
@@ -147,7 +147,7 @@ class TestLangGraphToolDrift:
     names — there are intentionally no per-tool string literals to find.
     """
 
-    _FILE = _SRC_ROOT / "integrations" / "langgraph" / "langchain_tools.py"
+    _FILE = SRC_ROOT / "integrations" / "langgraph" / "langchain_tools.py"
 
     def test_derives_tools_from_central_registry(self):
         source = self._FILE.read_text()
@@ -167,7 +167,7 @@ class TestCrewAIToolDrift:
     wrappers. The drift check now scans the shared module.
     """
 
-    _FILE = _SRC_ROOT / "integrations" / "crewai" / "tools.py"
+    _FILE = SRC_ROOT / "integrations" / "crewai" / "tools.py"
 
     def test_all_tools_registered(self):
         """Every tool in TOOL_MODELS has a CrewAI tool class."""
@@ -183,7 +183,7 @@ class TestCrewAIToolDrift:
 class TestPydanticAIToolDrift:
     """PydanticAI adapter (adapters/pydantic_ai.py)."""
 
-    _FILE = _SRC_ROOT / "adapters" / "pydantic_ai.py"
+    _FILE = SRC_ROOT / "adapters" / "pydantic_ai.py"
 
     def test_all_tools_registered(self):
         """Every tool in TOOL_MODELS has a PydanticAI tool function."""
@@ -204,7 +204,7 @@ class TestGeminiToolDrift:
     string literals.  Instead we verify it uses the dynamic schema mechanism.
     """
 
-    _FILE = _SRC_ROOT / "adapters" / "gemini.py"
+    _FILE = SRC_ROOT / "adapters" / "gemini.py"
 
     def test_derives_tools_from_openai_schemas(self):
         """Verify the adapter builds tools via get_openai_tool_schemas()."""
@@ -226,7 +226,7 @@ class TestGeminiToolDrift:
 class TestParlantToolDrift:
     """Parlant integration (integrations/parlant/tools.py) — chat tools only."""
 
-    _FILE = _SRC_ROOT / "integrations" / "parlant" / "tools.py"
+    _FILE = SRC_ROOT / "integrations" / "parlant" / "tools.py"
 
     def test_all_chat_tools_registered(self):
         """Every chat tool has a Parlant tool function."""

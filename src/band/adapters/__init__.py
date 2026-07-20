@@ -7,6 +7,7 @@ Install the extra you need::
     uv add band-sdk[anthropic]
     uv add band-sdk[pydantic_ai]
     uv add band-sdk[claude_sdk]
+    uv add band-sdk[copilot_sdk]
     uv add band-sdk[parlant]
     uv add band-sdk[crewai]
     uv add band-sdk[gemini]
@@ -20,6 +21,7 @@ Install the extra you need::
 
 from __future__ import annotations
 
+import importlib
 from typing import TYPE_CHECKING
 
 # Type-only imports for static analysis (pyrefly, mypy, etc.)
@@ -28,6 +30,14 @@ if TYPE_CHECKING:
     from band.adapters.anthropic import AnthropicAdapter as AnthropicAdapter
     from band.adapters.pydantic_ai import PydanticAIAdapter as PydanticAIAdapter
     from band.adapters.claude_sdk import ClaudeSDKAdapter as ClaudeSDKAdapter
+    from band.adapters.copilot_sdk import CopilotSDKAdapter as CopilotSDKAdapter
+    from band.adapters.copilot_sdk import (
+        CopilotSDKAdapterConfig as CopilotSDKAdapterConfig,
+    )
+    from band.adapters.copilot_acp import CopilotACPAdapter as CopilotACPAdapter
+    from band.adapters.copilot_acp import (
+        CopilotACPAdapterConfig as CopilotACPAdapterConfig,
+    )
     from band.adapters.parlant import ParlantAdapter as ParlantAdapter
     from band.adapters.crewai import CrewAIAdapter as CrewAIAdapter
     from band.adapters.crewai_flow import (
@@ -58,6 +68,10 @@ __all__ = [
     "AnthropicAdapter",
     "PydanticAIAdapter",
     "ClaudeSDKAdapter",
+    "CopilotSDKAdapter",
+    "CopilotSDKAdapterConfig",
+    "CopilotACPAdapter",
+    "CopilotACPAdapterConfig",
     "ParlantAdapter",
     "CrewAIAdapter",
     "CrewAIFlowAdapter",
@@ -81,102 +95,43 @@ __all__ = [
 ]
 
 
+# Submodule (under band.adapters) providing each lazily imported name.
+_LAZY_IMPORTS: dict[str, str] = {
+    "LangGraphAdapter": "langgraph",
+    "AnthropicAdapter": "anthropic",
+    "PydanticAIAdapter": "pydantic_ai",
+    "ClaudeSDKAdapter": "claude_sdk",
+    "CopilotSDKAdapter": "copilot_sdk",
+    "CopilotSDKAdapterConfig": "copilot_sdk",
+    "CopilotACPAdapter": "copilot_acp",
+    "CopilotACPAdapterConfig": "copilot_acp",
+    "ParlantAdapter": "parlant",
+    "CrewAIAdapter": "crewai",
+    "CrewAIFlowAdapter": "crewai_flow",
+    "A2AAdapter": "a2a",
+    "A2AGatewayAdapter": "a2a_gateway",
+    "CodexAdapter": "codex",
+    "CodexAdapterConfig": "codex",
+    "ACPClientAdapter": "acp",
+    "ACPServer": "acp",
+    "BandACPServerAdapter": "acp",
+    "AgnoAdapter": "agno",
+    "GeminiAdapter": "gemini",
+    "GoogleADKAdapter": "google_adk",
+    "OpencodeAdapter": "opencode",
+    "OpencodeAdapterConfig": "opencode",
+    "LettaAdapter": "letta",
+    "LettaAdapterConfig": "letta",
+    "SlackAdapter": "slack",
+    "SlackApp": "slack",
+    "SlackSessionState": "slack",
+}
+
+
 def __getattr__(name: str) -> type:
     """Lazy import adapters to avoid loading optional dependencies."""
-    if name == "LangGraphAdapter":
-        from band.adapters.langgraph import LangGraphAdapter
-
-        return LangGraphAdapter
-    elif name == "AnthropicAdapter":
-        from band.adapters.anthropic import AnthropicAdapter
-
-        return AnthropicAdapter
-    elif name == "PydanticAIAdapter":
-        from band.adapters.pydantic_ai import PydanticAIAdapter
-
-        return PydanticAIAdapter
-    elif name == "ClaudeSDKAdapter":
-        from band.adapters.claude_sdk import ClaudeSDKAdapter
-
-        return ClaudeSDKAdapter
-    elif name == "ParlantAdapter":
-        from band.adapters.parlant import ParlantAdapter
-
-        return ParlantAdapter
-    elif name == "CrewAIAdapter":
-        from band.adapters.crewai import CrewAIAdapter
-
-        return CrewAIAdapter
-    elif name == "CrewAIFlowAdapter":
-        from band.adapters.crewai_flow import CrewAIFlowAdapter
-
-        return CrewAIFlowAdapter
-    elif name == "A2AAdapter":
-        from band.adapters.a2a import A2AAdapter
-
-        return A2AAdapter
-    elif name == "A2AGatewayAdapter":
-        from band.adapters.a2a_gateway import A2AGatewayAdapter
-
-        return A2AGatewayAdapter
-    elif name == "CodexAdapter":
-        from band.adapters.codex import CodexAdapter
-
-        return CodexAdapter
-    elif name == "CodexAdapterConfig":
-        from band.adapters.codex import CodexAdapterConfig
-
-        return CodexAdapterConfig
-    elif name in (
-        "ACPClientAdapter",
-        "ACPServer",
-        "BandACPServerAdapter",
-    ):
-        from band.adapters.acp import (
-            ACPClientAdapter,
-            ACPServer,
-            BandACPServerAdapter,
-        )
-
-        if name == "ACPClientAdapter":
-            return ACPClientAdapter
-        elif name == "ACPServer":
-            return ACPServer
-        return BandACPServerAdapter
-    elif name == "AgnoAdapter":
-        from band.adapters.agno import AgnoAdapter
-
-        return AgnoAdapter
-    elif name == "GeminiAdapter":
-        from band.adapters.gemini import GeminiAdapter
-
-        return GeminiAdapter
-    elif name == "GoogleADKAdapter":
-        from band.adapters.google_adk import GoogleADKAdapter
-
-        return GoogleADKAdapter
-    elif name == "OpencodeAdapter":
-        from band.adapters.opencode import OpencodeAdapter
-
-        return OpencodeAdapter
-    elif name == "OpencodeAdapterConfig":
-        from band.adapters.opencode import OpencodeAdapterConfig
-
-        return OpencodeAdapterConfig
-    elif name == "LettaAdapter":
-        from band.adapters.letta import LettaAdapter
-
-        return LettaAdapter
-    elif name == "LettaAdapterConfig":
-        from band.adapters.letta import LettaAdapterConfig
-
-        return LettaAdapterConfig
-    elif name in ("SlackAdapter", "SlackApp", "SlackSessionState"):
-        from band.adapters.slack import SlackAdapter, SlackApp, SlackSessionState
-
-        if name == "SlackAdapter":
-            return SlackAdapter
-        elif name == "SlackApp":
-            return SlackApp
-        return SlackSessionState
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module_name = _LAZY_IMPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(f".{module_name}", __name__)
+    return getattr(module, name)

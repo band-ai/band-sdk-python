@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import socket
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager, suppress
+from collections.abc import Awaitable, Callable, Generator, Sequence
+from contextlib import asynccontextmanager, contextmanager, suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,6 +47,27 @@ LOCAL_MCP_HEALTH_PATH = "/healthz"
 SERVER_START_TIMEOUT_S = 5.0
 
 MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
+
+
+class EmbeddedUvicornServer(uvicorn.Server):
+    """A uvicorn server that leaves process signal handling to its host.
+
+    uvicorn's ``serve()`` captures SIGINT/SIGTERM for itself. Embedded in a
+    host process that may run several servers over its lifetime, that hijacks
+    the host's signal handling, and registers the server as process state that
+    other libraries introspect: sse_starlette discovers "the" uvicorn server
+    through the installed signal handler and latches a process-global shutdown
+    flag when it stops mid-stream — after which every later SSE response in
+    the process (any subsequent server's) closes right after its headers.
+    Shutdown here is driven programmatically via ``should_exit`` (see
+    ``LocalMCPServer.stop``), so signal capture is dropped entirely.
+    """
+
+    @contextmanager
+    def capture_signals(self) -> Generator[None, None, None]:
+        yield
+
+
 RoomToolResolver = Callable[[str], AgentToolsProtocol | None]
 
 
@@ -309,7 +331,13 @@ def _serialize_tool_result(result: Any) -> dict[str, Any]:
 
 
 class LocalMCPServer:
-    """A local localhost-only MCP server with SSE and streamable HTTP endpoints."""
+    """A local MCP server with SSE and streamable HTTP endpoints.
+
+    Binds to loopback by default. An explicit non-loopback ``host`` (e.g.
+    ``"0.0.0.0"``) is allowed for callers whose MCP client runs in a container
+    and reaches back over the docker bridge — but it exposes the agent's tools
+    to the local network, so only opt in on an isolated/trusted host.
+    """
 
     def __init__(
         self,
@@ -323,8 +351,6 @@ class LocalMCPServer:
         http_path: str = LOCAL_MCP_HTTP_PATH,
         message_path: str = LOCAL_MCP_MESSAGE_PATH,
     ) -> None:
-        if host != LOCAL_MCP_HOST:
-            raise ValueError(f"LocalMCPServer only supports host={LOCAL_MCP_HOST}")
         if port_min > port_max:
             raise ValueError("port_min must be less than or equal to port_max")
 
@@ -373,7 +399,7 @@ class LocalMCPServer:
         reserved_socket, port = self._reserve_socket()
         server = self._build_server()
         app = self._build_app(server)
-        uvicorn_server = uvicorn.Server(
+        uvicorn_server = EmbeddedUvicornServer(
             uvicorn.Config(
                 app,
                 host=self._host,
@@ -456,6 +482,17 @@ class LocalMCPServer:
         http_transport = StreamableHTTPServerTransport(mcp_session_id=None)
         initialization_options = server.create_initialization_options()
 
+        def log_run_failure(task: asyncio.Task[Any]) -> None:
+            # server.run is the app's single message loop: if it dies, every
+            # subsequent request on the transport fails mid-response with no
+            # trace. Surface the exception instead of letting it vanish.
+            if not task.cancelled() and task.exception() is not None:
+                logger.error(
+                    "Local MCP server %s message loop crashed",
+                    self._name,
+                    exc_info=task.exception(),
+                )
+
         @asynccontextmanager
         async def lifespan(_: Starlette):
             async with http_transport.connect() as streams:
@@ -466,6 +503,7 @@ class LocalMCPServer:
                         initialization_options,
                     )
                 )
+                http_task.add_done_callback(log_run_failure)
                 try:
                     yield
                 finally:
@@ -511,8 +549,16 @@ class LocalMCPServer:
             reserved_socket.setblocking(False)
             return reserved_socket, port
 
+        # Scan the range from a random starting offset (wrapping around), not
+        # first-fit from port_min: first-fit hands a new server the port a
+        # just-stopped sibling freed moments ago, and that port's previous
+        # consumers (e.g. an MCP client subprocess still winding down) keep
+        # sending stale session traffic that wedges the new server's transport.
         last_error: OSError | None = None
-        for port in range(self._port_min, self._port_max + 1):
+        span = self._port_max - self._port_min + 1
+        start = random.randrange(span)
+        for offset in range(span):
+            port = self._port_min + (start + offset) % span
             reserved_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             reserved_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:

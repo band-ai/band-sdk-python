@@ -12,16 +12,24 @@ The surface is small — methods on ``ReplyCapture``:
 - ``wait_for_delivery`` — block until a recipient's delivery status for a message
   reaches one of the given ``DeliveryStatus`` values; the general delivery waiter.
 - ``wait_for_processed`` — the common barrier built on ``wait_for_delivery``:
-  block until a recipient has *processed* a given message.
+  block until a recipient has *processed* a given message. Use it before reading
+  *durable* turn state (memory, tool calls, usage, events) — persisted by the time a
+  message is processed.
+- ``wait_for_reply`` — the reply barrier: block until the turn is processed *and* the
+  agent's reply frame has actually been captured. Use it (not ``wait_for_processed``)
+  before asserting on captured reply text — the reply's ``message_created`` frame and
+  the delivery-status ``message_updated`` frame are independent, unordered platform
+  events, so the buffer can lag the processed signal.
 - ``delivery_status`` / ``delivery_history`` — inspect the current state and the
   observed transition sequence (e.g. ``[PROCESSING, PROCESSED]``).
 
 Why this is enough: the room processes a room's messages strictly one-at-a-time
 in FIFO order (a single per-room process loop), and the agent marks a message
-``processed`` only *after* its reply has been emitted. So waiting for the last
-message you sent to be processed (its id is returned by ``send_message``) proves
-every earlier message was handled *and* that the agent's reply is already in
-``messages`` — no probe message and no reply-text matching required.
+``processed`` when its handler completes. So waiting for the last message you sent
+to be processed (its id is returned by ``send_message``) proves every earlier
+message was handled — no probe message and no reply-text matching required. Note:
+``processed`` does **not** imply a reply was emitted — replies are optional (the LLM
+may not call ``band_send_message``), so never infer reply presence from the barrier.
 """
 
 from __future__ import annotations
@@ -31,8 +39,8 @@ import logging
 import sys
 from collections import defaultdict
 from collections.abc import AsyncIterator, Callable, Iterable
-from contextlib import asynccontextmanager
-from datetime import datetime
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 from band_rest import AsyncRestClient
@@ -55,13 +63,14 @@ from tests.e2e.baseline.toolkit.observations import (
     Tasks,
     Thoughts,
     ToolCalls,
+    Usage,
 )
 from tests.e2e.baseline.toolkit.provisioning import (
     ProvisionedAgent,
     agent_rest_client,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.helpers import TrackingWebSocketClient
+from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +170,26 @@ class ReplyCapture:
         """Ordered, de-duplicated delivery transitions seen for the pair."""
         return list(self._history[(message_id, recipient_id)])
 
+    def turn_boundary(self) -> datetime:
+        """Server timestamp of the latest captured reply — a between-turns boundary.
+
+        Use it as ``since`` for a later durable read (``tool_calls`` / ``usage``) so
+        that read is scoped to the *next* turn, even across a reused capture or a
+        stop/restart (the value is a plain timestamp that carries over the capture's
+        lifetime). Naive timestamps are treated as UTC (the platform stores UTC),
+        matching the orphan-sweep coercion. Call it after a completion barrier: it
+        raises if no reply has been captured yet (an empty buffer would otherwise
+        surface as an opaque ``IndexError``).
+        """
+        if not self.messages:
+            raise RuntimeError(
+                "turn_boundary() needs a captured reply; call it after wait_for_processed"
+            )
+        # Normalize a trailing Z before parsing, matching the src/band convention.
+        raw = self.messages[-1].inserted_at.replace("Z", "+00:00")
+        stamp = datetime.fromisoformat(raw)
+        return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
     def _delivery_error(self, message_id: str, recipient_id: str) -> str:
         """Best-effort last-attempt error string, for failure diagnostics."""
         recipient = self._delivery.get(message_id, {}).get(recipient_id) or {}
@@ -227,8 +256,10 @@ class ReplyCapture:
         Driven by ``message_updated`` delivery-state events, not chat text — so
         it is immune to how (or whether) the agent phrases a reply. Per-room FIFO
         means a processed barrier message proves every earlier message was
-        processed too, and because ``PROCESSED`` is reported only after the reply
-        is emitted, that reply is already in ``messages`` once this returns.
+        processed too. This proves the *turn* finished and its durable state is
+        persisted; it does **not** prove the reply's ``message_created`` frame has
+        been captured — that frame is an independent, unordered platform event, so
+        to assert on reply text wait on ``wait_for_reply`` instead.
 
         ``PROCESSED`` is the only success terminal: ``FAILED`` is transient (the
         platform retries), so we wait through it rather than giving up. On
@@ -250,6 +281,63 @@ class ReplyCapture:
                 f"{last.value if last else 'none'}"
                 f"{self._delivery_error(message_id, recipient_id)}"
             ) from None
+
+    async def wait_for_reply(
+        self,
+        message_id: str,
+        recipient_id: str,
+        *,
+        since: int = 0,
+        deadline_s: float | None = None,
+    ) -> Replies:
+        """Block until ``recipient_id`` has PROCESSED ``message_id`` *and* a reply by
+        ``recipient_id`` (past cursor ``since``) is captured; return that reply window.
+
+        The reply barrier — use it instead of ``wait_for_processed`` whenever the test
+        then asserts on captured reply *text*. ``wait_for_processed`` only proves the
+        turn finished: the reply arrives as a ``message_created`` frame the platform
+        emits *independently* of the delivery-status ``message_updated`` frame (a
+        different row, a different write), with no cross-frame ordering guarantee. So
+        the PROCESSED frame can reach the observer a beat before the reply's frame, and
+        reading ``messages`` the instant ``wait_for_processed`` returns races that gap
+        and can see an empty buffer. Waiting on the reply itself closes the race
+        deterministically, and is event-driven — the deadline is a *failure* bound, not
+        a success signal.
+
+        The reply is scoped to ``recipient_id``: the wait keys on *its* PROCESSED signal,
+        so it waits for *its* reply (a peer's own captured message can't satisfy it in a
+        multi-agent room). A reply by some other agent isn't gated by this signal — wait
+        on that with ``wait_until`` instead. Pair with ``snapshot()`` across a reused
+        capture: pass the pre-send cursor as ``since`` so only this turn's replies count.
+        On timeout the error says whether the turn never finished (stuck) or finished
+        without a reply (silent), so a failure is diagnosable rather than a bare empty
+        buffer.
+        """
+
+        def window() -> Replies:
+            return self.messages.since(since).from_sender(recipient_id)
+
+        def ready(_messages: list[MessageCreatedPayload]) -> bool:
+            return self.delivery_status(
+                message_id, recipient_id
+            ) == DeliveryStatus.PROCESSED and bool(window())
+
+        try:
+            await self.wait_until(ready, deadline_s=deadline_s)
+        except TimeoutError:
+            status = self.delivery_status(message_id, recipient_id)
+            if status == DeliveryStatus.PROCESSED:
+                raise TimeoutError(
+                    f"{recipient_id} processed message {message_id} in room "
+                    f"{self.room_id} but captured no reply from it"
+                ) from None
+            raise TimeoutError(
+                f"{recipient_id} did not process message {message_id} in room "
+                f"{self.room_id}; last delivery status: "
+                f"{status.value if status else 'none'}"
+                f"{self._delivery_error(message_id, recipient_id)}"
+            ) from None
+        return window()
 
     def _require_user_ops(self) -> UserOps:
         """Return the bound ``UserOps`` or raise (durable reads need it).
@@ -298,6 +386,34 @@ class ReplyCapture:
             include_memory=include_memory,
         )
 
+    async def usage(
+        self,
+        *,
+        sender_id: str | None = None,
+        since: datetime | None = None,
+        limit: int = 100,
+    ) -> Usage:
+        """Read this room's per-turn token usage (call after the turn settles).
+
+        Reads the persisted ``usage`` events, so the agent must run with
+        ``Emit.USAGE`` on, and this should follow a completion barrier such as
+        ``wait_for_processed`` (the platform marks a message ``processed`` only
+        after the reply is emitted, by which point the turn's usage event is
+        already persisted). Pass ``sender_id`` to keep only one agent's usage.
+
+        Comes back empty for an adapter that cannot report usage (server-side
+        execution) — the honest N-A. Without ``since`` this returns *every*
+        usage record in the room; pass ``since`` (a server timestamp) to scope
+        to a single turn when reusing a capture across turns.
+        """
+        return await Usage.read(
+            self._require_user_ops(),
+            self.room_id,
+            sender_id=sender_id,
+            since=since,
+            limit=limit,
+        )
+
     async def memory(
         self,
         agent: ProvisionedAgent,
@@ -311,7 +427,6 @@ class ReplyCapture:
         segment: Any | None = None,
         content_query: str | None = None,
         status: Any | None = None,
-        page_size: int = 50,
     ) -> MemoryObservation:
         """Read both layers of ``agent``'s memory for the turn (after the barrier).
 
@@ -321,9 +436,10 @@ class ReplyCapture:
         memories API via the agent's own key -- hence the ``agent`` arg).
 
         The ``scope``/``system``/``type``/``segment``/``content_query``/``status``
-        filters narrow the store read. Needs ``user_ops`` and ``settings`` (both
-        bound by the ``reply_capture`` fixture); the agent must run with
-        ``Emit.EXECUTION`` for the call layer to be populated.
+        filters narrow the store read. ``limit`` caps both layers (call events and
+        stored records). Needs ``user_ops`` and ``settings`` (both bound by the
+        ``reply_capture`` fixture); the agent must run with ``Emit.EXECUTION`` for
+        the call layer to be populated.
         """
         user_ops = self._require_user_ops()
         if self._settings is None:
@@ -350,7 +466,7 @@ class ReplyCapture:
                 segment=segment,
                 content_query=content_query,
                 status=status,
-                page_size=page_size,
+                limit=limit,
             ),
         )
         return MemoryObservation(calls=calls, stored=stored)
@@ -449,3 +565,9 @@ async def reply_capture(
         yield capture
     finally:
         await ws.leave_chat_room_channel(room_id)
+
+
+# Type of the ``reply_capture`` fixture: call with a room id, get a
+# ``ReplyCapture`` async context manager. Shared so smokes type their fixture
+# parameter without each redefining the same alias.
+CaptureFactory = Callable[[str], AbstractAsyncContextManager[ReplyCapture]]

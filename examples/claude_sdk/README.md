@@ -46,7 +46,7 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key"
 
 ## Quick Start
 
-```python
+```python notest
 from band import Agent
 from band.adapters import ClaudeSDKAdapter
 
@@ -101,11 +101,13 @@ Features:
 Enable extended thinking for complex reasoning tasks:
 
 ```python
+from band.core.types import AdapterFeatures, Emit
+
 adapter = ClaudeSDKAdapter(
     model="opus",
     fallback_model="sonnet",
     max_thinking_tokens=10000,  # Enable extended thinking
-    enable_execution_reporting=True,
+    features=AdapterFeatures(emit={Emit.EXECUTION}),
 )
 ```
 
@@ -128,7 +130,7 @@ adapter = ClaudeSDKAdapter(
 
 Tools are defined as MCP stubs in the SDK. The actual execution happens via `AgentTools`:
 
-```python
+```text
 # MCP tool name -> AgentTools method
 "mcp__band__band_send_message" -> tools.send_message()
 "mcp__band__band_send_event" -> tools.send_event()

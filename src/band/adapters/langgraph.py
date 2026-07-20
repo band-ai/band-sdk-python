@@ -14,7 +14,13 @@ from langgraph.pregel import Pregel
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
-from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.converters.langchain import LangChainHistoryConverter, LangChainMessages
 from band.runtime.prompts import render_system_prompt
 
@@ -72,7 +78,7 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -125,6 +131,27 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             history_converter=history_converter or LangChainHistoryConverter(),
             features=features,
         )
+
+        # Accept the SDK's portable custom-tool form: convert any CustomToolDef
+        # (InputModel, handler) tuples in additional_tools to LangChain tools — the
+        # same shape every other adapter takes — while passing ready-made LangChain
+        # tools through untouched. Done once here so both the simple and advanced
+        # patterns get a uniform tool list, and a tool written once works across
+        # adapters (LangChain would otherwise reject a bare tuple).
+        if additional_tools:
+            from band.integrations.langgraph.langchain_tools import (
+                custom_tool_defs_to_langchain,
+            )
+
+            normalized: list[Any] = []
+            for item in additional_tools:
+                if isinstance(
+                    item, tuple
+                ):  # a band CustomToolDef (InputModel, handler)
+                    normalized.extend(custom_tool_defs_to_langchain([item]))
+                else:  # already a LangChain tool / callable
+                    normalized.append(item)
+            additional_tools = normalized
 
         uses_simple_pattern = (
             llm is not None and graph_factory is None and graph is None
@@ -307,6 +334,13 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
 
         graph_input = {"messages": messages}
 
+        # Usage is reported per model call on the stream; a turn may make several
+        # (a tool loop), so sum across every on_chat_model_end into one TurnUsage,
+        # emitted on every exit via the finally. Gated outside the loop: the
+        # stream yields per-token events, so accumulation there is pure churn
+        # when usage emission is off.
+        track_usage = Emit.USAGE in self.features.emit
+        turn_usage = TurnUsage()
         try:
             async for event in graph.astream_events(
                 graph_input,
@@ -319,6 +353,8 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 version="v2",
             ):
                 await self._handle_stream_event(event, room_id, tools)
+                if track_usage:
+                    turn_usage = turn_usage + self._usage_from_stream_event(event)
 
             if should_mark_bootstrapped:
                 self._bootstrapped_rooms[room_id] = None
@@ -346,6 +382,9 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
             except Exception:
                 logger.exception("Failed to report error event for message %s", msg.id)
             raise
+        finally:
+            # No-op unless Emit.USAGE is on; best-effort, never raises.
+            await self.emit_usage(tools, turn_usage)
 
     async def _handle_stream_event(
         self,
@@ -401,6 +440,41 @@ class LangGraphAdapter(SimpleAdapter[LangChainMessages]):
                 )
             except Exception as e:
                 logger.warning("Failed to send tool_result event: %s", e)
+
+    @staticmethod
+    def _usage_from_stream_event(event: Any) -> TurnUsage:
+        """Map a LangChain ``on_chat_model_end`` stream event onto TurnUsage.
+
+        Any other event (or a shape without ``usage_metadata``) contributes an
+        empty ``TurnUsage``. LangChain reports cache tokens under
+        ``input_token_details`` (``cache_read`` / ``cache_creation``).
+        """
+        if not isinstance(event, dict) or event.get("event") != "on_chat_model_end":
+            return TurnUsage()
+        data = event.get("data")
+        output = data.get("output") if isinstance(data, dict) else None
+        usage_metadata = getattr(output, "usage_metadata", None)
+        if usage_metadata is None and isinstance(output, dict):
+            usage_metadata = output.get("usage_metadata")
+        if not isinstance(usage_metadata, dict):
+            return TurnUsage()
+
+        # Cache tokens live one level down under input_token_details; flatten
+        # them alongside the top-level counts so it's a single from_mapping.
+        details = usage_metadata.get("input_token_details")
+        details = details if isinstance(details, dict) else {}
+        flat = {
+            **usage_metadata,
+            "cache_read": details.get("cache_read"),
+            "cache_creation": details.get("cache_creation"),
+        }
+        return TurnUsage.from_mapping(
+            flat,
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read",
+            cache_write="cache_creation",
+        )
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up process-local LangGraph bookkeeping for a room."""

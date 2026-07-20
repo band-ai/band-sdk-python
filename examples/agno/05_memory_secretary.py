@@ -3,7 +3,7 @@
 # dependencies = ["band-sdk[agno]", "anthropic>=0.75.0"]
 #
 # [tool.uv.sources]
-# band-sdk = { git = "https://github.com/thenvoi/thenvoi-sdk-python.git" }
+# band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """
 Agno agent with Band memory tools enabled.

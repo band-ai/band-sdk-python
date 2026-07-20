@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 from acp import spawn_agent_process
@@ -19,6 +21,10 @@ from band.integrations.acp.client_runtime import (
     ACPConnectionProtocol,
     ACPRuntime,
     PermissionHandler,
+    allow_permission,
+    cancel_permission,
+    select_allow_option_id,
+    tcp_spawn_process,
 )
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
@@ -28,6 +34,7 @@ from band.integrations.mcp.backends import (
     BandMCPBackend,
     create_band_mcp_backend,
 )
+from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.mcp_server import LocalMCPServer
 from band.runtime.tools import iter_tool_definitions
@@ -35,6 +42,27 @@ from band.runtime.tools import iter_tool_definitions
 logger = logging.getLogger(__name__)
 
 LocalMcpServerConfig = HttpMcpServer | SseMcpServer
+
+# The transport seam: a callable matching ACPRuntime's spawn_process contract —
+# ``(client, *command, env=..., transport_kwargs=...) -> async CM yielding (conn, _)``.
+# stdio and TCP are the built-in transports; injecting one (e.g. docker exec / ssh,
+# or a fake in tests) is the supported extension point.
+SpawnProcess = Callable[..., object]
+
+
+def _resolve_launcher(command: list[str]) -> list[str]:
+    """Resolve the launcher to its full path so the subprocess spawns on Windows.
+
+    An npm-installed launcher like ``npx`` is ``npx.cmd`` on Windows, and
+    ``create_subprocess_exec`` does not apply PATHEXT to a bare name — so it fails
+    with ``FileNotFoundError``. ``shutil.which`` finds the ``.cmd`` shim (and the
+    plain binary on POSIX). A name that can't be resolved is left as-is, so a
+    genuinely missing binary still fails loudly at spawn.
+    """
+    if not command:
+        return command
+    resolved = shutil.which(command[0])
+    return [resolved, *command[1:]] if resolved else list(command)
 
 
 class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
@@ -51,7 +79,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
     def __init__(
         self,
-        command: str | list[str],
+        command: str | list[str] | None = None,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         mcp_servers: list[dict[str, Any]] | None = None,
@@ -61,12 +89,29 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         auth_method: str | None = None,
         profile: ACPClientProfile | None = None,
         features: AdapterFeatures | None = None,
+        # Transport + advanced knobs are keyword-only: this preserves the original
+        # positional order (command, env, cwd, …) for existing callers, and TCP /
+        # custom-transport wiring reads clearly at the call site.
+        *,
+        host: str | None = None,
+        port: int | None = None,
+        custom_section: str = "",
+        spawn_process: SpawnProcess | None = None,
     ) -> None:
         super().__init__(
             history_converter=ACPClientHistoryConverter(),
             features=features,
         )
-        self._command = command if isinstance(command, list) else [command]
+        self._host, self._port = self._resolve_transport(command, host, port)
+        # stdio spawns a subprocess from ``command``; TCP dials an already-running
+        # ACP server at host/port and passes an empty command to the runtime.
+        self._command: list[str]
+        if self._host is not None:
+            self._command = []
+        else:
+            # _resolve_transport guarantees command is set when host is None.
+            assert command is not None
+            self._command = [command] if isinstance(command, str) else list(command)
         self._env = env
         self._cwd = os.path.abspath(cwd or ".")
         self._mcp_servers = list(mcp_servers or [])
@@ -76,17 +121,24 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._inject_band_tools = inject_band_tools
         self._auth_method = auth_method
         self._profile = profile
+        self._custom_section = custom_section
+
+        # Transport: an explicit spawn_process wins (advanced/custom transports and
+        # tests); otherwise default to acp's subprocess spawner (stdio) or a
+        # connect-only seam closed over host/port (TCP; see tcp_spawn_process).
+        if spawn_process is not None:
+            transport: SpawnProcess = spawn_process
+        elif self._host is not None and self._port is not None:
+            transport = tcp_spawn_process(self._host, self._port)
+        else:
+            transport = spawn_agent_process
 
         self._runtime = ACPRuntime(
-            command=self._command,
+            command=_resolve_launcher(self._command),
             env=self._env,
             auth_method=self._auth_method,
             client_factory=lambda: BandACPClient(profile=self._profile),
-            spawn_process=lambda client, *args, **kwargs: spawn_agent_process(
-                client,
-                *args,
-                **kwargs,
-            ),
+            spawn_process=transport,
         )
 
         self._room_to_session: dict[str, str] = {}
@@ -117,63 +169,42 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         del participants_msg, contacts_msg
         await self._ensure_connection()
 
-        if is_session_bootstrap and history:
-            async with self._session_lock:
-                self._rehydrate(room_id, history)
-
         if self._inject_band_tools:
             async with self._session_lock:
                 self._room_tools[room_id] = tools
 
+        if is_session_bootstrap and history:
+            await self._load_persisted_session(room_id, history)
+
         session_id = await self._get_or_create_session(room_id)
         self._runtime.reset_session(session_id)
-        self._runtime.set_permission_handler(
-            session_id,
-            self._make_permission_handler(tools, room_id),
-        )
 
-        prompt_text = msg.content
-        async with self._session_lock:
-            needs_bootstrap = session_id not in self._bootstrapped_sessions
-            if needs_bootstrap:
-                self._bootstrapped_sessions.add(session_id)
-        if needs_bootstrap:
-            system_context = self._build_system_context(room_id, msg)
-            prompt_text = f"{system_context}\n\n{msg.content}"
+        prompt_text = await self._build_prompt_text(room_id, session_id, msg)
+        sender_name = msg.sender_name or msg.sender_id or "Unknown"
+        mentions = [{"id": msg.sender_id, "name": sender_name}]
 
+        # The emitter posts the turn's events live, in the order the ACP stream
+        # delivers them (see RoomTurnEmitter), so narration stays interleaved with
+        # the permission pair and any in-room tool post. On a clean turn its
+        # __aexit__ relays the held text (if not already posted) and the session
+        # bookkeeping event; on failure it posts nothing and the error is handled
+        # below.
         try:
-            chunks = await self._runtime.prompt(
+            async with RoomTurnEmitter(
+                tools,
+                mentions=mentions,
                 session_id=session_id,
-                prompt_text=prompt_text,
-            )
-            sender_name = msg.sender_name or msg.sender_id or "Unknown"
-            mentions = [{"id": msg.sender_id, "name": sender_name}]
-            for chunk in chunks:
-                match chunk.chunk_type:
-                    case "text":
-                        if chunk.content:
-                            await tools.send_message(
-                                content=chunk.content,
-                                mentions=mentions,
-                            )
-                    case "thought":
-                        await tools.send_event(
-                            content=chunk.content,
-                            message_type="thought",
-                            metadata=chunk.metadata,
-                        )
-                    case "tool_call" | "tool_result":
-                        await tools.send_event(
-                            content=chunk.content,
-                            message_type=chunk.chunk_type,
-                            metadata=chunk.metadata,
-                        )
-                    case "plan":
-                        await tools.send_event(
-                            content=chunk.content,
-                            message_type="task",
-                            metadata=chunk.metadata,
-                        )
+                room_id=room_id,
+            ) as emitter:
+                self._runtime.set_permission_handler(
+                    session_id,
+                    self._make_permission_handler(emitter, room_id),
+                )
+                await self._runtime.prompt(
+                    session_id=session_id,
+                    prompt_text=prompt_text,
+                    on_chunk=emitter.emit,
+                )
         except Exception as e:
             logger.exception("ACP agent error: %s", e)
             await self.stop()
@@ -182,20 +213,10 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 message_type="error",
                 metadata={"acp_error": str(e)},
             )
-            return
-
-        await tools.send_event(
-            content="ACP client session",
-            message_type="task",
-            metadata={
-                "acp_client_session_id": session_id,
-                "acp_client_room_id": room_id,
-            },
-        )
 
     def _make_permission_handler(
         self,
-        tools: AgentToolsProtocol,
+        emitter: RoomTurnEmitter,
         room_id: str,
     ) -> PermissionHandler:
         async def handler(
@@ -204,7 +225,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             tool_call: object,
             **kwargs: object,
         ) -> dict[str, object]:
-            del options, kwargs
+            del kwargs
             tool_name = getattr(tool_call, "title", None) or getattr(
                 tool_call,
                 "name",
@@ -212,28 +233,63 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
             tool_call_id = getattr(tool_call, "tool_call_id", "")
 
+            # Auto-approve by selecting one of the agent's offered allow options;
+            # an ACP grant must reference an offered optionId (not a bare
+            # "allowed"), or the agent can't parse the response and aborts.
+            option_id = select_allow_option_id(options)
+
             logger.info(
-                "Permission request: tool=%s, session=%s, room=%s",
+                "Permission request: tool=%s, session=%s, room=%s, option=%s",
                 tool_name,
                 session_id,
                 room_id,
+                option_id,
             )
 
-            await tools.send_event(
-                content=f"Permission requested: {tool_name}",
-                message_type="tool_call",
-                metadata={
-                    "permission_request": True,
-                    "tool_name": tool_name,
-                    "tool_call_id": tool_call_id,
-                    "acp_session_id": session_id,
-                    "auto_allowed": True,
-                },
-            )
+            if option_id is not None:
+                return allow_permission(option_id)
 
-            return {"outcome": {"outcome": "allowed"}}
+            # A denied request never runs the tool, so there is no execution
+            # frame to show it happened — post a synthetic tool_call/tool_result
+            # pair as the only record. An approved request grants silently: if
+            # the tool then executes, its own real tool_call/tool_result narrate
+            # it like any other tool (no pair needed).
+            await emitter.open_permission(
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                session_id=session_id,
+                outcome="cancelled",
+            )
+            return cancel_permission()
 
         return handler
+
+    @staticmethod
+    def _resolve_transport(
+        command: str | list[str] | None,
+        host: str | None,
+        port: int | None,
+    ) -> tuple[str | None, int | None]:
+        """Validate exactly one transport is configured; return (host, port) for TCP.
+
+        stdio spawns a subprocess from ``command``; TCP connects to an
+        already-running ACP server at ``host``/``port``. The two are mutually
+        exclusive and one is required.
+        """
+        # An empty command ("" or []) is not a usable stdio transport — treat it as
+        # absent so it fails the "one is required" check below with a clear error,
+        # rather than slipping through to crash at spawn time.
+        has_command = bool(command)
+        has_tcp = host is not None or port is not None
+        if has_command and has_tcp:
+            raise ValueError(
+                "Provide either command (stdio) or host+port (TCP), not both"
+            )
+        if not has_command and not has_tcp:
+            raise ValueError("Provide either command (stdio) or host+port (TCP)")
+        if has_tcp and (host is None or port is None):
+            raise ValueError("TCP transport requires both host and port")
+        return (host, port) if has_tcp else (None, None)
 
     @staticmethod
     def _validate_rest_url(rest_url: str) -> None:
@@ -251,6 +307,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         system_prompt = render_system_prompt(
             agent_name=agent_name,
             agent_description=agent_desc,
+            custom_section=self._custom_section,
             include_base_instructions=False,
             features=self.features,
         )
@@ -258,14 +315,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         room_context = (
             f"\n## Room Context\n"
             f"You are connected to Band using the Band tools.\n"
-            f"Use the Band tools for any visible room action. Plain text "
-            f"output is not posted back to the room.\n"
+            f"Use the Band tools for any visible room action. If you post a "
+            f"message with a Band tool, your plain text output is not also "
+            f"posted; otherwise your plain text reply is delivered to the "
+            f"room on your behalf. Never both — reply exactly once, and do "
+            f"not narrate the tool calls you are about to make.\n"
             f"\n"
             f"Current room_id: {room_id}\n"
             f"Current requester name: {requester_name}\n"
             f"Current requester id: {requester_id}\n"
             f"\n"
-            f"All Band tool calls must include room_id.\n"
+            f"Use each MCP tool's schema for its argument names. When a tool needs "
+            f"the current room, use the Current room_id value above.\n"
         )
 
         return f"[System Context]\n{system_prompt}\n{room_context}"
@@ -315,9 +376,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             if room_id in self._room_to_session:
                 return self._room_to_session[room_id]
 
-            mcp_servers: list[object] = list(self._mcp_servers)
-            if self._inject_band_tools:
-                mcp_servers.append(await self._get_or_start_band_mcp_server())
+            mcp_servers = await self._session_mcp_servers()
 
             session_id = await self._runtime.create_session(
                 cwd=self._cwd,
@@ -332,6 +391,31 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             )
             return session_id
 
+    async def _session_mcp_servers(self) -> list[object]:
+        """The MCP configuration supplied when creating or loading a session."""
+        mcp_servers: list[object] = list(self._mcp_servers)
+        if self._inject_band_tools:
+            mcp_servers.append(await self._get_or_start_band_mcp_server())
+        return mcp_servers
+
+    async def _build_prompt_text(
+        self,
+        room_id: str,
+        session_id: str,
+        msg: PlatformMessage,
+    ) -> str:
+        """Add room context on the first prompt sent to an ACP session."""
+        async with self._session_lock:
+            needs_bootstrap = session_id not in self._bootstrapped_sessions
+            if needs_bootstrap:
+                self._bootstrapped_sessions.add(session_id)
+
+        if not needs_bootstrap:
+            return msg.content
+
+        system_context = self._build_system_context(room_id, msg)
+        return f"{system_context}\n\n{msg.content}"
+
     async def on_cleanup(self, room_id: str) -> None:
         async with self._session_lock:
             session_id = self._room_to_session.pop(room_id, None)
@@ -341,7 +425,13 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         logger.debug("Cleaned up ACP client resources for room %s", room_id)
 
-    async def stop(self) -> None:
+    async def cleanup_all(self) -> None:
+        """Adapter-wide teardown — the hook ``Agent.stop()`` invokes on shutdown.
+
+        The ACP subprocess / TCP connection and the local Band MCP server are started
+        adapter-wide in ``on_started`` (not per room), so releasing them belongs here,
+        not in per-room ``on_cleanup``. Idempotent — safe to call again from ``stop()``.
+        """
         async with self._session_lock:
             self._room_to_session.clear()
             self._room_tools.clear()
@@ -357,21 +447,45 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         await self._runtime.stop()
         logger.info("ACP client adapter stopped")
 
-    def _rehydrate(self, room_id: str, history: ACPClientSessionState) -> None:
-        del room_id
-        for restored_room_id, session_id in history.room_to_session.items():
-            if restored_room_id not in self._room_to_session:
-                self._room_to_session[restored_room_id] = session_id
+    async def stop(self) -> None:
+        """Tear down now (used by the ``on_message`` error path); see ``cleanup_all``."""
+        await self.cleanup_all()
+
+    async def _load_persisted_session(
+        self,
+        room_id: str,
+        history: ACPClientSessionState,
+    ) -> None:
+        """Accept this room's persisted session ID only after ACP loads it."""
+        async with self._session_lock:
+            if room_id in self._room_to_session:
+                return
+            session_id = history.room_to_session.get(room_id)
+
+        if session_id is None:
+            return
+
+        loaded = await self._runtime.load_session(
+            cwd=self._cwd,
+            session_id=session_id,
+            mcp_servers=await self._session_mcp_servers(),
+        )
+        if not loaded:
+            logger.info(
+                "Persisted ACP session %s is unavailable for room %s; using a new session",
+                session_id,
+                room_id,
+            )
+            return
+
+        async with self._session_lock:
+            if room_id not in self._room_to_session:
+                self._room_to_session[room_id] = session_id
                 logger.debug(
-                    "Restored ACP client session mapping: %s -> %s",
-                    restored_room_id,
+                    "Loaded ACP session mapping: %s -> %s",
+                    room_id,
                     session_id,
                 )
-
-        logger.info(
-            "Rehydrated ACP client state: %d room-session mappings",
-            len(self._room_to_session),
-        )
 
     async def _ensure_connection(self) -> ACPConnectionProtocol:
         return await self._runtime.ensure_connection(

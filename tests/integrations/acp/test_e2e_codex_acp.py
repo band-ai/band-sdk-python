@@ -1,6 +1,6 @@
 """End-to-end test: spawn codex-acp via ACP SDK and validate protocol flow.
 
-This test spawns `npx @zed-industries/codex-acp` as a real ACP agent
+This test spawns `codex-acp` as a real ACP agent
 subprocess and validates the full protocol lifecycle:
   1. Initialize connection
   2. Create a new session with cwd/mcp_servers
@@ -8,13 +8,14 @@ subprocess and validates the full protocol lifecycle:
   4. Receive session_update chunks
   5. Verify collected chunks contain a response
 
-Requires: npx, @zed-industries/codex-acp
+Requires: codex-acp
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -23,6 +24,12 @@ import pytest
 from pydantic import BaseModel
 
 from band.integrations.acp.client_profiles import NoopACPClientProfile
+from band.integrations.acp.client_runtime import (
+    ACP_STDIO_LIMIT_BYTES,
+    allow_permission,
+    cancel_permission,
+    select_allow_option_id,
+)
 from band.integrations.acp.client_types import BandACPClient
 from band.runtime.mcp_server import (
     LocalMCPServer,
@@ -30,20 +37,36 @@ from band.runtime.mcp_server import (
     build_band_mcp_tool_registrations,
 )
 from band.runtime.tools import AgentTools
+from tests.toolkit.timeouts import backstop_timeout
 
 logger = logging.getLogger(__name__)
 
-# Skip entire module if npx is not available
-pytestmark = [
-    pytest.mark.skipif(
-        shutil.which("npx") is None,
-        reason="npx not available",
-    ),
-    pytest.mark.e2e,
-]
-
+# These are real E2E tests: each spawns `codex-acp` as a
+# live subprocess (Node + network), so they are opt-in like the rest of the e2e
+# suite. Gated on E2E_TESTS_ENABLED so a plain `uv run pytest` skips them — they
+# are slow and their subprocess/fd pressure was starving nearby server tests
+# (e.g. tests/runtime/test_mcp_server.py) into spurious timeouts.
+_E2E_ENABLED = os.environ.get("E2E_TESTS_ENABLED", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+_CODEX_ACP_COMMAND = shutil.which("codex-acp")
 _INIT_TIMEOUT = 30
 _PROMPT_TIMEOUT = 120
+pytestmark = [
+    pytest.mark.skipif(
+        not _E2E_ENABLED,
+        reason="codex-acp E2E tests are opt-in; set E2E_TESTS_ENABLED=true to run",
+    ),
+    pytest.mark.skipif(
+        _CODEX_ACP_COMMAND is None,
+        reason="codex-acp not available",
+    ),
+    pytest.mark.e2e,
+    pytest.mark.timeout(backstop_timeout(_PROMPT_TIMEOUT)),
+]
 
 
 class EchoInput(BaseModel):
@@ -52,18 +75,44 @@ class EchoInput(BaseModel):
     message: str
 
 
+def _spawn_codex_acp(acp_client: BandACPClient):
+    """Spawn the installed codex-acp executable."""
+    from acp import spawn_agent_process
+
+    if _CODEX_ACP_COMMAND is None:
+        pytest.skip("codex-acp not available")
+
+    return spawn_agent_process(
+        acp_client,
+        _CODEX_ACP_COMMAND,
+        transport_kwargs={"limit": ACP_STDIO_LIMIT_BYTES},
+    )
+
+
 @pytest.fixture
 def acp_client() -> BandACPClient:
     """Create a fresh BandACPClient."""
     return BandACPClient(profile=NoopACPClientProfile())
 
 
+async def _allow_all_permissions(
+    options: object = None, **kwargs: object
+) -> dict[str, object]:
+    """Approve every tool-call permission request by selecting an allow option.
+
+    codex-acp asks the client to approve before running an MCP tool
+    (``session/request_permission``); with no handler registered the client
+    auto-cancels, so the tool comes back "cancelled". This mirrors the production
+    bridge (``_make_permission_handler``): select an offered allow option."""
+    del kwargs
+    option_id = select_allow_option_id(options)
+    return cancel_permission() if option_id is None else allow_permission(option_id)
+
+
 @pytest.mark.asyncio
 async def test_codex_acp_initialize(acp_client: BandACPClient) -> None:
     """Should successfully initialize the ACP protocol with codex-acp."""
-    from acp import spawn_agent_process
-
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = _spawn_codex_acp(acp_client)
     conn, _proc = await ctx.__aenter__()
     try:
         result = await asyncio.wait_for(
@@ -82,9 +131,7 @@ async def test_codex_acp_initialize(acp_client: BandACPClient) -> None:
 @pytest.mark.asyncio
 async def test_codex_acp_new_session(acp_client: BandACPClient) -> None:
     """Should create a new ACP session with cwd and mcp_servers."""
-    from acp import spawn_agent_process
-
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = _spawn_codex_acp(acp_client)
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(
@@ -106,9 +153,9 @@ async def test_codex_acp_new_session(acp_client: BandACPClient) -> None:
 @pytest.mark.asyncio
 async def test_codex_acp_prompt_and_collect(acp_client: BandACPClient) -> None:
     """Should send a prompt and collect response chunks from codex-acp."""
-    from acp import spawn_agent_process, text_block
+    from acp import text_block
 
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = _spawn_codex_acp(acp_client)
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(
@@ -157,7 +204,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
     acp_client: BandACPClient,
 ) -> None:
     """Should connect to a local HTTP MCP server and execute a tool."""
-    from acp import spawn_agent_process, text_block
+    from acp import text_block
     from acp.schema import HttpMcpServer
 
     async def execute(arguments: dict[str, str]) -> dict[str, str]:
@@ -179,11 +226,7 @@ async def test_codex_acp_http_mcp_server_tool_call(
 
     await local_server.start()
     try:
-        ctx = spawn_agent_process(
-            acp_client,
-            "npx",
-            "@zed-industries/codex-acp",
-        )
+        ctx = _spawn_codex_acp(acp_client)
         conn, _proc = await ctx.__aenter__()
         try:
             init_result = await asyncio.wait_for(
@@ -213,6 +256,9 @@ async def test_codex_acp_http_mcp_server_tool_call(
             )
 
             acp_client.reset_session(session.session_id)
+            acp_client.set_permission_handler(
+                session.session_id, _allow_all_permissions
+            )
 
             await asyncio.wait_for(
                 conn.prompt(
@@ -244,7 +290,7 @@ async def test_codex_acp_band_mcp_tool_call(
     acp_client: BandACPClient,
 ) -> None:
     """Should discover and call a real Band MCP tool."""
-    from acp import spawn_agent_process, text_block
+    from acp import text_block
     from acp.schema import HttpMcpServer
 
     rest = SimpleNamespace(
@@ -279,11 +325,7 @@ async def test_codex_acp_band_mcp_tool_call(
 
     await local_server.start()
     try:
-        ctx = spawn_agent_process(
-            acp_client,
-            "npx",
-            "@zed-industries/codex-acp",
-        )
+        ctx = _spawn_codex_acp(acp_client)
         conn, _proc = await ctx.__aenter__()
         try:
             init_result = await asyncio.wait_for(
@@ -313,6 +355,9 @@ async def test_codex_acp_band_mcp_tool_call(
             )
 
             acp_client.reset_session(session.session_id)
+            acp_client.set_permission_handler(
+                session.session_id, _allow_all_permissions
+            )
 
             await asyncio.wait_for(
                 conn.prompt(
@@ -354,9 +399,9 @@ async def test_codex_acp_band_mcp_tool_call(
 @pytest.mark.asyncio
 async def test_codex_acp_multiple_sessions(acp_client: BandACPClient) -> None:
     """Should handle multiple concurrent sessions with separate buffers."""
-    from acp import spawn_agent_process, text_block
+    from acp import text_block
 
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = _spawn_codex_acp(acp_client)
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(
@@ -407,10 +452,9 @@ async def test_codex_acp_multiple_sessions(acp_client: BandACPClient) -> None:
 @pytest.mark.asyncio
 async def test_codex_acp_list_sessions(acp_client: BandACPClient) -> None:
     """Should list created sessions (if supported by the agent)."""
-    from acp import spawn_agent_process
     from acp.exceptions import RequestError
 
-    ctx = spawn_agent_process(acp_client, "npx", "@zed-industries/codex-acp")
+    ctx = _spawn_codex_acp(acp_client)
     conn, _proc = await ctx.__aenter__()
     try:
         await asyncio.wait_for(

@@ -6,6 +6,9 @@ __pycache__/
 # E2E baseline run output (scorecards, evidence artifacts)
 artifacts/
 
+# Docker Sandbox staging smoke: gitignored per-run state, logs, and evidence.md
+examples/sandbox/staging-smoke/.sandbox-smoke/
+
 # C extensions
 *.so
 
@@ -93,6 +96,7 @@ celerybeat-schedule
 .env
 .env.test
 .venv/
+.venv-crewai/
 env/
 venv/
 ENV/

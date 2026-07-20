@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import warnings
 from abc import ABC, abstractmethod
@@ -9,11 +10,14 @@ from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from band.core.protocols import AgentToolsProtocol, HistoryConverter
 from band.core.types import (
+    USAGE_EVENT_TYPE,
+    USAGE_METADATA_KEY,
     AdapterFeatures,
     AgentInput,
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,8 +123,63 @@ class SimpleAdapter(Generic[H], ABC):
         """
         ...
 
+    async def emit_usage(self, tools: AgentToolsProtocol, usage: TurnUsage) -> None:
+        """Emit a turn's token usage as a platform event, if enabled.
+
+        Additive and best-effort, mirroring how adapters emit ``tool_call``
+        events under ``Emit.EXECUTION``: gated on ``Emit.USAGE`` in the
+        adapter's features, and never allowed to crash the turn. The token
+        counts ride an accepted ``task`` event's structured ``metadata`` under
+        ``USAGE_METADATA_KEY`` (the read side filters on that key), since the
+        backend rejects an unknown ``usage`` message_type today; see
+        ``USAGE_EVENT_TYPE``.
+
+        Adapters call this once per turn with the usage summed across the tool
+        loop, typically from a ``finally`` so every exit path is covered: it
+        never raises, and an empty total is skipped, so a turn that fails after
+        a successful model call still reports the tokens it spent while a
+        first-call failure emits nothing. When the calling task is being
+        cancelled (shutdown, a turn timeout) the emit is skipped entirely, so
+        teardown never blocks on network I/O and a CancelledError can't fire
+        mid-send. An adapter that cannot observe usage (server-side execution)
+        simply never calls it, so no event is emitted and the toolkit records
+        N-A rather than a false zero. An all-zero usage is likewise skipped so
+        a read never sees a zero-only record masquerading as real data.
+        """
+        if Emit.USAGE not in self.features.emit:
+            return
+        if usage.is_empty:
+            logger.debug("Skipping empty usage event")
+            return
+        task = asyncio.current_task()
+        if task is not None and task.cancelling():
+            logger.debug("Skipping usage emit during task cancellation")
+            return
+        try:
+            await tools.send_event(
+                content=(
+                    f"Token usage: input={usage.input_tokens} "
+                    f"output={usage.output_tokens}"
+                ),
+                message_type=USAGE_EVENT_TYPE,
+                metadata={USAGE_METADATA_KEY: usage.to_dict()},
+            )
+        except Exception as e:  # best-effort: usage reporting must never crash a turn
+            logger.warning("Failed to send usage event: %s", e)
+
     async def on_cleanup(self, room_id: str) -> None:
         """Override for session cleanup."""
+        pass
+
+    async def cleanup_all(self) -> None:
+        """Override to release adapter-wide resources (clients, servers).
+
+        Called by ``Agent.stop()`` after the runtime has stopped. Rooms are
+        not individually cleaned on shutdown (``on_cleanup`` fires on room
+        removal, not agent stop), so resources that outlive rooms — a CLI
+        runtime subprocess, a self-hosted server, an external registration —
+        release here.
+        """
         pass
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:

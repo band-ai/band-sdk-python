@@ -258,6 +258,40 @@ class TestExecuteCustomTool:
         assert result == "8.0"
 
     @pytest.mark.asyncio
+    async def test_awaits_callable_object_with_async_call(self):
+        """A callable object whose __call__ is async must be awaited, not returned
+        raw — asyncio.iscoroutinefunction is False for such instances, so a bare
+        check would leak an unawaited coroutine."""
+
+        class AsyncTool:
+            async def __call__(self, args: WeatherInput) -> str:
+                return f"Weather in {args.city}: from async-callable"
+
+        tool: CustomToolDef = (WeatherInput, AsyncTool())
+
+        result = await execute_custom_tool(tool, {"city": "NYC"})
+
+        assert result == "Weather in NYC: from async-callable"
+
+    @pytest.mark.asyncio
+    async def test_runs_unhashable_callable_handler(self):
+        """A callable object that defines __eq__ (and is therefore unhashable) is a
+        valid handler and must run — not raise on a cache lookup."""
+
+        class UnhashableTool:
+            def __eq__(self, other: object) -> bool:
+                return isinstance(other, UnhashableTool)
+
+            async def __call__(self, args: WeatherInput) -> str:
+                return f"Weather in {args.city}: unhashable-ok"
+
+        tool: CustomToolDef = (WeatherInput, UnhashableTool())
+
+        result = await execute_custom_tool(tool, {"city": "LA"})
+
+        assert result == "Weather in LA: unhashable-ok"
+
+    @pytest.mark.asyncio
     async def test_validates_input_with_pydantic(self):
         """Should raise ValueError with formatted message for invalid args."""
         tool: CustomToolDef = (CalculatorInput, sync_calculator)

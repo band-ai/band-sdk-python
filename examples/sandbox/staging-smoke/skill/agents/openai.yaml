@@ -1,0 +1,10 @@
+# Optional Codex-specific display metadata only. Must not contain
+# instructions, commands, credentials, or any behavior needed to run the
+# smoke — that all lives in ../SKILL.md, which every client (Codex, Claude
+# Code, or a plain operator) reads and runs the same way. Other clients
+# ignore this file entirely.
+name: band-sandbox-staging-smoke
+description: >-
+  Manual, resumable Docker Sandbox staging smoke for band-sdk-python:
+  headless agent round trip, operator-driven Wi-Fi reconnect proof, evidence
+  report.

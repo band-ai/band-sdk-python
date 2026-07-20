@@ -18,6 +18,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
 from band.runtime.prompts import render_system_prompt
@@ -25,7 +26,9 @@ from band.runtime.tools import get_band_tool_category
 
 try:
     from agno.models.message import Message
+    from agno.run import RunStatus
     from agno.run.agent import (
+        RunErrorEvent,
         RunOutput,
         ToolCallCompletedEvent,
         ToolCallStartedEvent,
@@ -45,9 +48,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# These tools already produce visible room output.
-_SELF_REPORTING_TOOLS = frozenset({"band_send_message", "band_send_event"})
-
 # Conversation roles to persist across turns. Allowlisting these drops Agno's
 # per-run injected messages (system/developer instructions, datetime/state
 # context, summaries) so they are not replayed alongside freshly injected ones.
@@ -57,6 +57,23 @@ _CONVERSATION_ROLES = frozenset({"user", "assistant", "tool"})
 _current_tools: ContextVar[AgentToolsProtocol | None] = ContextVar(
     "agno_current_tools", default=None
 )
+
+
+class AgnoRunError(RuntimeError):
+    """An Agno run finished in an error state instead of raising.
+
+    Agno catches exceptions inside ``Agent.arun`` (model/API failures included)
+    and reports them as an error-status result rather than propagating. Raising
+    here restores the cross-adapter contract: a failed turn must reach the
+    runtime so the message is marked failed and the platform retries it,
+    instead of being recorded as a successful turn that produced no output.
+    """
+
+
+def _error_summary(detail: str | None) -> str:
+    """A bounded, log-safe summary of Agno's swallowed error text."""
+    text = (detail or "unknown error").strip() or "unknown error"
+    return text if len(text) <= 500 else f"{text[:500]}..."
 
 
 def _tool_executions(response: RunOutput) -> list[Any]:
@@ -108,7 +125,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS}
+        {Emit.EXECUTION, Emit.THOUGHTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -127,8 +144,8 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         The adapter runs against the ``agent`` instance you pass **directly**.
         At startup it configures that instance for Band -- replacing its
         ``tools`` with a per-run factory, disabling ``cache_callables``, and
-        appending Band guidance to ``additional_context``. The adapter therefore
-        takes ownership of the agent; do not reuse the same instance elsewhere.
+        prepending the Band operating contract to ``description``. The adapter
+        therefore takes ownership of the agent; do not reuse it elsewhere.
 
         Args:
             agent: A fully configured Agno agent to bridge to Band.
@@ -226,7 +243,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         """Configure the caller's agent for Band and sync the converter identity.
 
         The adapter runs against the agent passed at construction. Agent-dependent
-        checks and the Band configuration (tool factory, ``additional_context``)
+        checks and the Band configuration (tool factory, ``description``)
         run here, not in ``__init__``, so they happen once at startup.
         """
         await super().on_started(agent_name, agent_description)
@@ -301,6 +318,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         if Emit.THOUGHTS in self.features.emit:
             await self._report_thoughts(response, tools, room_id=room_id, msg_id=msg.id)
 
+        # RunOutput.metrics is aggregated across the run's model calls.
+        await self.emit_usage(tools, self._usage_from_response(response))
+
         self._persist_turn(room_id, response)
 
         if not any(
@@ -317,6 +337,31 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
     async def on_cleanup(self, room_id: str) -> None:
         """Drop the room's accumulated transcript when the agent leaves."""
         self._message_history.pop(room_id, None)
+
+    @staticmethod
+    def _usage_from_response(response: RunOutput) -> TurnUsage:
+        """Map an Agno ``RunOutput.metrics`` onto TurnUsage.
+
+        ``metrics`` (a ``RunMetrics``, aggregated across the run's model calls)
+        is optional and its token field names line up 1:1 with TurnUsage's, so
+        this is a straight ``from_object`` (missing metrics → empty usage).
+
+        Agno exposes a separate ``reasoning_tokens``, but unlike the single-provider
+        adapters it is a multi-provider aggregator whose ``output_tokens`` already
+        *includes* reasoning for some backends (OpenAI's completion tokens) and
+        *excludes* it for others (Gemini's candidates), so no static fold is
+        correct for every backend — folding would double-count OpenAI-backed runs.
+        Leaving reasoning out (rather than statically folding) mirrors the RAW
+        cache convention: don't apply a provider-specific normalization that this
+        aggregator can't guarantee. So reasoning is deliberately not folded here.
+        """
+        return TurnUsage.from_object(
+            getattr(response, "metrics", None),
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read_tokens",
+            cache_write="cache_write_tokens",
+        )
 
     def _prior_transcript(
         self,
@@ -412,6 +457,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                     )
                 else:
                     response = await agent.arun(input=messages, session_id=session_id)
+            # Agno swallows run exceptions into a normal-looking return value
+            # (status=error); surface it so the shared except path below treats
+            # the turn as failed rather than as a silent empty reply.
+            if response is not None and response.status == RunStatus.error:
+                raise AgnoRunError(_error_summary(response.content))
         except Exception:
             # Keep the user-facing payload generic; the full traceback is in the
             # agent log via logger.exception. Exception text can include DB
@@ -464,6 +514,11 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         ):
             if isinstance(item, RunOutput):
                 final = item
+            elif isinstance(item, RunErrorEvent):
+                # On a swallowed run error the stream ends with this event and
+                # never yields a final RunOutput — raise instead of returning
+                # None, which would read as a successful turn with no output.
+                raise AgnoRunError(_error_summary(item.content))
             else:
                 await self._emit_stream_event(
                     item, tools, room_id=room_id, msg_id=msg_id
@@ -546,19 +601,28 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         return list(resolved) if resolved else []
 
     def _inject_band_instructions(self) -> None:
-        """Append Band tool guidance to the runtime agent's ``additional_context``.
+        """Prepend the Band operating contract to the runtime agent's ``description``.
 
-        Appending (rather than replacing) preserves the user's own
-        instructions. Called once at startup, before any room runs.
+        Every other adapter makes :func:`render_system_prompt` the authoritative
+        system frame and places the developer's own steering *after* it (its
+        "## Developer Instructions" tail). Agno assembles its system message as
+        ``description`` -> ``<instructions>`` -> ... -> ``additional_context``, so
+        writing the Band block to ``description`` puts it first -- ahead of the
+        developer's ``instructions`` -- reproducing that ordering.
+
+        The previous approach appended to ``additional_context``, which lands
+        *after* the developer's instructions. That made the anti-injection Security
+        rule the most-recent system content, so even a capable model over-applied it
+        and refused benign peer requests (e.g. a liveness probe from another
+        participant). Prepending (not replacing) preserves any ``description`` the
+        developer set. Called once at startup, before any room runs.
         """
         if self._agent is None:
             return
 
         guidance = self._band_instructions()
-        existing = getattr(self._agent, "additional_context", None)
-        self._agent.additional_context = (
-            f"{existing}\n\n{guidance}" if existing else guidance
-        )
+        existing = getattr(self._agent, "description", None)
+        self._agent.description = f"{guidance}\n\n{existing}" if existing else guidance
 
     def _band_instructions(self) -> str:
         """Compose the Band identity + guidance gated on enabled capabilities.
@@ -566,8 +630,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
         Mirrors the other adapters via :func:`render_system_prompt`: prepends
         "You are {name}, {description}." so the model knows its Band-registered
         identity, then the base instructions and any capability sections. The
-        developer's own Agno ``instructions`` are preserved separately — this is
-        appended to ``additional_context`` (see :meth:`_inject_band_instructions`).
+        developer's own Agno ``instructions`` are preserved separately — this
+        block is written to ``description`` so it frames the agent ahead of them
+        (see :meth:`_inject_band_instructions`).
         """
         return render_system_prompt(
             agent_name=self.agent_name or "Agent",
@@ -655,17 +720,12 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         Agno yields a started + completed event (each carrying a
         ``ToolExecution``) for every tool call -- user-configured and Band
-        alike. Self-reporting tools already produce visible room output, so they
-        are skipped. The completed event carries ``result`` + ``tool_call_error``,
-        so exactly one tool_result is emitted per call whether it succeeded or
-        failed; all other events (content deltas, reasoning, ``ToolCallErrorEvent``)
-        fall through and are ignored.
+        alike; all are reported. The completed event carries ``result`` +
+        ``tool_call_error``, so exactly one tool_result is emitted per call
+        whether it succeeded or failed; all other events (content deltas,
+        reasoning, ``ToolCallErrorEvent``) fall through and are ignored.
         """
-        if (
-            isinstance(item, ToolCallStartedEvent)
-            and (ex := item.tool) is not None
-            and ex.tool_name not in _SELF_REPORTING_TOOLS
-        ):
+        if isinstance(item, ToolCallStartedEvent) and (ex := item.tool) is not None:
             await cls._emit_tool_event(
                 tools,
                 "tool_call",
@@ -677,11 +737,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 room_id=room_id,
                 msg_id=msg_id,
             )
-        elif (
-            isinstance(item, ToolCallCompletedEvent)
-            and (ex := item.tool) is not None
-            and ex.tool_name not in _SELF_REPORTING_TOOLS
-        ):
+        elif isinstance(item, ToolCallCompletedEvent) and (ex := item.tool) is not None:
             await cls._emit_tool_event(
                 tools,
                 "tool_result",

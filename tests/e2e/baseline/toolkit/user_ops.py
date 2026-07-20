@@ -17,7 +17,9 @@ from band_rest import (
     ChatMessageRequest,
     ChatMessageRequestMentionsItem,
     CreateMyChatRoomRequestChat,
+    ListMyPeersRequestType,
     ParticipantRequest,
+    Peer,
 )
 
 from band.core.types import MessageType
@@ -74,6 +76,45 @@ class UserOps:
         )
         return [participant.id for participant in (response.data or [])]
 
+    async def whoami(self) -> str:
+        """Return the driving user's own id, via the Human profile endpoint.
+
+        The subject id for memories *about the user*. Used when a scenario must
+        assert an agent resolved *the user's* identity itself (e.g. inferred
+        subject-scoped memory) rather than being handed the id in the prompt.
+        """
+        response = await self._client.human_api_profile.get_my_profile()
+        return response.data.id
+
+    async def lookup_peers(
+        self,
+        *,
+        not_in_room: str | None = None,
+        peer_type: ListMyPeersRequestType | None = None,
+        page: int = 1,
+        limit: int = 100,
+    ) -> list[Peer]:
+        """List one page of peers the user can interact with — the invitable roster.
+
+        The driver-side mirror of the agent's own ``band_lookup_peers``: it asks
+        the Human API which entities (users and agents) the test user could bring
+        into a room. Pass ``not_in_room=<room_id>`` to exclude peers already in
+        that room, so the result is exactly the set still invitable there;
+        ``peer_type`` (``"User"``/``"Agent"``) narrows by kind. Returns the ``Peer``
+        models so callers match on ``.name``/``.id``/``.handle``/``.type``.
+
+        Returns a single page (``limit`` items from ``page``); a caller that must
+        see the whole roster in a populated workspace pages until a short page.
+
+        ``not_in_room``/``peer_type`` are query params: left ``None`` they are
+        omitted (not sent as ``null``), matching how the SDK itself calls this
+        endpoint, so no conditional kwargs bag is needed.
+        """
+        response = await self._client.human_api_peers.list_my_peers(
+            not_in_chat=not_in_room, type=peer_type, page=page, page_size=limit
+        )
+        return list(response.data or [])
+
     async def list_messages(
         self,
         room_id: str,
@@ -89,15 +130,11 @@ class UserOps:
         path for an agent's tool calls. Newest-first from the API; reversed
         here to chronological (oldest-first) so callers read a turn in order.
         ``None`` ``message_type`` returns all types; ``since`` (a server
-        timestamp) keeps only items after it.
+        timestamp) keeps only items after it. Both are query params: left
+        ``None`` they are omitted (not sent as ``null``), so they pass directly.
         """
-        kwargs: dict[str, object] = {"limit": limit}
-        if message_type is not None:
-            kwargs["message_type"] = message_type
-        if since is not None:
-            kwargs["since"] = since
         response = await self._client.human_api_messages.list_my_chat_messages(
-            room_id, **kwargs
+            room_id, message_type=message_type, since=since, limit=limit
         )
         return list(reversed(response.data or []))
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from band.runtime.tools import ToolCallOutcome
+
 
 class FakeAgentTools:
     """
@@ -297,9 +299,15 @@ class FakeAgentTools:
         return []
 
     async def execute_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        call = {"tool_name": tool_name, "arguments": arguments}
-        self.tool_calls.append(call)
-        return {"status": "ok"}
+        return (await self.execute_tool_call_structured(tool_name, arguments)).value
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        """Record the call and report success. Override in a subclass to return
+        ``ok=False`` (a base tool failing without raising) for failure-path tests."""
+        self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
+        return ToolCallOutcome(value={"status": "ok"}, ok=True)
 
     # --- Assertion helpers ---
 

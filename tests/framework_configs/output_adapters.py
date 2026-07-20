@@ -14,6 +14,7 @@ __all__ = [
     "OutputAdapter",
     "BaseDictListOutputAdapter",
     "ClaudeSDKOutputAdapter",
+    "CopilotSDKOutputAdapter",
     "DictListOutputAdapter",
     "GoogleADKOutputAdapter",
     "LangChainOutputAdapter",
@@ -609,6 +610,20 @@ class ClaudeSDKOutputAdapter(OutputAdapter):
         sender_type: str | None = None,
     ) -> None:
         self._inner.assert_sender_metadata(result.text, index, sender_name, sender_type)
+
+
+class CopilotSDKOutputAdapter(ClaudeSDKOutputAdapter):
+    """Adapter for CopilotSDK converter output (:class:`CopilotSDKSessionState`).
+
+    Same flat-string shape as ClaudeSDK — only the session-state type differs.
+    """
+
+    def assert_result_type(self, result: Any) -> None:
+        from band.converters.copilot_sdk import CopilotSDKSessionState
+
+        assert isinstance(result, CopilotSDKSessionState), (
+            f"Expected CopilotSDKSessionState, got {type(result).__name__}"
+        )
 
 
 class GoogleADKOutputAdapter(BaseDictListOutputAdapter):

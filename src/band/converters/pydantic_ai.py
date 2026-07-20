@@ -24,7 +24,7 @@ except ImportError as e:
 from band.core.protocols import HistoryConverter
 from band.core.types import MessageType
 
-from ._tool_parsing import parse_tool_call, parse_tool_result
+from .parsing import parse_tool_call, parse_tool_result
 
 logger = logging.getLogger(__name__)
 

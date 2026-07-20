@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 from tests.framework_configs._sentinel import MISSING, STRICT_CI, _MissingSentinel
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
+from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK
 
 __all__ = ["AdapterConfig", "ADAPTER_CONFIGS", "ADAPTER_EXCLUDED_MODULES"]
 
@@ -492,6 +493,42 @@ def _build_crewai_flow_config() -> AdapterConfig:
     )
 
 
+def _copilot_sdk_factory(**kw: Any) -> Any:
+    from band.adapters.copilot_sdk import CopilotSDKAdapter
+
+    return CopilotSDKAdapter(**kw)
+
+
+def _build_copilot_sdk_config() -> AdapterConfig | None:
+    from band.adapters.copilot_sdk import (
+        _COPILOT_SDK_AVAILABLE,
+        CopilotSDKAdapterConfig,
+    )
+
+    if not _COPILOT_SDK_AVAILABLE:
+        return None  # optional dep not installed; skip in CI
+
+    custom = CopilotSDKAdapterConfig(
+        model="gpt-5",
+        custom_section="Be helpful.",
+        reasoning_effort="high",
+        session_id_prefix="custom-",
+        turn_timeout_s=45.0,
+    )
+    return AdapterConfig(
+        framework_id="copilot_sdk",
+        display_name="CopilotSDK",
+        adapter_factory=_copilot_sdk_factory,
+        expected_initial_values={
+            "_custom_tools": [],
+            "config": CopilotSDKAdapterConfig(),
+        },
+        custom_kwargs={"config": custom},
+        custom_expected={"config": custom},
+        skip_on_started_conformance=True,  # on_started creates a real CopilotClient; tested in test_copilot_sdk_adapter
+    )
+
+
 def _build_claude_sdk_config() -> AdapterConfig | None:
     from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE, ClaudeSDKAdapter
 
@@ -614,7 +651,7 @@ def _build_codex_config() -> AdapterConfig:
 
 
 def _build_letta_config() -> AdapterConfig:
-    from band.adapters.letta import LettaAdapterConfig
+    from band.adapters.letta import LettaAdapterConfig, LettaMCPConfig
 
     return AdapterConfig(
         framework_id="letta",
@@ -627,14 +664,14 @@ def _build_letta_config() -> AdapterConfig:
             "config": LettaAdapterConfig(
                 enable_execution_reporting=True,
                 mode="shared",
-                mcp_server_url="http://mcp:9000/sse",
+                mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
         },
         custom_expected={
             "config": LettaAdapterConfig(
                 enable_execution_reporting=True,
                 mode="shared",
-                mcp_server_url="http://mcp:9000/sse",
+                mcp=LettaMCPConfig(mode="external", server_url="http://mcp:9000/sse"),
             ),
         },
         has_custom_tools_attr=False,
@@ -725,14 +762,21 @@ def _build_gemini_config() -> AdapterConfig:
 # on_cleanup contract), so they cannot share the same conformance tests.
 # acp uses the ACP protocol (Agent Client Protocol) with a similar non-standard
 # lifecycle (ACP JSON-RPC over stdio), so it is also excluded.
+# copilot_acp is a thin ACPClientAdapter subclass (Copilot CLI over ACP): it shares
+# the excluded acp bridge's lifecycle and converter and adds no model/LLM contract
+# of its own, so it is excluded for the same reason as acp. It is exercised live via
+# the baseline matrix (backends lane), not the framework-conformance matrix.
 # slack is a transport bridge that *wraps* an inner framework adapter (the brain)
 # and adds Slack ingress/egress; it has no model/LLM contract of its own, so it
 # cannot share the framework-adapter conformance tests (same rationale as a2a/acp).
 # claude_sdk is excluded when claude-agent-sdk optional dep is not installed.
+# copilot_sdk is excluded when github-copilot-sdk optional dep is not installed.
 
-_excluded = {"a2a", "a2a_gateway", "acp", "slack"}
+_excluded = {"a2a", "a2a_gateway", "acp", "copilot_acp", "slack"}
 if not _HAS_CLAUDE_SDK:
     _excluded = _excluded | {"claude_sdk"}
+if not _HAS_COPILOT_SDK:
+    _excluded = _excluded | {"copilot_sdk"}
 ADAPTER_EXCLUDED_MODULES: frozenset[str] = frozenset(_excluded)
 
 
@@ -771,6 +815,7 @@ _ADAPTER_CONFIG_BUILDERS: list[Callable[[], AdapterConfig]] = [
     _build_crewai_config,
     _build_crewai_flow_config,
     _build_claude_sdk_config,
+    _build_copilot_sdk_config,
     _build_pydantic_ai_config,
     _build_parlant_config,
     _build_codex_config,

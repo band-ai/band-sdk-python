@@ -49,7 +49,7 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.platform.link import BandLink
 from band.runtime._context_serialization import context_item_to_dict
-from band.runtime.formatters import format_history_for_llm
+from band.runtime.formatters import format_history_for_llm, replace_uuid_mentions
 from band.runtime.tools import AgentTools
 
 logger = logging.getLogger(__name__)
@@ -273,7 +273,7 @@ class OneShotInvoker:
             participants = await self._fetch_participants(room_id)
             sender_name = _lookup_sender_name(participants, payload.get("sender_id"))
 
-            msg = _build_platform_message(payload, room_id, sender_name)
+            msg = _build_platform_message(payload, room_id, sender_name, participants)
             history, seen_ids = await self._fetch_history(
                 room_id,
                 exclude_message_id=msg.id,
@@ -474,11 +474,14 @@ def _build_platform_message(
     payload: dict[str, Any],
     room_id: str,
     sender_name: str | None,
+    participants: list[dict[str, Any]],
 ) -> PlatformMessage:
+    # Translate @[[uuid]] mention tokens to @handle like history formatting
+    # does — a raw uuid in the turn misleads the LLM (see DefaultPreprocessor).
     return PlatformMessage(
         id=payload["id"],
         room_id=room_id,
-        content=payload.get("content", ""),
+        content=replace_uuid_mentions(payload.get("content", ""), participants),
         sender_id=payload.get("sender_id", ""),
         sender_type=payload.get("sender_type", "User"),
         sender_name=sender_name,

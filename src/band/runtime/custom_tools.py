@@ -7,10 +7,8 @@ and execute custom tools with validation.
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
-from functools import lru_cache
 from typing import Any, Callable
 
 from pydantic import BaseModel, ValidationError
@@ -45,6 +43,19 @@ def custom_tool_to_mcp_schema(
             mcp_schema[prop_name] = str
 
     return mcp_schema
+
+
+def is_marked_terminal(tool: Any) -> bool:
+    """Whether a custom tool opts in as a *terminal* action.
+
+    A custom tool declares itself terminal by setting ``band_terminal = True`` on
+    its **handler function** — both adapters read the flag off the handler (crewai
+    from the ``(input_model, handler)`` tuple; pydantic-ai from the registered
+    function). Terminal custom tools let an empty final model response be treated as
+    benign (the tool completed the turn); undeclared custom tools do not (fail-loud
+    — see ``runtime.tools.is_terminal_success``).
+    """
+    return bool(getattr(tool, "band_terminal", False))
 
 
 def get_custom_tool_name(input_model: type[BaseModel]) -> str:
@@ -148,7 +159,18 @@ def find_custom_tool(
     return None
 
 
-@lru_cache(maxsize=256)
+def format_validation_error(exc: ValidationError) -> str:
+    """Format a pydantic ValidationError as an LLM-readable field list.
+
+    Model-level validators report an empty ``loc``, so the field name
+    falls back to "unknown" instead of raising IndexError.
+    """
+    return "; ".join(
+        f"{'.'.join(str(x) for x in err['loc']) if err.get('loc') else 'unknown'}: {err['msg']}"
+        for err in exc.errors()
+    )
+
+
 def _custom_tool_accepts_input(func: Callable[..., Any]) -> bool:
     try:
         return len(inspect.signature(func).parameters) > 0
@@ -180,23 +202,48 @@ async def execute_custom_tool(
     try:
         validated = model.model_validate(arguments)
     except ValidationError as e:
-        errors = [
-            f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
-            for err in e.errors()
-        ]
         tool_name = get_custom_tool_name(model)
         raise ValueError(
-            f"Invalid arguments for {tool_name}: {', '.join(errors)}"
+            f"Invalid arguments for {tool_name}: {format_validation_error(e)}"
         ) from e
 
+    if not _custom_tool_accepts_input(func) and arguments:
+        tool_name = get_custom_tool_name(model)
+        raise ValueError(
+            f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
+        )
+    return await invoke_validated_custom_tool(tool, validated)
+
+
+async def invoke_validated_custom_tool(
+    tool: CustomToolDef,
+    validated: Any,
+) -> Any:
+    """
+    Execute a custom tool whose arguments are already a validated InputModel
+    instance — the post-validation half of :func:`execute_custom_tool`.
+
+    For callers whose framework has already constructed the InputModel (e.g.
+    pydantic-ai validates tool args natively): re-serializing the instance to
+    a dict and re-validating would break models using field aliases, so the
+    instance is passed through as-is. Async/zero-argument handler semantics
+    match :func:`execute_custom_tool` exactly.
+    """
+    model, func = tool
+
     accepts_input = _custom_tool_accepts_input(func)
-    if not accepts_input and (arguments or model.model_fields):
+    if not accepts_input and model.model_fields:
         tool_name = get_custom_tool_name(model)
         raise ValueError(
             f"Invalid handler for {tool_name}: zero-argument handlers require an empty InputModel and no arguments"
         )
     args = (validated,) if accepts_input else ()
 
-    if asyncio.iscoroutinefunction(func):
-        return await func(*args)
-    return func(*args)
+    # Call the handler, then await if it produced an awaitable. This covers plain
+    # sync/async functions AND callable objects with an async __call__ (for which
+    # asyncio.iscoroutinefunction returns False, so a bare check would leak the
+    # coroutine unawaited).
+    result = func(*args)
+    if inspect.isawaitable(result):
+        return await result
+    return result

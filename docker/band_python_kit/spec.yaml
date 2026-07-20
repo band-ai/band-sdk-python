@@ -1,0 +1,62 @@
+# schemaVersion "2" selects sbx's OCI v2 kit artifact format (tar+gzip layer,
+# spec in the manifest config blob, standard OCI annotations) for
+# `sbx kit push`, with v0.34.0's streaming/caching support. It changes only
+# the packaging on push — no spec-field differences from "1" — and passes
+# `sbx kit validate` unchanged on the pinned CLI.
+schemaVersion: "2"
+kind: sandbox
+name: band-python-kit
+displayName: Band Python Agent
+description: Run a workspace Python agent on Band inside a Docker Sandbox.
+
+sandbox:
+  image: band-python-kit:local
+  aiFilename: AGENTS.md
+
+# The agent launches headlessly at every sandbox start (no attach needed):
+# the startup command chains through the base image entrypoint (proxy-CA
+# refresh as root, then a setpriv drop to uid 1000) into the SDK launcher,
+# which syncs the workspace's locked dependencies into a sandbox-owned venv
+# and execs the configured customer entrypoint. Startup runs are idempotent;
+# output lands in /var/log/sbx-kit-startup.log inside the sandbox.
+# Paths below assume the image's default layout (BAND_SDK_HOME=/opt/band);
+# a build that overrides --build-arg BAND_SDK_HOME needs a matching kit.
+commands:
+  startup:
+    - command:
+        - /usr/local/bin/band-entrypoint.sh
+        - /opt/band/venv/bin/python
+        - -m
+        - band.docker.launcher
+      user: "0"
+      background: true
+      description: Launch the Band agent
+
+# Minimal egress for Band, locked dependency sync (PyPI), and the supported
+# LLM backends (OpenAI, Anthropic, GitHub Copilot). The Copilot set is the
+# empirically minimal one for the Copilot CLI (release-assets serves its
+# self-download; the IDE-only copilot-proxy/origin-tracker hosts are not
+# needed). Non-production Band hosts are granted per sandbox with
+# `sbx policy allow network --sandbox <name> <host>`, never baked in here.
+caps:
+  network:
+    allow:
+      - app.band.ai
+      - pypi.org
+      - files.pythonhosted.org
+      - api.openai.com
+      - api.anthropic.com
+      - github.com
+      - api.github.com
+      - release-assets.githubusercontent.com
+      - "*.githubcopilot.com"
+      - "*.individual.githubcopilot.com"
+      - "*.business.githubcopilot.com"
+      - "*.enterprise.githubcopilot.com"
+
+agentContext: |
+  This workspace contains a Python agent launched by the Band Sandbox kit.
+  Agent configuration is in band.yaml.
+  Dependency changes must update both pyproject.toml and uv.lock.
+  Supported LLM backends are OpenAI, Anthropic/Claude, and GitHub Copilot.
+  Never print or commit configured credentials.

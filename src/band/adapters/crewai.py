@@ -50,6 +50,36 @@ _reply_tracker_var: ContextVar[ReplyTracker | None] = ContextVar(
 )
 
 
+def _silence_lite_agent_error_panel() -> None:
+    """Deregister CrewAI's benign red "LiteAgent Failed" console panel.
+
+    The agent replies via the band_send_message tool, so CrewAI's post-tool step
+    returns an empty final answer and raises the "Invalid response from LLM call"
+    ValueError that on_message already swallows — yet its global console listener
+    prints an alarming panel anyway (regardless of verbose). Remove only that
+    handler; tracing and genuine errors are untouched. Idempotent (a later call
+    finds nothing) and best-effort (leave the panel if CrewAI internals move).
+    """
+    try:
+        # event_listener is imported for its side effect: registering the handlers.
+        from crewai.events import crewai_event_bus
+        from crewai.events.event_listener import event_listener  # noqa: F401
+        from crewai.events.types.agent_events import LiteAgentExecutionErrorEvent
+
+        handlers = crewai_event_bus._sync_handlers.get(
+            LiteAgentExecutionErrorEvent, frozenset()
+        )
+        for handler in list(handlers):
+            if getattr(handler, "__name__", "") == "on_lite_agent_execution_error":
+                crewai_event_bus.off(LiteAgentExecutionErrorEvent, handler)
+    except (ImportError, AttributeError) as e:
+        # Tolerate only CrewAI's private event internals moving on a version bump
+        # (we reach into _sync_handlers); any other error is a real bug — let it raise.
+        # warn (not debug): this means our private-API reach broke and the silencer
+        # needs updating — surface it rather than bury it.
+        logger.warning("Could not silence CrewAI LiteAgent error panel: %s", e)
+
+
 class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
     """CrewAI adapter using the official CrewAI SDK.
 
@@ -187,6 +217,8 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
                 "Install with: pip install 'band-sdk[crewai]'\n"
                 "Or: uv add crewai nest-asyncio"
             ) from e
+
+        _silence_lite_agent_error_panel()
 
         await super().on_started(agent_name, agent_description)
         self._tool_loop = asyncio.get_running_loop()
@@ -338,7 +370,7 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
 
         messages = []
 
-        if is_session_bootstrap and self._message_history.get(room_id):
+        if self._message_history.get(room_id):
             history_text = "\n".join(
                 f"{m['role']}: {m['content']}" for m in self._message_history[room_id]
             )
@@ -385,6 +417,9 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
             is_session_bootstrap,
         )
 
+        # CrewAI usage is intentionally not emitted (Emit.USAGE absent from
+        # SUPPORTED_EMIT): result.usage_metrics is cumulative-lifetime, not
+        # per-turn. Proper per-turn capture is deferred — don't add emit_usage here.
         try:
             # Type ignore explanation: CrewAI's kickoff_async is typed to accept
             # only a string prompt, but the implementation also accepts a list of
@@ -419,21 +454,23 @@ class CrewAIAdapter(SimpleAdapter[CrewAIMessages]):
         except Exception as e:
             # CrewAI raises ValueError("Invalid response from LLM call - None or
             # empty.") when its ReAct loop yields an empty final answer. In this
-            # adapter the agent replies via the band_send_message tool, so an
-            # empty final answer AFTER a successful reply is benign noise — the
-            # user already got their response. Match that specific ValueError
-            # narrowly so genuine failures after a reply (downstream errors,
-            # later-processing bugs, a second tool call throwing) still surface
-            # as error events and propagate.
+            # adapter the agent acts via tools (band_send_message to reply,
+            # band_store_memory, etc.), so an empty final answer AFTER the agent
+            # already did productive work is benign noise — a reply went out, or a
+            # tool-only turn (e.g. a memory store the user told it not to follow
+            # with a message) completed and there is simply nothing left to say.
+            # Match that specific ValueError narrowly so genuine no-response
+            # failures (the LLM returned empty without doing anything) still
+            # surface as error events and propagate.
             if (
                 reply_tracker is not None
-                and reply_tracker.replied
+                and (reply_tracker.replied or reply_tracker.tool_executed)
                 and isinstance(e, ValueError)
                 and "Invalid response from LLM call" in str(e)
             ):
                 logger.warning(
-                    "Room %s: CrewAI returned an empty final answer after a reply "
-                    "was already delivered; treating as non-fatal: %s",
+                    "Room %s: CrewAI returned an empty final answer after the agent "
+                    "already did productive work this turn; treating as non-fatal: %s",
                     room_id,
                     e,
                 )

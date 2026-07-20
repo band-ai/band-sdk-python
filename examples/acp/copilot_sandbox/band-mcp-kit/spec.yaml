@@ -1,0 +1,42 @@
+schemaVersion: "1"
+kind: mixin
+name: band-mcp
+displayName: Band MCP
+description: Expose Band tools to a sandboxed ACP agent through loopback MCP/SSE.
+
+caps:
+  network:
+    allow:
+      - app.band.ai
+      - files.pythonhosted.org
+      - pypi.org
+
+environment:
+  variables:
+    ALLOWED_HOSTS: '["localhost:*","127.0.0.1:*"]'
+    BAND_AGENT_KEY: proxy-managed
+    THENVOI_BASE_URL: https://app.band.ai
+
+commands:
+  install:
+    - command: "uv tool install band-mcp"
+      user: "1000"
+      description: Install band-mcp
+  startup:
+    - command:
+        - /home/agent/.local/bin/thenvoi-mcp
+        - --transport
+        - sse
+        - --host
+        - 127.0.0.1
+        - --port
+        - "3000"
+      user: "1000"
+      background: true
+      description: Start band-mcp on sandbox loopback
+
+agentContext: |
+  Band tools are available through the MCP server named `band`.
+  Use the Band tools when you need to post messages, inspect participants, manage
+  contacts, or use Band memory. The standalone band-mcp server expects explicit
+  `chat_id` arguments for chat and message tools.

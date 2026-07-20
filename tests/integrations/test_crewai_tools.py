@@ -292,8 +292,8 @@ class TestToolSetComposition:
         tools_obj.lookup_peers.assert_awaited_once_with(2, 25)
 
     def test_send_message_marks_reply_tracker(self, builder_mod):
-        """A successful band_send_message flips the per-turn ReplyTracker so
-        the adapter can treat a later empty final answer as benign."""
+        """A successful band_send_message flips both ReplyTracker markers so the
+        adapter can treat a later empty final answer as benign."""
         tools_obj = MagicMock()
         tools_obj.send_message = AsyncMock(return_value={"status": "sent"})
         tracker = builder_mod.ReplyTracker()
@@ -312,9 +312,58 @@ class TestToolSetComposition:
         assert result["status"] == "success"
         tools_obj.send_message.assert_awaited_once()
         assert tracker.replied is True
+        assert tracker.tool_executed is True
+
+    def test_send_event_is_not_terminal_work(self, builder_mod):
+        """band_send_event emits an observational event (thought/error/task), not
+        terminal work — it must NOT flip tool_executed. So a turn that only sends an
+        event and then yields an empty final answer is a genuine no-response failure
+        the adapter still surfaces, not benign noise (see is_terminal_success)."""
+        tools_obj = MagicMock()
+        tools_obj.send_event = AsyncMock(return_value=None)
+        tracker = builder_mod.ReplyTracker()
+        context = builder_mod.CrewAIToolContext(
+            room_id="room-1", tools=tools_obj, reply_tracker=tracker
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        send_event = next(t for t in tools if t.name == "band_send_event")
+
+        result = json.loads(send_event._run(content="thinking", message_type="task"))
+
+        assert result["status"] == "success"
+        assert tracker.tool_executed is False
+        assert tracker.replied is False
+
+    def test_read_only_tool_does_not_mark_tool_executed(self, builder_mod):
+        """A successful read-only tool (lookup/listing) must NOT flip either
+        marker. Fetching state is not a terminal action, so a turn that runs only
+        a lookup and then yields an empty final answer is a genuine no-response
+        failure the adapter must still surface — not benign noise."""
+        tools_obj = MagicMock()
+        tools_obj.lookup_peers = AsyncMock(return_value={"peers": []})
+        tracker = builder_mod.ReplyTracker()
+        context = builder_mod.CrewAIToolContext(
+            room_id="room-1", tools=tools_obj, reply_tracker=tracker
+        )
+        tools = builder_mod.build_band_crewai_tools(
+            get_context=lambda: context,
+            reporter=builder_mod.NoopReporter(),
+            capabilities=frozenset(),
+        )
+        lookup_peers = next(t for t in tools if t.name == "band_lookup_peers")
+
+        result = json.loads(lookup_peers._run())
+
+        assert result["status"] == "success"
+        assert tracker.tool_executed is False
+        assert tracker.replied is False
 
     def test_reply_tracker_not_marked_on_send_failure(self, builder_mod):
-        """A failed send must NOT mark the tracker — the turn produced no reply."""
+        """A failed send must NOT mark either tracker — the turn produced nothing."""
         tools_obj = MagicMock()
         tools_obj.send_message = AsyncMock(side_effect=RuntimeError("boom"))
         tracker = builder_mod.ReplyTracker()
@@ -332,6 +381,7 @@ class TestToolSetComposition:
 
         assert result["status"] == "error"
         assert tracker.replied is False
+        assert tracker.tool_executed is False
 
     def test_send_failure_appends_available_handles(self, builder_mod):
         """The real empty-mentions error already lists the room's handles, so the
@@ -435,6 +485,59 @@ class TestEmitExecutionReporter:
         await reporter.report_result(tools, "tool", "result")
 
         assert tools.send_event.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_emits_canonical_event_schema(self, builder_mod):
+        """The emitted payloads must use the canonical name/args/output schema.
+
+        Every framework's tool_call / tool_result events are read back through
+        the shared ``parse_tool_call`` / ``parse_tool_result`` (and the E2E
+        observer), which key off ``name`` / ``args`` / ``output``. crewai once
+        emitted ``tool`` / ``input`` / ``result`` instead, so its tool events
+        were silently dropped on read. Pin the schema here so a count-only
+        assertion can't let that drift back in.
+        """
+        from band.core.types import AdapterFeatures, Emit
+
+        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
+        reporter = builder_mod.EmitExecutionReporter(features)
+        tools = MagicMock()
+        tools.send_event = AsyncMock()
+
+        await reporter.report_call(tools, "lookup", {"key": "alpha"})
+        await reporter.report_result(tools, "lookup", "SECRET-123")
+
+        call_kwargs, result_kwargs = (c.kwargs for c in tools.send_event.call_args_list)
+
+        assert call_kwargs["message_type"] == "tool_call"
+        assert json.loads(call_kwargs["content"]) == {
+            "name": "lookup",
+            "args": {"key": "alpha"},
+        }
+
+        assert result_kwargs["message_type"] == "tool_result"
+        assert json.loads(result_kwargs["content"]) == {
+            "name": "lookup",
+            "output": "SECRET-123",
+            "is_error": False,
+        }
+
+    @pytest.mark.asyncio
+    async def test_error_result_sets_is_error(self, builder_mod):
+        from band.core.types import AdapterFeatures, Emit
+
+        features = AdapterFeatures(emit=frozenset({Emit.EXECUTION}))
+        reporter = builder_mod.EmitExecutionReporter(features)
+        tools = MagicMock()
+        tools.send_event = AsyncMock()
+
+        await reporter.report_result(tools, "lookup", "boom", is_error=True)
+
+        assert json.loads(tools.send_event.call_args.kwargs["content"]) == {
+            "name": "lookup",
+            "output": "boom",
+            "is_error": True,
+        }
 
     @pytest.mark.asyncio
     async def test_send_event_failure_does_not_propagate(self, builder_mod):

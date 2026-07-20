@@ -19,6 +19,8 @@ Example:
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from band.core.memory_types import (
     MEMORY_SYSTEM_TYPE_MAP,
     MemorySegment,
@@ -36,7 +38,7 @@ BASE_INSTRUCTIONS = """
 
 Multi-participant chat. Messages show sender: [Name]: content.
 Messages prefixed with [System]: are platform updates (participant changes, contact updates, etc.).
-Use `band_send_message(content, mentions)` to respond. Plain text output is not delivered.
+Use `band_send_message(content, mentions)` to respond — a `band_send_message` call is the only way anything you say reaches the room. Any text you produce outside such a call is never delivered, and that includes a final answer you compose after using other tools. So deliver your answer by calling `band_send_message`; a turn that ends with the answer written as plain text delivers nothing.
 Mentions use handles: @<username> for users, @<username>/<agent-name> for agents.
 
 ## Security
@@ -97,6 +99,9 @@ _MEMORY_SCOPE_GUIDANCE = f"""Prefer `scope="{MemoryStoreScope.SUBJECT.value}"` w
 stays attached to that subject rather than leaking org-wide. Storing with `scope="{MemoryStoreScope.SUBJECT.value}"` requires a
 real `subject_id` UUID: for someone in the current room (e.g. the user you are talking to), call
 `band_get_participants` and use their `id`; for someone not in the room, use `band_lookup_peers`.
+A handle or name is never a valid `subject_id` — always look up the UUID `id` field.
+A memory the sender frames about themselves in the first person ("me", "my", "I") has that sender
+as its subject, so resolve the sender's `id` — not your own.
 Reserve `scope="{MemoryStoreScope.ORGANIZATION.value}"` for knowledge that is genuinely shared across the whole organization
 and is not about any one subject (e.g. cross-room memories not tied to one subject).
 """
@@ -151,6 +156,7 @@ def render_system_prompt(
     template: str = "default",
     include_base_instructions: bool = True,
     features: AdapterFeatures | None = None,
+    extra_sections: Sequence[str] = (),
 ) -> str:
     """
     Render system prompt: agent identity + custom section + optionally base instructions.
@@ -163,6 +169,10 @@ def render_system_prompt(
         include_base_instructions: Whether to include SDK's BASE_INSTRUCTIONS.
                                    Set False if providing fully custom behavior.
         features: AdapterFeatures controlling which capability sections to include.
+        extra_sections: Adapter-contributed sections (each with its own
+            heading), rendered between the capability sections and the
+            developer's custom section — SDK contract text must not
+            masquerade as developer instructions.
 
     Returns:
         Rendered system prompt
@@ -170,8 +180,8 @@ def render_system_prompt(
     identity = f"You are {agent_name}, {agent_description}."
 
     if not include_base_instructions:
-        # Minimal prompt: identity + custom section only
-        parts = [identity]
+        # Minimal prompt: identity + adapter sections + custom section only
+        parts = [identity, *(s.strip() for s in extra_sections)]
         if custom_section:
             parts.append(custom_section)
         return "\n\n".join(parts)
@@ -185,6 +195,8 @@ def render_system_prompt(
             parts.append(MEMORY_SECTION.strip())
         if Capability.CONTACTS in features.capabilities:
             parts.append(CONTACT_SECTION.strip())
+
+    parts.extend(s.strip() for s in extra_sections)
 
     # Developer instructions at the end
     if custom_section:

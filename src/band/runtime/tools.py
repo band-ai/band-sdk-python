@@ -40,6 +40,36 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The Agent Events API enforces a hard cap on event content (see
+# thenvoi-platform's events_controller.ex `@content_max_length`) and rejects
+# anything larger with a 422 before it ever reaches the room; it also rejects
+# a blank string outright ("content can't be blank"). Event content can be
+# arbitrarily large or entirely absent in practice — e.g. an ACP tool_result
+# mirroring a large file, or a tool call whose result has no text
+# representation (a terminal- or diff-only ACP tool_call_update) — so guard
+# both ends defensively rather than letting the send fail.
+_EVENT_CONTENT_MAX_LENGTH = 16384
+_EVENT_TRUNCATION_MARKER = "... [truncated] ..."
+_EVENT_EMPTY_CONTENT_PLACEHOLDER = "(no content)"
+
+
+def _truncate_event_content(content: str) -> str:
+    """Cap *content* at ``_EVENT_CONTENT_MAX_LENGTH`` chars, keeping its head
+    and tail around a marker.
+
+    Both ends are preserved because the tail is often the informative part of a
+    truncated payload — the final lines of a raw error dump, or a trailing
+    status — which a head-only cut would silently drop. A no-op when *content*
+    is already within the limit, so callers can run it unconditionally rather
+    than checking the length themselves first.
+    """
+    if len(content) <= _EVENT_CONTENT_MAX_LENGTH:
+        return content
+    budget = _EVENT_CONTENT_MAX_LENGTH - len(_EVENT_TRUNCATION_MARKER)
+    head_len = budget // 2
+    tail_len = budget - head_len
+    return content[:head_len] + _EVENT_TRUNCATION_MARKER + content[-tail_len:]
+
 
 def _normalize_handle(value: str) -> str:
     """Strip leading ``@`` so ``@alice`` and ``alice`` compare equal."""
@@ -678,6 +708,39 @@ class ListMyPeersInput(BaseModel):
     page_size: int | None = Field(None, description="Items per page (optional).")
 
 
+# Tool names whose successful call posts a visible message into the room.
+# Bridge adapters (copilot_sdk, codex, ACP client) use this to suppress their
+# fallback text relay once the turn has already replied in the room, so the
+# reply is delivered exactly once. band-mcp 1.3.2+ advertises the SDK-native
+# ``band_send_message`` (its registrar reuses these SDK tool definitions), which
+# the ``<server>-`` prefix match already covers; ``create_agent_chat_message``
+# is the legacy band-mcp <=1.3.1 spelling, kept so older out-of-process servers
+# still match.
+ROOM_POSTING_TOOL_NAMES: frozenset[str] = frozenset(
+    {"band_send_message", "create_agent_chat_message"}
+)
+
+
+def _matches_tool_name(tool_name: str, names: frozenset[str]) -> bool:
+    """Match a native tool name or the ``<server>-<tool>`` MCP spelling."""
+    if tool_name in names:
+        return True
+    return tool_name.endswith(tuple(f"-{name}" for name in names))
+
+
+def is_room_posting_tool(tool_name: str) -> bool:
+    """True when a successful call of ``tool_name`` posts a message to the room.
+
+    Tolerates the one MCP naming convention seen in practice: a ``<server>-``
+    prefix (e.g. ``band-band_send_message`` from band-mcp 1.3.2+, or the legacy
+    ``band-create_agent_chat_message`` from band-mcp <=1.3.1). Other spellings
+    (``mcp__server__tool``, ``server.tool``) are not matched — no wired backend
+    uses them, and a miss only costs a duplicate reply (the pre-suppression
+    behavior), never a wrong post. Extend here when such a backend is added.
+    """
+    return _matches_tool_name(tool_name, ROOM_POSTING_TOOL_NAMES)
+
+
 # Registry mapping tool names to their schemas and bound AgentTools methods.
 TOOL_DEFINITIONS: dict[str, ToolDefinition] = {
     "band_send_message": ToolDefinition(
@@ -972,6 +1035,29 @@ CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
     }
 )
 
+# Read-only / informational agent tools - explicitly listed (not derived by a
+# name heuristic) because misclassifying a write tool as read-only would weaken
+# the benign-empty-answer suppression in the crewai/pydantic-ai adapters. These
+# tools only *fetch* state; running one is not a terminal action and does not
+# constitute a reply, so a turn that runs only these and then yields an empty
+# final answer is a genuine no-response failure, not benign noise.
+READ_ONLY_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "band_get_participants",
+        "band_lookup_peers",
+        "band_list_contacts",
+        "band_list_contact_requests",
+        "band_list_memories",
+        "band_get_memory",
+    }
+)
+
+# Event-emitting tools are observational, not terminal work: band_send_event posts a
+# thought/error/task event (narration/status) — not a chat reply or a durable requested
+# action. Like read-only tools, a turn that only sends an event and then yields an empty
+# final answer is a genuine no-response failure, not benign (see is_terminal_success).
+EVENT_TOOL_NAMES: frozenset[str] = frozenset({"band_send_event"})
+
 # Human-surface memory tools - parallel to MEMORY_TOOL_NAMES but on the
 # ``surface="human"`` side of the registry. Used by iter_tool_definitions()
 # to apply the ``include_memory`` filter uniformly across both surfaces.
@@ -1004,12 +1090,68 @@ HUMAN_CONTACT_TOOL_NAMES: frozenset[str] = frozenset(
 # Derived from TOOL_MODELS — single source of truth
 ALL_TOOL_NAMES: frozenset[str] = frozenset(TOOL_MODELS.keys())
 
+
+def band_tool_errored(tool_name: str | None, content: Any) -> bool:
+    """Whether a Band tool call failed, by its wrapper's error convention.
+
+    Band tool wrappers catch exceptions and return a string starting with
+    ``"Error "``. Only known Band tools follow this convention (custom tools do not),
+    so it is checked for ``ALL_TOOL_NAMES`` members only. (crewai detects failure
+    differently — via its JSON ``status`` envelope — and does not use this helper.)
+    """
+    return (
+        tool_name in ALL_TOOL_NAMES
+        and isinstance(content, str)
+        and content.startswith("Error ")
+    )
+
+
+def is_terminal_success(
+    tool_name: str | None,
+    *,
+    succeeded: bool,
+    custom_terminal: bool = False,
+) -> bool:
+    """Whether a finished tool call counts as terminal productive work.
+
+    Single source of truth shared by the crewai / pydantic-ai adapters to decide
+    whether an empty final model response is *benign* (the agent already did its
+    work this turn) or a genuine no-response failure. Terminal work is:
+
+    * a Band tool that is not read-only, not observational, and did not fail, or
+    * a custom tool the caller declares terminal (``custom_terminal=True``).
+
+    Read-only Band tools (``READ_ONLY_TOOL_NAMES``) never count — fetching state is
+    not a terminal action. Observational tools (``EVENT_TOOL_NAMES`` — band_send_event
+    posts a thought/error/task event) don't count either: emitting narration/status is
+    not a chat reply or a durable requested action. Custom tools are **not** terminal
+    by default: the SDK cannot know whether a bare custom tool is a lookup or a
+    side-effecting action, so it fails loud — an empty final after only an undeclared
+    custom tool surfaces as a no-response error rather than being silently swallowed.
+    A custom tool that genuinely completes the turn opts in (see
+    ``runtime.custom_tools.is_marked_terminal``).
+    """
+    if not succeeded:
+        return False
+    if tool_name in READ_ONLY_TOOL_NAMES or tool_name in EVENT_TOOL_NAMES:
+        return False
+    if tool_name in ALL_TOOL_NAMES:
+        return True
+    return custom_terminal
+
+
 # Fail fast on typos — catch at import time, not in a test run.
 # Use explicit checks instead of ``assert`` so they are not stripped by -O.
 if MEMORY_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown memory tools: {MEMORY_TOOL_NAMES - ALL_TOOL_NAMES}")
 if CONTACT_TOOL_NAMES - ALL_TOOL_NAMES:
     raise ValueError(f"Unknown contact tools: {CONTACT_TOOL_NAMES - ALL_TOOL_NAMES}")
+if READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES:
+    raise ValueError(
+        f"Unknown read-only tools: {READ_ONLY_TOOL_NAMES - ALL_TOOL_NAMES}"
+    )
+if EVENT_TOOL_NAMES - ALL_TOOL_NAMES:
+    raise ValueError(f"Unknown event tools: {EVENT_TOOL_NAMES - ALL_TOOL_NAMES}")
 
 # Human-surface registry membership is validated against TOOL_DEFINITIONS
 # (not TOOL_MODELS, which stays agent-only for back-compat).
@@ -1300,10 +1442,14 @@ class AgentTools(AgentToolsProtocol):
             ChatMessageRequestMentionsItem,
         )
 
-        # Deprecation warning for dict-style mentions
-        if mentions and isinstance(mentions[0], dict):
+        # Deprecation warning for dict-style mentions WITHOUT an id: those
+        # lean on name/handle resolution, which list[str] does better.
+        # Id-bearing dicts are adapter-supplied ground truth (the message's
+        # own sender_id) — the one shape that can never miss the
+        # participants cache — and stay first-class.
+        if any(isinstance(m, dict) and not m.get("id") for m in mentions or []):
             warnings.warn(
-                "Passing mentions as list[dict] is deprecated. "
+                "Passing mentions as list[dict] without an 'id' is deprecated. "
                 "Use list[str] with handles instead.",
                 DeprecationWarning,
                 stacklevel=2,
@@ -1365,6 +1511,25 @@ class AgentTools(AgentToolsProtocol):
         from band.client.rest import ChatEventRequest
 
         logger.debug("Sending %s event to room %s", message_type, self.room_id)
+
+        if not content:
+            logger.warning(
+                "Substituting placeholder for blank %s event content in room %s",
+                message_type,
+                self.room_id,
+            )
+            content = _EVENT_EMPTY_CONTENT_PLACEHOLDER
+
+        original_length = len(content)
+        content = _truncate_event_content(content)
+        if len(content) != original_length:
+            logger.warning(
+                "Truncated oversized %s event content for room %s (%d chars > %d limit)",
+                message_type,
+                self.room_id,
+                original_length,
+                _EVENT_CONTENT_MAX_LENGTH,
+            )
 
         response = await self.rest.agent_api_events.create_agent_chat_event(
             chat_id=self.room_id,

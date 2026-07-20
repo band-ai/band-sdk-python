@@ -21,6 +21,7 @@ from band.runtime.tools import (
     _matches_identifier,
     append_mention_handles_hint,
     available_mention_handles,
+    is_room_posting_tool,
 )
 
 
@@ -539,6 +540,41 @@ class TestAgentToolsSendEvent:
 
         with pytest.raises(RuntimeError, match="Failed to send event"):
             await tools.send_event("Error!", "error")
+
+    async def test_send_event_within_limit_untouched(self, mock_rest_client):
+        """send_event() should pass short content through unchanged."""
+        tools = AgentTools("room-123", mock_rest_client)
+        content = "x" * 16384
+
+        await tools.send_event(content, "tool_result")
+
+        call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
+        assert call_args.kwargs["event"].content == content
+
+    async def test_send_event_truncates_oversized_content(self, mock_rest_client):
+        """send_event() caps oversized content, keeping both its head and tail."""
+        tools = AgentTools("room-123", mock_rest_client)
+        content = "HEAD" * 10000 + "TAIL" * 10000
+
+        await tools.send_event(content, "tool_result")
+
+        call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
+        sent_content = call_args.kwargs["event"].content
+        assert len(sent_content) == 16384
+        assert sent_content.startswith("HEAD")  # head is retained
+        assert sent_content.endswith("TAIL")  # and the tail isn't dropped
+        assert "[truncated]" in sent_content  # with a marker between them
+
+    async def test_send_event_substitutes_placeholder_for_blank_content(
+        self, mock_rest_client
+    ):
+        """send_event() should never send a blank string — the platform 422s on it."""
+        tools = AgentTools("room-123", mock_rest_client)
+
+        await tools.send_event("", "tool_result")
+
+        call_args = mock_rest_client.agent_api_events.create_agent_chat_event.call_args
+        assert call_args.kwargs["event"].content == "(no content)"
 
 
 class TestMatchesIdentifier:
@@ -1368,3 +1404,27 @@ class TestToolInputModels:
         """CreateChatroomInput should work without task_id."""
         model = CreateChatroomInput()
         assert model.task_id is None
+
+
+class TestIsRoomPostingTool:
+    """Which tool calls count as having replied in the room."""
+
+    def test_sdk_injected_tool(self):
+        assert is_room_posting_tool("band_send_message") is True
+
+    def test_standalone_band_mcp_tool(self):
+        assert is_room_posting_tool("create_agent_chat_message") is True
+
+    def test_mcp_server_prefixed_names(self):
+        """MCP clients may prefix the server name onto the tool name."""
+        assert is_room_posting_tool("band-band_send_message") is True
+        assert is_room_posting_tool("band-create_agent_chat_message") is True
+
+    def test_non_posting_tools(self):
+        assert is_room_posting_tool("band_send_event") is False
+        assert is_room_posting_tool("band_lookup_peers") is False
+        assert is_room_posting_tool("get_weather") is False
+
+    def test_no_substring_false_positive(self):
+        """Only an exact or server-prefixed match counts, not any substring."""
+        assert is_room_posting_tool("band_send_message_draft") is False

@@ -24,6 +24,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 from band.integrations.codex import (
     CodexJsonRpcError,
@@ -44,7 +45,9 @@ from band.runtime.custom_tools import (
     custom_tool_to_openai_schema,
     execute_custom_tool,
     find_custom_tool,
+    format_validation_error,
 )
+from band.runtime.tools import is_room_posting_tool
 from band.runtime.prompts import render_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -55,16 +58,8 @@ ApprovalDecision = Literal["accept", "acceptForSession", "decline"]
 _REASONING_EFFORTS = {"none", "minimal", "low", "medium", "high", "xhigh"}
 _REASONING_SUMMARIES = {"auto", "concise", "detailed", "none"}
 
-# Platform tools whose execution should not be reported as tool_call/tool_result
-# events — they already produce visible output (messages or events) on the platform.
-_SILENT_REPORTING_TOOLS: frozenset[str] = frozenset(
-    {
-        "band_send_message",
-        "band_send_event",
-        "setmodel",
-        "setreasoning",
-    }
-)
+# Codex-local slash commands, which surface their outcome in the room themselves.
+_SILENT_REPORTING_TOOLS: frozenset[str] = frozenset({"setmodel", "setreasoning"})
 
 # Slash commands recognised by _extract_local_command().
 _LOCAL_COMMANDS: frozenset[str] = frozenset(
@@ -297,7 +292,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     """
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset(
-        {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS}
+        {Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS, Emit.USAGE}
     )
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
@@ -620,7 +615,10 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             if usage_obj is not None:
                 usage_obj.reset_turn_deltas()
 
-            _turn_start = _time.monotonic()
+            # perf_counter (not monotonic): highest-resolution clock, so a fast
+            # turn still measures a non-zero duration on Windows, where
+            # monotonic()'s coarse tick can round an instant turn to 0.0.
+            _turn_start = _time.perf_counter()
             try:
                 result = await self._process_turn_events(
                     tools=tools,
@@ -642,7 +640,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     turn_error="Internal error during turn processing",
                 )
 
-            _turn_duration_s = _time.monotonic() - _turn_start
+            _turn_duration_s = _time.perf_counter() - _turn_start
             await self._emit_turn_outcome(
                 tools=tools,
                 msg=msg,
@@ -675,7 +673,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             while True:
                 _remaining = max(
                     0.0,
-                    self.config.turn_timeout_s - (_time.monotonic() - turn_start),
+                    self.config.turn_timeout_s - (_time.perf_counter() - turn_start),
                 )
                 event = await self._client.recv_event(timeout_s=_remaining)
                 if event.kind == "request":
@@ -1314,8 +1312,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
             call_id = str(params.get("callId") or "")
             tool_call_succeeded = False
 
-            # Don't emit reporting for platform tools that already produce
-            # visible output (messages/events) — reporting them is redundant.
+            # Don't emit reporting for codex-local slash commands — they already
+            # surface their outcome in the room themselves.
             should_report = (
                 Emit.EXECUTION in self.features.emit
                 and tool_name not in _SILENT_REPORTING_TOOLS
@@ -1333,14 +1331,21 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                 custom_tool = find_custom_tool(self._custom_tools, tool_name)
                 if custom_tool:
                     result = await execute_custom_tool(custom_tool, arguments)
+                    success = True
                 else:
-                    result = await tools.execute_tool_call(tool_name, arguments)
+                    # Structured: a base tool (e.g. band_send_message) can fail without
+                    # raising (bad args, API error) via ok=False; the plain variant would
+                    # report success and wrongly suppress the final-text fallback.
+                    outcome = await tools.execute_tool_call_structured(
+                        tool_name, arguments
+                    )
+                    result = outcome.value
+                    success = outcome.ok
                 text_result = (
                     result
                     if isinstance(result, str)
                     else json.dumps(result, default=str)
                 )
-                success = True
                 await self._client.respond(
                     event.id,
                     {
@@ -1348,7 +1353,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         "success": success,
                     },
                 )
-                tool_call_succeeded = True
+                tool_call_succeeded = success
                 if should_report:
                     await tools.send_event(
                         content=json.dumps(
@@ -1361,9 +1366,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         message_type="tool_result",
                     )
             except ValidationError as exc:
-                errors = "; ".join(
-                    f"{err['loc'][0]}: {err['msg']}" for err in exc.errors()
-                )
+                errors = format_validation_error(exc)
                 error_text = f"Invalid arguments for {tool_name}: {errors}"
                 logger.error("Validation error for tool %s: %s", tool_name, exc)
                 await self._client.respond(
@@ -1406,7 +1409,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                         message_type="tool_result",
                     )
 
-            return tool_name == "band_send_message" and tool_call_succeeded
+            return is_room_posting_tool(tool_name) and tool_call_succeeded
 
         if event.method in CODEX_APPROVAL_METHODS:
             await self._handle_approval_request(
@@ -1537,6 +1540,27 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
                     exc_info=True,
                 )
 
+    @staticmethod
+    def _turn_usage(usage: CodexTokenUsage | None) -> TurnUsage:
+        """Map codex's per-turn token deltas onto the framework-agnostic TurnUsage.
+
+        Uses the per-turn deltas (rise from the turn-start anchor), not the
+        thread cumulatives, so each emitted record is this turn's usage —
+        matching what the in-process adapters emit. Codex reports no cache
+        dimension, so those stay 0; a ``None`` usage yields empty (no emit).
+
+        Codex reports reasoning tokens *disjointly* from output (its own total is
+        ``input + output + reasoning``), so fold reasoning into ``output_tokens``
+        — otherwise reasoning-heavy turns undercount, and this stays consistent
+        with providers that already count reasoning inside output.
+        """
+        return TurnUsage.from_object(
+            usage,
+            input="turn_input_tokens",
+            output="turn_output_tokens",
+            reasoning="turn_reasoning_tokens",
+        )
+
     async def _emit_turn_outcome(
         self,
         *,
@@ -1554,6 +1578,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         # Look up token usage once for both marker and lifecycle events.
         usage = self._token_usage.get(thread_id)
         has_usage = usage is not None and usage.total_tokens > 0
+
+        # Emit this turn's usage through the unified Emit.USAGE seam so the
+        # toolkit's capture.usage() reads codex like every other adapter. This
+        # is independent of the codex-specific emit_token_usage_events path
+        # (which embeds codex_*_tokens on the marker/lifecycle task events);
+        # emit_usage no-ops unless Emit.USAGE is enabled and usage is non-empty.
+        await self.emit_usage(tools, self._turn_usage(usage))
 
         if (
             Emit.TASK_EVENTS in self.features.emit

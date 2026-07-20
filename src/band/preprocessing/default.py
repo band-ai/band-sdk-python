@@ -11,7 +11,7 @@ from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools import AgentTools
-from band.runtime.formatters import format_history_for_llm
+from band.runtime.formatters import format_history_for_llm, replace_uuid_mentions
 from band.integrations.base import check_and_format_participants
 
 logger = logging.getLogger(__name__)
@@ -60,11 +60,14 @@ class DefaultPreprocessor(Preprocessor):
         # Look up sender name from participants list
         sender_name = self._lookup_sender_name(ctx, msg_data.sender_id)
 
-        # Convert to PlatformMessage (typed attribute access, no dict lookups)
+        # Convert to PlatformMessage (typed attribute access, no dict lookups).
+        # Translate @[[uuid]] mention tokens to @handle like history formatting
+        # does: the platform normalizes mentions to uuid form, and a raw uuid in
+        # the turn misleads the LLM (e.g. into using it as a memory subject_id).
         msg = PlatformMessage(
             id=msg_data.id,
             room_id=room_id,
-            content=msg_data.content,
+            content=replace_uuid_mentions(msg_data.content, ctx.participants),
             sender_id=msg_data.sender_id,
             sender_type=msg_data.sender_type,
             sender_name=sender_name,

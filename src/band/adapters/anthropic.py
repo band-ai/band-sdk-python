@@ -22,6 +22,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    TurnUsage,
 )
 from band.converters.anthropic import AnthropicHistoryConverter, AnthropicMessages
 from band.runtime.custom_tools import (
@@ -55,7 +56,7 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
         await agent.run()
     """
 
-    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION})
+    SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
         {Capability.MEMORY, Capability.CONTACTS}
     )
@@ -268,55 +269,64 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             custom_schemas = custom_tools_to_schemas(self._custom_tools, "anthropic")
             tool_schemas.extend(cast(list[ToolParam], custom_schemas))
 
-        # Tool loop - let LLM decide when to stop
-        while True:
-            try:
-                response = await self._call_anthropic(
-                    messages=self._message_history[room_id],
-                    tools=tool_schemas,
-                )
-            except Exception as e:
-                logger.error("Error calling Anthropic: %s", e, exc_info=True)
-                await self._report_error(tools, str(e))
-                raise  # Re-raise so message is marked as failed
-
-            # Check for tool use
-            if response.stop_reason != "tool_use":
-                # No more tool calls - extract text content if any
-                text_content = self._extract_text_content(response.content)
-                if text_content:
-                    self._message_history[room_id].append(
-                        {
-                            "role": "assistant",
-                            "content": text_content,
-                        }
+        # Tool loop - let LLM decide when to stop. Anthropic reports usage
+        # per API call, so sum it across every iteration of the loop into one
+        # per-turn TurnUsage, emitted on every exit via the finally.
+        turn_usage = TurnUsage()
+        try:
+            while True:
+                try:
+                    response = await self._call_anthropic(
+                        messages=self._message_history[room_id],
+                        tools=tool_schemas,
                     )
-                logger.debug(
-                    "Room %s: Completed with stop_reason=%s",
-                    room_id,
-                    response.stop_reason,
+                except Exception as e:
+                    logger.error("Error calling Anthropic: %s", e, exc_info=True)
+                    await self._report_error(tools, str(e))
+                    raise  # Re-raise so message is marked as failed
+
+                turn_usage = turn_usage + self._usage_from_response(response)
+
+                # Check for tool use
+                if response.stop_reason != "tool_use":
+                    # No more tool calls - extract text content if any
+                    text_content = self._extract_text_content(response.content)
+                    if text_content:
+                        self._message_history[room_id].append(
+                            {
+                                "role": "assistant",
+                                "content": text_content,
+                            }
+                        )
+                    logger.debug(
+                        "Room %s: Completed with stop_reason=%s",
+                        room_id,
+                        response.stop_reason,
+                    )
+                    break
+
+                # Add assistant response with tool_use blocks to history
+                serialized_content = self._serialize_content_blocks(response.content)
+                self._message_history[room_id].append(
+                    {
+                        "role": "assistant",
+                        "content": serialized_content,
+                    }
                 )
-                break
 
-            # Add assistant response with tool_use blocks to history
-            serialized_content = self._serialize_content_blocks(response.content)
-            self._message_history[room_id].append(
-                {
-                    "role": "assistant",
-                    "content": serialized_content,
-                }
-            )
+                # Process tool calls
+                tool_results = await self._process_tool_calls(response, tools)
 
-            # Process tool calls
-            tool_results = await self._process_tool_calls(response, tools)
-
-            # Add tool results to history
-            self._message_history[room_id].append(
-                {
-                    "role": "user",
-                    "content": tool_results,
-                }
-            )
+                # Add tool results to history
+                self._message_history[room_id].append(
+                    {
+                        "role": "user",
+                        "content": tool_results,
+                    }
+                )
+        finally:
+            # No-op unless Emit.USAGE is on; best-effort, never raises.
+            await self.emit_usage(tools, turn_usage)
 
         logger.debug(
             "Message %s processed successfully (history now has %s messages)",
@@ -353,6 +363,23 @@ class AnthropicAdapter(SimpleAdapter[AnthropicMessages]):
             system=self._system_prompt,
             messages=cast(list[MessageParam], messages),
             tools=tools,
+        )
+
+    @staticmethod
+    def _usage_from_response(response: Message) -> TurnUsage:
+        """Map an Anthropic ``Message.usage`` onto the framework-agnostic TurnUsage.
+
+        Raw per the TurnUsage convention: Anthropic's ``input_tokens`` excludes
+        cached tokens (reported separately in the cache fields). Cache fields are
+        optional on the SDK model (absent/None when caching is off); ``from_object``
+        reads them defensively (missing → 0).
+        """
+        return TurnUsage.from_object(
+            response.usage,
+            input="input_tokens",
+            output="output_tokens",
+            cache_read="cache_read_input_tokens",
+            cache_write="cache_creation_input_tokens",
         )
 
     # --- Copied from BandAnthropicAgent._extract_text_content ---

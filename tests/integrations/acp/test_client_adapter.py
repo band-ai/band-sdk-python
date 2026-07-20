@@ -6,18 +6,34 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from acp.helpers import update_agent_message_text
 
-from band.integrations.acp.client_adapter import ACPClientAdapter
+from band.integrations.acp.client_adapter import ACPClientAdapter, _resolve_launcher
 from band.integrations.acp.client_profiles import CursorACPClientProfile
 from band.integrations.acp.client_runtime import ACPCollectingClient
 from band.integrations.acp.client_types import (
     ACPClientSessionState,
     BandACPClient,
 )
+from band.integrations.acp.room_emitter import turn_replied_in_room
 from band.integrations.acp.types import CollectedChunk
 from band.testing import FakeAgentTools
 
 from .conftest import make_platform_message
+
+
+def permission_events(tools: FakeAgentTools) -> list[dict[str, object]]:
+    """The permission tool_call/tool_result events the handler posted to the room."""
+    return [
+        event
+        for event in tools.events_sent
+        if (event.get("metadata") or {}).get("permission_request")
+    ]
+
+
+def event_types(events: list[dict[str, object]]) -> list[object]:
+    """The ordered ``message_type`` of each event — for asserting a pair's shape."""
+    return [event["message_type"] for event in events]
 
 
 class TestACPClientAdapterInit:
@@ -64,7 +80,7 @@ class TestACPClientAdapterInit:
             cwd="/workspace",
             mcp_servers=[{"type": "stdio", "command": "server"}],
         )
-        assert adapter._cwd == "/workspace"
+        assert adapter._cwd == os.path.abspath("/workspace")
         assert adapter._env == {"API_KEY": "test"}
         assert len(adapter._mcp_servers) == 1
 
@@ -82,6 +98,83 @@ class TestACPClientAdapterInit:
         """Should fail fast on invalid Band base URLs."""
         with pytest.raises(ValueError, match="rest_url"):
             ACPClientAdapter(command="codex", rest_url="ftp://invalid")
+
+
+class TestACPClientAdapterTransport:
+    """Tests for stdio-vs-TCP transport selection and validation."""
+
+    def test_tcp_construction_sets_host_port_and_empty_command(self) -> None:
+        """TCP transport records host/port and spawns no subprocess command."""
+        adapter = ACPClientAdapter(host="10.0.0.5", port=8080)
+        assert adapter._host == "10.0.0.5"
+        assert adapter._port == 8080
+        assert adapter._command == []
+
+    def test_stdio_construction_leaves_host_port_unset(self) -> None:
+        adapter = ACPClientAdapter(command="copilot")
+        assert adapter._host is None
+        assert adapter._port is None
+        assert adapter._command == ["copilot"]
+
+    def test_requires_a_transport(self) -> None:
+        """Neither command nor host/port is a misconfiguration."""
+        with pytest.raises(ValueError, match="command .*or host"):
+            ACPClientAdapter()
+
+    def test_empty_command_is_rejected(self) -> None:
+        """An empty command is not a usable transport (would crash at spawn)."""
+        with pytest.raises(ValueError, match="command .*or host"):
+            ACPClientAdapter(command=[])
+        with pytest.raises(ValueError, match="command .*or host"):
+            ACPClientAdapter(command="")
+
+    def test_rejects_command_and_tcp_together(self) -> None:
+        with pytest.raises(ValueError, match="not both"):
+            ACPClientAdapter(command="copilot", host="10.0.0.5", port=8080)
+
+    def test_tcp_requires_both_host_and_port(self) -> None:
+        with pytest.raises(ValueError, match="both host and port"):
+            ACPClientAdapter(host="10.0.0.5")
+        with pytest.raises(ValueError, match="both host and port"):
+            ACPClientAdapter(port=8080)
+
+    @pytest.mark.asyncio
+    async def test_injected_spawn_process_wins_over_defaults(
+        self, make_acp_transport
+    ) -> None:
+        """An explicit spawn_process is used even for a TCP-configured adapter."""
+        transport = make_acp_transport()
+        adapter = ACPClientAdapter(host="10.0.0.5", port=8080, spawn_process=transport)
+
+        await adapter.on_started("Copilot", "Copilot over TCP")
+
+        assert adapter._runtime._conn is transport.conn
+        # TCP still forwards no positional command.
+        args, _ = transport.last_call
+        assert args == ()
+
+
+class TestACPClientAdapterShutdown:
+    """Graceful shutdown must release the adapter-wide subprocess/TCP connection.
+
+    ``Agent.stop()`` invokes ``cleanup_all()`` (not ``stop()``), so the teardown has
+    to hang off ``cleanup_all`` or the transport spawned in ``on_started`` leaks.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cleanup_all_tears_down_the_transport(
+        self, make_acp_transport
+    ) -> None:
+        adapter = ACPClientAdapter(
+            command="codex", spawn_process=make_acp_transport(), inject_band_tools=False
+        )
+        await adapter.on_started("Codex", "bridge")
+        assert adapter._runtime._ctx is not None  # transport is up
+
+        await adapter.cleanup_all()  # the hook Agent.stop() calls on graceful shutdown
+
+        assert adapter._runtime._ctx is None  # ...and released
+        assert adapter._runtime._conn is None
 
 
 class TestACPClientAdapterLocalMcpConfig:
@@ -162,117 +255,112 @@ class TestACPClientAdapterLocalMcpConfig:
         assert "Band tools" in system_context
         assert "Current room_id: room-123" in system_context
         assert "Current requester name: Pat" in system_context
-        assert "must include room_id" in system_context
+        assert "Use each MCP tool's schema" in system_context
+
+    def test_build_system_context_defers_to_external_mcp_tool_schema(self) -> None:
+        """The room value is supplied without assuming a remote tool's field name."""
+        adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
+        adapter.agent_name = "ACP Bridge"
+        adapter.agent_description = "Bridge to ACP agents"
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        system_context = adapter._build_system_context("room-123", msg)
+
+        assert "Use each MCP tool's schema" in system_context
+        assert "must include room_id" not in system_context
 
 
 class TestACPClientAdapterOnStarted:
-    """Tests for ACPClientAdapter.on_started()."""
+    """Tests for ACPClientAdapter.on_started().
+
+    These inject a :class:`FakeSpawn` transport (the ``make_acp_transport`` fixture)
+    through the adapter's ``spawn_process`` seam rather than patching module globals,
+    so the real ACPRuntime start path runs against a scripted connection.
+    """
 
     @pytest.mark.asyncio
-    async def test_on_started_spawns_process(self) -> None:
+    async def test_on_started_spawns_process(self, make_acp_transport) -> None:
         """Should spawn ACP process and initialize connection."""
-        adapter = ACPClientAdapter(command="codex")
+        transport = make_acp_transport()
+        adapter = ACPClientAdapter(command="codex", spawn_process=transport)
 
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock()
-        mock_proc = MagicMock()
+        await adapter.on_started("Codex Bridge", "Bridge to Codex")
 
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, mock_proc))
-
-        with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
-        ):
-            await adapter.on_started("Codex Bridge", "Bridge to Codex")
-
-        assert adapter._runtime._conn is mock_conn
-        mock_conn.initialize.assert_called_once_with(protocol_version=1)
+        assert adapter._runtime._conn is transport.conn
+        transport.conn.initialize.assert_awaited_once_with(protocol_version=1)
 
     @pytest.mark.asyncio
-    async def test_on_started_uses_large_stdio_limit(self) -> None:
+    async def test_on_started_uses_large_stdio_limit(self, make_acp_transport) -> None:
         """Should raise the stdio reader limit for large ACP JSON frames."""
-        adapter = ACPClientAdapter(command=["npx", "@zed-industries/codex-acp"])
+        transport = make_acp_transport()
+        adapter = ACPClientAdapter(
+            command=["npx", "@zed-industries/codex-acp"],
+            spawn_process=transport,
+        )
 
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock()
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
+        await adapter.on_started("Codex Bridge", "Bridge to Codex")
 
-        with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
-        ) as mock_spawn:
-            await adapter.on_started("Codex Bridge", "Bridge to Codex")
-
-        assert mock_spawn.call_args.kwargs["transport_kwargs"] == {
-            "limit": 16 * 1024 * 1024
-        }
+        assert transport.last_kwargs["transport_kwargs"] == {"limit": 16 * 1024 * 1024}
 
     @pytest.mark.asyncio
-    async def test_on_started_stores_agent_info(self) -> None:
-        """Should store agent name and description."""
-        adapter = ACPClientAdapter(command="codex")
-
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock()
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
-
+    async def test_on_started_forwards_command_positionally(
+        self, make_acp_transport
+    ) -> None:
+        """Should forward the stdio command (executable + args) to the transport."""
+        transport = make_acp_transport()
+        # Pin the launcher pass-through: with no PATH resolution (which happens at
+        # construction, via _resolve_launcher) the command reaches the transport
+        # verbatim, so this asserts the positional splat, not _resolve_launcher
+        # (covered by TestResolveLauncher) or whether `npx` happens to be installed here.
         with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
+            "band.integrations.acp.client_adapter.shutil.which", return_value=None
         ):
-            await adapter.on_started("Test Agent", "A test agent")
+            adapter = ACPClientAdapter(
+                command=["npx", "@zed-industries/codex-acp"],
+                spawn_process=transport,
+            )
+
+        await adapter.on_started("Codex Bridge", "Bridge to Codex")
+
+        # spawn(client, *command, ...) — command splatted as positional args.
+        args, _ = transport.last_call
+        assert args == ("npx", "@zed-industries/codex-acp")
+
+    @pytest.mark.asyncio
+    async def test_on_started_stores_agent_info(self, make_acp_transport) -> None:
+        """Should store agent name and description."""
+        adapter = ACPClientAdapter(command="codex", spawn_process=make_acp_transport())
+
+        await adapter.on_started("Test Agent", "A test agent")
 
         assert adapter.agent_name == "Test Agent"
         assert adapter.agent_description == "A test agent"
 
     @pytest.mark.asyncio
-    async def test_on_started_prefers_http_mcp_when_supported(self) -> None:
+    async def test_on_started_prefers_http_mcp_when_supported(
+        self, make_acp_transport
+    ) -> None:
         """Should select HTTP MCP when the ACP agent advertises it."""
-        adapter = ACPClientAdapter(command="codex")
-
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock(
-            return_value=MagicMock(
-                agent_capabilities=MagicMock(
-                    mcp_capabilities=MagicMock(http=True, sse=True)
-                )
-            )
+        adapter = ACPClientAdapter(
+            command="codex",
+            spawn_process=make_acp_transport(http=True, sse=True),
         )
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
 
-        with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
-        ):
-            await adapter.on_started("Test Agent", "A test agent")
+        await adapter.on_started("Test Agent", "A test agent")
 
         assert adapter._runtime._agent_mcp_transport == "http"
 
     @pytest.mark.asyncio
-    async def test_on_started_uses_sse_mcp_when_http_missing(self) -> None:
+    async def test_on_started_uses_sse_mcp_when_http_missing(
+        self, make_acp_transport
+    ) -> None:
         """Should fall back to SSE MCP when that's all the ACP agent supports."""
-        adapter = ACPClientAdapter(command="codex")
-
-        mock_conn = AsyncMock()
-        mock_conn.initialize = AsyncMock(
-            return_value=MagicMock(
-                agent_capabilities=MagicMock(
-                    mcp_capabilities=MagicMock(http=False, sse=True)
-                )
-            )
+        adapter = ACPClientAdapter(
+            command="codex",
+            spawn_process=make_acp_transport(http=False, sse=True),
         )
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=(mock_conn, MagicMock()))
 
-        with patch(
-            "band.integrations.acp.client_adapter.spawn_agent_process",
-            return_value=mock_ctx,
-        ):
-            await adapter.on_started("Test Agent", "A test agent")
+        await adapter.on_started("Test Agent", "A test agent")
 
         assert adapter._runtime._agent_mcp_transport == "sse"
 
@@ -362,144 +450,6 @@ class TestACPClientAdapterOnMessage:
         assert call_kwargs["session_id"] == "acp-session-123"
 
     @pytest.mark.asyncio
-    async def test_on_message_posts_response(
-        self, adapter_with_mocks: ACPClientAdapter
-    ) -> None:
-        """Should post collected response back to Band room."""
-
-        # Make prompt() populate the per-session buffer (simulating session_update)
-        async def mock_prompt(**kwargs):
-            session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(chunk_type="text", content="The weather is sunny.")
-            ]
-
-        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
-
-        tools = FakeAgentTools()
-        msg = make_platform_message("Weather?", room_id="room-123")
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        # Should have sent message back
-        assert len(tools.messages_sent) > 0
-        assert tools.messages_sent[0]["content"] == "The weather is sunny."
-
-    @pytest.mark.asyncio
-    async def test_on_message_posts_thought_event(
-        self, adapter_with_mocks: ACPClientAdapter
-    ) -> None:
-        """Should post thought chunks as thought events."""
-
-        async def mock_prompt(**kwargs):
-            session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(chunk_type="thought", content="Let me think...")
-            ]
-
-        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
-
-        tools = FakeAgentTools()
-        msg = make_platform_message("Question?", room_id="room-123")
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        thought_events = [
-            e for e in tools.events_sent if e.get("message_type") == "thought"
-        ]
-        assert len(thought_events) == 1
-        assert thought_events[0]["content"] == "Let me think..."
-
-    @pytest.mark.asyncio
-    async def test_on_message_posts_tool_call_event(
-        self, adapter_with_mocks: ACPClientAdapter
-    ) -> None:
-        """Should post tool_call chunks as tool_call events."""
-
-        async def mock_prompt(**kwargs):
-            session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(
-                    chunk_type="tool_call",
-                    content="search",
-                    metadata={"tool_call_id": "tc-1"},
-                )
-            ]
-
-        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
-
-        tools = FakeAgentTools()
-        msg = make_platform_message("Find info", room_id="room-123")
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        tool_events = [
-            e for e in tools.events_sent if e.get("message_type") == "tool_call"
-        ]
-        assert len(tool_events) == 1
-        assert tool_events[0]["metadata"]["tool_call_id"] == "tc-1"
-
-    @pytest.mark.asyncio
-    async def test_on_message_posts_plan_as_task_event(
-        self, adapter_with_mocks: ACPClientAdapter
-    ) -> None:
-        """Should post plan chunks as task events."""
-
-        async def mock_prompt(**kwargs):
-            session_id = kwargs.get("session_id", "acp-session-123")
-            adapter_with_mocks._runtime._client._session_chunks[session_id] = [
-                CollectedChunk(chunk_type="plan", content="Step 1: Do stuff")
-            ]
-
-        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
-
-        tools = FakeAgentTools()
-        msg = make_platform_message("Plan it", room_id="room-123")
-
-        await adapter_with_mocks.on_message(
-            msg,
-            tools,
-            ACPClientSessionState(),
-            None,
-            None,
-            is_session_bootstrap=False,
-            room_id="room-123",
-        )
-
-        task_events = [
-            e
-            for e in tools.events_sent
-            if e.get("message_type") == "task"
-            and "acp_client_session_id" not in e.get("metadata", {})
-        ]
-        assert len(task_events) == 1
-        assert task_events[0]["content"] == "Step 1: Do stuff"
-
-    @pytest.mark.asyncio
     async def test_on_message_emits_task_event(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
@@ -530,7 +480,11 @@ class TestACPClientAdapterOnMessage:
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        history = ACPClientSessionState(room_to_session={"room-abc": "session-abc"})
+        adapter_with_mocks._runtime._agent_supports_session_load = True
+        adapter_with_mocks._runtime._conn.load_session = AsyncMock(
+            return_value=object()
+        )
+        history = ACPClientSessionState(room_to_session={"room-123": "session-abc"})
 
         await adapter_with_mocks.on_message(
             msg,
@@ -542,7 +496,53 @@ class TestACPClientAdapterOnMessage:
             room_id="room-123",
         )
 
-        assert adapter_with_mocks._room_to_session["room-abc"] == "session-abc"
+        assert adapter_with_mocks._room_to_session["room-123"] == "session-abc"
+        adapter_with_mocks._runtime._conn.load_session.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_on_message_creates_new_session_when_persisted_session_cannot_load(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """A rebooted ephemeral ACP agent creates a session before prompting."""
+        stale_session = "stale-session"
+        fresh_session = MagicMock(session_id="fresh-session")
+        adapter_with_mocks._runtime._conn.new_session = AsyncMock(
+            return_value=fresh_session
+        )
+        adapter_with_mocks._runtime._agent_supports_session_load = True
+        adapter_with_mocks._runtime._conn.load_session = AsyncMock(return_value=None)
+
+        async def prompt_new_session(**kwargs):
+            session_id = kwargs["session_id"]
+            # Stream the reply through the live sink the adapter registers for the
+            # turn (as a real agent would), not a direct buffer poke.
+            await adapter_with_mocks._runtime._client.session_update(
+                session_id, update_agent_message_text("Recovered reply")
+            )
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(
+            side_effect=prompt_new_session
+        )
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(room_to_session={"room-123": stale_session}),
+            None,
+            None,
+            is_session_bootstrap=True,
+            room_id="room-123",
+        )
+
+        assert adapter_with_mocks._room_to_session["room-123"] == "fresh-session"
+        adapter_with_mocks._runtime._conn.new_session.assert_awaited_once()
+        adapter_with_mocks._runtime._conn.load_session.assert_awaited_once()
+        prompt_calls = adapter_with_mocks._runtime._conn.prompt.call_args_list
+        assert [call.kwargs["session_id"] for call in prompt_calls] == ["fresh-session"]
+        assert "[System Context]" in prompt_calls[0].kwargs["prompt"][0].text
+        assert tools.messages_sent[0]["content"] == "Recovered reply"
 
     @pytest.mark.asyncio
     async def test_on_message_error_sends_error_event(
@@ -633,26 +633,35 @@ class TestACPClientAdapterPermissionHandler:
         assert len(adapter_with_mocks._runtime._client._permission_handlers) > 0
 
     @pytest.mark.asyncio
-    async def test_permission_handler_posts_event(
+    async def test_permission_handler_skips_pair_for_approved_band_send_message(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """Should post permission request event to platform."""
+        """An approved band_send_message grants silently, like any other tool.
+
+        Regression guard: band_send_message/band_send_event were formerly
+        special-cased ("self-reporting") to post a synthetic permission pair
+        since their execution events were suppressed. Now nothing is suppressed —
+        if the tool executes, its own real tool_call/tool_result narrate it, so no
+        pair should be posted here either.
+        """
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
-        # Simulate permission request during prompt
         async def mock_prompt(**kwargs):
-            # Trigger the permission handler directly
             tool_call = MagicMock()
-            tool_call.title = "write_file"
+            tool_call.title = "band_send_message"
             tool_call.tool_call_id = "tc-perm-1"
 
             result = await adapter_with_mocks._runtime._client.request_permission(
-                options={},
+                options=[
+                    {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"}
+                ],
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
-            assert result == {"outcome": {"outcome": "allowed"}}
+            assert result == {
+                "outcome": {"outcome": "selected", "optionId": "allow-once"}
+            }
 
         adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
 
@@ -666,22 +675,56 @@ class TestACPClientAdapterPermissionHandler:
             room_id="room-123",
         )
 
-        # Should have posted a permission event
-        perm_events = [
-            e
-            for e in tools.events_sent
-            if e.get("metadata", {}).get("permission_request")
-        ]
-        assert len(perm_events) == 1
-        assert perm_events[0]["metadata"]["tool_name"] == "write_file"
-        assert perm_events[0]["metadata"]["auto_allowed"] is True
-        assert perm_events[0]["message_type"] == "tool_call"
+        assert permission_events(tools) == []
 
     @pytest.mark.asyncio
-    async def test_permission_handler_returns_allowed(
+    async def test_permission_handler_skips_pair_for_approved_ordinary_tool(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
-        """Should auto-allow permission requests."""
+        """An approved ordinary tool grants without posting a permission pair.
+
+        The tool's own tool_call/tool_result already show the call, so a pair
+        would duplicate it in the room. The grant is still returned to the agent.
+        """
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        async def mock_prompt(**kwargs):
+            tool_call = MagicMock()
+            tool_call.title = "write_file"
+            tool_call.tool_call_id = "tc-perm-1"
+
+            result = await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "allow-once", "name": "Allow", "kind": "allow_once"}
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+            # The grant is still returned even though no pair is posted.
+            assert result == {
+                "outcome": {"outcome": "selected", "optionId": "allow-once"}
+            }
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert permission_events(tools) == []
+
+    @pytest.mark.asyncio
+    async def test_permission_handler_selects_allow_option(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """Should auto-approve by selecting an offered allow option (not "allowed")."""
         tools = FakeAgentTools()
         msg = make_platform_message("Hello", room_id="room-123")
 
@@ -693,7 +736,10 @@ class TestACPClientAdapterPermissionHandler:
             tool_call.tool_call_id = "tc-read"
 
             result = await adapter_with_mocks._runtime._client.request_permission(
-                options={},
+                options=[
+                    {"optionId": "p-once", "name": "Allow once", "kind": "allow_once"},
+                    {"optionId": "p-rej", "name": "Reject", "kind": "reject_once"},
+                ],
                 session_id="acp-session-123",
                 tool_call=tool_call,
             )
@@ -711,7 +757,54 @@ class TestACPClientAdapterPermissionHandler:
             room_id="room-123",
         )
 
-        assert captured_result == {"outcome": {"outcome": "allowed"}}
+        assert captured_result == {
+            "outcome": {"outcome": "selected", "optionId": "p-once"}
+        }
+
+    @pytest.mark.asyncio
+    async def test_permission_handler_cancels_without_allow_option(
+        self, adapter_with_mocks: ACPClientAdapter
+    ) -> None:
+        """Should cancel (not guess) when the agent offers no allow option."""
+        tools = FakeAgentTools()
+        msg = make_platform_message("Hello", room_id="room-123")
+
+        captured_result = {}
+
+        async def mock_prompt(**kwargs):
+            tool_call = MagicMock()
+            tool_call.title = "rm_rf"
+            tool_call.tool_call_id = "tc-danger"
+
+            result = await adapter_with_mocks._runtime._client.request_permission(
+                options=[
+                    {"optionId": "p-rej", "name": "Reject", "kind": "reject_once"},
+                ],
+                session_id="acp-session-123",
+                tool_call=tool_call,
+            )
+            captured_result.update(result)
+
+        adapter_with_mocks._runtime._conn.prompt = AsyncMock(side_effect=mock_prompt)
+
+        await adapter_with_mocks.on_message(
+            msg,
+            tools,
+            ACPClientSessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert captured_result == {"outcome": {"outcome": "cancelled"}}
+        perm_events = permission_events(tools)
+        assert event_types(perm_events) == ["tool_call", "tool_result"]
+        assert all(
+            event["metadata"]["tool_call_id"] == "tc-danger" for event in perm_events
+        )
+        assert perm_events[1]["content"] == "Permission cancelled"
+        assert perm_events[1]["metadata"]["permission_outcome"] == "cancelled"
 
     @pytest.mark.asyncio
     async def test_permission_handler_uses_name_fallback(
@@ -744,13 +837,9 @@ class TestACPClientAdapterPermissionHandler:
             room_id="room-123",
         )
 
-        perm_events = [
-            e
-            for e in tools.events_sent
-            if e.get("metadata", {}).get("permission_request")
-        ]
-        assert len(perm_events) == 1
-        assert perm_events[0]["metadata"]["tool_name"] == "bash"
+        perm_events = permission_events(tools)
+        assert event_types(perm_events) == ["tool_call", "tool_result"]
+        assert all(event["metadata"]["tool_name"] == "bash" for event in perm_events)
 
 
 class TestACPClientAdapterCleanup:
@@ -1015,3 +1104,80 @@ class TestACPClientAdapterInjectToolsConfig:
         adapter = ACPClientAdapter(command="codex", inject_band_tools=False)
 
         assert not adapter._inject_band_tools
+
+
+class TestResolveLauncher:
+    """The launcher is resolved to a full path so the subprocess spawns on Windows,
+    where an npm launcher (``npx``) is ``npx.cmd`` and bare-name exec lookup fails."""
+
+    def test_resolves_launcher_and_preserves_args(self) -> None:
+        """The launcher becomes its resolved path; the arguments are untouched."""
+        with patch(
+            "band.integrations.acp.client_adapter.shutil.which",
+            return_value="/opt/node/bin/npx",
+        ):
+            assert _resolve_launcher(["npx", "@zed-industries/codex-acp"]) == [
+                "/opt/node/bin/npx",
+                "@zed-industries/codex-acp",
+            ]
+
+    def test_unresolved_name_is_left_as_is(self) -> None:
+        """An unresolvable launcher is passed through so spawn fails loudly, not here."""
+        with patch(
+            "band.integrations.acp.client_adapter.shutil.which", return_value=None
+        ):
+            assert _resolve_launcher(["mystery-bin", "arg"]) == ["mystery-bin", "arg"]
+
+
+class TestTurnRepliedInRoom:
+    """`turn_replied_in_room`: detect a room post from the ACP tool-call stream.
+
+    ACP has no structured tool-name field and tools may run out-of-process, so the
+    adapter reads the collected chunk stream. These lock the id-correlation edges.
+    """
+
+    @staticmethod
+    def _chunk(chunk_type: str, content: str, **metadata: object) -> CollectedChunk:
+        return CollectedChunk(chunk_type=chunk_type, content=content, metadata=metadata)
+
+    def test_completed_posting_tool_call_counts_as_reply(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call",
+                "band_send_message",
+                tool_call_id="tc-1",
+                status="completed",
+            )
+        ]
+        assert turn_replied_in_room(chunks)
+
+    def test_posting_call_correlated_to_completed_result_counts(self) -> None:
+        # The tool_call arrives before its terminal status; the completed result seals it.
+        chunks = [
+            self._chunk(
+                "tool_call",
+                "band_send_message",
+                tool_call_id="tc-1",
+                status="in_progress",
+            ),
+            self._chunk("tool_result", "", tool_call_id="tc-1", status="completed"),
+        ]
+        assert turn_replied_in_room(chunks)
+
+    def test_empty_ids_do_not_cross_match(self) -> None:
+        # A not-yet-completed posting call with NO id and a completed NON-posting result
+        # with NO id both default to "" — they must not correlate, or the text fallback
+        # is falsely suppressed and the turn goes silent.
+        chunks = [
+            self._chunk("tool_call", "band_send_message", status="in_progress"),
+            self._chunk("tool_result", "", status="completed"),
+        ]
+        assert not turn_replied_in_room(chunks)
+
+    def test_non_posting_tool_never_counts(self) -> None:
+        chunks = [
+            self._chunk(
+                "tool_call", "get_weather", tool_call_id="tc-1", status="completed"
+            )
+        ]
+        assert not turn_replied_in_room(chunks)

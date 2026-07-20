@@ -126,6 +126,17 @@ class TestBuildBandMcpToolRegistrations:
 
 
 class TestLocalMcpServer:
+    def test_accepts_explicit_non_loopback_bind_host(self) -> None:
+        """An explicit non-loopback bind is a supported opt-in (containerized
+        MCP clients reach back over the docker bridge); construction must not
+        reject it."""
+        server = LocalMCPServer(
+            name="test-local-mcp",
+            tool_registrations=[],
+            host="0.0.0.0",
+        )
+        assert server._host == "0.0.0.0"
+
     @pytest.mark.asyncio
     async def test_serves_sse_tools_on_localhost(self) -> None:
         async def execute(arguments: dict[str, str]) -> dict[str, str]:

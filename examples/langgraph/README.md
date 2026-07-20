@@ -80,6 +80,12 @@ await agent.run()
 
 **Supporting files:** `standalone_calculator.py`, `standalone_rag.py`, `standalone_sql_agent.py`
 
+### No LLM Required
+
+| File | Description |
+|------|-------------|
+| `11_no_llm_graph.py` | **Deterministic graph** - `graph_factory` graph with no LLM at all; plain Python logic calls `band_send_message` directly. |
+
 ---
 
 ## Adding Custom Tools
@@ -201,6 +207,9 @@ uv run --extra langgraph python examples/langgraph/09_research_ops_orchestrator.
 
 # Memory tools
 uv run --extra langgraph python examples/langgraph/10_memory_tool_usage.py
+
+# Deterministic graph with no LLM
+uv run --extra langgraph python examples/langgraph/11_no_llm_graph.py
 ```
 
 **Using as external library:**
@@ -247,6 +256,10 @@ research_ops_agent:
 memory_agent:
   agent_id: "agent_memory"
   api_key: "key_memory"
+
+no_llm_agent:
+  agent_id: "agent_no_llm"
+  api_key: "key_no_llm"
 
 # Also used by multi-agent examples:
 tom_agent:
