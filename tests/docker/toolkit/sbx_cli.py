@@ -113,13 +113,20 @@ class Sandbox:
         )
         return result.stdout.strip()
 
-    def process_environ(self, pid: int = 1) -> str:
-        """The NUL-joined ``/proc/<pid>/environ`` of a process in the VM.
+    def all_process_environ(self) -> str:
+        """Every readable process environment in the VM, one VAR=value per line.
 
-        The never-in-VM proof reads this to show the real key is absent even
-        from the agent's own process environment (only the sentinel is there).
+        Scans all of ``/proc/<pid>/environ`` rather than assuming the agent is a
+        particular pid — in an sbx microVM, pid 1 is the VM init, not the agent,
+        and ``sbx exec`` spawns its own processes too. Entries owned by another
+        user are silently skipped (unreadable), which is fine: the agent runs as
+        the exec user, so its environment is included. The never-in-VM proof
+        reads this to show the real key is absent from every process it can see
+        while the sentinel is present in the agent's.
         """
-        return self.exec(f"tr '\\0' '\\n' < /proc/{pid}/environ")
+        return self.exec(
+            'for e in /proc/[0-9]*/environ; do tr "\\0" "\\n" < "$e" 2>/dev/null; done'
+        )
 
     def band_host_cert(self, host: str) -> str:
         """The TLS cert subject+issuer the sandbox sees for ``host`` — **through
@@ -138,12 +145,12 @@ class Sandbox:
     def real_secret_absent(self, secret: str, *, search_paths: Sequence[str]) -> bool:
         """True when ``secret`` appears nowhere the VM could leak it.
 
-        Checks the environment, ``/proc/1/environ``, and the given paths. The
-        caller passes the real value from its own settings and asserts absence;
-        the value is never logged.
+        Checks the exec shell's environment, every readable ``/proc/*/environ``,
+        and the given paths. The caller passes the real value from its own
+        settings and asserts absence; the value is never logged.
         """
         env = self.exec("env")
-        proc = self.process_environ(1)
+        proc = self.all_process_environ()
         # -F: match the secret as a literal, not a regex — a key with '.' or
         # other metacharacters must not over- or under-match in an absence proof.
         paths = " ".join(shlex.quote(path) for path in search_paths)

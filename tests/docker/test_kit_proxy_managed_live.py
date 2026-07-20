@@ -106,7 +106,9 @@ def test_real_band_key_never_enters_the_vm(
     assert sandbox.real_secret_absent(
         real_key, search_paths=["/home/agent", "/etc", "/tmp", "/workspace"]
     )
-    assert PROXY_MANAGED_API_KEY in sandbox.process_environ(1)
+    # The agent's BAND_API_KEY is exactly the sentinel — not just that the string
+    # appears somewhere. `all_process_environ` emits one VAR=value per line.
+    assert f"BAND_API_KEY={PROXY_MANAGED_API_KEY}" in sandbox.all_process_environ()
 
 
 @pytest.mark.skip(
