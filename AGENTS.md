@@ -608,6 +608,11 @@ test, where the markdown-docs run actually executes it.
   `pydantic-settings` `BaseSettings` class (field name == env var name,
   `SettingsConfigDict(extra="ignore", case_sensitive=False)`) and read its
   fields; see `tests/e2e/baseline/settings.py` for the canonical pattern
+- In tests, never derive repository-anchored paths with per-file
+  `Path(__file__).parents[N]` arithmetic — import the anchors from
+  `tests/paths.py` (`REPO_ROOT`, `SRC_ROOT`, `EXAMPLES_ROOT`, `KIT_DIR`,
+  `ENV_TEST_FILE`). Only genuinely package-relative paths (a fixture file
+  next to its test) stay relative to their own `__file__`.
 - Prefer `match`/`case` over long `if`/`elif` chains that dispatch on one value
 - Never use `print()` — use `logging` with module-level `logger = logging.getLogger(__name__)`
 - Use `%s` placeholders in log messages for lazy evaluation

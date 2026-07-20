@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.paths import SRC_ROOT
+
 import pytest
 
 from tests.framework_configs.adapters import ADAPTER_CONFIGS, ADAPTER_EXCLUDED_MODULES
@@ -17,8 +19,6 @@ from tests.framework_configs.converters import (
     CONVERTER_CONFIGS,
     CONVERTER_EXCLUDED_MODULES,
 )
-
-_SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "band"
 
 
 def _discover_modules(package_dir: Path) -> set[str]:
@@ -38,7 +38,7 @@ class TestAdapterConfigDrift:
 
     def test_all_adapter_modules_are_covered(self):
         """Each module in src/band/adapters/ has a config or is excluded."""
-        adapter_dir = _SRC_ROOT / "adapters"
+        adapter_dir = SRC_ROOT / "adapters"
         source_modules = _discover_modules(adapter_dir)
         registered_ids = {cfg.framework_id for cfg in ADAPTER_CONFIGS}
         covered = registered_ids | ADAPTER_EXCLUDED_MODULES
@@ -52,7 +52,7 @@ class TestAdapterConfigDrift:
 
     def test_no_stale_exclusions(self):
         """Excluded adapter module names still exist on disk."""
-        adapter_dir = _SRC_ROOT / "adapters"
+        adapter_dir = SRC_ROOT / "adapters"
         source_modules = _discover_modules(adapter_dir)
         stale = ADAPTER_EXCLUDED_MODULES - source_modules
 
@@ -63,7 +63,7 @@ class TestAdapterConfigDrift:
 
     def test_no_stale_configs(self):
         """Registered adapter framework_ids still correspond to a source module."""
-        adapter_dir = _SRC_ROOT / "adapters"
+        adapter_dir = SRC_ROOT / "adapters"
         source_modules = _discover_modules(adapter_dir)
         registered_ids = {cfg.framework_id for cfg in ADAPTER_CONFIGS}
 
@@ -80,7 +80,7 @@ class TestConverterConfigDrift:
 
     def test_all_converter_modules_are_covered(self):
         """Each module in src/band/converters/ has a config or is excluded."""
-        converter_dir = _SRC_ROOT / "converters"
+        converter_dir = SRC_ROOT / "converters"
         source_modules = _discover_modules(converter_dir)
         registered_ids = {cfg.framework_id for cfg in CONVERTER_CONFIGS}
         covered = registered_ids | CONVERTER_EXCLUDED_MODULES
@@ -94,7 +94,7 @@ class TestConverterConfigDrift:
 
     def test_no_stale_exclusions(self):
         """Excluded converter module names still exist on disk."""
-        converter_dir = _SRC_ROOT / "converters"
+        converter_dir = SRC_ROOT / "converters"
         source_modules = _discover_modules(converter_dir)
         stale = CONVERTER_EXCLUDED_MODULES - source_modules
 
@@ -105,7 +105,7 @@ class TestConverterConfigDrift:
 
     def test_no_stale_configs(self):
         """Registered converter framework_ids still correspond to a source module."""
-        converter_dir = _SRC_ROOT / "converters"
+        converter_dir = SRC_ROOT / "converters"
         source_modules = _discover_modules(converter_dir)
         registered_ids = {cfg.framework_id for cfg in CONVERTER_CONFIGS}
         stale = registered_ids - source_modules

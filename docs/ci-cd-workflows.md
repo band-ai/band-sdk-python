@@ -65,7 +65,20 @@ Triggered on push to `main` (i.e. after a promotion PR merges).
 
 1. release-please opens/updates a release PR, or — when a release PR merges —
    tags the release and updates the changelog and version.
-2. On a created release, publishes both `band-sdk` and `band-sdk` to PyPI.
+2. On a created release, publishes `band-sdk` to PyPI (`publish-band`).
+3. In parallel, publishes the sandbox kit to GHCR via the reusable
+   `kit-publish.yml` pipeline (`publish-kit`): the multi-arch attested image
+   `ghcr.io/band-ai/band-python-kit/image` and the OCI kit artifact
+   `ghcr.io/band-ai/band-python-kit`, gated by the supply-chain quarantine
+   check. A kit failure never blocks the PyPI publish (independent jobs).
+4. After a successful kit publish, opens an automated version-bump PR against
+   `band-ai/add-band` (`bump-add-band`; merging it stays a human step).
+5. `summary` reports every artifact's outcome.
+
+Related: `kit-image-rebuild.yml` (weekly CVE rebuild of the published kit
+image), `kit-publish-manual.yml` (serialized manual recovery/rehearsal), and
+`docker/band_python_kit/RELEASING.md` (tag policy, quarantine gate, rehearsal
+and recovery runbook).
 
 ## Promotion Workflow
 

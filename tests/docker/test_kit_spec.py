@@ -1,25 +1,24 @@
-"""The kit spec and echo-agent starter stay coherent with the launcher contract.
+"""Drift checks: the kit spec ships exactly the contract that was reviewed.
 
+Identity, headless launch shape, network allowlist, no credential plumbing.
 Pure file/contract checks — no Docker daemon and no sbx CLI needed, so these
 run in the ordinary unit suite. `sbx kit validate` itself is a manual step
 (recorded in the kit README) because the sandbox CLI only exists on
 Docker-Sandbox-capable machines.
+
+The echo-agent starter's contract lives in test_echo_agent.py; the release
+stamp helper's tests in test_stamp_spec.py; the supply-chain quarantine
+gate's in test_lock_age.py.
 """
 
 from __future__ import annotations
 
 import importlib
-import re
-from pathlib import Path
 from typing import Any
 
 import yaml
-from dotenv import dotenv_values
 
-from band.docker.launcher import CredentialName, WorkspaceConfig
-
-KIT_DIR = Path(__file__).parents[2] / "docker" / "band_python_kit"
-ECHO_AGENT_DIR = KIT_DIR / "echo-agent"
+from tests.paths import KIT_DIR
 
 # Hosts the launch flow was measured to need (see the kit spec's comments):
 # Band, locked dependency sync, and each supported LLM backend.
@@ -33,6 +32,14 @@ REQUIRED_ALLOWLIST_HOSTS = {
     "api.github.com",
     "release-assets.githubusercontent.com",
     "*.githubcopilot.com",
+}
+
+# Copilot plan-variant wildcards: not observed in the smoke (which ran on an
+# individual-plan account) but required for business/enterprise accounts.
+PLAN_VARIANT_HOSTS = {
+    "*.individual.githubcopilot.com",
+    "*.business.githubcopilot.com",
+    "*.enterprise.githubcopilot.com",
 }
 
 # IDE-completion and telemetry hosts that were measured NOT to be needed —
@@ -52,6 +59,10 @@ def load_spec() -> dict[str, Any]:
 
 def test_spec_is_a_sandbox_kit_with_stable_identity() -> None:
     spec = load_spec()
+    # schemaVersion "2" selects sbx's OCI v2 kit artifact format on push. The
+    # value is a string in the spec; pin it so a downgrade to legacy ZIP
+    # packaging (or an unquoted YAML int) is caught here.
+    assert spec["schemaVersion"] == "2"
     assert spec["kind"] == "sandbox"
     # The kit name doubles as the `sbx create` agent positional — renaming it
     # breaks every documented launch command.
@@ -82,15 +93,6 @@ def test_launcher_module_referenced_by_kit_is_importable() -> None:
     importlib.import_module(module_name)
 
 
-# Copilot plan-variant wildcards: not observed in the smoke (which ran on an
-# individual-plan account) but required for business/enterprise accounts.
-PLAN_VARIANT_HOSTS = {
-    "*.individual.githubcopilot.com",
-    "*.business.githubcopilot.com",
-    "*.enterprise.githubcopilot.com",
-}
-
-
 def test_allowlist_matches_measured_minimal_set() -> None:
     allow = set(load_spec()["caps"]["network"]["allow"])
     # Exact equality: any widening of the egress surface fails this test,
@@ -106,48 +108,3 @@ def test_spec_defines_no_proxy_or_credential_entries() -> None:
     env_vars = spec.get("environment", {}).get("variables", {})
     assert not {k for k in env_vars if k.upper().endswith("_PROXY")}
     assert "credentials" not in spec
-
-
-def test_echo_agent_workspace_satisfies_the_launcher_contract() -> None:
-    raw = yaml.safe_load((ECHO_AGENT_DIR / "band.yaml").read_text(encoding="utf-8"))
-    config = WorkspaceConfig.model_validate(raw)
-
-    assert (ECHO_AGENT_DIR / config.agent.entrypoint).is_file()
-    assert (ECHO_AGENT_DIR / "pyproject.toml").is_file()
-    assert (ECHO_AGENT_DIR / "uv.lock").is_file(), (
-        "the echo-agent starter must ship a committed lock — unlocked resolution is not supported"
-    )
-
-    credentials = config.credentials
-    assert credentials is not None
-    assert credentials.acknowledge_plaintext_in_sandbox is True
-    # The configured credential path must be covered by the echo-agent starter's
-    # .gitignore so a copied workspace never commits secrets.
-    gitignore = (ECHO_AGENT_DIR / ".gitignore").read_text(encoding="utf-8")
-    assert credentials.path.split("/")[0] + "/" in gitignore
-
-    # Runtime paths must be sandbox-owned: outside the workspace mount and
-    # outside the immutable SDK home.
-    for value in (
-        config.runtime.environment_path,
-        config.runtime.state_path,
-        config.runtime.cache_path,
-        config.runtime.log_path,
-    ):
-        assert value.startswith("/home/agent/"), value
-
-
-def test_echo_agent_secrets_template_names_match_documented_names() -> None:
-    """The shipped template must mention every documented credential name and
-    nothing else — the launcher rejects undocumented names at launch."""
-    template = ECHO_AGENT_DIR / "secrets.env.example"
-    active = set(dotenv_values(template))
-    commented = set(
-        re.findall(
-            r"^#\s*([A-Z][A-Z0-9_]*)=",
-            template.read_text(encoding="utf-8"),
-            re.MULTILINE,
-        )
-    )
-    assert "BAND_API_KEY" in active
-    assert active | commented == {name.value for name in CredentialName}

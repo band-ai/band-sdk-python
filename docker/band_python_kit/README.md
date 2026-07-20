@@ -33,30 +33,66 @@ a collection of sandbox-created virtualenv files, caches, and logs.
 ## Quickstart
 
 You need [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/) (`sbx`),
-Docker, and a registered Band agent (its id and API key).
+Docker, and a registered Band agent (its id and API key). The kit and its image
+are published to GHCR, so there is **no repo checkout and no local build** — the
+sandbox runtime pulls both.
 
 ```bash
-# 1. Build the kit image and make it visible to the sandbox runtime
-#    (the sandbox VM cannot see host-local Docker images).
-docker build -f docker/band_python_kit/Dockerfile -t band-python-kit:local .
-docker save band-python-kit:local | sbx template load /dev/stdin
+# 1. One-time host setup: install sbx and sign in.
+brew install docker/tap/sbx && sbx login
 
-# 2. Start your workspace from the echo-agent starter (see echo-agent/README.md).
-cp -r docker/band_python_kit/echo-agent ~/my-band-agent
-cd ~/my-band-agent
+# 2. Let the sandbox runtime pull kits from the band-ai GHCR namespace.
+#    kit.allowedSources REPLACES the whole list (default: ["docker.io/"]), so
+#    keep docker.io/ in it. If you have already customized the allowlist, MERGE
+#    instead of pasting — run `sbx settings get kit.allowedSources` first.
+sbx settings set kit.allowedSources '["docker.io/","ghcr.io/band-ai/"]'
+
+# 3. Create your workspace from the echo-agent starter, extracted from the
+#    matching release tarball (no repo checkout needed; same <X.Y.Z> as the
+#    kit tag below). See echo-agent/README.md for the workspace guide.
+mkdir -p ~/my-band-agent
+curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags/band-sdk-v<X.Y.Z>" \
+  | tar -xz --strip-components=4 -C ~/my-band-agent \
+      "band-sdk-python-band-sdk-v<X.Y.Z>/docker/band_python_kit/echo-agent"
+#    Then, in ~/my-band-agent:
 #    - set agent.id in band.yaml
 #    - create .band/secrets.env from secrets.env.example (chmod 600)
 
-# 3. Create the sandbox — your agent starts immediately.
+# 4. Create the sandbox from the published kit — your agent starts immediately.
 sbx create --name my-band-agent \
-  --kit /path/to/band-sdk-python/docker/band_python_kit \
+  --kit ghcr.io/band-ai/band-python-kit:<X.Y.Z> \
   band-python-kit ~/my-band-agent
 ```
 
-Mention your agent in a Band room — it replies from inside the sandbox. To
-make the echo-agent starter your own — swap the echo adapter for a real
-framework adapter and set up credentials — see
-[`echo-agent/README.md`](echo-agent/README.md).
+Pin a concrete `X.Y.Z` for a frozen artifact, or ride `latest` / the major tag
+(e.g. `1`) to pick up CVE rebuilds when you re-create the sandbox (see
+[`RELEASING.md`](RELEASING.md) for the tag policy).
+
+Mention your agent in a Band room — it replies from inside the sandbox. To make
+the echo-agent starter your own — swap the echo adapter for a real framework
+adapter and set up credentials — see
+[`echo-agent/README.md`](echo-agent/README.md). The
+[`band-ai/add-band`](https://github.com/band-ai/add-band) catalog wraps all of
+the above into a single bootstrap command for a clean machine.
+
+### Staging vs. production
+
+The kit's defaults target production Band. To point an agent at a non-production
+deployment, override the endpoints in `band.yaml` (or via `BAND_REST_URL` /
+`BAND_WS_URL`) and grant that host per sandbox — never baked into the kit:
+
+```bash
+sbx policy allow network --sandbox my-band-agent platform.dev.band.ai
+```
+
+### Credential custody (v0.1)
+
+Credentials are supplied through the opt-in `.band/secrets.env` file
+(`credentials.acknowledgePlaintextInSandbox: true`). This is **laptop-equivalent
+custody**: the plaintext keys exist in your workspace and inside the sandbox VM.
+Proxy-injected credentials that never enter the VM come in a later release.
+Treat the keys as you would any local `.env`: git-ignored, `chmod 600`, rotated
+if leaked.
 
 ## Your workspace
 
@@ -138,6 +174,31 @@ Kit changes apply only at creation (`--kit` on `sbx create`); to pick up a
 modified kit, remove and recreate the sandbox. Do not rely on post-create
 `sbx kit add`: it applies files and startup commands but silently skips the
 kit's network and credential configuration.
+
+## Developing the kit
+
+To iterate on the kit itself (not just adopt it), build the image locally and
+make it visible to the sandbox runtime — the sandbox VM cannot see host-local
+Docker images until they are loaded as a template:
+
+```bash
+# Build the image and load it into the sandbox runtime.
+docker build -f docker/band_python_kit/Dockerfile -t band-python-kit:local .
+docker save band-python-kit:local | sbx template load /dev/stdin
+
+# Create a sandbox from the local kit directory (spec.yaml points at :local).
+sbx create --name my-band-agent \
+  --kit /path/to/band-sdk-python/docker/band_python_kit \
+  band-python-kit ~/my-band-agent
+```
+
+The in-repo `spec.yaml` keeps `sandbox.image: band-python-kit:local` so this
+local flow works unchanged; the published kit's spec is stamped at release time
+to pin the GHCR image by digest (see [`RELEASING.md`](RELEASING.md)).
+
+Release engineering — how the GHCR image and kit artifact are published, the
+tag policy, the supply-chain quarantine gate, and the CVE-rebuild cadence — is
+documented in [`RELEASING.md`](RELEASING.md).
 
 ## Image reference
 

@@ -3,7 +3,7 @@
 # pin human-legible; the digest is what actually gets resolved — re-pin by
 # passing --build-arg to bump either, but always keep both in sync (the tag
 # is documentation, not an independent fallback).
-ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:c3d81d25b3154142b0b42eb1e61300024426268edeb5b5a26dd7ddf64d9daf28
+ARG PYTHON_BASE_IMAGE=python:3.12.13-slim-trixie@sha256:57cd7c3a7a273101a6485ba99423ee568157882804b1124b4dd04266317710de
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5
 # Shared by both stages so the venv is built at the exact absolute path it
 # will live at in the runtime image — see UV_PROJECT_ENVIRONMENT below.
@@ -49,6 +49,12 @@ RUN sed -i '/^\[tool\.uv\.sources\]/,/^\[/{ /^\[tool\.uv\.sources\]/d; /^\[/!d; 
 # resolve into the same venv. Any other framework is the customer's own
 # venv, created at sandbox runtime, isolated from this one.
 ARG SDK_EXTRA=""
+# Supply-chain quarantine note: the release pipeline enforces a minimum public
+# age on every locked package BEFORE this build runs (scripts/check-lock-age.py
+# in kit-publish.yml, reading the upload-times recorded in uv.lock). It is
+# deliberately not an in-build `--exclude-newer` flag: a cutoff makes uv treat
+# the committed lock itself as outdated, failing `--locked` on every build
+# (astral-sh/uv#18775; reproduced on uv 0.9.13 and 0.11.19).
 # Build the venv directly at its final runtime path (not e.g. ./.venv, then
 # relocated by COPY below): console-script shebangs bake in an absolute
 # interpreter path at install time, so copying an already-built venv to a
@@ -95,6 +101,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
+# Static OCI labels. GHCR uses org.opencontainers.image.source to link a
+# package to its repository (and, from there, to its build provenance). The
+# Actions-pushed image links automatically via GITHUB_TOKEN, but a CLI/manual
+# push and the kit OCI artifact only inherit the linkage from this label — so
+# bake it in rather than relying on the pusher. Dynamic, per-build labels
+# (version, revision, created) are added by docker/metadata-action at build
+# time and are deliberately not hardcoded here.
+LABEL org.opencontainers.image.source="https://github.com/band-ai/band-sdk-python" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.title="band-python-kit" \
+      org.opencontainers.image.description="Run a locked Python agent workspace on Band inside a Docker Sandbox microVM."
 
 # Immutable SDK venv, outside the customer's writable workspace ($HOME). Copied
 # from the exact same absolute path it was built at (see UV_PROJECT_ENVIRONMENT

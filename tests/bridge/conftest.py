@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-_bridge_dir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "band-bridge")
-)
+from tests.paths import REPO_ROOT
+
+_bridge_dir = str(REPO_ROOT / "band-bridge")
 if _bridge_dir not in sys.path:
     sys.path.insert(0, _bridge_dir)
 

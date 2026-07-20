@@ -32,12 +32,12 @@ from tests.e2e.baseline.toolkit.adapters import (
 from tests.e2e.baseline.toolkit.deps import (
     DEFAULT_LANE,
     LINUX_ONLY_LANES,
-    REPO_ROOT,
     Extra,
     Lane,
     lane_extra,
     validate_dep_tables,
 )
+from tests.paths import REPO_ROOT
 
 
 @dataclass(frozen=True)

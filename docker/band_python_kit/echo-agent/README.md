@@ -2,8 +2,8 @@
 
 A complete, runnable starter workspace for the
 [Band Python kit](../README.md): an echo agent you can copy and grow into a
-real one. Building the kit image and creating the sandbox is the kit README's
-quickstart; this page covers the workspace itself.
+real one. Getting the published kit and creating the sandbox is the kit
+README's quickstart; this page covers the workspace itself.
 
 ## Files
 

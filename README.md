@@ -47,9 +47,11 @@ pip install "band-sdk[langgraph]"
 ### Docker Sandboxes
 
 Building an agent for [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)?
-The repository includes a `band-python-kit` base image with the Band SDK in an
-isolated, read-only virtual environment, automatic sandbox proxy-CA trust
-wiring, and support for both arm64 and x86_64.
+The `band-python-kit` kit runs your agent in an isolated microVM — the Band
+SDK in a read-only virtual environment, automatic sandbox proxy-CA trust
+wiring, a default-deny egress allowlist, arm64 and x86_64. It is distributed
+on GHCR (`ghcr.io/band-ai/band-python-kit`), so adopting it is one
+`sbx create --kit …` from a clean machine — no repo checkout or local build.
 
 Choose the guide that matches what you need:
 
@@ -59,6 +61,8 @@ Choose the guide that matches what you need:
   — adapt `main.py`, dependencies, or start from a repository.
 - [Understand or maintain the launcher](src/band/docker/launcher/README.md)
   — internal launch phases, safety rules, and module map.
+- [Release engineering](docker/band_python_kit/RELEASING.md) — how the kit is
+  published, tag policy, CVE-rebuild cadence, supply-chain quarantine.
 
 The declarative kit and published GHCR image are separate release deliverables.
 
