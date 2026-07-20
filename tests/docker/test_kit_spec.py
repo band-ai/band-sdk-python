@@ -118,4 +118,11 @@ def test_spec_credential_injection_declares_no_baked_secrets() -> None:
         for rule in api_key["inject"]:
             assert set(rule) <= {"domain", "header", "format"}, rule
             injected_domains.add(rule["domain"])
-    assert {"app.band.ai", "api.openai.com", "api.anthropic.com"} <= injected_domains
+    # Band is a custom service sbx doesn't know, so the kit declares it.
+    assert "app.band.ai" in injected_domains
+    # LLM providers are built-in sbx services — the customer provisions them with
+    # `sbx secret set -g <provider>`; declaring them here would duplicate and
+    # override sbx's own authoritative definitions.
+    assert not ({"api.openai.com", "api.anthropic.com"} & injected_domains), (
+        "OpenAI/Anthropic are built-in sbx services — don't declare them in the kit"
+    )

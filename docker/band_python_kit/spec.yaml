@@ -54,29 +54,23 @@ caps:
       - "*.business.githubcopilot.com"
       - "*.enterprise.githubcopilot.com"
 
-# Proxy-managed credential injection (kit-spec v2). The real Band and LLM keys
-# stay on the host (provisioned with `sbx secret`); the VM only ever holds a
-# sentinel in each named env var, and the host-side proxy writes the real value
-# into the auth header on every request to the mapped domain — REST calls and the
-# WebSocket upgrade alike. Injection applies only under `sbx create --kit`.
+# Proxy-managed credential injection for Band (kit-spec v2). app.band.ai is not
+# one of sbx's built-in credential services, so the kit declares it: the real
+# Band key stays on the host (provisioned with `sbx secret`), the VM holds only a
+# sentinel in BAND_API_KEY, and the proxy writes the X-API-Key header on every
+# request to app.band.ai — REST and the WebSocket upgrade alike. Applies only
+# under `sbx create --kit`.
+#
+# LLM provider keys are deliberately NOT declared here: OpenAI, Anthropic, Google,
+# etc. are built-in sbx services. The customer provisions the one their agent uses
+# with `sbx secret set -g <provider>` (e.g. anthropic, openai) — no kit change,
+# and the key never enters the VM. See the README "Credentials" section.
 credentials:
   - apiKey:
       name: BAND_API_KEY
       inject:
         - domain: app.band.ai
           header: X-API-Key
-          format: "%s"
-  - apiKey:
-      name: OPENAI_API_KEY
-      inject:
-        - domain: api.openai.com
-          header: Authorization
-          format: "Bearer %s"
-  - apiKey:
-      name: ANTHROPIC_API_KEY
-      inject:
-        - domain: api.anthropic.com
-          header: x-api-key
           format: "%s"
 
 agentContext: |
