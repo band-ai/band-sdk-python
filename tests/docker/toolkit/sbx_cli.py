@@ -39,6 +39,30 @@ def sbx_available() -> bool:
     return shutil.which(SBX) is not None
 
 
+@contextmanager
+def custom_secret(
+    *, host: str, env: str, value: str, placeholder: str
+) -> Iterator[None]:
+    """Register a global custom-secret injection for ``host``, then remove it.
+
+    The test provisions the secret itself so the value it later asserts-absent is
+    exactly the one the proxy would inject — closing the gap where a test checks a
+    *different* key than the one actually stored.
+    """
+    subprocess.run(
+        [SBX, "secret", "set-custom", "-g", "--host", host,
+         "--env", env, "--placeholder", placeholder, "--value", value],
+        capture_output=True, text=True, check=True, timeout=60,
+    )  # fmt: skip
+    try:
+        yield
+    finally:
+        subprocess.run(
+            [SBX, "secret", "rm", "-g", "--host", host],
+            input="y\n", capture_output=True, text=True, check=False, timeout=60,
+        )  # fmt: skip
+
+
 @dataclass
 class Sandbox:
     """A running Docker Sandbox, with helpers that read as intent.

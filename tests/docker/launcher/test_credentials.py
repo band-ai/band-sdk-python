@@ -98,6 +98,14 @@ def test_proxy_managed_source_needs_no_file_or_ack(workspace: Workspace) -> None
     }
 
 
+def test_proxy_managed_rejects_a_real_band_key(workspace: Workspace) -> None:
+    # proxy-managed promises the real key never enters the VM; a real BAND_API_KEY
+    # in the environment would be passed straight to the child, breaking that.
+    write_config(workspace, enable_proxy_managed(default_config(workspace)))
+    with pytest.raises(LaunchError, match=r"\[credentials\].*sentinel"):
+        resolve_launch(make_env(workspace, band_api_key="band_real_secret_key"))
+
+
 def test_proxy_managed_source_rejects_a_path(workspace: Workspace) -> None:
     config = default_config(workspace)
     config["credentials"] = {

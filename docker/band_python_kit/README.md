@@ -101,9 +101,12 @@ sees a sentinel. Requires `sbx create --kit`.
   Band deployment you point the agent at via `BAND_REST_URL` (prod `app.band.ai`,
   `platform.dev.band.ai`, staging, …) — the endpoint config is the control knob:
   ```bash
+  export BAND_API_KEY=<your-band-key>   # keep the value out of shell history
   sbx secret set-custom -g --host '**.band.ai' \
-    --env BAND_API_KEY --placeholder proxy-managed --value <your-band-key>
+    --env BAND_API_KEY --placeholder proxy-managed --value "$BAND_API_KEY"
   ```
+  `--value` is visible in shell history / process args — pass it from an exported
+  variable as above (and clear history if the real value ever appears literally).
   The proxy then supplies the real key on outbound requests to that host (verified:
   the Band host presents an `O=Docker Sandboxes` MITM cert inside the sandbox). For
   a non-`band.ai` (self-hosted) deployment, use its host with `--host`.

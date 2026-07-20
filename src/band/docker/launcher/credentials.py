@@ -24,6 +24,7 @@ from typing import Callable
 
 from dotenv import dotenv_values
 
+from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.launcher.config import (
     CredentialSource,
     CredentialsSection,
@@ -317,8 +318,30 @@ def resolve_credentials(
     uppercase names — this mapping can."""
     file_values = load_file_credentials(config, env, workspace)
     env_values = env.model_dump()
-    return {
+    resolved = {
         name.value: value
         for name in CredentialName
         if (value := env_values.get(name.lower()) or file_values.get(name))
     }
+    require_sentinel_under_proxy_managed(config, resolved)
+    return resolved
+
+
+def require_sentinel_under_proxy_managed(
+    config: WorkspaceConfig, credentials: dict[str, str]
+) -> None:
+    """In proxy-managed custody the VM must hold only the sentinel for the Band
+    key — a real key here would defeat the 'never enters the VM' guarantee, since
+    the launcher passes it straight to the customer process. The real key belongs
+    on the host (``sbx secret``), and the proxy supplies it on the wire."""
+    section = config.credentials
+    if section is None or section.source is not CredentialSource.PROXY_MANAGED:
+        return
+    key = credentials.get("BAND_API_KEY")
+    if key and key != PROXY_MANAGED_API_KEY:
+        raise LaunchError(
+            "credentials",
+            "proxy-managed custody requires BAND_API_KEY to be the "
+            f"{PROXY_MANAGED_API_KEY!r} sentinel, not a real key — the real key "
+            "must stay on the host (provision it with `sbx secret set-custom`).",
+        )

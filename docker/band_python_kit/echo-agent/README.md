@@ -31,9 +31,11 @@ README's [Credential custody](../README.md#credential-custody):
 ```bash
 # LLM provider (built-in sbx services — pick the one your agent uses):
 sbx secret set -g anthropic          # or openai, google, groq, mistral, …
-# Band key (wildcard follows whichever Band host BAND_REST_URL points at):
+# Band key (wildcard follows whichever Band host BAND_REST_URL points at).
+# Pass --value from an exported var so the key isn't a literal in shell history:
+export BAND_API_KEY=<your-band-key>
 sbx secret set-custom -g --host '**.band.ai' \
-  --env BAND_API_KEY --placeholder proxy-managed --value <your-band-key>
+  --env BAND_API_KEY --placeholder proxy-managed --value "$BAND_API_KEY"
 ```
 
 **Fallback — plaintext env file (laptop-equivalent, less secure).** The keys
