@@ -1,9 +1,10 @@
 """The echo-agent starter workspace satisfies the launcher contract.
 
 The starter is the template every quickstart user copies (and the add-band
-bootstrap scaffolds), so its shape is a shipped contract: a complete locked
-uv project, opt-in gitignored credentials, and sandbox-owned runtime paths.
-Pure file checks — no Docker daemon needed.
+bootstrap scaffolds), so its shape is a shipped contract: a complete locked uv
+project, proxy-managed custody by default (plaintext env-file as the gitignored
+fallback), and sandbox-owned runtime paths. Pure file checks — no Docker daemon
+needed.
 """
 
 from __future__ import annotations
