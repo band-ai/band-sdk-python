@@ -5,7 +5,7 @@ from __future__ import annotations
 from os import environ
 
 
-class _MissingSentinel:
+class MissingSentinel:
     """Sentinel indicating a required field was not provided."""
 
     __slots__ = ()
@@ -14,7 +14,7 @@ class _MissingSentinel:
         return "<MISSING>"
 
 
-MISSING = _MissingSentinel()
+MISSING = MissingSentinel()
 
 IN_CI = bool(environ.get("CI") or environ.get("GITHUB_ACTIONS"))
 
