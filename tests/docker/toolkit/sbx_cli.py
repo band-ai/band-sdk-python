@@ -12,6 +12,7 @@ never imported on an ordinary unit run.
 
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 import uuid
@@ -143,14 +144,10 @@ class Sandbox:
         """
         env = self.exec("env")
         proc = self.process_environ(1)
+        # -F: match the secret as a literal, not a regex — a key with '.' or
+        # other metacharacters must not over- or under-match in an absence proof.
+        paths = " ".join(shlex.quote(path) for path in search_paths)
         files = self.exec(
-            "grep -rIl -- {q} {paths} 2>/dev/null || true".format(
-                q=_shell_single_quote(secret), paths=" ".join(search_paths)
-            )
+            f"grep -rIlF -- {shlex.quote(secret)} {paths} 2>/dev/null || true"
         )
         return secret not in env and secret not in proc and not files
-
-
-def _shell_single_quote(value: str) -> str:
-    """POSIX single-quote a value so a real secret is passed to grep safely."""
-    return "'" + value.replace("'", "'\\''") + "'"

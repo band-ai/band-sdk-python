@@ -49,7 +49,7 @@ def band_host() -> str:
     absence checks both target exactly this host."""
     from tests.e2e.baseline.settings import BaselineSettings
 
-    return urlsplit(BaselineSettings().rest_url).hostname or "app.band.ai"
+    return urlsplit(BaselineSettings().endpoints.rest_url).hostname or "app.band.ai"
 
 
 @pytest.fixture
@@ -67,7 +67,7 @@ def provisioned_sandbox(band_host: str) -> Iterator[tuple[Sandbox, str]]:
         pytest.skip("sbx CLI not on PATH")
     from tests.e2e.baseline.settings import BaselineSettings
 
-    real_key = BaselineSettings().api_key_user
+    real_key = BaselineSettings().credentials.api_key_user
     if not real_key or real_key == PROXY_MANAGED_API_KEY:
         pytest.skip("a real Band key (BAND_API_KEY_USER) is required")
 
