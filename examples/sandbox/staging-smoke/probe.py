@@ -210,7 +210,7 @@ async def provision(sandbox_name: str, sbx_version: str, sdk_version: str) -> No
     # The URLs are the validated settings values, so the sandboxed agent can
     # only ever target the endpoints the production guard checked.
     sys.stdout.write(f"BAND_AGENT_ID={agent.id}\n")
-    sys.stdout.write(f"BAND_API_KEY={agent.api_key}\n")
+    sys.stdout.write("BAND_API_KEY=[REDACTED]\n")
     sys.stdout.write(f"BAND_WS_URL={settings.endpoints.ws_url}\n")
     sys.stdout.write(f"BAND_REST_URL={settings.endpoints.rest_url}\n")
 
