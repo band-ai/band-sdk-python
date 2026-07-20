@@ -119,3 +119,9 @@ def enable_credentials(config: dict[str, Any]) -> dict[str, Any]:
         "acknowledgePlaintextInSandbox": True,
     }
     return config
+
+
+def enable_proxy_managed(config: dict[str, Any]) -> dict[str, Any]:
+    """Select proxy-managed custody: no file, no plaintext acknowledgement."""
+    config["credentials"] = {"source": "proxy-managed"}
+    return config

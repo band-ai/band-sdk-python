@@ -14,6 +14,7 @@ from .fakes import (
     Workspace,
     default_config,
     enable_credentials,
+    enable_proxy_managed,
     make_env,
     make_workspace,
     write_config,
@@ -66,6 +67,7 @@ def test_process_env_wins_over_file(workspace: Workspace) -> None:
 
 
 def test_unsupported_source_rejected(workspace: Workspace) -> None:
+    # An unknown source is a closed-vocabulary violation, caught at config parse.
     config = default_config(workspace)
     config["credentials"] = {
         "source": "vault",
@@ -73,7 +75,41 @@ def test_unsupported_source_rejected(workspace: Workspace) -> None:
         "acknowledgePlaintextInSandbox": True,
     }
     write_config(workspace, config)
-    with pytest.raises(LaunchError, match=r"\[credentials\].*source"):
+    with pytest.raises(LaunchError, match=r"\[config\].*source"):
+        resolve_launch(make_env(workspace))
+
+
+def test_proxy_managed_source_needs_no_file_or_ack(workspace: Workspace) -> None:
+    write_config(workspace, enable_proxy_managed(default_config(workspace)))
+    # The sentinel arrives via the environment; no file, no acknowledgement,
+    # and it passes through verbatim for the Band and LLM keys alike.
+    launch = resolve_launch(
+        make_env(
+            workspace, band_api_key="proxy-managed", openai_api_key="proxy-managed"
+        )
+    )
+    assert launch.credentials == {
+        "BAND_API_KEY": "proxy-managed",
+        "OPENAI_API_KEY": "proxy-managed",
+    }
+
+
+def test_proxy_managed_source_rejects_a_path(workspace: Workspace) -> None:
+    config = default_config(workspace)
+    config["credentials"] = {"source": "proxy-managed", "path": ".band/secrets.env"}
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[config\].*path"):
+        resolve_launch(make_env(workspace, band_api_key="proxy-managed"))
+
+
+def test_workspace_env_file_requires_a_path(workspace: Workspace) -> None:
+    config = default_config(workspace)
+    config["credentials"] = {
+        "source": "workspace-env-file",
+        "acknowledgePlaintextInSandbox": True,
+    }
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[config\].*path"):
         resolve_launch(make_env(workspace))
 
 

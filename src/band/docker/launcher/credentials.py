@@ -25,6 +25,7 @@ from typing import Callable
 from dotenv import dotenv_values
 
 from band.docker.launcher.config import (
+    CredentialSource,
     CredentialsSection,
     LauncherEnv,
     WorkspaceConfig,
@@ -237,13 +238,9 @@ GUARDS: tuple[Callable[[SecretsFile], None], ...] = (
 
 
 def require_explicit_opt_in(section: CredentialsSection) -> None:
-    """Plaintext custody is never implicit: supported source + acknowledgement."""
-    if section.source != "workspace-env-file":
-        raise LaunchError(
-            "credentials",
-            f"unsupported credentials.source: {section.source!r} "
-            "(only 'workspace-env-file' is supported)",
-        )
+    """Plaintext custody is never implicit: the workspace env file places
+    plaintext keys in both the host workspace and the sandbox VM, so it must be
+    acknowledged. (An unsupported source is rejected earlier, at config parse.)"""
     if not section.acknowledge_plaintext_in_sandbox:
         raise LaunchError(
             "credentials",
@@ -281,11 +278,20 @@ def missing_from_environment(secrets: SecretsFile, env: LauncherEnv) -> dict[str
 def load_file_credentials(
     config: WorkspaceConfig, env: LauncherEnv, workspace: Path
 ) -> dict[str, str]:
-    """Return name -> value for documented credentials missing from the env."""
+    """Return name -> value for documented credentials missing from the env.
+
+    Only the workspace env-file source reads a file. Under proxy-managed
+    custody the VM holds only sentinels and the trusted proxy supplies the real
+    values on the wire, so there is no file — the environment is the sole
+    source."""
     section = config.credentials
-    if section is None:
+    if section is None or section.source is not CredentialSource.WORKSPACE_ENV_FILE:
         return {}
     require_explicit_opt_in(section)
+    if section.path is None:  # guaranteed by CredentialsSection; fail closed
+        raise LaunchError(
+            "credentials", "credentials.path is required for the workspace env file"
+        )
     secrets = guarded_secrets_file(workspace, section.path)
     resolved = missing_from_environment(secrets, env)
     logger.info(
