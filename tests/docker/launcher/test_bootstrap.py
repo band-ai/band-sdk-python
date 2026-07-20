@@ -17,7 +17,6 @@ from band.docker.launcher import (
     execute,
     resolve_launch,
 )
-from band.docker.launcher.bootstrap import REPO_LOCK_TIMEOUT_S
 
 from .fakes import Workspace, default_config, enable_repo, make_env, write_config
 
@@ -64,11 +63,12 @@ def test_bootstrap_passes_fenced_destination_and_runtime_dirs(
             "index": True,
         }
     }
+    # No lock_timeout_s: bootstrap relies on repo_init's own default
+    # (DEFAULT_LOCK_TIMEOUT_S) — the single owner of the repo-clone lock timeout.
     assert captured["kwargs"] == {
         "agent_key": "agent-123",
         "state_dir": launch.state_path,
         "context_dir": launch.state_path / "context",
-        "lock_timeout_s": REPO_LOCK_TIMEOUT_S,
     }
 
 
