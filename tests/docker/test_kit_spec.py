@@ -106,6 +106,9 @@ def test_allowlist_matches_measured_minimal_set() -> None:
 
 def test_spec_bakes_no_credentials_or_proxy_vars() -> None:
     spec = load_spec()
+    # Control: the spec actually loaded (else the absence checks below pass
+    # vacuously over an empty/broken spec).
+    assert spec.get("name") == "band-python-kit"
     # Proxy vars are runtime-owned (overriding them bypasses policy).
     env_vars = spec.get("environment", {}).get("variables", {})
     assert not {k for k in env_vars if k.upper().endswith("_PROXY")}

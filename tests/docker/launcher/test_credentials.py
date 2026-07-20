@@ -133,7 +133,10 @@ def test_proxy_managed_does_not_warn(
 ) -> None:
     write_config(workspace, enable_proxy_managed(default_config(workspace)))
     with caplog.at_level(logging.WARNING):
-        resolve_launch(make_env(workspace, band_api_key=PROXY_MANAGED_API_KEY))
+        launch = resolve_launch(make_env(workspace, band_api_key=PROXY_MANAGED_API_KEY))
+    # Control: the resolve actually succeeded on the proxy-managed path (else the
+    # no-warning assertion would pass vacuously — e.g. if it raised first).
+    assert launch.credentials["BAND_API_KEY"] == PROXY_MANAGED_API_KEY
     assert not any("less-secure" in record.message for record in caplog.records)
 
 

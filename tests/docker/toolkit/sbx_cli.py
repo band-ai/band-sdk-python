@@ -5,9 +5,11 @@ Mirrors :class:`tests.docker.toolkit.docker_cli.Container`, but drives the
 the host-side proxy that injects the real credentials. That is what a bare
 `docker run` cannot exercise, and what the never-in-VM proof needs.
 
-Only usable on a Docker-Sandbox-capable host with the `sbx` CLI; the test gates
-on the ``sandbox`` marker (``SANDBOX_TESTS_ENABLED=true``), so this module is
-never imported on an ordinary unit run.
+The sandbox-driving methods need a Docker-Sandbox-capable host with the `sbx`
+CLI, and run only under the ``sandbox``-marked proof
+(``SANDBOX_TESTS_ENABLED=true``). The module itself imports cleanly (stdlib +
+yaml), so its pure helpers are unit-tested in CI (see
+``tests/docker/test_nevervm_contracts.py``).
 """
 
 from __future__ import annotations
@@ -20,6 +22,8 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+import yaml
 
 SBX = "sbx"
 # `sbx create` provisions a microVM (image pull + boot); generous like the
@@ -34,10 +38,49 @@ EXEC_TIMEOUT_S = 120
 # `issuer: ... Docker Sandboxes Proxy CA`, so this substring matches either line.
 PROXY_CA_MARKER = "Docker Sandboxes"
 
+# Read the TLS peer cert the sandbox sees for a host *through* HTTPS_PROXY, so an
+# injected (MITM) connection reveals the Docker Sandboxes CA in its issuer. Uses
+# only the stdlib (the kit image has Python but no curl). Host is argv[1].
+_CERT_PROBE = r"""
+import os, ssl, socket, sys
+from urllib.parse import urlsplit
+host = sys.argv[1]
+proxy = urlsplit(os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or "")
+try:
+    sock = socket.create_connection((proxy.hostname, proxy.port), timeout=15)
+    sock.sendall(("CONNECT %s:443 HTTP/1.1\r\nHost: %s\r\n\r\n" % (host, host)).encode())
+    resp = b""
+    while b"\r\n\r\n" not in resp:  # full CONNECT reply before TLS; TCP may split it
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise RuntimeError("proxy closed before completing CONNECT response")
+        resp += chunk
+    status = resp.split(b"\r\n", 1)[0].split()
+    if len(status) < 2 or not status[1].isdigit() or not 200 <= int(status[1]) < 300:
+        raise RuntimeError("proxy CONNECT refused: %r" % resp.split(b"\r\n", 1)[0])
+    cafile = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE")
+    ctx = ssl.create_default_context(cafile=cafile) if cafile else ssl.create_default_context()
+    cert = ctx.wrap_socket(sock, server_hostname=host).getpeercert()
+    print("subject:", cert.get("subject"))
+    print("issuer:", cert.get("issuer"))
+except Exception as exc:
+    print("cert-probe-error:", type(exc).__name__, exc)
+"""
+
 
 def sbx_available() -> bool:
     """True when the `sbx` CLI is on PATH (else the sandbox test skips)."""
     return shutil.which(SBX) is not None
+
+
+def _kit_agent_name(kit: Path | str) -> str:
+    """The agent name a sandbox kit declares (its ``spec.yaml`` ``name``).
+
+    A sandbox (agent) kit is invoked as ``sbx create --kit <kit> <name>`` — the
+    name is the kit's own, not a generic ``shell`` agent (sbx rejects that combo).
+    """
+    spec = yaml.safe_load((Path(kit) / "spec.yaml").read_text(encoding="utf-8"))
+    return spec["name"]
 
 
 @contextmanager
@@ -81,14 +124,18 @@ class Sandbox:
         *,
         kit: Path | str,
         workspace: Path | str,
-        agent: str = "shell",
+        agent: str | None = None,
         name_prefix: str = "band-nevervm",
     ) -> Iterator[Sandbox]:
         """`sbx create --kit <kit> <agent> <workspace>`; yield it, then remove.
 
-        Injection config only applies when the kit rides ``sbx create --kit``
-        (not ``sbx kit add``) — so the never-in-VM proof must create this way.
+        For an agent (sandbox) kit the agent name is the kit's own name — a plain
+        ``shell`` agent can't be combined with one — so it defaults to the name
+        the kit's ``spec.yaml`` declares. Injection config only applies when the
+        kit rides ``sbx create --kit`` (not ``sbx kit add``), so the never-in-VM
+        proof must create this way.
         """
+        agent = agent or _kit_agent_name(kit)
         name = f"{name_prefix}-{uuid.uuid4().hex[:8]}"
         subprocess.run(
             [SBX, "create", "--name", name, "--kit", str(kit), agent, str(workspace)],
@@ -132,29 +179,29 @@ class Sandbox:
         """The TLS cert subject+issuer the sandbox sees for ``host`` — **through
         the sandbox proxy**.
 
-        curl honors ``HTTPS_PROXY``, so it sees the injection MITM cert. A raw
-        ``openssl s_client -connect`` would connect *directly*, bypass the proxy,
-        and show the real upstream cert — hiding the injection (verified the hard
-        way). Under injection the output contains ``PROXY_CA_MARKER``.
+        Uses Python (always in a Python kit; the kit image ships no ``curl``) to
+        open the connection via ``HTTPS_PROXY``, so it sees the injection MITM
+        cert. Connecting *directly* would bypass the proxy and show the real
+        upstream cert — hiding the injection. Under injection the output contains
+        ``PROXY_CA_MARKER``.
         """
-        return self.exec(
-            f"curl -sv --max-time 15 https://{host}/ 2>&1 "
-            "| grep -iE 'subject:|issuer:' | head -2"
-        )
+        return self.exec(f"python3 -c {shlex.quote(_CERT_PROBE)} {shlex.quote(host)}")
 
-    def real_secret_absent(self, secret: str, *, search_paths: Sequence[str]) -> bool:
-        """True when ``secret`` appears nowhere the VM could leak it.
+    def shell_env(self) -> str:
+        """The exec shell's own environment (``env``)."""
+        return self.exec("env")
 
-        Checks the exec shell's environment, every readable ``/proc/*/environ``,
-        and the given paths. The caller passes the real value from its own
-        settings and asserts absence; the value is never logged.
+    def files_containing(self, secret: str, *, search_paths: Sequence[str]) -> str:
+        """Files under ``search_paths`` that contain ``secret`` as a literal,
+        newline-joined; ``""`` when none.
+
+        ``-F`` matches the secret literally, not as a regex — a key with ``.`` or
+        other metacharacters must not over- or under-match in an absence proof.
+        The value is never logged. This is a raw read, not a verdict: the caller
+        pairs the absence check with a positive control (see the never-in-VM
+        test) so an empty result can't pass vacuously.
         """
-        env = self.exec("env")
-        proc = self.all_process_environ()
-        # -F: match the secret as a literal, not a regex — a key with '.' or
-        # other metacharacters must not over- or under-match in an absence proof.
         paths = " ".join(shlex.quote(path) for path in search_paths)
-        files = self.exec(
+        return self.exec(
             f"grep -rIlF -- {shlex.quote(secret)} {paths} 2>/dev/null || true"
         )
-        return secret not in env and secret not in proc and not files

@@ -91,6 +91,10 @@ def test_band_host_rides_the_injection_path(
     the injected key authenticates (see the round-trip test)."""
     sandbox, _ = provisioned_sandbox
     cert = sandbox.band_host_cert(band_host)
+    # Control: the probe actually produced a cert (didn't error / return empty),
+    # so a missing marker means "wrong issuer", not "we never looked".
+    assert "cert-probe-error" not in cert, cert
+    assert "issuer:" in cert, cert
     assert PROXY_CA_MARKER in cert, cert
 
 
@@ -103,12 +107,24 @@ def test_real_band_key_never_enters_the_vm(
     pass means *that* key never reached the VM. The scan is targeted (env,
     ``/proc``, common writable paths), not an exhaustive filesystem sweep."""
     sandbox, real_key = provisioned_sandbox
-    assert sandbox.real_secret_absent(
-        real_key, search_paths=["/home/agent", "/etc", "/tmp", "/workspace"]
+    environ = sandbox.all_process_environ()
+
+    # Positive control FIRST: prove we actually captured the agent's live
+    # environment (its BAND_API_KEY is exactly the sentinel, on its own
+    # VAR=value line). Without this, every absence check below could pass
+    # vacuously over empty output (agent down, /proc denied, tool missing).
+    assert f"BAND_API_KEY={PROXY_MANAGED_API_KEY}" in environ, "agent env not observed"
+
+    # Absence is now meaningful: the real key is in no process env, the exec
+    # shell's env, or any searched file.
+    assert real_key not in environ
+    assert real_key not in sandbox.shell_env()
+    assert (
+        sandbox.files_containing(
+            real_key, search_paths=["/home/agent", "/etc", "/tmp", "/workspace"]
+        )
+        == ""
     )
-    # The agent's BAND_API_KEY is exactly the sentinel — not just that the string
-    # appears somewhere. `all_process_environ` emits one VAR=value per line.
-    assert f"BAND_API_KEY={PROXY_MANAGED_API_KEY}" in sandbox.all_process_environ()
 
 
 @pytest.mark.skip(
