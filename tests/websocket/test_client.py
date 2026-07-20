@@ -9,14 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from phoenix_channels_python_client.exceptions import PHXConnectionError
+from websockets.asyncio.server import ServerConnection, serve
 from websockets.datastructures import Headers
 from websockets.exceptions import InvalidStatus
 from websockets.http11 import Response
 
+from band.credentials import PROXY_MANAGED_API_KEY
 from band.client.streaming import (
     DeliveryStatus,
     MessageCreatedPayload,
@@ -472,6 +476,50 @@ async def test_aenter_reraises_unrecognized_upgrade_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="socket exploded"):
         await client.__aenter__()
+
+
+# --- Upgrade wire-shape test: real SDK connect against an in-process peer ---
+
+
+@asynccontextmanager
+async def upgrade_peer():
+    """In-process WebSocket peer that captures the first upgrade request's query.
+
+    Accepts the connection and records the query params only — it speaks no
+    Phoenix and imitates no proxy. Its sole job is to observe the real wire shape
+    the SDK and its dependency produce on connect. Entered inside the test so the
+    server shares the test's event loop. Yields ``(ws_url, query)``, where
+    ``query`` is a future resolved with the parsed query params.
+    """
+    query: asyncio.Future[dict[str, list[str]]] = (
+        asyncio.get_running_loop().create_future()
+    )
+
+    async def handler(conn: ServerConnection) -> None:
+        if not query.done():
+            query.set_result(parse_qs(urlsplit(conn.request.path).query))
+        await conn.wait_closed()
+
+    # Bind and connect on 127.0.0.1 explicitly: "localhost" on a dual-stack host
+    # binds both ::1 and 127.0.0.1 on independently-chosen ephemeral ports, so
+    # picking one socket's port then resolving "localhost" can hit the other.
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
+        yield f"ws://127.0.0.1:{port}/socket/websocket", query
+
+
+async def test_upgrade_carries_api_key_vsn_and_agent_id():
+    """The proxy-managed sentinel rides the existing api_key query parameter on
+    the real upgrade, alongside vsn and agent_id — the request shape the sandbox
+    proxy injects the real header onto. Also locks that query shape so Phase B's
+    header-auth work can't silently drop it."""
+    async with upgrade_peer() as (ws_url, query):
+        async with WebSocketClient(ws_url, PROXY_MANAGED_API_KEY, "agent-xyz"):
+            params = await asyncio.wait_for(query, timeout=5)
+
+    assert params["api_key"] == [PROXY_MANAGED_API_KEY]
+    assert params["agent_id"] == ["agent-xyz"]
+    assert params.get("vsn")  # protocol version retained alongside the sentinel
 
 
 # --- Valid payload tests ---

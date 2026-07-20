@@ -127,7 +127,11 @@ class Agent:
         Args:
             adapter: Framework adapter (e.g., PydanticAIAdapter)
             agent_id: UUID of the agent
-            api_key: API key for authentication
+            api_key: API key for authentication. Normally a Band API key; may be
+                     ``PROXY_MANAGED_API_KEY`` (see ``band.credentials``) when a
+                     trusted host-side proxy replaces the request credential. The
+                     value is passed through verbatim to the REST and WebSocket
+                     transports — it is never validated or treated specially here.
             ws_url: WebSocket URL (default: wss://app.band.ai/api/v1/socket/websocket)
             rest_url: REST API URL (default: https://app.band.ai)
             config: Agent configuration options
