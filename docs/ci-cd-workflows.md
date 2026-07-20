@@ -33,10 +33,20 @@ Protection is enforced with GitHub Rulesets, not classic branch protection.
 **Required status checks:**
 
 - `lint`
-- `test (3.11)`
-- `test (3.12)`
+- `test (ubuntu-latest, 3.11)`
+- `test (ubuntu-latest, 3.12)`
+- `test (windows-latest, 3.11)`
+- `test (windows-latest, 3.12)`
 - `packaging`
 - `Validate PR Title`
+
+> **Matrix context names:** the `test` job is a 2×2 matrix (`os` ×
+> `python-version`), so GitHub reports one check context *per cell* named
+> `test (<os>, <python-version>)` — not `test (3.11)`. Configure the ruleset with
+> the exact strings above; a name that doesn't match a real context silently
+> never becomes required. The `test-crewai` job (run in the `dev-crewai` extra)
+> follows the same pattern — `test-crewai (<os>, <python-version>)` — if you add
+> it to the required set.
 
 > `main` uses **strict** required status checks: a PR branch must be up to date
 > with `main` before it can merge. After each merge, other open PRs go stale and
