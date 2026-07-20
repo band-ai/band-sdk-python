@@ -1,0 +1,5 @@
+# Plaintext credential custody (band.yaml credentials.path) — never commit.
+.band/
+# The customer venv is created OUTSIDE the workspace by the launcher, but
+# guard against a stray local one anyway.
+.venv/

@@ -51,9 +51,16 @@ The repository includes a `band-python-kit` base image with the Band SDK in an
 isolated, read-only virtual environment, automatic sandbox proxy-CA trust
 wiring, and support for both arm64 and x86_64.
 
-See the [band-python-kit image guide](docker/band_python_kit/README.md) for
-build options, framework extras, image layout, and direct Docker usage. The
-declarative kit and published GHCR image are separate release deliverables.
+Choose the guide that matches what you need:
+
+- [Run an agent with the kit](docker/band_python_kit/README.md) — customer
+  quickstart, configuration, credentials, and sandbox behavior.
+- [Customize the echo-agent starter workspace](docker/band_python_kit/echo-agent/README.md)
+  — adapt `main.py`, dependencies, or start from a repository.
+- [Understand or maintain the launcher](src/band/docker/launcher/README.md)
+  — internal launch phases, safety rules, and module map.
+
+The declarative kit and published GHCR image are separate release deliverables.
 
 ---
 
