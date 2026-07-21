@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from band.adapters.anthropic import AnthropicAdapter
 from band.core.types import AdapterFeatures, PlatformMessage
 
@@ -61,6 +63,28 @@ class Observation:
         if content is not None:
             assert any(content in event["content"] for event in matches), (
                 f"Expected {message_type} event containing {content!r}; got {matches}"
+            )
+
+    def assert_tool_exposure(
+        self, *, memory: bool | None = None, contacts: bool | None = None
+    ) -> None:
+        """Assert which optional tool groups the adapter exposed to the model."""
+        requests = self.tools.schema_requests
+        assert requests, "Adapter never requested tool schemas, so nothing was exposed"
+        checked = {
+            flag: expected
+            for flag, expected in {
+                "include_memory": memory,
+                "include_contacts": contacts,
+            }.items()
+            if expected is not None
+        }
+        for flag, expected in checked.items():
+            observed = [request[flag] for request in requests]
+            assert all(value is expected for value in observed), (
+                f"Adapter should request schemas with {flag}={expected} on every "
+                f"turn, got {observed} — the scenario's declared capabilities "
+                "were not honored"
             )
 
 
@@ -121,6 +145,24 @@ class BaselineScenario:
         # must re-bootstrap from durable history rather than retain partial state.
         self._rooms_started.add(room_id)
         return Observation(tools=self.tools, script=self.script)
+
+    async def run_expecting_failure(
+        self,
+        content: str,
+        *,
+        error: type[BaseException] = Exception,
+        match: str,
+        **run_kwargs: Any,
+    ) -> Observation:
+        """Deliver a message whose turn must raise, still returning the
+        observable outcome so failure paths share the success vocabulary."""
+        with pytest.raises(error, match=match):
+            await self.run(content, **run_kwargs)
+        return Observation(tools=self.tools, script=self.script)
+
+    def history_contents(self, room_id: str = "room-baseline") -> list[str]:
+        """The adapter's in-memory history for a room, as plain content strings."""
+        return [entry["content"] for entry in self.adapter._message_history[room_id]]
 
     def assert_complete(self) -> None:
         """Assert that every decision supplied for a multi-turn scenario ran."""
