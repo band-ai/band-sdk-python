@@ -2,10 +2,42 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from band.converters.acp_client import ACPClientHistoryConverter
 from band.integrations.acp.client_types import ACPClientSessionState
+
+
+def text(sender: str, content: str) -> dict[str, Any]:
+    """A room text message as platform history delivers it."""
+    return {"message_type": "text", "sender_name": sender, "content": content}
+
+
+def narration(message_type: str, content: str) -> dict[str, Any]:
+    """An adapter narration event (thought/tool_call/tool_result)."""
+    return {
+        "message_type": message_type,
+        "sender_name": "ACP Agent",
+        "content": content,
+    }
+
+
+def session_task(
+    session_id: str | None = None, room_id: str | None = None
+) -> dict[str, Any]:
+    """The adapter's session-bookkeeping task event; omit args for bare metadata."""
+    metadata: dict[str, Any] = {}
+    if session_id is not None:
+        metadata["acp_client_session_id"] = session_id
+    if room_id is not None:
+        metadata["acp_client_room_id"] = room_id
+    return {
+        "message_type": "task",
+        "content": "ACP session established",
+        "metadata": metadata,
+    }
 
 
 class TestACPClientHistoryConverter:
@@ -20,22 +52,48 @@ class TestACPClientHistoryConverter:
         """Empty history returns empty state."""
         result = converter.convert([])
         assert result.room_to_session == {}
+        assert result.replay_messages == []
         assert isinstance(result, ACPClientSessionState)
+
+    def test_replay_messages_render_room_text_history(
+        self, converter: ACPClientHistoryConverter
+    ) -> None:
+        """Text messages survive as replay lines, so a fresh remote session can
+        be re-seeded with the room transcript when session/load fails."""
+        raw = [
+            text("Alice", "What is the plan?"),
+            text("ACP Agent", "Working on it."),
+        ]
+        result = converter.convert(raw)
+        assert result.replay_messages == [
+            "[Alice]: What is the plan?",
+            "[ACP Agent]: Working on it.",
+        ]
+
+    def test_replay_skips_adapter_narration_and_bookkeeping(
+        self, converter: ACPClientHistoryConverter
+    ) -> None:
+        """The adapter narrates every turn into the room (thoughts, tool calls,
+        session task events); none of that may be replayed back to the remote
+        agent as conversation, while the same events still feed session resume.
+        Whitespace-only text is noise, not a line."""
+        raw = [
+            text("Alice", "hello"),
+            text("Alice", "   "),
+            narration("thought", "thinking..."),
+            narration("tool_call", '{"name": "grep"}'),
+            narration("tool_result", '{"output": "3 hits"}'),
+            session_task("session-123", "room-456"),
+        ]
+        result = converter.convert(raw)
+        assert result.replay_messages == ["[Alice]: hello"]
+        assert result.room_to_session == {"room-456": "session-123"}
 
     def test_extract_room_to_session_from_metadata(
         self, converter: ACPClientHistoryConverter
     ) -> None:
         """Should extract room_id -> session_id from metadata."""
-        raw = [
-            {
-                "message_type": "task",
-                "metadata": {
-                    "acp_client_session_id": "session-123",
-                    "acp_client_room_id": "room-456",
-                },
-            }
-        ]
-        result = converter.convert(raw)
+        result = converter.convert([session_task("session-123", "room-456")])
         assert result.room_to_session == {"room-456": "session-123"}
 
     def test_multiple_mappings_extracted(
@@ -43,20 +101,8 @@ class TestACPClientHistoryConverter:
     ) -> None:
         """Should extract all room -> session mappings."""
         raw = [
-            {
-                "message_type": "task",
-                "metadata": {
-                    "acp_client_session_id": "session-1",
-                    "acp_client_room_id": "room-1",
-                },
-            },
-            {
-                "message_type": "task",
-                "metadata": {
-                    "acp_client_session_id": "session-2",
-                    "acp_client_room_id": "room-2",
-                },
-            },
+            session_task("session-1", "room-1"),
+            session_task("session-2", "room-2"),
         ]
         result = converter.convert(raw)
         assert result.room_to_session == {
@@ -69,14 +115,8 @@ class TestACPClientHistoryConverter:
     ) -> None:
         """Should handle messages without metadata gracefully."""
         raw = [
-            {
-                "message_type": "text",
-                "content": "Hello",
-            },
-            {
-                "message_type": "task",
-                "metadata": {},
-            },
+            text("Alice", "Hello"),
+            session_task(),  # bookkeeping event with empty metadata
         ]
         result = converter.convert(raw)
         assert result.room_to_session == {}
@@ -95,20 +135,8 @@ class TestACPClientHistoryConverter:
     def test_requires_both_keys(self, converter: ACPClientHistoryConverter) -> None:
         """Should require both session_id and room_id."""
         raw = [
-            {
-                "message_type": "task",
-                "metadata": {
-                    "acp_client_session_id": "session-123",
-                    # Missing acp_client_room_id
-                },
-            },
-            {
-                "message_type": "task",
-                "metadata": {
-                    # Missing acp_client_session_id
-                    "acp_client_room_id": "room-456",
-                },
-            },
+            session_task(session_id="session-123"),  # missing room id
+            session_task(room_id="room-456"),  # missing session id
         ]
         result = converter.convert(raw)
         assert result.room_to_session == {}
@@ -118,20 +146,8 @@ class TestACPClientHistoryConverter:
     ) -> None:
         """Later mapping for same room should overwrite earlier."""
         raw = [
-            {
-                "message_type": "task",
-                "metadata": {
-                    "acp_client_session_id": "session-old",
-                    "acp_client_room_id": "room-1",
-                },
-            },
-            {
-                "message_type": "task",
-                "metadata": {
-                    "acp_client_session_id": "session-new",
-                    "acp_client_room_id": "room-1",
-                },
-            },
+            session_task("session-old", "room-1"),
+            session_task("session-new", "room-1"),
         ]
         result = converter.convert(raw)
         assert result.room_to_session == {"room-1": "session-new"}
@@ -156,11 +172,5 @@ class TestACPClientHistoryConverter:
         self, converter: ACPClientHistoryConverter
     ) -> None:
         """Should handle messages that have no metadata key at all."""
-        raw = [
-            {
-                "message_type": "text",
-                "content": "Hello world",
-            },
-        ]
-        result = converter.convert(raw)
+        result = converter.convert([text("Alice", "Hello world")])
         assert result.room_to_session == {}

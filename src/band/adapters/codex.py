@@ -15,6 +15,7 @@ from typing import ClassVar, Any, Callable, Literal, Protocol
 from pydantic import BaseModel, Field, ValidationError
 
 from band.converters.codex import CodexHistoryConverter
+from band.converters.helpers import build_replay_messages
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
@@ -1254,17 +1255,7 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         return items, injected_system_prompt
 
     def _format_history_context(self, raw: list[dict[str, Any]]) -> str | None:
-        text_messages: list[str] = []
-        for entry in raw:
-            msg_type = entry.get("message_type", "")
-            if msg_type not in {"text", "message"}:
-                continue
-            content = entry.get("content", "")
-            if not isinstance(content, str) or not content.strip():
-                continue
-            sender = entry.get("sender_name") or entry.get("sender_type") or "Unknown"
-            text_messages.append(f"[{sender}]: {content}")
-
+        text_messages = build_replay_messages(raw)
         if not text_messages:
             return None
 

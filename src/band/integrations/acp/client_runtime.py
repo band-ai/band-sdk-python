@@ -744,8 +744,9 @@ class ACPRuntime:
 
         ACP session IDs are meaningful only to the agent process that owns them.
         A successful ``session/load`` is therefore the boundary where a persisted ID
-        becomes usable on this connection. An unsupported, unavailable, or slow load
-        returns ``False`` so callers can create a fresh session without blocking a turn.
+        becomes usable on this connection. An unsupported, unavailable, slow, or
+        erroring load returns ``False`` so callers can create a fresh session
+        without blocking a turn.
         """
         if not self._agent_supports_session_load:
             return False
@@ -768,9 +769,17 @@ class ACPRuntime:
             )
             return False
         except RequestError as error:
-            if not self._is_missing_session_error(error):
-                raise
-            logger.info("ACP session %s is no longer available", session_id)
+            # Any load failure is equally recoverable: the caller falls back to
+            # a fresh session (with history replay) rather than letting a remote
+            # protocol error kill the bootstrap turn.
+            if self._is_missing_session_error(error):
+                logger.info("ACP session %s is no longer available", session_id)
+            else:
+                logger.warning(
+                    "ACP session/load for %s failed (%s); using a new session",
+                    session_id,
+                    error,
+                )
             return False
         return response is not None
 

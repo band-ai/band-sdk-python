@@ -54,6 +54,21 @@ def format_message_for_llm(msg: dict, participants: list[dict] | None = None) ->
     }
 
 
+def messages_before(messages: list[dict], message_id: str | None) -> list[dict]:
+    """The prefix of ``messages`` strictly before ``message_id``.
+
+    Bootstrap history must stop at the triggering message: entries after it
+    are pending turns of their own, and replaying them both exposes future
+    requests and duplicates them when their own turn arrives. An absent or
+    unknown id returns the list unchanged (callers still pass ``exclude_id``
+    so the trigger itself never slips through).
+    """
+    for index, message in enumerate(messages):
+        if message.get("id") == message_id:
+            return messages[:index]
+    return messages
+
+
 def format_history_for_llm(
     messages: list[dict],
     exclude_id: str | None = None,
