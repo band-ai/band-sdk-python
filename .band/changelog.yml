@@ -1,0 +1,8 @@
+# Config for the changelog-generator:generate skill (band-ai/private-agent-skills).
+# Read on release by the changelog automation (CI workflow or scheduled routine).
+fern_repo: thenvoi/fern
+fern_changelog_path: fern/changelog/sdks
+linear:
+  team_key: INT
+slack:
+  channel: integrations
