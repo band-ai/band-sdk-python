@@ -1,7 +1,89 @@
 """Tests for FakeAgentTools testing utility."""
 
+from typing import Any
+
 from band.core.protocols import AgentToolsProtocol
+from band.runtime.tools import serialize_tool_result
 from band.testing import FakeAgentTools
+
+
+async def store_fact(tools: FakeAgentTools, content: str) -> None:
+    """Store a memory with the platform-required fields filled in."""
+    await tools.store_memory(
+        content=content,
+        system="long_term",
+        type="semantic",
+        segment="user",
+        thought="noted",
+        scope="organization",
+    )
+
+
+async def listing_seen_by_adapter(
+    tools: FakeAgentTools, **kwargs: Any
+) -> dict[str, Any]:
+    """The serialized envelope an adapter receives from band_list_memories."""
+    return serialize_tool_result(await tools.list_memories(**kwargs))
+
+
+def listed_contents(listing: dict[str, Any]) -> list[str]:
+    """Each listed memory's content, in listing order."""
+    return [memory["content"] for memory in listing["data"]]
+
+
+class TestMemoryListing:
+    """list_memories must serve the real SDK's Fern envelope (data/meta)."""
+
+    async def test_stored_memories_come_back_in_the_real_envelope(self):
+        tools = FakeAgentTools()
+        await store_fact(tools, "prefers dark mode")
+
+        listing = await listing_seen_by_adapter(tools)
+
+        assert set(listing) == {"data", "meta"}, (
+            f"Envelope keys {set(listing)} drifted from the real SDK's "
+            "{data, meta} — adapters reading .data/.meta would go untested"
+        )
+        assert listed_contents(listing) == ["prefers dark mode"], (
+            "A stored memory must be visible in the listing's data"
+        )
+        assert listing["meta"] == {"page_size": 1, "total_count": 1}, (
+            "meta must report this page's size and the total match count"
+        )
+
+    async def test_page_size_serves_the_first_page(self):
+        tools = FakeAgentTools()
+        for content in ("first", "second", "third"):
+            await store_fact(tools, content)
+
+        listing = await listing_seen_by_adapter(tools, page_size=2)
+
+        assert listed_contents(listing) == ["first", "second"], (
+            "page_size must truncate to the first page, oldest first"
+        )
+        assert listing["meta"] == {"page_size": 2, "total_count": 3}, (
+            "meta.page_size is the served page's size, "
+            "total_count the whole store — the platform's semantics"
+        )
+
+    async def test_seeded_memories_are_listed(self):
+        seeded = {
+            "id": "mem-1",
+            "content": "seeded fact",
+            "system": "long_term",
+            "type": "semantic",
+            "segment": "user",
+            "scope": "organization",
+            "inserted_at": "2025-01-01T00:00:00Z",
+        }
+        tools = FakeAgentTools(memories=[seeded])
+
+        listing = await listing_seen_by_adapter(tools)
+
+        assert listed_contents(listing) == ["seeded fact"], (
+            "Constructor-seeded memories must be served by list_memories, "
+            "so tests can start from a pre-populated store"
+        )
 
 
 class TestFakeAgentToolsProtocol:

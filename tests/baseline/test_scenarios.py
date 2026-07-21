@@ -80,9 +80,7 @@ async def test_shared_memory_is_observable_through_the_platform_tool_surface() -
     observation = await scenario.run("Remember this")
 
     observation.assert_tool_called("band_store_memory", content="Baseline preference")
-    assert [memory["content"] for memory in scenario.tools.memories] == [
-        "Baseline preference"
-    ]
+    assert scenario.tools.memory_contents == ["Baseline preference"]
     assert scenario.tools.schema_requests[0]["include_memory"] is True
     scenario.assert_complete()
 

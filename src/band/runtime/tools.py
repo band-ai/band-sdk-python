@@ -34,7 +34,7 @@ from band.core.types import EventMessageType
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
-    from band.client.rest import AsyncRestClient
+    from band.client.rest import AsyncRestClient, ListAgentMemoriesResponse
 
     from .execution import ExecutionContext
 
@@ -1320,6 +1320,25 @@ class ToolCallOutcome:
     error_message: str | None = None
 
 
+def serialize_tool_result(result: Any) -> Any:
+    """Serialize Pydantic tool results to dicts at the adapter boundary.
+
+    The single definition of how a tool method's return value (a Fern model,
+    a list of models, or an already-plain value) becomes the JSON-serializable
+    payload adapters receive. Test fakes that mirror the dispatch boundary
+    (e.g. the baseline ``BaselineTools``) must use this same helper so their
+    output shape cannot drift from the real one.
+    """
+    if hasattr(result, "model_dump"):
+        return result.model_dump()
+    if isinstance(result, list):
+        return [
+            item.model_dump() if hasattr(item, "model_dump") else item
+            for item in result
+        ]
+    return result
+
+
 class AgentTools(AgentToolsProtocol):
     """
     Room-bound tools for LLM platform interaction.
@@ -1991,7 +2010,7 @@ class AgentTools(AgentToolsProtocol):
         content_query: str | None = None,
         page_size: int = 50,
         status: str | None = None,
-    ) -> Any:
+    ) -> ListAgentMemoriesResponse:
         """
         List memories accessible to the agent.
 
@@ -2435,15 +2454,7 @@ class AgentTools(AgentToolsProtocol):
         try:
             method = getattr(self, definition.method_name)
             result = await method(**arguments)
-            # Serialize Pydantic models to dicts at the adapter boundary
-            if hasattr(result, "model_dump"):
-                result = result.model_dump()
-            elif isinstance(result, list):
-                result = [
-                    item.model_dump() if hasattr(item, "model_dump") else item
-                    for item in result
-                ]
-            return ToolCallOutcome(value=result, ok=True)
+            return ToolCallOutcome(value=serialize_tool_result(result), ok=True)
         except BandToolError:
             # Let BandToolError propagate so framework wrappers can
             # translate it into framework-native failure results.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from band.client.rest import ListAgentMemoriesResponse, ListAgentMemoriesResponseMeta
 from band.runtime.tools import ToolCallOutcome
 
 
@@ -36,6 +37,7 @@ class FakeAgentTools:
         room_id: str = "room-fake",
         hub_room_id: str | None = None,
         room_context: list[dict[str, Any]] | None = None,
+        memories: list[dict[str, Any]] | None = None,
     ):
         self.room_id = room_id
         self._hub_room_id = hub_room_id
@@ -45,6 +47,7 @@ class FakeAgentTools:
         self._peers: list[dict[str, Any]] = peers or []
         self._contacts: list[dict[str, Any]] = contacts or []
         self._room_context: list[dict[str, Any]] = list(room_context or [])
+        self.memories: list[dict[str, Any]] = list(memories or [])
         self.participants_added: list[dict[str, Any]] = []
         self.participants_removed: list[dict[str, Any]] = []
         self.tool_calls: list[dict[str, Any]] = []
@@ -223,11 +226,21 @@ class FakeAgentTools:
         content_query: str | None = None,
         page_size: int = 50,
         status: str | None = None,
-    ) -> dict[str, Any]:
-        return {
-            "memories": [],
-            "metadata": {"page_size": page_size, "total_count": 0},
-        }
+    ) -> ListAgentMemoriesResponse:
+        """Return stored memories in the real SDK's Fern envelope (data/meta).
+
+        Filters are accepted but not applied; ``page_size`` truncates like the
+        real first page. Memory dicts are coerced into ``AgentMemory`` models,
+        so they must carry the platform-required fields (``store_memory``'s
+        return shape qualifies).
+        """
+        page = self.memories[:page_size]
+        return ListAgentMemoriesResponse(
+            data=page,
+            meta=ListAgentMemoriesResponseMeta(
+                page_size=len(page), total_count=len(self.memories)
+            ),
+        )
 
     async def store_memory(
         self,
@@ -240,7 +253,7 @@ class FakeAgentTools:
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        memory = {
             "id": str(uuid.uuid4()),
             "content": content,
             "system": system,
@@ -251,6 +264,8 @@ class FakeAgentTools:
             "thought": thought,
             "inserted_at": "2025-01-01T00:00:00Z",
         }
+        self.memories.append(memory)
+        return memory
 
     async def get_memory(self, memory_id: str) -> dict[str, Any]:
         return {
@@ -272,6 +287,12 @@ class FakeAgentTools:
 
     async def archive_memory(self, memory_id: str) -> dict[str, Any]:
         return {"id": memory_id, "status": "archived"}
+
+    @property
+    def memory_contents(self) -> list[str]:
+        """Contents of the stored memories, oldest first — a readable
+        projection for test assertions."""
+        return [memory["content"] for memory in self.memories]
 
     def get_tool_schemas(
         self,
