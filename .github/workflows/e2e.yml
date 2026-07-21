@@ -279,7 +279,7 @@ jobs:
     # contributes its pass/fail rows to the merged scorecard.
     - name: Upload lane scorecard
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: scorecard-${{ matrix.lane }}-${{ matrix.os }}
         path: artifacts/scorecard-*.json
@@ -326,7 +326,7 @@ jobs:
 
     - name: Upload scorecard
       if: always()
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: scorecard
         path: |
