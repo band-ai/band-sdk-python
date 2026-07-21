@@ -42,15 +42,6 @@ on:
         default: false
         type: boolean
 
-  # TEMPORARY — remove before merge. workflow_dispatch is only selectable once a
-  # workflow is on the default branch, so a push trigger is the only way to
-  # exercise the manual/relock path from this branch. Each push runs a rehearsal
-  # (move-floating stays false; the version is a throwaway `0.0.0-ci<run-id>`),
-  # so real release tags are never touched.
-  push:
-    branches:
-      - int-981-kit-credential-injection-llm-band-domains-never-in-vm-e2e
-
 permissions:
   contents: read
 
@@ -67,13 +58,10 @@ jobs:
       queue: max
     uses: ./.github/workflows/kit-publish.yml
     with:
-      # inputs.* are empty on the temporary push trigger — fall back to a
-      # branch-scoped rehearsal there (see the `push:` note above). relock is
-      # forced on under push so that path gets exercised; dispatch honors it.
-      ref: ${{ inputs.ref || github.ref_name }}
-      version: ${{ inputs.version || format('0.0.0-ci{0}', github.run_id) }}
-      major: ${{ inputs.major || '0' }}
-      move-floating: ${{ inputs.move-floating || false }}
+      ref: ${{ inputs.ref }}
+      version: ${{ inputs.version }}
+      major: ${{ inputs.major }}
+      move-floating: ${{ inputs.move-floating }}
       extra-build-args: ${{ inputs.extra-build-args }}
-      quarantine-max-age-days: ${{ inputs.quarantine-max-age-days || 7 }}
-      relock: ${{ github.event_name == 'push' && true || inputs.relock }}
+      quarantine-max-age-days: ${{ inputs.quarantine-max-age-days }}
+      relock: ${{ inputs.relock }}
