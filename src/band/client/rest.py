@@ -22,6 +22,8 @@ from band_rest import (
     ChatRoomRequest,
     ParticipantRequest,
     AgentMemoryCreateRequest,
+    ListAgentMemoriesResponse,
+    ListAgentMemoriesResponseMeta,
     NotFoundError,
     UnauthorizedError,
 )
@@ -43,6 +45,8 @@ __all__ = [
     "ChatRoomRequest",
     "ParticipantRequest",
     "AgentMemoryCreateRequest",
+    "ListAgentMemoriesResponse",
+    "ListAgentMemoriesResponseMeta",
     "NotFoundError",
     "UnauthorizedError",
     "RequestOptions",

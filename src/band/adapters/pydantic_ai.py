@@ -489,7 +489,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 status: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.list_memories(
+                    response = await ctx.deps.list_memories(
                         subject_id=subject_id,
                         scope=scope,
                         system=system,
@@ -499,6 +499,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         page_size=page_size,
                         status=status,
                     )
+                    return response.model_dump()
                 except Exception as e:
                     return f"Error listing memories: {e}"
 

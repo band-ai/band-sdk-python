@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from band.runtime.tools import serialize_tool_result
 from band.testing.fake_tools import FakeAgentTools
 
 
@@ -19,7 +20,6 @@ class BaselineTools(FakeAgentTools):
         super().__init__(**kwargs)
         self.schema_requests: list[dict[str, Any]] = []
         self.contact_requests: list[dict[str, Any]] = []
-        self.memories: list[dict[str, Any]] = []
 
     def get_anthropic_tool_schemas(
         self, *, include_memory: bool = False, include_contacts: bool = True
@@ -74,7 +74,9 @@ class BaselineTools(FakeAgentTools):
         if not isinstance(arguments, dict):
             raise ValueError(f"{tool_name} arguments must be an object")
         self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
+        return serialize_tool_result(await self._dispatch(tool_name, arguments))
 
+    async def _dispatch(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         match tool_name:
             case "band_send_message":
                 content = self._required_text(tool_name, arguments, "content")
@@ -137,12 +139,11 @@ class BaselineTools(FakeAgentTools):
                 self.contact_requests.append({"action": action, "result": result})
                 return result
             case "band_list_memories":
-                return {
-                    "memories": list(self.memories),
-                    "metadata": {"total_count": len(self.memories)},
-                }
+                return await self.list_memories(
+                    page_size=arguments.get("page_size", 50)
+                )
             case "band_store_memory":
-                memory = await self.store_memory(
+                return await self.store_memory(
                     self._required_text(tool_name, arguments, "content"),
                     self._required_text(tool_name, arguments, "system"),
                     self._required_text(tool_name, arguments, "type"),
@@ -152,8 +153,6 @@ class BaselineTools(FakeAgentTools):
                     subject_id=arguments.get("subject_id"),
                     metadata=arguments.get("metadata"),
                 )
-                self.memories.append(memory)
-                return memory
             case "band_get_memory":
                 memory_id = self._required_text(tool_name, arguments, "memory_id")
                 return next(

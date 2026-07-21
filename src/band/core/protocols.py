@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
+    from band.client.rest import ListAgentMemoriesResponse
     from band.core.types import AgentInput
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
@@ -190,8 +191,8 @@ class AgentToolsProtocol(Protocol):
         content_query: str | None = None,
         page_size: int = 50,
         status: str | None = None,
-    ) -> Any:
-        """List memories accessible to the agent."""
+    ) -> ListAgentMemoriesResponse:
+        """List memories accessible to the agent, in the Fern response envelope."""
         ...
 
     async def store_memory(

@@ -148,8 +148,8 @@ def mock_tools():
     )
     tools.list_memories = AsyncMock(
         return_value={
-            "memories": [{"id": "memory-1", "content": "remember this"}],
-            "count": 1,
+            "data": [{"id": "memory-1", "content": "remember this"}],
+            "meta": {"page_size": 1, "total_count": 1},
         }
     )
     tools.store_memory = AsyncMock(return_value={"id": "memory-1", "status": "stored"})
@@ -1126,7 +1126,7 @@ class TestMemoryToolExecution:
 
         result_data = json.loads(result)
         assert result_data["status"] == "success"
-        assert result_data["memories"][0]["id"] == "memory-1"
+        assert result_data["data"][0]["id"] == "memory-1"
         mock_tools.list_memories.assert_awaited_once_with(
             subject_id="subject-1",
             scope="subject",
