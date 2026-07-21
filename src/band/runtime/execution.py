@@ -49,7 +49,7 @@ from .types import (
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
 )
 from .retry_tracker import MessageRetryTracker
-from ._context_serialization import context_item_to_dict
+from band.runtime.context_serialization import context_item_to_dict
 from .working_state import WorkingStateReporter
 
 if TYPE_CHECKING:

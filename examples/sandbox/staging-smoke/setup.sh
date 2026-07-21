@@ -63,7 +63,7 @@ hosts = {
 print(','.join(sorted(h for h in hosts if h)))
 ")"
 sbx policy allow network --sandbox "$SBX_SANDBOX" \
-  "$STAGING_HOSTS,pypi.org,files.pythonhosted.org,github.com"
+  "$STAGING_HOSTS,pypi.org,files.pythonhosted.org"
 
 echo "Copying agent.py into the sandbox workspace..."
 cp "$(pwd)/agent.py" "$SBX_WORKSPACE/agent.py"

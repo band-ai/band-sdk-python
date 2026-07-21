@@ -15,12 +15,12 @@ return SDK-native types for pattern matching compatibility.
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.client.streaming import (
     MessageCreatedPayload,
@@ -54,6 +54,26 @@ from band.runtime.types import PlatformMessage
 pytest_plugins = ["pytester"]
 
 
+class CollectionGateSettings(BaseSettings):
+    """Env-var gates for which marked suites collect/run.
+
+    Field name == env var (case-insensitive). Read via a fresh instance in the
+    collection hooks so the current environment is always what decides.
+    ``env_ignore_empty`` treats a set-but-empty gate (``CI=``, as some CI
+    wrappers export) as unset instead of raising a ValidationError that would
+    kill the whole run inside a collection hook.
+    """
+
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    ci: bool = False  # CI
+    e2e_tests_enabled: bool = False  # E2E_TESTS_ENABLED
+    docker_tests_enabled: bool = False  # DOCKER_TESTS_ENABLED
+    sandbox_tests_enabled: bool = False  # SANDBOX_TESTS_ENABLED
+
+
 def pytest_ignore_collect(collection_path: Path) -> bool | None:
     """Skip real-API integration tests (tests/integration/) in CI.
 
@@ -63,7 +83,7 @@ def pytest_ignore_collect(collection_path: Path) -> bool | None:
     False) when not ignoring, so other mechanisms like --ignore still
     apply locally.
     """
-    if os.environ.get("CI") == "true" and "integration" in collection_path.parts:
+    if CollectionGateSettings().ci and "integration" in collection_path.parts:
         return True
     return None
 
@@ -82,17 +102,21 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     isn't enough to keep them off CI; they need the same explicit opt-in
     as e2e tests.
     """
-    e2e_enabled = os.environ.get("E2E_TESTS_ENABLED") == "true"
-    docker_enabled = os.environ.get("DOCKER_TESTS_ENABLED") == "true"
+    gates = CollectionGateSettings()
     skip_e2e = pytest.mark.skip(reason="set E2E_TESTS_ENABLED=true to run e2e tests")
     skip_docker = pytest.mark.skip(
         reason="set DOCKER_TESTS_ENABLED=true to run docker_build tests"
     )
+    skip_sandbox = pytest.mark.skip(
+        reason="set SANDBOX_TESTS_ENABLED=true to run sbx sandbox tests"
+    )
     for item in items:
-        if not e2e_enabled and item.get_closest_marker("e2e"):
+        if not gates.e2e_tests_enabled and item.get_closest_marker("e2e"):
             item.add_marker(skip_e2e)
-        if not docker_enabled and item.get_closest_marker("docker_build"):
+        if not gates.docker_tests_enabled and item.get_closest_marker("docker_build"):
             item.add_marker(skip_docker)
+        if not gates.sandbox_tests_enabled and item.get_closest_marker("sandbox"):
+            item.add_marker(skip_sandbox)
 
 
 @pytest.fixture(autouse=True)

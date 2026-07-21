@@ -1,6 +1,6 @@
 # schemaVersion "2" selects sbx's OCI v2 kit artifact format (tar+gzip layer,
 # spec in the manifest config blob, standard OCI annotations) for
-# `sbx kit push`, with v0.34.0's streaming/caching support. It changes only
+# `sbx kit push`, with v0.35.0's streaming/caching support. It changes only
 # the packaging on push — no spec-field differences from "1" — and passes
 # `sbx kit validate` unchanged on the pinned CLI.
 schemaVersion: "2"
@@ -32,31 +32,40 @@ commands:
       background: true
       description: Launch the Band agent
 
-# Minimal egress for Band, locked dependency sync (PyPI), and the supported
-# LLM backends (OpenAI, Anthropic, GitHub Copilot). The Copilot set is the
-# empirically minimal one for the Copilot CLI (release-assets serves its
-# self-download; the IDE-only copilot-proxy/origin-tracker hosts are not
-# needed). Non-production Band hosts are granted per sandbox with
-# `sbx policy allow network --sandbox <name> <host>`, never baked in here.
+# The immutable baseline: Band Cloud and locked dependency sync. `uv sync
+# --locked` still downloads the already-selected package artifacts, so both
+# PyPI hosts are needed on a fresh sandbox. LLM providers, source hosts, and
+# non-production Band deployments are opt-in per sandbox with
+# `sbx policy allow network --sandbox <name> <host>`; see the kit README.
 caps:
   network:
     allow:
       - app.band.ai
       - pypi.org
       - files.pythonhosted.org
-      - api.openai.com
-      - api.anthropic.com
-      - github.com
-      - api.github.com
-      - release-assets.githubusercontent.com
-      - "*.githubcopilot.com"
-      - "*.individual.githubcopilot.com"
-      - "*.business.githubcopilot.com"
-      - "*.enterprise.githubcopilot.com"
+
+# Credential injection is NOT declared here — it is provisioned host-side, per
+# deployment, so the operator controls which Band host is targeted (prod
+# `app.band.ai`, staging, self-hosted, …) rather than the
+# kit baking one in:
+#
+#   sbx secret set-custom -g --host '**.band.ai' \
+#     --env BAND_API_KEY --placeholder proxy-managed --value <band-key>
+#
+# The VM then holds only the sentinel; the proxy supplies the real key on the
+# wire (verified: the Band host presents an "O=Docker Sandboxes" MITM cert). A
+# `**.band.ai` wildcard follows whichever Band deployment `BAND_REST_URL` points
+# at. LLM provider keys are built-in sbx services — `sbx secret set -g <provider>`
+# (anthropic, openai, …). See the README "Credential custody" section.
+#
+# A kit-declared `credentials[].apiKey.inject[]` block crashes `sbx create` on
+# sbx 0.35.0 despite passing `sbx kit validate` (tracked upstream); host-side
+# `set-custom` is the working, controllable path.
 
 agentContext: |
   This workspace contains a Python agent launched by the Band Sandbox kit.
   Agent configuration is in band.yaml.
   Dependency changes must update both pyproject.toml and uv.lock.
-  Supported LLM backends are OpenAI, Anthropic/Claude, and GitHub Copilot.
+  Add network access only for the LLM provider, repository host, or service
+  this agent actually uses; see the kit README's "Network access" section.
   Never print or commit configured credentials.

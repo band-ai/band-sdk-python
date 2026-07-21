@@ -117,9 +117,12 @@ independent job) has already succeeded, but no kit artifacts were produced.
 
 ## Supported `sbx` version
 
-Validated against **`sbx` v0.34.0** at ship time (OCI v2 kit artifacts,
-`kit.allowedSources` default). The kit surface of `sbx` is experimental and has
-moved between releases, so on **every** CLI upgrade, revalidate:
+Targets **`sbx` v0.35.0** — the version whose kit-spec v2 schema the credential
+injection uses (`credentials[].apiKey.inject[]`). `sbx kit validate` passes clean
+on the repo `spec.yaml` under 0.35.0; run the full push → pull → OCI-consume
+roundtrip below at the next release cut. The kit surface of `sbx` is
+experimental and has moved between releases, so on **every** CLI upgrade,
+revalidate:
 
 - `sbx kit validate` on the repo `spec.yaml`,
 - a `kit push` → `kit pull` roundtrip,

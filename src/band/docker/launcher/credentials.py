@@ -24,7 +24,9 @@ from typing import Callable
 
 from dotenv import dotenv_values
 
+from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.launcher.config import (
+    CredentialSource,
     CredentialsSection,
     LauncherEnv,
     WorkspaceConfig,
@@ -237,13 +239,9 @@ GUARDS: tuple[Callable[[SecretsFile], None], ...] = (
 
 
 def require_explicit_opt_in(section: CredentialsSection) -> None:
-    """Plaintext custody is never implicit: supported source + acknowledgement."""
-    if section.source != "workspace-env-file":
-        raise LaunchError(
-            "credentials",
-            f"unsupported credentials.source: {section.source!r} "
-            "(only 'workspace-env-file' is supported)",
-        )
+    """Plaintext custody is never implicit: the workspace env file places
+    plaintext keys in both the host workspace and the sandbox VM, so it must be
+    acknowledged. (An unsupported source is rejected earlier, at config parse.)"""
     if not section.acknowledge_plaintext_in_sandbox:
         raise LaunchError(
             "credentials",
@@ -281,11 +279,25 @@ def missing_from_environment(secrets: SecretsFile, env: LauncherEnv) -> dict[str
 def load_file_credentials(
     config: WorkspaceConfig, env: LauncherEnv, workspace: Path
 ) -> dict[str, str]:
-    """Return name -> value for documented credentials missing from the env."""
+    """Return name -> value for documented credentials missing from the env.
+
+    Only the workspace env-file source reads a file. Under proxy-managed
+    custody the VM holds only sentinels and the trusted proxy supplies the real
+    values on the wire, so there is no file — the environment is the sole
+    source."""
     section = config.credentials
-    if section is None:
+    if section is None or section.source is not CredentialSource.WORKSPACE_ENV_FILE:
         return {}
     require_explicit_opt_in(section)
+    logger.warning(
+        "credentials.source 'workspace-env-file' is the less-secure custody tier: "
+        "plaintext keys live in both the workspace and the sandbox VM. Prefer "
+        "'proxy-managed', where the real keys never enter the VM."
+    )
+    if section.path is None:  # guaranteed by CredentialsSection; fail closed
+        raise LaunchError(
+            "credentials", "credentials.path is required for the workspace env file"
+        )
     secrets = guarded_secrets_file(workspace, section.path)
     resolved = missing_from_environment(secrets, env)
     logger.info(
@@ -306,8 +318,40 @@ def resolve_credentials(
     uppercase names — this mapping can."""
     file_values = load_file_credentials(config, env, workspace)
     env_values = env.model_dump()
-    return {
+    resolved = {
         name.value: value
         for name in CredentialName
         if (value := env_values.get(name.lower()) or file_values.get(name))
     }
+    require_sentinel_under_proxy_managed(config, resolved)
+    return resolved
+
+
+def require_sentinel_under_proxy_managed(
+    config: WorkspaceConfig, credentials: dict[str, str]
+) -> None:
+    """In proxy-managed custody the Band key in the VM must be the sentinel — a
+    real key here would defeat the 'never enters the VM' guarantee, since the
+    launcher passes it straight to the customer process. The real key belongs on
+    the host (``sbx secret set-custom`` with the ``proxy-managed`` placeholder),
+    and the proxy supplies it on the wire.
+
+    Scoped to the Band key on purpose. Only it uses the kit's own custom-secret
+    placeholder; LLM/provider keys ride sbx's built-in service secrets
+    (``sbx secret set -g <provider>``), which inject sbx's own placeholder
+    (``SANDBOX_STORED_CREDENTIAL_…``), never this literal. Requiring the Band
+    sentinel for them would reject the documented provider flow, and the
+    launcher can't police a placeholder scheme it doesn't own — provider custody
+    is sbx's, enforced by keeping the real key off the VM at the service-secret
+    layer."""
+    section = config.credentials
+    if section is None or section.source is not CredentialSource.PROXY_MANAGED:
+        return
+    key = credentials.get("BAND_API_KEY")
+    if key and key != PROXY_MANAGED_API_KEY:
+        raise LaunchError(
+            "credentials",
+            "proxy-managed custody requires BAND_API_KEY to be the "
+            f"{PROXY_MANAGED_API_KEY!r} sentinel, not a real key — the real key "
+            "must stay on the host (provision it with `sbx secret set-custom`).",
+        )

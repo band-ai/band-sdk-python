@@ -48,7 +48,7 @@ from band.core.protocols import FrameworkAdapter
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.platform.link import BandLink
-from band.runtime._context_serialization import context_item_to_dict
+from band.runtime.context_serialization import context_item_to_dict
 from band.runtime.formatters import format_history_for_llm, replace_uuid_mentions
 from band.runtime.tools import AgentTools
 

@@ -12,12 +12,20 @@ production defaults (endpoints only) → fail.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band.docker.launcher.errors import LaunchError
@@ -98,14 +106,40 @@ class RepoSection(BaseModel):
         return cleaned
 
 
+class CredentialSource(StrEnum):
+    """The custody modes ``band.yaml`` may select for credentials.
+
+    ``workspace-env-file`` keeps plaintext keys in the workspace and the VM;
+    ``proxy-managed`` keeps only sentinels in the VM while a trusted host-side
+    proxy injects the real keys on the wire.
+
+    ``PROXY_MANAGED`` here is the custody-mode *name*, distinct from the sentinel
+    api-key *value* ``band.credentials.PROXY_MANAGED_API_KEY`` — same spelling,
+    different concept.
+    """
+
+    WORKSPACE_ENV_FILE = "workspace-env-file"
+    PROXY_MANAGED = "proxy-managed"
+
+
 class CredentialsSection(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    source: str
-    path: str
+    source: CredentialSource
+    # Required for ``workspace-env-file`` (the file to read); unused for
+    # ``proxy-managed`` (there is no file), enforced below.
+    path: str | None = None
     acknowledge_plaintext_in_sandbox: bool = Field(
         default=False, alias="acknowledgePlaintextInSandbox"
     )
+
+    @model_validator(mode="after")
+    def path_matches_source(self) -> CredentialsSection:
+        if self.source is CredentialSource.WORKSPACE_ENV_FILE and not self.path:
+            raise ValueError(f"path is required for source '{self.source}'")
+        if self.source is CredentialSource.PROXY_MANAGED and self.path is not None:
+            raise ValueError(f"path is not used with source '{self.source}'")
+        return self
 
 
 class RuntimeSection(BaseModel):

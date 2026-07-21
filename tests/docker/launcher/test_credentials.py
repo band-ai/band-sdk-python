@@ -2,32 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-from band.docker.launcher import LaunchError, resolve_launch
+from band.credentials import PROXY_MANAGED_API_KEY
+from band.docker.launcher import CredentialSource, LaunchError, resolve_launch
+from tests.docker.markers import requires_posix_permission_bits
 
 from .fakes import (
     Workspace,
     default_config,
     enable_credentials,
+    enable_proxy_managed,
     make_env,
     make_workspace,
     write_config,
     write_credentials,
-)
-
-# has_owner_only_permissions enforces POSIX mode bits (stat().st_mode & 0o077).
-# Windows chmod/stat can't represent group/other bits — a non-read-only file
-# always reports 666 — so the guard always fires there regardless of the
-# requested mode. The guard only ever runs inside the Linux sandbox container
-# in production, so this is a real platform gap, not something to work around.
-requires_posix_permission_bits = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="has_owner_only_permissions needs real POSIX mode bits",
 )
 
 
@@ -66,6 +59,7 @@ def test_process_env_wins_over_file(workspace: Workspace) -> None:
 
 
 def test_unsupported_source_rejected(workspace: Workspace) -> None:
+    # An unknown source is a closed-vocabulary violation, caught at config parse.
     config = default_config(workspace)
     config["credentials"] = {
         "source": "vault",
@@ -73,7 +67,97 @@ def test_unsupported_source_rejected(workspace: Workspace) -> None:
         "acknowledgePlaintextInSandbox": True,
     }
     write_config(workspace, config)
-    with pytest.raises(LaunchError, match=r"\[credentials\].*source"):
+    with pytest.raises(LaunchError, match=r"\[config\].*source"):
+        resolve_launch(make_env(workspace))
+
+
+def test_proxy_managed_source_needs_no_file_or_ack(workspace: Workspace) -> None:
+    write_config(workspace, enable_proxy_managed(default_config(workspace)))
+    # The sentinel arrives via the environment; no file, no acknowledgement,
+    # and it passes through verbatim for the Band and LLM keys alike.
+    launch = resolve_launch(
+        make_env(
+            workspace,
+            band_api_key=PROXY_MANAGED_API_KEY,
+            openai_api_key=PROXY_MANAGED_API_KEY,
+        )
+    )
+    assert launch.credentials == {
+        "BAND_API_KEY": PROXY_MANAGED_API_KEY,
+        "OPENAI_API_KEY": PROXY_MANAGED_API_KEY,
+    }
+
+
+def test_proxy_managed_rejects_a_real_band_key(workspace: Workspace) -> None:
+    # proxy-managed promises the real key never enters the VM; a real BAND_API_KEY
+    # in the environment would be passed straight to the child, breaking that.
+    write_config(workspace, enable_proxy_managed(default_config(workspace)))
+    with pytest.raises(LaunchError, match=r"\[credentials\].*sentinel"):
+        resolve_launch(make_env(workspace, band_api_key="band_real_secret_key"))
+
+
+def test_proxy_managed_allows_an_sbx_provider_placeholder(workspace: Workspace) -> None:
+    # Provider keys ride sbx's built-in service secrets (`sbx secret set -g
+    # <provider>`), which inject sbx's own placeholder — not the Band
+    # `proxy-managed` literal. The launcher must pass that through untouched;
+    # only the Band key (whose placeholder the kit itself sets) is held to the
+    # sentinel. Guards against re-broadening the check to reject provider keys.
+    write_config(workspace, enable_proxy_managed(default_config(workspace)))
+    launch = resolve_launch(
+        make_env(
+            workspace,
+            band_api_key=PROXY_MANAGED_API_KEY,
+            openai_api_key="SANDBOX_STORED_CREDENTIAL_openai",
+        )
+    )
+    assert launch.credentials == {
+        "BAND_API_KEY": PROXY_MANAGED_API_KEY,
+        "OPENAI_API_KEY": "SANDBOX_STORED_CREDENTIAL_openai",
+    }
+
+
+def test_proxy_managed_source_rejects_a_path(workspace: Workspace) -> None:
+    config = default_config(workspace)
+    config["credentials"] = {
+        "source": CredentialSource.PROXY_MANAGED.value,
+        "path": ".band/secrets.env",
+    }
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[config\].*path"):
+        resolve_launch(make_env(workspace, band_api_key=PROXY_MANAGED_API_KEY))
+
+
+@requires_posix_permission_bits
+def test_workspace_env_file_warns_it_is_less_secure(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    enable(workspace)
+    write_credentials(workspace, "BAND_API_KEY=from-file\n")
+    with caplog.at_level(logging.WARNING):
+        resolve_launch(make_env(workspace, band_api_key=""))
+    assert any("less-secure" in record.message for record in caplog.records)
+
+
+def test_proxy_managed_does_not_warn(
+    workspace: Workspace, caplog: pytest.LogCaptureFixture
+) -> None:
+    write_config(workspace, enable_proxy_managed(default_config(workspace)))
+    with caplog.at_level(logging.WARNING):
+        launch = resolve_launch(make_env(workspace, band_api_key=PROXY_MANAGED_API_KEY))
+    # Control: the resolve actually succeeded on the proxy-managed path (else the
+    # no-warning assertion would pass vacuously — e.g. if it raised first).
+    assert launch.credentials["BAND_API_KEY"] == PROXY_MANAGED_API_KEY
+    assert not any("less-secure" in record.message for record in caplog.records)
+
+
+def test_workspace_env_file_requires_a_path(workspace: Workspace) -> None:
+    config = default_config(workspace)
+    config["credentials"] = {
+        "source": "workspace-env-file",
+        "acknowledgePlaintextInSandbox": True,
+    }
+    write_config(workspace, config)
+    with pytest.raises(LaunchError, match=r"\[config\].*path"):
         resolve_launch(make_env(workspace))
 
 

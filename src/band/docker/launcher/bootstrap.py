@@ -19,8 +19,6 @@ from band.docker.repo_init import initialize_repo
 
 logger = logging.getLogger(__name__)
 
-REPO_LOCK_TIMEOUT_S = 120.0
-
 
 def bootstrap_repository(launch: ResolvedLaunch) -> None:
     """Clone or validate the configured repository at the project path."""
@@ -41,7 +39,7 @@ def bootstrap_repository(launch: ResolvedLaunch) -> None:
             agent_key=launch.agent_id,
             state_dir=launch.state_path,
             context_dir=launch.state_path / "context",
-            lock_timeout_s=REPO_LOCK_TIMEOUT_S,
+            # repo-clone lock timeout: repo_init owns it (DEFAULT_LOCK_TIMEOUT_S).
         )
     except LaunchError:
         raise

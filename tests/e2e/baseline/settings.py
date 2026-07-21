@@ -5,6 +5,10 @@ endpoints, Band credentials) and is composed into ``BaselineSettings``. Reuses
 the existing ``BAND_*`` env vars (and ``.env.test``) so no new configuration is
 required to run. Add a new subclass + nested field as new concerns appear
 (model providers, pricing, etc.).
+
+Every class sets ``env_ignore_empty=True``: a set-but-empty var (e.g.
+``E2E_TESTS_ENABLED=`` from a CI wrapper) falls back to the field default
+instead of raising a bool/int ValidationError at construction.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ class BandEndpoints(BaseSettings):
     """Band platform URLs."""
 
     model_config = SettingsConfigDict(
-        env_prefix="BAND_", extra="ignore", case_sensitive=False
+        env_ignore_empty=True, env_prefix="BAND_", extra="ignore", case_sensitive=False
     )
 
     # Reuse the existing BAND_BASE_URL; BAND_REST_URL is accepted as an alias.
@@ -50,7 +54,7 @@ class BandCredentials(BaseSettings):
     """Band platform API keys."""
 
     model_config = SettingsConfigDict(
-        env_prefix="BAND_", extra="ignore", case_sensitive=False
+        env_ignore_empty=True, env_prefix="BAND_", extra="ignore", case_sensitive=False
     )
 
     api_key: str = ""  # BAND_API_KEY (agent / app key)
@@ -63,6 +67,7 @@ class BaselineRun(BaseSettings):
     """Run-level scoping, provisioning, and cleanup policy."""
 
     model_config = SettingsConfigDict(
+        env_ignore_empty=True,
         env_prefix="BAND_E2E_",
         extra="ignore",
         case_sensitive=False,
@@ -90,7 +95,9 @@ class BaselineRun(BaseSettings):
 class LLMCredentials(BaseSettings):
     """Model-provider API keys / config (standard provider env-var names, no prefix)."""
 
-    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
     openai_api_key: str = ""  # OPENAI_API_KEY
     anthropic_api_key: str = ""  # ANTHROPIC_API_KEY
@@ -109,7 +116,9 @@ class Backends(BaseSettings):
     adapter builders or the requirement predicates.
     """
 
-    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
     # Codex CLI (stdio app-server).
     codex_command: str = ""  # CODEX_COMMAND (override the `codex` binary + args)
@@ -154,6 +163,7 @@ class LLMModels(BaseSettings):
     """Model ids for the agents under test and the judge."""
 
     model_config = SettingsConfigDict(
+        env_ignore_empty=True,
         env_prefix="E2E_",
         extra="ignore",
         case_sensitive=False,
@@ -185,7 +195,7 @@ class LLMModels(BaseSettings):
 class BaselineSettings(BaseSettings):
     """Top-level baseline toolkit config, composed from per-concern groups."""
 
-    model_config = SettingsConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore", env_ignore_empty=True)
 
     # E2E_TESTS_ENABLED — the master gate for the live baseline suite.
     e2e_tests_enabled: bool = False

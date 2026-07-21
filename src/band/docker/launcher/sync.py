@@ -23,7 +23,7 @@ from band.docker.launcher.launch import ResolvedLaunch
 
 logger = logging.getLogger(__name__)
 
-LOCK_TIMEOUT_S = 600.0
+SYNC_LOCK_TIMEOUT_S = 600.0
 
 
 def require_locked_project(launch: ResolvedLaunch) -> None:
@@ -82,12 +82,12 @@ def sync_customer_environment(launch: ResolvedLaunch) -> None:
     launch.state_path.mkdir(parents=True, exist_ok=True)
     lock = FileLock(str(launch.state_path / "dependency_sync.lock"))
     try:
-        lock.acquire(timeout=LOCK_TIMEOUT_S)
+        lock.acquire(timeout=SYNC_LOCK_TIMEOUT_S)
     except Timeout:
         raise LaunchError(
             "sync",
             f"timed out waiting for the dependency-sync lock after "
-            f"{LOCK_TIMEOUT_S:.0f}s",
+            f"{SYNC_LOCK_TIMEOUT_S:.0f}s",
         ) from None
     try:
         run_locked_sync(launch)
