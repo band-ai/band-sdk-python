@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -52,7 +52,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -98,7 +98,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -151,7 +151,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"

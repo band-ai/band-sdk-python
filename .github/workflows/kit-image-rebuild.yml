@@ -63,7 +63,7 @@ jobs:
       cve_count: ${{ steps.findings.outputs.count }}
     steps:
       - name: Check out main
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         # main (the single trunk a scheduled run checks out) carries the
         # release manifest — which version is actually released. The pinning
         # ledger is read from main below (where this workflow's bump PRs land),
@@ -289,7 +289,7 @@ jobs:
       # Cut from and PR against the trunk (main). This is also what the decide
       # job's ledger comparison reads, so merging the PR quiesces the trigger.
       - name: Checkout main
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
         with:
           ref: main
           token: ${{ steps.app-token.outputs.token }}
