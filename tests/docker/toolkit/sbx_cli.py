@@ -15,6 +15,7 @@ the proxy cert probe in ``tests/docker/test_sbx_cli.py``.
 
 from __future__ import annotations
 
+import logging
 import shlex
 import shutil
 import subprocess
@@ -26,6 +27,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 SBX = "sbx"
 # `sbx create` provisions a microVM (image pull + boot); generous like the
@@ -133,6 +136,25 @@ def remove_custom_secret_command(*, sandbox: str, host: str) -> list[str]:
     return [SBX, "secret", "rm", sandbox, "--host", host, "-f"]
 
 
+def _run_redacting_secret(argv: list[str], *, secret: str) -> None:
+    """Run a secret-bearing ``sbx`` command, redacting ``secret`` from any error.
+
+    ``subprocess`` renders the failing argv — including ``--value <secret>`` —
+    into ``CalledProcessError``, so a routine failure (daemon down, auth, a real
+    sbx error) would spill the credential into the traceback and captured test
+    logs. Run unchecked and raise a redacted error instead; success is silent, so
+    the value is never surfaced on either path.
+    """
+    result = subprocess.run(
+        argv, capture_output=True, text=True, check=False, timeout=60
+    )
+    if result.returncode == 0:
+        return
+    redacted = " ".join("***" if arg == secret else shlex.quote(arg) for arg in argv)
+    detail = (result.stderr or result.stdout or "").replace(secret, "***").strip()
+    raise RuntimeError(f"{redacted} failed (exit {result.returncode}): {detail}")
+
+
 @contextmanager
 def custom_secret(
     *, sandbox: str, host: str, env: str, value: str, placeholder: str
@@ -143,25 +165,39 @@ def custom_secret(
     registers the Band key globally for real use, so a global test secret would
     *overwrite and then delete* the operator's own ``**.band.ai`` credential and
     disrupt their running sandboxes. The secret is set before ``sbx create`` so
-    the placeholder is baked into the VM's ``env`` at startup.
+    the placeholder is baked into the VM's ``env`` at startup (a scoped set for a
+    not-yet-created sandbox persists and returns cleanly — verified against sbx
+    0.35.0).
 
     The test provisions the secret itself, so the value it later asserts-absent
     is exactly the one the proxy would inject — closing the gap where a test
     checks a *different* key than the one actually stored.
     """
-    subprocess.run(
+    _run_redacting_secret(
         set_custom_secret_command(
             sandbox=sandbox, host=host, env=env, value=value, placeholder=placeholder
         ),
-        capture_output=True, text=True, check=True, timeout=60,
-    )  # fmt: skip
+        secret=value,
+    )
     try:
         yield
     finally:
-        subprocess.run(
+        removal = subprocess.run(
             remove_custom_secret_command(sandbox=sandbox, host=host),
             capture_output=True, text=True, check=False, timeout=60,
         )  # fmt: skip
+        if removal.returncode != 0:
+            # A failed removal leaves the real key in sbx's secret store (scoped
+            # to a torn-down sandbox, so never applied — but still stored). Don't
+            # raise from teardown; surface it so the operator can clean up.
+            logger.warning(
+                "failed to remove the scoped Band secret for sandbox %s (exit %s); "
+                "remove it manually: sbx secret rm %s --host %s -f",
+                sandbox,
+                removal.returncode,
+                sandbox,
+                host,
+            )
 
 
 def _network_allowed(host: str) -> bool:
@@ -198,13 +234,26 @@ def allow_network(host: str) -> Iterator[None]:
     try:
         yield
     finally:
-        subprocess.run(
+        removal = subprocess.run(
             [SBX, "policy", "rm", "network", "--resource", host],
             capture_output=True,
             text=True,
             check=False,
             timeout=60,
         )
+        if removal.returncode != 0:
+            # This is a *global* rule (sbx can't scope it before create), so a
+            # failed removal (e.g. an expired session) leaves it in force for the
+            # non-prod host. Don't raise from teardown; surface it so the operator
+            # can revoke it. (`rm --resource` matches the bare host sbx stores, so
+            # a mismatch is not the failure mode — a lost session is.)
+            logger.warning(
+                "failed to remove the global network allow rule for %s (exit %s); "
+                "remove it manually: sbx policy rm network --resource %s",
+                host,
+                removal.returncode,
+                host,
+            )
 
 
 NAME_PREFIX = "band-nevervm"
@@ -293,13 +342,19 @@ class Sandbox:
         Scans all of ``/proc/<pid>/environ`` rather than assuming the agent is a
         particular pid — in an sbx microVM, pid 1 is the VM init, not the agent,
         and ``sbx exec`` spawns its own processes too. Entries owned by another
-        user are silently skipped (unreadable), which is fine: the agent runs as
-        the exec user, so its environment is included. The never-in-VM proof
-        reads this to show the real key is absent from every process it can see
-        while the sentinel is present in the agent's.
+        user (e.g. root's pid 1) or racing to exit mid-scan are unreadable; the
+        loop's stderr is dropped and it force-exits 0 so those benign
+        per-entry failures don't fail the whole ``exec`` — a real ``sbx exec``
+        transport error still surfaces (sbx exits non-zero around ``bash``). The
+        never-in-VM proof reads this to show the real key is absent from every
+        process it can see while the sentinel is present in the agent's.
         """
+        # `2>/dev/null` must wrap the *loop* (not each `tr`): the shell's own
+        # open-failure on `< "$e"` for an unreadable entry prints before a
+        # per-command redirect would apply. `|| true` keeps a partial sweep green.
         return self.exec(
-            'for e in /proc/[0-9]*/environ; do tr "\\0" "\\n" < "$e" 2>/dev/null; done'
+            'for e in /proc/[0-9]*/environ; do tr "\\0" "\\n" < "$e"; done '
+            "2>/dev/null || true"
         )
 
     def band_host_cert(self, host: str) -> str:

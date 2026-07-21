@@ -75,22 +75,36 @@ def band_host() -> str:
     return urlsplit(BaselineSettings().endpoints.rest_url).hostname or "app.band.ai"
 
 
+def _deployment_hosts(endpoints: BandEndpoints) -> list[str]:
+    """The distinct hosts the agent reaches — REST and WS — in order.
+
+    Both must be network-allowed: a deployment that serves the WS upgrade on a
+    different host than REST would otherwise have its WS leg blocked while REST
+    succeeds. Band uses one host for both today, so this usually collapses to one.
+    """
+    hosts = [urlsplit(endpoints.rest_url).hostname, urlsplit(endpoints.ws_url).hostname]
+    return list(dict.fromkeys(host for host in hosts if host))
+
+
 @contextmanager
 def proxy_managed_sandbox(
-    *, workspace: Path, band_key: str, band_host: str
+    *, workspace: Path, band_key: str, endpoints: BandEndpoints
 ) -> Iterator[Sandbox]:
-    """A proxy-managed sandbox wired to reach ``band_host``, torn down on exit.
+    """A proxy-managed sandbox wired to reach ``endpoints``, torn down on exit.
 
     Injects ``band_key`` for the Band host **scoped to this one sandbox** — never
-    the operator's global ``**.band.ai`` credential — and, when the kit's baseline
-    doesn't already reach ``band_host`` (a non-prod deployment), grants it so the
-    agent's startup REST/WS and the cert probe are not blocked. Everything is set
-    before ``sbx create`` (so it is in force at startup) and removed on exit.
+    the operator's global ``**.band.ai`` credential — and grants every Band host
+    the agent reaches (REST and WS) that the kit's baseline doesn't already cover
+    (a non-prod deployment), so startup REST/WS and the cert probe are not
+    blocked. Everything is in force before ``sbx create`` (so it holds at startup)
+    and removed on exit.
     """
+    baseline = kit_baseline_hosts(KIT_DIR)
     name = sandbox_name()
     with ExitStack() as stack:
-        if band_host not in kit_baseline_hosts(KIT_DIR):
-            stack.enter_context(allow_network(band_host))
+        for host in _deployment_hosts(endpoints):
+            if host not in baseline:
+                stack.enter_context(allow_network(host))
         stack.enter_context(
             custom_secret(
                 sandbox=name,
@@ -106,7 +120,7 @@ def proxy_managed_sandbox(
 
 
 @pytest.fixture
-def provisioned_sandbox(band_host: str) -> Iterator[tuple[Sandbox, str]]:
+def provisioned_sandbox(tmp_path: Path) -> Iterator[tuple[Sandbox, str]]:
     """A sandbox under proxy-managed custody, plus the real key it was given.
 
     The fixture provisions the injection **itself** with the real Band key, so
@@ -114,17 +128,20 @@ def provisioned_sandbox(band_host: str) -> Iterator[tuple[Sandbox, str]]:
     inject — no guessing which key is stored. The kit bakes no `credentials`
     block (the kit-declared form crashes `sbx create` 0.35.0); injection is
     host-side `set-custom`, verified live to flip the Band host's TLS to the
-    Docker Sandboxes MITM cert. Yields ``(sandbox, real_key)``.
+    Docker Sandboxes MITM cert. The workspace is a throwaway copy pointed at the
+    settings deployment (so the granted/probed host matches the one baked in).
+    Yields ``(sandbox, real_key)``.
     """
     if not sbx_available():
         pytest.skip("sbx CLI not on PATH")
-    real_key = BaselineSettings().credentials.api_key_user
+    settings = BaselineSettings()
+    real_key = settings.credentials.api_key_user
     if not real_key or real_key == PROXY_MANAGED_API_KEY:
         pytest.skip("a real Band key (BAND_API_KEY_USER) is required")
 
-    workspace = KIT_DIR / "echo-agent"  # defaults to proxy-managed custody
+    workspace = _prepare_workspace(tmp_path, endpoints=settings.endpoints)
     with proxy_managed_sandbox(
-        workspace=workspace, band_key=real_key, band_host=band_host
+        workspace=workspace, band_key=real_key, endpoints=settings.endpoints
     ) as sandbox:
         yield sandbox, real_key
 
@@ -174,21 +191,25 @@ def test_real_band_key_never_enters_the_vm(
     )
 
 
-def _round_trip_workspace(
-    dest: Path, *, agent_id: str, endpoints: BandEndpoints
+def _prepare_workspace(
+    dest: Path, *, endpoints: BandEndpoints, agent_id: str | None = None
 ) -> Path:
-    """A throwaway copy of the echo-agent workspace with the provisioned identity
-    baked in.
+    """A throwaway copy of the echo-agent workspace pointed at ``endpoints``.
 
-    The agent id and endpoints are non-secret and must be inside the VM for the
+    Copying — never mounting the shipped ``echo-agent`` in place — keeps sbx's
+    workspace writes out of the repo. The endpoints (and, when given, a real
+    provisioned ``agent_id``) are non-secret and must be inside the VM for the
     launcher to resolve them (``sbx create`` takes no ``--env``); only the *key*
-    stays out, injected by the proxy. Returns the copy's path.
+    stays out, injected by the proxy. Without ``agent_id`` the kit's placeholder
+    id is left as shipped — the cert/absence proofs don't need a connecting
+    identity. Returns the copy's path.
     """
     workspace = dest / "echo-agent"
     shutil.copytree(KIT_DIR / "echo-agent", workspace)
     config_path = workspace / "band.yaml"
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    config["agent"]["id"] = agent_id
+    if agent_id is not None:
+        config["agent"]["id"] = agent_id
     config["band"] = {"restUrl": endpoints.rest_url, "wsUrl": endpoints.ws_url}
     config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
     return workspace
@@ -199,7 +220,6 @@ async def round_trip_sandbox(
     tmp_path: Path,
     resource_manager: ResourceManager,
     baseline_settings: BaselineSettings,
-    band_host: str,
 ) -> AsyncIterator[tuple[ProvisionedAgent, str]]:
     """A live echo agent inside a proxy-managed sandbox, plus its room.
 
@@ -215,11 +235,13 @@ async def round_trip_sandbox(
 
     agent = await resource_manager.provision_agent("nevervm-roundtrip")
     room_id = await resource_manager.provision_room(participants=[agent.id])
-    workspace = _round_trip_workspace(
+    workspace = _prepare_workspace(
         tmp_path, agent_id=agent.id, endpoints=baseline_settings.endpoints
     )
     with proxy_managed_sandbox(
-        workspace=workspace, band_key=agent.api_key, band_host=band_host
+        workspace=workspace,
+        band_key=agent.api_key,
+        endpoints=baseline_settings.endpoints,
     ):
         yield agent, room_id
 

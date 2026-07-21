@@ -52,14 +52,17 @@ def test_custom_secret_injection_is_scoped_to_the_sandbox() -> None:
     assert "-g" not in remove_command and name in remove_command
 
 
-def test_kit_baseline_reaches_prod_band_but_not_a_non_prod_host() -> None:
+def test_kit_baseline_reaches_only_prod_band() -> None:
     # The proof grants a Band host only when the kit's baseline doesn't already
-    # reach it. Guards that prod (`app.band.ai`, in the shipped spec) is treated
-    # as reachable — so it is never granted globally — while a non-prod host is
-    # not, so it gets the per-run `allow_network`.
+    # reach it. Prod (`app.band.ai`) is the *only* Band host the shipped spec
+    # reaches, so it is never granted globally, while any non-prod Band
+    # deployment is absent and gets the per-run `allow_network`. Asserting prod
+    # is the sole baseline Band host fails for a real reason — a second `band.ai`
+    # host added to the spec — rather than restating that one arbitrary staging
+    # host happens not to be listed.
     baseline = kit_baseline_hosts(KIT_DIR)
-    assert "app.band.ai" in baseline
-    assert "platform.dev.band.ai" not in baseline
+    band_hosts = {host for host in baseline if host.endswith(".band.ai")}
+    assert band_hosts == {"app.band.ai"}
 
 
 def test_baseline_settings_expose_the_paths_the_proof_reads() -> None:
