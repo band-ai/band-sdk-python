@@ -136,21 +136,22 @@ def remove_custom_secret_command(*, sandbox: str, host: str) -> list[str]:
     return [SBX, "secret", "rm", sandbox, "--host", host, "-f"]
 
 
-def _run_redacting_secret(argv: list[str], *, secret: str) -> None:
-    """Run a secret-bearing ``sbx`` command, redacting ``secret`` from any error.
+def run_redacting_secret(argv: list[str], *, secret: str, timeout: int = 60) -> str:
+    """Run a secret-bearing command, redacting ``secret`` from any error.
 
-    ``subprocess`` renders the failing argv — including ``--value <secret>`` —
-    into ``CalledProcessError``, so a routine failure (daemon down, auth, a real
-    sbx error) would spill the credential into the traceback and captured test
-    logs. Run unchecked and raise a redacted error instead; success is silent, so
-    the value is never surfaced on either path.
+    ``subprocess`` renders the failing argv into ``CalledProcessError``, so a
+    routine failure (daemon down, auth, a dead sandbox) would spill the
+    credential into the traceback and captured test logs — whether the secret is
+    a whole argument (``--value <secret>``) or embedded inside one (a grep
+    command quoting it). Run unchecked and raise a redacted error instead;
+    stdout is returned on success, so the secret is never surfaced either way.
     """
     result = subprocess.run(
-        argv, capture_output=True, text=True, check=False, timeout=60
+        argv, capture_output=True, text=True, check=False, timeout=timeout
     )
     if result.returncode == 0:
-        return
-    redacted = " ".join("***" if arg == secret else shlex.quote(arg) for arg in argv)
+        return result.stdout
+    redacted = " ".join(shlex.quote(arg).replace(secret, "***") for arg in argv)
     detail = (result.stderr or result.stdout or "").replace(secret, "***").strip()
     raise RuntimeError(f"{redacted} failed (exit {result.returncode}): {detail}")
 
@@ -173,7 +174,7 @@ def custom_secret(
     is exactly the one the proxy would inject — closing the gap where a test
     checks a *different* key than the one actually stored.
     """
-    _run_redacting_secret(
+    run_redacting_secret(
         set_custom_secret_command(
             sandbox=sandbox, host=host, env=env, value=value, placeholder=placeholder
         ),
@@ -318,7 +319,9 @@ class Sandbox:
                 timeout=60,
             )
 
-    def exec(self, command: str, *, timeout: int = EXEC_TIMEOUT_S) -> str:
+    def exec(
+        self, command: str, *, timeout: int = EXEC_TIMEOUT_S, redact: str | None = None
+    ) -> str:
         """Run ``command`` via ``bash -lc`` inside the sandbox; return stripped stdout.
 
         ``-l`` runs a login shell so the sandbox's login profile is sourced,
@@ -326,9 +329,16 @@ class Sandbox:
         for one, reads the proxy/CA variables from there). This is a deliberate
         divergence from the docker sibling's ``bash -c`` — don't collapse it to
         ``-c``.
+
+        Pass ``redact`` when ``command`` embeds a secret: a transport failure then
+        raises with the secret masked instead of a ``CalledProcessError`` that
+        renders the full argv (secret included) into the test output.
         """
+        argv = [SBX, "exec", self.name, "bash", "-lc", command]
+        if redact is not None:
+            return run_redacting_secret(argv, secret=redact, timeout=timeout).strip()
         result = subprocess.run(
-            [SBX, "exec", self.name, "bash", "-lc", command],
+            argv,
             capture_output=True,
             text=True,
             check=True,
@@ -380,6 +390,7 @@ class Sandbox:
         A raw read, not a verdict: the caller pairs this absence check with a
         positive control (see the never-in-VM test) so an empty result can't
         pass vacuously. The command's flag rationale lives in
-        ``files_containing_command``.
+        ``files_containing_command``. The command embeds ``secret``, so the exec
+        is redacted — a transport failure must not print the key it scans for.
         """
-        return self.exec(files_containing_command(secret, search_paths))
+        return self.exec(files_containing_command(secret, search_paths), redact=secret)

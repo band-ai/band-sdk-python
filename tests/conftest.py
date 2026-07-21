@@ -59,9 +59,14 @@ class CollectionGateSettings(BaseSettings):
 
     Field name == env var (case-insensitive). Read via a fresh instance in the
     collection hooks so the current environment is always what decides.
+    ``env_ignore_empty`` treats a set-but-empty gate (``CI=``, as some CI
+    wrappers export) as unset instead of raising a ValidationError that would
+    kill the whole run inside a collection hook.
     """
 
-    model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
 
     ci: bool = False  # CI
     e2e_tests_enabled: bool = False  # E2E_TESTS_ENABLED

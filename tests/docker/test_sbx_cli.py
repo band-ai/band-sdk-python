@@ -1,4 +1,5 @@
-"""Regression coverage for the sandbox proxy certificate probe."""
+"""Regression coverage for the sbx toolkit's pure/host-side pieces:
+the sandbox proxy certificate probe and the secret-redacting runner."""
 
 from __future__ import annotations
 
@@ -11,7 +12,9 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from tests.docker.toolkit.sbx_cli import _CERT_PROBE
+import pytest
+
+from tests.docker.toolkit.sbx_cli import _CERT_PROBE, run_redacting_secret
 
 
 @contextmanager
@@ -99,3 +102,35 @@ def test_cert_probe_rejects_non_successful_connect_response() -> None:
     assert observed["received_connect"]
     assert "cert-probe-error: RuntimeError proxy CONNECT refused" in result.stdout
     assert not observed["sent_tls_before_response_completed"]
+
+
+def test_run_redacting_secret_masks_the_secret_on_failure() -> None:
+    # The never-in-VM proof passes real Band keys through secret-bearing argv
+    # (set-custom --value, the files_containing grep). A failure must raise
+    # with the key masked — including a key EMBEDDED inside a longer argument,
+    # not just one that is a whole argument.
+    secret = "band-sk-neverVM-SEKRET"
+    argv = [
+        sys.executable,
+        "-c",
+        "import sys; print('daemon hiccup', file=sys.stderr); sys.exit(3)",
+        f"grep -ralF -- {secret} /workspace",
+        secret,
+    ]
+
+    with pytest.raises(RuntimeError) as excinfo:
+        run_redacting_secret(argv, secret=secret)
+
+    message = str(excinfo.value)
+    assert secret not in message
+    assert "***" in message
+    # The useful diagnostics survive redaction.
+    assert "exit 3" in message
+    assert "daemon hiccup" in message
+
+
+def test_run_redacting_secret_returns_stdout_on_success() -> None:
+    secret = "band-sk-neverVM-SEKRET"
+    argv = [sys.executable, "-c", "print('clean')", secret]
+
+    assert run_redacting_secret(argv, secret=secret) == "clean\n"

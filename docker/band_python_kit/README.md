@@ -85,7 +85,7 @@ deployment, override the endpoints in `band.yaml` (or via `BAND_REST_URL` /
 `BAND_WS_URL`) and grant that host per sandbox — never baked into the kit:
 
 ```bash
-sbx policy allow network --sandbox my-band-agent platform.dev.band.ai
+sbx policy allow network --sandbox my-band-agent <band-host>
 ```
 
 ### Credential custody
@@ -102,7 +102,7 @@ sees a sentinel. Requires `sbx create --kit`.
   ```
 - **Band** is provisioned host-side. The `**.band.ai` wildcard follows whichever
   Band deployment you point the agent at via `BAND_REST_URL` (prod `app.band.ai`,
-  `platform.dev.band.ai`, staging, …) — the endpoint config is the control knob:
+  staging, self-hosted, …) — the endpoint config is the control knob:
   ```bash
   export BAND_API_KEY=<your-band-key>   # keep the value out of shell history
   sbx secret set-custom -g --host '**.band.ai' \
@@ -196,7 +196,7 @@ sbx policy allow network --sandbox my-band-agent api.openai.com
 sbx policy allow network --sandbox my-band-agent github.com
 
 # Non-production or self-hosted Band
-sbx policy allow network --sandbox my-band-agent platform.dev.band.ai
+sbx policy allow network --sandbox my-band-agent <band-host>
 ```
 
 GitHub Copilot needs several hosts. Grant its documented minimal set only when

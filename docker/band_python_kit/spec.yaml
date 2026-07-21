@@ -46,7 +46,7 @@ caps:
 
 # Credential injection is NOT declared here — it is provisioned host-side, per
 # deployment, so the operator controls which Band host is targeted (prod
-# `app.band.ai`, `platform.dev.band.ai`, staging, self-hosted, …) rather than the
+# `app.band.ai`, staging, self-hosted, …) rather than the
 # kit baking one in:
 #
 #   sbx secret set-custom -g --host '**.band.ai' \
