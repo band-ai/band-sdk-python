@@ -2,19 +2,16 @@
 
 The proof in ``test_kit_proxy_managed_live.py`` runs only on sbx + staging, so
 the deterministic pieces it relies on are guarded here, where CI executes them —
-a broken agent-name derivation, cert probe, or settings path fails fast instead
-of lying dormant until a rare live run (each of these was a real bug that only a
-live run, or this guard, would catch).
+a broken agent-name derivation, cert probe, or settings path fails fast here
+instead of lying dormant until a rare live run.
 """
 
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
-import pytest
-
+from tests.docker.markers import requires_posix_shell
 from tests.docker.toolkit.sbx_cli import _files_containing_command, _kit_agent_name
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.paths import KIT_DIR
@@ -39,11 +36,7 @@ def test_baseline_settings_expose_the_paths_the_proof_reads() -> None:
     assert isinstance(settings.credentials.api_key_user, str)
 
 
-@pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="command targets the Linux sandbox shell; Windows runners have no "
-    "reliable POSIX `bash`/`grep` on PATH (it resolves to the WSL launcher stub)",
-)
+@requires_posix_shell
 def test_absence_search_scans_binary_files_too(tmp_path: Path) -> None:
     # The never-in-VM proof asserts the real key is in *no* searched file. grep's
     # default binary heuristic can skip a file with NUL bytes (a cache/DB), so a

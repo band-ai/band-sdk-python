@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 from band.credentials import PROXY_MANAGED_API_KEY
 from band.docker.launcher import CredentialSource, LaunchError, resolve_launch
+from tests.docker.markers import requires_posix_permission_bits
 
 from .fakes import (
     Workspace,
@@ -21,16 +21,6 @@ from .fakes import (
     make_workspace,
     write_config,
     write_credentials,
-)
-
-# has_owner_only_permissions enforces POSIX mode bits (stat().st_mode & 0o077).
-# Windows chmod/stat can't represent group/other bits — a non-read-only file
-# always reports 666 — so the guard always fires there regardless of the
-# requested mode. The guard only ever runs inside the Linux sandbox container
-# in production, so this is a real platform gap, not something to work around.
-requires_posix_permission_bits = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="has_owner_only_permissions needs real POSIX mode bits",
 )
 
 
