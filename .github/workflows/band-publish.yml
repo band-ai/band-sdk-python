@@ -4,15 +4,26 @@
 # failed publish is re-runnable on its own. workflow_dispatch covers manual
 # recovery for any existing tag; skip-existing makes re-runs idempotent.
 #
-# Why a separate top-level file instead of a reusable workflow shared with
-# release.yml: PyPI trusted publishing does not support reusable workflows
-# (docs.pypi.org/trusted-publishers/troubleshooting, warehouse#11096) — the
-# publish step must live in the top-level workflow the publisher is bound to.
-# The band-sdk trusted publisher on PyPI must reference this filename
-# (band-publish.yml) with environment `release`.
+# Layout follows PyPI's trusted-publishing security model
+# (docs.pypi.org/trusted-publishers/security-model):
+# - A separate top-level file, not a reusable workflow (unsupported by PyPI
+#   trusted publishing, warehouse#11096) and not a job in release.yml — the
+#   publisher is bound to this filename, so publishing rights stay isolated
+#   to the least-privileged workflow possible.
+# - Build and publish are separate jobs: the environment-privileged publish
+#   job runs exactly two steps (fetch dists, publish) and never executes
+#   project code, which `uv build` inevitably does.
+# - The tag is validated as a main-anchored band-sdk release whose version
+#   matches pyproject.toml. This guards mistakes (a fat-fingered dispatch, a
+#   rogue release event); the malicious-ref case — a doctored copy of this
+#   workflow dispatched from a side branch — is stopped by the `release`
+#   environment's deployment policy (main + band-sdk-v* tags only), which
+#   GitHub matches against the run's GITHUB_REF before the job can reach the
+#   OIDC credential.
 #
-# The release event only fires workflows present at the released tag, so tags
-# predating this file (e.g. band-sdk-v1.4.0) are published via dispatch.
+# The PyPI trusted publisher must reference this filename (band-publish.yml)
+# with environment `release`. The release event only fires workflows present
+# at the released tag, so tags predating this file are published via dispatch.
 
 name: band-publish
 
@@ -21,44 +32,70 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
-      ref:
+      tag:
         description: Existing release tag to build and publish (e.g. band-sdk-v1.4.0)
         required: true
         type: string
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
+  build:
     # Guard the event path: never auto-publish a prerelease to PyPI.
     if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
     runs-on: ubuntu-latest
-    environment: release
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
     steps:
-      - name: Checkout repository
+      - name: Checkout the release tag
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
-          ref: ${{ inputs.ref || github.event.release.tag_name }}
+          # Full refs/tags/ path: a branch that happens to share the name can
+          # never shadow the tag.
+          ref: refs/tags/${{ inputs.tag || github.event.release.tag_name }}
           fetch-depth: 0
 
-      - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: "3.12"
-
-      - name: Configure git to use HTTPS for GitHub
-        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+      - name: Validate the tag is a main-anchored band-sdk release
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^band-sdk-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || {
+            echo "::error::'${TAG}' is not a band-sdk-vX.Y.Z release tag"; exit 1; }
+          tag_version="${BASH_REMATCH[1]}"
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "::error::${TAG} does not point at a commit on main"; exit 1; }
+          project_version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$project_version" != "$tag_version" ]; then
+            echo "::error::pyproject.toml version ${project_version} does not match ${TAG}"; exit 1
+          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
-      - name: Install dependencies
-        run: uv sync --all-groups
-
       - name: Build band-sdk package
         run: uv build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: band-sdk-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      # Trusted publishing (OIDC) + reading this run's build artifact.
+      id-token: write
+      actions: read
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: band-sdk-dist
+          path: dist/
 
       - name: Publish band-sdk to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1

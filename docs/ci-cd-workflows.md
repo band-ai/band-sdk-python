@@ -100,6 +100,14 @@ workflows. Its `workflow_dispatch` republishes any pre-existing tag
 (`skip-existing` makes re-runs idempotent), which is the recovery path for a
 release whose publish failed — no retag or re-release needed.
 
+Hardening follows [PyPI's trusted-publishing security model](https://docs.pypi.org/trusted-publishers/security-model/):
+the build job validates the tag (a `band-sdk-vX.Y.Z` tag, on `main`, version
+matching `pyproject.toml`) and hands distributions to an
+environment-privileged publish job that runs only two steps and never
+executes project code; the `release` environment's deployment policy
+(`main` + `band-sdk-v*` tags) is what blocks a modified workflow on a side
+branch from reaching the OIDC credential at all.
+
 Related: `kit-image-rebuild.yml` (weekly CVE rebuild of the published kit
 image), `kit-publish-manual.yml` (serialized manual recovery/rehearsal), and
 `docker/band_python_kit/RELEASING.md` (tag policy, quarantine gate, rehearsal
