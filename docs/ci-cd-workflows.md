@@ -105,8 +105,12 @@ the build job validates the tag (a `band-sdk-vX.Y.Z` tag, on `main`, version
 matching `pyproject.toml`) and hands distributions to an
 environment-privileged publish job that runs only two steps and never
 executes project code; the `release` environment's deployment policy
-(`main` + `band-sdk-v*` tags) is what blocks a modified workflow on a side
-branch from reaching the OIDC credential at all.
+(`main` + `band-sdk-v*` tags) blocks a modified workflow on a side branch
+from reaching the OIDC credential; and a repository tag ruleset restricts
+creating/moving/deleting `band-sdk-v*` tags to the release App (plus repo
+admins), so the tag namespace the policy trusts can't be claimed by a
+write collaborator. The release event runs the workflow file at the tagged
+commit, which is why the tag namespace itself must be protected.
 
 Related: `kit-image-rebuild.yml` (weekly CVE rebuild of the published kit
 image), `kit-publish-manual.yml` (serialized manual recovery/rehearsal), and
