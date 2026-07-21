@@ -57,6 +57,48 @@ on:
       image-digest:
         description: Digest of the pushed multi-arch image
         value: ${{ jobs.image.outputs.digest }}
+  # Manual re-publish path: recover a kit artifact for an existing release whose
+  # publish failed (e.g. a stale-lock build). Mirrors the workflow_call inputs;
+  # `move-floating` defaults false here so re-publishing an old version never
+  # disturbs `latest` unless explicitly asked.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to check out and build from (e.g. band-sdk-vX.Y.Z or main)
+        required: true
+        type: string
+      version:
+        description: Bare artifact/image tag to publish (e.g. 1.3.0)
+        required: true
+        type: string
+      major:
+        description: Major version for the floating <major> tag (e.g. 1)
+        required: true
+        type: string
+      move-floating:
+        description: Also move the `latest` and `<major>` floating tags
+        required: false
+        default: false
+        type: boolean
+      relock:
+        description: |
+          Re-lock uv.lock in the build context before building. Use when
+          re-publishing a released tag whose committed lock lags its own
+          band-sdk version — only the self-version changes, third-party pins
+          (and the quarantine gate's inputs) are untouched.
+        required: false
+        default: false
+        type: boolean
+      quarantine-max-age-days:
+        description: Minimum public age (days) required of every locked package.
+        required: false
+        default: "7"
+        type: string
+      extra-build-args:
+        description: Newline-separated extra --build-arg entries.
+        required: false
+        default: ""
+        type: string
 env:
   IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
   KIT_NAME: ghcr.io/band-ai/band-python-kit
@@ -77,6 +119,18 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           ref: ${{ inputs.ref }}
+
+      # Recovery only (manual dispatch with relock=true): a released tag whose
+      # committed uv.lock lags its own band-sdk version can't be rebuilt
+      # (`uv sync --locked` refuses it). Re-lock the checked-out build context
+      # in place before the build; only the self-version changes.
+      - name: Install uv (relock)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.relock }}
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Re-lock the self-version in the build context
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.relock }}
+        run: uv lock
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
