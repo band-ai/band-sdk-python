@@ -66,11 +66,22 @@ class Observation:
             )
 
     def assert_tool_exposure(
-        self, *, memory: bool | None = None, contacts: bool | None = None
+        self,
+        *,
+        memory: bool | None = None,
+        contacts: bool | None = None,
+        count: int | None = None,
     ) -> None:
-        """Assert which optional tool groups the adapter exposed to the model."""
+        """Assert which optional tool groups the adapter exposed to the model.
+
+        ``count`` additionally pins how many schema requests the turn made.
+        """
         requests = self.tools.schema_requests
         assert requests, "Adapter never requested tool schemas, so nothing was exposed"
+        if count is not None:
+            assert len(requests) == count, (
+                f"Expected {count} schema requests, got {len(requests)}: {requests}"
+            )
         checked = {
             flag: expected
             for flag, expected in {
@@ -150,7 +161,7 @@ class BaselineScenario:
         self,
         content: str,
         *,
-        error: type[BaseException] = Exception,
+        error: type[BaseException],
         match: str,
         **run_kwargs: Any,
     ) -> Observation:

@@ -30,7 +30,7 @@ async def test_message_round_trip_uses_the_adapter_tool_exposure_path() -> None:
         "band_send_message", content="Hello @baseline-user", mentions=["@baseline-user"]
     )
     scenario.tools.assert_message_sent(content="Hello @baseline-user")
-    observation.assert_tool_exposure(memory=False, contacts=False)
+    observation.assert_tool_exposure(memory=False, contacts=False, count=1)
     scenario.assert_complete()
 
 

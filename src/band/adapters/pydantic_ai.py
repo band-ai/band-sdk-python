@@ -56,6 +56,7 @@ from band.runtime.tools import (
     band_tool_errored,
     get_tool_description,
     is_terminal_success,
+    serialize_tool_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -499,7 +500,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         page_size=page_size,
                         status=status,
                     )
-                    return response.model_dump()
+                    return serialize_tool_result(response)
                 except Exception as e:
                     return f"Error listing memories: {e}"
 

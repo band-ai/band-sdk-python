@@ -1,5 +1,7 @@
 """Tests for FakeAgentTools testing utility."""
 
+from __future__ import annotations
+
 from typing import Any
 
 from band.core.protocols import AgentToolsProtocol
@@ -34,7 +36,7 @@ def listed_contents(listing: dict[str, Any]) -> list[str]:
 class TestMemoryListing:
     """list_memories must serve the real SDK's Fern envelope (data/meta)."""
 
-    async def test_stored_memories_come_back_in_the_real_envelope(self):
+    async def test_stored_memories_come_back_in_the_real_envelope(self) -> None:
         tools = FakeAgentTools()
         await store_fact(tools, "prefers dark mode")
 
@@ -51,7 +53,7 @@ class TestMemoryListing:
             "meta must report this page's size and the total match count"
         )
 
-    async def test_page_size_serves_the_first_page(self):
+    async def test_page_size_serves_the_first_page(self) -> None:
         tools = FakeAgentTools()
         for content in ("first", "second", "third"):
             await store_fact(tools, content)
@@ -66,7 +68,7 @@ class TestMemoryListing:
             "total_count the whole store — the platform's semantics"
         )
 
-    async def test_seeded_memories_are_listed(self):
+    async def test_seeded_memories_are_listed(self) -> None:
         seeded = {
             "id": "mem-1",
             "content": "seeded fact",
@@ -83,6 +85,41 @@ class TestMemoryListing:
         assert listed_contents(listing) == ["seeded fact"], (
             "Constructor-seeded memories must be served by list_memories, "
             "so tests can start from a pre-populated store"
+        )
+
+    async def test_memory_tools_are_coherent_across_the_lifecycle(self) -> None:
+        tools = FakeAgentTools()
+        stored = await tools.store_memory(
+            content="lifecycle fact",
+            system="long_term",
+            type="semantic",
+            segment="user",
+            thought="noted",
+            scope="subject",
+            subject_id="subject-1",
+            metadata={"k": "v"},
+        )
+
+        fetched = await tools.get_memory(stored["id"])
+        archived = await tools.archive_memory(stored["id"])
+        listing = await listing_seen_by_adapter(tools)
+
+        assert stored["subject_id"] == "subject-1", (
+            "store_memory must persist the supplied subject_id"
+        )
+        assert stored["metadata"] == {"k": "v"}, (
+            "store_memory must persist the supplied metadata"
+        )
+        assert fetched == stored, (
+            "get_memory must return the same serialized shape store_memory returned"
+        )
+        assert listing["data"][0] == {**stored, "status": "archived"}, (
+            "The listing must serve the stored memory, one shape everywhere, "
+            "with archive_memory's status change applied"
+        )
+        assert archived["status"] == "archived"
+        assert await tools.get_memory("unknown-id") is None, (
+            "get_memory must not fabricate memories for unknown ids"
         )
 
 
