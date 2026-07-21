@@ -43,6 +43,7 @@ jobs:
             config
             docs
             ci
+            release
             perf
             deps
             tests
