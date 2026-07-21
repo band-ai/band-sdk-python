@@ -23,36 +23,13 @@ import yaml
 from band.credentials import PROXY_MANAGED_API_KEY
 from tests.paths import KIT_DIR
 
-# Hosts the launch flow was measured to need (see the kit spec's comments):
-# Band, locked dependency sync, and each supported LLM backend.
-REQUIRED_ALLOWLIST_HOSTS = {
+# Hosts required by every fresh starter workspace (see the kit spec's
+# comments). Provider, repository, and custom-service hosts are scoped per
+# sandbox by the operator rather than baked into the kit.
+DEFAULT_ALLOWLIST_HOSTS = {
     "app.band.ai",
     "pypi.org",
     "files.pythonhosted.org",
-    "api.openai.com",
-    "api.anthropic.com",
-    "github.com",
-    "api.github.com",
-    "release-assets.githubusercontent.com",
-    "*.githubcopilot.com",
-}
-
-# Copilot plan-variant wildcards: not observed in the smoke (which ran on an
-# individual-plan account) but required for business/enterprise accounts.
-PLAN_VARIANT_HOSTS = {
-    "*.individual.githubcopilot.com",
-    "*.business.githubcopilot.com",
-    "*.enterprise.githubcopilot.com",
-}
-
-# IDE-completion and telemetry hosts that were measured NOT to be needed —
-# reintroducing one silently widens the egress surface.
-EXCLUDED_HOSTS = {
-    "copilot-proxy.githubusercontent.com",
-    "origin-tracker.githubusercontent.com",
-    "collector.github.com",
-    "copilot-telemetry.githubusercontent.com",
-    "default.exp-tas.com",
 }
 
 
@@ -96,12 +73,11 @@ def test_launcher_module_referenced_by_kit_is_importable() -> None:
     importlib.import_module(module_name)
 
 
-def test_allowlist_matches_measured_minimal_set() -> None:
+def test_allowlist_matches_immutable_baseline() -> None:
     allow = set(load_spec()["caps"]["network"]["allow"])
     # Exact equality: any widening of the egress surface fails this test,
-    # not just reintroducing the specifically excluded hosts.
-    assert allow == REQUIRED_ALLOWLIST_HOSTS | PLAN_VARIANT_HOSTS
-    assert not (EXCLUDED_HOSTS & allow)
+    # including an optional provider or source-control host.
+    assert allow == DEFAULT_ALLOWLIST_HOSTS
 
 
 def test_spec_bakes_no_credentials_or_proxy_vars() -> None:

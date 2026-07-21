@@ -179,15 +179,44 @@ secret values.
 
 ## Network access
 
-The kit allows only what the launch flow and the supported LLM backends
-(OpenAI, Anthropic/Claude, GitHub Copilot) need: Band, PyPI, and each
-backend's API hosts. Everything else is denied by the sandbox proxy.
-
-To reach an additional host — or a non-production Band deployment — grant it
-per sandbox instead of editing the kit:
+The kit's immutable baseline allows only Band Cloud and the two PyPI hosts
+needed for `uv sync --locked` on a fresh sandbox. Everything else is denied by
+the sandbox proxy, including LLM providers, source-control hosts, and custom
+APIs. Grant only the exact host an agent needs, scoped to that sandbox:
 
 ```bash
+# Direct LLM providers
+sbx policy allow network --sandbox my-band-agent api.anthropic.com
+sbx policy allow network --sandbox my-band-agent api.openai.com
+
+# Clone a repository hosted on GitHub
+sbx policy allow network --sandbox my-band-agent github.com
+
+# Non-production or self-hosted Band
 sbx policy allow network --sandbox my-band-agent platform.dev.band.ai
+```
+
+GitHub Copilot needs several hosts. Grant its documented minimal set only when
+the agent uses Copilot:
+
+```bash
+sbx policy allow network --sandbox my-band-agent \
+  "github.com,api.github.com,release-assets.githubusercontent.com,*.githubcopilot.com,*.individual.githubcopilot.com,*.business.githubcopilot.com,*.enterprise.githubcopilot.com"
+```
+
+If a service is still blocked, inspect its exact hostname and allow that host
+rather than widening the policy:
+
+```bash
+sbx policy log my-band-agent
+```
+
+For a host required during startup (for example, a configured repository
+clone), add the rule and start the sandbox again:
+
+```bash
+sbx stop my-band-agent
+sbx run --name my-band-agent
 ```
 
 Do not set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` yourself: the sandbox

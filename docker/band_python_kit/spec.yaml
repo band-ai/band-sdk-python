@@ -32,27 +32,17 @@ commands:
       background: true
       description: Launch the Band agent
 
-# Minimal egress for Band, locked dependency sync (PyPI), and the supported
-# LLM backends (OpenAI, Anthropic, GitHub Copilot). The Copilot set is the
-# empirically minimal one for the Copilot CLI (release-assets serves its
-# self-download; the IDE-only copilot-proxy/origin-tracker hosts are not
-# needed). Non-production Band hosts are granted per sandbox with
-# `sbx policy allow network --sandbox <name> <host>`, never baked in here.
+# The immutable baseline: Band Cloud and locked dependency sync. `uv sync
+# --locked` still downloads the already-selected package artifacts, so both
+# PyPI hosts are needed on a fresh sandbox. LLM providers, source hosts, and
+# non-production Band deployments are opt-in per sandbox with
+# `sbx policy allow network --sandbox <name> <host>`; see the kit README.
 caps:
   network:
     allow:
       - app.band.ai
       - pypi.org
       - files.pythonhosted.org
-      - api.openai.com
-      - api.anthropic.com
-      - github.com
-      - api.github.com
-      - release-assets.githubusercontent.com
-      - "*.githubcopilot.com"
-      - "*.individual.githubcopilot.com"
-      - "*.business.githubcopilot.com"
-      - "*.enterprise.githubcopilot.com"
 
 # Credential injection is NOT declared here — it is provisioned host-side, per
 # deployment, so the operator controls which Band host is targeted (prod
@@ -76,5 +66,6 @@ agentContext: |
   This workspace contains a Python agent launched by the Band Sandbox kit.
   Agent configuration is in band.yaml.
   Dependency changes must update both pyproject.toml and uv.lock.
-  Supported LLM backends are OpenAI, Anthropic/Claude, and GitHub Copilot.
+  Add network access only for the LLM provider, repository host, or service
+  this agent actually uses; see the kit README's "Network access" section.
   Never print or commit configured credentials.
