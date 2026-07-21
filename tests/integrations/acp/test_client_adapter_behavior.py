@@ -14,12 +14,34 @@ fixture. Tests read as intent — script the agent, send a message, assert on th
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
-from band.integrations.acp.client_adapter import HISTORY_REPLAY_HEADER
+from band.integrations.acp.client_adapter import (
+    HISTORY_REPLAY_HEADER,
+    NEW_MESSAGE_MARKER_PREFIX,
+)
 from band.integrations.acp.client_types import ACPClientSessionState
 
 from .acp_toolkit import FakeACPAgent, acp_adapter
+
+# The header is a template ({marker} carries the per-turn nonce); its first
+# line is the stable sentinel tests can look for verbatim.
+REPLAY_HEADER_LINE = HISTORY_REPLAY_HEADER.splitlines()[0]
+NONCED_MARKER = re.compile(rf"{re.escape(NEW_MESSAGE_MARKER_PREFIX)} [0-9a-f]{{8}}\]")
+
+
+def replay_boundary(prompt: str) -> int:
+    """Index of the live-message boundary marker in a replay prompt.
+
+    Asserts the anti-spoofing contract on the way: exactly one nonce, named
+    once by the header and standing once above the live message.
+    """
+    markers = NONCED_MARKER.findall(prompt)
+    assert len(markers) == 2, f"expected header + boundary markers, got {markers}"
+    assert len(set(markers)) == 1, f"header and boundary nonces differ: {markers}"
+    return prompt.rindex(markers[-1])
 
 
 @pytest.mark.asyncio
@@ -374,24 +396,30 @@ async def test_replay_injected_when_remote_session_is_gone() -> None:
             "What is my favorite color?", bootstrap=True, history=history
         )
 
-    assert agent.session_load_requests == [
-        "stale-session"
-    ]  # resume was attempted first
-    assert len(agent.sessions) == 1  # then a fresh session was created
+    assert agent.session_load_requests == ["stale-session"], (
+        "the persisted session must be tried before any fallback"
+    )
+    assert len(agent.sessions) == 1, "a failed load must fall back to a fresh session"
 
     prompt = agent.prompt_texts()[0]
-    assert "[Marco]: My favorite color is blue." in prompt
-    assert prompt.count("What is my favorite color?") == 1
-    # The live message is attributed like the transcript lines, so the model
-    # can tell where the replay ends and who is speaking now.
-    assert "[Peer]: What is my favorite color?" in prompt
-    # Causal order: system context, then the replayed history, then the live message.
+    assert "[Marco]: My favorite color is blue." in prompt, (
+        "the room transcript was not replayed into the new session's first prompt"
+    )
+    assert prompt.count("What is my favorite color?") == 1, (
+        "the live message must appear exactly once (replay must not duplicate it)"
+    )
+    assert "[Peer]: What is my favorite color?" in prompt, (
+        "the live message must carry sender attribution like the transcript lines"
+    )
     assert (
         prompt.index("[System Context]")
-        < prompt.index(HISTORY_REPLAY_HEADER)
+        < prompt.index(REPLAY_HEADER_LINE)
         < prompt.index("[Marco]:")
+        < replay_boundary(prompt)
+    ), "prompt must read: system context, then replay, then the boundary marker"
+    assert prompt.rstrip().endswith("What is my favorite color?"), (
+        "the live message must come last so the model answers it, not the transcript"
     )
-    assert prompt.rstrip().endswith("What is my favorite color?")
 
 
 @pytest.mark.asyncio
@@ -410,10 +438,16 @@ async def test_replay_injected_when_session_load_errors() -> None:
             "What is my favorite color?", bootstrap=True, history=history
         )
 
-    assert agent.session_load_requests == ["wedged-session"]
-    assert len(agent.sessions) == 1  # fell back to a fresh session
-    assert HISTORY_REPLAY_HEADER in agent.prompt_texts()[0]
-    assert reply.texts == ["Blue."]  # the turn completed instead of dying
+    assert agent.session_load_requests == ["wedged-session"], (
+        "the persisted session must be tried before any fallback"
+    )
+    assert len(agent.sessions) == 1, (
+        "a load protocol error must fall back to a fresh session, not kill the turn"
+    )
+    assert REPLAY_HEADER_LINE in agent.prompt_texts()[0], (
+        "an erroring load counts as a miss, so the replay must still fire"
+    )
+    assert reply.texts == ["Blue."], "the turn must complete despite the load error"
 
 
 @pytest.mark.asyncio
@@ -432,11 +466,14 @@ async def test_no_replay_when_remote_session_loads() -> None:
         )
 
     assert agent.session_load_requests == ["session-1"]
-    assert agent.sessions == []  # resumed, never recreated
+    assert agent.sessions == [], (
+        "a successful load must reuse the session, not recreate it"
+    )
 
     prompt = agent.prompt_texts()[0]
-    assert HISTORY_REPLAY_HEADER not in prompt
-    assert "[Marco]:" not in prompt
+    assert REPLAY_HEADER_LINE not in prompt and "[Marco]:" not in prompt, (
+        "a restored session already holds the history remotely; replaying doubles it"
+    )
 
 
 @pytest.mark.asyncio
@@ -451,12 +488,13 @@ async def test_replay_injected_on_cold_boot_without_persisted_session(
     async with acp_adapter(fake_agent) as session:
         await session.send("What is the deploy code?", bootstrap=True, history=history)
 
-    assert (
-        fake_agent.session_load_requests == []
-    )  # nothing to resume, no load attempted
+    assert fake_agent.session_load_requests == [], (
+        "with no persisted id there is nothing to resume; no load should be attempted"
+    )
     prompt = fake_agent.prompt_texts()[0]
-    assert HISTORY_REPLAY_HEADER in prompt
-    assert "[Marco]: The deploy code is 7421." in prompt
+    assert (
+        REPLAY_HEADER_LINE in prompt and "[Marco]: The deploy code is 7421." in prompt
+    ), "with no session to restore, the transcript replay is the only context path"
 
 
 @pytest.mark.asyncio
@@ -467,7 +505,10 @@ async def test_bootstrap_with_empty_history_has_no_replay_block(fake_agent) -> N
     async with acp_adapter(fake_agent) as session:
         await session.send("hi", bootstrap=True)
 
-    assert HISTORY_REPLAY_HEADER not in fake_agent.prompt_texts()[0]
+    prompt = fake_agent.prompt_texts()[0]
+    assert (
+        REPLAY_HEADER_LINE not in prompt and NEW_MESSAGE_MARKER_PREFIX not in prompt
+    ), "an empty history must not produce an empty replay frame or a stray boundary"
 
 
 @pytest.mark.asyncio
@@ -482,6 +523,9 @@ async def test_replay_happens_once_not_on_later_turns(fake_agent) -> None:
         await session.send("second question", history=history)
 
     first, second = fake_agent.prompt_texts()
-    assert HISTORY_REPLAY_HEADER in first
-    assert HISTORY_REPLAY_HEADER not in second
-    assert "[Marco]:" not in second
+    assert REPLAY_HEADER_LINE in first
+    assert (
+        REPLAY_HEADER_LINE not in second
+        and NEW_MESSAGE_MARKER_PREFIX not in second
+        and "[Marco]:" not in second
+    ), "replay is seeded once per session; repeating it compounds duplication"

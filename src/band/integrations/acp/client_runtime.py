@@ -744,8 +744,9 @@ class ACPRuntime:
 
         ACP session IDs are meaningful only to the agent process that owns them.
         A successful ``session/load`` is therefore the boundary where a persisted ID
-        becomes usable on this connection. An unsupported, unavailable, or slow load
-        returns ``False`` so callers can create a fresh session without blocking a turn.
+        becomes usable on this connection. An unsupported, unavailable, slow, or
+        erroring load returns ``False`` so callers can create a fresh session
+        without blocking a turn.
         """
         if not self._agent_supports_session_load:
             return False

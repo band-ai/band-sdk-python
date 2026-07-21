@@ -280,8 +280,10 @@ restart/crash, or no persisted id at all), the room's text transcript
 (`ACPClientSessionState.replay_messages`, built by the shared
 `build_replay_messages` helper in `converters/helpers.py`) is injected exactly once
 into the new session's first prompt under `HISTORY_REPLAY_HEADER`: framed as
-context-only (never to be re-answered or re-executed), with the current message
-last. Adapter narration events (thought/tool_call/tool_result/task) never replay. A
+read-only background (treat as already handled; never re-execute), with the current
+message attributed and last under a nonce'd `[New Message <nonce>]` boundary marker
+the header names (the nonce defeats a replayed message spoofing the boundary).
+Adapter narration events (thought/tool_call/tool_result/task) never replay. A
 successfully loaded session gets no replay, so history is never doubled.
 
 ### Reply Delivery (Client Adapter)

@@ -16,7 +16,7 @@ import pytest
 from band.core.types import MessageType
 
 from tests.e2e.baseline.agents import Adapter, Lane, lane, with_adapters
-from tests.e2e.baseline.flaky import flaky_infra, flaky_model
+from tests.e2e.baseline.flaky import flaky_model
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import (
@@ -147,9 +147,10 @@ def resumemiss_config(settings: BaselineSettings, phase_dir: Path) -> Any:
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling to backends
 @requires(Dep.COPILOT_CLI)
-@flaky_infra(
-    "two fresh Copilot CLI boots (session-load-miss setup) can time out transiently"
-)
+# Deliberately no flaky marker: two clean runs so far, and a rerun here would
+# slow-surface a product bug that presents as a silent no-reply turn (the
+# load-error path failed exactly that way once). Add flaky_infra only with an
+# observed transient to cite.
 # Two agent lifecycles, each booting a fresh Copilot CLI with an empty
 # COPILOT_HOME (the session-load-miss setup) — the heaviest boot path here.
 @pytest.mark.timeout(extra=300)
