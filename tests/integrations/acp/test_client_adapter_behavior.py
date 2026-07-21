@@ -529,3 +529,55 @@ async def test_replay_happens_once_not_on_later_turns(fake_agent) -> None:
         and NEW_MESSAGE_MARKER_PREFIX not in second
         and "[Marco]:" not in second
     ), "replay is seeded once per session; repeating it compounds duplication"
+
+
+@pytest.mark.asyncio
+async def test_replay_after_midrun_respawn() -> None:
+    """A prompt failure tears the runtime down and wipes the session mappings;
+    the next turn's freshly created session must be re-seeded from the room
+    transcript (re-fetched, since the runtime only hands history to bootstrap
+    turns), not start amnesiac."""
+    from acp import RequestError
+
+    outcomes = iter(["I noted your favorite color.", "boom", "Blue."])
+    agent = FakeACPAgent()
+
+    @agent.on_prompt
+    async def _script(a: FakeACPAgent, sid: str) -> None:
+        step = next(outcomes)
+        if step == "boom":
+            raise RequestError.internal_error()
+        await a.say(sid, step)
+
+    transcript = [
+        {
+            "id": "m1",
+            "message_type": "text",
+            "sender_name": "Marco",
+            "content": "My favorite color is blue.",
+        },
+        {
+            "id": "m2",
+            "message_type": "text",
+            "sender_name": "Fake Agent",
+            "content": "I noted your favorite color.",
+        },
+    ]
+
+    async with acp_adapter(agent) as session:
+        await session.send("My favorite color is blue.", bootstrap=True)
+        crashed = await session.send("anything")  # prompt raises -> adapter stop()
+        reply = await session.send(
+            "What is my favorite color?", room_context=transcript
+        )
+
+    assert "error" in crashed.outline, "the failed turn must surface an error event"
+    assert reply.texts == ["Blue."], "the respawned turn must complete"
+
+    prompt = agent.prompt_texts()[-1]
+    assert (
+        REPLAY_HEADER_LINE in prompt and "[Marco]: My favorite color is blue." in prompt
+    ), "a session created after a respawn must be re-seeded from the transcript"
+    assert prompt.rstrip().endswith("What is my favorite color?"), (
+        "the live message must come last so the model answers it, not the transcript"
+    )

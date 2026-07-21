@@ -14,6 +14,7 @@ from acp import spawn_agent_process
 from acp.schema import HttpMcpServer, SseMcpServer
 
 from band.converters.acp_client import ACPClientHistoryConverter
+from band.converters.helpers import build_replay_messages
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
@@ -37,6 +38,7 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.acp.room_emitter import RoomTurnEmitter
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.formatters import messages_before
 from band.runtime.mcp_server import LocalMCPServer
 from band.runtime.tools import iter_tool_definitions
 
@@ -203,17 +205,23 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             async with self._session_lock:
                 self._room_tools[room_id] = tools
 
-        # A restored session already holds the conversation remotely; otherwise
-        # fall back to replaying the Band room's transcript so a fresh remote
-        # process (restart, crash, cold boot) keeps context.
-        replay: list[str] | None = None
         if is_session_bootstrap and history:
-            resumed = await self._load_persisted_session(room_id, history)
-            if not resumed:
-                replay = history.replay_messages
+            await self._load_persisted_session(room_id, history)
 
-        session_id = await self._get_or_create_session(room_id)
+        session_id, created = await self._get_or_create_session(room_id)
         self._runtime.reset_session(session_id)
+
+        # A just-created session holds no remote context (a restored one does),
+        # so seed it with the Band room's transcript. On bootstrap the converter
+        # carried it; a session minted later (the previous runtime was torn down
+        # mid-run) re-fetches it.
+        replay: list[str] | None = None
+        if created:
+            replay = (
+                history.replay_messages
+                if is_session_bootstrap
+                else await self._fetch_replay(tools, msg)
+            )
 
         prompt_text = await self._build_prompt_text(
             room_id, session_id, msg, replay=replay
@@ -406,13 +414,18 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
 
         return self._build_local_mcp_server_config(local_server)
 
-    async def _get_or_create_session(self, room_id: str) -> str:
+    async def _get_or_create_session(self, room_id: str) -> tuple[str, bool]:
+        """This room's ACP session id, plus whether it was created just now.
+
+        A just-created session is fresh and holds no conversation context;
+        the caller owes it a transcript replay.
+        """
         if room_id in self._room_to_session:
-            return self._room_to_session[room_id]
+            return self._room_to_session[room_id], False
 
         async with self._session_lock:
             if room_id in self._room_to_session:
-                return self._room_to_session[room_id]
+                return self._room_to_session[room_id], False
 
             mcp_servers = await self._session_mcp_servers()
 
@@ -427,7 +440,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 room_id,
                 len(mcp_servers),
             )
-            return session_id
+            return session_id, True
 
     async def _session_mcp_servers(self) -> list[object]:
         """The MCP configuration supplied when creating or loading a session."""
@@ -518,20 +531,21 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self,
         room_id: str,
         history: ACPClientSessionState,
-    ) -> bool:
-        """Accept this room's persisted session ID only after ACP loads it.
+    ) -> None:
+        """Map this room to its persisted session, but only after ACP loads it.
 
-        Returns True when the room ends up with a session that already holds
-        its conversation (an existing mapping, or a successful ``session/load``);
-        False means the caller starts from a fresh, context-less session.
+        On success the room keeps its restored session and no fresh one is
+        created; any miss (no candidate, unavailable, or erroring load) simply
+        leaves the room unmapped, so the caller creates a fresh session and
+        owes it a transcript replay.
         """
         async with self._session_lock:
             if room_id in self._room_to_session:
-                return True
+                return
             session_id = history.room_to_session.get(room_id)
 
         if session_id is None:
-            return False
+            return
 
         loaded = await self._runtime.load_session(
             cwd=self._cwd,
@@ -544,18 +558,42 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 session_id,
                 room_id,
             )
-            return False
+            return
 
         async with self._session_lock:
-            # setdefault keeps a mapping raced in by a concurrent turn; report
-            # "resumed" only if the loaded session is the one the room will use,
-            # so a discarded load still triggers the replay fallback.
+            # setdefault keeps a mapping raced in by a concurrent turn; a
+            # discarded load leaves that mapping's own created/replay decision
+            # in force.
             retained = (
                 self._room_to_session.setdefault(room_id, session_id) == session_id
             )
         if retained:
             logger.debug("Loaded ACP session mapping: %s -> %s", room_id, session_id)
-        return retained
+
+    async def _fetch_replay(
+        self,
+        tools: AgentToolsProtocol,
+        msg: PlatformMessage,
+    ) -> list[str] | None:
+        """The room transcript for a session created off-bootstrap.
+
+        The runtime hands history to the adapter only on session bootstrap;
+        when a session is minted later (the previous runtime was torn down
+        mid-run), the transcript is re-fetched so the fresh session does not
+        start amnesiac. Entries from the trigger onward are excluded: they are
+        this turn and pending turns of their own.
+        """
+        try:
+            context = await tools.fetch_room_context(room_id=msg.room_id)
+        except Exception:
+            logger.warning(
+                "Room %s: could not fetch history to re-seed the new ACP session",
+                msg.room_id,
+                exc_info=True,
+            )
+            return None
+        raw = messages_before(context.get("data") or [], msg.id)
+        return build_replay_messages([m for m in raw if m.get("id") != msg.id])
 
     async def _ensure_connection(self) -> ACPConnectionProtocol:
         return await self._runtime.ensure_connection(

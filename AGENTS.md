@@ -274,17 +274,24 @@ A turn's events must land in the room in the order they happened, because two th
 
 ### History replay fallback (Client Adapter)
 
-On bootstrap the adapter first validates the room's persisted session id with ACP
-`session/load`. When no remote session can be restored (fresh remote process after a
-restart/crash, or no persisted id at all), the room's text transcript
+A **freshly created** ACP session owes the room a transcript replay; a restored one
+does not. On bootstrap the adapter first validates the room's persisted session id
+with ACP `session/load`; on any miss (no persisted id, unavailable, or erroring
+load) the fresh session is seeded with the room's text transcript
 (`ACPClientSessionState.replay_messages`, built by the shared
-`build_replay_messages` helper in `converters/helpers.py`) is injected exactly once
-into the new session's first prompt under `HISTORY_REPLAY_HEADER`: framed as
-read-only background (treat as already handled; never re-execute), with the current
-message attributed and last under a nonce'd `[New Message <nonce>]` boundary marker
-the header names (the nonce defeats a replayed message spoofing the boundary).
-Adapter narration events (thought/tool_call/tool_result/task) never replay. A
-successfully loaded session gets no replay, so history is never doubled.
+`build_replay_messages` helper in `converters/helpers.py`). A session minted
+**off-bootstrap** (the previous runtime was torn down mid-run, e.g. after a prompt
+failure) re-fetches the transcript itself via `tools.fetch_room_context`, so a
+respawn never starts amnesiac. Replay is injected exactly once into the session's
+first prompt under `HISTORY_REPLAY_HEADER`: framed as read-only background (treat as
+already handled; never re-execute), with the current message attributed and last
+under a nonce'd `[New Message <nonce>]` boundary marker the header names (the nonce
+defeats a replayed message spoofing the boundary). Bootstrap history stops
+**strictly before** the triggering message (`messages_before` in
+`runtime/formatters.py`, applied in `preprocessing/default.py` for every adapter):
+later backlog entries are pending turns of their own and never replay. Adapter
+narration events (thought/tool_call/tool_result/task) never replay. A successfully
+loaded session gets no replay, so history is never doubled.
 
 ### Reply Delivery (Client Adapter)
 
