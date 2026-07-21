@@ -34,6 +34,13 @@ on:
         required: false
         default: 7
         type: number
+      relock:
+        description: |
+          Re-lock uv.lock before building — recovery for a released tag whose
+          committed lock lags its own band-sdk version.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -57,3 +64,4 @@ jobs:
       move-floating: ${{ inputs.move-floating }}
       extra-build-args: ${{ inputs.extra-build-args }}
       quarantine-max-age-days: ${{ inputs.quarantine-max-age-days }}
+      relock: ${{ inputs.relock }}
