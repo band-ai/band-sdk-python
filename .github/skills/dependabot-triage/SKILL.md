@@ -88,13 +88,13 @@ git, so the batch PR and any follow-ups link back to it. Record the surveyed
 queue (the table from Step 1) in the description. Use the Linear MCP tools
 (`create_issue` / `save_issue`). Keep the whole run under this issue.
 
-## Step 3 — Branch off `dev`
+## Step 3 — Branch off `main`
 
-Dependabot targets `dev`. Consolidate there.
+Dependabot targets `main` (single-trunk GitHub flow). Consolidate there.
 
 ```bash
 git fetch origin
-git checkout -b chore/deps-batch-$(date +%Y%m%d) origin/dev
+git checkout -b chore/deps-batch-$(date +%Y%m%d) origin/main
 ```
 
 ## Step 4 — Apply all the `uv` bumps at once
