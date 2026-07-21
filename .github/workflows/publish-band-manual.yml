@@ -1,0 +1,60 @@
+# Manual entrypoint for the PyPI publish of band-sdk. Recovery only: the
+# release workflow publishes on the release-creating merge, but a post-tag
+# failure there leaves a tagged release with no published package and no way
+# to re-run — release-please reports release_created only once per release.
+# This republishes any existing ref without deleting/re-tagging public
+# history. (The kit-image counterpart is kit-publish-manual.yml.)
+#
+# One-time setup: PyPI trusted publishing binds a publisher to a workflow
+# filename, so this file needs its own publisher entry on PyPI (project
+# band-sdk -> Publishing -> add: this repo, publish-band-manual.yml,
+# environment release).
+
+name: publish-band-manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build and publish (e.g. band-sdk-v1.4.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Configure git to use HTTPS for GitHub
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Build band-sdk package
+        run: uv build
+
+      - name: Publish band-sdk to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          # Idempotent recovery: a re-dispatch after a partial upload must not
+          # fail on the files that already made it to PyPI.
+          skip-existing: true
