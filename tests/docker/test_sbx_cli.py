@@ -45,7 +45,12 @@ def connect_proxy(status: bytes) -> Iterator[tuple[str, dict[str, bool]]]:
 
 
 def run_probe(proxy_url: str) -> subprocess.CompletedProcess[str]:
-    env = os.environ | {"HTTPS_PROXY": proxy_url, "https_proxy": ""}
+    # Drop any casing of the proxy var first: on Windows os.environ keys are
+    # normalized to uppercase, so merging in both "HTTPS_PROXY" and
+    # "https_proxy" produces two distinct keys in the plain dict `|` yields,
+    # and the child process can end up reading the empty lowercase one.
+    env = {k: v for k, v in os.environ.items() if k.upper() != "HTTPS_PROXY"}
+    env["HTTPS_PROXY"] = proxy_url
     return subprocess.run(
         [sys.executable, "-c", _CERT_PROBE, "band.example.test"],
         capture_output=True,

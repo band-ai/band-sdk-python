@@ -9,7 +9,10 @@ live run, or this guard, would catch).
 
 from __future__ import annotations
 
-from tests.docker.toolkit.sbx_cli import _kit_agent_name
+import subprocess
+from pathlib import Path
+
+from tests.docker.toolkit.sbx_cli import _files_containing_command, _kit_agent_name
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.paths import KIT_DIR
 
@@ -31,3 +34,30 @@ def test_baseline_settings_expose_the_paths_the_proof_reads() -> None:
     settings = BaselineSettings()
     assert isinstance(settings.endpoints.rest_url, str)
     assert isinstance(settings.credentials.api_key_user, str)
+
+
+def test_absence_search_scans_binary_files_too(tmp_path: Path) -> None:
+    # The never-in-VM proof asserts the real key is in *no* searched file. grep's
+    # default binary heuristic can skip a file with NUL bytes (a cache/DB), so a
+    # key leaked into one would pass the absence check unseen — the command uses
+    # `-a` to search every file as text. Builds the real command and runs it via
+    # the system grep the sandbox uses, so a flag regression fails here in CI
+    # rather than lying dormant until a live sbx run. The secret's metacharacters
+    # also guard that `-F` keeps the match literal.
+    secret = "band-sk-neVerVm.$*SEKRET"
+    (tmp_path / "plain.txt").write_text(f"prefix {secret} suffix\n", encoding="utf-8")
+    (tmp_path / "blob.bin").write_bytes(b"\x00\x01" + secret.encode() + b"\x00\xff")
+
+    command = _files_containing_command(secret, [str(tmp_path)])
+    result = subprocess.run(
+        ["bash", "-c", command],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert set(result.stdout.splitlines()) == {
+        str(tmp_path / "plain.txt"),
+        str(tmp_path / "blob.bin"),
+    }

@@ -8,8 +8,9 @@ the host-side proxy that injects the real credentials. That is what a bare
 The sandbox-driving methods need a Docker-Sandbox-capable host with the `sbx`
 CLI, and run only under the ``sandbox``-marked proof
 (``SANDBOX_TESTS_ENABLED=true``). The module itself imports cleanly (stdlib +
-yaml), so its pure helpers are unit-tested in CI (see
-``tests/docker/test_nevervm_contracts.py``).
+yaml), so its pure helpers are unit-tested in CI: the agent-name derivation and
+the absence-search command in ``tests/docker/test_nevervm_contracts.py``, and
+the proxy cert probe in ``tests/docker/test_sbx_cli.py``.
 """
 
 from __future__ import annotations
@@ -83,6 +84,24 @@ def _kit_agent_name(kit: Path | str) -> str:
     return spec["name"]
 
 
+def _files_containing_command(secret: str, search_paths: Sequence[str]) -> str:
+    """Shell command listing files under ``search_paths`` that hold ``secret`` literally.
+
+    The flags are chosen for an absence proof, where a *missed* match is a silent
+    hole rather than mere noise:
+
+    - ``-a`` searches every file as text, so a key sitting in an otherwise-binary
+      file (a cache/DB with NUL bytes) is still found. grep's default binary
+      heuristic can skip such a file — verified: merely dropping ``-I`` still
+      missed it under one grep implementation, whereas ``-a`` matched everywhere.
+    - ``-F`` matches the secret literally, so a key with ``.``/``$``/``*`` cannot
+      over- or under-match.
+    - ``-l`` prints only filenames, so the secret itself is never echoed.
+    """
+    paths = " ".join(shlex.quote(path) for path in search_paths)
+    return f"grep -ralF -- {shlex.quote(secret)} {paths} 2>/dev/null || true"
+
+
 @contextmanager
 def custom_secret(
     *, host: str, env: str, value: str, placeholder: str
@@ -147,10 +166,23 @@ class Sandbox:
         try:
             yield cls(name)
         finally:
-            subprocess.run([SBX, "rm", "-f", name], capture_output=True, check=False)
+            subprocess.run(
+                [SBX, "rm", "-f", name],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
 
     def exec(self, command: str, *, timeout: int = EXEC_TIMEOUT_S) -> str:
-        """Run ``command`` via `bash -lc` inside the sandbox; return stripped stdout."""
+        """Run ``command`` via ``bash -lc`` inside the sandbox; return stripped stdout.
+
+        ``-l`` runs a login shell so the sandbox's login profile is sourced,
+        bringing its provisioned PATH and environment into scope (the cert probe,
+        for one, reads the proxy/CA variables from there). This is a deliberate
+        divergence from the docker sibling's ``bash -c`` — don't collapse it to
+        ``-c``.
+        """
         result = subprocess.run(
             [SBX, "exec", self.name, "bash", "-lc", command],
             capture_output=True,
@@ -195,13 +227,9 @@ class Sandbox:
         """Files under ``search_paths`` that contain ``secret`` as a literal,
         newline-joined; ``""`` when none.
 
-        ``-F`` matches the secret literally, not as a regex — a key with ``.`` or
-        other metacharacters must not over- or under-match in an absence proof.
-        The value is never logged. This is a raw read, not a verdict: the caller
-        pairs the absence check with a positive control (see the never-in-VM
-        test) so an empty result can't pass vacuously.
+        A raw read, not a verdict: the caller pairs this absence check with a
+        positive control (see the never-in-VM test) so an empty result can't
+        pass vacuously. The command's flag rationale lives in
+        ``_files_containing_command``.
         """
-        paths = " ".join(shlex.quote(path) for path in search_paths)
-        return self.exec(
-            f"grep -rIlF -- {shlex.quote(secret)} {paths} 2>/dev/null || true"
-        )
+        return self.exec(_files_containing_command(secret, search_paths))
