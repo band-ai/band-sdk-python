@@ -1,0 +1,68 @@
+# Publishes band-sdk to PyPI. Runs in reaction to a published GitHub release
+# (rather than as a job inside the release workflow) so a post-tag failure
+# anywhere in that pipeline can't strand a tagged release unpublished, and a
+# failed publish is re-runnable on its own. workflow_dispatch covers manual
+# recovery for any existing tag; skip-existing makes re-runs idempotent.
+#
+# Why a separate top-level file instead of a reusable workflow shared with
+# release.yml: PyPI trusted publishing does not support reusable workflows
+# (docs.pypi.org/trusted-publishers/troubleshooting, warehouse#11096) — the
+# publish step must live in the top-level workflow the publisher is bound to.
+# The band-sdk trusted publisher on PyPI must reference this filename
+# (band-publish.yml) with environment `release`.
+#
+# The release event only fires workflows present at the released tag, so tags
+# predating this file (e.g. band-sdk-v1.4.0) are published via dispatch.
+
+name: band-publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Existing release tag to build and publish (e.g. band-sdk-v1.4.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    # Guard the event path: never auto-publish a prerelease to PyPI.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ inputs.ref || github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Configure git to use HTTPS for GitHub
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Install dependencies
+        run: uv sync --all-groups
+
+      - name: Build band-sdk package
+        run: uv build
+
+      - name: Publish band-sdk to PyPI
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          # Idempotent recovery: a re-run after a partial upload must not
+          # fail on the files that already made it to PyPI.
+          skip-existing: true
