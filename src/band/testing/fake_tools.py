@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
-from band.client.rest import ListAgentMemoriesResponse, ListAgentMemoriesResponseMeta
+from band.client.rest import (
+    AgentMemory,
+    ListAgentMemoriesResponse,
+    ListAgentMemoriesResponseMeta,
+)
 from band.runtime.tools import ToolCallOutcome
 
 
@@ -47,7 +52,12 @@ class FakeAgentTools:
         self._peers: list[dict[str, Any]] = peers or []
         self._contacts: list[dict[str, Any]] = contacts or []
         self._room_context: list[dict[str, Any]] = list(room_context or [])
-        self.memories: list[dict[str, Any]] = list(memories or [])
+        # Seeds are validated and canonicalized at seed time (not list time),
+        # so every stored memory carries the real serialized AgentMemory shape.
+        self.memories: list[dict[str, Any]] = [
+            AgentMemory.model_validate(memory).model_dump()
+            for memory in (memories or [])
+        ]
         self.participants_added: list[dict[str, Any]] = []
         self.participants_removed: list[dict[str, Any]] = []
         self.tool_calls: list[dict[str, Any]] = []
@@ -120,6 +130,8 @@ class FakeAgentTools:
         return list(self._participants)
 
     async def lookup_peers(self, page: int = 1, page_size: int = 50) -> dict[str, Any]:
+        """Legacy envelope — diverges from the real SDK's Fern ``{data, metadata}``
+        shape; align like ``list_memories`` before relying on the keys."""
         return {
             "peers": list(self._peers),
             "metadata": {
@@ -167,6 +179,8 @@ class FakeAgentTools:
         }
 
     async def list_contacts(self, page: int = 1, page_size: int = 50) -> dict[str, Any]:
+        """Legacy envelope — diverges from the real SDK's Fern ``{data, metadata}``
+        shape; align like ``list_memories`` before relying on the keys."""
         return {
             "contacts": list(self._contacts),
             "metadata": {
@@ -192,6 +206,8 @@ class FakeAgentTools:
     async def list_contact_requests(
         self, page: int = 1, page_size: int = 50, sent_status: str = "pending"
     ) -> dict[str, Any]:
+        """Legacy envelope — the real SDK nests these under ``data.received`` /
+        ``data.sent``; align like ``list_memories`` before relying on the keys."""
         return {
             "received": [],
             "sent": [],
@@ -230,9 +246,8 @@ class FakeAgentTools:
         """Return stored memories in the real SDK's Fern envelope (data/meta).
 
         Filters are accepted but not applied; ``page_size`` truncates like the
-        real first page. Memory dicts are coerced into ``AgentMemory`` models,
-        so they must carry the platform-required fields (``store_memory``'s
-        return shape qualifies).
+        real first page. Stored memories are already canonical serialized
+        ``AgentMemory`` dicts (validated at store/seed time).
         """
         page = self.memories[:page_size]
         return ListAgentMemoriesResponse(
@@ -253,40 +268,40 @@ class FakeAgentTools:
         subject_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        memory = {
-            "id": str(uuid.uuid4()),
-            "content": content,
-            "system": system,
-            "type": type,
-            "segment": segment,
-            "scope": scope,
-            "status": "active",
-            "thought": thought,
-            "inserted_at": "2025-01-01T00:00:00Z",
-        }
+        """Store and return the memory in the real serialized AgentMemory shape."""
+        memory = AgentMemory(
+            id=str(uuid.uuid4()),
+            content=content,
+            system=system,
+            type=type,
+            segment=segment,
+            scope=scope,
+            status="active",
+            thought=thought,
+            subject_id=subject_id,
+            metadata=metadata,
+            inserted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ).model_dump()
         self.memories.append(memory)
-        return memory
+        return dict(memory)
 
-    async def get_memory(self, memory_id: str) -> dict[str, Any]:
-        return {
-            "id": memory_id,
-            "content": "Test memory content",
-            "system": "long_term",
-            "type": "semantic",
-            "segment": "user",
-            "scope": "subject",
-            "status": "active",
-            "thought": "Test thought",
-            "subject_id": None,
-            "source_agent_id": None,
-            "inserted_at": "2025-01-01T00:00:00Z",
-        }
+    async def get_memory(self, memory_id: str) -> dict[str, Any] | None:
+        """Return a copy of the stored memory, or None when unknown."""
+        memory = next((m for m in self.memories if m["id"] == memory_id), None)
+        return dict(memory) if memory else None
 
     async def supersede_memory(self, memory_id: str) -> dict[str, Any]:
-        return {"id": memory_id, "status": "superseded"}
+        return self._set_memory_status(memory_id, "superseded")
 
     async def archive_memory(self, memory_id: str) -> dict[str, Any]:
-        return {"id": memory_id, "status": "archived"}
+        return self._set_memory_status(memory_id, "archived")
+
+    def _set_memory_status(self, memory_id: str, status: str) -> dict[str, Any]:
+        for memory in self.memories:
+            if memory["id"] == memory_id:
+                memory["status"] = status
+                return dict(memory)
+        raise ValueError(f"Unknown memory: {memory_id}")
 
     @property
     def memory_contents(self) -> list[str]:
@@ -363,15 +378,20 @@ class FakeAgentTools:
         message_type: str | None = None,
         count: int | None = None,
     ) -> None:
-        """Assert that an event was sent, optionally matching type/count."""
+        """Assert that an event was sent; ``count`` counts events of
+        ``message_type`` when one is given, otherwise all events."""
+        matching = [
+            e
+            for e in self.events_sent
+            if message_type is None or e["message_type"] == message_type
+        ]
         if count is not None:
-            assert len(self.events_sent) == count, (
-                f"Expected {count} events, got {len(self.events_sent)}"
+            assert len(matching) == count, (
+                f"Expected {count} {message_type or 'total'} events, "
+                f"got {len(matching)}. "
+                f"Sent types: {[e['message_type'] for e in self.events_sent]}"
             )
         if message_type is not None:
-            matching = [
-                e for e in self.events_sent if e["message_type"] == message_type
-            ]
             assert matching, (
                 f"No event with type {message_type!r} found. "
                 f"Sent types: {[e['message_type'] for e in self.events_sent]}"
