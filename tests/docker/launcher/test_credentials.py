@@ -96,6 +96,25 @@ def test_proxy_managed_rejects_a_real_band_key(workspace: Workspace) -> None:
         resolve_launch(make_env(workspace, band_api_key="band_real_secret_key"))
 
 
+def test_proxy_managed_rejects_a_real_llm_key(workspace: Workspace) -> None:
+    # The "never enters the VM" promise covers the LLM/provider keys, not just
+    # Band — a real OPENAI_API_KEY would be handed to the child exactly like a
+    # real Band key. The Band sentinel is correct here, so only the provider key
+    # trips the guard.
+    write_config(workspace, enable_proxy_managed(default_config(workspace)))
+    with pytest.raises(LaunchError, match=r"\[credentials\].*sentinel") as exc_info:
+        resolve_launch(
+            make_env(
+                workspace,
+                band_api_key=PROXY_MANAGED_API_KEY,
+                openai_api_key="sk-real-openai-secret",
+            )
+        )
+    # The offending variable is named; its secret value never is.
+    assert "OPENAI_API_KEY" in str(exc_info.value)
+    assert "sk-real-openai-secret" not in str(exc_info.value)
+
+
 def test_proxy_managed_source_rejects_a_path(workspace: Workspace) -> None:
     config = default_config(workspace)
     config["credentials"] = {

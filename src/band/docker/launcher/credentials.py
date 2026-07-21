@@ -330,18 +330,25 @@ def resolve_credentials(
 def require_sentinel_under_proxy_managed(
     config: WorkspaceConfig, credentials: dict[str, str]
 ) -> None:
-    """In proxy-managed custody the VM must hold only the sentinel for the Band
-    key — a real key here would defeat the 'never enters the VM' guarantee, since
-    the launcher passes it straight to the customer process. The real key belongs
-    on the host (``sbx secret``), and the proxy supplies it on the wire."""
+    """In proxy-managed custody the VM must hold only the sentinel for *every*
+    managed credential — the Band key and the LLM/provider keys alike. A real
+    value here would defeat the 'never enters the VM' guarantee, since the
+    launcher passes it straight to the customer process. The real keys belong on
+    the host (``sbx secret`` for the provider services, ``sbx secret set-custom``
+    for the Band key); the proxy supplies them on the wire."""
     section = config.credentials
     if section is None or section.source is not CredentialSource.PROXY_MANAGED:
         return
-    key = credentials.get("BAND_API_KEY")
-    if key and key != PROXY_MANAGED_API_KEY:
+    real = sorted(
+        name
+        for name, value in credentials.items()
+        if value and value != PROXY_MANAGED_API_KEY
+    )
+    if real:
         raise LaunchError(
             "credentials",
-            "proxy-managed custody requires BAND_API_KEY to be the "
-            f"{PROXY_MANAGED_API_KEY!r} sentinel, not a real key — the real key "
-            "must stay on the host (provision it with `sbx secret set-custom`).",
+            f"proxy-managed custody requires {', '.join(real)} to be the "
+            f"{PROXY_MANAGED_API_KEY!r} sentinel, not a real key — the real "
+            "key(s) must stay on the host (provision with `sbx secret` / "
+            "`sbx secret set-custom`).",
         )
