@@ -23,6 +23,7 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -74,17 +75,34 @@ def sbx_available() -> bool:
     return shutil.which(SBX) is not None
 
 
-def _kit_agent_name(kit: Path | str) -> str:
+def _kit_spec(kit: Path | str) -> dict[str, Any]:
+    """The kit's parsed ``spec.yaml``."""
+    return yaml.safe_load((Path(kit) / "spec.yaml").read_text(encoding="utf-8"))
+
+
+def kit_agent_name(kit: Path | str) -> str:
     """The agent name a sandbox kit declares (its ``spec.yaml`` ``name``).
 
     A sandbox (agent) kit is invoked as ``sbx create --kit <kit> <name>`` — the
     name is the kit's own, not a generic ``shell`` agent (sbx rejects that combo).
     """
-    spec = yaml.safe_load((Path(kit) / "spec.yaml").read_text(encoding="utf-8"))
-    return spec["name"]
+    return _kit_spec(kit)["name"]
 
 
-def _files_containing_command(secret: str, search_paths: Sequence[str]) -> str:
+def kit_baseline_hosts(kit: Path | str) -> frozenset[str]:
+    """The hosts the kit reaches out of the box (``caps.network.allow``).
+
+    The sandbox proxy denies every other host by default, so a Band deployment
+    outside this set (any non-prod target) needs an explicit ``allow_network``
+    before the agent can connect. Read from the kit's own spec so the two never
+    drift.
+    """
+    caps = _kit_spec(kit).get("caps") or {}
+    network = caps.get("network") or {}
+    return frozenset(network.get("allow") or [])
+
+
+def files_containing_command(secret: str, search_paths: Sequence[str]) -> str:
     """Shell command listing files under ``search_paths`` that hold ``secret`` literally.
 
     The flags are chosen for an absence proof, where a *missed* match is a silent
@@ -102,28 +120,103 @@ def _files_containing_command(secret: str, search_paths: Sequence[str]) -> str:
     return f"grep -ralF -- {shlex.quote(secret)} {paths} 2>/dev/null || true"
 
 
+def set_custom_secret_command(
+    *, sandbox: str, host: str, env: str, value: str, placeholder: str
+) -> list[str]:
+    """`sbx secret set-custom` argv, scoped to one sandbox (never global ``-g``)."""
+    return [SBX, "secret", "set-custom", sandbox, "--host", host,
+            "--env", env, "--placeholder", placeholder, "--value", value]  # fmt: skip
+
+
+def remove_custom_secret_command(*, sandbox: str, host: str) -> list[str]:
+    """`sbx secret rm` argv for the scoped secret; ``-f`` skips the prompt."""
+    return [SBX, "secret", "rm", sandbox, "--host", host, "-f"]
+
+
 @contextmanager
 def custom_secret(
-    *, host: str, env: str, value: str, placeholder: str
+    *, sandbox: str, host: str, env: str, value: str, placeholder: str
 ) -> Iterator[None]:
-    """Register a global custom-secret injection for ``host``, then remove it.
+    """Inject ``value`` for ``host`` scoped to ``sandbox``, then remove it.
 
-    The test provisions the secret itself so the value it later asserts-absent is
-    exactly the one the proxy would inject — closing the gap where a test checks a
-    *different* key than the one actually stored.
+    Scoped to the one sandbox on purpose — never global (``-g``). The kit README
+    registers the Band key globally for real use, so a global test secret would
+    *overwrite and then delete* the operator's own ``**.band.ai`` credential and
+    disrupt their running sandboxes. The secret is set before ``sbx create`` so
+    the placeholder is baked into the VM's ``env`` at startup.
+
+    The test provisions the secret itself, so the value it later asserts-absent
+    is exactly the one the proxy would inject — closing the gap where a test
+    checks a *different* key than the one actually stored.
     """
     subprocess.run(
-        [SBX, "secret", "set-custom", "-g", "--host", host,
-         "--env", env, "--placeholder", placeholder, "--value", value],
+        set_custom_secret_command(
+            sandbox=sandbox, host=host, env=env, value=value, placeholder=placeholder
+        ),
         capture_output=True, text=True, check=True, timeout=60,
     )  # fmt: skip
     try:
         yield
     finally:
         subprocess.run(
-            [SBX, "secret", "rm", "-g", "--host", host],
-            input="y\n", capture_output=True, text=True, check=False, timeout=60,
+            remove_custom_secret_command(sandbox=sandbox, host=host),
+            capture_output=True, text=True, check=False, timeout=60,
         )  # fmt: skip
+
+
+def _network_allowed(host: str) -> bool:
+    """Whether the global policy already permits ``host`` (read-only check)."""
+    probe = subprocess.run(
+        [SBX, "policy", "check", "network", host],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    return probe.returncode == 0
+
+
+@contextmanager
+def allow_network(host: str) -> Iterator[None]:
+    """Permit sandbox network access to ``host`` for the block, then revoke it.
+
+    A *global* rule: sbx refuses a per-sandbox grant before the sandbox exists,
+    and the agent connects at startup, so the rule must be in force before
+    ``sbx create``. Idempotent — when ``host`` is already allowed (the operator
+    granted it themselves), this is a no-op and leaves their rule untouched.
+    """
+    if _network_allowed(host):
+        yield
+        return
+    subprocess.run(
+        [SBX, "policy", "allow", "network", host],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=60,
+    )
+    try:
+        yield
+    finally:
+        subprocess.run(
+            [SBX, "policy", "rm", "network", "--resource", host],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+
+
+NAME_PREFIX = "band-nevervm"
+
+
+def sandbox_name(prefix: str = NAME_PREFIX) -> str:
+    """A unique sandbox name.
+
+    Allocate it up front when a scoped secret must name the sandbox before
+    ``Sandbox.create`` brings it into existence.
+    """
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 @dataclass
@@ -143,19 +236,21 @@ class Sandbox:
         *,
         kit: Path | str,
         workspace: Path | str,
+        name: str | None = None,
         agent: str | None = None,
-        name_prefix: str = "band-nevervm",
     ) -> Iterator[Sandbox]:
         """`sbx create --kit <kit> <agent> <workspace>`; yield it, then remove.
 
-        For an agent (sandbox) kit the agent name is the kit's own name — a plain
+        Pass ``name`` when it was allocated up front (so a scoped secret could be
+        provisioned before creation); otherwise a unique one is generated. For an
+        agent (sandbox) kit the agent name is the kit's own name — a plain
         ``shell`` agent can't be combined with one — so it defaults to the name
         the kit's ``spec.yaml`` declares. Injection config only applies when the
         kit rides ``sbx create --kit`` (not ``sbx kit add``), so the never-in-VM
         proof must create this way.
         """
-        agent = agent or _kit_agent_name(kit)
-        name = f"{name_prefix}-{uuid.uuid4().hex[:8]}"
+        agent = agent or kit_agent_name(kit)
+        name = name or sandbox_name()
         subprocess.run(
             [SBX, "create", "--name", name, "--kit", str(kit), agent, str(workspace)],
             capture_output=True,
@@ -230,6 +325,6 @@ class Sandbox:
         A raw read, not a verdict: the caller pairs this absence check with a
         positive control (see the never-in-VM test) so an empty result can't
         pass vacuously. The command's flag rationale lives in
-        ``_files_containing_command``.
+        ``files_containing_command``.
         """
-        return self.exec(_files_containing_command(secret, search_paths))
+        return self.exec(files_containing_command(secret, search_paths))

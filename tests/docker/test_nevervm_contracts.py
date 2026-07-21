@@ -12,7 +12,13 @@ import subprocess
 from pathlib import Path
 
 from tests.docker.markers import requires_posix_shell
-from tests.docker.toolkit.sbx_cli import _files_containing_command, _kit_agent_name
+from tests.docker.toolkit.sbx_cli import (
+    files_containing_command,
+    kit_agent_name,
+    kit_baseline_hosts,
+    remove_custom_secret_command,
+    set_custom_secret_command,
+)
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.paths import KIT_DIR
 
@@ -24,7 +30,36 @@ def test_kit_agent_name_matches_the_shipped_spec() -> None:
     # A sandbox kit is created as `sbx create --kit <kit> <name>`; the name is
     # the kit's own (a plain `shell` agent is rejected). Guards the derivation
     # reads spec.yaml's `name`, and that the shipped kit declares it.
-    assert _kit_agent_name(KIT_DIR) == "band-python-kit"
+    assert kit_agent_name(KIT_DIR) == "band-python-kit"
+
+
+def test_custom_secret_injection_is_scoped_to_the_sandbox() -> None:
+    # The Band key is injected scoped to the proof's own sandbox, never globally
+    # (`-g`): the kit README registers the Band key globally for real use, so a
+    # global test secret would overwrite and then delete the operator's own
+    # credential. Guards both the set and the removal against a `-g` regression.
+    name = "band-nevervm-abc123"
+    set_command = set_custom_secret_command(
+        sandbox=name,
+        host="**.band.ai",
+        env="BAND_API_KEY",
+        value="real-key",
+        placeholder="proxy-managed",
+    )
+    remove_command = remove_custom_secret_command(sandbox=name, host="**.band.ai")
+
+    assert "-g" not in set_command and name in set_command
+    assert "-g" not in remove_command and name in remove_command
+
+
+def test_kit_baseline_reaches_prod_band_but_not_a_non_prod_host() -> None:
+    # The proof grants a Band host only when the kit's baseline doesn't already
+    # reach it. Guards that prod (`app.band.ai`, in the shipped spec) is treated
+    # as reachable — so it is never granted globally — while a non-prod host is
+    # not, so it gets the per-run `allow_network`.
+    baseline = kit_baseline_hosts(KIT_DIR)
+    assert "app.band.ai" in baseline
+    assert "platform.dev.band.ai" not in baseline
 
 
 def test_baseline_settings_expose_the_paths_the_proof_reads() -> None:
@@ -49,7 +84,7 @@ def test_absence_search_scans_binary_files_too(tmp_path: Path) -> None:
     (tmp_path / "plain.txt").write_text(f"prefix {secret} suffix\n", encoding="utf-8")
     (tmp_path / "blob.bin").write_bytes(b"\x00\x01" + secret.encode() + b"\x00\xff")
 
-    command = _files_containing_command(secret, [str(tmp_path)])
+    command = files_containing_command(secret, [str(tmp_path)])
     result = subprocess.run(
         ["bash", "-c", command],
         capture_output=True,

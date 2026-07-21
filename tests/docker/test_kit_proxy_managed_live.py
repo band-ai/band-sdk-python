@@ -15,9 +15,9 @@ set-custom`), with only the sentinel in the VM, this checks:
    whose key is injected on the wire and never enters the VM.
 
 Runs only on a Docker-Sandbox-capable host (nested virtualization) with the
-`sbx` CLI, against the Band deployment `.env.test` points at. That deployment's
-host must be reachable from the sandbox — the kit allowlists `app.band.ai`, so a
-non-prod target also needs `sbx policy allow network`. Gated behind BOTH
+`sbx` CLI, against the Band deployment `.env.test` points at. The fixtures reach
+that deployment automatically — the kit allowlists `app.band.ai`, and a non-prod
+target is granted per run via `sbx policy allow network`. Gated behind BOTH
 ``sandbox`` (SANDBOX_TESTS_ENABLED=true) and ``e2e`` (E2E_TESTS_ENABLED=true);
 skipped on every ordinary/CI run.
 
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import shutil
 from collections.abc import AsyncIterator, Iterator
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -40,7 +41,10 @@ from tests.docker.toolkit.sbx_cli import (
     CREATE_TIMEOUT_S,
     PROXY_CA_MARKER,
     Sandbox,
+    allow_network,
     custom_secret,
+    kit_baseline_hosts,
+    sandbox_name,
     sbx_available,
 )
 from tests.e2e.baseline.settings import BaselineSettings, BandEndpoints
@@ -71,16 +75,46 @@ def band_host() -> str:
     return urlsplit(BaselineSettings().endpoints.rest_url).hostname or "app.band.ai"
 
 
+@contextmanager
+def proxy_managed_sandbox(
+    *, workspace: Path, band_key: str, band_host: str
+) -> Iterator[Sandbox]:
+    """A proxy-managed sandbox wired to reach ``band_host``, torn down on exit.
+
+    Injects ``band_key`` for the Band host **scoped to this one sandbox** — never
+    the operator's global ``**.band.ai`` credential — and, when the kit's baseline
+    doesn't already reach ``band_host`` (a non-prod deployment), grants it so the
+    agent's startup REST/WS and the cert probe are not blocked. Everything is set
+    before ``sbx create`` (so it is in force at startup) and removed on exit.
+    """
+    name = sandbox_name()
+    with ExitStack() as stack:
+        if band_host not in kit_baseline_hosts(KIT_DIR):
+            stack.enter_context(allow_network(band_host))
+        stack.enter_context(
+            custom_secret(
+                sandbox=name,
+                host="**.band.ai",
+                env="BAND_API_KEY",
+                value=band_key,
+                placeholder=PROXY_MANAGED_API_KEY,
+            )
+        )
+        yield stack.enter_context(
+            Sandbox.create(name=name, kit=KIT_DIR, workspace=workspace)
+        )
+
+
 @pytest.fixture
 def provisioned_sandbox(band_host: str) -> Iterator[tuple[Sandbox, str]]:
     """A sandbox under proxy-managed custody, plus the real key it was given.
 
-    The fixture provisions the `set-custom` secret **itself** with the real Band
-    key, so the value the absence check asserts-absent is exactly the one the
-    proxy would inject — no guessing which key is stored. The kit bakes no
-    `credentials` block (the kit-declared form crashes `sbx create` 0.35.0);
-    injection is host-side `set-custom`, verified live to flip the Band host's
-    TLS to the Docker Sandboxes MITM cert. Yields ``(sandbox, real_key)``.
+    The fixture provisions the injection **itself** with the real Band key, so
+    the value the absence check asserts-absent is exactly the one the proxy would
+    inject — no guessing which key is stored. The kit bakes no `credentials`
+    block (the kit-declared form crashes `sbx create` 0.35.0); injection is
+    host-side `set-custom`, verified live to flip the Band host's TLS to the
+    Docker Sandboxes MITM cert. Yields ``(sandbox, real_key)``.
     """
     if not sbx_available():
         pytest.skip("sbx CLI not on PATH")
@@ -89,14 +123,10 @@ def provisioned_sandbox(band_host: str) -> Iterator[tuple[Sandbox, str]]:
         pytest.skip("a real Band key (BAND_API_KEY_USER) is required")
 
     workspace = KIT_DIR / "echo-agent"  # defaults to proxy-managed custody
-    with custom_secret(
-        host="**.band.ai",
-        env="BAND_API_KEY",
-        value=real_key,
-        placeholder=PROXY_MANAGED_API_KEY,
-    ):
-        with Sandbox.create(kit=KIT_DIR, workspace=workspace) as sandbox:
-            yield sandbox, real_key
+    with proxy_managed_sandbox(
+        workspace=workspace, band_key=real_key, band_host=band_host
+    ) as sandbox:
+        yield sandbox, real_key
 
 
 def test_band_host_rides_the_injection_path(
@@ -169,15 +199,16 @@ async def round_trip_sandbox(
     tmp_path: Path,
     resource_manager: ResourceManager,
     baseline_settings: BaselineSettings,
+    band_host: str,
 ) -> AsyncIterator[tuple[ProvisionedAgent, str]]:
     """A live echo agent inside a proxy-managed sandbox, plus its room.
 
     Provisions a real agent, bakes its id + the settings endpoints into a
-    throwaway workspace, and injects its *key* host-side with the same
-    ``set-custom`` placeholder the kit documents — so the VM holds only the
-    sentinel. The kit's startup command launches the agent at ``sbx create`` and
-    the proxy swaps the sentinel for the real key on the wire. Yields
-    ``(agent, room_id)`` to drive one turn against.
+    throwaway workspace, and injects its *key* host-side (scoped to this
+    sandbox) with the same ``proxy-managed`` placeholder the kit documents — so
+    the VM holds only the sentinel. The kit's startup command launches the agent
+    at ``sbx create`` and the proxy swaps the sentinel for the real key on the
+    wire. Yields ``(agent, room_id)`` to drive one turn against.
     """
     if not sbx_available():
         pytest.skip("sbx CLI not on PATH")
@@ -187,14 +218,10 @@ async def round_trip_sandbox(
     workspace = _round_trip_workspace(
         tmp_path, agent_id=agent.id, endpoints=baseline_settings.endpoints
     )
-    with custom_secret(
-        host="**.band.ai",
-        env="BAND_API_KEY",
-        value=agent.api_key,
-        placeholder=PROXY_MANAGED_API_KEY,
+    with proxy_managed_sandbox(
+        workspace=workspace, band_key=agent.api_key, band_host=band_host
     ):
-        with Sandbox.create(kit=KIT_DIR, workspace=workspace):
-            yield agent, room_id
+        yield agent, room_id
 
 
 @pytest.mark.asyncio(loop_scope="session")
