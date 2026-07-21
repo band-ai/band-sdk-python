@@ -59,7 +59,10 @@ jobs:
         if: ${{ steps.release.outputs.pr }}
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          # A step's env templates are evaluated even when its `if` is false,
+          # so this must stay total on release-creating merges, where the `pr`
+          # output is empty and a bare fromJSON('') fails the whole job.
+          PR_BRANCH: ${{ fromJSON(steps.release.outputs.pr || '{}').headBranchName }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
