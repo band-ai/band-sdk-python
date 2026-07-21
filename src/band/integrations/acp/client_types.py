@@ -14,9 +14,13 @@ class ACPClientSessionState:
 
     A session ID is owned by the remote ACP agent, so the adapter must validate it
     with ACP ``session/load`` after reconnecting before it can be used for a prompt.
+
+    ``replay_messages`` carries the room's text transcript as ``[sender]: content``
+    lines, the fallback context when no persisted session can be restored.
     """
 
     room_to_session: dict[str, str] = field(default_factory=dict)
+    replay_messages: list[str] = field(default_factory=list)
 
 
 class BandACPClient(ACPCollectingClient):

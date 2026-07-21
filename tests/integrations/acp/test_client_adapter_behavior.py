@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-from .acp_toolkit import acp_adapter
+from band.integrations.acp.client_adapter import HISTORY_REPLAY_HEADER
+from band.integrations.acp.client_types import ACPClientSessionState
+
+from .acp_toolkit import FakeACPAgent, acp_adapter
 
 
 @pytest.mark.asyncio
@@ -333,3 +336,152 @@ async def test_two_rooms_get_isolated_sessions(fake_agent) -> None:
     # Each room created its own ACP session and got its own reply — no cross-talk.
     assert len({s["session_id"] for s in fake_agent.sessions}) == 2
     assert reply1.texts != reply2.texts
+
+
+# --- Band-history replay when the remote session cannot be restored ------------
+#
+# The remote agent owns its session state; a container restart or fresh spawn
+# loses it. The Band room transcript survives on the platform, so on bootstrap
+# the adapter must fall back to replaying that transcript into the new session.
+# Known rehydration weaknesses guarded here: the current message must appear
+# exactly once (no duplication with the replay), and it must stay the prompt's
+# final word (the replay must not displace or answer over it).
+
+
+def rehydration_history(
+    *lines: str, session: str | None = None, room: str = "room-1"
+) -> ACPClientSessionState:
+    """Converted platform history handed to the adapter on bootstrap."""
+    return ACPClientSessionState(
+        room_to_session={room: session} if session else {},
+        replay_messages=list(lines),
+    )
+
+
+@pytest.mark.asyncio
+async def test_replay_injected_when_remote_session_is_gone() -> None:
+    """session/load fails for the persisted id -> the transcript is replayed,
+    framed as context, and the live message stays last and unduplicated."""
+    agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
+    history = rehydration_history(
+        "[Marco]: My favorite color is blue.",
+        "[Fake Agent]: Noted.",
+        session="stale-session",
+    )
+
+    async with acp_adapter(agent) as session:
+        await session.send(
+            "What is my favorite color?", bootstrap=True, history=history
+        )
+
+    assert agent.session_load_requests == [
+        "stale-session"
+    ]  # resume was attempted first
+    assert len(agent.sessions) == 1  # then a fresh session was created
+
+    prompt = agent.prompt_texts()[0]
+    assert "[Marco]: My favorite color is blue." in prompt
+    assert prompt.count("What is my favorite color?") == 1
+    # The live message is attributed like the transcript lines, so the model
+    # can tell where the replay ends and who is speaking now.
+    assert "[Peer]: What is my favorite color?" in prompt
+    # Causal order: system context, then the replayed history, then the live message.
+    assert (
+        prompt.index("[System Context]")
+        < prompt.index(HISTORY_REPLAY_HEADER)
+        < prompt.index("[Marco]:")
+    )
+    assert prompt.rstrip().endswith("What is my favorite color?")
+
+
+@pytest.mark.asyncio
+async def test_replay_injected_when_session_load_errors() -> None:
+    """A remote that errors on session/load (a protocol error, not "not found")
+    must not kill the turn: the failed load counts as a miss, the transcript
+    replay still fires, and the room still gets its reply."""
+    agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
+    agent.breaks_session_load()
+    history = rehydration_history(
+        "[Marco]: My favorite color is blue.", session="wedged-session"
+    )
+
+    async with acp_adapter(agent) as session:
+        reply = await session.send(
+            "What is my favorite color?", bootstrap=True, history=history
+        )
+
+    assert agent.session_load_requests == ["wedged-session"]
+    assert len(agent.sessions) == 1  # fell back to a fresh session
+    assert HISTORY_REPLAY_HEADER in agent.prompt_texts()[0]
+    assert reply.texts == ["Blue."]  # the turn completed instead of dying
+
+
+@pytest.mark.asyncio
+async def test_no_replay_when_remote_session_loads() -> None:
+    """A restored session already holds the conversation remotely; replaying the
+    transcript on top would double the history the agent sees."""
+    agent = FakeACPAgent(supports_session_load=True).will_say("Blue.")
+    agent.knows_session("session-1")
+    history = rehydration_history(
+        "[Marco]: My favorite color is blue.", session="session-1"
+    )
+
+    async with acp_adapter(agent) as session:
+        await session.send(
+            "What is my favorite color?", bootstrap=True, history=history
+        )
+
+    assert agent.session_load_requests == ["session-1"]
+    assert agent.sessions == []  # resumed, never recreated
+
+    prompt = agent.prompt_texts()[0]
+    assert HISTORY_REPLAY_HEADER not in prompt
+    assert "[Marco]:" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_replay_injected_on_cold_boot_without_persisted_session(
+    fake_agent,
+) -> None:
+    """No session id was ever persisted (e.g. the note landed while the agent was
+    down), yet the room transcript exists: replay is the only path to context."""
+    fake_agent.will_say("7421.")
+    history = rehydration_history("[Marco]: The deploy code is 7421.")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send("What is the deploy code?", bootstrap=True, history=history)
+
+    assert (
+        fake_agent.session_load_requests == []
+    )  # nothing to resume, no load attempted
+    prompt = fake_agent.prompt_texts()[0]
+    assert HISTORY_REPLAY_HEADER in prompt
+    assert "[Marco]: The deploy code is 7421." in prompt
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_with_empty_history_has_no_replay_block(fake_agent) -> None:
+    """A genuinely new room must not get an empty history frame."""
+    fake_agent.will_say("Hello!")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send("hi", bootstrap=True)
+
+    assert HISTORY_REPLAY_HEADER not in fake_agent.prompt_texts()[0]
+
+
+@pytest.mark.asyncio
+async def test_replay_happens_once_not_on_later_turns(fake_agent) -> None:
+    """The transcript is seeded into the session's first prompt only; repeating
+    it on every turn would compound the duplication it exists to avoid."""
+    fake_agent.will_say("ok")
+    history = rehydration_history("[Marco]: My favorite color is blue.")
+
+    async with acp_adapter(fake_agent) as session:
+        await session.send("first question", bootstrap=True, history=history)
+        await session.send("second question", history=history)
+
+    first, second = fake_agent.prompt_texts()
+    assert HISTORY_REPLAY_HEADER in first
+    assert HISTORY_REPLAY_HEADER not in second
+    assert "[Marco]:" not in second

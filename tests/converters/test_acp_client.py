@@ -20,7 +20,68 @@ class TestACPClientHistoryConverter:
         """Empty history returns empty state."""
         result = converter.convert([])
         assert result.room_to_session == {}
+        assert result.replay_messages == []
         assert isinstance(result, ACPClientSessionState)
+
+    def test_replay_messages_render_room_text_history(
+        self, converter: ACPClientHistoryConverter
+    ) -> None:
+        """Text messages survive as replay lines, so a fresh remote session can
+        be re-seeded with the room transcript when session/load fails."""
+        raw = [
+            {
+                "message_type": "text",
+                "sender_name": "Alice",
+                "content": "What is the plan?",
+            },
+            {
+                "message_type": "text",
+                "sender_name": "ACP Agent",
+                "content": "Working on it.",
+            },
+        ]
+        result = converter.convert(raw)
+        assert result.replay_messages == [
+            "[Alice]: What is the plan?",
+            "[ACP Agent]: Working on it.",
+        ]
+
+    def test_replay_skips_adapter_narration_and_bookkeeping(
+        self, converter: ACPClientHistoryConverter
+    ) -> None:
+        """The adapter narrates every turn into the room (thoughts, tool calls,
+        session task events); none of that may be replayed back to the remote
+        agent as conversation, while the same events still feed session resume."""
+        raw = [
+            {"message_type": "text", "sender_name": "Alice", "content": "hello"},
+            {"message_type": "text", "sender_name": "Alice", "content": "   "},
+            {
+                "message_type": "thought",
+                "sender_name": "ACP Agent",
+                "content": "thinking...",
+            },
+            {
+                "message_type": "tool_call",
+                "sender_name": "ACP Agent",
+                "content": '{"name": "grep"}',
+            },
+            {
+                "message_type": "tool_result",
+                "sender_name": "ACP Agent",
+                "content": '{"output": "3 hits"}',
+            },
+            {
+                "message_type": "task",
+                "content": "ACP session established",
+                "metadata": {
+                    "acp_client_session_id": "session-123",
+                    "acp_client_room_id": "room-456",
+                },
+            },
+        ]
+        result = converter.convert(raw)
+        assert result.replay_messages == ["[Alice]: hello"]
+        assert result.room_to_session == {"room-456": "session-123"}
 
     def test_extract_room_to_session_from_metadata(
         self, converter: ACPClientHistoryConverter

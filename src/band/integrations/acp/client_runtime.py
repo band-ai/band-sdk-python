@@ -768,9 +768,17 @@ class ACPRuntime:
             )
             return False
         except RequestError as error:
-            if not self._is_missing_session_error(error):
-                raise
-            logger.info("ACP session %s is no longer available", session_id)
+            # Any load failure is equally recoverable: the caller falls back to
+            # a fresh session (with history replay) rather than letting a remote
+            # protocol error kill the bootstrap turn.
+            if self._is_missing_session_error(error):
+                logger.info("ACP session %s is no longer available", session_id)
+            else:
+                logger.warning(
+                    "ACP session/load for %s failed (%s); using a new session",
+                    session_id,
+                    error,
+                )
             return False
         return response is not None
 

@@ -196,16 +196,28 @@ class AcpSession:
         self.adapter = adapter
         self.agent = agent
 
-    async def send(self, content: str, *, room: str = "room-1") -> Reply:
-        """Deliver ``content`` to ``room`` and return what the adapter posted back."""
+    async def send(
+        self,
+        content: str,
+        *,
+        room: str = "room-1",
+        history: ACPClientSessionState | None = None,
+        bootstrap: bool = False,
+    ) -> Reply:
+        """Deliver ``content`` to ``room`` and return what the adapter posted back.
+
+        ``bootstrap=True`` with a ``history`` models the first message after an
+        adapter (re)start, when the runtime hands over the room's converted
+        platform history.
+        """
         tools = TranscriptTools()
         await self.adapter.on_message(
             _message(content, room),
             tools,
-            ACPClientSessionState(),
+            history or ACPClientSessionState(),
             None,
             None,
-            is_session_bootstrap=False,
+            is_session_bootstrap=bootstrap,
             room_id=room,
         )
         return Reply(
