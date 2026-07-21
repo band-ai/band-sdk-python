@@ -91,7 +91,11 @@ jobs:
   # block the PyPI release.
   publish-kit:
     needs: [release]
-    if: needs.release.outputs.release_created == 'true'
+    # !cancelled() overrides the implicit success() gate on `needs`: the
+    # release job can fail after release-please has already tagged (v1.4.0
+    # did), and job outputs survive a failure — a created release must still
+    # publish. Non-release merges skip via the release_created check.
+    if: ${{ !cancelled() && needs.release.outputs.release_created == 'true' }}
     permissions:
       contents: read
       packages: write
@@ -118,7 +122,9 @@ jobs:
   # (skips) until the add-band catalog entry itself exists.
   bump-add-band:
     needs: [release, publish-kit]
-    if: needs.release.outputs.release_created == 'true'
+    # Same !cancelled() rationale as publish-kit; the explicit result check
+    # keeps the bump gated on the kit actually having published.
+    if: ${{ !cancelled() && needs.release.outputs.release_created == 'true' && needs.publish-kit.result == 'success' }}
     runs-on: ubuntu-latest
     # Everything here runs on the App token; don't inherit the workflow's
     # write-scoped GITHUB_TOKEN permissions this job never uses.
