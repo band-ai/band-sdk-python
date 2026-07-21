@@ -95,8 +95,9 @@ the Dockerfile.
 The check covers the **whole** lockfile, so the gate can trip on a fresh
 **dev-only** dependency bump (pytest, ruff, …) that never enters the
 image — not only on a poisoned runtime dependency. Benign trips are therefore
-expected. A trip leaves a **split release**: the PyPI publish (`publish-band`, an
-independent job) has already succeeded, but no kit artifacts were produced.
+expected. A trip leaves a **split release**: the PyPI publish (`band-publish.yml`,
+an independent release-triggered workflow) has already succeeded, but no kit
+artifacts were produced.
 
 ### Recovery
 

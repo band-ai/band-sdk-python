@@ -79,15 +79,26 @@ merges).
 
 1. Release Please opens/updates a release PR, or — when a release PR merges —
    tags the release and updates the changelog and version.
-2. On a created release, publishes `band-sdk` to PyPI (`publish-band`).
-3. In parallel, publishes the sandbox kit to GHCR via the reusable
+2. On a created release, publishes the sandbox kit to GHCR via the reusable
    `kit-publish.yml` pipeline (`publish-kit`): the multi-arch attested image
    `ghcr.io/band-ai/band-python-kit/image` and the OCI kit artifact
    `ghcr.io/band-ai/band-python-kit`, gated by the supply-chain quarantine
-   check. A kit failure never blocks the PyPI publish (independent jobs).
-4. After a successful kit publish, opens an automated version-bump PR against
+   check.
+3. After a successful kit publish, opens an automated version-bump PR against
    `band-ai/add-band` (`bump-add-band`; merging it stays a human step).
-5. `summary` reports every artifact's outcome.
+4. `summary` reports each artifact's outcome.
+
+### PyPI publish — `band-publish.yml`
+
+Not a job in `release.yml`: publishing `band-sdk` to PyPI reacts to the
+`release: published` event (the release workflow's App token makes that event
+fire), so no failure inside the release run can strand a tagged release
+unpublished, and neither publish blocks the other. It is deliberately a
+top-level workflow rather than a reusable one — PyPI trusted publishing binds
+the publisher to the top-level workflow filename and does not support reusable
+workflows. Its `workflow_dispatch` republishes any pre-existing tag
+(`skip-existing` makes re-runs idempotent), which is the recovery path for a
+release whose publish failed — no retag or re-release needed.
 
 Related: `kit-image-rebuild.yml` (weekly CVE rebuild of the published kit
 image), `kit-publish-manual.yml` (serialized manual recovery/rehearsal), and
@@ -101,7 +112,8 @@ and recovery runbook).
 3. Get 1 approval, **squash** merge to `main`.
 4. Release Please updates the standing release PR to reflect the new commit.
 5. When ready to release, review and **merge the release PR**. That tags the
-   release and triggers `release.yml`, which publishes to PyPI and GHCR.
+   release, publishes the kit to GHCR (`release.yml`), and the published
+   release triggers the PyPI publish (`band-publish.yml`).
 
 > **No back-merge:** the release commit Release Please lands (version bump +
 > CHANGELOG) goes onto `main` — the same branch everyone works from — so there is
