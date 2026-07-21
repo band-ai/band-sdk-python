@@ -330,25 +330,28 @@ def resolve_credentials(
 def require_sentinel_under_proxy_managed(
     config: WorkspaceConfig, credentials: dict[str, str]
 ) -> None:
-    """In proxy-managed custody the VM must hold only the sentinel for *every*
-    managed credential — the Band key and the LLM/provider keys alike. A real
-    value here would defeat the 'never enters the VM' guarantee, since the
-    launcher passes it straight to the customer process. The real keys belong on
-    the host (``sbx secret`` for the provider services, ``sbx secret set-custom``
-    for the Band key); the proxy supplies them on the wire."""
+    """In proxy-managed custody the Band key in the VM must be the sentinel — a
+    real key here would defeat the 'never enters the VM' guarantee, since the
+    launcher passes it straight to the customer process. The real key belongs on
+    the host (``sbx secret set-custom`` with the ``proxy-managed`` placeholder),
+    and the proxy supplies it on the wire.
+
+    Scoped to the Band key on purpose. Only it uses the kit's own custom-secret
+    placeholder; LLM/provider keys ride sbx's built-in service secrets
+    (``sbx secret set -g <provider>``), which inject sbx's own placeholder
+    (``SANDBOX_STORED_CREDENTIAL_…``), never this literal. Requiring the Band
+    sentinel for them would reject the documented provider flow, and the
+    launcher can't police a placeholder scheme it doesn't own — provider custody
+    is sbx's, enforced by keeping the real key off the VM at the service-secret
+    layer."""
     section = config.credentials
     if section is None or section.source is not CredentialSource.PROXY_MANAGED:
         return
-    real = sorted(
-        name
-        for name, value in credentials.items()
-        if value and value != PROXY_MANAGED_API_KEY
-    )
-    if real:
+    key = credentials.get("BAND_API_KEY")
+    if key and key != PROXY_MANAGED_API_KEY:
         raise LaunchError(
             "credentials",
-            f"proxy-managed custody requires {', '.join(real)} to be the "
-            f"{PROXY_MANAGED_API_KEY!r} sentinel, not a real key — the real "
-            "key(s) must stay on the host (provision with `sbx secret` / "
-            "`sbx secret set-custom`).",
+            "proxy-managed custody requires BAND_API_KEY to be the "
+            f"{PROXY_MANAGED_API_KEY!r} sentinel, not a real key — the real key "
+            "must stay on the host (provision it with `sbx secret set-custom`).",
         )
