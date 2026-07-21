@@ -522,7 +522,6 @@ async def test_upgrade_carries_api_key_in_query_and_x_api_key_header():
     assert params["api_key"] == [PROXY_MANAGED_API_KEY]
     assert params["agent_id"] == ["agent-xyz"]
     assert params.get("vsn")  # protocol version retained alongside the sentinel
-    # Phase B: the sentinel also rides the x-api-key handshake header.
     assert headers["x-api-key"] == PROXY_MANAGED_API_KEY
 
 

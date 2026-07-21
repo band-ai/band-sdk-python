@@ -58,9 +58,9 @@ caps:
 # at. LLM provider keys are built-in sbx services — `sbx secret set -g <provider>`
 # (anthropic, openai, …). See the README "Credential custody" section.
 #
-# (A kit-declared `credentials[].apiKey.inject[]` block was tried but crashes
-# `sbx create` on sbx 0.35.0 despite passing `sbx kit validate` — tracked
-# upstream; host-side `set-custom` is the working, controllable path.)
+# A kit-declared `credentials[].apiKey.inject[]` block crashes `sbx create` on
+# sbx 0.35.0 despite passing `sbx kit validate` (tracked upstream); host-side
+# `set-custom` is the working, controllable path.
 
 agentContext: |
   This workspace contains a Python agent launched by the Band Sandbox kit.

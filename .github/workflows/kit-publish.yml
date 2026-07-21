@@ -4,11 +4,11 @@
 # band-sdk release) and kit-image-rebuild.yml (weekly CVE rebuild) so the two
 # never drift into separate copies.
 #
-# The ORAS-assembled OCI v2 shape and a GHCR pull -> `sbx create --kit`
-# roundtrip were last validated against sbx v0.34.0; the kit now targets v0.35.0
-# (kit-spec v2 credential injection) and `sbx kit validate` passes under it — the
-# push/pull/consume roundtrip must be re-run under 0.35.0 at the next release.
-# See RELEASING.md. Revalidate on every sbx upgrade; the kit surface is experimental.
+# The kit targets sbx v0.35.0 (kit-spec v2 credential injection); `sbx kit
+# validate` passes under it. The ORAS-assembled OCI v2 shape and the GHCR
+# pull -> `sbx create --kit` roundtrip still need re-validating under 0.35.0
+# (last run under v0.34.0) — see RELEASING.md. Revalidate on every sbx upgrade;
+# the kit surface is experimental.
 #
 # NOTE (action pinning): every action in the kit publish/rebuild workflows is
 # pinned to a full commit SHA per GitHub's hardening guidance for
