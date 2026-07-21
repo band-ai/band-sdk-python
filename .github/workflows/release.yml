@@ -46,37 +46,38 @@ jobs:
           manifest-file: .release-please-manifest.json
           target-branch: main
 
-      # release-please bumps the version in pyproject.toml but not uv.lock's own
-      # band-sdk entry, so `uv sync --locked` (the kit image build) fails on the
-      # release. Re-lock the release PR so the version bump and the lock always
-      # land together. Runs only when a release PR was opened/updated (not on the
-      # release-creating merge, where the lock is already consistent).
       - name: Install uv
-        if: ${{ steps.release.outputs.pr }}
+        if: steps.release.outputs.prs_created == 'true'
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
-      - name: Sync uv.lock into the release PR
-        if: ${{ steps.release.outputs.pr }}
+      # release-please bumps pyproject.toml's version but cannot regenerate
+      # uv.lock (a generated file takes no release-please annotations). CI
+      # enforces the lock with `uv sync --locked`, so refresh it on the
+      # release PR here; otherwise every release PR fails CI with a stale
+      # lock. Pushed with the App token: a GITHUB_TOKEN-authored push would
+      # not trigger the PR's CI (same gotcha as the add-band job below).
+      - name: Refresh uv.lock on the release PR
+        if: steps.release.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
-          REPO: ${{ github.repository }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
         run: |
-          set -euo pipefail
-          git fetch origin "$PR_BRANCH"
-          git checkout -B "$PR_BRANCH" FETCH_HEAD
+          branch=$(echo "$RELEASE_PR" | jq -r '.headBranchName')
+          if [ -z "$branch" ] || [ "$branch" = "null" ]; then
+            echo "::error::release PR output carried no headBranchName — refresh step needs updating"
+            exit 1
+          fi
+          git fetch origin "$branch"
+          git switch "$branch"
           uv lock
-          if git diff --quiet -- uv.lock; then
-            echo "uv.lock already matches the release version."
+          if git diff --quiet uv.lock; then
+            echo "uv.lock already current for this release PR."
             exit 0
           fi
           git config user.name "band-release-bot"
           git config user.email "release-bot@band.ai"
-          git add uv.lock
-          git commit -m "chore: sync uv.lock to the release version"
-          # Push with the App token (not the default GITHUB_TOKEN) so the PR's CI
-          # re-runs and the `uv lock --check` gate sees the now-consistent lock.
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "HEAD:${PR_BRANCH}"
+          git commit -am "chore: refresh uv.lock for the release version bump"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
 
   publish-band:
     needs: [release]
@@ -101,7 +102,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
       - name: Install dependencies
-        run: uv sync --all-groups
+        run: uv sync --locked --all-groups
 
       - name: Build band-sdk package
         run: uv build
