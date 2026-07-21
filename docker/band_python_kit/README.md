@@ -56,7 +56,10 @@ curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags
       "band-sdk-python-band-sdk-v<X.Y.Z>/docker/band_python_kit/echo-agent"
 #    Then, in ~/my-band-agent:
 #    - set agent.id in band.yaml
-#    - create .band/secrets.env from secrets.env.example (chmod 600)
+#    - provision your Band key: band.yaml defaults to proxy-managed, so run the
+#      `sbx secret set-custom` step from "Credential custody" below — NOT
+#      .band/secrets.env, which the proxy-managed launcher ignores. (The echo
+#      starter needs no LLM key.)
 
 # 4. Create the sandbox from the published kit — your agent starts immediately.
 sbx create --name my-band-agent \
