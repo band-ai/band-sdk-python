@@ -103,6 +103,17 @@ class CircuitBreaker:
         self._nudged = False  # soft nudge already fired (fire once)
         self._terminal = False  # a kill/terminate already fired (stop acting)
 
+    def __enter__(self) -> CircuitBreaker:
+        """Enter the guarded meeting. Lock-like: the caller drives ``record``/``poll``
+        inside the ``with`` block, and leaving it always closes the meeting."""
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        """Closing the block terminates the breaker for good — a runaway can't
+        outlive the guarded region even if the loop breaks or raises."""
+        self._terminal = True
+        return False  # never suppress an exception
+
     def note_architect_present(self) -> None:
         """Conductor detected the Architect joined the room — we're in Act 2, stop nudging."""
         self._handoff = True

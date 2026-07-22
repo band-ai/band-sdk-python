@@ -178,3 +178,22 @@ def test_no_actions_after_terminal(config: BreakerConfig) -> None:
     assert cb.poll(config.wall_clock_s + 5) == [], (
         "a stopped breaker must never emit another action"
     )
+
+
+def test_context_manager_closes_the_meeting_on_exit(config: BreakerConfig) -> None:
+    cb = CircuitBreaker(config, start_time=0.0)
+    with cb as guard:
+        assert guard is cb, (
+            "entering the guard yields the breaker to drive inside the block"
+        )
+        cb.record(msg(SenderClass.PM, 1.0))
+    assert cb.stopped is True, "leaving the guarded block must close the meeting"
+    assert cb.poll(2.0) == [], (
+        "a closed breaker emits no further actions — the runaway can't outlive the block"
+    )
+
+
+def test_context_manager_does_not_suppress_exceptions(config: BreakerConfig) -> None:
+    with pytest.raises(ValueError):
+        with CircuitBreaker(config, start_time=0.0):
+            raise ValueError("boom")
