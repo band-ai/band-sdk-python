@@ -97,3 +97,12 @@ def test_to_observed_projects_all_breaker_inputs() -> None:
     ), (
         "projection must use the message's own timestamp so the breaker's clock is the room's clock"
     )
+
+
+def test_conductor_caps_do_not_drift_from_breaker_defaults() -> None:
+    # Guards the single-source rule: ConductorSettings cap defaults must equal the
+    # BreakerConfig defaults, so the two can never silently drift (300 vs 600 again).
+    settings = conductor.ConductorSettings()
+    assert settings.breaker_config() == conductor.BreakerConfig(), (
+        "conductor's default caps must match the single-source BreakerConfig defaults"
+    )

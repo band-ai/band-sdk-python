@@ -60,6 +60,10 @@ logger = logging.getLogger(__name__)
 # message must not. The architect persona is instructed to lead with this marker.
 DECISION_MARKER = re.compile(r"\b(?:decision|verdict)\s*:", re.IGNORECASE)
 
+# BreakerConfig is the single source of the breaker cap defaults; the settings
+# below default to it (env vars still override) so the two can't drift apart.
+_BREAKER_DEFAULTS = BreakerConfig()
+
 
 class ConductorSettings(BaseSettings):
     """Environment configuration for the conductor and the circuit breaker.
@@ -81,13 +85,11 @@ class ConductorSettings(BaseSettings):
     demo_architect_key: str = "demo_architect"
 
     demo_poll_interval_s: float = 3.0
-    demo_soft_cap: int = 6
-    demo_handoff_deadline: int = 2
-    demo_hard_cap: int = 12
-    demo_wall_clock_s: float = (
-        600.0  # headroom for first-run venv sync + the conversation
-    )
-    demo_grace_s: float = 20.0
+    demo_soft_cap: int = _BREAKER_DEFAULTS.soft_cap
+    demo_handoff_deadline: int = _BREAKER_DEFAULTS.handoff_deadline
+    demo_hard_cap: int = _BREAKER_DEFAULTS.hard_cap
+    demo_wall_clock_s: float = _BREAKER_DEFAULTS.wall_clock_s
+    demo_grace_s: float = _BREAKER_DEFAULTS.grace_s
     # Web UI URL for the room, auto-opened by launch.sh. {chat_id} is filled in;
     # default derives from the REST host (override for a distinct web app host).
     demo_ui_url_template: str = ""
@@ -324,8 +326,8 @@ class Conductor:
         """
         await self.setup()
         reason: str | None = None
-        # The breaker guards the meeting like a lock: leaving this block closes it,
-        # so the agents can never keep talking past the guarded region.
+        # Guard the loop with the breaker: on exit it marks itself terminal (a
+        # defensive backstop). Stopping the agents is teardown's job, not this flag's.
         with self.breaker:
             while reason is None:
                 await asyncio.sleep(self.settings.demo_poll_interval_s)

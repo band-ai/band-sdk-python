@@ -94,9 +94,7 @@ class BreakerConfig:
         2  # further design messages, Architect still absent, before we add it
     )
     hard_cap: int = 12  # total agent messages before we force-kill
-    wall_clock_s: float = (
-        300.0  # ceiling for reaching a decision (tail bounded by grace_s)
-    )
+    wall_clock_s: float = 600.0  # ceiling to reach a decision (tail bounded by grace_s)
     grace_s: float = 20.0  # wait after the decision before stopping
 
 
@@ -130,13 +128,14 @@ class CircuitBreaker:
         self._terminal = False  # a kill/terminate already fired (stop acting)
 
     def __enter__(self) -> CircuitBreaker:
-        """Enter the guarded meeting. Lock-like: the caller drives ``record``/``poll``
-        inside the ``with`` block, and leaving it always closes the meeting."""
+        """Enter the guarded meeting; the caller drives ``record``/``poll`` inside
+        the ``with`` block."""
         return self
 
     def __exit__(self, *exc: object) -> bool:
-        """Closing the block terminates the breaker for good — a runaway can't
-        outlive the guarded region even if the loop breaks or raises."""
+        """Mark the breaker terminal on block exit so ``poll`` yields nothing more,
+        even if the loop raised. This bounds the breaker's own in-memory state — it
+        does not itself stop the agents; the conductor's teardown does that."""
         self._terminal = True
         return False  # never suppress an exception
 
