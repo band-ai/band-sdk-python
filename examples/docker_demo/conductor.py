@@ -201,19 +201,22 @@ class Conductor:
             )
         await self._refresh_names()
 
+        # Brief goes to the PM alone (deterministic opening): she frames the problem
+        # and pulls in the developer with a specific question, rather than both
+        # agents opening at once. The developer is already a participant, so her
+        # @mention reaches him.
+        dev_name = self.roster.names[self.roster.dev_id]
         brief = (
-            f"@{self.roster.names[self.roster.pm_id]} @{self.roster.names[self.roster.dev_id]} "
-            f"let's design {self.settings.demo_topic}. Discuss the approach together, align on a "
-            f"design, and once you agree, the PM should bring in the architect for a review and decision."
+            f"@{self.roster.names[self.roster.pm_id]} you're leading this design meeting: "
+            f"design {self.settings.demo_topic} for a sprint MVP. Frame the problem and open the "
+            f"discussion with the developer ({dev_name}), then bring in the architect for the "
+            f"final decision once you've aligned."
         )
         await self.client.human_api_messages.send_my_chat_message(
             self.chat_id,
             message=ChatMessageRequest(
                 content=brief,
-                mentions=[
-                    self._mention(self.roster.pm_id),
-                    self._mention(self.roster.dev_id),
-                ],
+                mentions=[self._mention(self.roster.pm_id)],
             ),
         )
         logger.info("Kicked off design of %s", self.settings.demo_topic)
