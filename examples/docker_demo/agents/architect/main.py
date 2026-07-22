@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters.crewai import CrewAIAdapter
+from band.core.types import AdapterFeatures, Capability, Emit
 from band.prompts.roles import CONVERSATION_DISCIPLINE
 from band.runtime.shutdown import run_with_graceful_shutdown
 
@@ -66,7 +67,16 @@ async def main() -> None:
     expose_llm_key()
     identity = Identity()
     config = ArchitectConfig()
-    adapter = CrewAIAdapter(model=config.model, custom_section=build_persona())
+    adapter = CrewAIAdapter(
+        model=config.model,
+        custom_section=build_persona(),
+        # Surface tool_call/tool_result and reasoning in the room, and expose the
+        # memory tools so the architect can record its verdict rationale.
+        features=AdapterFeatures(
+            emit={Emit.EXECUTION, Emit.THOUGHTS},
+            capabilities={Capability.MEMORY},
+        ),
+    )
     agent = Agent.create(
         adapter=adapter,
         agent_id=identity.agent_id,

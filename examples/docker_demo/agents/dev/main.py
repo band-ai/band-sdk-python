@@ -19,6 +19,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
 from band.adapters.codex import CodexAdapter, CodexAdapterConfig
+from band.core.types import AdapterFeatures, Emit
 from band.prompts.roles import CONVERSATION_DISCIPLINE
 from band.runtime.shutdown import run_with_graceful_shutdown
 
@@ -87,7 +88,13 @@ async def main() -> None:
     adapter = CodexAdapter(
         config=CodexAdapterConfig(
             model=config.model, approval_policy="never", custom_section=build_persona()
-        )
+        ),
+        # Emit tool_call/tool_result and reasoning to the room, keeping the default
+        # per-turn task markers. Codex's Band tools come from band-mcp, so there is
+        # no MEMORY capability to toggle on this adapter.
+        features=AdapterFeatures(
+            emit={Emit.EXECUTION, Emit.THOUGHTS, Emit.TASK_EVENTS},
+        ),
     )
     agent = Agent.create(
         adapter=adapter,

@@ -89,7 +89,7 @@ class ConductorSettings(BaseSettings):
     band_rest_url: str = "https://app.band.ai"
     band_api_key_user: str = ""  # conductor identity == the presenter's human seat
 
-    demo_topic: str = "a URL shortener service"
+    demo_topic: str = "a way to run untrusted AI agents in isolated Docker sandboxes"
     demo_pm_key: str = "demo_pm"
     demo_dev_key: str = "demo_dev"
     demo_architect_key: str = "demo_architect"
