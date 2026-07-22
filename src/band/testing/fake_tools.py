@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,6 +29,14 @@ from band.runtime.tools import ToolCallOutcome
 def total_pages(total: int, page_size: int) -> int:
     """Page count the platform reports for ``total`` items at ``page_size``."""
     return max(1, (total + page_size - 1) // page_size) if total else 0
+
+
+def page_slice(
+    items: list[dict[str, Any]], page: int, page_size: int
+) -> list[dict[str, Any]]:
+    """The 1-indexed page of ``items`` the platform would serve."""
+    start = (page - 1) * page_size
+    return items[start : start + page_size]
 
 
 class FakeAgentTools:
@@ -155,7 +164,7 @@ class FakeAgentTools:
     ) -> ListAgentPeersResponse:
         """Return seeded peers in the real SDK's Fern envelope (data/metadata)."""
         return ListAgentPeersResponse(
-            data=self._peers[:page_size],
+            data=page_slice(self._peers, page, page_size),
             metadata=ListAgentPeersResponseMetadata(
                 page=page,
                 page_size=page_size,
@@ -186,9 +195,7 @@ class FakeAgentTools:
         self.context_calls.append(
             {"room_id": room_id, "page": page, "page_size": page_size}
         )
-        start = (page - 1) * page_size
-        end = start + page_size
-        page_data = self._room_context[start:end]
+        page_data = page_slice(self._room_context, page, page_size)
         total = len(self._room_context)
         return {
             "data": page_data,
@@ -205,7 +212,7 @@ class FakeAgentTools:
     ) -> ListAgentContactsResponse:
         """Return seeded contacts in the real SDK's Fern envelope (data/metadata)."""
         return ListAgentContactsResponse(
-            data=self._contacts[:page_size],
+            data=page_slice(self._contacts, page, page_size),
             metadata=ListAgentContactsResponseMetadata(
                 page=page,
                 page_size=page_size,
@@ -307,25 +314,29 @@ class FakeAgentTools:
             inserted_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
         ).model_dump()
         self.memories.append(memory)
-        return dict(memory)
+        return deepcopy(memory)
 
-    async def get_memory(self, memory_id: str) -> dict[str, Any] | None:
-        """Return a copy of the stored memory, or None when unknown."""
+    async def get_memory(self, memory_id: str) -> dict[str, Any]:
+        """Return a copy of the stored memory; unknown ids raise like the real tool."""
         memory = next((m for m in self.memories if m["id"] == memory_id), None)
-        return dict(memory) if memory else None
+        if memory is None:
+            raise RuntimeError("Failed to get memory - no response data")
+        return deepcopy(memory)
 
     async def supersede_memory(self, memory_id: str) -> dict[str, Any]:
-        return self._set_memory_status(memory_id, "superseded")
+        return self._set_memory_status(memory_id, "superseded", "supersede")
 
     async def archive_memory(self, memory_id: str) -> dict[str, Any]:
-        return self._set_memory_status(memory_id, "archived")
+        return self._set_memory_status(memory_id, "archived", "archive")
 
-    def _set_memory_status(self, memory_id: str, status: str) -> dict[str, Any]:
+    def _set_memory_status(
+        self, memory_id: str, status: str, action: str
+    ) -> dict[str, Any]:
         for memory in self.memories:
             if memory["id"] == memory_id:
                 memory["status"] = status
-                return dict(memory)
-        raise ValueError(f"Unknown memory: {memory_id}")
+                return deepcopy(memory)
+        raise RuntimeError(f"Failed to {action} memory - no response data")
 
     @property
     def memory_contents(self) -> list[str]:
@@ -409,6 +420,8 @@ class FakeAgentTools:
             for e in self.events_sent
             if message_type is None or e["message_type"] == message_type
         ]
+        if count is None and message_type is None:
+            assert matching, "Expected at least one event; none were sent"
         if count is not None:
             assert len(matching) == count, (
                 f"Expected {count} {message_type or 'total'} events, "

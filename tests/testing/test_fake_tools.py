@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from band.core.protocols import AgentToolsProtocol
 from band.runtime.tools import serialize_tool_result
 from band.testing import FakeAgentTools
@@ -118,9 +120,8 @@ class TestMemoryListing:
             "with archive_memory's status change applied"
         )
         assert archived["status"] == "archived"
-        assert await tools.get_memory("unknown-id") is None, (
-            "get_memory must not fabricate memories for unknown ids"
-        )
+        with pytest.raises(RuntimeError, match="Failed to get memory"):
+            await tools.get_memory("unknown-id")
 
 
 class TestFakeAgentToolsProtocol:
@@ -245,6 +246,32 @@ class TestLookupPeers:
             "page_size": 25,
             "total_count": 0,
             "total_pages": 0,
+        }
+
+    async def test_pages_serve_distinct_slices(self) -> None:
+        peers = [
+            {
+                "id": f"u{index}",
+                "name": f"Peer {index}",
+                "type": "user",
+                "handle": f"@peer{index}",
+                "is_contact": False,
+                "source": "internal",
+            }
+            for index in range(3)
+        ]
+        tools = FakeAgentTools(peers=peers)
+
+        page_two = serialize_tool_result(await tools.lookup_peers(page=2, page_size=2))
+
+        assert [peer["name"] for peer in page_two["data"]] == ["Peer 2"], (
+            "Page 2 must serve the items after the first page, not repeat it"
+        )
+        assert page_two["metadata"] == {
+            "page": 2,
+            "page_size": 2,
+            "total_count": 3,
+            "total_pages": 2,
         }
 
 
