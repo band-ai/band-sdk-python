@@ -35,6 +35,13 @@ jobs:
       # kit image build's `uv sync --locked`.
       run: uv lock --check
 
+    - name: Verify the echo-agent starter lock is in sync with its pyproject
+      # The starter ships a committed uv.lock that the kit launcher installs
+      # verbatim (`uv sync --locked`), so a lock that no longer satisfies the
+      # starter's constraints (e.g. a band-sdk floor bump without a relock)
+      # would break every fresh kit workspace.
+      run: uv lock --check --directory docker/band_python_kit/echo-agent
+
     - name: Install dependencies
       run: uv sync --extra dev
 

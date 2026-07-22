@@ -50,24 +50,26 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "band-sdk", specifier = ">=1.1.0" },
+    { name = "band-sdk", specifier = ">=1.4.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
 ]
 
 [[package]]
 name = "band-sdk"
-version = "1.2.0"
+version = "1.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "band-client-rest" },
     { name = "cryptography" },
+    { name = "filelock" },
     { name = "phoenix-channels-python-client" },
+    { name = "pydantic-settings" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/92/cd/7de37be949948dffb838767ed8f3f22d6adcab6482d8d6e88c3bad832769/band_sdk-1.2.0.tar.gz", hash = "sha256:959b5935a48b2d5d5ead91be86ecb50f0f45378dc86b62c65793c970e74c0e88", size = 424097, upload-time = "2026-07-08T10:34:58.418Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/45/0e2d4902222b79b198800395b5cc24f0705cf92864e6c4a2fb203251f303/band_sdk-1.4.2.tar.gz", hash = "sha256:576739353c5eca68f1a02ae0efc91cbd6995f534467ea2c49d64edc4dcebefde", size = 518085, upload-time = "2026-07-22T07:19:39.199Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/e7/9c714c3068ed89de7f032848963ec0127cb55de04ed55562f98fd0697a28/band_sdk-1.2.0-py3-none-any.whl", hash = "sha256:21a3e1d90146fba240b6c586649a383c5a92d345c290c1901fa97697ba312d85", size = 443366, upload-time = "2026-07-08T10:34:56.234Z" },
+    { url = "https://files.pythonhosted.org/packages/65/03/3655e5dc77e0a01ebba65ccad958fe9f53e0f9d7fc4952fcd27e4a83a88b/band_sdk-1.4.2-py3-none-any.whl", hash = "sha256:dd51a7b6054e02c7a23b66872d3c4bbb207210c2fd6e8b11e519d9c0e4e2f66c", size = 547318, upload-time = "2026-07-22T07:19:37.267Z" },
 ]
 
 [[package]]
@@ -234,6 +236,15 @@ wheels = [
 ]
 
 [[package]]
+name = "filelock"
+version = "3.32.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/80/8232b582c4b318b817cf1274ba74976b07b34d35ef439b3eb948f98645a1/filelock-3.32.0.tar.gz", hash = "sha256:7be2ad23a14607ccc71808e68fe30848aeace7058ace17852f68e2a68e310402", size = 213757, upload-time = "2026-07-21T13:17:42.898Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/06/79/b4c714bef36bc4ec2beeae1e0c124f0223888cd8c6feb1cdc56038116920/filelock-3.32.0-py3-none-any.whl", hash = "sha256:d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3", size = 97732, upload-time = "2026-07-21T13:17:41.55Z" },
+]
+
+[[package]]
 name = "h11"
 version = "0.16.0"
 source = { registry = "https://pypi.org/simple" }
@@ -281,14 +292,14 @@ wheels = [
 
 [[package]]
 name = "phoenix-channels-python-client"
-version = "0.2.1"
+version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/53/dbabc21137c7f9657d5f02ac020aa1fab97747a409b393dca9a1ba752945/phoenix_channels_python_client-0.2.1.tar.gz", hash = "sha256:a5ff329d4ed0ce850c3568e39ec29beaf82540d18016d4934837374a612151a1", size = 29245, upload-time = "2026-04-12T12:46:38.53Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1e/4a/3fad1bc7724c874b9224878af9e6f7062e295c448b325da4fdd9b7745176/phoenix_channels_python_client-0.2.2.tar.gz", hash = "sha256:b610e54b56ecfa238aa8568b33dba4c9ae9a7f5362a0f3c66fdec013ae38f728", size = 29491, upload-time = "2026-07-20T14:10:55.912Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/06/1a37e48ead532b123ed71c5a5e4fd78d4fc93c11622887f41e18d14fedb6/phoenix_channels_python_client-0.2.1-py3-none-any.whl", hash = "sha256:24606551dfbcae35f3052f1573091c25b4da1deded4d6f62d171ff2820ed8ad4", size = 23930, upload-time = "2026-04-12T12:46:39.593Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/e9/47ac73a5a8bc6b8dec339fbb2b89f325bf2270fa68c81dfe1f2495a7e7a6/phoenix_channels_python_client-0.2.2-py3-none-any.whl", hash = "sha256:ebbf468a15b3ffaa8bc463ddd0132811e94a2fcd5bc20f507ee76109e45b8b14", size = 24197, upload-time = "2026-07-20T14:10:54.799Z" },
 ]
 
 [[package]]
