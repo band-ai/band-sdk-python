@@ -305,6 +305,16 @@ class ExecutionContext:
         self._active_cycle_task: asyncio.Task[None] | None = None
         self._interrupt_kind: str | None = None  # "interrupt" | "stop" | None
 
+        # Signal that landed in the claim->cycle window, where a message is
+        # claimed (mark_processing) and hydrating but the cancellable cycle task
+        # doesn't exist yet, so interrupt() has nothing to cancel. ``_cycle_armed``
+        # marks that window open; interrupt() records ``_pending_interrupt`` while
+        # it is, and _run_cycle honors it before invoking the handler. Both are
+        # cleared as the cycle starts and in the per-message ``finally``, so a
+        # signal can never leak onto a later cycle.
+        self._cycle_armed: bool = False
+        self._pending_interrupt: str | None = None
+
         # Durable stop (play to resume). Trigger suppression is
         # platform-authoritative (dispatch gated server-side, persists across
         # reconnect); this flag is a PURE LOCAL EFFICIENCY CACHE — it pauses
@@ -635,21 +645,34 @@ class ExecutionContext:
                 paths in ``_run_cycle``.
 
         Returns:
-            True if a cycle was actually in flight and got cancelled. Between
-            cycles this is a clean no-op and does NOT set ``_interrupt_kind``
-            (which would otherwise mis-flag the next cycle).
+            True if the signal took effect — either a running cycle was
+            cancelled, or a claimed-but-not-yet-started cycle was armed to abort
+            (the claim->cycle window). Between cycles this is a clean no-op and
+            does NOT set ``_interrupt_kind``/``_pending_interrupt`` (which would
+            otherwise mis-flag the next cycle).
         """
         task = self._active_cycle_task
-        if task is None or task.done():
-            return False
-        self._interrupt_kind = kind
-        task.cancel()
-        logger.info(
-            "ExecutionContext %s: %s requested, cancelling in-flight cycle",
-            self.room_id,
-            kind,
-        )
-        return True
+        if task is not None and not task.done():
+            self._interrupt_kind = kind
+            task.cancel()
+            logger.info(
+                "ExecutionContext %s: %s requested, cancelling in-flight cycle",
+                self.room_id,
+                kind,
+            )
+            return True
+        if self._cycle_armed:
+            # A message is claimed and its cycle is imminent but the cancellable
+            # task doesn't exist yet; record the request so _run_cycle aborts
+            # before invoking the handler instead of losing the signal.
+            self._pending_interrupt = kind
+            logger.info(
+                "ExecutionContext %s: %s requested during claim->cycle window",
+                self.room_id,
+                kind,
+            )
+            return True
+        return False
 
     def stop_room(self) -> None:
         """Durable stop for this room: abort the in-flight cycle and
@@ -1417,6 +1440,11 @@ class ExecutionContext:
                 )
                 return _BacklogProcessResult.ADVANCED
 
+            # Open the claim->cycle window: until _run_cycle creates the
+            # cancellable task, an interrupt/stop has no task to cancel, so
+            # interrupt() records it as pending instead.
+            self._cycle_armed = True
+
             # Mark as processing on server BEFORE we start. If this fails, do not
             # invoke the adapter; otherwise the platform will keep returning the
             # same message and the agent may replay side effects.
@@ -1518,6 +1546,10 @@ class ExecutionContext:
             return _BacklogProcessResult.ADVANCED
 
         finally:
+            # Close the claim->cycle window on every exit so a pending signal
+            # can't leak onto the next backlog message.
+            self._cycle_armed = False
+            self._pending_interrupt = None
             self._release_local_message(msg_id)
             self._set_state("idle")
 
@@ -1603,6 +1635,16 @@ class ExecutionContext:
             ``except asyncio.CancelledError``; we only swallow it for an
             interrupt/stop, never for shutdown.
         """
+        # Honor a signal that landed in the claim->cycle window (interrupt()/
+        # stop_room() with no cycle task to cancel yet). Reading/clearing the
+        # flags and creating the task below all run without an intervening
+        # await, so interrupt() on the receive task can't interleave here.
+        pending = self._pending_interrupt
+        self._pending_interrupt = None
+        self._cycle_armed = False
+        if pending is not None:
+            return await self._abort_cycle(pending, msg_id)
+
         self._active_cycle_task = asyncio.create_task(self._invoke_handler(event))
         try:
             await self._active_cycle_task
@@ -1618,45 +1660,59 @@ class ExecutionContext:
                 # Shutdown cancel of the loop task propagating through the child
                 # await — let it propagate so the loop exits.
                 raise
-            # Interrupt/stop: drop all accumulated work, send nothing. The
-            # handler never ran to completion, so uncharge the attempt
-            # `record_attempt` already billed before this cycle started —
-            # otherwise a message that's merely stopped/interrupted a couple
-            # of times gets poisoned into permanently_failed before it's ever
-            # actually attempted.
-            if msg_id:
-                self._retry_tracker.discard_attempt(msg_id)
-            await self._clear_activity()
-            if kind == "interrupt" and msg_id:
-                # Consume the message so the idle /next resync does not
-                # re-return it (excludes-only-processed) and re-fire the cycle
-                # the user just interrupted. Mirror the success-path bookkeeping.
-                if await self.link.mark_processed(self.room_id, msg_id):
-                    self._remember_processed_message(msg_id)
-                else:
-                    logger.warning(
-                        "ExecutionContext %s: durable mark_processed failed for "
-                        "interrupted message %s; idle resync may re-deliver it",
-                        self.room_id,
-                        msg_id,
-                    )
-            # For "stop" we deliberately leave the message in 'processing' so the
-            # platform replays it via /next on play; do not mark or remember.
-            #
-            # CROSS-SYSTEM INVARIANT: this replay depends on the platform's
-            # /next (Chat.get_next_actionable_message) excluding ONLY 'processed'
-            # — a 'processing' message must still be returned. If the platform
-            # ever also excludes 'processing', stopped messages are silently
-            # dropped on play. Covered by the stop->play replay test.
-            logger.info(
-                "ExecutionContext %s: cycle %s (message %s) — nothing sent",
-                self.room_id,
-                "interrupted" if kind == "interrupt" else "stopped",
-                msg_id,
-            )
-            return False
+            return await self._abort_cycle(kind, msg_id)
         finally:
             self._active_cycle_task = None
+
+    async def _abort_cycle(self, kind: str, msg_id: str | None) -> bool:
+        """Unwind an aborted cycle (interrupt/stop): drop work, send nothing.
+
+        Shared by the in-flight cancel path (``_run_cycle``'s ``CancelledError``
+        handler) and the claim->cycle window where interrupt()/stop_room()
+        landed before the cycle task existed. Returns False so the caller sends
+        nothing further.
+        """
+        # The handler never ran to completion, so uncharge the attempt
+        # `record_attempt` already billed before this cycle started — otherwise
+        # a message that's merely stopped/interrupted a couple of times gets
+        # poisoned into permanently_failed before it's ever actually attempted.
+        if msg_id:
+            self._retry_tracker.discard_attempt(msg_id)
+        await self._clear_activity()
+        if kind == "interrupt" and msg_id:
+            # Consume the message so the idle /next resync does not re-return it
+            # (excludes-only-processed) and re-fire the cycle the user just
+            # interrupted. Mirror the success-path bookkeeping.
+            if await self.link.mark_processed(self.room_id, msg_id):
+                self._remember_processed_message(msg_id)
+            else:
+                # Durable ack failed. Mark the message locally consumed and
+                # queue the ack for background retry, exactly as the success
+                # path does — otherwise the interrupted message stays locally
+                # replayable and the idle /next resync re-fires the cycle the
+                # user just interrupted.
+                self._remember_processed_ack_pending(msg_id)
+                logger.warning(
+                    "ExecutionContext %s: durable mark_processed failed for "
+                    "interrupted message %s; retrying ack in background",
+                    self.room_id,
+                    msg_id,
+                )
+        # For "stop" we deliberately leave the message in 'processing' so the
+        # platform replays it via /next on play; do not mark or remember.
+        #
+        # CROSS-SYSTEM INVARIANT: this replay depends on the platform's /next
+        # (Chat.get_next_actionable_message) excluding ONLY 'processed' — a
+        # 'processing' message must still be returned. If the platform ever also
+        # excludes 'processing', stopped messages are silently dropped on play.
+        # Covered by the stop->play replay test.
+        logger.info(
+            "ExecutionContext %s: cycle %s (message %s) — nothing sent",
+            self.room_id,
+            "interrupted" if kind == "interrupt" else "stopped",
+            msg_id,
+        )
+        return False
 
     async def _process_event(self, event: PlatformEvent) -> bool:
         """
@@ -1795,6 +1851,11 @@ class ExecutionContext:
                     )
                     return True
 
+                # Open the claim->cycle window: from here until _run_cycle
+                # creates the cancellable task, an interrupt/stop has no task to
+                # cancel, so interrupt() records it as pending instead.
+                self._cycle_armed = True
+
                 # For messages: mark as processing on server
                 if not await self.link.mark_processing(self.room_id, msg_id):
                     logger.warning(
@@ -1857,6 +1918,11 @@ class ExecutionContext:
             return True
 
         finally:
+            # Close the claim->cycle window on every exit (e.g. hydration raised
+            # before _run_cycle consumed the flags) so a pending signal can't
+            # leak onto the next message.
+            self._cycle_armed = False
+            self._pending_interrupt = None
             if claimed_msg_id:
                 self._release_local_message(claimed_msg_id)
             self._set_state("idle")

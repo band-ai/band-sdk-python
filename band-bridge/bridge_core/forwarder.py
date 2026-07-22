@@ -157,6 +157,10 @@ class AgentCoreForwarder:
                     body.close()
 
         try:
+            # interrupt/stop are best-effort for this transport: cancelling the
+            # await frees the bridge but can't kill the in-flight boto3 thread —
+            # the remote invocation runs to completion (or its own timeout)
+            # regardless.
             await asyncio.wait_for(
                 asyncio.to_thread(_call),
                 timeout=self._target.timeout,

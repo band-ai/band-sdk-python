@@ -28,27 +28,24 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from collections.abc import Callable
 
 import httpx
 import pytest
 import pytest_asyncio
-from thenvoi_rest.human_api_chats.types.create_my_chat_room_request_chat import (
-    CreateMyChatRoomRequestChat,
-)
-from thenvoi_rest.types import ParticipantRequest
+from band_rest import ChatMessageRequest
+from band_rest.types import ChatMessageRequestMentionsItem
 
 from band.platform.link import BandLink
 from band.runtime.runtime import AgentRuntime
+from tests.conftest import BlockingHandler
 from tests.integration.conftest import (
     get_api_key,
     get_base_url,
     get_user_api_key,
     get_ws_url,
-    is_room_alive,
     requires_api,
     requires_user_api,
+    wait_until,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,7 +54,7 @@ _API = "/api/v1"
 
 
 # --------------------------------------------------------------------------- #
-# Raw HTTP helpers (user key) for endpoints not yet in the generated client
+# Raw HTTP helpers (user key) for the control endpoints not yet in the client
 # --------------------------------------------------------------------------- #
 
 
@@ -75,58 +72,18 @@ async def _get(path: str) -> httpx.Response:
         return await client.get(f"{get_base_url()}{path}", headers=_user_headers())
 
 
-async def _send_user_mention(chat_id: str, agent_id: str, text: str) -> str:
+async def _send_user_mention(
+    user_api_client, chat_id: str, agent_id: str, text: str
+) -> str:
     """Post a message from the user that @mentions the agent; return message id."""
-    body = {"message": {"content": text, "mentions": [{"id": agent_id}]}}
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            f"{get_base_url()}{_API}/me/chats/{chat_id}/messages",
-            headers=_user_headers(),
-            json=body,
-        )
-    assert resp.status_code in (200, 201), (
-        f"send failed: {resp.status_code} {resp.text}"
+    resp = await user_api_client.human_api_messages.send_my_chat_message(
+        chat_id,
+        message=ChatMessageRequest(
+            content=text,
+            mentions=[ChatMessageRequestMentionsItem(id=agent_id)],
+        ),
     )
-    return resp.json()["data"]["id"]
-
-
-async def _wait_until(
-    pred: Callable[[], bool], *, timeout: float, interval: float = 1.0
-) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if pred():
-            return True
-        await asyncio.sleep(interval)
-    return pred()
-
-
-class _ControllableHandler:
-    """Stand-in for an adapter's on_execute with deterministic timing.
-
-    Records which message ids it fully processed, signals when a cycle starts,
-    and (when ``block`` is set) hangs until cancelled so an interrupt can land
-    mid-cycle.
-    """
-
-    def __init__(self) -> None:
-        self.block = False
-        self.started = asyncio.Event()
-        self.cancelled = asyncio.Event()
-        self.completed: list[str] = []
-
-    async def __call__(self, ctx, event) -> None:
-        payload = getattr(event, "payload", None)
-        msg_id = getattr(payload, "id", None)
-        self.started.set()
-        try:
-            if self.block:
-                await asyncio.sleep(120)  # hang until interrupted
-            if msg_id:
-                self.completed.append(msg_id)
-        except asyncio.CancelledError:
-            self.cancelled.set()
-            raise
+    return resp.data.id
 
 
 # --------------------------------------------------------------------------- #
@@ -135,55 +92,15 @@ class _ControllableHandler:
 
 
 @pytest_asyncio.fixture
-async def control_room(user_api_client, session_api_client, shared_agent1_info):
-    """A **user-owned** chat with the agent as a participant (reused across runs).
-
-    User ownership is required so the user may issue room-scope stop/play. The
-    reuse-or-create logic keeps this within the platform's per-agent room limit
-    even though the fixture is function-scoped.
-    """
-    if (
-        user_api_client is None
-        or session_api_client is None
-        or shared_agent1_info is None
-    ):
-        return None
-
-    agent_id = shared_agent1_info.id
-
-    # Reuse a live user-owned room that already has the agent (10-room limit).
-    chats = await user_api_client.human_api_chats.list_my_chats()
-    for room in reversed(chats.data or []):
-        if not await is_room_alive(session_api_client, room.id):
-            continue
-        parts = await user_api_client.human_api_participants.list_my_chat_participants(
-            room.id
-        )
-        if any(p.id == agent_id for p in (parts.data or [])):
-            logger.info("Reusing user-owned control room: %s", room.id)
-            return room.id
-
-    created = await user_api_client.human_api_chats.create_my_chat_room(
-        chat=CreateMyChatRoomRequestChat()
-    )
-    chat_id = created.data.id
-    await user_api_client.human_api_participants.add_my_chat_participant(
-        chat_id, participant=ParticipantRequest(participant_id=agent_id, role="member")
-    )
-    logger.info("Created user-owned control room: %s", chat_id)
-    return chat_id
-
-
-@pytest_asyncio.fixture
-async def control_runtime(control_room, shared_agent1_info):
+async def control_runtime(shared_user_owned_room, shared_agent1_info):
     """A live AgentRuntime for the agent with a controllable handler.
 
     Wires ``link.on_control`` exactly as PlatformRuntime does. Always resumes the
     room and stops the runtime on teardown so a failed test can't leave the agent
     parked in a stopped state.
     """
-    if control_room is None or shared_agent1_info is None:
-        pytest.skip("control_room/agent unavailable")
+    if shared_user_owned_room is None or shared_agent1_info is None:
+        pytest.skip("user-owned room/agent unavailable")
 
     agent_id = shared_agent1_info.id
     link = BandLink(
@@ -192,17 +109,20 @@ async def control_runtime(control_room, shared_agent1_info):
         ws_url=get_ws_url(),
         rest_url=get_base_url(),
     )
-    handler = _ControllableHandler()
+    # Non-blocking by default: the stop/play test needs cycles to complete so
+    # the replayed message lands in ``completed``. The interrupt test flips
+    # ``handler.block = True`` to make a cycle hang mid-flight.
+    handler = BlockingHandler(block=False)
     runtime = AgentRuntime(link=link, agent_id=agent_id, on_execute=handler)
     link.on_control = runtime.handle_control  # mirror PlatformRuntime wiring
 
     await runtime.start()
     await asyncio.sleep(2.0)  # let presence subscribe to the room
     try:
-        yield runtime, handler, agent_id, control_room
+        yield runtime, handler, agent_id, shared_user_owned_room
     finally:
         try:
-            await _post(f"{_API}/me/chats/{control_room}/agents/play")
+            await _post(f"{_API}/me/chats/{shared_user_owned_room}/agents/play")
         except Exception:  # noqa: BLE001 - best-effort un-park
             logger.warning("teardown play failed", exc_info=True)
         await runtime.stop()
@@ -215,8 +135,11 @@ async def control_runtime(control_room, shared_agent1_info):
 
 @requires_api
 @requires_user_api
+@pytest.mark.asyncio(loop_scope="session")
 class TestControlSignalsIntegration:
-    async def test_stop_suppresses_then_play_replays(self, control_runtime):
+    async def test_stop_suppresses_then_play_replays(
+        self, control_runtime, user_api_client
+    ):
         """Stop silences the agent in the room; play replays the missed mention."""
         runtime, handler, agent_id, chat_id = control_runtime
 
@@ -228,7 +151,7 @@ class TestControlSignalsIntegration:
 
         # A mention sent while stopped must NOT be processed by the handler.
         stopped_msg_id = await _send_user_mention(
-            chat_id, agent_id, "ping while stopped — please stay quiet"
+            user_api_client, chat_id, agent_id, "ping while stopped — please stay quiet"
         )
         await asyncio.sleep(10.0)
         assert stopped_msg_id not in handler.completed, (
@@ -240,12 +163,14 @@ class TestControlSignalsIntegration:
         play = await _post(f"{_API}/me/chats/{chat_id}/agents/play")
         assert play.status_code == 200, f"play failed: {play.status_code} {play.text}"
 
-        replayed = await _wait_until(
+        replayed = await wait_until(
             lambda: stopped_msg_id in handler.completed, timeout=90.0
         )
         assert replayed, "play did not replay the message missed while stopped"
 
-    async def test_interrupt_aborts_in_flight_cycle(self, control_runtime):
+    async def test_interrupt_aborts_in_flight_cycle(
+        self, control_runtime, user_api_client
+    ):
         """Interrupt cancels a cycle already in flight; nothing is delivered."""
         runtime, handler, agent_id, chat_id = control_runtime
 
@@ -255,9 +180,9 @@ class TestControlSignalsIntegration:
         handler.started.clear()
 
         msg_id = await _send_user_mention(
-            chat_id, agent_id, "begin a long task and keep working"
+            user_api_client, chat_id, agent_id, "begin a long task and keep working"
         )
-        assert await _wait_until(handler.started.is_set, timeout=90.0), (
+        assert await wait_until(handler.started.is_set, timeout=90.0), (
             "cycle never started — cannot test interrupt"
         )
 
@@ -279,7 +204,7 @@ class TestControlSignalsIntegration:
             f"interrupt failed: {interrupt.status_code} {interrupt.text}"
         )
 
-        assert await _wait_until(handler.cancelled.is_set, timeout=45.0), (
+        assert await wait_until(handler.cancelled.is_set, timeout=45.0), (
             "in-flight cycle was not interrupted"
         )
         assert msg_id not in handler.completed, (

@@ -15,7 +15,7 @@ import pytest
 
 from band.runtime.execution import ExecutionContext, _BacklogProcessResult
 from band.runtime.types import PlatformMessage, SessionConfig
-from tests.conftest import make_message_event
+from tests.conftest import BlockingHandler, make_message_event
 
 
 @pytest.fixture
@@ -57,30 +57,20 @@ class TestInterruptInFlightCycle:
     async def test_interrupt_cancels_cycle_marks_processed_loop_alive(self, mock_link):
         """Interrupt aborts the cycle, sends nothing, consumes the message, and
         the loop stays alive to process a fresh message afterward."""
-        started = asyncio.Event()
-        sent: list[str] = []
-
-        async def on_execute(ctx, event):
-            started.set()
-            try:
-                await asyncio.sleep(60)  # simulate a long reasoning cycle
-                sent.append(event.payload.id)  # would "send" — must not happen
-            except asyncio.CancelledError:
-                sent.append("CANCELLED")
-                raise
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
         event = make_message_event(msg_id="msg-1")
         proc = asyncio.create_task(ctx._process_event(event))
-        await started.wait()
+        await handler.started.wait()
 
         # Interrupt from the "receive task" side.
         assert ctx.interrupt() is True
 
         result = await proc
         assert result is True  # loop continues, not a failure
-        assert "msg-1" not in sent  # nothing was sent
+        assert handler.cancelled.is_set()  # cycle was aborted
+        assert "msg-1" not in handler.completed  # nothing was sent
         # Consumed: durable mark + local dedupe.
         mock_link.mark_processed.assert_awaited_once_with("room-123", "msg-1")
         assert "msg-1" in ctx._processed_ids
@@ -88,15 +78,11 @@ class TestInterruptInFlightCycle:
         assert ctx._active_cycle_task is None
 
         # Loop still alive: a fresh message processes normally.
-        completed: list[str] = []
-
-        async def on_execute2(ctx, event):
-            completed.append(event.payload.id)
-
-        ctx._on_execute = on_execute2
+        handler2 = BlockingHandler(block=False)
+        ctx._on_execute = handler2
         result2 = await ctx._process_event(make_message_event(msg_id="msg-2"))
         assert result2 is True
-        assert completed == ["msg-2"]
+        assert handler2.completed == ["msg-2"]
 
     async def test_interrupt_during_tool_call_drops_result(self, mock_link):
         """A tool call already executing is abandoned (await dropped); its
@@ -139,15 +125,10 @@ class TestStopInFlightCycle:
     async def test_stop_leaves_message_actionable(self, mock_link):
         """Stop aborts the cycle but leaves the message in 'processing' (no
         mark_processed, not remembered) so the platform replays it on play."""
-        started = asyncio.Event()
-
-        async def on_execute(ctx, event):
-            started.set()
-            await asyncio.sleep(60)
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="s1")))
-        await started.wait()
+        await handler.started.wait()
 
         ctx.interrupt(kind="stop")
         result = await proc
@@ -163,18 +144,13 @@ class TestShutdownVsInterrupt:
     async def test_shutdown_cancels_cycle_without_marking(self, mock_link):
         """stop() (shutdown) cancels an in-flight cycle, does NOT mark it
         processed, and leaves no orphaned child task."""
-        started = asyncio.Event()
-
-        async def on_execute(ctx, event):
-            started.set()
-            await asyncio.sleep(60)
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         await ctx.start()
 
         # Feed a message through the running loop.
         await ctx.on_event(make_message_event(msg_id="sd1"))
-        await started.wait()
+        await handler.started.wait()
 
         cycle_task = ctx._active_cycle_task
         assert cycle_task is not None
@@ -189,15 +165,10 @@ class TestShutdownVsInterrupt:
 class TestStopRoomResumeRoom:
     async def test_stop_room_sets_flag_and_interrupts(self, mock_link):
         """stop_room aborts the in-flight cycle and sets the local _stopped flag."""
-        started = asyncio.Event()
-
-        async def on_execute(ctx, event):
-            started.set()
-            await asyncio.sleep(60)
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="x")))
-        await started.wait()
+        await handler.started.wait()
 
         ctx.stop_room()
         result = await proc
@@ -209,18 +180,14 @@ class TestStopRoomResumeRoom:
     async def test_stopped_room_skips_new_message(self, mock_link):
         """A WS trigger arriving while stopped is left actionable (never claimed
         or marked), not processed."""
-        executed: list[str] = []
-
-        async def on_execute(ctx, event):
-            executed.append(event.payload.id)
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler(block=False)
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         ctx._stopped = True
 
         result = await ctx._process_event(make_message_event(msg_id="while-stopped"))
 
         assert result is True
-        assert executed == []  # adapter never invoked
+        assert handler.invoked == []  # adapter never invoked
         mock_link.mark_processing.assert_not_awaited()
         mock_link.mark_processed.assert_not_awaited()
 
@@ -243,18 +210,14 @@ class TestStopRoomResumeRoom:
         mock_link.get_stale_processing_messages = AsyncMock(
             return_value=[_backlog_message("stuck-in-processing")]
         )
-        executed: list[str] = []
-
-        async def on_execute(ctx, event):
-            executed.append(event.payload.id)
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler(block=False)
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         ctx._stopped = True
 
         ok = await ctx._recover_stale_processing_messages()
 
         assert ok is True
-        assert executed == []  # adapter not invoked while stopped
+        assert handler.invoked == []  # adapter not invoked while stopped
         mock_link.get_stale_processing_messages.assert_not_awaited()
 
     async def test_resume_replays_and_responds(self, mock_link):
@@ -269,52 +232,40 @@ class TestStopRoomResumeRoom:
             return replayed if calls["n"] == 1 else None
 
         mock_link.get_next_message = AsyncMock(side_effect=get_next)
-        executed: list[str] = []
-
-        async def on_execute(ctx, event):
-            executed.append(event.payload.id)
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler(block=False)
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         # Simulate: was stopped, now resuming.
         ctx._stopped = False
         ok = await ctx._resync_pending_messages()
 
         assert ok is True
-        assert executed == ["replayed-1"]
+        assert handler.completed == ["replayed-1"]
 
     async def test_stop_does_not_poison_retry_budget(self, mock_link):
         """A cycle aborted by stop must not count against the message's retry
         budget — at the real default of one retry, the replayed backlog
         message (delivered again via /next after play) must still reach the
         handler instead of immediately landing in permanently_failed."""
-        started = asyncio.Event()
-        executed: list[str] = []
-        calls = {"n": 0}
-
-        async def on_execute(ctx, event):
-            calls["n"] += 1
-            started.set()
-            if calls["n"] == 1:
-                await asyncio.sleep(60)  # first attempt: hangs, gets stopped
-            executed.append(event.payload.id)
+        # First attempt hangs (gets stopped); the redelivered replay completes.
+        handler = BlockingHandler(block=1)
 
         # Real default (SessionConfig().max_message_retries == 1) — no
         # generous override, so a poisoned attempt count would trip this.
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
 
         proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="p1")))
-        await started.wait()
+        await handler.started.wait()
         ctx.stop_room()
         assert await proc is True
         mock_link.mark_processed.assert_not_awaited()
 
         # Resume, then the platform replays the still-"processing" message via
         # /next — same message id, now delivered through the backlog path.
-        started.clear()
+        handler.started.clear()
         result = await ctx._process_backlog_message(_backlog_message("p1"))
 
         assert result == _BacklogProcessResult.ADVANCED
-        assert executed == ["p1"]  # handler actually ran this time
+        assert handler.completed == ["p1"]  # handler actually ran this time
         assert not ctx._retry_tracker.is_permanently_failed("p1")
 
 
@@ -322,16 +273,11 @@ class TestBacklogInterrupt:
     async def test_interrupt_during_backlog_consumes_and_advances(self, mock_link):
         """Interrupt during a /next backlog cycle consumes the message and the
         sync advances (does not retry the interrupted turn)."""
-        started = asyncio.Event()
-
-        async def on_execute(ctx, event):
-            started.set()
-            await asyncio.sleep(60)
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         msg = _backlog_message("bk1")
         proc = asyncio.create_task(ctx._process_backlog_message(msg))
-        await started.wait()
+        await handler.started.wait()
 
         ctx.interrupt()
         result = await proc
@@ -341,17 +287,12 @@ class TestBacklogInterrupt:
         assert "bk1" in ctx._processed_ids
 
     async def test_stop_during_backlog_leaves_actionable(self, mock_link):
-        started = asyncio.Event()
-
-        async def on_execute(ctx, event):
-            started.set()
-            await asyncio.sleep(60)
-
-        ctx = ExecutionContext("room-123", mock_link, on_execute, agent_id="agent-123")
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
         proc = asyncio.create_task(
             ctx._process_backlog_message(_backlog_message("bk2"))
         )
-        await started.wait()
+        await handler.started.wait()
 
         ctx.interrupt(kind="stop")
         result = await proc
@@ -387,18 +328,11 @@ class TestBacklogInterrupt:
 
         mock_link.get_next_message = AsyncMock(side_effect=fake_get_next)
 
-        started = asyncio.Event()
-        calls: list[str] = []
-
-        async def on_execute(ctx, event):
-            calls.append(event.payload.id)
-            started.set()
-            await asyncio.sleep(60)  # cancelled by stop_room() below
-
+        handler = BlockingHandler()  # hangs until cancelled by stop_room() below
         ctx = ExecutionContext(
             "room-123",
             mock_link,
-            on_execute,
+            handler,
             agent_id="agent-123",
             # A high retry cap so the retry tracker can't itself block a second
             # attempt -- the test must fail (or pass) on the _stopped guard
@@ -407,13 +341,110 @@ class TestBacklogInterrupt:
         )
 
         resync_task = asyncio.create_task(ctx._resync_pending_messages())
-        await started.wait()
+        await handler.started.wait()
 
         ctx.stop_room()
         result = await asyncio.wait_for(resync_task, timeout=5)
 
         assert result is True
         # The adapter must not run a second time on the very next /next poll.
-        assert calls == ["loop1"]
+        assert handler.invoked == ["loop1"]
         mock_link.mark_processed.assert_not_awaited()
         assert "loop1" not in ctx._processed_ids
+
+
+class TestControlSignalInClaimWindow:
+    """Signals landing after a message is claimed but before its cancellable
+    cycle task exists (the mark_processing/hydration window) must not be lost.
+    """
+
+    @staticmethod
+    def _gated_mark_processing(
+        claiming: asyncio.Event, release: asyncio.Event
+    ) -> AsyncMock:
+        """mark_processing that parks inside the claim so a test can fire a
+        signal while the cycle task does not yet exist."""
+
+        async def _gate(room_id: str, msg_id: str) -> bool:
+            claiming.set()
+            await release.wait()
+            return True
+
+        return AsyncMock(side_effect=_gate)
+
+    async def test_interrupt_in_window_aborts_before_handler(self, mock_link):
+        claiming, release = asyncio.Event(), asyncio.Event()
+        mock_link.mark_processing = self._gated_mark_processing(claiming, release)
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+
+        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="w1")))
+        await claiming.wait()
+
+        # No cycle task to cancel yet, but the signal must still take effect.
+        assert ctx._active_cycle_task is None
+        assert ctx.interrupt() is True
+
+        release.set()
+        result = await proc
+
+        assert result is True
+        assert handler.invoked == []  # handler never ran
+        mock_link.mark_processed.assert_awaited_once_with("room-123", "w1")  # consumed
+        assert "w1" in ctx._processed_ids
+        assert ctx._pending_interrupt is None
+        assert ctx._cycle_armed is False
+
+    async def test_stop_in_window_leaves_message_actionable(self, mock_link):
+        claiming, release = asyncio.Event(), asyncio.Event()
+        mock_link.mark_processing = self._gated_mark_processing(claiming, release)
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+
+        proc = asyncio.create_task(ctx._process_event(make_message_event(msg_id="w2")))
+        await claiming.wait()
+
+        ctx.stop_room()  # sets _stopped and records the pending stop
+
+        release.set()
+        result = await proc
+
+        assert result is True
+        assert handler.invoked == []
+        assert ctx._stopped is True
+        mock_link.mark_processed.assert_not_awaited()  # left for replay on play
+        assert "w2" not in ctx._processed_ids
+
+    async def test_interrupt_in_backlog_window_aborts_and_advances(self, mock_link):
+        claiming, release = asyncio.Event(), asyncio.Event()
+        mock_link.mark_processing = self._gated_mark_processing(claiming, release)
+        handler = BlockingHandler()
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+
+        proc = asyncio.create_task(
+            ctx._process_backlog_message(_backlog_message("bw1"))
+        )
+        await claiming.wait()
+
+        assert ctx.interrupt() is True
+
+        release.set()
+        result = await proc
+
+        assert result == _BacklogProcessResult.ADVANCED
+        assert handler.invoked == []
+        mock_link.mark_processed.assert_awaited_once_with("room-123", "bw1")
+
+    async def test_interrupt_between_cycles_arms_nothing(self, mock_link):
+        """A truly idle interrupt (no claim in flight) stays a no-op and does not
+        arm a pending signal that would mis-flag the next message."""
+        handler = BlockingHandler(block=False)
+        ctx = ExecutionContext("room-123", mock_link, handler, agent_id="agent-123")
+
+        assert ctx.interrupt() is False
+        assert ctx._pending_interrupt is None
+
+        # The next message runs to completion, unaffected.
+        result = await ctx._process_event(make_message_event(msg_id="n1"))
+        assert result is True
+        assert handler.completed == ["n1"]

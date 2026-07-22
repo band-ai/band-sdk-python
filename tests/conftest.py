@@ -15,6 +15,7 @@ return SDK-native types for pattern matching compatibility.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -122,6 +123,61 @@ def isolated_single_instance_lock(request, tmp_path_factory, monkeypatch):
     # the lock fd (and its process-registry entry) for the whole session.
     for guard in created:
         guard.release()
+
+
+# =============================================================================
+# Controllable on_execute handler (interrupt/stop tests)
+# =============================================================================
+
+
+class BlockingHandler:
+    """Deterministic ``on_execute`` stand-in for interrupt/stop tests.
+
+    Replaces the started/cancelled-event + hang-until-cancelled pattern that
+    interrupt/stop tests otherwise hand-roll. On each cycle it records the
+    message id, sets ``started``, optionally hangs until cancelled so a control
+    signal can land mid-cycle, and sets ``cancelled`` if the cycle is aborted.
+
+    ``block`` controls the hang:
+    - ``True``  — every cycle hangs until cancelled.
+    - ``False`` — no cycle hangs; each completes immediately.
+    - ``int N`` — only the first ``N`` cycles hang (later ones complete), for
+      the stop-then-replay case where the first attempt is aborted and the
+      redelivered message must run to completion.
+
+    ``invoked`` lists the message ids every cycle *entered*; ``completed``
+    lists only those that ran to completion (never populated for an aborted
+    hanging cycle).
+    """
+
+    def __init__(self, *, block: bool | int = True, block_seconds: float = 60) -> None:
+        self.block = block
+        self.block_seconds = block_seconds
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.invoked: list[str] = []
+        self.completed: list[str] = []
+        self.invocations = 0
+
+    def _should_block(self) -> bool:
+        if isinstance(self.block, bool):
+            return self.block
+        return self.invocations <= self.block
+
+    async def __call__(self, ctx, event) -> None:
+        self.invocations += 1
+        msg_id = getattr(getattr(event, "payload", None), "id", None)
+        if msg_id is not None:
+            self.invoked.append(msg_id)
+        self.started.set()
+        try:
+            if self._should_block():
+                await asyncio.sleep(self.block_seconds)
+            if msg_id is not None:
+                self.completed.append(msg_id)
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
 
 
 # =============================================================================

@@ -80,6 +80,15 @@ async def _await_cancelled(task: asyncio.Task[None]) -> None:
     assert task.cancelled()
 
 
+async def _drain_control_tasks(runner: Any) -> None:
+    """Await the background tasks a ``play`` signal spawns (it's fire-and-forget
+    off the receive path, so tests must let the nudges finish before asserting).
+    """
+    tasks = tuple(runner._control_tasks)
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
 # ---------------------------------------------------------------------------
 # Wiring
 # ---------------------------------------------------------------------------
@@ -92,7 +101,7 @@ class TestControlWiring:
 
         await runner._connect_and_consume()
 
-        assert link.on_control == runner._handle_control
+        assert link.on_control == runner._control.handle
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +120,7 @@ class TestControlCancelsInFlightForward:
         )
         await fwd.started.wait()
 
-        await runner._handle_control(_control("interrupt", scope="room", room_id="r1"))
+        await runner._control.handle(_control("interrupt", scope="room", room_id="r1"))
 
         await _await_cancelled(task)
         assert fwd.forwarded == []
@@ -126,7 +135,7 @@ class TestControlCancelsInFlightForward:
         )
         await fwd.started.wait()
 
-        await runner._handle_control(_control("stop", scope="room", room_id="r1"))
+        await runner._control.handle(_control("stop", scope="room", room_id="r1"))
 
         await _await_cancelled(task)
         assert fwd.forwarded == []
@@ -142,7 +151,7 @@ class TestControlCancelsInFlightForward:
         )
         await fwd.started.wait()
 
-        await runner._handle_control(_control("interrupt", scope="room", room_id="r1"))
+        await runner._control.handle(_control("interrupt", scope="room", room_id="r1"))
         await _await_cancelled(task)
 
         assert "m-cancel" not in runner._processed_message_ids
@@ -158,7 +167,7 @@ class TestControlCancelsInFlightForward:
         )
         await fwd.started.wait()
 
-        await runner._handle_control(_control("interrupt", scope="room", room_id="r1"))
+        await runner._control.handle(_control("interrupt", scope="room", room_id="r1"))
         await _await_cancelled(task1)
 
         fwd.hang = False
@@ -175,7 +184,7 @@ class TestControlCancelsInFlightForward:
     async def test_interrupt_with_no_active_forward_is_noop(self) -> None:
         runner, fwd, _ = _build_runner()
 
-        await runner._handle_control(_control("interrupt", scope="room", room_id="r1"))
+        await runner._control.handle(_control("interrupt", scope="room", room_id="r1"))
 
         assert isinstance(fwd, FakeForwarder)
         assert fwd.forwarded == []
@@ -204,7 +213,7 @@ class TestControlRouting:
         await fwd.started["r1"].wait()
         await fwd.started["r2"].wait()
 
-        await runner._handle_control(_control("interrupt", scope="room", room_id="r1"))
+        await runner._control.handle(_control("interrupt", scope="room", room_id="r1"))
 
         await _await_cancelled(t1)
         assert not t2.done()
@@ -232,7 +241,7 @@ class TestControlRouting:
         await fwd.started["r1"].wait()
         await fwd.started["r2"].wait()
 
-        await runner._handle_control(_control("interrupt", scope="agent", room_id=None))
+        await runner._control.handle(_control("interrupt", scope="agent", room_id=None))
 
         await _await_cancelled(t1)
         await _await_cancelled(t2)
@@ -240,7 +249,7 @@ class TestControlRouting:
     async def test_bad_scope_with_no_room_id_is_noop(self) -> None:
         runner, fwd, _ = _build_runner()
 
-        await runner._handle_control(
+        await runner._control.handle(
             AgentControlPayload(mode="interrupt", scope="room", agent_id="agent-1")
         )
 
@@ -268,7 +277,7 @@ class TestControlDedup:
             )
         )
         await fwd.started.wait()
-        await runner._handle_control(sig)
+        await runner._control.handle(sig)
         await _await_cancelled(task1)
 
         # A new, unrelated forward now occupies the room slot.
@@ -282,7 +291,7 @@ class TestControlDedup:
         await fwd.started.wait()
 
         # Duplicate delivery of the SAME signal must not cancel task2.
-        await runner._handle_control(sig)
+        await runner._control.handle(sig)
         await asyncio.sleep(0.01)
         assert not task2.done()
 
@@ -295,8 +304,8 @@ class TestControlDedup:
         runner._cancel_active_forward = MagicMock()
         sig = _control("interrupt", scope="room", room_id="r1", correlation_id="ctl-1")
 
-        await runner._handle_control(sig)
-        await runner._handle_control(sig)
+        await runner._control.handle(sig)
+        await runner._control.handle(sig)
 
         runner._cancel_active_forward.assert_called_once()
 
@@ -304,10 +313,10 @@ class TestControlDedup:
         runner, _, _ = _build_runner()
         runner._cancel_active_forward = MagicMock()
 
-        await runner._handle_control(
+        await runner._control.handle(
             _control("interrupt", scope="room", room_id="r1", correlation_id="ctl-1")
         )
-        await runner._handle_control(
+        await runner._control.handle(
             _control("interrupt", scope="room", room_id="r1", correlation_id="ctl-2")
         )
 
@@ -318,8 +327,8 @@ class TestControlDedup:
         runner._cancel_active_forward = MagicMock()
         sig = _control("interrupt", scope="room", room_id="r1")
 
-        await runner._handle_control(sig)
-        await runner._handle_control(sig)
+        await runner._control.handle(sig)
+        await runner._control.handle(sig)
 
         assert runner._cancel_active_forward.call_count == 2
 
@@ -336,7 +345,8 @@ class TestControlPlayNudge:
             return_value=_make_platform_message("m-a", "r1")
         )
 
-        await runner._handle_control(_control("play", scope="room", room_id="r1"))
+        await runner._control.handle(_control("play", scope="room", room_id="r1"))
+        await _drain_control_tasks(runner)
 
         assert isinstance(fwd, FakeForwarder)
         ids = {(p.get("payload") or {}).get("id") for p in fwd.forwarded}
@@ -352,7 +362,8 @@ class TestControlPlayNudge:
             _make_platform_message("m-b", "r2"),
         ]
 
-        await runner._handle_control(_control("play", scope="agent", room_id=None))
+        await runner._control.handle(_control("play", scope="agent", room_id=None))
+        await _drain_control_tasks(runner)
 
         assert isinstance(fwd, FakeForwarder)
         ids = {(p.get("payload") or {}).get("id") for p in fwd.forwarded}
@@ -362,10 +373,36 @@ class TestControlPlayNudge:
         runner, fwd, link = _build_runner()
         link.get_next_message = AsyncMock(return_value=None)
 
-        await runner._handle_control(_control("play", scope="room", room_id="r1"))
+        await runner._control.handle(_control("play", scope="room", room_id="r1"))
+        await _drain_control_tasks(runner)
 
         assert isinstance(fwd, FakeForwarder)
         assert fwd.forwarded == []
+
+    async def test_play_nudge_does_not_block_receive_path(self) -> None:
+        """play must return on the receive task without awaiting the /next +
+        forward, so a following stop/interrupt isn't queued behind it."""
+        started = asyncio.Event()
+
+        async def slow_next(room_id: str) -> None:
+            started.set()
+            await asyncio.sleep(120)  # would block the receive task if awaited
+
+        runner, _, link = _build_runner()
+        link.get_next_message = AsyncMock(side_effect=slow_next)
+
+        # handle() returns promptly even though the nudge is still running.
+        await asyncio.wait_for(
+            runner._control.handle(_control("play", scope="room", room_id="r1")),
+            timeout=1.0,
+        )
+        await started.wait()  # the nudge did start, in the background
+        assert runner._control_tasks  # tracked for cancellation on close()
+
+        for task in tuple(runner._control_tasks):
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(*runner._control_tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +418,7 @@ class TestControlGracefulDegradation:
         link.get_next_message = AsyncMock(return_value=None)
 
         for mode in ("interrupt", "stop", "play"):
-            await runner._handle_control(
+            await runner._control.handle(
                 _control(mode, scope="room", room_id="ghost-room")
             )
+        await _drain_control_tasks(runner)
