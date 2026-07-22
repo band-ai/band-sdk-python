@@ -86,8 +86,9 @@ DEMO_ENV_FILE=/path/to/.env ./launch.sh up
   and the launcher **opens it in your browser** automatically (URL also logged as
   `Room UI URL:` and written to `.demo/room.url`). Override the link shape with
   `DEMO_UI_URL_TEMPLATE` (a `{chat_id}` template); it defaults to `<BAND_REST_URL>/chat/{chat_id}`.
-  Each agent emits its **tool calls, results, and reasoning** into the room, so the
-  handoff mechanics (peer lookup, add-participant) are visible alongside the chat.
+  Each agent emits its **tool calls and results** into the room — plus **reasoning**
+  where the framework exposes it (Maya and Sam; CrewAI has no reasoning stream) — so
+  the handoff mechanics (peer lookup, add-participant) are visible alongside the chat.
   These land in the room's REST context / Band UI, not the user WebSocket stream.
 - **Per-agent logs.** With `tmux`, the launcher starts a `band-demo` session with one
   live setup/log pane per agent. Attach from another terminal tab:
