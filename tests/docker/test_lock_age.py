@@ -113,17 +113,18 @@ wheels = [{ url = "https://example/p.whl", upload-time = "2999-01-01T00:00:00Z" 
 
 def test_first_party_matching_is_pep503_canonical() -> None:
     # uv writes canonical names, but the exemption must not silently lapse on
-    # a spelling variant.
+    # a spelling variant — including PEP 503's separator-run collapse
+    # (Our__Pkg.Name -> our-pkg-name, not our--pkg-name).
     lock = """\
 [[package]]
-name = "Our_Package"
+name = "Our__Package.Name"
 version = "1.0.0"
 wheels = [{ url = "https://example/o.whl", upload-time = "2999-01-01T00:00:00Z" }]
 """
     violations = gate.find_violations(
         lock,
         gate.parse_upload_time("2026-01-01T00:00:00Z"),
-        first_party=frozenset({"our-package"}),
+        first_party=frozenset({"our-package-name"}),
     )
     assert violations == []
 

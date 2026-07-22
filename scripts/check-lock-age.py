@@ -33,6 +33,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
@@ -60,7 +61,7 @@ class Violation:
 
 def canonical(name: str) -> str:
     """PEP 503 canonical form, so lock spellings always match FIRST_PARTY."""
-    return name.strip().lower().replace("_", "-").replace(".", "-")
+    return re.sub(r"[-_.]+", "-", name.strip()).lower()
 
 
 def parse_upload_time(value: object) -> datetime | None:
