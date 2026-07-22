@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections import OrderedDict
-from typing import TypeAlias
+from contextlib import contextmanager
+from typing import Iterator, TypeAlias
 
 DEFAULT_COMPLETED_CACHE_SIZE = 500
 ClaimKey: TypeAlias = tuple[str, str]
@@ -44,9 +45,9 @@ class MessageClaimRegistry:
         self._inflight: set[ClaimKey] = set()
         self._ack_pending: OrderedDict[ClaimKey, bool] = OrderedDict()
         self._ack_retries: dict[ClaimKey, int] = {}
-        self._completed: OrderedDict[ClaimKey, bool] = OrderedDict()
+        self._completed_by_room: dict[str, OrderedDict[str, bool]] = {}
 
-    def try_claim(self, room_id: str, message_id: str) -> bool:
+    def _try_claim(self, room_id: str, message_id: str) -> bool:
         """Claim a message for one execution; False if another owner holds it."""
         key = (room_id, message_id)
         if key in self._inflight:
@@ -54,37 +55,50 @@ class MessageClaimRegistry:
         self._inflight.add(key)
         return True
 
-    def release(self, room_id: str, message_id: str) -> None:
+    def _release(self, room_id: str, message_id: str) -> None:
         """Release an in-flight claim (failure, cancellation, or completion)."""
         self._inflight.discard((room_id, message_id))
 
-    @property
-    def inflight_ids(self) -> set[str]:
-        """Currently claimed message IDs (copy)."""
-        return {message_id for _, message_id in self._inflight}
+    @contextmanager
+    def claim(self, room_id: str, message_id: str) -> Iterator[bool]:
+        """Yield whether a claim was acquired and always release acquired claims.
+
+        Exceptions propagate to the delivery path's existing error handling;
+        this context only guarantees cleanup.
+        """
+        acquired = self._try_claim(room_id, message_id)
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                self._release(room_id, message_id)
+
+    def inflight_ids(self, room_id: str) -> set[str]:
+        """Currently claimed message IDs for a room (copy)."""
+        return {message_id for room, message_id in self._inflight if room == room_id}
 
     def is_completed(self, room_id: str, message_id: str) -> bool:
         """Whether the message already completed; a hit refreshes LRU recency."""
-        key = (room_id, message_id)
-        if key not in self._completed:
+        completed = self._completed_by_room.get(room_id)
+        if completed is None or message_id not in completed:
             return False
-        self._completed.move_to_end(key)
+        completed.move_to_end(message_id)
         return True
 
-    @property
-    def completed_ids(self) -> list[str]:
-        """Completed message IDs, oldest first (copy, no recency side effect)."""
-        return [message_id for _, message_id in self._completed]
+    def completed_ids(self, room_id: str) -> list[str]:
+        """Completed message IDs for a room, oldest first."""
+        return list(self._completed_by_room.get(room_id, ()))
 
     def remember_completed(self, room_id: str, message_id: str) -> None:
         """Record durable completion and clear any pending-ack state."""
+        completed = self._completed_by_room.setdefault(room_id, OrderedDict())
+        completed[message_id] = True
+        completed.move_to_end(message_id)
         key = (room_id, message_id)
-        self._completed[key] = True
-        self._completed.move_to_end(key)
         self._ack_pending.pop(key, None)
         self._ack_retries.pop(key, None)
-        if len(self._completed) > self.max_completed:
-            self._completed.popitem(last=False)
+        if len(completed) > self.max_completed:
+            completed.popitem(last=False)
 
     def is_ack_pending(self, room_id: str, message_id: str) -> bool:
         """Whether the message completed locally but lacks a durable ack."""

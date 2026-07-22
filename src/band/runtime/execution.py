@@ -17,13 +17,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
-    Literal,
     Protocol,
     runtime_checkable,
 )
@@ -71,6 +70,14 @@ class _ResyncRequest:
 class _BacklogProcessResult(Enum):
     ADVANCED = "advanced"
     RETRY_LATER = "retry_later"
+
+
+class ExecutionState(StrEnum):
+    """Lifecycle state for one room execution."""
+
+    STARTING = "starting"
+    IDLE = "idle"
+    PROCESSING = "processing"
 
 
 def _error_label(e: Exception) -> str:
@@ -206,8 +213,8 @@ class ExecutionContext:
                 schema methods can auto-enable contact tools when this context
                 belongs to the hub room.
             claim_registry: Optional shared message-claim registry. AgentRuntime
-                passes one registry to all contexts it creates so a message ID
-                executes at most once per runtime. Defaults to a private
+                passes one registry to its default contexts so a room/message
+                pair executes at most once per runtime. Defaults to a private
                 instance for standalone contexts.
         """
         self.room_id = room_id
@@ -233,7 +240,7 @@ class ExecutionContext:
 
         # Per-room state
         self.queue: asyncio.Queue[PlatformEvent] = asyncio.Queue()
-        self.state: Literal["starting", "idle", "processing"] = "starting"
+        self.state = ExecutionState.STARTING
         self._is_running = False
         self._process_loop_task: asyncio.Task[None] | None = None
         self._context_cache: ConversationContext | None = None
@@ -276,9 +283,9 @@ class ExecutionContext:
     @property
     def is_processing(self) -> bool:
         """Check if context is currently processing an event."""
-        return self.state == "processing"
+        return self.state is ExecutionState.PROCESSING
 
-    def _set_state(self, new_state: Literal["starting", "idle", "processing"]) -> None:
+    def _set_state(self, new_state: ExecutionState) -> None:
         """
         Set the execution state and update the idle event accordingly.
 
@@ -286,7 +293,7 @@ class ExecutionContext:
         for graceful shutdown coordination.
         """
         self.state = new_state
-        if new_state == "processing":
+        if new_state is ExecutionState.PROCESSING:
             self._idle_event.clear()
         else:
             self._idle_event.set()
@@ -863,10 +870,10 @@ class ExecutionContext:
             # If a pending message cannot be claimed yet, stay in startup sync
             # instead of processing newer WebSocket events out of order.
             while not await self._synchronize_with_next():
-                self._set_state("idle")
+                self._set_state(ExecutionState.IDLE)
                 await asyncio.sleep(self.config.idle_resync_seconds)
 
-            self._set_state("idle")
+            self._set_state(ExecutionState.IDLE)
             logger.info(
                 "ExecutionContext %s: Synchronized, switching to WebSocket",
                 self.room_id,
@@ -931,7 +938,7 @@ class ExecutionContext:
                 and await self._resync_pending_messages()
             ):
                 return
-            self._set_state("idle")
+            self._set_state(ExecutionState.IDLE)
             await asyncio.sleep(self.config.idle_resync_seconds)
 
     async def _synchronize_with_next(self) -> bool:
@@ -1176,11 +1183,18 @@ class ExecutionContext:
                 return _BacklogProcessResult.ADVANCED
             return _BacklogProcessResult.RETRY_LATER
 
-        if not self.claims.try_claim(self.room_id, msg_id):
-            logger.debug("Skipping already in-flight backlog message: %s", msg_id)
-            return _BacklogProcessResult.RETRY_LATER
+        with self.claims.claim(self.room_id, msg_id) as acquired:
+            if not acquired:
+                logger.debug("Deferring in-flight backlog message: %s", msg_id)
+                return _BacklogProcessResult.RETRY_LATER
+            return await self._process_claimed_backlog_message(msg)
 
-        self._set_state("processing")
+    async def _process_claimed_backlog_message(
+        self, msg: PlatformMessage
+    ) -> _BacklogProcessResult:
+        """Process a backlog message while its in-flight claim is held."""
+        msg_id = msg.id
+        self._set_state(ExecutionState.PROCESSING)
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
 
         try:
@@ -1300,8 +1314,7 @@ class ExecutionContext:
             return _BacklogProcessResult.ADVANCED
 
         finally:
-            self.claims.release(self.room_id, msg_id)
-            self._set_state("idle")
+            self._set_state(ExecutionState.IDLE)
 
     def _drain_duplicate_from_queue(self, msg_id: str) -> None:
         """
@@ -1343,7 +1356,7 @@ class ExecutionContext:
 
         ``start()`` emits working:true (+ keep-alive); ``stop()`` in the finally
         emits the authoritative working:false on success, exception, and cancel —
-        mirroring the ``_set_state('idle')`` placement. The reporter is a no-op
+        mirroring the final idle-state transition. The reporter is a no-op
         when disabled or for the hub room, so call sites need no extra gating.
         """
         await self._working_reporter.start()
@@ -1364,23 +1377,21 @@ class ExecutionContext:
         5. Mark as processed (success) or failed (exception)
         """
         if isinstance(event, ReconnectedEvent):
-            self._set_state("processing")
+            self._set_state(ExecutionState.PROCESSING)
             logger.debug("Processing %s in room %s", event.type, self.room_id)
             try:
                 if self._reconnect_sync_requested:
                     self._reconnect_sync_requested = False
                     while not await self._synchronize_with_next():
-                        self._set_state("idle")
+                        self._set_state(ExecutionState.IDLE)
                         await asyncio.sleep(self.config.idle_resync_seconds)
                 logger.debug("Event %s processed successfully", event.type)
             finally:
-                self._set_state("idle")
+                self._set_state(ExecutionState.IDLE)
             return True
 
         payload = event.payload if isinstance(event, MessageEvent) else None
         msg_id = payload.id if payload else None
-
-        claimed_msg_id: str | None = None
 
         # For messages: check if we should skip
         if isinstance(event, MessageEvent) and msg_id and payload:
@@ -1421,27 +1432,34 @@ class ExecutionContext:
                         return True
                     return False
 
-                if not self.claims.try_claim(self.room_id, msg_id):
-                    # Another execution owns this message. Defer rather than
-                    # treat it as handled: the resync safety net re-checks it,
-                    # so an owner failure never silently loses the message.
-                    logger.debug(
-                        "Message %s owned by another execution; deferring", msg_id
-                    )
-                    return False
-                claimed_msg_id = msg_id
+                with self.claims.claim(self.room_id, msg_id) as acquired:
+                    if not acquired:
+                        # The resync safety net re-checks deferred work, so an
+                        # owner failure never silently loses the message.
+                        logger.debug(
+                            "Message %s owned by another execution; deferring",
+                            msg_id,
+                        )
+                        return False
+                    return await self._process_event_body(event, msg_id, payload)
 
-                if self._message_processed_for_agent(msg_id, payload.metadata):
-                    logger.info(
-                        "Skipping processed replay message %s in room %s",
-                        msg_id,
-                        self.room_id,
-                    )
-                    self.claims.remember_completed(self.room_id, msg_id)
-                    self.claims.release(self.room_id, msg_id)
-                    return True
+        return await self._process_event_body(event, msg_id, payload)
 
-        self._set_state("processing")
+    async def _process_event_body(
+        self, event: PlatformEvent, msg_id: str | None, payload: Any
+    ) -> bool:
+        """Process an event after any required in-flight claim is acquired."""
+        if isinstance(event, MessageEvent) and msg_id and payload:
+            if self._message_processed_for_agent(msg_id, payload.metadata):
+                logger.info(
+                    "Skipping processed replay message %s in room %s",
+                    msg_id,
+                    self.room_id,
+                )
+                self.claims.remember_completed(self.room_id, msg_id)
+                return True
+
+        self._set_state(ExecutionState.PROCESSING)
         logger.debug("Processing %s in room %s", event.type, self.room_id)
 
         try:
@@ -1531,6 +1549,4 @@ class ExecutionContext:
             return True
 
         finally:
-            if claimed_msg_id:
-                self.claims.release(self.room_id, claimed_msg_id)
-            self._set_state("idle")
+            self._set_state(ExecutionState.IDLE)

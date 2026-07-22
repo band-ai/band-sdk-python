@@ -132,8 +132,8 @@ class AgentRuntime:
         # Per-room executions
         self.executions: dict[str, Execution] = {}
 
-        # Shared by all contexts this runtime creates, so a message ID
-        # executes at most once per runtime even across context recreation.
+        # Shared by default contexts so a room/message pair executes at most
+        # once per runtime, including across context recreation.
         self._claim_registry = MessageClaimRegistry()
 
         # Set up presence callbacks
