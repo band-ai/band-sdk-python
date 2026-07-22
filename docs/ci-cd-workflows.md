@@ -117,6 +117,31 @@ image), `kit-publish-manual.yml` (serialized manual recovery/rehearsal), and
 `docker/band_python_kit/RELEASING.md` (tag policy, quarantine gate, rehearsal
 and recovery runbook).
 
+## Validating workflow changes before merge
+
+Workflow defects historically surfaced only when a real release or dispatch
+run executed server-side. Use this ladder, cheapest rung first:
+
+1. **actionlint (automatic).** Runs via pre-commit on every commit, and the CI
+   `lint` job runs the same hooks over all files — syntax, expression, and
+   shellcheck errors in `run:` blocks never reach a PR unchecked. One known
+   false positive is ignored in `.pre-commit-config.yaml`:
+   `concurrency.queue` is valid workflow syntax actionlint doesn't know yet.
+2. **Probe-branch dispatch (server-side ground truth).** Some semantics only
+   exist in GitHub's startup validation — env templates are evaluated even
+   under a false `if:`, and reusable-workflow `with:` values are type-checked
+   (a dispatch `number` input arrives as a string; booleans coerce, numbers
+   need `fromJSON`). To validate those without merging: push a branch and run
+   `gh workflow run <file> --ref <branch>` — startup validation and job
+   creation run against the branch's copy of the workflow. Safe by
+   construction: the `release` environment's deployment policy rejects
+   non-main refs before a job can reach publishing credentials, so the probe
+   fails at the environment gate — which doubles as a check that the
+   guardrail still works.
+3. **Rehearsal publish.** `kit-publish-manual` can publish a real, disposable
+   artifact without touching customers: version `0.0.0-rcN`,
+   `move-floating: false` (see `docker/band_python_kit/RELEASING.md`).
+
 ## Typical Development Flow
 
 1. Branch off `main` (e.g. `feat/...-INT-123`).

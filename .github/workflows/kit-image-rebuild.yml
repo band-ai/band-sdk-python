@@ -74,9 +74,11 @@ jobs:
         id: readver
         run: |
           version="$(jq -r '."."' .release-please-manifest.json)"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "tag=band-sdk-v${version}" >> "$GITHUB_OUTPUT"
-          echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=${version}"
+            echo "tag=band-sdk-v${version}"
+            echo "major=${version%%.*}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Compare the pinning ledger with the current upstream digests
         id: bases
@@ -111,9 +113,11 @@ jobs:
           if [ "$python_ref" != "$python_pin" ] || [ "$uv_ref" != "$uv_pin" ]; then
             changed="true"
           fi
-          echo "python_ref=${python_ref}" >> "$GITHUB_OUTPUT"
-          echo "uv_ref=${uv_ref}" >> "$GITHUB_OUTPUT"
-          echo "base_changed=${changed}" >> "$GITHUB_OUTPUT"
+          {
+            echo "python_ref=${python_ref}"
+            echo "uv_ref=${uv_ref}"
+            echo "base_changed=${changed}"
+          } >> "$GITHUB_OUTPUT"
 
       # The published image may still be private (packages start private and the
       # public flip is a post-first-publish step), so authenticate before
