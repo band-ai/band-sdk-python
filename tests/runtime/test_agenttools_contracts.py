@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from band.core.exceptions import BandToolError
+from band.runtime.tools import serialize_tool_result
 from band.testing.fake_tools import FakeAgentTools
 
 
@@ -20,19 +21,44 @@ class TestFakeAgentToolsSeededData:
 
     @pytest.mark.asyncio
     async def test_seeded_peers_returned(self) -> None:
-        peers = [{"id": "u1", "name": "Bob", "type": "user"}]
+        peers = [
+            {
+                "id": "u1",
+                "name": "Bob",
+                "type": "user",
+                "handle": "@bob",
+                "is_contact": False,
+                "source": "internal",
+            }
+        ]
         tools = FakeAgentTools(peers=peers)
-        result = await tools.lookup_peers()
-        assert result["peers"] == peers
-        assert result["metadata"]["total"] == 1
+
+        listing = serialize_tool_result(await tools.lookup_peers())
+
+        assert [peer["name"] for peer in listing["data"]] == ["Bob"], (
+            "Seeded peers must be served in the real SDK's data field"
+        )
+        assert listing["metadata"]["total_count"] == 1
 
     @pytest.mark.asyncio
     async def test_seeded_contacts_returned(self) -> None:
-        contacts = [{"id": "c1", "handle": "@alice", "name": "Alice"}]
+        contacts = [
+            {
+                "id": "c1",
+                "handle": "@alice",
+                "name": "Alice",
+                "type": "User",
+                "inserted_at": "2025-01-01T00:00:00Z",
+            }
+        ]
         tools = FakeAgentTools(contacts=contacts)
-        result = await tools.list_contacts()
-        assert result["contacts"] == contacts
-        assert result["metadata"]["total_count"] == 1
+
+        listing = serialize_tool_result(await tools.list_contacts())
+
+        assert [contact["handle"] for contact in listing["data"]] == ["@alice"], (
+            "Seeded contacts must be served in the real SDK's data field"
+        )
+        assert listing["metadata"]["total_count"] == 1
 
     @pytest.mark.asyncio
     async def test_seeded_participants_returned(self) -> None:

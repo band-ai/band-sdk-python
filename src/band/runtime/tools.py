@@ -34,7 +34,13 @@ from band.core.types import EventMessageType
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
-    from band.client.rest import AsyncRestClient, ListAgentMemoriesResponse
+    from band.client.rest import (
+        AsyncRestClient,
+        ListAgentContactRequestsResponse,
+        ListAgentContactsResponse,
+        ListAgentMemoriesResponse,
+        ListAgentPeersResponse,
+    )
 
     from .execution import ExecutionContext
 
@@ -1770,7 +1776,9 @@ class AgentTools(AgentToolsProtocol):
             "status": "removed",
         }
 
-    async def lookup_peers(self, page: int = 1, page_size: int = 50) -> Any:
+    async def lookup_peers(
+        self, page: int = 1, page_size: int = 50
+    ) -> ListAgentPeersResponse:
         """
         Find available peers (agents and users) on the platform.
 
@@ -1851,7 +1859,9 @@ class AgentTools(AgentToolsProtocol):
 
     # --- Contact management tools ---
 
-    async def list_contacts(self, page: int = 1, page_size: int = 50) -> Any:
+    async def list_contacts(
+        self, page: int = 1, page_size: int = 50
+    ) -> ListAgentContactsResponse:
         """
         List agent's contacts with pagination.
 
@@ -1927,7 +1937,7 @@ class AgentTools(AgentToolsProtocol):
 
     async def list_contact_requests(
         self, page: int = 1, page_size: int = 50, sent_status: str = "pending"
-    ) -> Any:
+    ) -> ListAgentContactRequestsResponse:
         """
         List both received and sent contact requests.
 
@@ -2260,9 +2270,9 @@ class AgentTools(AgentToolsProtocol):
                 if _matches_identifier(peer, identifier):
                     return peer
 
-            # Check if more pages
+            # Stop when past the last page; a missing total_pages means one page
             metadata = result.metadata
-            total_pages = metadata.total_pages if metadata else 1
+            total_pages = (metadata.total_pages if metadata else None) or 1
             if page >= total_pages:
                 break
             page += 1

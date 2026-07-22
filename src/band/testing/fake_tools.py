@@ -7,11 +7,27 @@ from datetime import datetime, timezone
 from typing import Any
 
 from band.client.rest import (
+    AgentContact,
     AgentMemory,
+    ListAgentContactRequestsResponse,
+    ListAgentContactRequestsResponseData,
+    ListAgentContactRequestsResponseMetadata,
+    ListAgentContactRequestsResponseMetadataReceived,
+    ListAgentContactRequestsResponseMetadataSent,
+    ListAgentContactsResponse,
+    ListAgentContactsResponseMetadata,
     ListAgentMemoriesResponse,
     ListAgentMemoriesResponseMeta,
+    ListAgentPeersResponse,
+    ListAgentPeersResponseMetadata,
+    Peer,
 )
 from band.runtime.tools import ToolCallOutcome
+
+
+def total_pages(total: int, page_size: int) -> int:
+    """Page count the platform reports for ``total`` items at ``page_size``."""
+    return max(1, (total + page_size - 1) // page_size) if total else 0
 
 
 class FakeAgentTools:
@@ -49,11 +65,16 @@ class FakeAgentTools:
         self.messages_sent: list[dict[str, Any]] = []
         self.events_sent: list[dict[str, Any]] = []
         self._participants: list[dict[str, Any]] = participants or []
-        self._peers: list[dict[str, Any]] = peers or []
-        self._contacts: list[dict[str, Any]] = contacts or []
         self._room_context: list[dict[str, Any]] = list(room_context or [])
         # Seeds are validated and canonicalized at seed time (not list time),
-        # so every stored memory carries the real serialized AgentMemory shape.
+        # so every stored record carries the real serialized Fern model shape.
+        self._peers: list[dict[str, Any]] = [
+            Peer.model_validate(peer).model_dump() for peer in (peers or [])
+        ]
+        self._contacts: list[dict[str, Any]] = [
+            AgentContact.model_validate(contact).model_dump()
+            for contact in (contacts or [])
+        ]
         self.memories: list[dict[str, Any]] = [
             AgentMemory.model_validate(memory).model_dump()
             for memory in (memories or [])
@@ -129,17 +150,19 @@ class FakeAgentTools:
     async def get_participants(self) -> list[dict[str, Any]]:
         return list(self._participants)
 
-    async def lookup_peers(self, page: int = 1, page_size: int = 50) -> dict[str, Any]:
-        """Legacy envelope — diverges from the real SDK's Fern ``{data, metadata}``
-        shape; align like ``list_memories`` before relying on the keys."""
-        return {
-            "peers": list(self._peers),
-            "metadata": {
-                "page": page,
-                "page_size": page_size,
-                "total": len(self._peers),
-            },
-        }
+    async def lookup_peers(
+        self, page: int = 1, page_size: int = 50
+    ) -> ListAgentPeersResponse:
+        """Return seeded peers in the real SDK's Fern envelope (data/metadata)."""
+        return ListAgentPeersResponse(
+            data=self._peers[:page_size],
+            metadata=ListAgentPeersResponseMetadata(
+                page=page,
+                page_size=page_size,
+                total_count=len(self._peers),
+                total_pages=total_pages(len(self._peers), page_size),
+            ),
+        )
 
     async def create_chatroom(self, task_id: str | None = None) -> str:
         return f"room-{uuid.uuid4()}"
@@ -167,31 +190,29 @@ class FakeAgentTools:
         end = start + page_size
         page_data = self._room_context[start:end]
         total = len(self._room_context)
-        total_pages = max(1, (total + page_size - 1) // page_size) if total else 0
         return {
             "data": page_data,
             "meta": {
                 "page": page,
                 "page_size": page_size,
                 "total_count": total,
-                "total_pages": total_pages,
+                "total_pages": total_pages(total, page_size),
             },
         }
 
-    async def list_contacts(self, page: int = 1, page_size: int = 50) -> dict[str, Any]:
-        """Legacy envelope — diverges from the real SDK's Fern ``{data, metadata}``
-        shape; align like ``list_memories`` before relying on the keys."""
-        return {
-            "contacts": list(self._contacts),
-            "metadata": {
-                "page": page,
-                "page_size": page_size,
-                "total_count": len(self._contacts),
-                "total_pages": max(
-                    1, (len(self._contacts) + page_size - 1) // page_size
-                ),
-            },
-        }
+    async def list_contacts(
+        self, page: int = 1, page_size: int = 50
+    ) -> ListAgentContactsResponse:
+        """Return seeded contacts in the real SDK's Fern envelope (data/metadata)."""
+        return ListAgentContactsResponse(
+            data=self._contacts[:page_size],
+            metadata=ListAgentContactsResponseMetadata(
+                page=page,
+                page_size=page_size,
+                total_count=len(self._contacts),
+                total_pages=total_pages(len(self._contacts), page_size),
+            ),
+        )
 
     async def add_contact(
         self, handle: str, message: str | None = None
@@ -205,19 +226,22 @@ class FakeAgentTools:
 
     async def list_contact_requests(
         self, page: int = 1, page_size: int = 50, sent_status: str = "pending"
-    ) -> dict[str, Any]:
-        """Legacy envelope — the real SDK nests these under ``data.received`` /
-        ``data.sent``; align like ``list_memories`` before relying on the keys."""
-        return {
-            "received": [],
-            "sent": [],
-            "metadata": {
-                "page": page,
-                "page_size": page_size,
-                "received": {"total": 0, "total_pages": 0},
-                "sent": {"total": 0, "total_pages": 0},
-            },
-        }
+    ) -> ListAgentContactRequestsResponse:
+        """Return the real SDK's Fern envelope; the fake tracks no request
+        state, so both directions list empty."""
+        return ListAgentContactRequestsResponse(
+            data=ListAgentContactRequestsResponseData(received=[], sent=[]),
+            metadata=ListAgentContactRequestsResponseMetadata(
+                page=page,
+                page_size=page_size,
+                received=ListAgentContactRequestsResponseMetadataReceived(
+                    total=0, total_pages=0
+                ),
+                sent=ListAgentContactRequestsResponseMetadataSent(
+                    total=0, total_pages=0
+                ),
+            ),
+        )
 
     async def respond_contact_request(
         self, action: str, handle: str | None = None, request_id: str | None = None

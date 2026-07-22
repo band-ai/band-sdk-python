@@ -114,19 +114,19 @@ def mock_tools():
     )
     tools.lookup_peers = AsyncMock(
         return_value={
-            "peers": [],
+            "data": [],
             "metadata": {
                 "page": 1,
                 "page_size": 50,
                 "total_count": 0,
-                "total_pages": 1,
+                "total_pages": 0,
             },
         }
     )
     tools.create_chatroom = AsyncMock(return_value="new-room-123")
     tools.list_contacts = AsyncMock(
         return_value={
-            "contacts": [{"id": "contact-1", "handle": "@alice", "name": "Alice"}],
+            "data": [{"id": "contact-1", "handle": "@alice", "name": "Alice"}],
             "metadata": {"page": 1, "page_size": 50, "total_count": 1},
         }
     )
@@ -138,8 +138,10 @@ def mock_tools():
     )
     tools.list_contact_requests = AsyncMock(
         return_value={
-            "received": [{"id": "request-1", "from_handle": "@alice"}],
-            "sent": [],
+            "data": {
+                "received": [{"id": "request-1", "from_handle": "@alice"}],
+                "sent": [],
+            },
             "metadata": {"page": 1, "page_size": 50, "total_count": 1},
         }
     )
@@ -1004,7 +1006,7 @@ class TestContactToolExecution:
 
         result_data = json.loads(result)
         assert result_data["status"] == "success"
-        assert result_data["contacts"][0]["handle"] == "@alice"
+        assert result_data["data"][0]["handle"] == "@alice"
         mock_tools.list_contacts.assert_awaited_once_with(2, 25)
 
     def test_add_contact_tool_executes(
@@ -1066,7 +1068,7 @@ class TestContactToolExecution:
 
         result_data = json.loads(result)
         assert result_data["status"] == "success"
-        assert result_data["received"][0]["id"] == "request-1"
+        assert result_data["data"]["received"][0]["id"] == "request-1"
         mock_tools.list_contact_requests.assert_awaited_once_with(3, 10, "approved")
 
     def test_respond_contact_request_tool_executes(
