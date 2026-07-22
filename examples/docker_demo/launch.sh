@@ -153,6 +153,11 @@ launch_one() {
 
   # Secrets FIRST — the placeholder env vars are injected at create time, so they
   # must exist before the sandbox is created (set-custom accepts a new name).
+  #
+  # Host exposure caveat: sbx 0.35.0 `set-custom` takes the real value only via
+  # --value (no stdin), so it briefly sits in this process's args — visible to
+  # other processes of the same host user. Fine for a presenter's own laptop; run
+  # the demo on a host only you can inspect.
   # sbx reserves the real provider env names (ANTHROPIC_API_KEY / OPENAI_API_KEY)
   # for its built-in wire-only injection, which the coding CLIs can't use — they
   # refuse to send without a local key. So inject under a NON-reserved *_PROXY_KEY
