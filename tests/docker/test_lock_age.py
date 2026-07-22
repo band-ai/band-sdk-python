@@ -96,6 +96,38 @@ wheels = [{ url = "https://example/undated-1.0.0-py3-none-any.whl" }]
     ]
 
 
+def test_first_party_packages_are_exempt_from_the_age_window() -> None:
+    # Band-published packages carry no upstream-compromise signal: a same-day
+    # release of our own dependency must not quarantine our own pipeline.
+    lock = """\
+[[package]]
+name = "phoenix-channels-python-client"
+version = "9.9.9"
+wheels = [{ url = "https://example/p.whl", upload-time = "2999-01-01T00:00:00Z" }]
+"""
+    violations = gate.find_violations(
+        lock, gate.parse_upload_time("2026-01-01T00:00:00Z")
+    )
+    assert violations == []
+
+
+def test_first_party_matching_is_pep503_canonical() -> None:
+    # uv writes canonical names, but the exemption must not silently lapse on
+    # a spelling variant.
+    lock = """\
+[[package]]
+name = "Our_Package"
+version = "1.0.0"
+wheels = [{ url = "https://example/o.whl", upload-time = "2999-01-01T00:00:00Z" }]
+"""
+    violations = gate.find_violations(
+        lock,
+        gate.parse_upload_time("2026-01-01T00:00:00Z"),
+        first_party=frozenset({"our-package"}),
+    )
+    assert violations == []
+
+
 def test_cli_matches_the_publish_workflow_invocation(tmp_path: Path) -> None:
     """kit-publish.yml runs the gate through main() with --lock/--max-age-days;
     pin that CLI contract (plus the --cutoff form) and the exit codes."""

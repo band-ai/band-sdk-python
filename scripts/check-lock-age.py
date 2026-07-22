@@ -14,6 +14,13 @@ gate does NOT work: the cutoff makes uv treat the committed lock itself as
 outdated and every gated build fails — proven live on uv 0.9.13 and 0.11.19;
 see astral-sh/uv#18775 for the underlying option-tracking behavior.)
 
+Packages Band publishes itself (``FIRST_PARTY``) are exempt from the age
+window: the gate models *upstream* compromise — a poisoned third-party
+release that the ecosystem detects and yanks within days — and a release we
+made carries no such signal. Ageing our own artifacts would only deadlock
+our own pipeline for a week after every first-party dependency bump.
+Exemptions are printed on every run so they stay visible in the gate log.
+
 Exit codes: 0 = every artifact is old enough; 1 = violations (each listed on
 stderr); 2 = bad usage / unreadable lock. Artifacts without an upload-time
 are violations too — an undatable source must not slip the gate silently.
@@ -33,11 +40,27 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 
+# Band-published PyPI packages (PEP 503 canonical names). Ownership, not
+# trust-by-name-pattern: extend only for packages this org actually releases.
+FIRST_PARTY = frozenset(
+    {
+        "band-client-rest",
+        "band-testing-python",
+        "phoenix-channels-python-client",
+    }
+)
+
+
 @dataclass(frozen=True)
 class Violation:
     package: str
     version: str
     detail: str
+
+
+def canonical(name: str) -> str:
+    """PEP 503 canonical form, so lock spellings always match FIRST_PARTY."""
+    return name.strip().lower().replace("_", "-").replace(".", "-")
 
 
 def parse_upload_time(value: object) -> datetime | None:
@@ -49,17 +72,24 @@ def parse_upload_time(value: object) -> datetime | None:
     return None
 
 
-def find_violations(lock_text: str, cutoff: datetime) -> list[Violation]:
+def find_violations(
+    lock_text: str,
+    cutoff: datetime,
+    first_party: frozenset[str] = FIRST_PARTY,
+) -> list[Violation]:
     """Every registry artifact in the lock must predate ``cutoff``.
 
     Packages without any sdist/wheel entries (the project itself, path
-    sources) carry no artifacts to date and are skipped; an artifact entry
+    sources) carry no artifacts to date and are skipped, as are the
+    ``first_party`` packages we publish ourselves; an artifact entry
     *missing* its upload-time is a violation, not a skip.
     """
     lock = tomllib.loads(lock_text)
     violations: list[Violation] = []
     for package in lock.get("package", []):
         name = package.get("name", "<unnamed>")
+        if canonical(name) in first_party:
+            continue
         version = str(package.get("version", "?"))
         artifacts = list(package.get("wheels", []))
         if sdist := package.get("sdist"):
@@ -110,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
     else:
         cutoff = datetime.now(tz=UTC) - timedelta(days=args.max_age_days)
 
+    sys.stderr.write(
+        f"first-party exemptions (Band-published): {', '.join(sorted(FIRST_PARTY))}\n"
+    )
     violations = find_violations(args.lock.read_text(encoding="utf-8"), cutoff)
     if violations:
         for v in violations:
