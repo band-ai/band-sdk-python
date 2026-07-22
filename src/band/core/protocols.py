@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeVar, runtime_checkable
 if TYPE_CHECKING:
     from anthropic.types import ToolParam
 
-    from band.client.rest import ListAgentMemoriesResponse
+    from band.client.rest import (
+        ListAgentContactRequestsResponse,
+        ListAgentContactsResponse,
+        ListAgentMemoriesResponse,
+        ListAgentPeersResponse,
+    )
     from band.core.types import AgentInput
     from band.platform.event import PlatformEvent
     from band.runtime.execution import ExecutionContext
@@ -84,8 +89,10 @@ class AgentToolsProtocol(Protocol):
         """Get participants in the current room."""
         ...
 
-    async def lookup_peers(self, page: int = 1, page_size: int = 50) -> Any:
-        """Find available peers (agents and users) on the platform."""
+    async def lookup_peers(
+        self, page: int = 1, page_size: int = 50
+    ) -> ListAgentPeersResponse:
+        """Find available peers, in the Fern response envelope."""
         ...
 
     async def create_chatroom(self, task_id: str | None = None) -> str:
@@ -148,8 +155,10 @@ class AgentToolsProtocol(Protocol):
         ...
 
     # Contact management tools
-    async def list_contacts(self, page: int = 1, page_size: int = 50) -> Any:
-        """List agent's contacts with pagination."""
+    async def list_contacts(
+        self, page: int = 1, page_size: int = 50
+    ) -> ListAgentContactsResponse:
+        """List agent's contacts, in the Fern response envelope."""
         ...
 
     async def add_contact(self, handle: str, message: str | None = None) -> Any:
@@ -167,8 +176,8 @@ class AgentToolsProtocol(Protocol):
         page: int = 1,
         page_size: int = 50,
         sent_status: str = "pending",
-    ) -> Any:
-        """List received and sent contact requests."""
+    ) -> ListAgentContactRequestsResponse:
+        """List received and sent contact requests, in the Fern envelope."""
         ...
 
     async def respond_contact_request(

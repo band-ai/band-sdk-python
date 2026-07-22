@@ -352,7 +352,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             page_size: int = 50,
         ) -> dict[str, Any] | str:
             try:
-                return await ctx.deps.lookup_peers(page, page_size)
+                return serialize_tool_result(
+                    await ctx.deps.lookup_peers(page, page_size)
+                )
             except Exception as e:
                 return f"Error looking up peers: {e}"
 
@@ -391,7 +393,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 page_size: int = 50,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.list_contacts(page, page_size)
+                    return serialize_tool_result(
+                        await ctx.deps.list_contacts(page, page_size)
+                    )
                 except Exception as e:
                     return f"Error listing contacts: {e}"
 
@@ -431,8 +435,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 sent_status: str = "pending",
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.list_contact_requests(
-                        page, page_size, sent_status
+                    return serialize_tool_result(
+                        await ctx.deps.list_contact_requests(
+                            page, page_size, sent_status
+                        )
                     )
                 except Exception as e:
                     return f"Error listing contact requests: {e}"

@@ -228,18 +228,24 @@ class TestParticipantOperations:
 
 
 class TestLookupPeers:
-    """Tests for lookup_peers."""
+    """lookup_peers must serve the real SDK's Fern envelope (data/metadata)."""
 
-    async def test_returns_empty_peers(self):
-        """Should return empty peers list with metadata."""
+    async def test_returns_empty_peers_in_the_real_envelope(self) -> None:
         tools = FakeAgentTools()
 
-        result = await tools.lookup_peers(page=2, page_size=25)
+        listing = serialize_tool_result(await tools.lookup_peers(page=2, page_size=25))
 
-        assert result["peers"] == []
-        assert result["metadata"]["page"] == 2
-        assert result["metadata"]["page_size"] == 25
-        assert result["metadata"]["total"] == 0
+        assert set(listing) == {"data", "metadata"}, (
+            f"Envelope keys {set(listing)} drifted from the real SDK's "
+            "{data, metadata}"
+        )
+        assert listing["data"] == []
+        assert listing["metadata"] == {
+            "page": 2,
+            "page_size": 25,
+            "total_count": 0,
+            "total_pages": 0,
+        }
 
 
 class TestCreateChatroom:
