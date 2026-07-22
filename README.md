@@ -44,6 +44,43 @@ With `pip`, use the same package spec:
 pip install "band-sdk[langgraph]"
 ```
 
+### Docker Sandboxes
+
+Building an agent for [Docker Sandboxes](https://docs.docker.com/ai/sandboxes/)?
+The `band-python-kit` kit runs your agent in an isolated microVM — the Band
+SDK in a read-only virtual environment, automatic sandbox proxy-CA trust
+wiring, a default-deny egress allowlist, arm64 and x86_64. It is distributed
+on GHCR (`ghcr.io/band-ai/band-python-kit`), so adopting it is one
+`sbx create --kit …` from a clean machine — no repo checkout or local build.
+
+Choose the guide that matches what you need:
+
+- [Run an agent with the kit](docker/band_python_kit/README.md) — customer
+  quickstart, configuration, credentials, and sandbox behavior.
+- [Customize the echo-agent starter workspace](docker/band_python_kit/echo-agent/README.md)
+  — adapt `main.py`, dependencies, or start from a repository.
+- [Understand or maintain the launcher](src/band/docker/launcher/README.md)
+  — internal launch phases, safety rules, and module map.
+- [Release engineering](docker/band_python_kit/RELEASING.md) — how the kit is
+  published, tag policy, CVE-rebuild cadence, supply-chain quarantine.
+
+The declarative kit and published GHCR image are separate release deliverables.
+
+#### Proxy-managed credentials
+
+When a sandbox is configured for proxy-managed credentials, the agent never
+holds the real Band API key: it passes the literal `proxy-managed` (exported as
+`band.credentials.PROXY_MANAGED_API_KEY`) as its `api_key`, and a trusted
+host-side proxy swaps in the real credential on the outbound request. The SDK
+passes that value unchanged: REST sends it in `X-API-Key`, while the current
+WebSocket transport sends it in the upgrade's `api_key` query parameter. A
+proxy-managed deployment must support both credential locations; otherwise it
+must use a genuine Band API key. The sentinel is a non-secret placeholder, not
+a credential, and authenticates nothing on its own.
+
+See the kit's [credential custody](docker/band_python_kit/README.md#credential-custody-v01)
+for how credentials are supplied today.
+
 ---
 
 ## Quickstart
@@ -286,6 +323,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`                  | | [examples](examples/pydantic_ai/) |
 | Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [docs](docs/adapters/anthropic.md) | [examples](examples/anthropic/)     |
 | Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
+| GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
 | CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |
 | Gemini SDK       | `gemini`      | `GeminiAdapter`                      | | [examples](examples/gemini/)           |
 | Google ADK       | `google_adk`  | `GoogleADKAdapter`                   | | [examples](examples/google_adk/)   |
@@ -305,7 +343,8 @@ LangGraph supports the built-in Band platform tools, custom LangChain tools thro
 | ------------ | ------------- | ------------------------------------ | --------------------------------------------- |
 | A2A bridge   | `a2a`         | `A2AAdapter`                         | [examples](examples/a2a_bridge/)              |
 | A2A gateway  | `a2a_gateway` | `A2AGatewayAdapter`                  | [examples](examples/a2a_gateway/)             |
-| ACP          | `acp`         | `ACPClientAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
+| ACP          | `acp`         | `ACPClientAdapter`, `CopilotACPAdapter`, `ACPServer`, `BandACPServerAdapter` | [examples](examples/acp/) |
+| Slack        | `slack`       | `SlackAdapter`                       | [examples](examples/slack/) |
 
 > **Other languages:** The Band SDK is also available for [TypeScript](https://github.com/thenvoi/thenvoi-sdk-typescript).
 

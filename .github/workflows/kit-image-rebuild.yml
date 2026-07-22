@@ -1,0 +1,354 @@
+# Weekly (and on-demand) CVE rebuild of the latest released band-python-kit.
+#
+# Rebuilds the currently-released version from its immutable tag when — and only
+# when — there is a real reason to: a pinned base image has a newer digest, the
+# published image has fixable HIGH/CRITICAL vulnerabilities, or a human forces
+# it. On a real rebuild it publishes an immutable `X.Y.Z-rN` tag, moves the
+# floating tags, republishes the kit artifact against the new image digest (all
+# through the shared kit-publish.yml pipeline), and opens a PR bumping the
+# committed Dockerfile digest pins so the repo never lies about what `latest` is
+# built from. A no-change week publishes nothing.
+#
+# NOTE: like the release publish jobs, this workflow can only be exercised once
+# it is on the default branch and the GHCR packages exist — see
+# docker/band_python_kit/RELEASING.md.
+
+name: kit-image-rebuild
+
+on:
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild even if no base digest changed and no fixable CVE
+        type: boolean
+        default: false
+      reason:
+        description: Why this ad-hoc rebuild is being run (recorded in the run log)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# An overlapping dispatch + schedule run would both resolve the same next -rN
+# and collide on the push; queue them instead (never cancel a publish mid-run).
+concurrency:
+  group: kit-image-rebuild
+  cancel-in-progress: false
+  queue: max
+
+env:
+  IMAGE_NAME: ghcr.io/band-ai/band-python-kit/image
+  DOCKERFILE: docker/band_python_kit/Dockerfile
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      rebuild: ${{ steps.gate.outputs.rebuild }}
+      reason: ${{ steps.gate.outputs.reason }}
+      version: ${{ steps.readver.outputs.version }}
+      rversion: ${{ steps.tags.outputs.rversion }}
+      tag: ${{ steps.readver.outputs.tag }}
+      major: ${{ steps.readver.outputs.major }}
+      python_ref: ${{ steps.bases.outputs.python_ref }}
+      uv_ref: ${{ steps.bases.outputs.uv_ref }}
+      base_changed: ${{ steps.bases.outputs.base_changed }}
+      scanned_tag: ${{ steps.tags.outputs.current_tag }}
+      cve_count: ${{ steps.findings.outputs.count }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        # main (the single trunk a scheduled run checks out) carries the
+        # release manifest — which version is actually released. The pinning
+        # ledger is read from main below (where this workflow's bump PRs land),
+        # and the build itself happens at the released tag, checked out by the
+        # reusable workflow.
+
+      - name: Read version from the release manifest
+        id: readver
+        run: |
+          version="$(jq -r '."."' .release-please-manifest.json)"
+          {
+            echo "version=${version}"
+            echo "tag=band-sdk-v${version}"
+            echo "major=${version%%.*}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Compare the pinning ledger with the current upstream digests
+        id: bases
+        run: |
+          set -euo pipefail
+          # Pins are read from the trunk's (main's) Dockerfile: main is where
+          # the bump PR below lands and the only branch on which the ledger
+          # heals promptly. Comparing against a released tag's pins would
+          # re-trigger forever (tags are immutable). Until a rebuild's bump PR
+          # is merged to main, the next scheduled run may rebuild redundantly —
+          # merge bump PRs promptly.
+          # FETCH_HEAD, not origin/main: actions/checkout configures a
+          # single-ref fetch refspec, so the remote-tracking ref may not be
+          # written by this fetch.
+          git fetch --quiet --depth=1 origin main
+          pinned() {
+            # $1 = ARG name. Prints the committed "image:tag@digest" pin.
+            git show "FETCH_HEAD:$DOCKERFILE" | grep -E "^ARG $1=" | sed -E "s/^ARG $1=//"
+          }
+          current() {
+            # $1 = a pin. Prints the same image ref with its live upstream digest.
+            local image="${1%@*}"
+            echo "${image}@$(docker buildx imagetools inspect "$image" --format '{{.Manifest.Digest}}')"
+          }
+          python_pin="$(pinned PYTHON_BASE_IMAGE)"
+          uv_pin="$(pinned UV_IMAGE)"
+          python_ref="$(current "$python_pin")"
+          uv_ref="$(current "$uv_pin")"
+          # Compared here in the parent shell — a flag set inside a function
+          # called via command substitution would die with its subshell.
+          changed="false"
+          if [ "$python_ref" != "$python_pin" ] || [ "$uv_ref" != "$uv_pin" ]; then
+            changed="true"
+          fi
+          {
+            echo "python_ref=${python_ref}"
+            echo "uv_ref=${uv_ref}"
+            echo "base_changed=${changed}"
+          } >> "$GITHUB_OUTPUT"
+
+      # The published image may still be private (packages start private and the
+      # public flip is a post-first-publish step), so authenticate before
+      # inspecting or scanning it.
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install ORAS
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d # v2
+
+      - name: Resolve the currently published tag and the next -rN suffix
+        id: tags
+        env:
+          VERSION: ${{ steps.readver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # One listing answers both questions: which tag is the *currently
+          # published* state of this version (X.Y.Z-rMax, or bare X.Y.Z when
+          # never rebuilt) — the tag the CVE scan must target — and what the
+          # next free rebuild suffix is. Listed straight from the registry
+          # (same auth as every other step) rather than the GitHub packages
+          # REST API — one auth surface, no URL-encoded package names.
+          set +e
+          tags="$(oras repo tags "$IMAGE_NAME" 2>listing-err.txt)"
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            if grep -qiE "name unknown|NAME_UNKNOWN" listing-err.txt; then
+              tags="" # package not created yet — nothing published
+            else
+              # Any other listing failure must fail loudly: defaulting to an
+              # empty list would reset the counter and re-mint an existing
+              # immutable -rN tag.
+              cat listing-err.txt >&2
+              exit $rc
+            fi
+          fi
+          max=0
+          while IFS= read -r t; do
+            case "$t" in
+              "${VERSION}-r"*)
+                n="${t##*-r}"
+                if [ "$n" -gt "$max" ] 2>/dev/null; then max="$n"; fi
+                ;;
+            esac
+          done <<< "$tags"
+          if [ "$max" -gt 0 ]; then
+            current_tag="${VERSION}-r${max}"
+          else
+            current_tag="${VERSION}"
+          fi
+          echo "current_tag=${current_tag}" >> "$GITHUB_OUTPUT"
+          echo "rversion=${VERSION}-r$((max + 1))" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether the current tag is pullable
+        id: published
+        run: |
+          # First scheduled run can predate the first publish; that is a normal
+          # skip, distinct from a scan failure.
+          state="$(python3 scripts/registry-ref-state.py \
+            "${IMAGE_NAME}:${{ steps.tags.outputs.current_tag }}")"
+          if [ "$state" = "exists" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Scans the newest published state of this version (see the tags step) —
+      # scanning bare X.Y.Z after an -rN fixed its CVEs would re-find them and
+      # rebuild forever. exit-code stays 0: findings are read from the JSON
+      # report below, so a nonzero exit here is a real scan failure (registry,
+      # DB download, ...) and fails this job loudly instead of masquerading as
+      # a CVE hit. TRIVY_USERNAME/PASSWORD because trivy authenticates via its
+      # own env, not the docker login above (per the action's README).
+      - name: Scan the published image
+        if: ${{ steps.published.outputs.exists == 'true' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.current_tag }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: json
+          output: trivy-report.json
+
+      - name: Count fixable HIGH/CRITICAL findings
+        id: findings
+        if: ${{ steps.published.outputs.exists == 'true' }}
+        run: |
+          set -euo pipefail
+          count="$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy-report.json)"
+          if [ "$count" -gt 0 ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "count=${count}" >> "$GITHUB_OUTPUT"
+
+      - name: Decide whether to rebuild
+        id: gate
+        env:
+          # Env-var indirection: a dispatch input interpolated into the script
+          # text would be a shell-injection vector.
+          FORCE_REASON: ${{ github.event.inputs.reason }}
+          VERSION: ${{ steps.readver.outputs.version }}
+        run: |
+          published="${{ steps.published.outputs.exists }}"
+          base_changed="${{ steps.bases.outputs.base_changed }}"
+          scan_found="${{ steps.findings.outputs.found }}" # empty when unpublished/skipped
+          forced="${{ github.event.inputs.force }}"
+          reason=""
+          rebuild="false"
+          if [ "$base_changed" = "true" ]; then rebuild="true"; reason="${reason}base-digest-changed "; fi
+          if [ "$scan_found" = "true" ]; then rebuild="true"; reason="${reason}fixable-high-critical "; fi
+          if [ "$forced" = "true" ]; then rebuild="true"; reason="${reason}forced(${FORCE_REASON}) "; fi
+          # A version that was never published cannot be REbuilt — the initial
+          # X.Y.Z belongs to the release workflow alone. Absolute: overrides
+          # base-digest changes and force, or the first scheduled run would
+          # mint X.Y.Z-r1 with no X.Y.Z underneath it.
+          if [ "$published" != "true" ]; then
+            rebuild="false"
+            reason="skip: ${VERSION:-version} not yet published — initial publish belongs to the release workflow"
+          fi
+          [ -n "$reason" ] || reason="no-change"
+          echo "rebuild=${rebuild}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+
+  rebuild:
+    needs: [decide]
+    if: ${{ needs.decide.outputs.rebuild == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    # Shared with release.yml's publish-kit: both move the floating tags, so
+    # two concurrent publishes could leave `latest` pointing at whichever
+    # finished last. Queue, never cancel a publish mid-run.
+    concurrency:
+      group: kit-ghcr-publish
+      cancel-in-progress: false
+      queue: max
+    uses: ./.github/workflows/kit-publish.yml
+    with:
+      ref: ${{ needs.decide.outputs.tag }}
+      version: ${{ needs.decide.outputs.rversion }}
+      major: ${{ needs.decide.outputs.major }}
+      move-floating: true
+      # The committed pins are defaults, not ceilings: rebuild against the fresh
+      # upstream base digests, keeping the same uv.lock and quarantine gate.
+      extra-build-args: |
+        PYTHON_BASE_IMAGE=${{ needs.decide.outputs.python_ref }}
+        UV_IMAGE=${{ needs.decide.outputs.uv_ref }}
+
+  bump-pins:
+    needs: [decide, rebuild]
+    if: ${{ needs.decide.outputs.rebuild == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      # Cut from and PR against the trunk (main). This is also what the decide
+      # job's ledger comparison reads, so merging the PR quiesces the trigger.
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Open the digest-pin bump PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PYTHON_REF: ${{ needs.decide.outputs.python_ref }}
+          UV_REF: ${{ needs.decide.outputs.uv_ref }}
+          RVERSION: ${{ needs.decide.outputs.rversion }}
+        run: |
+          set -euo pipefail
+          # Rewrite the pinned base-image ARGs to the digests this rebuild used.
+          sed -i -E "s#^(ARG PYTHON_BASE_IMAGE=).*#\1${PYTHON_REF}#" "$DOCKERFILE"
+          sed -i -E "s#^(ARG UV_IMAGE=).*#\1${UV_REF}#" "$DOCKERFILE"
+          if git diff --quiet; then
+            echo "pins already current; no bump PR needed."
+            exit 0
+          fi
+          branch="chore/rebuild-pins-${RVERSION}"
+          git config user.name "band-release-bot"
+          git config user.email "release-bot@band.ai"
+          git switch -c "$branch"
+          git commit -am "chore: bump band-python-kit base digests (${RVERSION} rebuild)"
+          # Plain --force: the branch is bot-owned with deterministic per-run
+          # content, and a re-run must simply overwrite the previous attempt.
+          # (--force-with-lease is rejected as stale here — the fresh checkout
+          # has no remote-tracking ref for the branch to lease against.)
+          git push -u origin "$branch" --force
+          if [ -z "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create \
+              --base main \
+              --title "chore: bump band-python-kit base digests (${RVERSION})" \
+              --body "Keeps the committed pinning ledger truthful after the ${RVERSION} CVE rebuild moved \`latest\`/\`${{ needs.decide.outputs.major }}\` onto fresh base digests." \
+              --head "$branch"
+          else
+            echo "PR for ${branch} already open; the push updated it."
+          fi
+
+  report:
+    needs: [decide, rebuild, bump-pins]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write the run summary
+        run: |
+          {
+            echo "## Kit image rebuild"
+            echo ""
+            echo "**Version:** ${{ needs.decide.outputs.version }} (published as \`${{ needs.decide.outputs.scanned_tag || 'nothing yet' }}\`)"
+            echo "**Rebuild:** ${{ needs.decide.outputs.rebuild }} (${{ needs.decide.outputs.reason }})"
+            echo "**Base digests moved:** ${{ needs.decide.outputs.base_changed }}"
+            echo "**Fixable HIGH/CRITICAL in the published image:** ${{ needs.decide.outputs.cve_count || 'not scanned (image not published)' }}"
+            echo "**Published this run:** ${{ needs.decide.outputs.rebuild == 'true' && needs.decide.outputs.rversion || 'nothing (no change)' }}"
+            echo "**python base:** ${{ needs.decide.outputs.python_ref }}"
+            echo "**uv image:** ${{ needs.decide.outputs.uv_ref }}"
+            echo "**Publish result:** ${{ needs.rebuild.result }}"
+          } >> "$GITHUB_STEP_SUMMARY"

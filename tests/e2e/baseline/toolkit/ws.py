@@ -4,16 +4,43 @@
 it has joined so they can all be left on teardown. Only the methods the toolkit
 uses are explicitly delegated — no ``__getattr__`` proxy — so typos surface as
 type-checker errors instead of silent runtime failures.
+
+``user_ws_observer`` is the one construction of the user-authenticated
+observer connection, shared by the pytest fixture (``baseline_ws``) and
+pytest-free callers (e.g. the sandbox staging smoke's ``probe.py``).
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 from band.client.streaming import MessageCreatedPayload, WebSocketClient
 
+from tests.e2e.baseline.settings import BaselineSettings
+
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def user_ws_observer(
+    settings: BaselineSettings,
+) -> AsyncIterator[TrackingWebSocketClient]:
+    """Connect a user-authenticated WS observer; leave its channels on exit.
+
+    Connects as the user (not an agent), so it coexists with agents and
+    receives the same ``message_created`` events.
+    """
+    if not settings.credentials.api_key_user:
+        raise ValueError("BAND_API_KEY_USER is required for the WS observer")
+    ws = WebSocketClient(
+        ws_url=settings.endpoints.ws_url,
+        api_key=settings.credentials.api_key_user,
+        agent_id=None,  # user connection, not an agent
+    )
+    async with ws, TrackingWebSocketClient(ws) as tracking:
+        yield tracking
 
 
 class TrackingWebSocketClient:

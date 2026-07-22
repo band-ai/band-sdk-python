@@ -35,11 +35,10 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.paths import REPO_ROOT
 
-# Repo root (this file is at tests/e2e/baseline/toolkit/). Used to reject a Codex
-# working directory inside the SDK checkout, and shared with the rest of the
-# toolkit (e.g. locating the e2e workflow) so the depth assumption lives once.
-REPO_ROOT = Path(__file__).resolve().parents[4]
+# REPO_ROOT: used to reject a Codex working directory inside the SDK checkout,
+# and by the rest of the toolkit (e.g. locating the e2e workflow).
 
 _LETTA_CLOUD_HOST = "api.letta.com"
 

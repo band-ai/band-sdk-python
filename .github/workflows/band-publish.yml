@@ -1,0 +1,105 @@
+# Publishes band-sdk to PyPI. Runs in reaction to a published GitHub release
+# (rather than as a job inside the release workflow) so a post-tag failure
+# anywhere in that pipeline can't strand a tagged release unpublished, and a
+# failed publish is re-runnable on its own. workflow_dispatch covers manual
+# recovery for any existing tag; skip-existing makes re-runs idempotent.
+#
+# Layout follows PyPI's trusted-publishing security model
+# (docs.pypi.org/trusted-publishers/security-model):
+# - A separate top-level file, not a reusable workflow (unsupported by PyPI
+#   trusted publishing, warehouse#11096) and not a job in release.yml — the
+#   publisher is bound to this filename, so publishing rights stay isolated
+#   to the least-privileged workflow possible.
+# - Build and publish are separate jobs: the environment-privileged publish
+#   job runs exactly two steps (fetch dists, publish) and never executes
+#   project code, which `uv build` inevitably does.
+# - The tag is validated as a main-anchored band-sdk release whose version
+#   matches pyproject.toml. This guards mistakes (a fat-fingered dispatch, a
+#   rogue release event); the malicious-ref case — a doctored copy of this
+#   workflow dispatched from a side branch — is stopped by the `release`
+#   environment's deployment policy (main + band-sdk-v* tags only), which
+#   GitHub matches against the run's GITHUB_REF before the job can reach the
+#   OIDC credential.
+#
+# The PyPI trusted publisher must reference this filename (band-publish.yml)
+# with environment `release`. The release event only fires workflows present
+# at the released tag, so tags predating this file are published via dispatch.
+
+name: band-publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish (e.g. band-sdk-v1.4.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Guard the event path: never auto-publish a prerelease to PyPI.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - name: Checkout the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          # Full refs/tags/ path: a branch that happens to share the name can
+          # never shadow the tag.
+          ref: refs/tags/${{ inputs.tag || github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Validate the tag is a main-anchored band-sdk release
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^band-sdk-v([0-9]+\.[0-9]+\.[0-9]+)$ ]] || {
+            echo "::error::'${TAG}' is not a band-sdk-vX.Y.Z release tag"; exit 1; }
+          tag_version="${BASH_REMATCH[1]}"
+          git merge-base --is-ancestor HEAD origin/main || {
+            echo "::error::${TAG} does not point at a commit on main"; exit 1; }
+          project_version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$project_version" != "$tag_version" ]; then
+            echo "::error::pyproject.toml version ${project_version} does not match ${TAG}"; exit 1
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Build band-sdk package
+        run: uv build
+
+      - name: Upload distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: band-sdk-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      # Trusted publishing (OIDC) + reading this run's build artifact.
+      id-token: write
+      actions: read
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: band-sdk-dist
+          path: dist/
+
+      - name: Publish band-sdk to PyPI
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # release/v1
+        with:
+          # Idempotent recovery: a re-run after a partial upload must not
+          # fail on the files that already made it to PyPI.
+          skip-existing: true

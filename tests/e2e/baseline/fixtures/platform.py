@@ -10,15 +10,14 @@ from collections.abc import AsyncGenerator
 import pytest
 from band_rest import AsyncRestClient
 
-from band.client.streaming import WebSocketClient
-
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
     new_run_id,
+    user_rest_client,
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
-from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
+from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient, user_ws_observer
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +47,7 @@ def baseline_run_id() -> str:
 @pytest.fixture(scope="session")
 def baseline_user_client(baseline_settings: BaselineSettings) -> AsyncRestClient:
     """Session-scoped user-authenticated REST client for provisioning."""
-    assert baseline_settings.credentials.api_key_user, (
-        "BAND_API_KEY_USER is required for provisioning"
-    )
-    return AsyncRestClient(
-        api_key=baseline_settings.credentials.api_key_user,
-        base_url=baseline_settings.endpoints.rest_url,
-    )
+    return user_rest_client(baseline_settings)
 
 
 @pytest.fixture
@@ -73,19 +66,11 @@ async def baseline_ws(
 ) -> AsyncGenerator[TrackingWebSocketClient, None]:
     """User-authenticated WS observer for the wait primitives.
 
-    Connects as the user (not an agent), so it coexists with agents and
-    receives the same ``message_created`` events. Session-scoped to avoid
-    per-test connect/teardown latency; channels are left on teardown.
+    Session-scoped to avoid per-test connect/teardown latency; channels are
+    left on teardown. Construction lives in ``user_ws_observer`` (shared with
+    pytest-free callers).
     """
-    assert baseline_settings.credentials.api_key_user, (
-        "BAND_API_KEY_USER is required for the WS observer"
-    )
-    ws = WebSocketClient(
-        ws_url=baseline_settings.endpoints.ws_url,
-        api_key=baseline_settings.credentials.api_key_user,
-        agent_id=None,  # user connection, not an agent
-    )
-    async with ws, TrackingWebSocketClient(ws) as tracking:
+    async with user_ws_observer(baseline_settings) as tracking:
         yield tracking
 
 

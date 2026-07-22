@@ -13,10 +13,8 @@ via importlib here.
 from __future__ import annotations
 
 import asyncio
-import importlib.util
 import os
-import sys
-from pathlib import Path
+from types import ModuleType
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -24,28 +22,18 @@ import pytest
 from fastapi import HTTPException
 
 from band.runtime.oneshot import OneShotEnvelopeError
+from tests.loaders import load_script_module
+from tests.paths import EXAMPLES_ROOT
 
-_CONTAINER_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "examples"
-    / "agentcore"
-    / "agentcore_llm_server.py"
-)
+_CONTAINER_PATH = EXAMPLES_ROOT / "agentcore" / "agentcore_llm_server.py"
 
 
-def _load_container_module():
-    spec = importlib.util.spec_from_file_location(
-        "agentcore_llm_server", _CONTAINER_PATH
-    )
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
+def _load_container_module() -> ModuleType:
     # Provide env vars so the module imports cleanly (lifespan is lazy, not eager)
     os.environ.setdefault("BAND_AGENT_ID", "test-agent")
     os.environ.setdefault("BAND_API_KEY", "test-key")
     os.environ.setdefault("ANTHROPIC_API_KEY", "test-anthropic")
-    spec.loader.exec_module(module)
-    sys.modules["agentcore_llm_server"] = module
-    return module
+    return load_script_module(_CONTAINER_PATH, "agentcore_llm_server")
 
 
 container = _load_container_module()

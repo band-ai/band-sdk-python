@@ -1,0 +1,6 @@
+[project]
+name = "band-kit-example"
+version = "0.1.0"
+description = "Example customer workspace for the Band Python Sandbox kit."
+requires-python = ">=3.11"
+dependencies = ["band-sdk>=1.4.2", "pydantic-settings>=2.0.0"]

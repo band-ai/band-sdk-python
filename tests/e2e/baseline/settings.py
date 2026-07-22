@@ -5,30 +5,36 @@ endpoints, Band credentials) and is composed into ``BaselineSettings``. Reuses
 the existing ``BAND_*`` env vars (and ``.env.test``) so no new configuration is
 required to run. Add a new subclass + nested field as new concerns appear
 (model providers, pricing, etc.).
+
+Every class sets ``env_ignore_empty=True``: a set-but-empty var (e.g.
+``E2E_TESTS_ENABLED=`` from a CI wrapper) falls back to the field default
+instead of raising a bool/int ValidationError at construction.
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Load .env.test into os.environ (idempotent, non-overriding) so the framework
-# LLM SDKs (anthropic, openai, google-genai) that read their provider keys
-# straight from the environment pick them up. pydantic-settings' ``env_file``
-# only populates this module's own fields, not ``os.environ``, so the SDKs — and
-# any adapter/model the toolkit builds — need this explicit load. Imported before
-# any fixture constructs a client or adapter, so keys are present in time.
-load_dotenv(Path(__file__).parents[3] / ".env.test", override=False)
+from tests.paths import ENV_TEST_FILE
+
+# Load .env.test into os.environ (idempotent, non-overriding) — the single
+# load path for every consumer: the framework LLM SDKs (anthropic, openai,
+# google-genai) read their provider keys straight from the environment, and
+# the settings classes below read their fields from the same environment via
+# pydantic's env source. (No ``env_file`` in the model_configs: it would
+# re-read the same file with lower priority than the env vars this line
+# already set — pure shadowed duplication.) Imported before any fixture
+# constructs a client or adapter, so keys are present in time.
+load_dotenv(ENV_TEST_FILE, override=False)
 
 
 class BandEndpoints(BaseSettings):
     """Band platform URLs."""
 
     model_config = SettingsConfigDict(
-        env_prefix="BAND_", env_file=".env.test", extra="ignore", case_sensitive=False
+        env_ignore_empty=True, env_prefix="BAND_", extra="ignore", case_sensitive=False
     )
 
     # Reuse the existing BAND_BASE_URL; BAND_REST_URL is accepted as an alias.
@@ -48,7 +54,7 @@ class BandCredentials(BaseSettings):
     """Band platform API keys."""
 
     model_config = SettingsConfigDict(
-        env_prefix="BAND_", env_file=".env.test", extra="ignore", case_sensitive=False
+        env_ignore_empty=True, env_prefix="BAND_", extra="ignore", case_sensitive=False
     )
 
     api_key: str = ""  # BAND_API_KEY (agent / app key)
@@ -61,8 +67,8 @@ class BaselineRun(BaseSettings):
     """Run-level scoping, provisioning, and cleanup policy."""
 
     model_config = SettingsConfigDict(
+        env_ignore_empty=True,
         env_prefix="BAND_E2E_",
-        env_file=".env.test",
         extra="ignore",
         case_sensitive=False,
     )
@@ -90,7 +96,7 @@ class LLMCredentials(BaseSettings):
     """Model-provider API keys / config (standard provider env-var names, no prefix)."""
 
     model_config = SettingsConfigDict(
-        env_file=".env.test", extra="ignore", case_sensitive=False
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
     openai_api_key: str = ""  # OPENAI_API_KEY
@@ -111,7 +117,7 @@ class Backends(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env.test", extra="ignore", case_sensitive=False
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
     )
 
     # Codex CLI (stdio app-server).
@@ -157,8 +163,8 @@ class LLMModels(BaseSettings):
     """Model ids for the agents under test and the judge."""
 
     model_config = SettingsConfigDict(
+        env_ignore_empty=True,
         env_prefix="E2E_",
-        env_file=".env.test",
         extra="ignore",
         case_sensitive=False,
     )
@@ -189,7 +195,7 @@ class LLMModels(BaseSettings):
 class BaselineSettings(BaseSettings):
     """Top-level baseline toolkit config, composed from per-concern groups."""
 
-    model_config = SettingsConfigDict(env_file=".env.test", extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore", env_ignore_empty=True)
 
     # E2E_TESTS_ENABLED — the master gate for the live baseline suite.
     e2e_tests_enabled: bool = False

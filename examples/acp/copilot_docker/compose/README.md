@@ -75,8 +75,8 @@ and calls Band tools via band-mcp.
 - **Auth model.** band-mcp holds one Band identity (its agent key) and MCP clients
   present **no** credentials. Treat band-mcp as a trusted sidecar — it is not
   published to the host here. One container = one Band identity.
-- **Copilot auth.** The Copilot CLI authenticates from `GITHUB_TOKEN` /
-  `GH_TOKEN` / `COPILOT_GITHUB_TOKEN` (checked in that reverse order) **or** a
+- **Copilot auth.** The Copilot CLI checks `COPILOT_GITHUB_TOKEN`, then
+  `GH_TOKEN`, then `GITHUB_TOKEN`, or uses a
   stored `copilot login`. A container has no stored login, so set a token env
   (a v2 fine-grained PAT with "Copilot Requests", or a Copilot/`gh` OAuth token —
   classic `ghp_` and Actions `ghs_` tokens are rejected).

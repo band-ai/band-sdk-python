@@ -26,7 +26,6 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -40,6 +39,8 @@ from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
 from band_rest.types import ParticipantRequest
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
 from thenvoi_testing.settings import BaseTestSettings
+
+from tests.paths import ENV_TEST_FILE
 
 if TYPE_CHECKING:
     from _pytest.config.argparsing import Parser
@@ -101,10 +102,18 @@ def is_no_clean_mode(request: pytest.FixtureRequest | None = None) -> bool:
 # =============================================================================
 
 
-class TestSettings(BaseTestSettings):
-    """Settings for integration tests, loaded from .env.test."""
+# Load .env.test into os.environ, once, for every consumer: skip_without_env()
+# markers check os.environ at definition time, and TestSettings below reads its
+# fields from the same environment (pydantic's env source), so no second
+# env_file load inside the settings class is needed. override=False ensures
+# explicitly-set env vars take precedence — the same winner pydantic's
+# env-over-env_file priority would pick.
+load_dotenv(ENV_TEST_FILE, override=False)
 
-    _env_file_path = Path(__file__).parent.parent / ".env.test"
+
+class TestSettings(BaseTestSettings):
+    """Settings for integration tests, read from the environment
+    (`.env.test` is loaded into ``os.environ`` above)."""
 
     band_api_key: str = ""
     band_api_key_2: str = ""
@@ -115,13 +124,6 @@ class TestSettings(BaseTestSettings):
     test_agent_id_2: str = ""
 
 
-# Load .env.test into os.environ so skip_without_env() markers (which check
-# os.environ at definition time) see the credentials.  override=False ensures
-# explicitly-set env vars take precedence.
-_ENV_TEST_PATH = Path(__file__).parent.parent / ".env.test"
-load_dotenv(_ENV_TEST_PATH, override=False)
-
-# Load settings from .env.test
 test_settings = TestSettings()
 
 

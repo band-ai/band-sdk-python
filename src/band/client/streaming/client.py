@@ -355,6 +355,13 @@ class WebSocketClient:
                 auto_reconnect=False,
                 on_reconnect=self._on_reconnect,
                 on_disconnect=self._on_disconnect,
+                # Also send the key as an x-api-key handshake header. Under
+                # proxy-managed sandbox custody the host-side proxy replaces the
+                # sentinel in this header (it can't touch the URL query), and the
+                # platform authenticates off the header (precedence over the
+                # query) — so the WS upgrade works with the real key never in the
+                # VM. Harmless elsewhere: same value the query already carries.
+                additional_headers={"x-api-key": self.api_key},
             )
             if self.agent_id:
                 self.client.channel_socket_url += f"&agent_id={self.agent_id}"

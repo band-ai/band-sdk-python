@@ -68,6 +68,8 @@ Event reporting and platform-tool exposure are **off by default** — opt in
 via `AdapterFeatures`:
 
 ```python
+from band.core.types import AdapterFeatures, Capability, Emit
+
 features=AdapterFeatures(
     emit={Emit.EXECUTION, Emit.THOUGHTS},          # tool_call/thought events
     capabilities={Capability.MEMORY, Capability.CONTACTS},  # band_* tool groups
@@ -79,7 +81,7 @@ features=AdapterFeatures(
 Copilot's built-in `ask_user` tool lets the model ask a human a question —
 freeform or multiple-choice. Off by default; route it with `ask_user`:
 
-```python
+```python notest
 config = CopilotSDKAdapterConfig(ask_user="room")   # ask the people in the room
 config = CopilotSDKAdapterConfig(ask_user=handler)  # ask someone outside it
 ```
@@ -106,7 +108,7 @@ defaults do: the console gives up gracefully at 90s, under the 120s turn
 default). Tell the model the operator exists — handler mode injects no
 prompt guidance — and raise both knobs for patient operators:
 
-```python
+```python notest
 config = CopilotSDKAdapterConfig(
     custom_section=(
         "A human operator supervises you. When a request needs a decision "

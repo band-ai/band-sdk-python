@@ -3,7 +3,7 @@ updates:
   # Python dependencies (uv)
   - package-ecosystem: "uv"
     directory: "/"
-    target-branch: "dev"
+    target-branch: "main"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -15,10 +15,31 @@ updates:
     reviewers:
       - "band/integrations-team"
 
-  # GitHub Actions
+  # The echo-agent starter workspace (the template every band-python-kit
+  # quickstart copies). Its committed uv.lock is what a new user's sandbox
+  # syncs, so it must not age silently — nothing else watches it: the SDK
+  # entry above covers only "/", and the weekly kit rebuild refreshes base
+  # images, never Python locks.
+  - package-ecosystem: "uv"
+    directory: "/docker/band_python_kit/echo-agent"
+    target-branch: "main"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    reviewers:
+      - "band/integrations-team"
+
+  # GitHub Actions. Dependabot resolves SHA-pinned actions (the kit publish
+  # workflows pin full commit SHAs with a trailing version comment) the same
+  # as tag pins, and updates both the hash and the comment in its PRs.
   - package-ecosystem: "github-actions"
     directory: "/"
-    target-branch: "dev"
+    target-branch: "main"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -26,3 +47,9 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+    # One combined weekly PR instead of a PR per action — keeps the SHA-pin
+    # maintenance to a single review.
+    groups:
+      github-actions:
+        patterns:
+          - "*"

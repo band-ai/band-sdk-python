@@ -15,8 +15,10 @@ and fails closed on ambiguous state.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import logging
+import re
 from collections import OrderedDict
 from collections.abc import Awaitable, Mapping
 from contextvars import ContextVar
@@ -1171,8 +1173,6 @@ class SideEffectExecutor:
             # Decide whether to prefix correlation token.
             content = item.content
             if target_counts.get(normalized, 0) > 1:
-                import hashlib
-
                 token = hashlib.sha256(side_effect_key.encode()).hexdigest()[:8]
                 content = f"[ref:{token}] {content}"
 
@@ -2206,8 +2206,6 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         participants: list[CrewAIFlowParticipantSnapshot],
     ) -> list[str]:
         """Return normalized keys of room participants tagged via @handle."""
-        import re
-
         if not content:
             return []
         tokens = re.findall(r"@([A-Za-z0-9_./-]+)", content)
@@ -2386,9 +2384,6 @@ class CrewAIFlowAdapter(SimpleAdapter[CrewAIFlowSessionState]):
         content: str,
         candidates: list[tuple[str, str, "CrewAIFlowMetadata"]],
     ) -> list[tuple[str, str, "CrewAIFlowMetadata"]] | None:
-        import hashlib
-        import re
-
         if not content:
             return None
         match = re.search(r"\[ref:([0-9a-f]{8})\]", content)

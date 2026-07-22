@@ -17,7 +17,7 @@ with full control over conversation history and tool loop management.
 
 ## Quick Start
 
-```python
+```python notest
 from band import Agent
 from band.adapters import AnthropicAdapter
 

@@ -2,6 +2,9 @@ name: CI
 
 on:
   pull_request:
+    # Keep dev here until the single-trunk cutover completes (default branch
+    # flipped to main and dev retired). Removing dev early would stop CI on
+    # dev-targeted PRs — including this migration PR — blocking their merge.
     branches: [dev, main]
 
 jobs:
@@ -10,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -22,9 +25,15 @@ jobs:
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.12'
+
+    - name: Verify uv.lock is in sync with pyproject
+      # Catches lock drift on every PR (including release-please's version-bump
+      # PR), so a stale lock can never silently reach a release and break the
+      # kit image build's `uv sync --locked`.
+      run: uv lock --check
 
     - name: Install dependencies
       run: uv sync --extra dev
@@ -49,7 +58,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -61,7 +70,7 @@ jobs:
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -76,7 +85,9 @@ jobs:
       # git ls-files globbing that we don't need to re-run per platform.
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
       # examples/ READMEs have illustrative fragments not yet snippet-testable
-      run: uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+      run: |
+        # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
+        uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 
 
   test-crewai:
@@ -95,7 +106,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -107,7 +118,7 @@ jobs:
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -148,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6
+      uses: actions/checkout@v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
@@ -157,7 +168,7 @@ jobs:
       uses: astral-sh/setup-uv@v7
 
     - name: Set up Python
-      uses: actions/setup-python@v6
+      uses: actions/setup-python@v7
       with:
         python-version: '3.12'
 
@@ -191,29 +202,3 @@ jobs:
         from band.config import load_agent_config
         print('All imports successful')
         "
-
-
-  # Single aggregate gate for branch protection. Branch rulesets require exactly
-  # this one context: `needs` a matrix job is green only when every one of its
-  # OS/Python cells passed, so requiring `ci-required` covers the whole matrix and
-  # survives future matrix changes without re-editing the ruleset. `if: always()`
-  # runs it even when a dependency failed (a skipped/failed dep would otherwise
-  # skip this job and report nothing, leaving the required check stuck "Expected").
-  ci-required:
-    name: ci-required
-    needs: [lint, test, test-crewai, packaging]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-    - name: Fail unless every required job succeeded
-      env:
-        RESULTS: ${{ needs.lint.result }} ${{ needs.test.result }} ${{ needs.test-crewai.result }} ${{ needs.packaging.result }}
-      run: |
-        echo "dependency results: ${RESULTS}"
-        for result in ${RESULTS}; do
-          if [ "${result}" != "success" ]; then
-            echo "::error::A required CI job did not succeed (results: ${RESULTS})."
-            exit 1
-          fi
-        done
-        echo "All required CI jobs succeeded."

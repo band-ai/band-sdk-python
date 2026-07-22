@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 from unittest.mock import MagicMock
 
-from tests.framework_configs._sentinel import MISSING, STRICT_CI, _MissingSentinel
+from tests.framework_configs.sentinel import MISSING, STRICT_CI, MissingSentinel
 from band.adapters.claude_sdk import _CLAUDE_SDK_AVAILABLE as _HAS_CLAUDE_SDK
 from band.adapters.copilot_sdk import _COPILOT_SDK_AVAILABLE as _HAS_COPILOT_SDK
 
@@ -43,7 +43,7 @@ def _default_from_init(cls: type, param: str, fallback: Any = MISSING) -> Any:
     sig = inspect.signature(cls.__init__)
     p = sig.parameters.get(param)
     if p is None or p.default is inspect.Parameter.empty:
-        if not isinstance(fallback, _MissingSentinel):
+        if not isinstance(fallback, MissingSentinel):
             return fallback
         raise ValueError(
             f"{cls.__name__}.__init__ has no default for {param!r}. "

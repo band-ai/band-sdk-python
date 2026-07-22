@@ -48,9 +48,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# These tools already produce visible room output.
-_SELF_REPORTING_TOOLS = frozenset({"band_send_message", "band_send_event"})
-
 # Conversation roles to persist across turns. Allowlisting these drops Agno's
 # per-run injected messages (system/developer instructions, datetime/state
 # context, summaries) so they are not replayed alongside freshly injected ones.
@@ -723,17 +720,12 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
 
         Agno yields a started + completed event (each carrying a
         ``ToolExecution``) for every tool call -- user-configured and Band
-        alike. Self-reporting tools already produce visible room output, so they
-        are skipped. The completed event carries ``result`` + ``tool_call_error``,
-        so exactly one tool_result is emitted per call whether it succeeded or
-        failed; all other events (content deltas, reasoning, ``ToolCallErrorEvent``)
-        fall through and are ignored.
+        alike; all are reported. The completed event carries ``result`` +
+        ``tool_call_error``, so exactly one tool_result is emitted per call
+        whether it succeeded or failed; all other events (content deltas,
+        reasoning, ``ToolCallErrorEvent``) fall through and are ignored.
         """
-        if (
-            isinstance(item, ToolCallStartedEvent)
-            and (ex := item.tool) is not None
-            and ex.tool_name not in _SELF_REPORTING_TOOLS
-        ):
+        if isinstance(item, ToolCallStartedEvent) and (ex := item.tool) is not None:
             await cls._emit_tool_event(
                 tools,
                 "tool_call",
@@ -745,11 +737,7 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 room_id=room_id,
                 msg_id=msg_id,
             )
-        elif (
-            isinstance(item, ToolCallCompletedEvent)
-            and (ex := item.tool) is not None
-            and ex.tool_name not in _SELF_REPORTING_TOOLS
-        ):
+        elif isinstance(item, ToolCallCompletedEvent) and (ex := item.tool) is not None:
             await cls._emit_tool_event(
                 tools,
                 "tool_result",

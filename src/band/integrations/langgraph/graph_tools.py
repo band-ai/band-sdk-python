@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 from typing import Annotated, Any, Callable, cast
-from pydantic import create_model
+from pydantic import Field, create_model
 from langchain_core.tools import BaseTool, InjectedToolArg, tool
 from langchain_core.runnables import RunnableConfig
 from langgraph.pregel import Pregel
@@ -132,8 +132,6 @@ def graph_as_tool(
 
     # Create Pydantic model for the input schema
     # This ensures LangChain knows what parameters the tool expects
-    from pydantic import Field
-
     field_definitions = {}
     for param_name, param_desc in input_schema.items():
         field_definitions[param_name] = (Any, Field(description=param_desc))

@@ -22,6 +22,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Generator
 from urllib.parse import urlparse
 
+from filelock import FileLock, Timeout
 from pydantic import BaseModel, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
@@ -594,8 +595,6 @@ def _locked_file(path: Path, *, timeout_s: float) -> Generator[None, None, None]
     ``msvcrt`` on Windows) so multi-agent startup stays concurrency-safe on
     every platform the SDK runs on.
     """
-    from filelock import FileLock, Timeout
-
     path.parent.mkdir(parents=True, exist_ok=True)
     lock = FileLock(str(path))
     try:

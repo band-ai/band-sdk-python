@@ -1,0 +1,70 @@
+# Manual entrypoint for the reusable kit publisher. Keeping dispatch here
+# (rather than on kit-publish.yml itself) makes manual releases and rehearsals
+# participate in the same caller-level concurrency lock as releases/rebuilds.
+
+name: kit-publish-manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to check out and build from (e.g. main or a release tag)
+        required: true
+        type: string
+      version:
+        description: Immutable artifact tag (e.g. 0.0.0-rc1 or 1.2.3)
+        required: true
+        type: string
+      major:
+        description: Major version for the floating tag (e.g. 1)
+        required: true
+        type: string
+      move-floating:
+        description: Move latest/major after success (leave false for rehearsals)
+        required: false
+        default: false
+        type: boolean
+      extra-build-args:
+        description: Newline-separated extra --build-arg entries
+        required: false
+        default: ""
+        type: string
+      quarantine-max-age-days:
+        description: Minimum public age (days) of every locked package
+        required: false
+        default: 7
+        type: number
+      relock:
+        description: |
+          Re-lock uv.lock before building — recovery for a released tag whose
+          committed lock lags its own band-sdk version.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    concurrency:
+      group: kit-ghcr-publish
+      cancel-in-progress: false
+      queue: max
+    uses: ./.github/workflows/kit-publish.yml
+    with:
+      ref: ${{ inputs.ref }}
+      version: ${{ inputs.version }}
+      major: ${{ inputs.major }}
+      move-floating: ${{ inputs.move-floating }}
+      extra-build-args: ${{ inputs.extra-build-args }}
+      # fromJSON: a dispatch `number` input reaches a called workflow's with:
+      # as a string, failing its number type check at startup (a 0-job
+      # "workflow file issue" run); booleans coerce, numbers don't.
+      quarantine-max-age-days: ${{ fromJSON(inputs.quarantine-max-age-days) }}
+      relock: ${{ inputs.relock }}
