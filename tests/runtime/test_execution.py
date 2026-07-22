@@ -1101,25 +1101,42 @@ class TestCrashRecoverySync:
         """Cache pressure must never evict ACK_PENDING into a side-effect replay.
 
         A message whose handler completed but whose durable processed ack
-        failed may only retry the ack on redelivery. Filling the cache past
-        capacity must not erase that state and re-execute the handler.
+        failed may only retry the ack on redelivery — even after enough later
+        completions to overflow the dedupe cache.
         """
+        mock_link_with_next.mark_processing = AsyncMock(return_value=True)
+        mock_link_with_next.mark_processed = AsyncMock(return_value=False)
         ctx = ExecutionContext(
             "room-123",
             mock_link_with_next,
             mock_handler,
             agent_id="agent-123",
-            config=SessionConfig(enable_context_hydration=False),
+            config=SessionConfig(
+                enable_context_hydration=False,
+                enable_working_state=False,
+                # Retry headroom so eviction shows up as a handler replay,
+                # not as the retry budget silently dropping the redelivery.
+                max_message_retries=5,
+            ),
         )
 
-        ctx._remember_processed_ack_pending("msg-unacked")
+        async def deliver(message_id: str) -> None:
+            await ctx._process_event(
+                make_message_event(room_id="room-123", msg_id=message_id)
+            )
+
+        # Handler completes but the durable ack fails → ACK_PENDING.
+        await deliver("msg-unacked")
+        # Enough later completions to overflow the dedupe cache capacity.
         for i in range(ctx._max_processed_ids):
-            ctx._remember_processed_ack_pending(f"msg-filler-{i}")
+            await deliver(f"msg-filler-{i}")
 
-        event = make_message_event(room_id="room-123", msg_id="msg-unacked")
-        await ctx._process_event(event)
+        executions_before_redelivery = mock_handler.await_count
+        mock_link_with_next.mark_processed = AsyncMock(return_value=True)
 
-        mock_handler.assert_not_awaited()
+        await deliver("msg-unacked")
+
+        assert mock_handler.await_count == executions_before_redelivery
         mock_link_with_next.mark_processed.assert_awaited_once_with(
             "room-123", "msg-unacked"
         )
