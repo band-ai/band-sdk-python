@@ -23,6 +23,11 @@ SenderClass = breaker.SenderClass
 
 PM, DEV, ARCH = SenderClass.PM, SenderClass.DEVELOPER, SenderClass.ARCHITECT
 
+# decided_interactive drives the meeting to a verdict and opens the floor at this
+# instant; the open-floor tests measure every deadline relative to it (VERDICT_AT +
+# idle) so the timeline reads as intent, not bare timestamps.
+VERDICT_AT = 10.0
+
 
 def msg(
     sender,
@@ -63,8 +68,10 @@ def decided_interactive(idle_s: float = 30.0) -> CircuitBreaker:
         open_floor_idle_s=idle_s,
     )
     cb = CircuitBreaker(cfg, start_time=0.0)
-    cb.record(msg(ARCH, 10.0, is_final_decision=True))
-    assert cb.poll(10.0) == [Action.OPEN_FLOOR], "verdict must open the floor once"
+    cb.record(msg(ARCH, VERDICT_AT, is_final_decision=True))
+    assert cb.poll(VERDICT_AT) == [Action.OPEN_FLOOR], (
+        "verdict must open the floor once"
+    )
     return cb
 
 
@@ -295,58 +302,69 @@ def test_verdict_opens_the_floor_instead_of_terminating() -> None:
     cb = decided_interactive()
     # decided_interactive already asserts the first poll emitted OPEN_FLOOR; a
     # second poll shortly after must NOT terminate — the presenter has the room.
-    assert cb.poll(11.0) == [], "an interactive meeting must not close on the verdict"
+    assert cb.poll(VERDICT_AT + 1) == [], (
+        "an interactive meeting must not close on the verdict"
+    )
     assert cb.stopped is False, "the floor stays open for the presenter"
 
 
 def test_open_floor_opens_only_once() -> None:
     cb = decided_interactive()
-    assert cb.poll(12.0) == [], (
+    assert cb.poll(VERDICT_AT + 2) == [], (
         "OPEN_FLOOR must fire once, not on every subsequent poll"
     )
 
 
 def test_presenter_end_phrase_closes_the_floor() -> None:
     cb = decided_interactive()
-    cb.record(presenter(15.0, end=True))
-    assert cb.poll(15.0) == [Action.TERMINATE_OK], (
+    cb.record(presenter(VERDICT_AT + 5, end=True))
+    assert cb.poll(VERDICT_AT + 5) == [Action.TERMINATE_OK], (
         "the presenter's end phrase ends the meeting"
     )
     assert "presenter ended" in cb.stop_reason
 
 
 def test_open_floor_terminates_after_presenter_idle() -> None:
-    cb = decided_interactive(idle_s=30.0)
-    # Floor opened at t=10; no presenter message. At t=39 still within idle, at t=40
-    # the 30s silence has elapsed.
-    assert cb.poll(39.0) == [], "still within the idle window — hold the room open"
-    assert cb.poll(40.0) == [Action.TERMINATE_OK], (
-        "30s of presenter silence after the verdict must auto-close the room"
+    idle = 30.0
+    cb = decided_interactive(idle_s=idle)
+    # No presenter message: the floor must close exactly one idle window after the verdict.
+    assert cb.poll(VERDICT_AT + idle - 1) == [], (
+        "still within the idle window — hold the room open"
+    )
+    assert cb.poll(VERDICT_AT + idle) == [Action.TERMINATE_OK], (
+        "presenter silence for the full idle window after the verdict must auto-close"
     )
     assert "idle" in cb.stop_reason
 
 
 def test_presenter_activity_resets_the_idle_timer() -> None:
-    cb = decided_interactive(idle_s=30.0)
-    # Floor opened at t=10 (would close at t=40). A presenter message at t=35 lands
-    # inside that window and pushes the deadline out to t=65.
-    cb.record(presenter(35.0))
-    assert cb.poll(35.0) == [], "presenter just spoke — timer resets, room stays open"
-    assert cb.poll(60.0) == [], "still within the reset window (last activity t=35)"
-    assert cb.poll(65.0) == [Action.TERMINATE_OK], (
+    idle = 30.0
+    cb = decided_interactive(idle_s=idle)
+    # A presenter message inside the original window pushes the deadline out to
+    # (spoke_at + idle), proving the timer anchors on presenter activity, not the verdict.
+    spoke_at = VERDICT_AT + idle - 5
+    cb.record(presenter(spoke_at))
+    assert cb.poll(spoke_at) == [], (
+        "presenter just spoke — timer resets, room stays open"
+    )
+    assert cb.poll(spoke_at + idle - 1) == [], (
+        "still within the window reset from the last presenter message"
+    )
+    assert cb.poll(spoke_at + idle) == [Action.TERMINATE_OK], (
         "idle measured from the last presenter message, not from the verdict"
     )
 
 
 def test_agent_chatter_alone_does_not_keep_the_floor_open() -> None:
-    cb = decided_interactive(idle_s=30.0)
-    # Agents keep talking after the verdict, but only presenter input holds the floor.
-    for t in (12.0, 15.0, 20.0, 39.0):
+    idle = 30.0
+    cb = decided_interactive(idle_s=idle)
+    # Agents keep talking right up to the deadline, but only presenter input holds the floor.
+    for t in (VERDICT_AT + 2, VERDICT_AT + 5, VERDICT_AT + 10, VERDICT_AT + idle - 1):
         cb.record(msg(PM if int(t) % 2 else DEV, t))
         assert cb.poll(t) == [], (
             "agent messages must not reset the presenter idle timer"
         )
-    assert cb.poll(40.0) == [Action.TERMINATE_OK], (
+    assert cb.poll(VERDICT_AT + idle) == [Action.TERMINATE_OK], (
         "with no presenter input, the floor still closes on idle despite agent chatter"
     )
 

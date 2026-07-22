@@ -129,8 +129,7 @@ touching code:
    its **setup log to a labeled pane**.
 3. The conductor creates the room and posts the brief. Maya and Sam discuss;
    Maya invites Jordan; Jordan posts a `VERDICT:`. The conductor then opens the
-   floor to you (interactive) — chat with the agents, then end with the end phrase,
-   idle, or Ctrl-C.
+   floor to you (see [Ending the meeting](#ending-the-meeting)).
 4. Cleanup removes exactly the sandboxes, secrets, policy rules, and agents this
    run recorded.
 
@@ -162,17 +161,15 @@ tests). Tiers:
   absent, add her ourselves (Maya's invite never landed).
 - **Hard-kill** — no decision yet and `DEMO_HARD_CAP` agent messages or
   `DEMO_WALL_CLOCK_S` elapsed.
-- **Open floor** (interactive, the default for a live run) — when Jordan posts a
-  `VERDICT:`, the meeting does **not** close. The conductor hands the room to you:
-  ask the still-live agents anything. It ends only when you post the end phrase
-  (`end meeting` / `/end` / `wrap up` / `adjourn`) or go quiet for
-  `DEMO_OPEN_FLOOR_IDLE_S` (default 7 min). Cleanup runs only then.
-- **Clean end** (headless / `DEMO_INTERACTIVE=false`) — verdict + `DEMO_GRACE_S`,
-  then close and stop, so automation never waits on an absent presenter.
-  A decided meeting is never hard-killed.
+- **Open floor** (interactive, the default) — a `VERDICT:` does **not** close the
+  meeting; the conductor hands you the room (see [Ending the meeting](#ending-the-meeting)
+  for how to close it).
+- **Clean end** (headless) — verdict + `DEMO_GRACE_S`, then close, so automation
+  never waits on a presenter.
 
-Only **agent** messages move the caps — your interjections never trip the breaker.
-Timers run on the conductor's clock (not platform timestamps). All caps env-tunable.
+A decided meeting is never hard-killed. Only **agent** messages move the caps — your
+interjections never trip the breaker. Timers run on the conductor's clock (not platform
+timestamps). All caps are env-tunable (see [Tuning](#tuning)).
 
 ## Reset / re-run
 
