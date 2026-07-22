@@ -196,14 +196,16 @@ jobs:
     steps:
       - name: Publish release summary
         run: |
-          echo "## Release Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Tag:** ${{ needs.release.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Artifact | Outcome |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| GHCR kit image + artifact | ${{ needs.publish-kit.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| add-band pin bump PR | ${{ needs.bump-add-band.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "PyPI publish runs in the release-triggered \`band-publish\` workflow." >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Release Summary"
+            echo ""
+            echo "**Version:** ${{ needs.release.outputs.major }}.${{ needs.release.outputs.minor }}.${{ needs.release.outputs.patch }}"
+            echo "**Tag:** ${{ needs.release.outputs.tag_name }}"
+            echo ""
+            echo "| Artifact | Outcome |"
+            echo "|---|---|"
+            echo "| GHCR kit image + artifact | ${{ needs.publish-kit.result }} |"
+            echo "| add-band pin bump PR | ${{ needs.bump-add-band.result }} |"
+            echo ""
+            echo "PyPI publish runs in the release-triggered \`band-publish\` workflow."
+          } >> "$GITHUB_STEP_SUMMARY"

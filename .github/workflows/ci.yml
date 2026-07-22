@@ -85,7 +85,9 @@ jobs:
       # git ls-files globbing that we don't need to re-run per platform.
       if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
       # examples/ READMEs have illustrative fragments not yet snippet-testable
-      run: uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
+      run: |
+        # shellcheck disable=SC2046  # word-splitting the ls-files output is the point
+        uv run pytest --markdown-docs $(git ls-files '*.md' ':!:examples/*') --no-cov
 
 
   test-crewai:
