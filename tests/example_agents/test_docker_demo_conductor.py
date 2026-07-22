@@ -24,6 +24,9 @@ to_observed = conductor.to_observed
 PM, DEV, ARCH = "pm-id", "dev-id", "arch-id"
 
 
+_STAMP = dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc)
+
+
 def make_message(
     sender_id: str,
     sender_type: str = "Agent",
@@ -31,6 +34,7 @@ def make_message(
     mentions: list[str] | None = None,
     id: str = "m1",
     content: str = "hi",
+    inserted_at: dt.datetime | None = _STAMP,
 ) -> ChatMessage:
     metadata = (
         {"mentions": [{"id": m} for m in mentions]} if mentions is not None else None
@@ -41,7 +45,7 @@ def make_message(
         message_type="text",
         sender_id=sender_id,
         sender_type=sender_type,
-        inserted_at=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+        inserted_at=inserted_at,
         metadata=metadata,
     )
 
@@ -142,6 +146,41 @@ def test_end_phrase_from_an_agent_is_ignored() -> None:
     obs = to_observed(msg, r, set())
     assert obs.is_end_signal is False, (
         "only the presenter can end the meeting — an agent saying 'wrap up' must not"
+    )
+
+
+class FakeMessages:
+    """Stands in for human_api_messages: returns a fixed page of messages."""
+
+    def __init__(self, page: list[ChatMessage]) -> None:
+        self._page = page
+
+    async def list_my_chat_messages(self, chat_id: str, **kwargs: object):
+        return type("Resp", (), {"data": self._page})()
+
+
+class FakeClient:
+    def __init__(self, page: list[ChatMessage]) -> None:
+        self.human_api_messages = FakeMessages(page)
+
+
+def make_conductor(page: list[ChatMessage]) -> object:
+    return conductor.Conductor(
+        FakeClient(page), conductor.ConductorSettings(), roster()
+    )
+
+
+async def test_new_messages_orders_mixed_timezone_stamps_without_crashing() -> None:
+    # inserted_at is optional; a page mixing an unstamped message with tz-aware ones
+    # must sort chronologically, not raise TypeError (naive vs aware datetime).
+    page = [
+        make_message(DEV, id="late", inserted_at=_STAMP + dt.timedelta(minutes=5)),
+        make_message(PM, id="unstamped", inserted_at=None),
+        make_message(ARCH, id="early", inserted_at=_STAMP),
+    ]
+    ordered = [m.id for m in await make_conductor(page)._new_messages()]
+    assert ordered == ["unstamped", "early", "late"], (
+        "an unstamped message sorts as oldest; stamped messages stay chronological"
     )
 
 

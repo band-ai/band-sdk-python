@@ -294,7 +294,11 @@ class Conductor:
         )
         fresh = [m for m in resp.data if m.id not in self._seen]
         self._seen.update(m.id for m in fresh)
-        return sorted(fresh, key=lambda m: m.inserted_at or dt.datetime.min)
+        # inserted_at is optional and platform stamps are tz-aware; an unstamped
+        # message must sort as oldest with a tz-aware sentinel — a naive one would
+        # raise TypeError against the aware stamps and crash the loop.
+        oldest = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+        return sorted(fresh, key=lambda m: m.inserted_at or oldest)
 
     async def _architect_in_room(self) -> bool:
         parts = await self.client.human_api_participants.list_my_chat_participants(
