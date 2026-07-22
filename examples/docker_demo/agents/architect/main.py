@@ -70,10 +70,11 @@ async def main() -> None:
     adapter = CrewAIAdapter(
         model=config.model,
         custom_section=build_persona(),
-        # Surface tool_call/tool_result and reasoning in the room, and expose the
-        # memory tools so the architect can record its verdict rationale.
+        # Surface tool_call/tool_result in the room, and expose the memory tools so
+        # the architect can record its verdict rationale. CrewAI has no native
+        # reasoning stream, so THOUGHTS is unsupported and intentionally omitted.
         features=AdapterFeatures(
-            emit={Emit.EXECUTION, Emit.THOUGHTS},
+            emit={Emit.EXECUTION},
             capabilities={Capability.MEMORY},
         ),
     )
