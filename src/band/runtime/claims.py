@@ -61,7 +61,7 @@ class MessageClaimRegistry:
     @property
     def inflight_ids(self) -> set[str]:
         """Currently claimed message IDs (copy)."""
-        return set(self._inflight)
+        return {message_id for _, message_id in self._inflight}
 
     def is_completed(self, room_id: str, message_id: str) -> bool:
         """Whether the message already completed; a hit refreshes LRU recency."""
