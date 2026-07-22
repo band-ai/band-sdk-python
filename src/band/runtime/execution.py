@@ -384,12 +384,15 @@ class ExecutionContext:
             self._processed_ids.popitem(last=False)
 
     def _remember_processed_ack_pending(self, message_id: str) -> None:
-        """Track local completion while waiting for durable processed ack."""
+        """Track local completion while waiting for durable processed ack.
+
+        Never evicted under cache pressure: losing this state would replay
+        the handler's side effects on redelivery. Entries drain through the
+        ack retry budget instead (success or promotion to completed).
+        """
         self._processed_ack_pending_ids[message_id] = True
         self._processed_ack_pending_ids.move_to_end(message_id)
         self._processed_ack_retry_counts.setdefault(message_id, 0)
-        if len(self._processed_ack_pending_ids) > self._max_processed_ids:
-            self._processed_ack_pending_ids.popitem(last=False)
 
     async def _retry_processed_ack(self, message_id: str) -> bool:
         """Retry durable processed ack for a locally completed message."""
