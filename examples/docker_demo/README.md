@@ -76,7 +76,9 @@ Keys can live in `.demo.env` or the environment (`BAND_API_KEY_USER`,
    injects the LLM + Band credentials host-side, creates the sandbox, and streams
    its **setup log to a labeled pane**.
 3. The conductor creates the room and posts the brief. Maya and Sam discuss;
-   Maya invites Jordan; Jordan posts a `VERDICT:`; the conductor closes the room.
+   Maya invites Jordan; Jordan posts a `VERDICT:`. The conductor then opens the
+   floor to you (interactive) — chat with the agents, then end with the end phrase,
+   idle, or Ctrl-C.
 4. Cleanup removes exactly the sandboxes, secrets, policy rules, and agents this
    run recorded.
 

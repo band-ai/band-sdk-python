@@ -11,13 +11,16 @@ The conductor is the only actor that sits *outside* the sandboxes, so it is the
 only thing that can guarantee the meeting ends. It creates the room, kicks off
 the design discussion, then watches the room over the Human REST API — feeding
 every text message to the pure ``CircuitBreaker`` (see breaker.py) and executing
-whatever the breaker returns: a handoff nudge, an Architect add-fallback, or a
-stop. In the happy path it stays silent; the PM hands off, the Architect decides,
-and the conductor closes the room cleanly.
+whatever the breaker returns: a handoff nudge, an Architect add-fallback, an open
+floor, or a stop. In the happy path it stays silent while the PM hands off and the
+Architect decides.
 
-The presenter (you) is a human participant in the same room and can interject at
-any time by @mentioning an agent — human messages are recorded but never counted
-toward the caps, so talking never trips the breaker.
+The presenter (you) is a human participant in the same room. Interjections are
+recorded but never counted toward the caps, so talking never trips the breaker.
+Interactive runs (the default) hand the room to you once the Architect decides:
+ask the agents anything, then end the meeting with an end phrase (``end meeting``
+/ ``/end`` / ``wrap up``), by going idle, or with Ctrl-C. Headless runs
+(``DEMO_INTERACTIVE=false``) skip the open floor and close on the verdict.
 
 Run with:
     uv run examples/docker_demo/conductor.py
