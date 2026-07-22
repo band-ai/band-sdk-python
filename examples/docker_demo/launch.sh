@@ -2,19 +2,18 @@
 #
 # One-command launcher for the Band Docker demo: three agents (PM / Developer /
 # Architect), each in its own sbx sandbox, each a different framework, one Band
-# room. Secrets stay on the host and are injected on the wire — they never enter
-# a VM. Per-agent setup logs stream to labeled panes so the setup is visible.
+# room. Secrets stay on the host and are injected on the wire — never in a VM.
+#
+# Three phases with explicit resource ownership: every sandbox, scoped secret,
+# and global policy rule this run creates is recorded in a manifest under
+# .demo/run/, and cleanup removes ONLY what it recorded — so a stray or
+# pre-existing band-demo-* is never touched, and failures are reported (not
+# silently swallowed).
 #
 # Subcommands:
-#   ./launch.sh build   Build + load the kit images (once, or after a kit change).
-#   ./launch.sh up       Provision agents, create sandboxes, run the meeting (default).
-#   ./launch.sh down     Tear everything down (sandboxes + provisioned agents).
-#
-# Prereqs: sbx (>=0.35.0, `sbx login`), uv, and host-side keys —
-#   BAND_API_KEY_USER, ANTHROPIC_API_KEY (PM), OPENAI_API_KEY (Dev + Architect).
-#
-# Lines marked "CONFIRM AT REHEARSAL" use sbx flags that track the kit README
-# (sbx 0.35.0); verify them against the installed sbx before the show.
+#   ./launch.sh build   Build + load the kit images (needs Docker + sbx only).
+#   ./launch.sh up       Provision, create sandboxes, run the meeting (default).
+#   ./launch.sh down     Remove exactly what the last run recorded.
 
 set -euo pipefail
 
@@ -22,19 +21,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 KIT_DIR="$ROOT/docker/band_python_kit"
 
-# One-file setup: drop endpoints + keys in an env file and they're loaded here.
-# Prod is the default (below); to target dev, point DEMO_ENV_FILE at the repo
-# .env.test, or put prod values in .demo.env. Explicit env vars still win.
+# One-file setup: drop endpoints + keys in an env file, loaded here. Prod is the
+# default; target dev by pointing DEMO_ENV_FILE at the repo .env.test.
 DEMO_ENV_FILE="${DEMO_ENV_FILE:-$HERE/.demo.env}"
 # shellcheck source=/dev/null
 if [ -f "$DEMO_ENV_FILE" ]; then set -a; . "$DEMO_ENV_FILE"; set +a; fi
 
-# Endpoints default to PROD (the real demo target); override via the env file
-# or BAND_REST_URL/BAND_WS_URL for dev/staging/self-hosted.
+# Endpoints default to PROD (the real demo target); override for dev/staging.
 BAND_REST_URL="${BAND_REST_URL:-https://app.band.ai}"
 BAND_WS_URL="${BAND_WS_URL:-wss://app.band.ai/api/v1/socket/websocket}"
-# Bare host (strip scheme/path) used both to grant egress and as the proxy
-# rewrite host for the Band key. Override BAND_SECRET_HOST for a wildcard.
 BAND_NET_HOST="$(printf '%s' "$BAND_REST_URL" | sed -E 's#^[a-z]+://##; s#/.*##')"
 BAND_WS_HOST="$(printf '%s' "$BAND_WS_URL" | sed -E 's#^[a-z]+://##; s#/.*##')"
 BAND_SECRET_HOST="${BAND_SECRET_HOST:-$BAND_NET_HOST}"
@@ -42,52 +37,98 @@ BAND_SECRET_HOST="${BAND_SECRET_HOST:-$BAND_NET_HOST}"
 BAND_HOSTS=("$BAND_NET_HOST")
 [ "$BAND_WS_HOST" != "$BAND_NET_HOST" ] && BAND_HOSTS+=("$BAND_WS_HOST")
 
-# Base image name must match the kit spec's sandbox.image (band-python-kit:local).
+# Image names must match the kit spec's sandbox.image (band-python-kit:local).
 BASE_IMAGE="band-python-kit:local"       # Architect (crewai: pure-Python via uv.lock)
 CLI_IMAGE="band-python-kit-cli:local"    # PM + Dev (adds the claude + codex CLIs)
 
-# role | workspace | sbx name | kit image | LLM provider (sbx built-in secret)
+# role | workspace | sbx name | kit image | LLM provider
 ROLES=(
   "pm|agents/pm|band-demo-pm|$CLI_IMAGE|anthropic"
   "dev|agents/dev|band-demo-dev|$CLI_IMAGE|openai"
   "architect|agents/architect|band-demo-architect|$BASE_IMAGE|openai"
 )
 
-log() { printf '\n=== %s ===\n' "$*"; }
+# Manifest of resources THIS run owns (so cleanup removes only these).
+RUN_DIR="$HERE/.demo/run"
+MF_SANDBOXES="$RUN_DIR/sandboxes"     # one sbx name per line
+MF_SECRETS="$RUN_DIR/secrets"          # "sandbox<TAB>host" per line (scoped set-custom)
+MF_POLICY="$RUN_DIR/policy"            # global network host per line (rules we added)
 
+log()  { printf '\n=== %s ===\n' "$*"; }
+warn() { printf 'WARN: %s\n' "$*" >&2; }
 require() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found on PATH" >&2; exit 1; }; }
+record() { printf '%s\n' "$2" >>"$1"; }   # append line "$2" to manifest "$1"
 
-preflight() {
-  log "Preflight"
+# --- Preflight (split: image build needs tools only, not live keys) ------------
+
+check_tools() {
   require sbx
   require uv
+  require docker
+  docker info >/dev/null 2>&1 || { echo "ERROR: Docker daemon not running" >&2; exit 1; }
+  # sbx needs an initialized global policy before custom rules / sandbox use.
+  sbx policy ls >/dev/null 2>&1 || {
+    echo "ERROR: sbx policy not initialized — run: sbx policy init balanced" >&2; exit 1;
+  }
+  echo "tools ok — sbx: $(sbx version 2>/dev/null | head -1 || echo '?')"
+}
+
+check_keys() {
   : "${BAND_API_KEY_USER:?BAND_API_KEY_USER is required (conductor + agent provisioning)}"
   : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY is required (PM agent)}"
   : "${OPENAI_API_KEY:?OPENAI_API_KEY is required (Developer + Architect agents)}"
-  echo "sbx: $(sbx version 2>/dev/null | head -1 || echo '?')   Band: $BAND_REST_URL"
+  echo "keys ok — Band: $BAND_REST_URL"
 }
+
+# --- Build ---------------------------------------------------------------------
 
 build() {
   log "Building kit images"
-  # Base kit image (name must match the spec's sandbox.image). The workspace
-  # uv.lock carries each framework's Python deps, synced at first boot.
   docker build -f "$KIT_DIR/Dockerfile" -t "$BASE_IMAGE" "$ROOT"
   docker save "$BASE_IMAGE" | sbx template load /dev/stdin
-
   # PM + Dev image: base + the claude and codex CLIs their adapters spawn.
   docker build -f "$HERE/Dockerfile.cli" --build-arg BASE="$BASE_IMAGE" -t "$CLI_IMAGE" "$HERE"
   docker save "$CLI_IMAGE" | sbx template load /dev/stdin
 }
 
+# --- Create --------------------------------------------------------------------
+
 provision() {
   log "Provisioning demo agents"
-  ( cd "$HERE" && uv run provision.py )
+  ( cd "$HERE" && uv run provision.py )   # self-rolls-back on partial failure
   # shellcheck source=/dev/null
-  source "$HERE/.demo/agents.env"   # DEMO_PM_ID / _APIKEY / _NAME, etc.
+  source "$HERE/.demo/agents.env"          # DEMO_PM_ID / _APIKEY / _NAME, etc.
 }
 
-# For each role: bake the agent id into its band.yaml, create the sandbox, grant
-# egress, and inject credentials host-side (LLM built-in + Band custom sentinel).
+# Global egress rule, in force BEFORE sbx create so the agent's startup traffic
+# is never blocked (sbx can't scope a rule to a not-yet-created sandbox). Records
+# only rules we actually added, and is idempotent against the operator's policy.
+allow_global() {
+  local host="$1"
+  sbx policy check network "$host" >/dev/null 2>&1 && return 0
+  sbx policy allow network "$host" >/dev/null
+  record "$MF_POLICY" "$host"
+}
+
+grant_egress() {
+  local h
+  for h in "${BAND_HOSTS[@]}"; do allow_global "$h"; done
+  allow_global api.anthropic.com
+  allow_global api.openai.com
+}
+
+# Abort rather than clobber a band-demo-* that this run did not create.
+assert_names_free() {
+  local spec name existing; existing="$(sbx ls 2>/dev/null || true)"
+  for spec in "${ROLES[@]}"; do
+    IFS='|' read -r _ _ name _ _ <<<"$spec"
+    if printf '%s' "$existing" | grep -qw "$name"; then
+      echo "ERROR: sandbox '$name' already exists — run './launch.sh down' first" >&2
+      exit 1
+    fi
+  done
+}
+
 launch_one() {
   local role="$1" workspace="$2" name="$3" image="$4" provider="$5"
   local up_role; up_role="$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')"
@@ -99,10 +140,9 @@ launch_one() {
   esac
 
   log "Sandbox: $name ($role, $provider)"
-  # Stage a per-run copy of the workspace and bake the id + endpoints into THAT,
-  # never the tracked source — keeps the git tree clean and avoids leaking a live
-  # agent id into a committed file. Teardown removes the staged copies.
-  local stage="$HERE/.demo/workspaces/$role"
+  # Stage a per-run copy and bake the id + endpoints into THAT, never the tracked
+  # source — keeps the git tree clean and avoids leaking a live agent id.
+  local stage="$RUN_DIR/workspaces/$role"
   rm -rf "$stage"; mkdir -p "$stage"
   cp "$HERE/$workspace"/* "$stage"/
   sed -i.bak \
@@ -111,57 +151,47 @@ launch_one() {
     -e "s#^  wsUrl: .*#  wsUrl: $BAND_WS_URL#" \
     "$stage/band.yaml" && rm -f "$stage/band.yaml.bak"
 
-  # Secrets FIRST — placeholder env vars are injected at create time, so the
-  # secrets must exist before the sandbox is created (set-custom accepts a
-  # not-yet-created name).
-  #
-  # LLM key: sbx reserves the real provider env names (ANTHROPIC_API_KEY /
-  # OPENAI_API_KEY) for its built-in *wire-only* injection, which the coding CLIs
-  # can't use — they refuse to send without a local key. So inject the placeholder
-  # under a NON-reserved *_PROXY_KEY var; the workspace's main.py copies it into
-  # the real var for the CLI, and the proxy swaps the placeholder on the wire.
+  # Secrets FIRST — the placeholder env vars are injected at create time, so they
+  # must exist before the sandbox is created (set-custom accepts a new name).
+  # sbx reserves the real provider env names (ANTHROPIC_API_KEY / OPENAI_API_KEY)
+  # for its built-in wire-only injection, which the coding CLIs can't use — they
+  # refuse to send without a local key. So inject under a NON-reserved *_PROXY_KEY
+  # var; the workspace's main.py copies it into the real var for the CLI.
   local llm_host llm_env llm_ph
   case "$provider" in
     anthropic) llm_host="api.anthropic.com"; llm_env="ANTHROPIC_PROXY_KEY"; llm_ph='sk-ant-{rand}' ;;
     openai)    llm_host="api.openai.com";    llm_env="OPENAI_PROXY_KEY";    llm_ph='sk-{rand}' ;;
   esac
   sbx secret set-custom "$name" --host "$llm_host" --env "$llm_env" --placeholder "$llm_ph" --value "$provider_key"
+  record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$llm_host")"
 
-  # Band key: host-held sentinel swap, scoped per sandbox (each agent's key differs).
-  # Cover every Band host (REST + WS); an explicit BAND_SECRET_HOST override (e.g. a
-  # wildcard) replaces the derived set.
+  # Band key: host-held sentinel swap, scoped per sandbox. Cover every Band host
+  # (REST + WS); an explicit BAND_SECRET_HOST override (e.g. a wildcard) wins.
   local secret_hosts=("${BAND_HOSTS[@]}")
   [ "$BAND_SECRET_HOST" != "$BAND_NET_HOST" ] && secret_hosts=("$BAND_SECRET_HOST")
-  local host_args=()
+  local host_args=() h
   for h in "${secret_hosts[@]}"; do host_args+=(--host "$h"); done
-  sbx secret set-custom "$name" "${host_args[@]}" \
-    --env BAND_API_KEY --placeholder proxy-managed --value "$agent_key"
+  sbx secret set-custom "$name" "${host_args[@]}" --env BAND_API_KEY --placeholder proxy-managed --value "$agent_key"
+  for h in "${secret_hosts[@]}"; do record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$h")"; done
 
-  # Create: --kit is the spec dir, --template the loaded image. The agent boots
-  # and runs uv sync (its framework deps) — a window of seconds+ before it connects.
   sbx create --name "$name" --kit "$KIT_DIR" --template "$image" band-python-kit "$stage"
-
-  # Policy can only be added after the sandbox exists; do it now, inside the sync
-  # window, so the allow rule is in place before the agent's first Band request.
-  # (On prod the spec already allows app.band.ai; the LLM host still needs this.)
-  for h in "${BAND_HOSTS[@]}"; do sbx policy allow network --sandbox "$name" "$h"; done
-  case "$provider" in
-    anthropic) sbx policy allow network --sandbox "$name" api.anthropic.com ;;
-    openai)    sbx policy allow network --sandbox "$name" api.openai.com ;;
-  esac
+  record "$MF_SANDBOXES" "$name"
 }
 
 launch_all() {
+  grant_egress   # global rules before any create — no startup race
+  local spec role workspace name image provider
   for spec in "${ROLES[@]}"; do
     IFS='|' read -r role workspace name image provider <<<"$spec"
     launch_one "$role" "$workspace" "$name" "$image" "$provider"
   done
 }
 
-# One Terminal window per sandbox, tailing its in-VM setup log — the visible
-# "watch each agent set up" view. macOS Terminal via osascript (no tmux needed).
+# --- Presentation --------------------------------------------------------------
+
 spawn_terminals() {
   command -v osascript >/dev/null 2>&1 || { echo "osascript not found — skipping per-sandbox windows"; return; }
+  local spec role name
   for spec in "${ROLES[@]}"; do
     IFS='|' read -r role _ name _ _ <<<"$spec"
     local cmd="printf '\\033]0;%s sandbox\\007' '$role'; echo '=== [$role] $name ==='; sbx exec '$name' tail -n +1 -f /var/log/sbx-kit-startup.log"
@@ -169,8 +199,6 @@ spawn_terminals() {
   done
 }
 
-# Wait for the conductor to create the room (it writes .demo/room.url), then open
-# the Band UI in the browser so the presenter can watch + type as the human.
 open_ui() {
   local f="$HERE/.demo/room.url"
   for _ in $(seq 1 60); do [ -s "$f" ] && break; sleep 1; done
@@ -184,23 +212,56 @@ run_conductor() {
   uv run "$HERE/conductor.py"
 }
 
-teardown() {
-  log "Teardown"
-  for spec in "${ROLES[@]}"; do
-    IFS='|' read -r _ _ name _ _ <<<"$spec"
-    sbx rm -f "$name" 2>/dev/null || true
-  done
-  ( cd "$HERE" && uv run provision.py delete ) 2>/dev/null || true
-  rm -rf "$HERE/.demo/workspaces" "$HERE/.demo/room.url"
+# --- Cleanup (removes only recorded resources; reports every failure) ----------
+
+cleanup() {
+  log "Cleanup"
+  local failed=0 name sandbox host
+
+  if [ -f "$MF_SANDBOXES" ]; then
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      sbx rm -f "$name" >/dev/null || { warn "could not remove sandbox $name"; failed=1; }
+    done <"$MF_SANDBOXES"
+  fi
+
+  # Scoped secrets persist in the host store after a sandbox is removed — a failed
+  # removal leaves a real key behind, so surface it loudly.
+  if [ -f "$MF_SECRETS" ]; then
+    while IFS=$'\t' read -r sandbox host; do
+      [ -n "$sandbox" ] || continue
+      sbx secret rm "$sandbox" --host "$host" -f >/dev/null 2>&1 \
+        || { warn "leftover secret for $sandbox ($host); remove: sbx secret rm $sandbox --host $host -f"; failed=1; }
+    done <"$MF_SECRETS"
+  fi
+
+  if [ -f "$MF_POLICY" ]; then
+    while IFS= read -r host; do
+      [ -n "$host" ] || continue
+      sbx policy rm network --resource "$host" >/dev/null 2>&1 \
+        || { warn "leftover global egress rule for $host; remove: sbx policy rm network --resource $host"; failed=1; }
+    done <"$MF_POLICY"
+  fi
+
+  # Provisioned agents: provision.py deletes by the ids it recorded.
+  ( cd "$HERE" && uv run provision.py delete ) || { warn "agent deletion reported an error"; failed=1; }
+
+  rm -rf "$RUN_DIR" "$HERE/.demo/room.url"
+  [ "$failed" -eq 0 ] && echo "cleanup complete" || echo "cleanup finished with warnings (see above)"
 }
 
+# --- Orchestration -------------------------------------------------------------
+
 up() {
-  preflight
+  check_tools
+  check_keys
+  assert_names_free
+  rm -rf "$RUN_DIR"; mkdir -p "$RUN_DIR/workspaces"
+  # Arm cleanup BEFORE the first mutation so any partial failure is reaped.
+  trap cleanup EXIT
   provision
-  trap teardown EXIT
   launch_all
   rm -f "$HERE/.demo/room.url"
-  # DEMO_HEADLESS=1 skips the GUI presentation (used for automated validation).
   if [ -z "${DEMO_HEADLESS:-}" ]; then
     spawn_terminals
     ( open_ui ) &          # background: opens the UI once the room exists
@@ -209,8 +270,8 @@ up() {
 }
 
 case "${1:-up}" in
-  build) preflight; build ;;
+  build) check_tools; build ;;
   up)    up ;;
-  down)  teardown ;;
+  down)  cleanup ;;
   *) echo "usage: $0 {build|up|down}" >&2; exit 2 ;;
 esac

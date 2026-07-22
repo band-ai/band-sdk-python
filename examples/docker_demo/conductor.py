@@ -307,11 +307,14 @@ class Conductor:
         """
         await self.setup()
         reason: str | None = None
-        while reason is None:
-            await asyncio.sleep(self.settings.demo_poll_interval_s)
-            for message in await self._new_messages():
-                self.breaker.record(to_observed(message, self.roster))
-            reason = await self._apply(self.breaker.poll(self._now()))
+        # The breaker guards the meeting like a lock: leaving this block closes it,
+        # so the agents can never keep talking past the guarded region.
+        with self.breaker:
+            while reason is None:
+                await asyncio.sleep(self.settings.demo_poll_interval_s)
+                for message in await self._new_messages():
+                    self.breaker.record(to_observed(message, self.roster))
+                reason = await self._apply(self.breaker.poll(self._now()))
         logger.info("Conductor finished: %s", reason)
         return reason
 
