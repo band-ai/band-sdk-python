@@ -214,20 +214,41 @@ launch_all() {
 # The command that streams one sandbox's live agent log (one source of truth).
 pane_cmd() { echo "sbx exec $1 tail -n +1 -f /var/log/sbx-kit-startup.log"; }
 
+# tmux gives one window with a live pane per agent that shows *inside* the current
+# terminal (Warp, iTerm, Terminal — all fine), instead of osascript spawning
+# separate Apple Terminal.app windows that hide behind a different front-end.
+TMUX_SESSION="band-demo"
+
 spawn_terminals() {
   local spec role name
+  if command -v tmux >/dev/null 2>&1; then
+    tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+    local first=1
+    for spec in "${ROLES[@]}"; do
+      IFS='|' read -r role _ name _ _ <<<"$spec"
+      local pane="echo '=== [$role] $name ==='; $(pane_cmd "$name")"
+      if [ "$first" = 1 ]; then
+        tmux new-session -d -s "$TMUX_SESSION" -n agents "$pane"; first=0
+      else
+        tmux split-window -t "$TMUX_SESSION" "$pane"
+      fi
+      tmux select-layout -t "$TMUX_SESSION" tiled >/dev/null
+    done
+    printf '\nAgent logs live in tmux — open a new terminal tab/pane and run:\n   tmux attach -t %s        (detach with Ctrl-b then d)\n\n' "$TMUX_SESSION"
+    return
+  fi
+  # No tmux: fall back to osascript, but bring Terminal to the front so the windows
+  # aren't lost behind another terminal app. Still print the commands as a backstop.
   if command -v osascript >/dev/null 2>&1; then
     for spec in "${ROLES[@]}"; do
       IFS='|' read -r role _ name _ _ <<<"$spec"
-      local cmd
-      cmd="printf '\\033]0;%s sandbox\\007' '$role'; echo '=== [$role] $name ==='; $(pane_cmd "$name")"
-      osascript -e "tell application \"Terminal\" to do script \"$cmd\"" >/dev/null 2>&1 || true
+      local cmd="printf '\\033]0;%s sandbox\\007' '$role'; echo '=== [$role] $name ==='; $(pane_cmd "$name")"
+      osascript -e "tell application \"Terminal\" to do script \"$cmd\"" \
+                -e 'tell application "Terminal" to activate' >/dev/null 2>&1 || true
     done
-    return
   fi
-  # No osascript (non-macOS / no Terminal): print the panes to open by hand, so the
-  # "one live pane per agent" view is still achievable — never a silent skip.
-  echo "osascript unavailable — open one terminal per sandbox and run:"
+  echo "For a live pane per agent, 'brew install tmux' then re-run. Or open one"
+  echo "terminal per sandbox and run:"
   for spec in "${ROLES[@]}"; do
     IFS='|' read -r role _ name _ _ <<<"$spec"
     echo "  [$role]  $(pane_cmd "$name")"
@@ -252,6 +273,9 @@ run_conductor() {
 cleanup() {
   log "Cleanup"
   local failed=0 name sandbox host
+
+  # Close the live-log panes (best effort) so teardown doesn't leave dead tails.
+  command -v tmux >/dev/null 2>&1 && tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 
   if [ -f "$MF_SANDBOXES" ]; then
     while IFS= read -r name; do
@@ -297,8 +321,11 @@ up() {
   check_keys
   assert_names_free
   rm -rf "$RUN_DIR"; mkdir -p "$RUN_DIR/workspaces"
-  # Arm cleanup BEFORE the first mutation so any partial failure is reaped.
+  # Arm cleanup BEFORE the first mutation so any partial failure is reaped. INT/TERM
+  # (Ctrl-C) convert to a normal exit so the single EXIT trap tears down cleanly —
+  # a guaranteed manual stop that never depends on the chat or the conductor.
   trap cleanup EXIT
+  trap 'exit 130' INT TERM
   provision
   launch_all
   rm -f "$HERE/.demo/room.url"
@@ -306,18 +333,15 @@ up() {
     spawn_terminals
     ( open_ui ) &          # background: opens the UI once the room exists
   fi
-  run_conductor            # foreground: the meeting narration in this terminal
 
-  # The meeting reached its end, but the agents are still live in their sandboxes.
-  # Keep them up so the presenter can keep chatting with the participants and ask
-  # questions in the Band UI; only tear down (which reaps the agents — after that
-  # their names no longer resolve in history) on an explicit Enter. Skipped when
-  # headless so automated runs don't hang.
-  if [ -z "${DEMO_HEADLESS:-}" ]; then
-    printf '\n== Meeting concluded — agents still live. Chat with them in the Band UI:\n   %s\n' \
-      "$(cat "$HERE/.demo/room.url" 2>/dev/null)"
-    read -r -p "Press Enter to tear everything down... " _
-  fi
+  # The conductor owns the whole lifecycle, including the ending: after the verdict
+  # it hands the room to the presenter (interactive) and only returns once the
+  # presenter posts the end phrase or goes quiet — so this call blocks for the
+  # entire meeting AND the Q&A that follows, with no TTY read here. Headless runs
+  # skip the open floor (DEMO_INTERACTIVE=false) and end on the verdict, so
+  # automation never waits on an absent presenter. Cleanup then runs via the trap.
+  export DEMO_INTERACTIVE="$([ -z "${DEMO_HEADLESS:-}" ] && echo true || echo false)"
+  run_conductor
 }
 
 case "${1:-up}" in

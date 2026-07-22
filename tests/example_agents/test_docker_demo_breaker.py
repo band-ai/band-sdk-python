@@ -25,14 +25,47 @@ PM, DEV, ARCH = SenderClass.PM, SenderClass.DEVELOPER, SenderClass.ARCHITECT
 
 
 def msg(
-    sender, t, *, mentions_architect=False, is_final_decision=False
+    sender,
+    t,
+    *,
+    mentions_architect=False,
+    is_final_decision=False,
+    is_presenter=False,
+    is_end_signal=False,
 ) -> ObservedMessage:
     return ObservedMessage(
         sender_class=sender,
         timestamp=t,
         mentions_architect=mentions_architect,
         is_final_decision=is_final_decision,
+        is_presenter=is_presenter,
+        is_end_signal=is_end_signal,
     )
+
+
+def presenter(t: float, *, end: bool = False) -> ObservedMessage:
+    """A genuine presenter message at time t (optionally the end phrase)."""
+    return msg(SenderClass.HUMAN, t, is_presenter=True, is_end_signal=end)
+
+
+def decided_interactive(idle_s: float = 30.0) -> CircuitBreaker:
+    """A breaker in interactive mode driven straight to a verdict, floor just opened.
+
+    Returns the breaker after the first post-verdict poll (which emits OPEN_FLOOR),
+    so a test can exercise the open floor from t=verdict onward.
+    """
+    cfg = BreakerConfig(
+        soft_cap=4,
+        handoff_deadline=2,
+        hard_cap=8,
+        wall_clock_s=100.0,
+        interactive=True,
+        open_floor_idle_s=idle_s,
+    )
+    cb = CircuitBreaker(cfg, start_time=0.0)
+    cb.record(msg(ARCH, 10.0, is_final_decision=True))
+    assert cb.poll(10.0) == [Action.OPEN_FLOOR], "verdict must open the floor once"
+    return cb
 
 
 def design_run(n: int, start: int = 1) -> list[ObservedMessage]:
@@ -253,3 +286,90 @@ def test_context_manager_does_not_suppress_exceptions(config: BreakerConfig) -> 
     with pytest.raises(ValueError):
         with CircuitBreaker(config, start_time=0.0):
             raise ValueError("boom")
+
+
+# --- interactive open floor -----------------------------------------------------
+
+
+def test_verdict_opens_the_floor_instead_of_terminating() -> None:
+    cb = decided_interactive()
+    # decided_interactive already asserts the first poll emitted OPEN_FLOOR; a
+    # second poll shortly after must NOT terminate — the presenter has the room.
+    assert cb.poll(11.0) == [], "an interactive meeting must not close on the verdict"
+    assert cb.stopped is False, "the floor stays open for the presenter"
+
+
+def test_open_floor_opens_only_once() -> None:
+    cb = decided_interactive()
+    assert cb.poll(12.0) == [], (
+        "OPEN_FLOOR must fire once, not on every subsequent poll"
+    )
+
+
+def test_presenter_end_phrase_closes_the_floor() -> None:
+    cb = decided_interactive()
+    cb.record(presenter(15.0, end=True))
+    assert cb.poll(15.0) == [Action.TERMINATE_OK], (
+        "the presenter's end phrase ends the meeting"
+    )
+    assert "presenter ended" in cb.stop_reason
+
+
+def test_open_floor_terminates_after_presenter_idle() -> None:
+    cb = decided_interactive(idle_s=30.0)
+    # Floor opened at t=10; no presenter message. At t=39 still within idle, at t=40
+    # the 30s silence has elapsed.
+    assert cb.poll(39.0) == [], "still within the idle window — hold the room open"
+    assert cb.poll(40.0) == [Action.TERMINATE_OK], (
+        "30s of presenter silence after the verdict must auto-close the room"
+    )
+    assert "idle" in cb.stop_reason
+
+
+def test_presenter_activity_resets_the_idle_timer() -> None:
+    cb = decided_interactive(idle_s=30.0)
+    # Floor opened at t=10 (would close at t=40). A presenter message at t=35 lands
+    # inside that window and pushes the deadline out to t=65.
+    cb.record(presenter(35.0))
+    assert cb.poll(35.0) == [], "presenter just spoke — timer resets, room stays open"
+    assert cb.poll(60.0) == [], "still within the reset window (last activity t=35)"
+    assert cb.poll(65.0) == [Action.TERMINATE_OK], (
+        "idle measured from the last presenter message, not from the verdict"
+    )
+
+
+def test_agent_chatter_alone_does_not_keep_the_floor_open() -> None:
+    cb = decided_interactive(idle_s=30.0)
+    # Agents keep talking after the verdict, but only presenter input holds the floor.
+    for t in (12.0, 15.0, 20.0, 39.0):
+        cb.record(msg(PM if int(t) % 2 else DEV, t))
+        assert cb.poll(t) == [], (
+            "agent messages must not reset the presenter idle timer"
+        )
+    assert cb.poll(40.0) == [Action.TERMINATE_OK], (
+        "with no presenter input, the floor still closes on idle despite agent chatter"
+    )
+
+
+def test_non_interactive_still_terminates_on_grace() -> None:
+    cfg = BreakerConfig(wall_clock_s=100.0, grace_s=20.0)  # interactive defaults False
+    cb = CircuitBreaker(cfg, start_time=0.0)
+    cb.record(msg(ARCH, 10.0, is_final_decision=True))
+    assert cb.poll(10.0) == [], "non-interactive: verdict starts the grace tail"
+    assert cb.poll(31.0) == [Action.TERMINATE_OK], (
+        "non-interactive (headless/CI) still closes on decision + grace, no open floor"
+    )
+
+
+def test_presenter_can_end_before_any_verdict() -> None:
+    # The presenter must be able to stop the meeting at any time — not only during
+    # the post-verdict open floor. Here the design is still in progress, no verdict.
+    cfg = BreakerConfig(interactive=True, wall_clock_s=100.0, open_floor_idle_s=30.0)
+    cb = CircuitBreaker(cfg, start_time=0.0)
+    cb.record(msg(PM, 1.0))
+    cb.record(msg(DEV, 2.0))
+    cb.record(presenter(3.0, end=True))
+    assert cb.poll(3.0) == [Action.TERMINATE_OK], (
+        "an end phrase ends the meeting mid-discussion, before any verdict"
+    )
+    assert "presenter ended" in cb.stop_reason
