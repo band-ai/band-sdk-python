@@ -219,6 +219,26 @@ class TestAgentRuntimeExecutionManagement:
 
         await runtime.stop()
 
+    async def test_room_recreation_reclaims_completed_and_retries_pending_ack(
+        self, mock_link, mock_handler
+    ):
+        """Room teardown may drop durable cache, but not unacknowledged success."""
+        runtime = AgentRuntime(mock_link, "agent-123", mock_handler)
+        original = await runtime._create_execution("room-a")
+        original.claims.remember_completed("room-a", "msg-completed")
+        original.claims.remember_ack_pending("room-a", "msg-ack-pending")
+
+        await runtime._on_room_left("room-a")
+        recreated = await runtime._create_execution("room-a")
+
+        assert not recreated.claims.is_completed("room-a", "msg-completed")
+
+        mock_link.mark_processed = AsyncMock(return_value=True)
+        assert await recreated._retry_pending_processed_acks()
+        mock_link.mark_processed.assert_awaited_once_with("room-a", "msg-ack-pending")
+
+        await runtime.stop()
+
     async def test_active_sessions_returns_copy(self, mock_link, mock_handler):
         """active_sessions should return a copy."""
         runtime = AgentRuntime(mock_link, "agent-123", mock_handler)

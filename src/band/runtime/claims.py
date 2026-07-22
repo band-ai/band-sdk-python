@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator, TypeAlias
+from typing import TypeAlias
 
 DEFAULT_COMPLETED_CACHE_SIZE = 500
 ClaimKey: TypeAlias = tuple[str, str]
@@ -20,7 +21,8 @@ class MessageClaimRegistry:
     - **ack pending** — the handler completed but the durable processed ack
       failed; redelivery retries only the ack, never the handler. Never
       evicted (losing it would replay side effects); drains through the ack
-      retry budget instead.
+      retry budget instead. If a room never returns, this state intentionally
+      remains for the registry's lifetime rather than risk replaying effects.
     - **completed** — durably processed; kept in a bounded LRU for dedup.
 
     ``AgentRuntime`` owns one registry and passes it to every context it
@@ -88,6 +90,10 @@ class MessageClaimRegistry:
     def completed_ids(self, room_id: str) -> list[str]:
         """Completed message IDs for a room, oldest first."""
         return list(self._completed_by_room.get(room_id, ()))
+
+    def discard_completed(self, room_id: str) -> None:
+        """Discard a removed room's durably acknowledged local cache."""
+        self._completed_by_room.pop(room_id, None)
 
     def remember_completed(self, room_id: str, message_id: str) -> None:
         """Record durable completion and clear any pending-ack state."""

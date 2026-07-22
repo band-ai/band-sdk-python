@@ -306,6 +306,11 @@ class AgentRuntime:
         execution = self.executions.pop(room_id)
         graceful = await execution.stop(timeout=timeout)
 
+        # Durable completion state is safe to release with the room. Pending
+        # acknowledgements remain in the shared registry so a later rejoin
+        # retries only the ack instead of replaying handler side effects.
+        self._claim_registry.discard_completed(room_id)
+
         # Call cleanup callback (for adapter to clean up checkpointer, etc.)
         if self._on_session_cleanup:
             try:
