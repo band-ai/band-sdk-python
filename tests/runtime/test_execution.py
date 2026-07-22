@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from band.runtime.claims import MessageClaimRegistry
 from band.runtime.execution import (
     Execution,
     ExecutionContext,
@@ -553,7 +554,7 @@ class TestCrashRecoverySync:
         # Marker should be cleared
         assert ctx._first_ws_msg_id is None
         # Dedupe cache should keep processed sync id to avoid WS reprocessing
-        assert "msg-sync-001" in ctx._processed_ids
+        assert "msg-sync-001" in ctx.claims.completed_ids
 
         await ctx.stop()
 
@@ -661,7 +662,7 @@ class TestCrashRecoverySync:
 
         mock_handler.assert_not_called()
         mock_link_with_next.mark_processing.assert_not_called()
-        assert "msg-processed-replay" in ctx._processed_ids
+        assert "msg-processed-replay" in ctx.claims.completed_ids
 
         await ctx.stop()
 
@@ -700,7 +701,7 @@ class TestCrashRecoverySync:
 
         mock_handler.assert_not_called()
         mock_link_with_next.mark_processing.assert_not_called()
-        assert "msg-stale-replay" in ctx._processed_ids
+        assert "msg-stale-replay" in ctx.claims.completed_ids
 
         await ctx.stop()
 
@@ -811,7 +812,7 @@ class TestCrashRecoverySync:
         await backlog_task
 
         assert mock_handler.await_count == 1
-        assert ctx._inflight_message_ids == set()
+        assert ctx.claims.inflight_ids == set()
 
     async def test_first_message_to_fresh_room_executes_once(self, mock_link_with_next):
         """A message posted before the room's context was live executes once.
@@ -873,7 +874,11 @@ class TestCrashRecoverySync:
     async def test_fresh_contexts_do_not_execute_the_same_message_twice(
         self, mock_link_with_next
     ):
-        """Two live contexts for one room must execute a shared message once."""
+        """Contexts sharing a runtime's registry execute a shared message once.
+
+        The losing delivery is deferred (not treated as durably handled), so
+        the resync safety net re-checks it if the owner later fails.
+        """
         handler_started = asyncio.Event()
         release_handler = asyncio.Event()
         handler_calls = 0
@@ -884,26 +889,23 @@ class TestCrashRecoverySync:
             handler_started.set()
             await release_handler.wait()
 
-        first_context = ExecutionContext(
-            "room-123",
-            mock_link_with_next,
-            blocking_handler,
-            agent_id="agent-123",
-            config=SessionConfig(
-                enable_context_hydration=False,
-                enable_working_state=False,
-            ),
-        )
-        second_context = ExecutionContext(
-            "room-123",
-            mock_link_with_next,
-            blocking_handler,
-            agent_id="agent-123",
-            config=SessionConfig(
-                enable_context_hydration=False,
-                enable_working_state=False,
-            ),
-        )
+        registry = MessageClaimRegistry()
+
+        def fresh_context() -> ExecutionContext:
+            return ExecutionContext(
+                "room-123",
+                mock_link_with_next,
+                blocking_handler,
+                agent_id="agent-123",
+                config=SessionConfig(
+                    enable_context_hydration=False,
+                    enable_working_state=False,
+                ),
+                claim_registry=registry,
+            )
+
+        first_context = fresh_context()
+        second_context = fresh_context()
         event = make_message_event(room_id="room-123", msg_id="msg-fresh-peer")
 
         first_task = asyncio.create_task(first_context._process_event(event))
@@ -912,10 +914,12 @@ class TestCrashRecoverySync:
 
         await asyncio.sleep(0)
         release_handler.set()
-        await asyncio.gather(first_task, second_task)
+        owner_handled, duplicate_handled = await asyncio.gather(first_task, second_task)
 
         assert handler_calls == 1
         assert mock_link_with_next.mark_processing.await_count == 1
+        assert owner_handled is True
+        assert duplicate_handled is False
 
     async def test_mark_processing_failure_does_not_execute_message(
         self, mock_link_with_next, mock_handler
@@ -937,7 +941,7 @@ class TestCrashRecoverySync:
         )
         mock_handler.assert_not_called()
         mock_link_with_next.mark_processed.assert_not_called()
-        assert ctx._inflight_message_ids == set()
+        assert ctx.claims.inflight_ids == set()
 
     async def test_backlog_processed_ack_failure_is_not_remembered(
         self, mock_link_with_next, mock_handler
@@ -972,8 +976,8 @@ class TestCrashRecoverySync:
         mock_link_with_next.mark_processed.assert_awaited_once_with(
             "room-123", "msg-ack-fails"
         )
-        assert "msg-ack-fails" not in ctx._processed_ids
-        assert "msg-ack-fails" in ctx._processed_ack_pending_ids
+        assert "msg-ack-fails" not in ctx.claims.completed_ids
+        assert ctx.claims.is_ack_pending(ctx.room_id, "msg-ack-fails")
 
     async def test_websocket_processed_ack_failure_is_not_remembered(
         self, mock_link_with_next, mock_handler
@@ -995,8 +999,8 @@ class TestCrashRecoverySync:
         mock_link_with_next.mark_processed.assert_awaited_once_with(
             "room-123", "msg-ws-ack-fails"
         )
-        assert "msg-ws-ack-fails" not in ctx._processed_ids
-        assert "msg-ws-ack-fails" in ctx._processed_ack_pending_ids
+        assert "msg-ws-ack-fails" not in ctx.claims.completed_ids
+        assert ctx.claims.is_ack_pending(ctx.room_id, "msg-ws-ack-fails")
 
     async def test_backlog_processed_ack_failure_retries_ack_without_handler_replay(
         self, mock_link_with_next, mock_handler
@@ -1031,8 +1035,8 @@ class TestCrashRecoverySync:
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
-        assert "msg-backlog-ack-retry" in ctx._processed_ids
-        assert "msg-backlog-ack-retry" not in ctx._processed_ack_pending_ids
+        assert "msg-backlog-ack-retry" in ctx.claims.completed_ids
+        assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-backlog-ack-retry")
 
     async def test_processed_ack_retry_budget_exhaustion_keeps_local_completion(
         self, mock_link_with_next, mock_handler
@@ -1070,8 +1074,8 @@ class TestCrashRecoverySync:
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
-        assert "msg-ack-budget" in ctx._processed_ids
-        assert "msg-ack-budget" not in ctx._processed_ack_pending_ids
+        assert "msg-ack-budget" in ctx.claims.completed_ids
+        assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-ack-budget")
 
     async def test_websocket_processed_ack_failure_retries_ack_without_handler_replay(
         self, mock_link_with_next, mock_handler
@@ -1092,8 +1096,8 @@ class TestCrashRecoverySync:
 
         mock_handler.assert_awaited_once()
         assert mock_link_with_next.mark_processed.await_count == 2
-        assert "msg-ws-ack-retry" in ctx._processed_ids
-        assert "msg-ws-ack-retry" not in ctx._processed_ack_pending_ids
+        assert "msg-ws-ack-retry" in ctx.claims.completed_ids
+        assert not ctx.claims.is_ack_pending(ctx.room_id, "msg-ws-ack-retry")
 
     async def test_ack_pending_message_survives_lru_pressure_without_replay(
         self, mock_link_with_next, mock_handler
@@ -1128,7 +1132,7 @@ class TestCrashRecoverySync:
         # Handler completes but the durable ack fails → ACK_PENDING.
         await deliver("msg-unacked")
         # Enough later completions to overflow the dedupe cache capacity.
-        for i in range(ctx._max_processed_ids):
+        for i in range(ctx.claims.max_completed):
             await deliver(f"msg-filler-{i}")
 
         executions_before_redelivery = mock_handler.await_count
@@ -1165,9 +1169,9 @@ class TestCrashRecoverySync:
             "msg-new-ws",
         ]
         assert mock_link_with_next.mark_processed.await_count == 3
-        assert "msg-old-ws" in ctx._processed_ids
-        assert "msg-new-ws" in ctx._processed_ids
-        assert ctx._processed_ack_pending_ids == {}
+        assert "msg-old-ws" in ctx.claims.completed_ids
+        assert "msg-new-ws" in ctx.claims.completed_ids
+        assert ctx.claims.pending_ack_ids(ctx.room_id) == []
 
         await ctx.stop()
 
@@ -1205,7 +1209,7 @@ class TestCrashRecoverySync:
 
         assert ctx._first_ws_msg_id == "msg-sync-claim-fails"
         mock_handler.assert_not_called()
-        assert "msg-sync-claim-fails" not in ctx._processed_ids
+        assert "msg-sync-claim-fails" not in ctx.claims.completed_ids
 
         await ctx.stop()
 
@@ -1244,7 +1248,7 @@ class TestCrashRecoverySync:
             "room-123", "msg-startup-claim-fails"
         )
         mock_handler.assert_not_called()
-        assert "msg-startup-claim-fails" not in ctx._processed_ids
+        assert "msg-startup-claim-fails" not in ctx.claims.completed_ids
 
     async def test_startup_backlog_claim_failure_does_not_process_newer_ws_event(
         self, mock_link_with_next, mock_handler
@@ -1324,7 +1328,7 @@ class TestCrashRecoverySync:
             "room-123", "msg-resync-claim-fails"
         )
         mock_handler.assert_not_called()
-        assert "msg-resync-claim-fails" not in ctx._processed_ids
+        assert "msg-resync-claim-fails" not in ctx.claims.completed_ids
 
     async def test_resync_claim_failure_does_not_process_newer_ws_event(
         self, mock_link_with_next, mock_handler
@@ -1367,7 +1371,7 @@ class TestCrashRecoverySync:
             "room-123", "msg-resync-older-claim-fails"
         )
         mock_handler.assert_not_called()
-        assert "msg-resync-newer-ws" not in ctx._processed_ids
+        assert "msg-resync-newer-ws" not in ctx.claims.completed_ids
 
         await ctx.stop()
 
@@ -1544,7 +1548,7 @@ class TestCancellationDuringProcessing:
         assert elapsed < 1.0, f"stop() took {elapsed}s - should cancel processing"
 
         # Cancellation must release the local in-flight claim
-        assert ctx._inflight_message_ids == set()
+        assert ctx.claims.inflight_ids == set()
 
 
 class TestContextHydrationConfig:

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
 
 from band.platform.event import PlatformEvent
 
+from .claims import MessageClaimRegistry
 from .execution import Execution, ExecutionContext, ExecutionHandler
 from .presence import RoomPresence
 from .types import (
@@ -130,6 +131,10 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
+
+        # Shared by all contexts this runtime creates, so a message ID
+        # executes at most once per runtime even across context recreation.
+        self._claim_registry = MessageClaimRegistry()
 
         # Set up presence callbacks
         self.presence.on_room_joined = self._on_room_joined
@@ -273,6 +278,7 @@ class AgentRuntime:
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
                 hub_room_id=self._hub_room_id,
+                claim_registry=self._claim_registry,
             )
 
         self.executions[room_id] = execution
