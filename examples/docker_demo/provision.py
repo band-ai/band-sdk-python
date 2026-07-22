@@ -56,10 +56,15 @@ class AgentSpec:
 DEMO_MARKER = "[band-demo]"
 
 SPECS = [
-    AgentSpec("demo_pm", "DEMO_PM", "Maya", "Product manager & team lead (Claude SDK)"),
-    AgentSpec("demo_dev", "DEMO_DEV", "Sam", "Lead developer (Codex)"),
     AgentSpec(
-        "demo_architect", "DEMO_ARCHITECT", "Jordan", "Software architect (CrewAI)"
+        "demo_pm", "DEMO_PM", "Maya (PM)", "Product manager & team lead (Claude SDK)"
+    ),
+    AgentSpec("demo_dev", "DEMO_DEV", "Sam (Dev)", "Lead developer (Codex)"),
+    AgentSpec(
+        "demo_architect",
+        "DEMO_ARCHITECT",
+        "Jordan (Architect)",
+        "Software architect (CrewAI)",
     ),
 ]
 

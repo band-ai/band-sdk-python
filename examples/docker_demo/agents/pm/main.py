@@ -40,7 +40,7 @@ class PMConfig(BaseSettings):
     model: str | None = None
     # How the PM addresses the architect when handing off. Matches the fixed name
     # provision.py registers (Jordan), so band_lookup_peers finds it.
-    architect_name: str = "Jordan, the software architect"
+    architect_name: str = "Jordan (Architect)"
 
 
 def build_persona(architect_name: str) -> str:
