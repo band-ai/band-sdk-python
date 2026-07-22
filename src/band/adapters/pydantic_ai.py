@@ -525,15 +525,17 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 metadata: dict[str, Any] | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.store_memory(
-                        content=content,
-                        system=system,
-                        type=type,
-                        segment=segment,
-                        thought=thought,
-                        scope=scope,
-                        subject_id=subject_id,
-                        metadata=metadata,
+                    return serialize_tool_result(
+                        await ctx.deps.store_memory(
+                            content=content,
+                            system=system,
+                            type=type,
+                            segment=segment,
+                            thought=thought,
+                            scope=scope,
+                            subject_id=subject_id,
+                            metadata=metadata,
+                        )
                     )
                 except Exception as e:
                     return f"Error storing memory: {e}"
@@ -546,7 +548,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.get_memory(memory_id)
+                    return serialize_tool_result(await ctx.deps.get_memory(memory_id))
                 except Exception as e:
                     return f"Error getting memory: {e}"
 
@@ -558,7 +560,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.supersede_memory(memory_id)
+                    return serialize_tool_result(
+                        await ctx.deps.supersede_memory(memory_id)
+                    )
                 except Exception as e:
                     return f"Error superseding memory: {e}"
 
@@ -572,7 +576,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.archive_memory(memory_id)
+                    return serialize_tool_result(
+                        await ctx.deps.archive_memory(memory_id)
+                    )
                 except Exception as e:
                     return f"Error archiving memory: {e}"
 

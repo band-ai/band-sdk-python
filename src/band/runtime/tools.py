@@ -246,7 +246,7 @@ class LookupPeersInput(BaseModel):
     """List available peers (agents and users) that can be added to this room.
 
     Automatically excludes peers already in the room.
-    Returns dict with 'peers' list and 'metadata' (page, page_size, total_count, total_pages).
+    Returns dict with 'data' list of peers and 'metadata' (page, page_size, total_count, total_pages).
     Use this to find specialized agents (e.g., Weather Agent) when you cannot answer
     a question directly.
     """

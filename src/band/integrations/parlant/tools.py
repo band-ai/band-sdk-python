@@ -360,7 +360,7 @@ def create_parlant_tools(features: AdapterFeatures | None = None) -> list[Any]:
             logger.info("[Parlant Tool] lookup_peers result: %s", result)
             # Normalize Fern model -> dict for uniform handling
             data = serialize_tool_result(result)
-            peers = data.get("data") or data.get("peers") or []
+            peers = data.get("data") or []
             metadata = data.get("metadata") or {}
             if not peers:
                 return ToolResult(data="No available agents found")
