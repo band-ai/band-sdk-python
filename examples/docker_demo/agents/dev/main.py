@@ -9,6 +9,7 @@ also carry the ``codex`` CLI, and the OpenAI credential is provided host-side
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import subprocess
 from pathlib import Path
@@ -73,6 +74,11 @@ def login_codex() -> None:
 
 
 async def main() -> None:
+    # INFO so the Band lifecycle trace (messages, tool calls, replies) shows in the
+    # sandbox log the demo pane tails — without this, only WARNING+ would surface.
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     expose_llm_key()
     login_codex()
     identity = Identity()

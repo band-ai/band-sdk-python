@@ -205,13 +205,26 @@ launch_all() {
 
 # --- Presentation --------------------------------------------------------------
 
+# The command that streams one sandbox's live agent log (one source of truth).
+pane_cmd() { echo "sbx exec $1 tail -n +1 -f /var/log/sbx-kit-startup.log"; }
+
 spawn_terminals() {
-  command -v osascript >/dev/null 2>&1 || { echo "osascript not found — skipping per-sandbox windows"; return; }
   local spec role name
+  if command -v osascript >/dev/null 2>&1; then
+    for spec in "${ROLES[@]}"; do
+      IFS='|' read -r role _ name _ _ <<<"$spec"
+      local cmd
+      cmd="printf '\\033]0;%s sandbox\\007' '$role'; echo '=== [$role] $name ==='; $(pane_cmd "$name")"
+      osascript -e "tell application \"Terminal\" to do script \"$cmd\"" >/dev/null 2>&1 || true
+    done
+    return
+  fi
+  # No osascript (non-macOS / no Terminal): print the panes to open by hand, so the
+  # "one live pane per agent" view is still achievable — never a silent skip.
+  echo "osascript unavailable — open one terminal per sandbox and run:"
   for spec in "${ROLES[@]}"; do
     IFS='|' read -r role _ name _ _ <<<"$spec"
-    local cmd="printf '\\033]0;%s sandbox\\007' '$role'; echo '=== [$role] $name ==='; sbx exec '$name' tail -n +1 -f /var/log/sbx-kit-startup.log"
-    osascript -e "tell application \"Terminal\" to do script \"$cmd\"" >/dev/null 2>&1 || true
+    echo "  [$role]  $(pane_cmd "$name")"
   done
 }
 
