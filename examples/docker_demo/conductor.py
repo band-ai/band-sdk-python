@@ -29,6 +29,7 @@ import asyncio
 import datetime as dt
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +55,10 @@ from docker_demo.breaker import (  # noqa: E402  (path set up above)
 from band.config import load_agent_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# The Architect ends the meeting only with an explicit verdict; a "reviewing…"
+# message must not. The architect persona is instructed to lead with this marker.
+DECISION_MARKER = re.compile(r"\b(?:decision|verdict)\s*:", re.IGNORECASE)
 
 
 class ConductorSettings(BaseSettings):
@@ -134,6 +139,12 @@ class Roster:
             if isinstance(m, dict)
         )
 
+    def is_final_decision(self, message: ChatMessage) -> bool:
+        """True only for an Architect message carrying an explicit verdict marker."""
+        return self.classify(message) is SenderClass.ARCHITECT and bool(
+            DECISION_MARKER.search(message.content or "")
+        )
+
 
 def to_observed(message: ChatMessage, roster: Roster) -> ObservedMessage:
     """Project a platform ChatMessage into the transport-free shape the breaker consumes."""
@@ -146,6 +157,7 @@ def to_observed(message: ChatMessage, roster: Roster) -> ObservedMessage:
         sender_class=roster.classify(message),
         timestamp=ts,
         mentions_architect=roster.mentions_architect(message),
+        is_final_decision=roster.is_final_decision(message),
     )
 
 
