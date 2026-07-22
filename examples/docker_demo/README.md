@@ -47,9 +47,9 @@ human participant and can interject at any time by @mentioning an agent.
 ## Prerequisites
 
 - `sbx` ≥ 0.35.0, signed in (`sbx login`); Docker; `uv`.
-- `tmux` (recommended) — the launcher opens one window with a live log pane per
-  agent inside your current terminal. Without it, it falls back to spawning
-  separate Terminal.app windows (macOS) or prints the tail commands.
+- `tmux` (recommended, `brew install tmux`) — the launcher opens one window with a
+  live log pane per agent inside your current terminal. Without it, it falls back to
+  spawning separate Terminal.app windows (macOS) or prints the tail commands.
 - Host keys: `BAND_API_KEY_USER` (a Band **user** key — the conductor and
   presenter identity), `ANTHROPIC_API_KEY` (PM), `OPENAI_API_KEY` (Dev + Architect).
 
