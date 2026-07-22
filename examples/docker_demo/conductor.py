@@ -180,11 +180,10 @@ def to_observed(
         if message.inserted_at
         else dt.datetime.now(dt.timezone.utc).timestamp()
     )
-    is_presenter = (
-        roster.classify(message) is SenderClass.HUMAN and message.id not in self_posted
-    )
+    sender_class = roster.classify(message)
+    is_presenter = sender_class is SenderClass.HUMAN and message.id not in self_posted
     return ObservedMessage(
-        sender_class=roster.classify(message),
+        sender_class=sender_class,
         timestamp=ts,
         mentions_architect=roster.mentions_architect(message),
         is_final_decision=roster.is_final_decision(message),

@@ -30,8 +30,9 @@ Tiers, evaluated on every ``poll``:
   4. add       — handoff_deadline further messages with the Architect still absent:
                  add it ourselves (the PM's invite never landed).
 
-Counting: only agent messages move the caps. Human/conductor messages are
-recorded but never counted — interjecting must not trip the breaker.
+Counting: only agent messages move the caps. Non-agent messages (the human
+presenter, our own posts) are recorded but never counted — interjecting must
+not trip the breaker.
 """
 
 from __future__ import annotations
@@ -49,8 +50,7 @@ class SenderClass(str, Enum):
     PM = "pm"
     DEVELOPER = "developer"
     ARCHITECT = "architect"
-    HUMAN = "human"
-    CONDUCTOR = "conductor"
+    HUMAN = "human"  # the presenter and the conductor's own posts (both Users)
     UNKNOWN = "unknown"
 
 
