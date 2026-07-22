@@ -82,6 +82,7 @@ class ConductorSettings(BaseSettings):
 
     demo_poll_interval_s: float = 3.0
     demo_soft_cap: int = 6
+    demo_handoff_deadline: int = 2
     demo_hard_cap: int = 12
     demo_wall_clock_s: float = (
         600.0  # headroom for first-run venv sync + the conversation
@@ -94,6 +95,7 @@ class ConductorSettings(BaseSettings):
     def breaker_config(self) -> BreakerConfig:
         return BreakerConfig(
             soft_cap=self.demo_soft_cap,
+            handoff_deadline=self.demo_handoff_deadline,
             hard_cap=self.demo_hard_cap,
             wall_clock_s=self.demo_wall_clock_s,
             grace_s=self.demo_grace_s,

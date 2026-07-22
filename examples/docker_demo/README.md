@@ -40,8 +40,8 @@ human participant and can interject at any time by @mentioning an agent.
 | `breaker.py` | Pure conversation circuit breaker (no IO); the safety piece |
 | `conductor.py` | Host-side room driver that enforces the breaker |
 | `provision.py` | Register / tear down the three agents (Human API) |
-| `launch.sh` | One-command build / up / down orchestration |
-| `Dockerfile.codex` | Developer kit image = base kit + the `codex` CLI |
+| `launch.sh` | One-command build / up / down; owns a `.demo/run` manifest |
+| `Dockerfile.cli` | PM + Dev kit image = base kit + the `claude` and `codex` CLIs |
 | `agents/{pm,dev,architect}/` | Per-agent sbx workspace (`main.py`, `band.yaml`, `pyproject.toml`, `uv.lock`, `prompt.md`) |
 | `skill/SKILL.md` | Presenter-facing skill (quick start) |
 
@@ -55,40 +55,44 @@ human participant and can interject at any time by @mentioning an agent.
 
 ```bash
 cd examples/docker_demo
-export BAND_API_KEY_USER=band_u_... ANTHROPIC_API_KEY=sk-ant-... OPENAI_API_KEY=sk-...
+cp .demo.env.example .demo.env    # fill in keys + (optional) endpoints; auto-loaded
 
-./launch.sh build     # once: builds + loads the base and codex kit images
+./launch.sh build     # once: needs Docker + sbx only (no keys); builds + loads images
 ./launch.sh up        # provisions agents, creates 3 sandboxes, runs the meeting
-./launch.sh down      # tears down sandboxes + provisioned agents (also on exit)
+./launch.sh down      # removes exactly what the last run recorded (also runs on exit)
 ```
 
-Non-production Band: set `BAND_REST_URL` / `BAND_WS_URL` (and `BAND_SECRET_HOST`,
-the proxy wildcard, e.g. `**.staging.band.ai`) before `up`.
+Keys can live in `.demo.env` or the environment (`BAND_API_KEY_USER`,
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Non-production Band: set `BAND_REST_URL` /
+`BAND_WS_URL` (endpoints, host, and each `band.yaml` are derived from them).
 
 ## Expected output
 
-1. `build` produces `band-python-kit-demo:local` and `band-python-kit-codex:local`
-   and loads both as sbx templates.
-2. `up` registers Maya/Sam/Jordan, writes `agent_config.yaml` + `.demo/agents.env`,
-   then for each agent: creates the sandbox, grants egress, injects the LLM +
-   Band credentials host-side, and streams its **setup log to a labeled pane**.
+1. `build` produces `band-python-kit:local` and `band-python-kit-cli:local` and
+   loads both as sbx templates.
+2. `up` registers Maya/Sam/Jordan, grants global egress, then for each agent:
+   injects the LLM + Band credentials host-side, creates the sandbox, and streams
+   its **setup log to a labeled pane**.
 3. The conductor creates the room and posts the brief. Maya and Sam discuss;
-   Maya invites Jordan; Jordan posts a verdict; the conductor closes the room.
-4. Teardown removes the sandboxes and deletes the provisioned agents.
+   Maya invites Jordan; Jordan posts a `DECISION:`; the conductor closes the room.
+4. Cleanup removes exactly the sandboxes, secrets, policy rules, and agents this
+   run recorded.
 
 ## The never-in-VM proof
 
 With a sandbox up:
 
 ```bash
-sbx secret ls band-demo-pm                          # host holds the real key
-sbx exec band-demo-pm env | grep -i BAND_API_KEY    # in the VM: only "proxy-managed"
+sbx secret ls band-demo-pm                        # host holds the real keys
+sbx exec band-demo-pm env | grep -iE 'API_KEY'    # in the VM: only placeholders
 ```
 
-The VM only ever holds the `proxy-managed` sentinel; the sbx proxy swaps the real
-key onto outbound `**.band.ai` requests (verifiable via the `O=Docker Sandboxes`
-MITM cert). The kit launcher **fails the launch** if a real Band key is found in
-the VM under proxy-managed custody.
+The VM holds only placeholders — `proxy-managed` for the Band key, an
+`sk-…`-shaped sentinel for the LLM key (under `ANTHROPIC_PROXY_KEY` /
+`OPENAI_PROXY_KEY`, which each agent copies into the real var for its CLI). The
+sbx proxy swaps the placeholder for the real key on outbound requests to the Band
+and provider hosts (verifiable via the `O=Docker Sandboxes` MITM cert). The kit
+launcher **fails the launch** if a real Band key is found in the VM.
 
 ## Circuit breaker
 
@@ -96,38 +100,40 @@ The conductor guarantees the meeting ends (see `breaker.py` for the state machin
 and `../../tests/example_agents/test_docker_demo_breaker.py` for its offline
 tests). Tiers:
 
-- **Soft** — after `DEMO_SOFT_CAP` PM↔Dev messages with no handoff, nudge Maya to
-  bring in Jordan (and add Jordan as a fallback if she hasn't).
-- **Hard** — at `DEMO_HARD_CAP` agent messages or `DEMO_WALL_CLOCK_S`, force-stop.
-- **Clean end** — `DEMO_GRACE_S` after Jordan's decision, close and stop.
+- **Nudge** — after `DEMO_SOFT_CAP` PM↔Dev messages with no handoff, nudge Maya to
+  bring in Jordan.
+- **Add-fallback** — `DEMO_HANDOFF_DEADLINE` further messages with Jordan still
+  absent, add her ourselves (Maya's invite never landed).
+- **Hard-kill** — no decision yet and `DEMO_HARD_CAP` agent messages or
+  `DEMO_WALL_CLOCK_S` elapsed.
+- **Clean end** — Jordan posts a `DECISION:`; `DEMO_GRACE_S` later, close and stop.
+  A decided meeting is never hard-killed, so it can run to `wall_clock + grace`.
 
 Only **agent** messages move the caps — your interjections never trip the breaker.
-All caps are env-tunable before a show.
+Timers run on the conductor's clock (not platform timestamps). All caps env-tunable.
 
 ## Reset / re-run
 
-`./launch.sh down` (or just exit `up` — teardown runs on exit) returns to a clean
-state; `./launch.sh up` again is a fresh run. `build` is only needed once or after
-a kit change.
+`./launch.sh down` removes only what the last run recorded (sandboxes, scoped
+secrets, global egress rules, agents) — never an unrelated `band-demo-*` — and
+reports any resource it couldn't remove. Teardown also runs on `up` exit, so a
+normal run leaves a clean host. `build` is only needed once or after a kit change.
 
-## Rehearsal-gated confirmations
+## Status
 
-This demo drives live `sbx` and two coding-agent CLIs; confirm these against the
-installed toolchain during rehearsal (each is marked `CONFIRM AT REHEARSAL` in
-`launch.sh`):
+Validated live on dev: never-in-VM inference for both CLIs (claude + codex
+authenticate through the proxy via a placeholder; codex via `codex login`),
+provisioning, egress, the circuit breaker (wall-clock kill fired), and cleanup.
 
-1. **sbx flags** — `sbx create --kit … band-python-kit <workspace>`, the
-   per-sandbox secret scope flag (`--sandbox`), and `set-custom` options track the
-   kit README for sbx 0.35.0; verify on your version.
-2. **Setup-log streaming** — the labeled pane tails `/var/log/sbx-kit-startup.log`
-   via `sbx exec`; confirm the path/command, or switch to `sbx logs`.
-3. **Codex CLI** — the Developer image installs `@openai/codex`; confirm `codex
-   app-server` runs under the `agent` user with `CODEX_HOME=/home/agent/.codex`.
-4. **LLM proxy custody** — confirm the Anthropic/OpenAI clients issue requests
-   with sbx's built-in provider injection (they may need a placeholder key in env
-   to attempt the call, which the proxy then replaces). This is the one path the
-   kit's own live proof (`tests/docker/test_kit_proxy_managed_live.py`) still lists
-   as "run live against staging".
+Confirm before the show:
+
+1. **Full happy path** — PM+Dev align, Maya hands off, Jordan posts a `DECISION:`,
+   clean end. The pieces are proven individually; the end-to-end conversation is
+   the last rehearsal step. The Architect (CrewAI) uses the same OpenAI-over-HTTPS
+   path codex proved.
+2. **codex transport** — codex reaches `api.openai.com` over an HTTPS fallback (its
+   WebSocket transport is blocked by the MITM proxy): functional, but noisy in the
+   logs.
 
 ## Testing
 
