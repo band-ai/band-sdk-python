@@ -28,7 +28,7 @@ human participant and can interject at any time by @mentioning an agent.
   │  · creates the Band room          │  Band  │  band-demo-dev   (Codex)      │
   │  · kicks off the design           │ ◀────▶ │  band-demo-architect (CrewAI) │
   │  · polls messages, enforces caps  │  room  │                               │
-  │  · nudge / add-fallback / stop    │        │  each: kit launcher → agent   │
+  │  · nudge / add / open floor / stop│        │  each: kit launcher → agent   │
   │ real API keys (proxy-injected) ───┼────────┼──▶ VM sees only "proxy-managed"│
   └──────────────────────────────────┘        └───────────────────────────────┘
 ```
@@ -129,21 +129,14 @@ secrets, global egress rules, agents) — never an unrelated `band-demo-*` — a
 reports any resource it couldn't remove. Teardown also runs on `up` exit, so a
 normal run leaves a clean host. `build` is only needed once or after a kit change.
 
-## Status
+## Notes
 
-Validated live on dev: never-in-VM inference for both CLIs (claude + codex
-authenticate through the proxy via a placeholder; codex via `codex login`),
-provisioning, egress, the circuit breaker (wall-clock kill fired), and cleanup.
-
-Confirm before the show:
-
-1. **Full happy path** — PM+Dev align, Maya hands off, Jordan posts a `VERDICT:`,
-   clean end. The pieces are proven individually; the end-to-end conversation is
-   the last rehearsal step. The Architect (CrewAI) uses the same OpenAI-over-HTTPS
-   path codex proved.
-2. **codex transport** — codex reaches `api.openai.com` over an HTTPS fallback (its
-   WebSocket transport is blocked by the MITM proxy): functional, but noisy in the
-   logs.
+- **Ending the meeting.** In an interactive run the meeting ends when you post an
+  end phrase (`end meeting` / `/end` / `wrap up` / `adjourn`), after
+  `DEMO_OPEN_FLOOR_IDLE_S` of silence, or on Ctrl-C — all of which run cleanup.
+- **codex transport.** The Developer's codex CLI reaches `api.openai.com` over an
+  HTTPS fallback because its WebSocket transport is blocked by the sandbox's MITM
+  proxy. This is functional but produces retry noise in that agent's log.
 
 ## Testing
 

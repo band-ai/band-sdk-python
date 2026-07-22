@@ -100,13 +100,13 @@ def test_quiet_meeting_emits_nothing(config: BreakerConfig) -> None:
     )
 
 
-def test_human_messages_never_count_toward_caps(config: BreakerConfig) -> None:
+def test_non_agent_messages_never_count_toward_caps(config: BreakerConfig) -> None:
     cb = CircuitBreaker(config, start_time=0.0)
     flood = [msg(SenderClass.HUMAN, float(i)) for i in range(20)] + [
-        msg(SenderClass.CONDUCTOR, 21.0)
+        msg(SenderClass.UNKNOWN, 21.0)
     ]
     assert feed(cb, flood) == [], (
-        "human/conductor chatter must never trip the design cap — only agents do"
+        "human/unknown chatter must never trip the design cap — only agents do"
     )
 
 
