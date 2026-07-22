@@ -1,0 +1,33 @@
+# PM + Developer kit image: the base band-python-kit plus the coding-agent CLIs
+# their adapters drive. claude-sdk spawns the `claude` Code CLI; codex drives
+# `codex app-server`. Both are separate binaries (not Python deps in uv.lock),
+# so they must be baked into the image. The Architect (crewai) needs neither and
+# uses the base image directly.
+#
+# Build (driven by launch.sh):
+#   docker build -f Dockerfile.cli --build-arg BASE=band-python-kit:local \
+#     -t band-python-kit-cli:local .
+
+ARG BASE=band-python-kit:local
+FROM ${BASE}
+
+# The kit drops privilege to the non-root `agent` user itself at startup, so the
+# image's default user stays root; we only install the CLIs and prepare homes.
+USER root
+
+# Keep nodejs on the image — the codex and claude CLIs are node programs and
+# fail at runtime without it (do NOT purge/autoremove node here).
+# Pin the CLI versions so a rehearsed image matches the show run (never @latest).
+ARG CODEX_VERSION=0.145.0
+ARG CLAUDE_CODE_VERSION=2.1.217
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs npm \
+    && npm i -g "@openai/codex@${CODEX_VERSION}" "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && rm -rf /var/lib/apt/lists/* \
+    && codex --version \
+    && codex app-server --help >/dev/null \
+    && claude --version
+
+# The CLIs need writable homes; the kit runs the agent as uid 1000 (`agent`).
+ENV CODEX_HOME=/home/agent/.codex
+RUN mkdir -p /home/agent/.codex /home/agent/.claude \
+    && chown -R agent:agent /home/agent/.codex /home/agent/.claude
