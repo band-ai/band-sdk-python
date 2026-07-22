@@ -3,7 +3,8 @@
 The kit launcher execs this file with the workspace's own locked venv; Band
 identity and endpoints arrive as BAND_* env vars. This workspace's image must
 also carry the ``codex`` CLI, and the OpenAI credential is provided host-side
-(``sbx secret set -g openai``) so it never enters this VM.
+(a placeholder injected via ``sbx secret set-custom`` for api.openai.com) so it
+never enters this VM.
 """
 
 from __future__ import annotations

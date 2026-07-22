@@ -59,6 +59,11 @@ warn() { printf 'WARN: %s\n' "$*" >&2; }
 require() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found on PATH" >&2; exit 1; }; }
 record() { printf '%s\n' "$2" >>"$1"; }   # append line "$2" to manifest "$1"
 
+# set-custom refuses to overwrite an existing env for a host, so clear any leftover
+# scoped secret (from a crashed run or prior manual use — secrets survive `sbx rm`)
+# before setting, keeping `up` idempotent.
+clear_secret() { sbx secret rm "$1" --host "$2" -f >/dev/null 2>&1 || true; }
+
 # Provider -> "<llm-host> <proxy-env-var> <placeholder>". One source, read by both
 # egress and secret setup so a provider's host can't drift between them.
 provider_llm() {
@@ -178,6 +183,7 @@ launch_one() {
   # var; the workspace's main.py copies it into the real var for the CLI.
   local llm_host llm_env llm_ph
   read -r llm_host llm_env llm_ph <<<"$(provider_llm "$provider")"
+  clear_secret "$name" "$llm_host"
   sbx secret set-custom "$name" --host "$llm_host" --env "$llm_env" --placeholder "$llm_ph" --value "$provider_key"
   record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$llm_host")"
 
@@ -186,7 +192,7 @@ launch_one() {
   local secret_hosts=("${BAND_HOSTS[@]}")
   [ "$BAND_SECRET_HOST" != "$BAND_NET_HOST" ] && secret_hosts=("$BAND_SECRET_HOST")
   local host_args=() h
-  for h in "${secret_hosts[@]}"; do host_args+=(--host "$h"); done
+  for h in "${secret_hosts[@]}"; do host_args+=(--host "$h"); clear_secret "$name" "$h"; done
   sbx secret set-custom "$name" "${host_args[@]}" --env BAND_API_KEY --placeholder proxy-managed --value "$agent_key"
   for h in "${secret_hosts[@]}"; do record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$h")"; done
 
@@ -301,6 +307,17 @@ up() {
     ( open_ui ) &          # background: opens the UI once the room exists
   fi
   run_conductor            # foreground: the meeting narration in this terminal
+
+  # The meeting reached its end, but the agents are still live in their sandboxes.
+  # Keep them up so the presenter can keep chatting with the participants and ask
+  # questions in the Band UI; only tear down (which reaps the agents — after that
+  # their names no longer resolve in history) on an explicit Enter. Skipped when
+  # headless so automated runs don't hang.
+  if [ -z "${DEMO_HEADLESS:-}" ]; then
+    printf '\n== Meeting concluded — agents still live. Chat with them in the Band UI:\n   %s\n' \
+      "$(cat "$HERE/.demo/room.url" 2>/dev/null)"
+    read -r -p "Press Enter to tear everything down... " _
+  fi
 }
 
 case "${1:-up}" in

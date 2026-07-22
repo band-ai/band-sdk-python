@@ -2,7 +2,8 @@
 
 The kit launcher execs this file with the workspace's own locked venv; Band
 identity and endpoints arrive as BAND_* env vars. The OpenAI credential is
-provided host-side (``sbx secret set -g openai``) so it never enters this VM.
+provided host-side as a placeholder via ``sbx secret set-custom`` (api.openai.com)
+so it never enters this VM.
 The architect stays silent until the PM @mentions it for a decision.
 """
 
