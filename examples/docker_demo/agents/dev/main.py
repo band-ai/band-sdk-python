@@ -61,14 +61,15 @@ def login_codex() -> None:
     so log in with the placeholder key (the proxy swaps it for the real one on
     the wire). Without this, codex requests go out with no auth header (401)."""
     key = os.environ.get("OPENAI_API_KEY")
-    if key:
-        subprocess.run(
-            ["codex", "login", "--with-api-key"],
-            input=key,
-            text=True,
-            check=False,
-            capture_output=True,
-        )
+    if not key:
+        return
+    result = subprocess.run(
+        ["codex", "login", "--with-api-key"], input=key, text=True, capture_output=True
+    )
+    if result.returncode != 0:
+        # Fail here, not later with a confusing 401. Redact the key from the error.
+        detail = (result.stderr or result.stdout or "").replace(key, "***").strip()
+        raise RuntimeError(f"codex login failed: {detail[:300]}")
 
 
 async def main() -> None:

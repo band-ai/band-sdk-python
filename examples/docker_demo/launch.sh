@@ -59,6 +59,16 @@ warn() { printf 'WARN: %s\n' "$*" >&2; }
 require() { command -v "$1" >/dev/null 2>&1 || { echo "ERROR: '$1' not found on PATH" >&2; exit 1; }; }
 record() { printf '%s\n' "$2" >>"$1"; }   # append line "$2" to manifest "$1"
 
+# Provider -> "<llm-host> <proxy-env-var> <placeholder>". One source, read by both
+# egress and secret setup so a provider's host can't drift between them.
+provider_llm() {
+  case "$1" in
+    anthropic) echo "api.anthropic.com ANTHROPIC_PROXY_KEY sk-ant-{rand}" ;;
+    openai)    echo "api.openai.com OPENAI_PROXY_KEY sk-{rand}" ;;
+    *) echo "ERROR: unknown provider '$1'" >&2; return 1 ;;
+  esac
+}
+
 # --- Preflight (split: image build needs tools only, not live keys) ------------
 
 check_tools() {
@@ -111,10 +121,14 @@ allow_global() {
 }
 
 grant_egress() {
-  local h
+  local h spec provider seen=" "
   for h in "${BAND_HOSTS[@]}"; do allow_global "$h"; done
-  allow_global api.anthropic.com
-  allow_global api.openai.com
+  # Provider hosts come from the roles actually in play (deduped) — no hardcoded list.
+  for spec in "${ROLES[@]}"; do
+    IFS='|' read -r _ _ _ _ provider <<<"$spec"
+    h="$(provider_llm "$provider" | cut -d' ' -f1)"
+    case "$seen" in *" $h "*) ;; *) allow_global "$h"; seen="$seen$h " ;; esac
+  done
 }
 
 # Abort rather than clobber a band-demo-* that this run did not create.
@@ -144,7 +158,7 @@ launch_one() {
   # source — keeps the git tree clean and avoids leaking a live agent id.
   local stage="$RUN_DIR/workspaces/$role"
   rm -rf "$stage"; mkdir -p "$stage"
-  cp "$HERE/$workspace"/* "$stage"/
+  cp -R "$HERE/$workspace/." "$stage/"   # -R + /. copies dotfiles too, and is robust if the dir has only hidden files
   sed -i.bak \
     -e "s/^  id: .*/  id: $agent_id/" \
     -e "s#^  restUrl: .*#  restUrl: $BAND_REST_URL#" \
@@ -163,10 +177,7 @@ launch_one() {
   # refuse to send without a local key. So inject under a NON-reserved *_PROXY_KEY
   # var; the workspace's main.py copies it into the real var for the CLI.
   local llm_host llm_env llm_ph
-  case "$provider" in
-    anthropic) llm_host="api.anthropic.com"; llm_env="ANTHROPIC_PROXY_KEY"; llm_ph='sk-ant-{rand}' ;;
-    openai)    llm_host="api.openai.com";    llm_env="OPENAI_PROXY_KEY";    llm_ph='sk-{rand}' ;;
-  esac
+  read -r llm_host llm_env llm_ph <<<"$(provider_llm "$provider")"
   sbx secret set-custom "$name" --host "$llm_host" --env "$llm_env" --placeholder "$llm_ph" --value "$provider_key"
   record "$MF_SECRETS" "$(printf '%s\t%s' "$name" "$llm_host")"
 
@@ -251,8 +262,13 @@ cleanup() {
   # Provisioned agents: provision.py deletes by the ids it recorded.
   ( cd "$HERE" && uv run provision.py delete ) || { warn "agent deletion reported an error"; failed=1; }
 
-  rm -rf "$RUN_DIR" "$HERE/.demo/room.url"
-  [ "$failed" -eq 0 ] && echo "cleanup complete" || echo "cleanup finished with warnings (see above)"
+  rm -f "$HERE/.demo/room.url"
+  if [ "$failed" -eq 0 ]; then
+    rm -rf "$RUN_DIR"   # drop the manifest only after a fully clean teardown
+    echo "cleanup complete"
+  else
+    echo "cleanup finished with WARNINGS — manifest kept at $RUN_DIR; rerun './launch.sh down' to retry"
+  fi
 }
 
 # --- Orchestration -------------------------------------------------------------
