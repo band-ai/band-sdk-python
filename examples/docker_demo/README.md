@@ -6,6 +6,10 @@ sandbox (sbx)**, collaborating in one Band room. The demo's spine is
 **credential custody** — every agent's API keys stay on the host and are
 injected on the wire, so they are never present inside any VM.
 
+The topic is deliberately recursive: the agents design **how to run untrusted AI
+agents in isolated Docker sandboxes** — the very thing being done to them as they
+talk.
+
 ## Cast
 
 | Agent | Name | Framework | Sandbox | LLM (host-held) |
@@ -14,10 +18,11 @@ injected on the wire, so they are never present inside any VM.
 | Lead Developer | Sam | Codex | `band-demo-dev` | OpenAI |
 | Software Architect | Jordan | CrewAI | `band-demo-architect` | OpenAI |
 
-They design **a URL shortener**. Maya and Sam discuss and align; Maya invites
-Jordan, who reviews and returns one decision. A host-side **conductor** enforces
-a circuit breaker so the conversation always ends. You (the presenter) are a
-human participant and can interject at any time by @mentioning an agent.
+Maya and Sam debate the isolation approach (a hardened container vs. a stronger
+runtime like `sbx`/Firecracker or gVisor/Kata) and align; Maya invites Jordan,
+who reviews and returns one decision. A host-side **conductor** enforces a
+circuit breaker so the conversation always ends. You (the presenter) are a human
+participant and can interject at any time by @mentioning an agent.
 
 ## Architecture
 
@@ -81,6 +86,9 @@ DEMO_ENV_FILE=/path/to/.env ./launch.sh up
   and the launcher **opens it in your browser** automatically (URL also logged as
   `Room UI URL:` and written to `.demo/room.url`). Override the link shape with
   `DEMO_UI_URL_TEMPLATE` (a `{chat_id}` template); it defaults to `<BAND_REST_URL>/chat/{chat_id}`.
+  Each agent emits its **tool calls, results, and reasoning** into the room, so the
+  handoff mechanics (peer lookup, add-participant) are visible alongside the chat.
+  These land in the room's REST context / Band UI, not the user WebSocket stream.
 - **Per-agent logs.** With `tmux`, the launcher starts a `band-demo` session with one
   live setup/log pane per agent. Attach from another terminal tab:
 
@@ -111,7 +119,7 @@ touching code:
 
 | Var | Default | Effect |
 |---|---|---|
-| `DEMO_TOPIC` | `a URL shortener service` | What the agents design |
+| `DEMO_TOPIC` | `a way to run untrusted AI agents in isolated Docker sandboxes` | What the agents design |
 | `DEMO_SOFT_CAP` | `10` | PM↔Dev messages before nudging a handoff |
 | `DEMO_HANDOFF_DEADLINE` | `3` | Further messages, Architect still absent, before we add it |
 | `DEMO_HARD_CAP` | `24` | Total agent messages before force-kill (pre-verdict only) |
