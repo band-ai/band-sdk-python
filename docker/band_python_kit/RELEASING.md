@@ -99,6 +99,13 @@ expected. A trip leaves a **split release**: the PyPI publish (`band-publish.yml
 an independent release-triggered workflow) has already succeeded, but no kit
 artifacts were produced.
 
+Packages Band publishes itself are **exempt** (`FIRST_PARTY` in
+`scripts/check-lock-age.py`): the gate models *upstream* compromise, and
+ageing our own releases would deadlock every kit publish that follows a
+first-party dependency bump. The gate script runs from the checked-out
+release tag, so tags cut before the exemption existed still gate those
+packages — republish those with the override below.
+
 ### Recovery
 
 - **Wait it out (default).** Once the young package has aged past 7 days, use
