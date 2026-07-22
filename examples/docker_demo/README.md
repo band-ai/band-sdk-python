@@ -74,7 +74,7 @@ Keys can live in `.demo.env` or the environment (`BAND_API_KEY_USER`,
    injects the LLM + Band credentials host-side, creates the sandbox, and streams
    its **setup log to a labeled pane**.
 3. The conductor creates the room and posts the brief. Maya and Sam discuss;
-   Maya invites Jordan; Jordan posts a `DECISION:`; the conductor closes the room.
+   Maya invites Jordan; Jordan posts a `VERDICT:`; the conductor closes the room.
 4. Cleanup removes exactly the sandboxes, secrets, policy rules, and agents this
    run recorded.
 
@@ -106,7 +106,7 @@ tests). Tiers:
   absent, add her ourselves (Maya's invite never landed).
 - **Hard-kill** — no decision yet and `DEMO_HARD_CAP` agent messages or
   `DEMO_WALL_CLOCK_S` elapsed.
-- **Clean end** — Jordan posts a `DECISION:`; `DEMO_GRACE_S` later, close and stop.
+- **Clean end** — Jordan posts a `VERDICT:`; `DEMO_GRACE_S` later, close and stop.
   A decided meeting is never hard-killed, so it can run to `wall_clock + grace`.
 
 Only **agent** messages move the caps — your interjections never trip the breaker.
@@ -127,7 +127,7 @@ provisioning, egress, the circuit breaker (wall-clock kill fired), and cleanup.
 
 Confirm before the show:
 
-1. **Full happy path** — PM+Dev align, Maya hands off, Jordan posts a `DECISION:`,
+1. **Full happy path** — PM+Dev align, Maya hands off, Jordan posts a `VERDICT:`,
    clean end. The pieces are proven individually; the end-to-end conversation is
    the last rehearsal step. The Architect (CrewAI) uses the same OpenAI-over-HTTPS
    path codex proved.

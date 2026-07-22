@@ -71,7 +71,7 @@ A host-side conductor watches the room and enforces caps, all env-tunable:
 | `DEMO_HANDOFF_DEADLINE` | 2 | further messages, architect still absent, before adding her |
 | `DEMO_HARD_CAP` | 12 | total agent messages before force-stop (no decision yet) |
 | `DEMO_WALL_CLOCK_S` | 600 | ceiling to reach a decision (a decided meeting runs to +grace) |
-| `DEMO_GRACE_S` | 20 | wait after the architect's `DECISION:`, then stop |
+| `DEMO_GRACE_S` | 20 | wait after the architect's `VERDICT:`, then stop |
 
 Your own messages never count toward the caps. See `../README.md` for the full
-runbook, the rehearsal-gated confirmations, and troubleshooting.
+runbook and the current validation status.
