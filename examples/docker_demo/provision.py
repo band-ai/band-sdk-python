@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -125,10 +126,12 @@ async def create(client: AsyncRestClient) -> None:
             AGENT_IDS.write_text("\n".join(ids) + "\n", encoding="utf-8")
 
             keyed_config[spec.config_key] = {"agent_id": agent.id, "api_key": api_key}
+            # shlex.quote so a display name with spaces/parens ("Maya (PM)")
+            # survives being sourced by launch.sh (`set -a; . agents.env`).
             env_lines += [
-                f"{spec.env_prefix}_ID={agent.id}",
-                f"{spec.env_prefix}_APIKEY={api_key}",
-                f"{spec.env_prefix}_NAME={agent.name}",
+                f"{spec.env_prefix}_ID={shlex.quote(agent.id)}",
+                f"{spec.env_prefix}_APIKEY={shlex.quote(api_key)}",
+                f"{spec.env_prefix}_NAME={shlex.quote(agent.name)}",
             ]
     except Exception:
         # Roll back everything created so far so a partial failure leaks nothing.

@@ -60,6 +60,13 @@ logger = logging.getLogger(__name__)
 # message must not. The architect persona is instructed to lead with this marker.
 DECISION_MARKER = re.compile(r"\b(?:decision|verdict)\s*:", re.IGNORECASE)
 
+# In the interactive open floor the presenter wraps up by posting any of these.
+# Single source, surfaced verbatim in the open-floor invite so it's discoverable.
+END_PHRASE = re.compile(
+    r"(?:^/end\b|\bend meeting\b|\bwrap up\b|\badjourn\b)", re.IGNORECASE
+)
+END_PHRASE_HINT = "end meeting"
+
 # BreakerConfig is the single source of the breaker cap defaults; the settings
 # below default to it (env vars still override) so the two can't drift apart.
 _BREAKER_DEFAULTS = BreakerConfig()
@@ -90,6 +97,10 @@ class ConductorSettings(BaseSettings):
     demo_hard_cap: int = _BREAKER_DEFAULTS.hard_cap
     demo_wall_clock_s: float = _BREAKER_DEFAULTS.wall_clock_s
     demo_grace_s: float = _BREAKER_DEFAULTS.grace_s
+    # Interactive: after the verdict, hand the room to the presenter instead of
+    # closing on grace. launch.sh sets this False for headless/CI runs.
+    demo_interactive: bool = True
+    demo_open_floor_idle_s: float = _BREAKER_DEFAULTS.open_floor_idle_s
     # Web UI URL for the room, auto-opened by launch.sh. {chat_id} is filled in;
     # default derives from the REST host (override for a distinct web app host).
     demo_ui_url_template: str = ""
@@ -101,6 +112,8 @@ class ConductorSettings(BaseSettings):
             hard_cap=self.demo_hard_cap,
             wall_clock_s=self.demo_wall_clock_s,
             grace_s=self.demo_grace_s,
+            interactive=self.demo_interactive,
+            open_floor_idle_s=self.demo_open_floor_idle_s,
         )
 
 
@@ -150,18 +163,30 @@ class Roster:
         )
 
 
-def to_observed(message: ChatMessage, roster: Roster) -> ObservedMessage:
-    """Project a platform ChatMessage into the transport-free shape the breaker consumes."""
+def to_observed(
+    message: ChatMessage, roster: Roster, self_posted: set[str]
+) -> ObservedMessage:
+    """Project a platform ChatMessage into the transport-free shape the breaker consumes.
+
+    ``self_posted`` holds ids of messages the conductor posted itself. Those arrive
+    as the presenter's own identity (HUMAN), so they are excluded here — otherwise
+    the invite/closer would masquerade as presenter activity and reset the idle timer.
+    """
     ts = (
         message.inserted_at.timestamp()
         if message.inserted_at
         else dt.datetime.now(dt.timezone.utc).timestamp()
+    )
+    is_presenter = (
+        roster.classify(message) is SenderClass.HUMAN and message.id not in self_posted
     )
     return ObservedMessage(
         sender_class=roster.classify(message),
         timestamp=ts,
         mentions_architect=roster.mentions_architect(message),
         is_final_decision=roster.is_final_decision(message),
+        is_presenter=is_presenter,
+        is_end_signal=is_presenter and bool(END_PHRASE.search(message.content or "")),
     )
 
 
@@ -177,10 +202,17 @@ class Conductor:
         self.breaker = CircuitBreaker(settings.breaker_config(), start_time=self._now())
         self.chat_id: str = ""
         self._seen: set[str] = set()
+        self._self_posted: set[str] = set()  # ids of messages we posted (not presenter)
 
     @staticmethod
     def _now() -> float:
         return dt.datetime.now(dt.timezone.utc).timestamp()
+
+    def _room_title(self) -> str:
+        """A readable, timestamped room name (topic + local date-time)."""
+        topic = re.sub(r"^(?:a|an)\s+", "", self.settings.demo_topic).strip()
+        stamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+        return f"Design Review — {topic} — {stamp}"
 
     def _mention(self, participant_id: str) -> Mention:
         return Mention(
@@ -188,10 +220,26 @@ class Conductor:
             name=self.roster.names.get(participant_id, participant_id),
         )
 
+    async def _post(self, content: str, mention_ids: list[str] | None = None) -> None:
+        """Send a facilitator message and remember its id.
+
+        The conductor posts as the presenter's own identity, so recording the id
+        lets ``to_observed`` tell our posts apart from the presenter's real input.
+        """
+        resp = await self.client.human_api_messages.send_my_chat_message(
+            self.chat_id,
+            message=ChatMessageRequest(
+                content=content,
+                mentions=[self._mention(m) for m in (mention_ids or [])],
+            ),
+        )
+        if mid := getattr(resp.data, "id", None):
+            self._self_posted.add(str(mid))
+
     async def setup(self) -> str:
         """Create the room, add the PM and Developer, and post the opening brief."""
         resp = await self.client.human_api_chats.create_my_chat_room(
-            chat=CreateMyChatRoomRequestChat()
+            chat=CreateMyChatRoomRequestChat(title=self._room_title())
         )
         self.chat_id = resp.data.id
         logger.info("Created demo room: %s", self.chat_id)
@@ -214,13 +262,7 @@ class Conductor:
             f"discussion with the developer ({dev_name}), then bring in the architect for the "
             f"final decision once you've aligned."
         )
-        await self.client.human_api_messages.send_my_chat_message(
-            self.chat_id,
-            message=ChatMessageRequest(
-                content=brief,
-                mentions=[self._mention(self.roster.pm_id)],
-            ),
-        )
+        await self._post(brief, [self.roster.pm_id])
         logger.info("Kicked off design of %s", self.settings.demo_topic)
         self._emit_room_url()
         return self.chat_id
@@ -229,7 +271,7 @@ class Conductor:
         """Write the room's web URL so launch.sh can open the Band UI to it."""
         template = (
             self.settings.demo_ui_url_template
-            or f"{self.settings.band_rest_url}/chats/{{chat_id}}"
+            or f"{self.settings.band_rest_url}/chat/{{chat_id}}"
         )
         url = template.format(chat_id=self.chat_id)
         url_file = Path(__file__).parent / ".demo" / "room.url"
@@ -260,12 +302,9 @@ class Conductor:
 
     async def _nudge_handoff(self) -> None:
         pm = self.roster.names[self.roster.pm_id]
-        await self.client.human_api_messages.send_my_chat_message(
-            self.chat_id,
-            message=ChatMessageRequest(
-                content=f"[facilitator] @{pm} you've aligned enough — please bring in the architect for a decision.",
-                mentions=[self._mention(self.roster.pm_id)],
-            ),
+        await self._post(
+            f"[facilitator] @{pm} you've aligned enough — please bring in the architect for a decision.",
+            [self.roster.pm_id],
         )
         logger.info("Nudged PM to hand off")
 
@@ -282,23 +321,29 @@ class Conductor:
         )
         await self._refresh_names()
         arch = self.roster.names.get(self.roster.architect_id, "architect")
-        await self.client.human_api_messages.send_my_chat_message(
-            self.chat_id,
-            message=ChatMessageRequest(
-                content=f"[facilitator] @{arch} please review the design above and give a decision.",
-                mentions=[self._mention(self.roster.architect_id)],
-            ),
+        await self._post(
+            f"[facilitator] @{arch} please review the design above and give a decision.",
+            [self.roster.architect_id],
         )
         self.breaker.note_architect_present()
         logger.info("Add-fallback: added architect to room")
 
+    async def _open_floor(self) -> None:
+        """Verdict reached: invite the presenter to drive, naming the end phrase."""
+        agents = [self.roster.pm_id, self.roster.dev_id, self.roster.architect_id]
+        handles = " ".join(f"@{self.roster.names.get(a, a)}" for a in agents)
+        await self._post(
+            f"[facilitator] ✅ Decision reached — the floor is yours. {handles} are "
+            f'still here; ask them anything. Post "{END_PHRASE_HINT}" when you\'re '
+            f"done and I'll wrap up and tear down.",
+            agents,
+        )
+        logger.info("Opened the floor to the presenter")
+
     async def _close(self, reason: str) -> None:
-        await self.client.human_api_messages.send_my_chat_message(
-            self.chat_id,
-            message=ChatMessageRequest(
-                content=f"[facilitator] Wrapping up the design meeting ({reason}). Thanks all.",
-                mentions=[self._mention(self.roster.pm_id)],
-            ),
+        await self._post(
+            f"[facilitator] Wrapping up the design meeting ({reason}). Thanks all.",
+            [self.roster.pm_id],
         )
         logger.info("Posted closer (%s)", reason)
 
@@ -310,8 +355,10 @@ class Conductor:
                     await self._nudge_handoff()
                 case Action.ADD_ARCHITECT:
                     await self._add_architect()
+                case Action.OPEN_FLOOR:
+                    await self._open_floor()
                 case Action.TERMINATE_OK:
-                    await self._close("design decided")
+                    await self._close(self.breaker.stop_reason or "design decided")
                     return "terminate_ok"
                 case Action.HARD_KILL:
                     await self._close("time/turn limit reached")
@@ -332,7 +379,9 @@ class Conductor:
             while reason is None:
                 await asyncio.sleep(self.settings.demo_poll_interval_s)
                 for message in await self._new_messages():
-                    self.breaker.record(to_observed(message, self.roster))
+                    self.breaker.record(
+                        to_observed(message, self.roster, self._self_posted)
+                    )
                 reason = await self._apply(self.breaker.poll(self._now()))
         logger.info("Conductor finished: %s", reason)
         return reason

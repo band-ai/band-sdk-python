@@ -19,10 +19,13 @@ carrying an explicit decision marker ends the meeting — an "I'm reviewing this
 must not start the grace timer.
 
 Tiers, evaluated on every ``poll``:
-  1. terminate — a decision was seen and the grace window elapsed (happy path).
+  1. decided   — a verdict was seen. Non-interactive: terminate once ``grace_s``
+                 elapses (headless/CI). Interactive: open the floor to the presenter
+                 (``OPEN_FLOOR`` once), then terminate on the end phrase or after
+                 ``open_floor_idle_s`` of presenter silence. A decided meeting is
+                 never hard-killed.
   2. hard-kill — no decision yet and ``hard_cap`` agent messages or ``wall_clock_s``
-                 elapsed. A meeting that reached a decision is never hard-killed;
-                 its tail is bounded by ``grace_s`` (so total <= wall_clock_s + grace_s).
+                 elapsed.
   3. nudge     — soft_cap design messages, no handoff requested yet: nudge the PM.
   4. add       — handoff_deadline further messages with the Architect still absent:
                  add it ourselves (the PM's invite never landed).
@@ -64,8 +67,9 @@ class Action(str, Enum):
         "nudge_handoff"  # post a facilitator message pushing the PM to hand off
     )
     ADD_ARCHITECT = "add_architect"  # PM never got the Architect in — add it ourselves
+    OPEN_FLOOR = "open_floor"  # verdict reached: hand the room to the presenter (once)
     HARD_KILL = "hard_kill"  # force-terminate: runaway or timeout
-    TERMINATE_OK = "terminate_ok"  # clean end: Architect decided, grace elapsed
+    TERMINATE_OK = "terminate_ok"  # clean end: decided (grace or presenter-driven)
 
 
 @dataclass(frozen=True)
@@ -83,19 +87,29 @@ class ObservedMessage:
     timestamp: float
     mentions_architect: bool = False
     is_final_decision: bool = False
+    # Interactive open-floor phase only: a genuine presenter message (not the
+    # conductor's own posts, which share the presenter's identity) keeps the room
+    # alive; one carrying the end phrase wraps it up.
+    is_presenter: bool = False
+    is_end_signal: bool = False
 
 
 @dataclass(frozen=True)
 class BreakerConfig:
     """Tunable ceilings. All env-overridable so they can be adjusted before a show."""
 
-    soft_cap: int = 6  # PM<->Dev design messages before we nudge a handoff
+    soft_cap: int = 10  # PM<->Dev design messages before we nudge a handoff
     handoff_deadline: int = (
-        2  # further design messages, Architect still absent, before we add it
+        3  # further design messages, Architect still absent, before we add it
     )
-    hard_cap: int = 12  # total agent messages before we force-kill
-    wall_clock_s: float = 600.0  # ceiling to reach a decision (tail bounded by grace_s)
-    grace_s: float = 20.0  # wait after the decision before stopping
+    hard_cap: int = 24  # total agent messages before we force-kill
+    wall_clock_s: float = 900.0  # ceiling to reach a decision (tail bounded by grace_s)
+    grace_s: float = 20.0  # wait after the decision before stopping (non-interactive)
+    # Interactive demos hand the room to the presenter after the verdict instead of
+    # closing on grace; the meeting then ends on the end phrase or this much
+    # presenter silence. Ignored when interactive is False (CI/headless).
+    interactive: bool = False
+    open_floor_idle_s: float = 420.0  # presenter silence that ends an open floor
 
 
 class CircuitBreaker:
@@ -126,6 +140,12 @@ class CircuitBreaker:
         self._nudged = False  # soft nudge already fired (fire once)
         self._added = False  # add-fallback already fired (fire once)
         self._terminal = False  # a kill/terminate already fired (stop acting)
+        # Interactive open-floor phase (only when config.interactive):
+        self._floor_opened_at: float | None = None  # conductor-clock time floor opened
+        self._last_presenter_at: float | None = None  # last genuine presenter message
+        self._presenter_spoke = False  # presenter spoke since the last poll
+        self._end_requested = False  # presenter posted the end phrase
+        self.stop_reason: str = ""  # human-readable why, for the conductor's closer
 
     def __enter__(self) -> CircuitBreaker:
         """Enter the guarded meeting; the caller drives ``record``/``poll`` inside
@@ -149,6 +169,11 @@ class CircuitBreaker:
         if self._terminal:
             return
 
+        if msg.is_presenter:
+            self._presenter_spoke = True  # stamped on the conductor clock in poll
+            if msg.is_end_signal:
+                self._end_requested = True
+
         if msg.mentions_architect and msg.sender_class is not SenderClass.ARCHITECT:
             self._handoff_requested = True
 
@@ -169,17 +194,15 @@ class CircuitBreaker:
         if self._terminal:
             return []
 
-        # Stamp the decision on the conductor clock the first time we see it, so the
-        # grace window is measured in the same clock as the wall-clock ceiling.
-        if self._decision_seen and self._decision_at is None:
-            self._decision_at = now
+        # The presenter is the authority: an end phrase ends the meeting at any point,
+        # even before a verdict — otherwise "end meeting" mid-discussion does nothing.
+        if self.config.interactive and self._end_requested:
+            return self._terminate("presenter ended the meeting")
 
-        if self._decision_at is not None:
-            if now - self._decision_at >= self.config.grace_s:
-                self._terminal = True
-                logger.info("breaker: clean terminate (decision + grace elapsed)")
-                return [Action.TERMINATE_OK]
-            return []  # decided — hold through the grace tail, never hard-kill
+        # A decided meeting is never hard-killed: once the verdict lands, the tail is
+        # governed by the grace window (non-interactive) or the presenter (open floor).
+        if self._decision_seen:
+            return self._poll_decided(now)
 
         if (
             now - self._start >= self.config.wall_clock_s
@@ -216,6 +239,42 @@ class CircuitBreaker:
                 return [Action.ADD_ARCHITECT]
 
         return []
+
+    def _poll_decided(self, now: float) -> list[Action]:
+        """Handle the post-verdict tail: grace close (non-interactive) or the
+        presenter-driven open floor (interactive)."""
+        if not self.config.interactive:
+            if self._decision_at is None:
+                self._decision_at = now
+            if now - self._decision_at >= self.config.grace_s:
+                return self._terminate("clean terminate (decision + grace elapsed)")
+            return []  # hold through the grace tail
+
+        # Interactive: open the floor once, then keep the room alive until the
+        # presenter ends it (end phrase) or goes quiet for open_floor_idle_s.
+        if self._floor_opened_at is None:
+            self._floor_opened_at = now
+            self._last_presenter_at = now
+            logger.info("breaker: verdict reached — opening the floor to the presenter")
+            return [Action.OPEN_FLOOR]
+
+        if self._presenter_spoke:
+            self._last_presenter_at = now
+            self._presenter_spoke = False
+
+        # An end phrase is handled at the top of poll (works pre- and post-verdict).
+        assert self._last_presenter_at is not None  # set with _floor_opened_at
+        if now - self._last_presenter_at >= self.config.open_floor_idle_s:
+            return self._terminate(
+                f"open floor idle ({self.config.open_floor_idle_s:.0f}s)"
+            )
+        return []
+
+    def _terminate(self, reason: str) -> list[Action]:
+        self._terminal = True
+        self.stop_reason = reason
+        logger.info("breaker: %s", reason)
+        return [Action.TERMINATE_OK]
 
     @property
     def stopped(self) -> bool:

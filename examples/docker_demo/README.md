@@ -43,11 +43,13 @@ human participant and can interject at any time by @mentioning an agent.
 | `launch.sh` | One-command build / up / down; owns a `.demo/run` manifest |
 | `Dockerfile.cli` | PM + Dev kit image = base kit + the `claude` and `codex` CLIs |
 | `agents/{pm,dev,architect}/` | Per-agent sbx workspace (`main.py`, `band.yaml`, `pyproject.toml`, `uv.lock`, `prompt.md`) |
-| `skill/SKILL.md` | Presenter-facing skill (quick start) |
 
 ## Prerequisites
 
 - `sbx` ≥ 0.35.0, signed in (`sbx login`); Docker; `uv`.
+- `tmux` (recommended) — the launcher opens one window with a live log pane per
+  agent inside your current terminal. Without it, it falls back to spawning
+  separate Terminal.app windows (macOS) or prints the tail commands.
 - Host keys: `BAND_API_KEY_USER` (a Band **user** key — the conductor and
   presenter identity), `ANTHROPIC_API_KEY` (PM), `OPENAI_API_KEY` (Dev + Architect).
 
@@ -106,8 +108,14 @@ tests). Tiers:
   absent, add her ourselves (Maya's invite never landed).
 - **Hard-kill** — no decision yet and `DEMO_HARD_CAP` agent messages or
   `DEMO_WALL_CLOCK_S` elapsed.
-- **Clean end** — Jordan posts a `VERDICT:`; `DEMO_GRACE_S` later, close and stop.
-  A decided meeting is never hard-killed, so it can run to `wall_clock + grace`.
+- **Open floor** (interactive, the default for a live run) — when Jordan posts a
+  `VERDICT:`, the meeting does **not** close. The conductor hands the room to you:
+  ask the still-live agents anything. It ends only when you post the end phrase
+  (`end meeting` / `/end` / `wrap up` / `adjourn`) or go quiet for
+  `DEMO_OPEN_FLOOR_IDLE_S` (default 7 min). Cleanup runs only then.
+- **Clean end** (headless / `DEMO_INTERACTIVE=false`) — verdict + `DEMO_GRACE_S`,
+  then close and stop, so automation never waits on an absent presenter.
+  A decided meeting is never hard-killed.
 
 Only **agent** messages move the caps — your interjections never trip the breaker.
 Timers run on the conductor's clock (not platform timestamps). All caps env-tunable.

@@ -25,14 +25,19 @@ PM, DEV, ARCH = "pm-id", "dev-id", "arch-id"
 
 
 def make_message(
-    sender_id: str, sender_type: str = "Agent", *, mentions: list[str] | None = None
+    sender_id: str,
+    sender_type: str = "Agent",
+    *,
+    mentions: list[str] | None = None,
+    id: str = "m1",
+    content: str = "hi",
 ) -> ChatMessage:
     metadata = (
         {"mentions": [{"id": m} for m in mentions]} if mentions is not None else None
     )
     return ChatMessage(
-        id="m1",
-        content="hi",
+        id=id,
+        content=content,
         message_type="text",
         sender_id=sender_id,
         sender_type=sender_type,
@@ -87,7 +92,7 @@ def test_mentions_architect_detects_the_handoff() -> None:
 
 def test_to_observed_projects_all_breaker_inputs() -> None:
     r = roster()
-    obs = to_observed(make_message(PM, mentions=[ARCH]), r)
+    obs = to_observed(make_message(PM, mentions=[ARCH]), r, set())
     assert obs.sender_class is SenderClass.PM, (
         "projection must carry the classified sender"
     )
@@ -99,10 +104,56 @@ def test_to_observed_projects_all_breaker_inputs() -> None:
     )
 
 
+def test_presenter_message_marks_presenter_activity() -> None:
+    r = roster()
+    obs = to_observed(make_message("presenter", sender_type="User", id="p1"), r, set())
+    assert obs.is_presenter is True, (
+        "a human message that isn't one of our own posts is genuine presenter activity"
+    )
+    assert obs.is_end_signal is False, (
+        "an ordinary presenter message doesn't end the meeting"
+    )
+
+
+def test_conductor_own_post_is_not_presenter_activity() -> None:
+    r = roster()
+    # Same identity as the presenter (User), but its id is in the self-posted set:
+    # the invite/closer must never masquerade as presenter input (would reset idle).
+    obs = to_observed(make_message("presenter", sender_type="User", id="c1"), r, {"c1"})
+    assert obs.is_presenter is False, (
+        "the conductor's own posts share the presenter's identity but must not count as activity"
+    )
+
+
+def test_end_phrase_from_presenter_is_an_end_signal() -> None:
+    r = roster()
+    msg = make_message(
+        "presenter", sender_type="User", id="p2", content="ok, end meeting"
+    )
+    obs = to_observed(msg, r, set())
+    assert obs.is_end_signal is True, (
+        "the presenter's end phrase must be projected as the meeting-ending signal"
+    )
+
+
+def test_end_phrase_from_an_agent_is_ignored() -> None:
+    r = roster()
+    msg = make_message(PM, id="a1", content="let's wrap up the API section")
+    obs = to_observed(msg, r, set())
+    assert obs.is_end_signal is False, (
+        "only the presenter can end the meeting — an agent saying 'wrap up' must not"
+    )
+
+
 def test_conductor_caps_do_not_drift_from_breaker_defaults() -> None:
     # Guards the single-source rule: ConductorSettings cap defaults must equal the
     # BreakerConfig defaults, so the two can never silently drift (300 vs 600 again).
+    # `interactive` is intentionally different (conductor defaults to interactive,
+    # the breaker to headless-safe), so normalize just that one mode flag.
+    import dataclasses
+
     settings = conductor.ConductorSettings()
-    assert settings.breaker_config() == conductor.BreakerConfig(), (
-        "conductor's default caps must match the single-source BreakerConfig defaults"
+    normalized = dataclasses.replace(settings.breaker_config(), interactive=False)
+    assert normalized == conductor.BreakerConfig(), (
+        "conductor's default caps/idle must match the single-source BreakerConfig defaults"
     )
