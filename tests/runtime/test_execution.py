@@ -813,6 +813,110 @@ class TestCrashRecoverySync:
         assert mock_handler.await_count == 1
         assert ctx._inflight_message_ids == set()
 
+    async def test_first_message_to_fresh_room_executes_once(self, mock_link_with_next):
+        """A message posted before the room's context was live executes once.
+
+        The gateway sequence: create room, add peer, post immediately. The
+        peer's startup sync receives the message from /next, and the
+        WebSocket copy arrives while that execution is still in flight. The
+        second delivery must be deduplicated, not re-executed.
+        """
+        from band.runtime.types import PlatformMessage
+
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
+        handled_message_ids: list[str] = []
+
+        async def blocking_handler(_context: ExecutionContext, event) -> None:
+            handled_message_ids.append(event.payload.id)
+            handler_started.set()
+            await release_handler.wait()
+
+        first_message = PlatformMessage(
+            id="msg-first",
+            room_id="room-123",
+            content="posted before the peer subscribed",
+            sender_id="user-1",
+            sender_type="User",
+            sender_name="User One",
+            message_type="text",
+            metadata={},
+            created_at=datetime.now(timezone.utc),
+        )
+        mock_link_with_next.get_next_message = AsyncMock(
+            side_effect=[first_message, None]
+        )
+
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            blocking_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        await ctx.start()
+        await asyncio.wait_for(handler_started.wait(), timeout=1.0)
+
+        # WebSocket copy of the same message arrives mid-execution.
+        await ctx.on_event(make_message_event(room_id="room-123", msg_id="msg-first"))
+
+        release_handler.set()
+        await asyncio.sleep(0.2)  # Let sync finish and Phase 2 drain the WS copy
+
+        assert handled_message_ids == ["msg-first"]
+        assert mock_link_with_next.mark_processing.await_count == 1
+        assert mock_link_with_next.mark_processed.await_count == 1
+
+        await ctx.stop()
+
+    async def test_fresh_contexts_do_not_execute_the_same_message_twice(
+        self, mock_link_with_next
+    ):
+        """Two live contexts for one room must execute a shared message once."""
+        handler_started = asyncio.Event()
+        release_handler = asyncio.Event()
+        handler_calls = 0
+
+        async def blocking_handler(_context: ExecutionContext, _event: object) -> None:
+            nonlocal handler_calls
+            handler_calls += 1
+            handler_started.set()
+            await release_handler.wait()
+
+        first_context = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            blocking_handler,
+            agent_id="agent-123",
+            config=SessionConfig(
+                enable_context_hydration=False,
+                enable_working_state=False,
+            ),
+        )
+        second_context = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            blocking_handler,
+            agent_id="agent-123",
+            config=SessionConfig(
+                enable_context_hydration=False,
+                enable_working_state=False,
+            ),
+        )
+        event = make_message_event(room_id="room-123", msg_id="msg-fresh-peer")
+
+        first_task = asyncio.create_task(first_context._process_event(event))
+        await asyncio.wait_for(handler_started.wait(), timeout=1.0)
+        second_task = asyncio.create_task(second_context._process_event(event))
+
+        await asyncio.sleep(0)
+        release_handler.set()
+        await asyncio.gather(first_task, second_task)
+
+        assert handler_calls == 1
+        assert mock_link_with_next.mark_processing.await_count == 1
+
     async def test_mark_processing_failure_does_not_execute_message(
         self, mock_link_with_next, mock_handler
     ):
@@ -990,6 +1094,35 @@ class TestCrashRecoverySync:
         assert mock_link_with_next.mark_processed.await_count == 2
         assert "msg-ws-ack-retry" in ctx._processed_ids
         assert "msg-ws-ack-retry" not in ctx._processed_ack_pending_ids
+
+    async def test_ack_pending_message_survives_lru_pressure_without_replay(
+        self, mock_link_with_next, mock_handler
+    ):
+        """Cache pressure must never evict ACK_PENDING into a side-effect replay.
+
+        A message whose handler completed but whose durable processed ack
+        failed may only retry the ack on redelivery. Filling the cache past
+        capacity must not erase that state and re-execute the handler.
+        """
+        ctx = ExecutionContext(
+            "room-123",
+            mock_link_with_next,
+            mock_handler,
+            agent_id="agent-123",
+            config=SessionConfig(enable_context_hydration=False),
+        )
+
+        ctx._remember_processed_ack_pending("msg-unacked")
+        for i in range(ctx._max_processed_ids):
+            ctx._remember_processed_ack_pending(f"msg-filler-{i}")
+
+        event = make_message_event(room_id="room-123", msg_id="msg-unacked")
+        await ctx._process_event(event)
+
+        mock_handler.assert_not_awaited()
+        mock_link_with_next.mark_processed.assert_awaited_once_with(
+            "room-123", "msg-unacked"
+        )
 
     async def test_websocket_processed_ack_failure_retries_ack_before_newer_queue(
         self, mock_link_with_next, mock_handler
@@ -1362,7 +1495,7 @@ class TestCancellationDuringProcessing:
     """Tests for cancellation during message processing."""
 
     async def test_stop_cancels_slow_processing(self, mock_link):
-        """stop() should cancel message processing."""
+        """stop() should cancel processing and release the in-flight claim."""
 
         async def slow_handler(ctx, event):
             await asyncio.sleep(10)  # Would take 10 seconds
@@ -1392,6 +1525,9 @@ class TestCancellationDuringProcessing:
 
         # Should complete quickly (not wait 10 seconds for handler)
         assert elapsed < 1.0, f"stop() took {elapsed}s - should cancel processing"
+
+        # Cancellation must release the local in-flight claim
+        assert ctx._inflight_message_ids == set()
 
 
 class TestContextHydrationConfig:
