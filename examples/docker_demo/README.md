@@ -66,7 +66,59 @@ cp .demo.env.example .demo.env    # fill in keys + (optional) endpoints; auto-lo
 
 Keys can live in `.demo.env` or the environment (`BAND_API_KEY_USER`,
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`). Non-production Band: set `BAND_REST_URL` /
-`BAND_WS_URL` (endpoints, host, and each `band.yaml` are derived from them).
+`BAND_WS_URL` (endpoints, host, and each `band.yaml` are derived from them). To load a
+different env file instead of `.demo.env`, point `DEMO_ENV_FILE` at it:
+
+```bash
+DEMO_ENV_FILE=/path/to/.env ./launch.sh up
+```
+
+### Watch it run
+
+`up` gives you two views:
+
+- **The Band UI.** The conductor creates a room titled `Design Review — <topic> — <date time>`
+  and the launcher **opens it in your browser** automatically (URL also logged as
+  `Room UI URL:` and written to `.demo/room.url`). Override the link shape with
+  `DEMO_UI_URL_TEMPLATE` (a `{chat_id}` template); it defaults to `<BAND_REST_URL>/chat/{chat_id}`.
+- **Per-agent logs.** With `tmux`, the launcher starts a `band-demo` session with one
+  live setup/log pane per agent. Attach from another terminal tab:
+
+  ```bash
+  tmux attach -t band-demo        # detach with Ctrl-b then d
+  ```
+
+  Without `tmux` it falls back to separate Terminal.app windows (macOS) or just prints
+  the `sbx exec … tail -f` command per agent.
+
+### Ending the meeting
+
+An interactive `up` (the default) hands you the room after the verdict — chat with the
+agents, then end it any of three ways, **each of which runs cleanup**:
+
+- post an **end phrase** in the room — `end meeting`, `/end`, `wrap up`, or `adjourn`
+  (works at any point, even mid-discussion);
+- go **idle** for `DEMO_OPEN_FLOOR_IDLE_S` (default 7 min);
+- press **Ctrl-C**.
+
+For an unattended run (CI / recording), set `DEMO_HEADLESS=1` on `up`: the meeting
+skips the open floor and closes on the verdict, so it never waits on a presenter.
+
+### Tuning
+
+Every breaker ceiling and the topic are env-overridable — retune before a show without
+touching code:
+
+| Var | Default | Effect |
+|---|---|---|
+| `DEMO_TOPIC` | `a URL shortener service` | What the agents design |
+| `DEMO_SOFT_CAP` | `10` | PM↔Dev messages before nudging a handoff |
+| `DEMO_HANDOFF_DEADLINE` | `3` | Further messages, Architect still absent, before we add it |
+| `DEMO_HARD_CAP` | `24` | Total agent messages before force-kill (pre-verdict only) |
+| `DEMO_WALL_CLOCK_S` | `900` | Seconds to reach a verdict before force-kill |
+| `DEMO_GRACE_S` | `20` | Post-verdict wait before closing (headless only) |
+| `DEMO_OPEN_FLOOR_IDLE_S` | `420` | Presenter silence that ends an open floor |
+| `DEMO_INTERACTIVE` | `true` | Open the floor after the verdict (set by `up`; `DEMO_HEADLESS=1` flips it) |
 
 ## Expected output
 
@@ -131,9 +183,6 @@ normal run leaves a clean host. `build` is only needed once or after a kit chang
 
 ## Notes
 
-- **Ending the meeting.** In an interactive run the meeting ends when you post an
-  end phrase (`end meeting` / `/end` / `wrap up` / `adjourn`), after
-  `DEMO_OPEN_FLOOR_IDLE_S` of silence, or on Ctrl-C — all of which run cleanup.
 - **codex transport.** The Developer's codex CLI reaches `api.openai.com` over an
   HTTPS fallback because its WebSocket transport is blocked by the sandbox's MITM
   proxy. This is functional but produces retry noise in that agent's log.
