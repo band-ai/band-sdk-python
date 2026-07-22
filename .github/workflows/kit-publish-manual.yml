@@ -63,5 +63,8 @@ jobs:
       major: ${{ inputs.major }}
       move-floating: ${{ inputs.move-floating }}
       extra-build-args: ${{ inputs.extra-build-args }}
-      quarantine-max-age-days: ${{ inputs.quarantine-max-age-days }}
+      # fromJSON: a dispatch `number` input reaches a called workflow's with:
+      # as a string, failing its number type check at startup (a 0-job
+      # "workflow file issue" run); booleans coerce, numbers don't.
+      quarantine-max-age-days: ${{ fromJSON(inputs.quarantine-max-age-days) }}
       relock: ${{ inputs.relock }}
