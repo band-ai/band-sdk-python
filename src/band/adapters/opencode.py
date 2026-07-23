@@ -14,7 +14,6 @@ from typing import ClassVar, Any, Literal
 
 import httpx
 
-from band.converters.helpers import optional_str
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
@@ -32,8 +31,24 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.opencode import (
     HttpOpencodeClient,
+    MessagePartDeltaEvent,
+    MessagePartUpdatedEvent,
+    MessageUpdatedEvent,
     OpencodeClientProtocol,
+    OpencodeEvent,
+    OpencodeMessageInfo,
+    OpencodePart,
+    OpencodePermissionRequest,
+    OpencodeQuestion,
+    OpencodeQuestionRequest,
     OpencodeSessionState,
+    OpencodeToolState,
+    PermissionAskedEvent,
+    QuestionAskedEvent,
+    SessionErrorEvent,
+    SessionIdleEvent,
+    describe_error,
+    parse_opencode_event,
 )
 from band.runtime.custom_tools import CustomToolDef
 from band.runtime.prompts import render_system_prompt
@@ -63,7 +78,7 @@ class _PendingPermission:
 @dataclass
 class _PendingQuestion:
     request_id: str
-    questions: list[dict[str, Any]]
+    questions: list[OpencodeQuestion]
     timeout_task: asyncio.Task[None] | None = None
 
 
@@ -507,9 +522,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 client = self._client
                 if client is None:
                     return
-                async for event in client.iter_events():
+                async for raw_event in client.iter_events():
                     retry_delay = 1.0  # reset on successful event
-                    await self._handle_event(event)
+                    await self._handle_event(parse_opencode_event(raw_event))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -521,77 +536,32 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             else:
                 await asyncio.sleep(0.25)
 
-    async def _handle_event(self, event: dict[str, Any]) -> None:
-        event_type = str(event.get("type") or "")
-        properties = event.get("properties") or {}
-        if not isinstance(properties, dict):
-            return
-
-        room_state = await self._room_state_for_event(event_type, properties)
+    async def _handle_event(self, event: OpencodeEvent) -> None:
+        room_state = await self._room_state_for_session(event.session_id)
         if room_state is None:
             return
 
-        if event_type == "message.updated":
-            info = properties.get("info") or {}
-            if isinstance(info, dict):
-                message_id = optional_str(info.get("id"))
-                if info.get("role") == "assistant":
-                    if message_id:
-                        room_state.assistant_message_ids.add(message_id)
-                        if Emit.USAGE in self.features.emit:
-                            usage = self._usage_from_info(info)
-                            if not usage.is_empty:
-                                room_state.usage_by_message[message_id] = usage
-                    error = info.get("error")
-                    if error:
-                        room_state.last_error_message = self._format_opencode_error(
-                            error
-                        )
-            return
+        match event:
+            case MessageUpdatedEvent():
+                self._apply_message_update(room_state, event.properties.info)
+            case MessagePartUpdatedEvent():
+                if event.properties.part is not None:
+                    await self._handle_part_update(room_state, event.properties.part)
+            case MessagePartDeltaEvent():
+                self._apply_part_delta(room_state, event)
+            case PermissionAskedEvent():
+                await self._handle_permission_asked(room_state, event.properties)
+            case QuestionAskedEvent():
+                await self._handle_question_asked(room_state, event.properties)
+            case SessionErrorEvent():
+                room_state.last_error_message = describe_error(event.properties.error)
+                self._finish_turn(room_state)
+            case SessionIdleEvent():
+                self._finish_turn(room_state)
 
-        if event_type == "message.part.updated":
-            part = properties.get("part") or {}
-            if isinstance(part, dict):
-                await self._handle_part_update(room_state, part)
-            return
-
-        if event_type == "message.part.delta":
-            await self._handle_part_delta(room_state, properties)
-            return
-
-        if event_type == "permission.asked":
-            await self._handle_permission_asked(room_state, properties)
-            return
-
-        if event_type == "question.asked":
-            await self._handle_question_asked(room_state, properties)
-            return
-
-        if event_type == "session.error":
-            room_state.last_error_message = self._format_opencode_error(
-                properties.get("error")
-            )
-            self._finish_turn(room_state)
-            return
-
-        if event_type == "session.idle":
-            self._finish_turn(room_state)
-
-    async def _room_state_for_event(
-        self, event_type: str, properties: dict[str, Any]
+    async def _room_state_for_session(
+        self, session_id: str | None
     ) -> _RoomState | None:
-        session_id: str | None = None
-        if "sessionID" in properties:
-            session_id = optional_str(properties.get("sessionID"))
-        elif event_type == "message.updated":
-            info = properties.get("info") or {}
-            if isinstance(info, dict):
-                session_id = optional_str(info.get("sessionID"))
-        elif event_type == "message.part.updated":
-            part = properties.get("part") or {}
-            if isinstance(part, dict):
-                session_id = optional_str(part.get("sessionID"))
-
         if not session_id:
             return None
 
@@ -601,44 +571,57 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return None
             return self._rooms.get(room_id)
 
-    async def _handle_part_update(
-        self, room_state: _RoomState, part: dict[str, Any]
+    def _apply_message_update(
+        self, room_state: _RoomState, info: OpencodeMessageInfo | None
     ) -> None:
-        part_type = part.get("type")
-        part_id = optional_str(part.get("id"))
-        message_id = optional_str(part.get("messageID"))
-        if not part_id:
+        if info is None or info.role != "assistant":
             return
+        if info.id:
+            room_state.assistant_message_ids.add(info.id)
+            if Emit.USAGE in self.features.emit and info.tokens is not None:
+                usage = info.tokens.to_turn_usage()
+                if not usage.is_empty:
+                    room_state.usage_by_message[info.id] = usage
+        if info.error is not None:
+            room_state.last_error_message = info.error.describe()
 
-        if part_type == "text":
+    async def _handle_part_update(
+        self, room_state: _RoomState, part: OpencodePart
+    ) -> None:
+        if not part.id:
+            return
+        part_id = part.id
+        message_id = part.message_id
+
+        if part.type == "text":
             if not message_id or message_id not in room_state.assistant_message_ids:
                 return
             room_state.assistant_part_types[part_id] = "text"
-            room_state.text_parts[part_id] = str(part.get("text") or "")
+            room_state.text_parts[part_id] = part.text or ""
             return
 
-        if part_type == "reasoning":
+        if part.type == "reasoning":
             if not message_id or message_id not in room_state.assistant_message_ids:
                 return
             room_state.assistant_part_types[part_id] = "reasoning"
             return
 
-        if part_type != "tool" or Emit.EXECUTION not in self.features.emit:
+        if part.type != "tool" or Emit.EXECUTION not in self.features.emit:
             return
 
-        state = part.get("state") or {}
-        if not isinstance(state, dict):
+        state = part.state
+        if state is None:
             return
 
-        tool_name = optional_str(part.get("tool")) or "unknown"
-        call_id = optional_str(part.get("callID")) or part_id
-        if state.get("status") in {"pending", "running"}:
+        tool_name = part.tool or "unknown"
+        call_id = part.call_id or part_id
+        if state.status in {"pending", "running"}:
             if call_id not in room_state.reported_tool_calls:
                 room_state.reported_tool_calls.add(call_id)
                 await self._report_tool_call(room_state, tool_name, state, call_id)
             return
 
-        if state.get("status") in {"completed", "error"}:
+        if state.status in {"completed", "error"}:
             if call_id not in room_state.reported_tool_calls:
                 room_state.reported_tool_calls.add(call_id)
                 await self._report_tool_call(room_state, tool_name, state, call_id)
@@ -646,37 +629,34 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 room_state.reported_tool_results.add(call_id)
                 await self._report_tool_result(room_state, state, call_id)
 
-    async def _handle_part_delta(
-        self, room_state: _RoomState, properties: dict[str, Any]
+    def _apply_part_delta(
+        self, room_state: _RoomState, event: MessagePartDeltaEvent
     ) -> None:
-        if properties.get("field") != "text":
+        props = event.properties
+        if props.field != "text":
             return
-        part_id = optional_str(properties.get("partID"))
-        message_id = optional_str(properties.get("messageID"))
-        if not part_id:
+        if not props.part_id:
             return
+        message_id = props.message_id
         if not message_id or message_id not in room_state.assistant_message_ids:
             return
-        if room_state.assistant_part_types.get(part_id) != "text":
+        if room_state.assistant_part_types.get(props.part_id) != "text":
             return
-        delta = str(properties.get("delta") or "")
-        room_state.text_parts[part_id] = room_state.text_parts.get(part_id, "") + delta
+        room_state.text_parts[props.part_id] = (
+            room_state.text_parts.get(props.part_id, "") + props.delta
+        )
 
     async def _handle_permission_asked(
-        self, room_state: _RoomState, properties: dict[str, Any]
+        self, room_state: _RoomState, request: OpencodePermissionRequest
     ) -> None:
-        request_id = optional_str(properties.get("id"))
+        request_id = request.id
         if not request_id:
             return
 
         pending = _PendingPermission(
             request_id=request_id,
-            permission=optional_str(properties.get("permission")) or "unknown",
-            patterns=[
-                str(pattern)
-                for pattern in properties.get("patterns") or []
-                if pattern is not None
-            ],
+            permission=request.permission,
+            patterns=request.patterns,
         )
         self._cancel_pending_timeout(room_state.pending_permission)
         room_state.pending_permission = pending
@@ -705,16 +685,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._release_turn_wait(room_state)
 
     async def _handle_question_asked(
-        self, room_state: _RoomState, properties: dict[str, Any]
+        self, room_state: _RoomState, request: OpencodeQuestionRequest
     ) -> None:
-        request_id = optional_str(properties.get("id"))
-        questions = properties.get("questions") or []
-        if not request_id or not isinstance(questions, list):
+        request_id = request.id
+        if not request_id:
             return
 
         pending = _PendingQuestion(
             request_id=request_id,
-            questions=[q for q in questions if isinstance(q, dict)],
+            questions=request.questions,
         )
         self._cancel_pending_timeout(room_state.pending_question)
         room_state.pending_question = pending
@@ -1080,46 +1059,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         total = sum(usage_by_message.values(), TurnUsage())
         await self.emit_usage(room_state.tools, total)
 
-    @staticmethod
-    def _usage_from_info(info: dict[str, Any]) -> TurnUsage:
-        """Map an OpenCode assistant ``info.tokens`` onto TurnUsage.
-
-        Read defensively off the raw event dict (OpenCode's payloads are not
-        modeled in this integration): the server reports
-        ``tokens: {input, output, reasoning, cache: {read, write}}``. A missing
-        or malformed ``tokens`` yields empty usage.
-
-        OpenCode reports reasoning tokens *disjointly* from output (its own total
-        is ``input + output + reasoning + cache``), so fold reasoning into
-        ``output_tokens`` — otherwise reasoning-heavy turns undercount, and this
-        stays consistent with providers that already count reasoning inside output.
-        """
-        tokens = info.get("tokens")
-        if not isinstance(tokens, dict):
-            return TurnUsage()
-        cache = tokens.get("cache")
-        cache = cache if isinstance(cache, dict) else {}
-        flat = {
-            "input": tokens.get("input"),
-            "output": tokens.get("output"),
-            "reasoning": tokens.get("reasoning"),
-            "cache_read": cache.get("read"),
-            "cache_write": cache.get("write"),
-        }
-        return TurnUsage.from_mapping(
-            flat,
-            input="input",
-            output="output",
-            reasoning="reasoning",
-            cache_read="cache_read",
-            cache_write="cache_write",
-        )
-
     async def _report_tool_call(
         self,
         room_state: _RoomState,
         tool_name: str,
-        state: dict[str, Any],
+        state: OpencodeToolState,
         call_id: str,
     ) -> None:
         if room_state.tools is None:
@@ -1129,7 +1073,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 json.dumps(
                     {
                         "name": tool_name,
-                        "args": state.get("input") or {},
+                        "args": state.input,
                         "tool_call_id": call_id,
                     }
                 ),
@@ -1141,16 +1085,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     async def _report_tool_result(
         self,
         room_state: _RoomState,
-        state: dict[str, Any],
+        state: OpencodeToolState,
         call_id: str,
     ) -> None:
         if room_state.tools is None:
             return
         output: Any
-        if state.get("status") == "error":
-            output = {"error": state.get("error") or "OpenCode tool failed"}
+        if state.status == "error":
+            output = {"error": state.error or "OpenCode tool failed"}
         else:
-            output = state["output"] if "output" in state else ""
+            output = state.reported_output
 
         try:
             await room_state.tools.send_event(
@@ -1233,12 +1177,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         return [[line] for line in lines[: len(pending.questions)]]
 
     def _format_question_prompt(
-        self, questions: list[dict[str, Any]], request_id: str
+        self, questions: list[OpencodeQuestion], request_id: str
     ) -> str:
         prompt_lines = [f"OpenCode asked question `{request_id}`:"]
         for index, question in enumerate(questions, start=1):
-            question_text = str(question.get("question") or "Question")
-            prompt_lines.append(f"{index}. {question_text}")
+            prompt_lines.append(f"{index}. {question.question}")
         prompt_lines.append("Reply with one line per question, or `reject`.")
         return "\n".join(prompt_lines)
 
@@ -1248,15 +1191,3 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         except ValueError:
             payload = exc.response.text
         return f"OpenCode request failed ({exc.response.status_code}): {payload}"
-
-    def _format_opencode_error(self, error: Any) -> str:
-        if not isinstance(error, dict):
-            return "OpenCode reported an unknown error."
-
-        name = error.get("name") or "OpenCodeError"
-        data = error.get("data") or {}
-        if isinstance(data, dict):
-            message = data.get("message")
-            if message:
-                return f"{name}: {message}"
-        return f"{name}: OpenCode reported an error."
