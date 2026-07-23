@@ -400,7 +400,7 @@ class TestOpencodeAdapter:
     def _patch_mcp_backend(self) -> Any:
         """Patch MCP backend creation for all tests by default."""
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(),
         ):
             yield
@@ -432,7 +432,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -470,7 +470,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -1126,7 +1126,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -1687,7 +1687,7 @@ class TestOpencodeAdapter:
             return FakeMCPBackend()
 
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             AsyncMock(side_effect=capturing_factory),
         ):
             bare_adapter = OpencodeAdapter(

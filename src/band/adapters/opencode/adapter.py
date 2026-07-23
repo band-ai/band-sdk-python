@@ -10,10 +10,12 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import ClassVar, Any, Literal
+from typing import ClassVar, Any
 
 import httpx
 
+from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
+from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
@@ -38,9 +40,6 @@ from band.integrations.opencode import (
     OpencodeEvent,
     OpencodeMessageInfo,
     OpencodePart,
-    OpencodePermissionRequest,
-    OpencodeQuestion,
-    OpencodeQuestionRequest,
     OpencodeSessionState,
     OpencodeToolState,
     PermissionAskedEvent,
@@ -56,30 +55,11 @@ from band.runtime.tools import iter_tool_definitions
 
 logger = logging.getLogger(__name__)
 
-ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
-QuestionMode = Literal["manual", "auto_reject"]
-ApprovalReply = Literal["once", "always", "reject"]
-
 _OPENCODE_SYSTEM_NOTE = """\
 Responses are relayed back into the Band room by the adapter.
 Use the band_ prefixed tools (e.g. band_send_message) for Band platform actions when available.
 When you need approval or clarification, ask clearly and wait for the user's next room message.
 """
-
-
-@dataclass
-class _PendingPermission:
-    request_id: str
-    permission: str
-    patterns: list[str]
-    timeout_task: asyncio.Task[None] | None = None
-
-
-@dataclass
-class _PendingQuestion:
-    request_id: str
-    questions: list[OpencodeQuestion]
-    timeout_task: asyncio.Task[None] | None = None
 
 
 @dataclass
@@ -96,41 +76,14 @@ class _RoomState:
     assistant_part_types: dict[str, str] = field(default_factory=dict)
     reported_tool_calls: set[str] = field(default_factory=set)
     reported_tool_results: set[str] = field(default_factory=set)
-    pending_permission: _PendingPermission | None = None
-    pending_question: _PendingQuestion | None = None
+    # Bound in _get_or_create_room_state, immediately after construction.
+    approvals: RoomApprovals = field(init=False)
     last_error_message: str | None = None
     persisted_session_id: str | None = None
     # Per-assistant-message usage for the current turn (last-write-wins per id,
     # since message.updated streams repeatedly). Summed across messages at turn
     # end — a tool loop produces several assistant messages.
     usage_by_message: dict[str, TurnUsage] = field(default_factory=dict)
-
-
-@dataclass
-class OpencodeAdapterConfig:
-    """Runtime configuration for OpenCode sessions."""
-
-    base_url: str = "http://127.0.0.1:4096"
-    directory: str | None = None
-    workspace: str | None = None
-    provider_id: str | None = None
-    model_id: str | None = None
-    agent: str | None = None
-    variant: str | None = None
-    custom_section: str = ""
-    include_base_instructions: bool = False
-    enable_task_events: bool = True
-    enable_execution_reporting: bool = False
-    enable_memory_tools: bool = False
-    fallback_send_agent_text: bool = True
-    turn_timeout_s: float = 300.0
-    approval_mode: ApprovalMode = "manual"
-    approval_wait_timeout_s: float = 300.0
-    approval_timeout_reply: ApprovalReply = "reject"
-    question_mode: QuestionMode = "manual"
-    question_wait_timeout_s: float = 300.0
-    session_title_prefix: str = "Band"
-    mcp_server_name: str = "band"
 
 
 class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
@@ -273,7 +226,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state = await self._get_or_create_room_state(room_id)
         room_state.tools = tools
 
-        if await self._handle_control_message(room_state, msg):
+        if await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
             return
 
         if room_state.turn_future and not room_state.turn_future.done():
@@ -405,6 +358,17 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             state = self._rooms.get(room_id)
             if state is None:
                 state = _RoomState(room_id=room_id)
+                state.approvals = RoomApprovals(
+                    self.config,
+                    ApprovalPorts(
+                        room_id=room_id,
+                        session_id=lambda: state.session_id,
+                        client=lambda: self._client,
+                        tools=lambda: state.tools,
+                        turn_mentions=lambda: state.pending_mentions,
+                        release_turn_wait=lambda: self._release_turn_wait(state),
+                    ),
+                )
                 self._rooms[room_id] = state
             return state
 
@@ -550,9 +514,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             case MessagePartDeltaEvent():
                 self._apply_part_delta(room_state, event)
             case PermissionAskedEvent():
-                await self._handle_permission_asked(room_state, event.properties)
+                await room_state.approvals.on_permission_asked(event.properties)
             case QuestionAskedEvent():
-                await self._handle_question_asked(room_state, event.properties)
+                await room_state.approvals.on_question_asked(event.properties)
             case SessionErrorEvent():
                 room_state.last_error_message = describe_error(event.properties.error)
                 self._finish_turn(room_state)
@@ -645,212 +609,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state.text_parts[props.part_id] = (
             room_state.text_parts.get(props.part_id, "") + props.delta
         )
-
-    async def _handle_permission_asked(
-        self, room_state: _RoomState, request: OpencodePermissionRequest
-    ) -> None:
-        request_id = request.id
-        if not request_id:
-            return
-
-        pending = _PendingPermission(
-            request_id=request_id,
-            permission=request.permission,
-            patterns=request.patterns,
-        )
-        self._cancel_pending_timeout(room_state.pending_permission)
-        room_state.pending_permission = pending
-
-        if self.config.approval_mode == "auto_accept":
-            await self._reply_permission(room_state, "once")
-            return
-
-        if self.config.approval_mode == "auto_decline":
-            await self._reply_permission(room_state, "reject")
-            return
-
-        pending.timeout_task = asyncio.create_task(
-            self._expire_permission(room_state, request_id)
-        )
-        if room_state.tools:
-            pattern_text = ", ".join(pending.patterns) if pending.patterns else "n/a"
-            await room_state.tools.send_message(
-                (
-                    f"OpenCode approval requested for `{pending.permission}` "
-                    f"({pattern_text}). Reply with `approve {request_id}`, "
-                    f"`always {request_id}`, or `reject {request_id}`."
-                ),
-                mentions=room_state.pending_mentions,
-            )
-        self._release_turn_wait(room_state)
-
-    async def _handle_question_asked(
-        self, room_state: _RoomState, request: OpencodeQuestionRequest
-    ) -> None:
-        request_id = request.id
-        if not request_id:
-            return
-
-        pending = _PendingQuestion(
-            request_id=request_id,
-            questions=request.questions,
-        )
-        self._cancel_pending_timeout(room_state.pending_question)
-        room_state.pending_question = pending
-
-        if self.config.question_mode == "auto_reject":
-            await self._reject_question(room_state)
-            return
-
-        pending.timeout_task = asyncio.create_task(
-            self._expire_question(room_state, request_id)
-        )
-        if room_state.tools:
-            prompt = self._format_question_prompt(pending.questions, request_id)
-            await room_state.tools.send_message(
-                prompt, mentions=room_state.pending_mentions
-            )
-        self._release_turn_wait(room_state)
-
-    async def _handle_control_message(
-        self, room_state: _RoomState, msg: PlatformMessage
-    ) -> bool:
-        content = msg.content.strip()
-        if not content:
-            return False
-
-        lowered = content.lower()
-        # Mention the sender of THIS control message, not room_state.pending_mentions
-        # -- that field belongs to whichever turn is currently open (_begin_turn),
-        # which a manual approve/reject reply does not itself start.
-        mentions = [{"id": msg.sender_id}] if msg.sender_id else []
-
-        if room_state.pending_permission:
-            pending_request_id = room_state.pending_permission.request_id
-            reply = self._parse_permission_reply(lowered, room_state.pending_permission)
-            if reply:
-                await self._reply_permission(room_state, reply)
-                if room_state.tools:
-                    await room_state.tools.send_message(
-                        f"OpenCode approval `{pending_request_id}` handled with `{reply}`.",
-                        mentions=mentions,
-                    )
-                return True
-
-        if room_state.pending_question:
-            pending_request_id = room_state.pending_question.request_id
-            if lowered in {"reject", "/reject"}:
-                await self._reject_question(room_state)
-                if room_state.tools:
-                    await room_state.tools.send_message(
-                        f"OpenCode question `{pending_request_id}` rejected.",
-                        mentions=mentions,
-                    )
-                return True
-
-            answers = self._parse_question_answers(content, room_state.pending_question)
-            if answers is None:
-                if room_state.tools:
-                    await room_state.tools.send_message(
-                        (
-                            "OpenCode is waiting for answers. Reply with one line per "
-                            "question, or `reject` to reject the question."
-                        ),
-                        mentions=mentions,
-                    )
-                return True
-
-            await self._reply_question(room_state, answers)
-            if room_state.tools:
-                await room_state.tools.send_message(
-                    f"OpenCode question `{pending_request_id}` answered.",
-                    mentions=mentions,
-                )
-            return True
-
-        return False
-
-    async def _reply_permission(
-        self, room_state: _RoomState, reply: ApprovalReply
-    ) -> None:
-        pending = room_state.pending_permission
-        if pending is None or self._client is None:
-            return
-        if not room_state.session_id:
-            logger.warning(
-                "Cannot reply to permission %s: no session_id for room %s",
-                pending.request_id,
-                room_state.room_id,
-            )
-            return
-        self._cancel_pending_timeout(pending)
-        await self._client.reply_permission(
-            room_state.session_id,
-            pending.request_id,
-            response=reply,
-        )
-        room_state.pending_permission = None
-
-    async def _reply_question(
-        self, room_state: _RoomState, answers: list[list[str]]
-    ) -> None:
-        pending = room_state.pending_question
-        if pending is None or self._client is None:
-            return
-        self._cancel_pending_timeout(pending)
-        await self._client.reply_question(
-            pending.request_id,
-            answers=answers,
-        )
-        room_state.pending_question = None
-
-    async def _reject_question(self, room_state: _RoomState) -> None:
-        pending = room_state.pending_question
-        if pending is None or self._client is None:
-            return
-        self._cancel_pending_timeout(pending)
-        await self._client.reject_question(pending.request_id)
-        room_state.pending_question = None
-
-    async def _expire_permission(self, room_state: _RoomState, request_id: str) -> None:
-        try:
-            await asyncio.sleep(self.config.approval_wait_timeout_s)
-        except asyncio.CancelledError:
-            return
-
-        if (
-            room_state.pending_permission is not None
-            and room_state.pending_permission.request_id == request_id
-        ):
-            await self._reply_permission(room_state, self.config.approval_timeout_reply)
-            if room_state.tools:
-                await room_state.tools.send_event(
-                    f"OpenCode approval `{request_id}` timed out and was handled with `{self.config.approval_timeout_reply}`.",
-                    "error",
-                )
-
-    async def _expire_question(self, room_state: _RoomState, request_id: str) -> None:
-        try:
-            await asyncio.sleep(self.config.question_wait_timeout_s)
-        except asyncio.CancelledError:
-            return
-
-        if (
-            room_state.pending_question is not None
-            and room_state.pending_question.request_id == request_id
-        ):
-            await self._reject_question(room_state)
-            if room_state.tools:
-                await room_state.tools.send_event(
-                    f"OpenCode question `{request_id}` timed out and was rejected.",
-                    "error",
-                )
-
-    def _cancel_pending_timeout(
-        self, pending: _PendingPermission | _PendingQuestion | None
-    ) -> None:
-        if pending and pending.timeout_task:
-            pending.timeout_task.cancel()
 
     async def _ensure_session(
         self, room_state: _RoomState, history: OpencodeSessionState
@@ -979,10 +737,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if turn_task is not None and turn_task is not expected_task:
             turn_task.cancel()
 
-        self._cancel_pending_timeout(room_state.pending_permission)
-        self._cancel_pending_timeout(room_state.pending_question)
-        room_state.pending_permission = None
-        room_state.pending_question = None
+        room_state.approvals.cancel()
         room_state.turn_future = None
         room_state.turn_release_future = None
         room_state.turn_task = None
@@ -1142,48 +897,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         sender_name = msg.sender_name or "Unknown"
         lines.append(f"[{sender_name}]: {msg.content}")
         return [{"type": "text", "text": "\n".join(lines)}]
-
-    def _parse_permission_reply(
-        self,
-        lowered_content: str,
-        pending: _PendingPermission,
-    ) -> ApprovalReply | None:
-        tokens = lowered_content.split()
-        if not tokens:
-            return None
-
-        command = tokens[0].lstrip("/")
-        request_id = tokens[1] if len(tokens) > 1 else pending.request_id
-        if request_id != pending.request_id:
-            return None
-
-        if command == "approve":
-            return "once"
-        if command == "always":
-            return "always"
-        if command == "reject":
-            return "reject"
-        return None
-
-    def _parse_question_answers(
-        self, content: str, pending: _PendingQuestion
-    ) -> list[list[str]] | None:
-        if len(pending.questions) == 1:
-            return [[content.strip()]]
-
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        if len(lines) < len(pending.questions):
-            return None
-        return [[line] for line in lines[: len(pending.questions)]]
-
-    def _format_question_prompt(
-        self, questions: list[OpencodeQuestion], request_id: str
-    ) -> str:
-        prompt_lines = [f"OpenCode asked question `{request_id}`:"]
-        for index, question in enumerate(questions, start=1):
-            prompt_lines.append(f"{index}. {question.question}")
-        prompt_lines.append("Reply with one line per question, or `reject`.")
-        return "\n".join(prompt_lines)
 
     def _format_http_error(self, exc: httpx.HTTPStatusError) -> str:
         try:
