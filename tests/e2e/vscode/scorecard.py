@@ -40,15 +40,15 @@ def outcome_status(report: pytest.TestReport) -> Status | None:
     """The row status one setup/call report contributes (same semantics as the
     baseline collector: skip anywhere = skip, failed setup or call = fail,
     passing call = pass, passing setup = no verdict yet)."""
-    if report.when not in ("setup", "call"):
-        return None
-    if report.skipped:
-        return "skip"
-    if report.failed:
-        return "fail"
-    if report.when == "call":
-        return "pass"
-    return None
+    match (report.when, report.skipped, report.failed):
+        case ("setup" | "call", True, _):
+            return "skip"
+        case ("setup" | "call", _, True):
+            return "fail"
+        case ("call", _, _):
+            return "pass"
+        case _:  # teardown reports and passing setups carry no verdict
+            return None
 
 
 class VSCodeScorecard:
