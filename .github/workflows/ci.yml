@@ -2,10 +2,10 @@ name: CI
 
 on:
   pull_request:
-    # Keep dev here until the single-trunk cutover completes (default branch
-    # flipped to main and dev retired). Removing dev early would stop CI on
-    # dev-targeted PRs — including this migration PR — blocking their merge.
-    branches: [dev, main]
+    branches: [main]
+  # Run on the merge queue's temporary branch so these required checks report
+  # against the queued merge result. Without this the queue would wait forever.
+  merge_group:
 
 jobs:
 

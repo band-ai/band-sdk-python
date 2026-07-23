@@ -3,6 +3,10 @@ name: PR Title
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
+  # Required check must also report on the merge queue's branch, or the queue
+  # deadlocks. A merge group has no PR, so the validation step below no-ops and
+  # the job reports success.
+  merge_group:
 
 permissions:
   pull-requests: read
@@ -15,6 +19,9 @@ jobs:
     if: "!contains(github.actor, '[bot]')"
     steps:
       - name: Validate Conventional Commits format
+        # A merge group carries no PR, so there is no title to validate; skip
+        # the step there and let the job report success for the required check.
+        if: github.event_name == 'pull_request'
         uses: amannn/action-semantic-pull-request@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
