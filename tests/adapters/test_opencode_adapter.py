@@ -1732,3 +1732,38 @@ class TestOpencodeAdapter:
         assert bare_tool_names.isdisjoint(CONTACT_TOOL_NAMES)
         assert MEMORY_TOOL_NAMES <= full_tool_names
         assert CONTACT_TOOL_NAMES <= full_tool_names
+
+    @pytest.mark.asyncio
+    async def test_malformed_events_do_not_kill_event_loop(self) -> None:
+        """Junk SSE payloads degrade to ignored events; the turn that follows
+        them completes normally instead of the event loop dying mid-stream."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    {"type": "bizarre.event", "properties": {"sessionID": "sess-1"}},
+                    {"type": "permission.asked", "properties": "garbage"},
+                    {},
+                    {"type": "message.updated", "properties": {"info": "not-a-dict"}},
+                    event_message_updated("sess-1", "msg-1"),
+                    event_text_part("sess-1", "msg-1", "survived the junk"),
+                    event_session_idle("sess-1"),
+                ]
+            ]
+        )
+        adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        assert any(msg["content"] == "survived the junk" for msg in tools.messages_sent)
+
+        await adapter.on_cleanup("room-1")
