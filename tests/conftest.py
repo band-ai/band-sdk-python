@@ -72,6 +72,7 @@ class CollectionGateSettings(BaseSettings):
     e2e_tests_enabled: bool = False  # E2E_TESTS_ENABLED
     docker_tests_enabled: bool = False  # DOCKER_TESTS_ENABLED
     sandbox_tests_enabled: bool = False  # SANDBOX_TESTS_ENABLED
+    vscode_chat_tests_enabled: bool = False  # VSCODE_CHAT_TESTS_ENABLED
 
 
 def pytest_ignore_collect(collection_path: Path) -> bool | None:
@@ -88,35 +89,39 @@ def pytest_ignore_collect(collection_path: Path) -> bool | None:
     return None
 
 
+# Opt-in suite gates: marker -> the CollectionGateSettings field that opens it.
+# The env var IS the field name uppercased (the pydantic-settings contract), so
+# the skip reason is derived — one row here is all a new gated suite needs.
+GATED_MARKERS: dict[str, str] = {
+    "e2e": "e2e_tests_enabled",
+    "docker_build": "docker_tests_enabled",
+    "sandbox": "sandbox_tests_enabled",
+    "vscode_chat": "vscode_chat_tests_enabled",
+}
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Skip e2e- and docker_build-marked tests unless explicitly enabled.
+    """Skip gate-marked suites unless their env gate is explicitly enabled.
 
-    tests/e2e/ gates itself through its own conftest; this covers
-    e2e-marked tests living elsewhere (e.g. the codex ACP protocol
-    tests), which spawn real backends and must never ride a normal
-    unit run.
-
-    docker_build-marked tests shell out to a real `docker build`/`docker
-    run` — CI runners do have a Docker daemon (unlike the nested
-    virtualization sbx tests need), so a plain Docker-availability check
-    isn't enough to keep them off CI; they need the same explicit opt-in
-    as e2e tests.
+    tests/e2e/ gates itself through its own conftest; this covers marked
+    tests living elsewhere (e.g. the codex ACP protocol tests). These
+    suites spawn real backends, real `docker build`s, sbx microVMs, or a
+    live VS Code window — none may ride a normal unit run, and none can
+    rely on mere tool availability (CI runners do have Docker), so each
+    needs its explicit opt-in.
     """
     gates = CollectionGateSettings()
-    skip_e2e = pytest.mark.skip(reason="set E2E_TESTS_ENABLED=true to run e2e tests")
-    skip_docker = pytest.mark.skip(
-        reason="set DOCKER_TESTS_ENABLED=true to run docker_build tests"
-    )
-    skip_sandbox = pytest.mark.skip(
-        reason="set SANDBOX_TESTS_ENABLED=true to run sbx sandbox tests"
-    )
+    closed = {
+        marker: pytest.mark.skip(
+            reason=f"set {field.upper()}=true to run {marker}-marked tests"
+        )
+        for marker, field in GATED_MARKERS.items()
+        if not getattr(gates, field)
+    }
     for item in items:
-        if not gates.e2e_tests_enabled and item.get_closest_marker("e2e"):
-            item.add_marker(skip_e2e)
-        if not gates.docker_tests_enabled and item.get_closest_marker("docker_build"):
-            item.add_marker(skip_docker)
-        if not gates.sandbox_tests_enabled and item.get_closest_marker("sandbox"):
-            item.add_marker(skip_sandbox)
+        for marker, skip in closed.items():
+            if item.get_closest_marker(marker):
+                item.add_marker(skip)
 
 
 @pytest.fixture(autouse=True)
