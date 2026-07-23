@@ -322,7 +322,12 @@ def _build_codex(
     )
 
 
-@adapter(Adapter.OPENCODE, requires=[Dep.OPENCODE_SERVER], runs_tool_loop=False)
+@adapter(
+    Adapter.OPENCODE,
+    requires=[Dep.OPENCODE_SERVER],
+    supports=_LLM_TOOL_LOOP,
+    runs_tool_loop=False,
+)
 def _build_opencode(
     s: BaselineSettings,
     *,

@@ -69,6 +69,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         directory: str | None = None,
         workspace: str | None = None,
         timeout_s: float = 300.0,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         headers: dict[str, str] = {}
         if directory:
@@ -87,6 +88,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             base_url=base_url.rstrip("/"),
             headers=headers,
             timeout=httpx.Timeout(30.0, read=timeout_s),
+            transport=transport,
         )
 
     def _query_params(self) -> dict[str, str]:
