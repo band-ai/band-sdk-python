@@ -164,3 +164,15 @@ class TestACPClientHistoryConverter:
         ]
         result = converter.convert(raw)
         assert result.room_to_session == {}
+
+    def test_collects_text_history_for_session_recovery(
+        self, converter: ACPClientHistoryConverter
+    ) -> None:
+        result = converter.convert(
+            [
+                {"message_type": "text", "sender_name": "Ada", "content": "note-1"},
+                {"message_type": "thought", "sender_name": "Ada", "content": "skip"},
+            ]
+        )
+
+        assert result.replay_messages == ["[Ada]: note-1"]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from band.converters.helpers import build_replay_messages
 from band.core.protocols import HistoryConverter
 
 if TYPE_CHECKING:
@@ -51,7 +52,10 @@ class ACPClientHistoryConverter(HistoryConverter["ACPClientSessionState"]):
                     session_id,
                 )
 
-        state = ACPClientSessionState(room_to_session=room_to_session)
+        state = ACPClientSessionState(
+            room_to_session=room_to_session,
+            replay_messages=build_replay_messages(raw),
+        )
 
         logger.debug(
             "Converted ACP client history: %d room-session candidates",

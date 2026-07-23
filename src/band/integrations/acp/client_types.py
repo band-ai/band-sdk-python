@@ -14,9 +14,11 @@ class ACPClientSessionState:
 
     A session ID is owned by the remote ACP agent, so the adapter must validate it
     with ACP ``session/load`` after reconnecting before it can be used for a prompt.
+    Text history seeds a new session when that load is unavailable.
     """
 
     room_to_session: dict[str, str] = field(default_factory=dict)
+    replay_messages: list[str] = field(default_factory=list)
 
 
 class BandACPClient(ACPCollectingClient):
