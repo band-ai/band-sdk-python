@@ -1,0 +1,6 @@
+[project]
+name = "band-demo-architect"
+version = "0.1.0"
+description = "Software Architect agent (CrewAI) for the Band Docker demo."
+requires-python = ">=3.11"
+dependencies = ["band-sdk[crewai]>=1.1.0", "pydantic-settings>=2.0.0"]

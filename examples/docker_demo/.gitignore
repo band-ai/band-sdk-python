@@ -1,0 +1,5 @@
+# Real credentials + provisioned agent artifacts — never commit.
+.demo/
+.demo.env
+agent_config.yaml
+*.bak
