@@ -56,6 +56,7 @@ from band.runtime.tools import (
     band_tool_errored,
     get_tool_description,
     is_terminal_success,
+    serialize_tool_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -351,7 +352,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             page_size: int = 50,
         ) -> dict[str, Any] | str:
             try:
-                return await ctx.deps.lookup_peers(page, page_size)
+                return serialize_tool_result(
+                    await ctx.deps.lookup_peers(page, page_size)
+                )
             except Exception as e:
                 return f"Error looking up peers: {e}"
 
@@ -390,7 +393,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 page_size: int = 50,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.list_contacts(page, page_size)
+                    return serialize_tool_result(
+                        await ctx.deps.list_contacts(page, page_size)
+                    )
                 except Exception as e:
                     return f"Error listing contacts: {e}"
 
@@ -430,8 +435,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 sent_status: str = "pending",
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.list_contact_requests(
-                        page, page_size, sent_status
+                    return serialize_tool_result(
+                        await ctx.deps.list_contact_requests(
+                            page, page_size, sent_status
+                        )
                     )
                 except Exception as e:
                     return f"Error listing contact requests: {e}"
@@ -489,7 +496,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 status: str | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.list_memories(
+                    response = await ctx.deps.list_memories(
                         subject_id=subject_id,
                         scope=scope,
                         system=system,
@@ -499,6 +506,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                         page_size=page_size,
                         status=status,
                     )
+                    return serialize_tool_result(response)
                 except Exception as e:
                     return f"Error listing memories: {e}"
 
@@ -517,15 +525,17 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 metadata: dict[str, Any] | None = None,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.store_memory(
-                        content=content,
-                        system=system,
-                        type=type,
-                        segment=segment,
-                        thought=thought,
-                        scope=scope,
-                        subject_id=subject_id,
-                        metadata=metadata,
+                    return serialize_tool_result(
+                        await ctx.deps.store_memory(
+                            content=content,
+                            system=system,
+                            type=type,
+                            segment=segment,
+                            thought=thought,
+                            scope=scope,
+                            subject_id=subject_id,
+                            metadata=metadata,
+                        )
                     )
                 except Exception as e:
                     return f"Error storing memory: {e}"
@@ -538,7 +548,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.get_memory(memory_id)
+                    return serialize_tool_result(await ctx.deps.get_memory(memory_id))
                 except Exception as e:
                     return f"Error getting memory: {e}"
 
@@ -550,7 +560,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.supersede_memory(memory_id)
+                    return serialize_tool_result(
+                        await ctx.deps.supersede_memory(memory_id)
+                    )
                 except Exception as e:
                     return f"Error superseding memory: {e}"
 
@@ -564,7 +576,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 memory_id: str,
             ) -> dict[str, Any] | str:
                 try:
-                    return await ctx.deps.archive_memory(memory_id)
+                    return serialize_tool_result(
+                        await ctx.deps.archive_memory(memory_id)
+                    )
                 except Exception as e:
                     return f"Error archiving memory: {e}"
 

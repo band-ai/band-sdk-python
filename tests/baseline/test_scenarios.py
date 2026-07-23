@@ -30,9 +30,7 @@ async def test_message_round_trip_uses_the_adapter_tool_exposure_path() -> None:
         "band_send_message", content="Hello @baseline-user", mentions=["@baseline-user"]
     )
     scenario.tools.assert_message_sent(content="Hello @baseline-user")
-    assert scenario.tools.schema_requests == [
-        {"format": "anthropic", "include_memory": False, "include_contacts": False}
-    ]
+    observation.assert_tool_exposure(memory=False, contacts=False, count=1)
     scenario.assert_complete()
 
 
@@ -80,10 +78,8 @@ async def test_shared_memory_is_observable_through_the_platform_tool_surface() -
     observation = await scenario.run("Remember this")
 
     observation.assert_tool_called("band_store_memory", content="Baseline preference")
-    assert [memory["content"] for memory in scenario.tools.memories] == [
-        "Baseline preference"
-    ]
-    assert scenario.tools.schema_requests[0]["include_memory"] is True
+    assert scenario.tools.memory_contents == ["Baseline preference"]
+    observation.assert_tool_exposure(memory=True)
     scenario.assert_complete()
 
 
@@ -115,15 +111,11 @@ async def test_room_histories_are_isolated() -> None:
     await scenario.run("second", room_id="room-two", message_id="message-two")
     scenario.assert_complete()
 
-    assert [
-        entry["content"] for entry in scenario.adapter._message_history["room-one"]
-    ] == [
+    assert scenario.history_contents("room-one") == [
         "[Baseline User]: first",
         "one",
     ]
-    assert [
-        entry["content"] for entry in scenario.adapter._message_history["room-two"]
-    ] == [
+    assert scenario.history_contents("room-two") == [
         "[Baseline User]: second",
         "two",
     ]
@@ -133,10 +125,11 @@ async def test_room_histories_are_isolated() -> None:
 async def test_permanent_model_failure_surfaces_an_error_event() -> None:
     scenario = BaselineScenario([RuntimeError("model unavailable")])
 
-    with pytest.raises(RuntimeError, match="model unavailable"):
-        await scenario.run("Try a model call")
+    observation = await scenario.run_expecting_failure(
+        "Try a model call", error=RuntimeError, match="model unavailable"
+    )
 
-    assert any(event["message_type"] == "error" for event in scenario.tools.events_sent)
+    observation.assert_event("error")
     scenario.assert_complete()
 
 
@@ -175,10 +168,7 @@ async def test_history_rehydration_and_contact_broadcast_reach_the_adapter() -> 
         contacts_msg="[Contacts]: @alice is now a contact",
     )
 
-    contents = [
-        entry["content"] for entry in scenario.adapter._message_history["room-baseline"]
-    ]
-    assert contents == [
+    assert scenario.history_contents() == [
         "[Baseline User]: previously saved marker-alpha",
         "I will remember marker-alpha",
         "[System]: [Contacts]: @alice is now a contact",
@@ -197,26 +187,19 @@ async def test_retry_after_a_transient_model_failure_uses_the_next_decision() ->
         ]
     )
 
-    with pytest.raises(RuntimeError, match="temporary provider failure"):
-        await scenario.run("Retry this", message_id="message-first")
+    await scenario.run_expecting_failure(
+        "Retry this",
+        error=RuntimeError,
+        match="temporary provider failure",
+        message_id="message-first",
+    )
     await scenario.run("Retry this", message_id="message-retry")
 
-    assert [
-        entry["content"] for entry in scenario.adapter._message_history["room-baseline"]
-    ] == [
+    assert scenario.history_contents() == [
         "[Baseline User]: Retry this",
         "recovered",
     ]
-    assert (
-        len(
-            [
-                event
-                for event in scenario.tools.events_sent
-                if event["message_type"] == "error"
-            ]
-        )
-        == 1
-    )
+    scenario.tools.assert_event_sent(message_type="error", count=1)
     scenario.assert_complete()
 
 
