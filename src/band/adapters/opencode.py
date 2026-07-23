@@ -699,7 +699,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     f"OpenCode approval requested for `{pending.permission}` "
                     f"({pattern_text}). Reply with `approve {request_id}`, "
                     f"`always {request_id}`, or `reject {request_id}`."
-                )
+                ),
+                mentions=room_state.pending_mentions,
             )
         self._release_turn_wait(room_state)
 
@@ -727,7 +728,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
         if room_state.tools:
             prompt = self._format_question_prompt(pending.questions, request_id)
-            await room_state.tools.send_message(prompt)
+            await room_state.tools.send_message(
+                prompt, mentions=room_state.pending_mentions
+            )
         self._release_turn_wait(room_state)
 
     async def _handle_control_message(
@@ -738,6 +741,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return False
 
         lowered = content.lower()
+        # Mention the sender of THIS control message, not room_state.pending_mentions
+        # -- that field belongs to whichever turn is currently open (_begin_turn),
+        # which a manual approve/reject reply does not itself start.
+        mentions = [{"id": msg.sender_id}] if msg.sender_id else []
 
         if room_state.pending_permission:
             pending_request_id = room_state.pending_permission.request_id
@@ -746,7 +753,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 await self._reply_permission(room_state, reply)
                 if room_state.tools:
                     await room_state.tools.send_message(
-                        f"OpenCode approval `{pending_request_id}` handled with `{reply}`."
+                        f"OpenCode approval `{pending_request_id}` handled with `{reply}`.",
+                        mentions=mentions,
                     )
                 return True
 
@@ -756,7 +764,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 await self._reject_question(room_state)
                 if room_state.tools:
                     await room_state.tools.send_message(
-                        f"OpenCode question `{pending_request_id}` rejected."
+                        f"OpenCode question `{pending_request_id}` rejected.",
+                        mentions=mentions,
                     )
                 return True
 
@@ -767,14 +776,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         (
                             "OpenCode is waiting for answers. Reply with one line per "
                             "question, or `reject` to reject the question."
-                        )
+                        ),
+                        mentions=mentions,
                     )
                 return True
 
             await self._reply_question(room_state, answers)
             if room_state.tools:
                 await room_state.tools.send_message(
-                    f"OpenCode question `{pending_request_id}` answered."
+                    f"OpenCode question `{pending_request_id}` answered.",
+                    mentions=mentions,
                 )
             return True
 

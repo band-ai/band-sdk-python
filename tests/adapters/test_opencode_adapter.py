@@ -591,6 +591,15 @@ class TestOpencodeAdapter:
         )
         await wait_for(lambda: first_turn.done())
         assert all(msg["content"] != "Approved and done" for msg in tools.messages_sent)
+        # Regression: FakeAgentTools records a call made with no mentions instead
+        # of rejecting it like the real AgentTools.send_message does, so this must
+        # be asserted explicitly -- it silently passed before mentions was wired.
+        approval_requested = next(
+            m
+            for m in tools.messages_sent
+            if "approval requested" in m["content"].lower()
+        )
+        assert approval_requested["mentions"]
 
         await adapter.on_message(
             make_platform_message(content="approve req-1"),
@@ -612,6 +621,10 @@ class TestOpencodeAdapter:
             {"session_id": "sess-1", "permission_id": "req-1", "response": "once"}
         ]
         assert any(msg["content"] == "Approved and done" for msg in tools.messages_sent)
+        handled_with = next(
+            m for m in tools.messages_sent if "handled with" in m["content"].lower()
+        )
+        assert handled_with["mentions"]
 
     @pytest.mark.asyncio
     async def test_manual_question_reply_from_follow_up_message(self) -> None:
@@ -650,6 +663,13 @@ class TestOpencodeAdapter:
             )
         )
         await wait_for(lambda: first_turn.done())
+        # Regression: FakeAgentTools accepts a call made with no mentions instead
+        # of rejecting it like the real AgentTools.send_message does, so this must
+        # be asserted explicitly -- it silently passed before mentions was wired.
+        asked_question = next(
+            m for m in tools.messages_sent if "asked question" in m["content"].lower()
+        )
+        assert asked_question["mentions"]
 
         await adapter.on_message(
             make_platform_message(content="Ship the adapter"),
@@ -670,6 +690,13 @@ class TestOpencodeAdapter:
         assert fake_client.question_replies == [
             {"request_id": "q-1", "answers": [["Ship the adapter"]]}
         ]
+        answered = next(
+            m
+            for m in tools.messages_sent
+            if "opencode question" in m["content"].lower()
+            and "answered" in m["content"].lower()
+        )
+        assert answered["mentions"]
 
     @pytest.mark.asyncio
     async def test_prompt_submission_failure_does_not_leave_room_stuck(self) -> None:
