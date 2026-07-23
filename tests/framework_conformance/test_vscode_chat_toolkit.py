@@ -28,7 +28,7 @@ from tests.e2e.vscode.scorecard import (
     outcome_status,
 )
 from tests.e2e.vscode.workspace import (
-    AUTO_APPROVE_SETTING,
+    AUTO_REPLY_SETTING,
     MCP_SERVER_NAME,
     scaffold_workspace,
     workspace_marker_path,
@@ -60,7 +60,7 @@ def test_turn_prompt_carries_room_message_and_tool_contract() -> None:
 # --- workspace scaffolding: what VS Code reads --------------------------------------
 
 
-def test_scaffold_workspace_writes_mcp_entry_and_auto_approve(tmp_path: Path) -> None:
+def test_scaffold_workspace_writes_mcp_entry_and_auto_reply(tmp_path: Path) -> None:
     sse_url = "http://127.0.0.1:8391/sse"
     scaffold_workspace(tmp_path, sse_url)
 
@@ -68,7 +68,7 @@ def test_scaffold_workspace_writes_mcp_entry_and_auto_approve(tmp_path: Path) ->
     assert mcp["servers"][MCP_SERVER_NAME] == {"type": "sse", "url": sse_url}
 
     settings = json.loads((tmp_path / ".vscode" / "settings.json").read_text())
-    assert settings[AUTO_APPROVE_SETTING] is True
+    assert settings[AUTO_REPLY_SETTING] is True
 
 
 def test_workspace_marker_path_stays_inside_workspace(tmp_path: Path) -> None:

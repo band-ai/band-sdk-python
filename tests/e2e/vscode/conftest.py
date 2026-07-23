@@ -111,6 +111,7 @@ async def band_mcp(
         shlex.split(vscode_settings.band_mcp_command),
         agent_key=copilot_identity.api_key,
         base_url=baseline_settings.endpoints.rest_url,
+        port=vscode_settings.band_mcp_port,
     )
     await server.start()
     yield server
@@ -119,9 +120,17 @@ async def band_mcp(
 
 @pytest.fixture(scope="session")
 def vscode_workspace(
-    tmp_path_factory: pytest.TempPathFactory, band_mcp: BandMCPServer
+    vscode_settings: VSCodeChatSettings, band_mcp: BandMCPServer
 ) -> Path:
-    workspace = tmp_path_factory.mktemp("vscode-chat-ws")
+    """The (persistent by default) workspace VS Code opens.
+
+    A stable path + stable band-mcp port keep ``.vscode/mcp.json`` identical
+    across runs, so VS Code's remembered MCP-server trust holds and reruns
+    prompt for nothing. Cell marker files use per-run tokens, so leftovers
+    from earlier runs never collide.
+    """
+    workspace = Path(vscode_settings.vscode_chat_workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
     scaffold_workspace(workspace, band_mcp.sse_url)
     return workspace
 
@@ -145,9 +154,11 @@ async def driver(
 def pytest_configure(config: pytest.Config) -> None:
     """Register the suite scorecard plugin when emission is enabled."""
     settings = VSCodeChatSettings()
-    if not settings.scorecard_json:
+    if not settings.vscode_chat_scorecard_json:
         return
-    plugin = VSCodeScorecard(settings.scorecard_json, Path(__file__).parent.resolve())
+    plugin = VSCodeScorecard(
+        settings.vscode_chat_scorecard_json, Path(__file__).parent.resolve()
+    )
     plugin.metadata = capture_versions(
         shlex.split(settings.code_command), shlex.split(settings.band_mcp_command)
     )
@@ -173,11 +184,16 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """
     suite_dir = Path(__file__).parent
     session_marker = pytest.mark.asyncio(loop_scope="session")
-    base = VSCodeChatSettings().turn_timeout
+    base = VSCodeChatSettings().vscode_chat_timeout
     for item in items:
         if not Path(item.path).is_relative_to(suite_dir):
             continue
-        item.add_marker(session_marker)
+        # Prepended (append=False) so this beats pytest-asyncio's bare
+        # auto-mode marker — get_closest_marker takes the first hit, and the
+        # bare marker's default function loop would strand the session-scoped
+        # WS/REST fixtures on another loop (subscribe timeouts, closed-loop
+        # teardown errors).
+        item.add_marker(session_marker, append=False)
         timeout = effective_timeout(item, base)
         if timeout is not None:
             item.add_marker(pytest.mark.timeout(timeout), append=False)

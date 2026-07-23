@@ -43,11 +43,16 @@ def _reserve_port() -> int:
 class BandMCPServer:
     """Lifecycle of one band-mcp SSE subprocess bound to a stable loopback port."""
 
-    def __init__(self, command: list[str], *, agent_key: str, base_url: str) -> None:
+    def __init__(
+        self, command: list[str], *, agent_key: str, base_url: str, port: int = 0
+    ) -> None:
+        """``port=0`` reserves an ephemeral one; a fixed port keeps the workspace's
+        mcp.json stable across runs, so VS Code's remembered MCP-server trust
+        holds and reruns need no re-approval."""
         self._command = command
         self._agent_key = agent_key
         self._base_url = base_url
-        self._port = _reserve_port()
+        self._port = port or _reserve_port()
         self._process: asyncio.subprocess.Process | None = None
 
     @property

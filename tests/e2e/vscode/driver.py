@@ -86,7 +86,13 @@ class CodeChatDriver:
         self._workspace = workspace
 
     async def open_window(self) -> None:
-        """Open the scaffolded workspace so ``code chat`` targets its window."""
+        """Open the scaffolded workspace so ``code chat`` targets its window.
+
+        Deliberately without ``--disable-workspace-trust``: Copilot's AI
+        features require a *trusted* workspace, so an untrusted launch just
+        defers the dialog to chat time. The workspace path is stable — one
+        "Trust Folder & Continue" click is remembered for every rerun.
+        """
         await self._run(str(self._workspace))
 
     async def submit_prompt(self, prompt: str, *, new_session: bool = False) -> None:
@@ -155,9 +161,12 @@ def capture_versions(
     copilot_lines = [
         line for line in extensions.splitlines() if "copilot" in line.lower()
     ]
+    # Current VS Code bundles Copilot Chat, which --list-extensions omits; its
+    # version is then pinned by the VS Code build recorded above.
+    copilot = "; ".join(copilot_lines) or "built-in (bundled with this VS Code build)"
     return {
         "os": platform.platform(),
         "vscode": capture([*code_command, "--version"]).replace("\n", " "),
-        "copilot_extensions": "; ".join(copilot_lines) or extensions,
+        "copilot_extensions": copilot,
         "band_mcp": capture([*band_mcp_command, "--version"]),
     }
