@@ -173,13 +173,24 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             async with self._session_lock:
                 self._room_tools[room_id] = tools
 
+        session_loaded = False
         if is_session_bootstrap and history:
-            await self._load_persisted_session(room_id, history)
+            session_loaded = await self._load_persisted_session(room_id, history)
 
         session_id = await self._get_or_create_session(room_id)
         self._runtime.reset_session(session_id)
 
-        prompt_text = await self._build_prompt_text(room_id, session_id, msg)
+        replay_messages = (
+            history.replay_messages
+            if is_session_bootstrap and not session_loaded
+            else None
+        )
+        prompt_text = await self._build_prompt_text(
+            room_id,
+            session_id,
+            msg,
+            replay_messages=replay_messages,
+        )
         sender_name = msg.sender_name or msg.sender_id or "Unknown"
         mentions = [{"id": msg.sender_id, "name": sender_name}]
 
@@ -403,6 +414,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         room_id: str,
         session_id: str,
         msg: PlatformMessage,
+        *,
+        replay_messages: list[str] | None = None,
     ) -> str:
         """Add room context on the first prompt sent to an ACP session."""
         async with self._session_lock:
@@ -414,7 +427,12 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
             return msg.content
 
         system_context = self._build_system_context(room_id, msg)
-        return f"{system_context}\n\n{msg.content}"
+        history_context = ""
+        if replay_messages:
+            history_context = "\n\n[Recovered Room History]\n" + "\n".join(
+                replay_messages
+            )
+        return f"{system_context}{history_context}\n\n{msg.content}"
 
     async def on_cleanup(self, room_id: str) -> None:
         async with self._session_lock:
@@ -455,15 +473,15 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self,
         room_id: str,
         history: ACPClientSessionState,
-    ) -> None:
+    ) -> bool:
         """Accept this room's persisted session ID only after ACP loads it."""
         async with self._session_lock:
             if room_id in self._room_to_session:
-                return
+                return True
             session_id = history.room_to_session.get(room_id)
 
         if session_id is None:
-            return
+            return False
 
         loaded = await self._runtime.load_session(
             cwd=self._cwd,
@@ -476,7 +494,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                 session_id,
                 room_id,
             )
-            return
+            return False
 
         async with self._session_lock:
             if room_id not in self._room_to_session:
@@ -486,6 +504,7 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
                     room_id,
                     session_id,
                 )
+            return True
 
     async def _ensure_connection(self) -> ACPConnectionProtocol:
         return await self._runtime.ensure_connection(

@@ -8,9 +8,9 @@ usage-capable adapter.
 
 Coverage is registry-derived, not a hand-maintained list: the fan is the whole
 matrix minus the adapters that don't emit usage — ``CREWAI_FLOW`` (usage lives in
-user-supplied flow internals — N-A) and ``CREWAI`` (usage capture deferred: its
-result counter is cumulative-lifetime, not per-turn). Every other adapter runs,
-letta included (it emits via ``Emit.USAGE`` from the per-room
+user-supplied flow internals — N-A), ``CREWAI`` (usage capture deferred: its
+result counter is cumulative-lifetime, not per-turn), and ``COPILOT_ACP`` (the ACP
+protocol exposes no Copilot usage telemetry). Every other adapter runs, letta included (it emits via ``Emit.USAGE`` from the per-room
 ``LettaResponse.usage``). Deriving from ``exclude=`` rather than an explicit
 include-list means a newly-registered usage-capable adapter is exercised
 automatically — and a new adapter that *cannot* emit usage fails loudly here
@@ -49,7 +49,7 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
 # Every registered adapter must emit usage (letta does, via Emit.USAGE from the
-# per-room LettaResponse.usage) except the crewai pair excluded below.
+# per-room LettaResponse.usage) except the explicitly unsupported backends below.
 @per_adapter(
     exclude=[
         ExcludedAdapter(
@@ -57,6 +57,9 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
         ),
         ExcludedAdapter(
             Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
+        ),
+        ExcludedAdapter(
+            Adapter.COPILOT_ACP, "ACP protocol exposes no Copilot usage telemetry"
         ),
     ],
     **COST_AGENT,
@@ -144,6 +147,9 @@ async def test_usage_recorded_for_a_turn(
         ),
         ExcludedAdapter(
             Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
+        ),
+        ExcludedAdapter(
+            Adapter.COPILOT_ACP, "ACP protocol exposes no Copilot usage telemetry"
         ),
     ],
     **COST_MULTI_TURN_AGENT,
