@@ -650,3 +650,724 @@ uv run ruff format .
 uv run pyrefly check
 uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 ```
+
+
+## Engineering Rules
+
+_Inlined from the former shared `claude-config` submodule (`.claude/rules/`), now removed. These apply repo-wide. (The old `06-claude-config-management` rule is intentionally dropped — it described managing that submodule.)_
+
+### Coding Standards
+
+#### Type Hints
+
+- Always use type hints for function parameters and return types
+- Use `from __future__ import annotations` as the first import in every file
+- Use `TypeVar` and `Generic` for typed generic classes
+- Use `Protocol` classes for interfaces (not ABC)
+
+#### Logging
+
+##### Core Rule
+
+- **NEVER use `print()` statements** - always use logging instead
+- When encountering `print()` in existing code, replace it with appropriate logging
+
+##### Logger Setup
+
+Every module should have a module-level logger:
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+```
+
+##### Log Levels
+
+Use the appropriate level for each message:
+
+| Level | Use For |
+|-------|---------|
+| `logger.debug()` | Detailed diagnostic info, variable values, flow tracing |
+| `logger.info()` | Normal operations, startup messages, successful completions |
+| `logger.warning()` | Unexpected but handled situations, deprecations |
+| `logger.error()` | Failures that prevented an operation from completing |
+| `logger.exception()` | Errors with full traceback (use inside except blocks) |
+
+##### Converting Print to Logging
+
+```python
+# Bad
+print(f"Processing {item}")
+print(f"Error: {e}")
+
+# Good
+logger.info("Processing %s", item)
+logger.error("Failed to process: %s", e)
+```
+
+##### String Formatting
+
+Use `%s` placeholders instead of f-strings for log messages:
+
+```python
+# Preferred - lazy evaluation, better performance
+logger.debug("User %s performed action %s", user_id, action)
+
+# Acceptable but less efficient
+logger.debug(f"User {user_id} performed action {action}")
+```
+
+##### Structured Context
+
+Include relevant context in log messages:
+
+```python
+logger.info("Request completed", extra={"user_id": user_id, "duration_ms": duration})
+logger.error("API call failed: %s", error, extra={"endpoint": url, "status": status_code})
+```
+
+#### Imports
+
+- Use absolute imports from the package root
+- Sort imports with isort (configured via ruff)
+- Group imports: stdlib, third-party, local
+
+#### Data Models
+
+- Use Pydantic v2 for data models and validation
+- Define models with proper field types and validators
+- Use `model_dump()` instead of deprecated `dict()`
+
+#### Python Version
+
+- Target Python 3.10+ (match statements are OK)
+- Use modern syntax: `list[str]` instead of `List[str]`
+- Use `|` for union types: `str | None` instead of `Optional[str]`
+
+#### Async/Await
+
+- Use async/await everywhere in async codebases
+- No sync code in async adapters or handlers
+- Use `asyncio.gather()` for concurrent operations
+- Use `AsyncMock` for testing async methods
+
+#### Documentation
+
+- Use Context7 MCP to fetch up-to-date documentation when needed
+- Follow existing patterns in the codebase for new code
+
+
+### Error Handling
+
+#### Pydantic ValidationError
+
+- Catch `pydantic.ValidationError` separately from generic `Exception`
+- Format validation errors for LLM readability: `"Invalid arguments for tool_name: field: message"`
+- Handle ValidationError at the lowest common point to avoid duplication
+- Log full error details but return concise messages to LLM
+
+Example:
+```python
+from pydantic import ValidationError
+
+try:
+    result = Model(**data)
+except ValidationError as e:
+    # Log full details for debugging
+    logger.error(f"Validation failed: {e}")
+    # Return concise message for LLM
+    errors = "; ".join(f"{err['loc'][0]}: {err['msg']}" for err in e.errors())
+    return f"Invalid arguments for {tool_name}: {errors}"
+except Exception as e:
+    logger.exception(f"Unexpected error: {e}")
+    raise
+```
+
+#### Exception Hierarchy
+
+- Use specific exceptions over generic ones
+- Create custom exception classes for domain-specific errors
+- Always include context in exception messages
+
+#### Error Messages
+
+- Make error messages actionable and clear
+- Include relevant context (what failed, why, what to do)
+- Avoid exposing internal implementation details to end users
+
+#### Required Configuration
+
+- Use `raise ValueError(...)` for missing required configuration
+- Do NOT use `logger.error()` + `sys.exit()` pattern
+- Fail fast with clear error messages
+
+Example:
+```python
+# Good
+if not api_key:
+    raise ValueError("OPENAI_API_KEY environment variable is required")
+
+# Bad
+if not api_key:
+    logger.error("Missing API key")
+    sys.exit(1)
+```
+
+
+### Git Workflow
+
+#### Branch Naming
+
+Branch names should match the Linear issue:
+
+- Format: `<prefix>/<title>-<ISSUE-ID>`
+- Example: `feat/add-user-auth-ENG-123`
+
+Prefixes:
+
+- `feat/` - New features
+- `fix/` - Bug fixes
+- `refactor/` - Code refactoring
+- `docs/` - Documentation changes
+- `chore/` - Maintenance tasks
+
+##### Creating Branches from Linear Issues
+
+Use `git lb` to create properly named branches from Linear issues:
+
+```bash
+git lb INT-84
+```
+
+This automatically fetches the issue title from Linear and creates a branch with the correct naming convention.
+
+If `git lb` is not installed, ask the developer for the proper branch name.
+
+#### Commit Messages
+
+Follow conventional commits format for all commits:
+
+```
+<type>: <description>
+
+[optional body]
+
+[optional footer]
+```
+
+Types:
+- `feat:` - New feature
+- `fix:` - Bug fix
+- `docs:` - Documentation only
+- `refactor:` - Code refactoring
+- `test:` - Adding or updating tests
+- `chore:` - Maintenance tasks
+
+#### Pull Request Titles
+
+PR titles MUST use conventional commits format:
+
+- `feat:` - New features
+- `fix:` - Bug fixes
+- `docs:` - Documentation changes
+
+Examples:
+- `feat: Add custom tools support to all adapters`
+- `fix: Handle validation errors in execute_tool_call`
+- `docs: Update README with new adapter examples`
+
+#### Pre-Commit Checklist
+
+- Run tests before committing
+- Run linting and formatting
+- Ensure type checking passes
+- Review changes with `git diff`
+
+#### Code Review
+
+- Keep PRs focused and reasonably sized
+- Respond to review comments promptly
+- Squash commits when merging if history is messy
+
+
+### Code Quality
+
+#### Linting with Ruff
+
+Ruff is used for linting and import sorting.
+
+```bash
+# Check for linting issues
+uv run ruff check .
+
+# Auto-fix issues
+uv run ruff check . --fix
+```
+
+##### Common Ruff Rules
+
+- `E` - pycodestyle errors
+- `F` - Pyflakes
+- `I` - isort (import sorting)
+- `UP` - pyupgrade (modern Python syntax)
+- `B` - flake8-bugbear (common bugs)
+
+##### Typical Ruff Configuration
+
+```toml
+# pyproject.toml
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["thenvoi"]  # Replace with your package name
+```
+
+#### Formatting with Ruff
+
+```bash
+# Format code
+uv run ruff format .
+
+# Check formatting without changes
+uv run ruff format . --check
+```
+
+##### Formatting Standards
+
+- Line length: 88 characters (Black default)
+- Use double quotes for strings
+- Trailing commas in multi-line structures
+
+#### Type Checking with Pyrefly
+
+Pyrefly is used for type checking (not mypy).
+
+```bash
+# Run type checker
+uv run pyrefly check
+```
+
+##### Type Checking Notes
+
+- Fix type errors before committing
+- Use `# type: ignore` sparingly with explanation
+- Prefer proper typing over ignoring errors
+
+##### When to Use `# type: ignore`
+
+Use type ignores only when:
+- Third-party library has incomplete type stubs
+- Dynamic behavior that can't be expressed in types
+- Workaround for known type checker limitations
+
+Always include a comment explaining why:
+
+```python
+# type: ignore[arg-type]  # langgraph returns untyped dict
+result = some_dynamic_call()
+
+# type: ignore[assignment]  # Pydantic model validates at runtime
+self.value = untrusted_input
+```
+
+##### Known Typing Limitations
+
+- Some async patterns may need explicit type annotations
+- Generic callbacks across frameworks may need `Any`
+- Dynamic tool registration may require runtime validation
+
+#### Package Management with uv
+
+After cloning a repository, always install dev dependencies:
+
+```bash
+# Install with dev dependencies (required for development)
+uv sync --extra dev
+```
+
+Other common commands:
+
+```bash
+# Install production dependencies only
+uv sync
+
+# Add a dependency
+uv add <package>
+
+# Add optional dependency to a group
+uv add --optional <group> <package>
+```
+
+#### Pre-Commit Workflow
+
+Run these before every commit:
+
+```bash
+uv run ruff check .
+uv run ruff format .
+uv run pyrefly check
+uv run pytest tests/ --ignore=tests/integration/ -v
+```
+
+
+### Testing Conventions
+
+#### Test Framework
+
+- Use pytest as the test framework
+- Use pytest-asyncio for async tests
+
+#### Running Tests
+
+```bash
+# Run unit tests
+uv run pytest tests/ --ignore=tests/integration/ -v
+
+# Run single test by name
+uv run pytest tests/ -k "test_name"
+
+# Run with coverage
+uv run pytest tests/ --ignore=tests/integration/ --cov=src/<package>
+
+# Run integration tests (requires API credentials)
+uv run pytest tests/integration/ -v -s --no-cov
+```
+
+#### Async Tests
+
+- Use `@pytest.mark.asyncio` decorator for async tests
+- Use `AsyncMock` for mocking async methods
+- Use `MagicMock` for sync methods
+
+```python
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+@pytest.mark.asyncio
+async def test_async_function():
+    mock_client = AsyncMock()
+    mock_client.fetch.return_value = {"data": "value"}
+
+    result = await some_async_function(mock_client)
+
+    assert result == expected
+    mock_client.fetch.assert_called_once()
+```
+
+#### Test Organization
+
+```
+tests/
+├── conftest.py         # Shared fixtures
+├── fixtures.py         # Test data factories
+├── unit/               # Unit tests (mocked dependencies)
+├── integration/        # Real API tests (skipped in CI)
+└── e2e/                # End-to-end tests
+```
+
+#### Fixtures
+
+- Define shared fixtures in `conftest.py`
+- Use `MockDataFactory` or similar for creating test data
+- Scope fixtures appropriately (function, class, module, session)
+
+```python
+# conftest.py
+import pytest
+from unittest.mock import AsyncMock
+
+@pytest.fixture
+def mock_client():
+    return AsyncMock()
+
+@pytest.fixture
+def sample_message():
+    return {"role": "user", "content": "Hello"}
+```
+
+#### Test Data Factory Pattern
+
+Create a factory class for generating consistent test data:
+
+```python
+# tests/fixtures.py
+from dataclasses import dataclass
+
+@dataclass
+class MockDataFactory:
+    @staticmethod
+    def make_message(role: str = "user", content: str = "test"):
+        return {"role": role, "content": content}
+
+    @staticmethod
+    def make_tool_call(name: str = "test_tool", args: dict | None = None):
+        return {"name": name, "arguments": args or {}}
+
+    @staticmethod
+    def make_event(event_type: str = "message", **kwargs):
+        return {"type": event_type, **kwargs}
+```
+
+Use in tests:
+
+```python
+from tests.fixtures import MockDataFactory
+
+def test_message_handling():
+    message = MockDataFactory.make_message(role="assistant", content="Hello")
+    # test code
+```
+
+#### Skip Markers
+
+Use markers to categorize tests:
+
+```python
+@pytest.mark.requires_api
+async def test_real_api_call():
+    """Skipped in CI, requires real API credentials."""
+    pass
+
+@pytest.mark.slow
+def test_performance():
+    """Skipped by default, run with --slow flag."""
+    pass
+```
+
+Configure in `pyproject.toml`:
+```toml
+[tool.pytest.ini_options]
+markers = [
+    "requires_api: marks tests as requiring real API (skipped in CI)",
+    "slow: marks tests as slow (skipped by default)",
+]
+```
+
+#### Test Performance
+
+- Override slow defaults for faster tests (e.g., `_max_iterations = 3`)
+- Use `pytest-xdist` for parallel test execution when needed
+- Keep unit tests fast (< 100ms each)
+
+#### Integration Tests
+
+- Store test credentials in `.env.test`
+- Never commit real credentials
+- Skip integration tests in CI by default
+- Use separate test accounts/environments
+
+
+### Optional Dependencies Pattern
+
+#### Overview
+
+Use optional dependencies to keep the core package lightweight while supporting multiple frameworks.
+
+#### pyproject.toml Configuration
+
+```toml
+[project.optional-dependencies]
+langgraph = ["langgraph", "langchain-openai"]
+anthropic = ["anthropic"]
+crewai = ["crewai"]
+dev = ["pytest", "pytest-asyncio", "ruff", "pyrefly"]
+```
+
+#### Lazy Imports in Adapters
+
+Adapters should import framework dependencies lazily to avoid import errors when the optional dependency is not installed.
+
+```python
+# Good - lazy import inside the adapter
+class LangGraphAdapter:
+    def __init__(self):
+        try:
+            from langgraph.graph import StateGraph
+        except ImportError:
+            raise ImportError(
+                "langgraph is required for LangGraphAdapter. "
+                "Install with: pip install thenvoi[langgraph]"
+            )
+        self.graph = StateGraph()
+
+# Bad - top-level import
+from langgraph.graph import StateGraph  # Fails if langgraph not installed
+
+class LangGraphAdapter:
+    pass
+```
+
+#### Testing with Optional Dependencies
+
+Skip tests when optional dependencies are missing:
+
+```python
+import pytest
+
+try:
+    import langgraph
+    HAS_LANGGRAPH = True
+except ImportError:
+    HAS_LANGGRAPH = False
+
+@pytest.mark.skipif(not HAS_LANGGRAPH, reason="langgraph not installed")
+def test_langgraph_adapter():
+    from mypackage.adapters.langgraph import LangGraphAdapter
+    # test code
+```
+
+Or use a marker:
+
+```python
+requires_langgraph = pytest.mark.skipif(
+    not HAS_LANGGRAPH,
+    reason="langgraph not installed"
+)
+
+@requires_langgraph
+def test_langgraph_feature():
+    pass
+```
+
+#### Installation Commands
+
+```bash
+# Install core only
+uv add thenvoi
+
+# Install with specific adapter
+uv add thenvoi[langgraph]
+uv add thenvoi[anthropic]
+
+# Install with multiple adapters
+uv add thenvoi[langgraph,anthropic]
+
+# Install with dev dependencies
+uv add thenvoi[dev]
+```
+
+
+### GitHub PR Inline Comments
+
+#### Adding Inline Review Comments
+
+To add inline comments at specific lines in a PR, use the GitHub Reviews API with `gh api`:
+
+```bash
+cat << 'EOF' | gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews --method POST --input -
+{
+  "commit_id": "<commit_sha>",
+  "event": "COMMENT",
+  "body": "Review summary",
+  "comments": [
+    {
+      "path": "src/path/to/file.py",
+      "line": 42,
+      "body": "Your comment here"
+    }
+  ]
+}
+EOF
+```
+
+#### Getting the Correct Line Numbers
+
+**Important:** Line numbers must be from the NEW version of the file, not diff line numbers.
+
+1. Get the commit SHA:
+   ```bash
+   gh pr view {pr_number} --json headRefOid -q .headRefOid
+   ```
+
+2. Find correct line numbers in the actual file:
+   ```bash
+   # Get the file content at the PR's HEAD commit
+   curl -s "https://raw.githubusercontent.com/{owner}/{repo}/{commit_sha}/path/to/file.py" | grep -n "pattern"
+   ```
+
+3. Alternatively, use the diff with grep:
+   ```bash
+   gh pr diff {pr_number} | grep -n "pattern_to_find"
+   ```
+   Note: These are diff line numbers, not file line numbers. Use the actual file method above for accuracy.
+
+#### Common Mistakes to Avoid
+
+- **Don't use `gh pr review --comment`** - This adds a general comment, not inline comments
+- **Don't use diff line numbers** - Use actual file line numbers from the new version
+- **Don't use `-f` flag for JSON arrays** - Pass JSON via stdin with `--input -`
+- **Don't guess line numbers** - Always verify by checking the actual file content
+
+#### Example: Full Workflow
+
+```bash
+# 1. Get commit SHA
+COMMIT=$(gh pr view 83 --json headRefOid -q .headRefOid)
+
+# 2. Find the line number for a specific pattern
+curl -s "https://raw.githubusercontent.com/owner/repo/${COMMIT}/src/file.py" | grep -n "def my_function"
+
+# 3. Add inline comment at that line
+cat << 'EOF' | gh api repos/owner/repo/pulls/83/reviews --method POST --input -
+{
+  "commit_id": "abc123...",
+  "event": "COMMENT",
+  "body": "Code review",
+  "comments": [
+    {
+      "path": "src/file.py",
+      "line": 25,
+      "body": "Consider renaming this function for clarity"
+    }
+  ]
+}
+EOF
+```
+
+#### Multiple Comments
+
+Add multiple inline comments in a single review:
+
+```bash
+cat << 'EOF' | gh api repos/owner/repo/pulls/83/reviews --method POST --input -
+{
+  "commit_id": "abc123...",
+  "event": "COMMENT",
+  "body": "Review with multiple comments",
+  "comments": [
+    {
+      "path": "src/file.py",
+      "line": 14,
+      "body": "First comment"
+    },
+    {
+      "path": "src/file.py",
+      "line": 42,
+      "body": "Second comment"
+    },
+    {
+      "path": "src/other_file.py",
+      "line": 10,
+      "body": "Comment on different file"
+    }
+  ]
+}
+EOF
+```
+
+#### Review Events
+
+The `event` field can be:
+- `"COMMENT"` - Submit general feedback without approval
+- `"APPROVE"` - Approve the PR
+- `"REQUEST_CHANGES"` - Request changes before merging
+
