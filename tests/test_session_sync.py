@@ -135,7 +135,7 @@ class TestLruDedupeCache:
 
         await ctx._process_event(event)
 
-        assert "msg-001" in ctx._processed_ids
+        assert "msg-001" in ctx.claims.completed_ids(ctx.room_id)
 
     @pytest.mark.asyncio
     async def test_duplicate_event_skipped(self, ctx):
@@ -153,26 +153,26 @@ class TestLruDedupeCache:
     @pytest.mark.asyncio
     async def test_lru_cache_evicts_oldest(self, ctx):
         """LRU cache should evict oldest entries when full."""
-        limit = ctx._max_processed_ids
+        limit = ctx.claims.max_completed
 
         for i in range(limit):
             event = make_message_event(msg_id=f"msg-{i:03d}")
             await ctx._process_event(event)
 
-        assert len(ctx._processed_ids) == limit
-        assert "msg-000" in ctx._processed_ids
+        assert len(ctx.claims.completed_ids(ctx.room_id)) == limit
+        assert "msg-000" in ctx.claims.completed_ids(ctx.room_id)
 
         event_overflow = make_message_event(msg_id=f"msg-{limit:03d}")
         await ctx._process_event(event_overflow)
 
-        assert len(ctx._processed_ids) == limit
-        assert "msg-000" not in ctx._processed_ids
-        assert f"msg-{limit:03d}" in ctx._processed_ids
+        assert len(ctx.claims.completed_ids(ctx.room_id)) == limit
+        assert "msg-000" not in ctx.claims.completed_ids(ctx.room_id)
+        assert f"msg-{limit:03d}" in ctx.claims.completed_ids(ctx.room_id)
 
     @pytest.mark.asyncio
     async def test_duplicate_refreshes_lru_position(self, ctx):
         """Accessing duplicate should refresh its LRU position."""
-        limit = ctx._max_processed_ids
+        limit = ctx.claims.max_completed
 
         for i in range(limit):
             event = make_message_event(msg_id=f"msg-{i:03d}")
@@ -184,8 +184,8 @@ class TestLruDedupeCache:
         event_overflow = make_message_event(msg_id=f"msg-{limit:03d}")
         await ctx._process_event(event_overflow)
 
-        assert "msg-000" in ctx._processed_ids
-        assert "msg-001" not in ctx._processed_ids
+        assert "msg-000" in ctx.claims.completed_ids(ctx.room_id)
+        assert "msg-001" not in ctx.claims.completed_ids(ctx.room_id)
 
 
 class TestSynchronizeWithNext:
@@ -251,7 +251,7 @@ class TestSynchronizeWithNext:
         # Queue should be empty (duplicate removed)
         assert ctx.queue.empty()
         # Dedupe cache keeps processed IDs to avoid immediate WS reprocessing
-        assert "sync-001" in ctx._processed_ids
+        assert "sync-001" in ctx.claims.completed_ids(ctx.room_id)
 
     @pytest.mark.asyncio
     async def test_sync_point_with_non_message_head_processes_once(

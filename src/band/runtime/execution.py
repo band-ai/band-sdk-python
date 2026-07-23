@@ -17,15 +17,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections import OrderedDict
 from datetime import datetime, timezone
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import (
     TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
-    Literal,
     Protocol,
     runtime_checkable,
 )
@@ -49,9 +47,10 @@ from .types import (
     SYNTHETIC_SENDER_TYPE,
     SYNTHETIC_CONTACT_EVENTS_SENDER_ID,
 )
-from .retry_tracker import MessageRetryTracker
+from band.runtime.claims import MessageClaimRegistry
 from band.runtime.context_serialization import context_item_to_dict
-from .working_state import WorkingStateReporter
+from band.runtime.retry_tracker import MessageRetryTracker
+from band.runtime.working_state import WorkingStateReporter
 
 if TYPE_CHECKING:
     from band.platform.link import BandLink
@@ -72,6 +71,14 @@ class _ResyncRequest:
 class _BacklogProcessResult(Enum):
     ADVANCED = "advanced"
     RETRY_LATER = "retry_later"
+
+
+class ExecutionState(StrEnum):
+    """Lifecycle state for one room execution."""
+
+    STARTING = "starting"
+    IDLE = "idle"
+    PROCESSING = "processing"
 
 
 def _error_label(e: Exception) -> str:
@@ -214,6 +221,7 @@ class ExecutionContext:
         on_participant_removed: ParticipantRemovedCallback | None = None,
         *,
         hub_room_id: str | None = None,
+        claim_registry: MessageClaimRegistry | None = None,
     ):
         """
         Initialize execution context for a specific room.
@@ -229,6 +237,10 @@ class ExecutionContext:
             hub_room_id: Optional hub-room ID. Forwarded to AgentTools so the
                 schema methods can auto-enable contact tools when this context
                 belongs to the hub room.
+            claim_registry: Optional shared message-claim registry. AgentRuntime
+                passes one registry to its default contexts so a room/message
+                pair executes at most once per runtime. Defaults to a private
+                instance for standalone contexts.
         """
         self.room_id = room_id
         self.link = link
@@ -253,7 +265,7 @@ class ExecutionContext:
 
         # Per-room state
         self.queue: asyncio.Queue[PlatformEvent] = asyncio.Queue()
-        self.state: Literal["starting", "idle", "processing"] = "starting"
+        self.state = ExecutionState.STARTING
         self._is_running = False
         self._process_loop_task: asyncio.Task[None] | None = None
         self._context_cache: ConversationContext | None = None
@@ -267,19 +279,10 @@ class ExecutionContext:
         # LLM context tracking
         self._llm_initialized = False
 
-        # Dedupe cache (LRU for detecting duplicates during sync)
-        self._processed_ids: OrderedDict[str, bool] = OrderedDict()
-        self._max_processed_ids: int = 500
-
-        # Local in-flight guard shared by /next and WebSocket processing.
-        # This prevents the same message ID from executing twice before the
-        # durable processed status becomes visible to both paths.
-        self._inflight_message_ids: set[str] = set()
-
-        # Messages whose local handler completed but whose durable processed ack
-        # failed. Redelivery should retry only the ack, not the side effects.
-        self._processed_ack_pending_ids: OrderedDict[str, bool] = OrderedDict()
-        self._processed_ack_retry_counts: dict[str, int] = {}
+        # Message ownership ledger (in-flight claims, completed LRU, pending
+        # acks) shared by /next and WebSocket processing. Runtime-provided so
+        # all contexts of one agent coordinate; private otherwise.
+        self.claims = claim_registry or MessageClaimRegistry()
 
         # Crash recovery: sync point marker and retry tracking
         self._first_ws_msg_id: str | None = None  # First WS message = sync point
@@ -335,9 +338,9 @@ class ExecutionContext:
     @property
     def is_processing(self) -> bool:
         """Check if context is currently processing an event."""
-        return self.state == "processing"
+        return self.state is ExecutionState.PROCESSING
 
-    def _set_state(self, new_state: Literal["starting", "idle", "processing"]) -> None:
+    def _set_state(self, new_state: ExecutionState) -> None:
         """
         Set the execution state and update the idle event accordingly.
 
@@ -345,7 +348,7 @@ class ExecutionContext:
         for graceful shutdown coordination.
         """
         self.state = new_state
-        if new_state == "processing":
+        if new_state is ExecutionState.PROCESSING:
             self._idle_event.clear()
         else:
             self._idle_event.set()
@@ -429,37 +432,18 @@ class ExecutionContext:
             == DeliveryStatus.PROCESSED
         )
 
-    def _remember_processed_message(self, message_id: str) -> None:
-        """Track a processed message ID in the local LRU dedupe cache."""
-        self._processed_ids[message_id] = True
-        self._processed_ids.move_to_end(message_id)
-        self._processed_ack_pending_ids.pop(message_id, None)
-        self._processed_ack_retry_counts.pop(message_id, None)
-        if len(self._processed_ids) > self._max_processed_ids:
-            self._processed_ids.popitem(last=False)
-
-    def _remember_processed_ack_pending(self, message_id: str) -> None:
-        """Track local completion while waiting for durable processed ack."""
-        self._processed_ack_pending_ids[message_id] = True
-        self._processed_ack_pending_ids.move_to_end(message_id)
-        self._processed_ack_retry_counts.setdefault(message_id, 0)
-        if len(self._processed_ack_pending_ids) > self._max_processed_ids:
-            self._processed_ack_pending_ids.popitem(last=False)
-
     async def _retry_processed_ack(self, message_id: str) -> bool:
         """Retry durable processed ack for a locally completed message."""
-        if message_id not in self._processed_ack_pending_ids:
+        if not self.claims.is_ack_pending(self.room_id, message_id):
             return False
 
-        self._processed_ack_pending_ids.move_to_end(message_id)
         durable_processed = await self.link.mark_processed(self.room_id, message_id)
         if durable_processed:
             self._retry_tracker.mark_success(message_id)
-            self._remember_processed_message(message_id)
+            self.claims.remember_completed(self.room_id, message_id)
             return True
 
-        retries = self._processed_ack_retry_counts.get(message_id, 0) + 1
-        self._processed_ack_retry_counts[message_id] = retries
+        retries = self.claims.record_ack_retry(self.room_id, message_id)
         if retries >= self._retry_tracker.max_retries:
             logger.warning(
                 "ExecutionContext %s: processed ack retry budget exhausted for message %s; keeping local completion marker",
@@ -467,21 +451,10 @@ class ExecutionContext:
                 message_id,
             )
             self._retry_tracker.mark_success(message_id)
-            self._remember_processed_message(message_id)
+            self.claims.remember_completed(self.room_id, message_id)
             return True
 
         return False
-
-    def _try_claim_local_message(self, message_id: str) -> bool:
-        """Claim a message ID for local processing before hydration/status writes."""
-        if message_id in self._inflight_message_ids:
-            return False
-        self._inflight_message_ids.add(message_id)
-        return True
-
-    def _release_local_message(self, message_id: str) -> None:
-        """Release a local in-flight message claim."""
-        self._inflight_message_ids.discard(message_id)
 
     # --- Execution protocol implementation ---
 
@@ -1044,10 +1017,10 @@ class ExecutionContext:
             # If a pending message cannot be claimed yet, stay in startup sync
             # instead of processing newer WebSocket events out of order.
             while not await self._synchronize_with_next():
-                self._set_state("idle")
+                self._set_state(ExecutionState.IDLE)
                 await asyncio.sleep(self.config.idle_resync_seconds)
 
-            self._set_state("idle")
+            self._set_state(ExecutionState.IDLE)
             logger.info(
                 "ExecutionContext %s: Synchronized, switching to WebSocket",
                 self.room_id,
@@ -1115,7 +1088,7 @@ class ExecutionContext:
 
     async def _retry_pending_processed_acks(self) -> bool:
         """Retry durable processed acks for locally completed messages."""
-        for msg_id in list(self._processed_ack_pending_ids):
+        for msg_id in self.claims.pending_ack_ids(self.room_id):
             if not await self._retry_processed_ack(msg_id):
                 return False
         return True
@@ -1128,7 +1101,7 @@ class ExecutionContext:
                 and await self._resync_pending_messages()
             ):
                 return
-            self._set_state("idle")
+            self._set_state(ExecutionState.IDLE)
             await asyncio.sleep(self.config.idle_resync_seconds)
 
     async def _synchronize_with_next(self) -> bool:
@@ -1401,22 +1374,28 @@ class ExecutionContext:
             return _BacklogProcessResult.ADVANCED
 
         # Skip if already processed (dedupe)
-        if msg_id in self._processed_ids:
-            self._processed_ids.move_to_end(msg_id)
+        if self.claims.is_completed(self.room_id, msg_id):
             logger.debug("Skipping duplicate backlog message: %s", msg_id)
             return _BacklogProcessResult.ADVANCED
 
-        if msg_id in self._processed_ack_pending_ids:
+        if self.claims.is_ack_pending(self.room_id, msg_id):
             logger.debug("Retrying processed ack for backlog message: %s", msg_id)
             if await self._retry_processed_ack(msg_id):
                 return _BacklogProcessResult.ADVANCED
             return _BacklogProcessResult.RETRY_LATER
 
-        if not self._try_claim_local_message(msg_id):
-            logger.debug("Skipping already in-flight backlog message: %s", msg_id)
-            return _BacklogProcessResult.RETRY_LATER
+        with self.claims.claim(self.room_id, msg_id) as acquired:
+            if not acquired:
+                logger.debug("Deferring in-flight backlog message: %s", msg_id)
+                return _BacklogProcessResult.RETRY_LATER
+            return await self._process_claimed_backlog_message(msg)
 
-        self._set_state("processing")
+    async def _process_claimed_backlog_message(
+        self, msg: PlatformMessage
+    ) -> _BacklogProcessResult:
+        """Process a backlog message while its in-flight claim is held."""
+        msg_id = msg.id
+        self._set_state(ExecutionState.PROCESSING)
         logger.info("Processing backlog message %s in room %s", msg_id, self.room_id)
 
         try:
@@ -1429,7 +1408,7 @@ class ExecutionContext:
                     msg_id,
                     self.room_id,
                 )
-                self._remember_processed_message(msg_id)
+                self.claims.remember_completed(self.room_id, msg_id)
                 return _BacklogProcessResult.ADVANCED
 
             # Track attempts - check if exceeded BEFORE processing
@@ -1519,9 +1498,9 @@ class ExecutionContext:
             durable_processed = await self.link.mark_processed(self.room_id, msg_id)
             if durable_processed:
                 self._retry_tracker.mark_success(msg_id)
-                self._remember_processed_message(msg_id)
+                self.claims.remember_completed(self.room_id, msg_id)
             else:
-                self._remember_processed_ack_pending(msg_id)
+                self.claims.remember_ack_pending(self.room_id, msg_id)
                 logger.warning(
                     "ExecutionContext %s: Local execution completed but durable processed mark failed for backlog message %s",
                     self.room_id,
@@ -1550,8 +1529,7 @@ class ExecutionContext:
             # can't leak onto the next backlog message.
             self._cycle_armed = False
             self._pending_interrupt = None
-            self._release_local_message(msg_id)
-            self._set_state("idle")
+            self._set_state(ExecutionState.IDLE)
 
     def _drain_duplicate_from_queue(self, msg_id: str) -> None:
         """
@@ -1606,7 +1584,7 @@ class ExecutionContext:
 
         ``start()`` emits working:true (+ keep-alive); ``stop()`` in the finally
         emits the authoritative working:false on success, exception, and cancel —
-        mirroring the ``_set_state('idle')`` placement. The reporter is a no-op
+        mirroring the final idle-state transition. The reporter is a no-op
         when disabled or for the hub room, so call sites need no extra gating.
         """
         await self._working_reporter.start()
@@ -1684,14 +1662,14 @@ class ExecutionContext:
             # (excludes-only-processed) and re-fire the cycle the user just
             # interrupted. Mirror the success-path bookkeeping.
             if await self.link.mark_processed(self.room_id, msg_id):
-                self._remember_processed_message(msg_id)
+                self.claims.remember_completed(self.room_id, msg_id)
             else:
                 # Durable ack failed. Mark the message locally consumed and
                 # queue the ack for background retry, exactly as the success
                 # path does — otherwise the interrupted message stays locally
                 # replayable and the idle /next resync re-fires the cycle the
                 # user just interrupted.
-                self._remember_processed_ack_pending(msg_id)
+                self.claims.remember_ack_pending(self.room_id, msg_id)
                 logger.warning(
                     "ExecutionContext %s: durable mark_processed failed for "
                     "interrupted message %s; retrying ack in background",
@@ -1726,7 +1704,7 @@ class ExecutionContext:
         5. Mark as processed (success) or failed (exception)
         """
         if isinstance(event, ReconnectedEvent):
-            self._set_state("processing")
+            self._set_state(ExecutionState.PROCESSING)
             logger.debug("Processing %s in room %s", event.type, self.room_id)
             try:
                 if self._reconnect_sync_requested:
@@ -1742,11 +1720,11 @@ class ExecutionContext:
                         )
                     else:
                         while not await self._synchronize_with_next():
-                            self._set_state("idle")
+                            self._set_state(ExecutionState.IDLE)
                             await asyncio.sleep(self.config.idle_resync_seconds)
                 logger.debug("Event %s processed successfully", event.type)
             finally:
-                self._set_state("idle")
+                self._set_state(ExecutionState.IDLE)
             return True
 
         # While stopped, leave message triggers actionable for replay on play.
@@ -1764,8 +1742,6 @@ class ExecutionContext:
 
         payload = event.payload if isinstance(event, MessageEvent) else None
         msg_id = payload.id if payload else None
-
-        claimed_msg_id: str | None = None
 
         # For messages: check if we should skip
         if isinstance(event, MessageEvent) and msg_id and payload:
@@ -1796,33 +1772,44 @@ class ExecutionContext:
                     return True
 
                 # Skip duplicates
-                if msg_id in self._processed_ids:
-                    self._processed_ids.move_to_end(msg_id)
+                if self.claims.is_completed(self.room_id, msg_id):
                     logger.debug("Skipping duplicate message %s", msg_id)
                     return True
 
-                if msg_id in self._processed_ack_pending_ids:
+                if self.claims.is_ack_pending(self.room_id, msg_id):
                     logger.debug("Retrying processed ack for message %s", msg_id)
                     if await self._retry_processed_ack(msg_id):
                         return True
                     return False
 
-                if not self._try_claim_local_message(msg_id):
-                    logger.debug("Skipping already in-flight message %s", msg_id)
-                    return True
-                claimed_msg_id = msg_id
+                with self.claims.claim(self.room_id, msg_id) as acquired:
+                    if not acquired:
+                        # The resync safety net re-checks deferred work, so an
+                        # owner failure never silently loses the message.
+                        logger.debug(
+                            "Message %s owned by another execution; deferring",
+                            msg_id,
+                        )
+                        return False
+                    return await self._process_event_body(event, msg_id, payload)
 
-                if self._message_processed_for_agent(msg_id, payload.metadata):
-                    logger.info(
-                        "Skipping processed replay message %s in room %s",
-                        msg_id,
-                        self.room_id,
-                    )
-                    self._remember_processed_message(msg_id)
-                    self._release_local_message(msg_id)
-                    return True
+        return await self._process_event_body(event, msg_id, payload)
 
-        self._set_state("processing")
+    async def _process_event_body(
+        self, event: PlatformEvent, msg_id: str | None, payload: Any
+    ) -> bool:
+        """Process an event after any required in-flight claim is acquired."""
+        if isinstance(event, MessageEvent) and msg_id and payload:
+            if self._message_processed_for_agent(msg_id, payload.metadata):
+                logger.info(
+                    "Skipping processed replay message %s in room %s",
+                    msg_id,
+                    self.room_id,
+                )
+                self.claims.remember_completed(self.room_id, msg_id)
+                return True
+
+        self._set_state(ExecutionState.PROCESSING)
         logger.debug("Processing %s in room %s", event.type, self.room_id)
 
         try:
@@ -1838,7 +1825,7 @@ class ExecutionContext:
                         msg_id,
                         self.room_id,
                     )
-                    self._remember_processed_message(msg_id)
+                    self.claims.remember_completed(self.room_id, msg_id)
                     return True
 
                 # Track attempts
@@ -1890,9 +1877,9 @@ class ExecutionContext:
                 durable_processed = await self.link.mark_processed(self.room_id, msg_id)
                 if durable_processed:
                     self._retry_tracker.mark_success(msg_id)
-                    self._remember_processed_message(msg_id)
+                    self.claims.remember_completed(self.room_id, msg_id)
                 else:
-                    self._remember_processed_ack_pending(msg_id)
+                    self.claims.remember_ack_pending(self.room_id, msg_id)
                     logger.warning(
                         "ExecutionContext %s: Local execution completed but durable processed mark failed for message %s",
                         self.room_id,
@@ -1923,6 +1910,4 @@ class ExecutionContext:
             # leak onto the next message.
             self._cycle_armed = False
             self._pending_interrupt = None
-            if claimed_msg_id:
-                self._release_local_message(claimed_msg_id)
-            self._set_state("idle")
+            self._set_state(ExecutionState.IDLE)

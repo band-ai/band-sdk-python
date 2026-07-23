@@ -73,7 +73,7 @@ class TestInterruptInFlightCycle:
         assert "msg-1" not in handler.completed  # nothing was sent
         # Consumed: durable mark + local dedupe.
         mock_link.mark_processed.assert_awaited_once_with("room-123", "msg-1")
-        assert "msg-1" in ctx._processed_ids
+        assert "msg-1" in ctx.claims.completed_ids(ctx.room_id)
         assert ctx._interrupt_kind is None  # flag cleared
         assert ctx._active_cycle_task is None
 
@@ -135,9 +135,9 @@ class TestStopInFlightCycle:
 
         assert result is True
         mock_link.mark_processed.assert_not_awaited()
-        assert "s1" not in ctx._processed_ids
+        assert "s1" not in ctx.claims.completed_ids(ctx.room_id)
         # Local in-flight claim released so it can be reprocessed on play.
-        assert "s1" not in ctx._inflight_message_ids
+        assert "s1" not in ctx.claims.inflight_ids(ctx.room_id)
 
 
 class TestShutdownVsInterrupt:
@@ -284,7 +284,7 @@ class TestBacklogInterrupt:
 
         assert result == _BacklogProcessResult.ADVANCED
         mock_link.mark_processed.assert_awaited_once_with("room-123", "bk1")
-        assert "bk1" in ctx._processed_ids
+        assert "bk1" in ctx.claims.completed_ids(ctx.room_id)
 
     async def test_stop_during_backlog_leaves_actionable(self, mock_link):
         handler = BlockingHandler()
@@ -299,7 +299,7 @@ class TestBacklogInterrupt:
 
         assert result == _BacklogProcessResult.ADVANCED
         mock_link.mark_processed.assert_not_awaited()
-        assert "bk2" not in ctx._processed_ids
+        assert "bk2" not in ctx.claims.completed_ids(ctx.room_id)
 
     async def test_stop_mid_resync_loop_does_not_reprocess(self, mock_link):
         """A stop landing mid-cycle during ``_resync_pending_messages`` must not
@@ -350,7 +350,7 @@ class TestBacklogInterrupt:
         # The adapter must not run a second time on the very next /next poll.
         assert handler.invoked == ["loop1"]
         mock_link.mark_processed.assert_not_awaited()
-        assert "loop1" not in ctx._processed_ids
+        assert "loop1" not in ctx.claims.completed_ids(ctx.room_id)
 
 
 class TestControlSignalInClaimWindow:
@@ -391,7 +391,7 @@ class TestControlSignalInClaimWindow:
         assert result is True
         assert handler.invoked == []  # handler never ran
         mock_link.mark_processed.assert_awaited_once_with("room-123", "w1")  # consumed
-        assert "w1" in ctx._processed_ids
+        assert "w1" in ctx.claims.completed_ids(ctx.room_id)
         assert ctx._pending_interrupt is None
         assert ctx._cycle_armed is False
 
@@ -413,7 +413,7 @@ class TestControlSignalInClaimWindow:
         assert handler.invoked == []
         assert ctx._stopped is True
         mock_link.mark_processed.assert_not_awaited()  # left for replay on play
-        assert "w2" not in ctx._processed_ids
+        assert "w2" not in ctx.claims.completed_ids(ctx.room_id)
 
     async def test_interrupt_in_backlog_window_aborts_and_advances(self, mock_link):
         claiming, release = asyncio.Event(), asyncio.Event()
