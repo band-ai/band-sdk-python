@@ -654,11 +654,9 @@ uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 ```
 
 
-## Engineering Rules
+## Error Handling
 
-### Error Handling
-
-#### Pydantic ValidationError
+### Pydantic ValidationError
 
 - Catch `pydantic.ValidationError` separately from generic `Exception`
 - Format validation errors for LLM readability: `"Invalid arguments for tool_name: field: message"`
@@ -682,19 +680,19 @@ except Exception as e:
     raise
 ```
 
-#### Exception Hierarchy
+### Exception Hierarchy
 
 - Use specific exceptions over generic ones
 - Create custom exception classes for domain-specific errors
 - Always include context in exception messages
 
-#### Error Messages
+### Error Messages
 
 - Make error messages actionable and clear
 - Include relevant context (what failed, why, what to do)
 - Avoid exposing internal implementation details to end users
 
-#### Required Configuration
+### Required Configuration
 
 - Use `raise ValueError(...)` for missing required configuration
 - Do NOT use `logger.error()` + `sys.exit()` pattern
@@ -713,9 +711,9 @@ if not api_key:
 ```
 
 
-### Git Workflow
+## Git Workflow
 
-#### Branch Naming
+### Branch Naming
 
 Branch names should match the Linear issue:
 
@@ -730,7 +728,7 @@ Prefixes:
 - `docs/` - Documentation changes
 - `chore/` - Maintenance tasks
 
-##### Creating Branches from Linear Issues
+#### Creating Branches from Linear Issues
 
 Use `git lb` to create properly named branches from Linear issues:
 
@@ -742,7 +740,7 @@ This automatically fetches the issue title from Linear and creates a branch with
 
 If `git lb` is not installed, ask the developer for the proper branch name.
 
-#### Commit Messages
+### Commit Messages
 
 Follow conventional commits format for all commits:
 
@@ -762,7 +760,7 @@ Types:
 - `test:` - Adding or updating tests
 - `chore:` - Maintenance tasks
 
-#### Pull Request Titles
+### Pull Request Titles
 
 PR titles MUST use conventional commits format:
 
@@ -775,23 +773,23 @@ Examples:
 - `fix: Handle validation errors in execute_tool_call`
 - `docs: Update README with new adapter examples`
 
-#### Pre-Commit Checklist
+### Pre-Commit Checklist
 
 - Run tests before committing
 - Run linting and formatting
 - Ensure type checking passes
 - Review changes with `git diff`
 
-#### Code Review
+### Code Review
 
 - Keep PRs focused and reasonably sized
 - Respond to review comments promptly
 - Squash commits when merging if history is messy
 
 
-### GitHub PR Inline Comments
+## GitHub PR Inline Comments
 
-#### Adding Inline Review Comments
+### Adding Inline Review Comments
 
 To add inline comments at specific lines in a PR, use the GitHub Reviews API with `gh api`:
 
@@ -812,7 +810,7 @@ cat << 'EOF' | gh api repos/{owner}/{repo}/pulls/{pr_number}/reviews --method PO
 EOF
 ```
 
-#### Getting the Correct Line Numbers
+### Getting the Correct Line Numbers
 
 **Important:** Line numbers must be from the NEW version of the file, not diff line numbers.
 
@@ -833,14 +831,14 @@ EOF
    ```
    Note: These are diff line numbers, not file line numbers. Use the actual file method above for accuracy.
 
-#### Common Mistakes to Avoid
+### Common Mistakes to Avoid
 
 - **Don't use `gh pr review --comment`** - This adds a general comment, not inline comments
 - **Don't use diff line numbers** - Use actual file line numbers from the new version
 - **Don't use `-f` flag for JSON arrays** - Pass JSON via stdin with `--input -`
 - **Don't guess line numbers** - Always verify by checking the actual file content
 
-#### Example: Full Workflow
+### Example: Full Workflow
 
 ```bash
 # 1. Get commit SHA
@@ -866,7 +864,7 @@ cat << 'EOF' | gh api repos/owner/repo/pulls/83/reviews --method POST --input -
 EOF
 ```
 
-#### Multiple Comments
+### Multiple Comments
 
 Add multiple inline comments in a single review:
 
@@ -897,7 +895,7 @@ cat << 'EOF' | gh api repos/owner/repo/pulls/83/reviews --method POST --input -
 EOF
 ```
 
-#### Review Events
+### Review Events
 
 The `event` field can be:
 - `"COMMENT"` - Submit general feedback without approval
