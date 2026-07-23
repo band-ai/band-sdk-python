@@ -145,17 +145,15 @@ class RoomApprovals:
             return
 
         pending.timeout_task = asyncio.create_task(self._expire_permission(request_id))
-        tools = self._ports.tools()
-        if tools:
-            pattern_text = ", ".join(pending.patterns) if pending.patterns else "n/a"
-            await tools.send_message(
-                (
-                    f"OpenCode approval requested for `{pending.permission}` "
-                    f"({pattern_text}). Reply with `approve {request_id}`, "
-                    f"`always {request_id}`, or `reject {request_id}`."
-                ),
-                mentions=self._ports.turn_mentions(),
-            )
+        pattern_text = ", ".join(pending.patterns) if pending.patterns else "n/a"
+        await self._notify_room(
+            (
+                f"OpenCode approval requested for `{pending.permission}` "
+                f"({pattern_text}). Reply with `approve {request_id}`, "
+                f"`always {request_id}`, or `reject {request_id}`."
+            ),
+            self._ports.turn_mentions(),
+        )
         self._ports.release_turn_wait()
 
     async def on_question_asked(self, request: OpencodeQuestionRequest) -> None:
@@ -175,10 +173,10 @@ class RoomApprovals:
             return
 
         pending.timeout_task = asyncio.create_task(self._expire_question(request_id))
-        tools = self._ports.tools()
-        if tools:
-            prompt = format_question_prompt(pending.questions, request_id)
-            await tools.send_message(prompt, mentions=self._ports.turn_mentions())
+        await self._notify_room(
+            format_question_prompt(pending.questions, request_id),
+            self._ports.turn_mentions(),
+        )
         self._ports.release_turn_wait()
 
     async def try_handle_reply(self, content: str, sender_id: str | None) -> bool:
@@ -192,7 +190,6 @@ class RoomApprovals:
             return False
 
         lowered = content.lower()
-        tools = self._ports.tools()
         # Mention the sender of THIS control message, not the turn mentions --
         # those belong to whichever turn is currently open (_begin_turn), which
         # a manual approve/reject reply does not itself start.
@@ -203,45 +200,59 @@ class RoomApprovals:
             reply = parse_permission_reply(lowered, self._pending_permission)
             if reply:
                 await self._reply_permission(reply)
-                if tools:
-                    await tools.send_message(
-                        f"OpenCode approval `{pending_request_id}` handled with `{reply}`.",
-                        mentions=mentions,
-                    )
+                await self._notify_room(
+                    f"OpenCode approval `{pending_request_id}` handled with `{reply}`.",
+                    mentions,
+                )
                 return True
 
         if self._pending_question:
             pending_request_id = self._pending_question.request_id
             if lowered in {"reject", "/reject"}:
                 await self._reject_question()
-                if tools:
-                    await tools.send_message(
-                        f"OpenCode question `{pending_request_id}` rejected.",
-                        mentions=mentions,
-                    )
+                await self._notify_room(
+                    f"OpenCode question `{pending_request_id}` rejected.",
+                    mentions,
+                )
                 return True
 
             answers = parse_question_answers(content, self._pending_question)
             if answers is None:
-                if tools:
-                    await tools.send_message(
-                        (
-                            "OpenCode is waiting for answers. Reply with one line per "
-                            "question, or `reject` to reject the question."
-                        ),
-                        mentions=mentions,
-                    )
+                await self._notify_room(
+                    (
+                        "OpenCode is waiting for answers. Reply with one line per "
+                        "question, or `reject` to reject the question."
+                    ),
+                    mentions,
+                )
                 return True
 
             await self._reply_question(answers)
-            if tools:
-                await tools.send_message(
-                    f"OpenCode question `{pending_request_id}` answered.",
-                    mentions=mentions,
-                )
+            await self._notify_room(
+                f"OpenCode question `{pending_request_id}` answered.",
+                mentions,
+            )
             return True
 
         return False
+
+    async def _notify_room(self, text: str, mentions: list[dict[str, str]]) -> None:
+        """Post a room message best-effort.
+
+        A send failure must never strand the turn or crash the SSE event loop:
+        the platform requires at least one mention, so a sender-less turn (no
+        mentions) would otherwise raise here and skip the ``release_turn_wait``
+        that unblocks ``on_message``. Log and move on instead.
+        """
+        tools = self._ports.tools()
+        if tools is None:
+            return
+        try:
+            await tools.send_message(text, mentions=mentions)
+        except Exception:
+            logger.exception(
+                "Failed to post approval message to room %s", self._ports.room_id
+            )
 
     def cancel(self) -> None:
         """Drop pending state and stop its expiry timers (turn end/cleanup)."""

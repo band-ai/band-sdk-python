@@ -254,6 +254,50 @@ class TestDegradation:
         assert isinstance(event, QuestionAskedEvent)
         assert event.properties.questions == []
 
+    def test_blocking_ask_survives_non_string_scalar(self) -> None:
+        """A blocking ask must never degrade to UnknownOpencodeEvent on a
+        non-string scalar: a dropped permission/question would strand the
+        session until the turn timeout, so the scalar is coerced instead."""
+        permission = parse_opencode_event(
+            {
+                "type": "permission.asked",
+                "properties": {"id": "p", "sessionID": "s", "permission": 5},
+            }
+        )
+        assert isinstance(permission, PermissionAskedEvent)
+        assert permission.properties.permission == "5"
+
+        question = parse_opencode_event(
+            {
+                "type": "question.asked",
+                "properties": {
+                    "id": "q",
+                    "sessionID": "s",
+                    "questions": [{"question": 5}],
+                },
+            }
+        )
+        assert isinstance(question, QuestionAskedEvent)
+        assert [q.question for q in question.properties.questions] == ["5"]
+
+    def test_text_delta_coerces_non_string(self) -> None:
+        """A null or non-string delta coerces rather than dropping the whole
+        streaming fragment (the old raw-dict path did ``str(delta or "")``)."""
+        for wire, expected in ((None, ""), (7, "7")):
+            event = parse_opencode_event(
+                {
+                    "type": "message.part.delta",
+                    "properties": {
+                        "sessionID": "s",
+                        "partID": "p",
+                        "field": "text",
+                        "delta": wire,
+                    },
+                }
+            )
+            assert isinstance(event, MessagePartDeltaEvent)
+            assert event.properties.delta == expected
+
 
 class TestToolStateOutputPresence:
     def test_present_falsy_output_is_preserved(self) -> None:
@@ -280,3 +324,32 @@ class TestErrorDescriptions:
     def test_error_without_name_uses_default(self) -> None:
         error = OpencodeErrorInfo.model_validate({"data": {"message": "nope"}})
         assert describe_error(error) == "OpenCodeError: nope"
+
+    def test_scalar_string_error_is_preserved(self) -> None:
+        """A bare-string error keeps its text instead of degrading to None
+        (which would surface a generic 'no reply' instead of the failure)."""
+        event = parse_opencode_event(
+            {
+                "type": "message.updated",
+                "properties": {
+                    "info": {
+                        "id": "m",
+                        "sessionID": "s",
+                        "role": "assistant",
+                        "error": "boom",
+                    }
+                },
+            }
+        )
+        info = event.properties.info
+        assert info is not None
+        assert info.error is not None
+        assert not info.error.is_empty
+        assert info.error.describe() == "OpenCodeError: boom"
+
+    def test_empty_error_object_is_flagged_empty(self) -> None:
+        """``error: {}`` carries nothing to surface; ``is_empty`` keeps a
+        text-less turn from posting a spurious generic error."""
+        assert OpencodeErrorInfo.model_validate({}).is_empty
+        assert not OpencodeErrorInfo.model_validate({"name": "X"}).is_empty
+        assert not OpencodeErrorInfo.model_validate({"data": {"message": "m"}}).is_empty

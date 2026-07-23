@@ -25,6 +25,7 @@ from pydantic import (
     ValidationError,
     ValidatorFunctionWrapHandler,
     field_validator,
+    model_validator,
 )
 
 from band.core.types import TurnUsage
@@ -61,6 +62,20 @@ def coerce_str_list(value: Any) -> list[str]:
 def coerce_dict(value: Any) -> dict[str, Any]:
     """Before-validator: a non-dict becomes ``{}``."""
     return value if isinstance(value, dict) else {}
+
+
+def coerce_str(value: Any) -> str:
+    """Before-validator: a present scalar always stringifies; ``None`` -> ``""``.
+
+    Applied to the scalar fields whose *event* must not be dropped on a type
+    mismatch. Unlike a non-blocking event (which may degrade to
+    ``UnknownOpencodeEvent`` freely), a blocking ask (``permission`` /
+    ``question``) that failed to parse would strand the session until the turn
+    timeout, and a lost text ``delta`` corrupts the streamed reply.
+    """
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
 
 
 class OpencodeTokenCache(OpencodeModel):
@@ -102,6 +117,25 @@ class OpencodeErrorInfo(OpencodeModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
     _coerce_data = field_validator("data", mode="before")(coerce_dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_scalar_error(cls, value: Any) -> Any:
+        """A bare-string error payload keeps its text as ``data.message``
+        rather than being swallowed to ``None`` by the ``lenient`` wrapper."""
+        if isinstance(value, str):
+            return {"data": {"message": value}}
+        return value
+
+    @property
+    def is_empty(self) -> bool:
+        """No content worth surfacing: no name and no data.
+
+        A ``message.updated`` may carry an empty ``error: {}``; the old
+        truthy check treated that as *no error*, so keep not surfacing it
+        (otherwise a text-less turn posts a spurious generic error).
+        """
+        return self.name is None and not self.data
 
     def describe(self) -> str:
         name = self.name or "OpenCodeError"
@@ -203,11 +237,14 @@ class OpencodePermissionRequest(OpencodeModel):
         coerce_str_list
     )
     _coerce_metadata = field_validator("metadata", mode="before")(coerce_dict)
+    _coerce_permission = field_validator("permission", mode="before")(coerce_str)
     _lenient_tool = field_validator("tool", mode="wrap")(lenient)
 
 
 class OpencodeQuestion(OpencodeModel):
     question: str = "Question"
+
+    _coerce_question = field_validator("question", mode="before")(coerce_str)
 
 
 class OpencodeQuestionRequest(OpencodeModel):
@@ -263,6 +300,8 @@ class MessagePartDeltaProps(OpencodeModel):
     part_id: str | None = Field(default=None, alias="partID")
     field: str | None = None
     delta: str = ""
+
+    _coerce_delta = field_validator("delta", mode="before")(coerce_str)
 
 
 class MessagePartDeltaEvent(OpencodeModel):
