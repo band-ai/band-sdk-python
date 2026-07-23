@@ -15,12 +15,14 @@ from unittest.mock import patch
 
 import pytest
 
-from prompts import (
-    create_llm,
-    create_llm_by_name,
-    generate_guesser_prompt,
-    generate_thinker_prompt,
-)
+from tests.loaders import load_script_module
+
+prompts = load_script_module("examples/20-questions-arena/prompts.py", "arena_prompts")
+
+create_llm = prompts.create_llm
+create_llm_by_name = prompts.create_llm_by_name
+generate_guesser_prompt = prompts.generate_guesser_prompt
+generate_thinker_prompt = prompts.generate_thinker_prompt
 
 
 class TestThinkerPrompt:
