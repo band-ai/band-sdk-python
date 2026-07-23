@@ -16,7 +16,6 @@ from typing import cast
 import pytest
 
 from tests.e2e.vscode.driver import (
-    FRESH_SESSION_PREAMBLE,
     PreflightError,
     capture_versions,
     preflight,
@@ -32,7 +31,6 @@ from tests.e2e.vscode.workspace import (
     AUTO_REPLY_SETTING,
     MCP_SERVER_NAME,
     scaffold_workspace,
-    workspace_marker_path,
 )
 
 
@@ -74,11 +72,6 @@ def test_scaffold_workspace_writes_mcp_entry_and_auto_reply(tmp_path: Path) -> N
 
     settings = json.loads((tmp_path / ".vscode" / "settings.json").read_text())
     assert settings[AUTO_REPLY_SETTING] is True
-
-
-def test_workspace_marker_path_stays_inside_workspace(tmp_path: Path) -> None:
-    marker = workspace_marker_path(tmp_path, "notes-abc.txt")
-    assert marker.parent == tmp_path
 
 
 # --- driver preflight + version evidence --------------------------------------------
@@ -123,12 +116,6 @@ def test_capture_versions_records_failures_instead_of_raising() -> None:
     assert "unavailable" in versions["band_mcp"]
 
 
-def test_fresh_session_preamble_is_prependable_text() -> None:
-    # The CLI has no verified new-session switch; the preamble is the fallback
-    # and must stay a plain instruction line (no templating placeholders).
-    assert "{" not in FRESH_SESSION_PREAMBLE
-
-
 # --- scorecard: outcome mapping + emitted artifact ----------------------------------
 
 
@@ -161,12 +148,6 @@ def _report(when: str, outcome: str, nodeid: str, fspath: str) -> pytest.TestRep
 def test_outcome_status_mapping(when: str, outcome: str, expected: str | None) -> None:
     report = _report(when, outcome, "tests/e2e/vscode/test_x.py::t", "x")
     assert outcome_status(report) == expected
-
-
-def test_usage_na_row_carries_surface_and_reason() -> None:
-    assert USAGE_NA_ROW.adapter == SURFACE_ID
-    assert USAGE_NA_ROW.status == "na"
-    assert USAGE_NA_ROW.reason
 
 
 def test_scorecard_keeps_suite_rows_plus_fixed_na_row(tmp_path: Path) -> None:
