@@ -656,8 +656,6 @@ uv run pytest tests/ --ignore=tests/integration/ --ignore=tests/e2e/ -v
 
 ## Engineering Rules
 
-_Inlined from the former shared `claude-config` submodule (`.claude/rules/`), now removed. Only the rules the sections above don't already cover are kept — error handling, git workflow, and the GitHub PR inline-comment recipe; the generic coding-standards, code-quality, testing, and packaging rules were dropped as duplicative of (or contradicting) the repo-specific sections above. (The old `06-claude-config-management` rule is intentionally dropped — it described managing that submodule.)_
-
 ### Error Handling
 
 #### Pydantic ValidationError
