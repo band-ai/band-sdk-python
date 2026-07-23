@@ -1,5 +1,17 @@
 # Copilot-in-VS-Code validation suite (opt-in, dev-machine only)
 
+> ## ⚠️ This is inherently a SEMI-MANUAL test suite
+>
+> It drives a **real, visible VS Code window** with a **human-signed-in
+> Copilot**. A person must be at the machine: sign in to Copilot once, and on
+> the **first run** click through a handful of one-time dialogs (folder trust,
+> MCP server allow, per-tool "Always allow"). Those choices are remembered, so
+> **reruns are unattended** — but the GUI window, the interactive GitHub OAuth,
+> and the possibility of a new confirmation dialog never go away. It can never
+> run in CI and is not a hands-off matrix suite; treat every green run as
+> "passed on a supervised dev machine", and record it via the scorecard
+> artifact.
+
 Drives **GitHub Copilot Chat inside a real VS Code window** (agent mode) against
 the live Band platform and validates the L0–L4 common bar. The harness:
 
@@ -45,26 +57,41 @@ GUI window must stay open. It is gated behind `VSCODE_CHAT_TESTS_ENABLED`
 
 ## Running
 
+**Easiest**: use the directory-scoped Claude Code skill — `/vscode-chat-e2e`
+(defined in `.claude/skills/vscode-chat-e2e/SKILL.md` next to this suite). It
+checks prerequisites, installs what it can, runs the suite, and tells you
+exactly what to click on a first run.
+
+Manual equivalent:
+
 ```bash
 VSCODE_CHAT_TESTS_ENABLED=true E2E_TESTS_ENABLED=true \
 VSCODE_CHAT_SCORECARD_JSON=artifacts/int-1110-copilot-vscode-scorecard.json \
 uv run pytest tests/e2e/vscode -v -s --no-cov
 ```
 
-During the run a VS Code window opens on the scaffolded temp workspace:
+During the run a VS Code window opens on the scaffolded workspace. The harness
+minimizes prompts, and after the first run reruns are unattended:
 
-- **Accept workspace trust** when prompted (first open).
-- If VS Code prompts to **start/trust the `band` MCP server**, allow it.
-- If individual tool calls still ask for approval (the workspace sets
-  `chat.tools.global.autoApprove`, but the installed VS Code may scope that
-  setting user-level only), pick **"Always allow"** on the first occurrence of
-  each tool — subsequent turns run unattended.
+- **Workspace trust**: suppressed — the window is launched with
+  `--disable-workspace-trust` (scoped to that launch, not a global setting).
+- **MCP server trust**: VS Code asks once per server *configuration*. The
+  workspace path and the band-mcp port are stable by default, so `mcp.json`
+  is byte-identical across runs — allow the `band` server on the first run
+  and the remembered trust holds for every rerun. (Changing
+  `VSCODE_CHAT_WORKSPACE` or `BAND_MCP_PORT` re-triggers the prompt.)
+- **Tool approvals**: on each tool's first-ever call, open the dropdown next
+  to Allow and pick **"Always allow…" (workspace)** — one click per tool
+  (~4 band tools), remembered afterwards. The workspace also sets
+  `chat.autoReply` so agent-side questions never stall a turn.
 - Leave the window open and unfocused-but-alive until the run finishes.
 
-> **Security note:** `chat.tools.global.autoApprove` disables per-tool
-> confirmation prompts. The workspace is a throwaway temp directory and the
-> only configured MCP server is the harness's own band-mcp instance, which
-> bounds the exposure — do not reuse this settings file in a real workspace.
+> **Security note:** the harness deliberately does **not** enable
+> `chat.tools.global.autoApprove` ("YOLO mode") — that disables tool approval
+> for every workspace on the machine and VS Code escalates it to a global
+> consent dialog. Approvals stay per-tool and workspace-scoped. If you enable
+> YOLO in your own user settings, that is a machine-wide security trade-off
+> you own.
 
 Artifacts (when `VSCODE_CHAT_SCORECARD_JSON` is set):
 
@@ -80,6 +107,8 @@ Artifacts (when `VSCODE_CHAT_SCORECARD_JSON` is set):
 | `VSCODE_CHAT_TESTS_ENABLED` | `false` | The collection gate |
 | `CODE_COMMAND` | `code` | VS Code CLI binary (may be a full path) |
 | `BAND_MCP_COMMAND` | `band-mcp` | band-mcp launcher (e.g. `uvx band-mcp`) |
+| `BAND_MCP_PORT` | `8631` | band-mcp SSE port (`0` = ephemeral; stable keeps MCP trust remembered) |
+| `VSCODE_CHAT_WORKSPACE` | `~/band-e2e/vscode-chat-workspace` | Workspace dir VS Code opens (stable keeps MCP trust remembered) |
 | `VSCODE_CHAT_SCORECARD_JSON` | empty | Scorecard output path (empty = don't emit) |
 | `VSCODE_CHAT_TIMEOUT` | `300` | Seconds allowed per live turn |
 

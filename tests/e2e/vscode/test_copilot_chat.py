@@ -104,7 +104,7 @@ async def test_participation_reply_round_trip(
             sender_name="the user",
             message=text,
             instruction="Reply to this message, repeating its echo token exactly.",
-            deadline_s=vscode_settings.turn_timeout,
+            deadline_s=vscode_settings.vscode_chat_timeout,
         )
     replies.assert_contains_any([token])
 
@@ -151,7 +151,7 @@ async def test_original_functions_retained(
                 f"roster with band_get_participants and reply listing every "
                 f"participant's name and confirming the file was created."
             ),
-            deadline_s=vscode_settings.turn_timeout,
+            deadline_s=vscode_settings.vscode_chat_timeout,
         )
 
     marker = workspace_marker_path(vscode_workspace, filename)
@@ -203,13 +203,21 @@ async def test_multi_participant_echo_peer(
                 "Another agent posted this in the room. Reply addressing that "
                 "agent and repeat its echo token exactly."
             ),
-            deadline_s=vscode_settings.turn_timeout,
+            deadline_s=vscode_settings.vscode_chat_timeout,
         )
 
     replies.assert_contains_any([token])
+    # Label both sides for the judge: the reply alone reads like an echo
+    # message itself and is unjudgeable without the peer's message.
+    transcript = f"Peer agent {echo.name} posted: {text}\n" + "\n".join(
+        f"Reply from the agent under test: {reply.content}" for reply in replies
+    )
     verdict = await judge(
-        criteria="The reply engages with the other agent's echo message.",
-        transcript="\n".join(reply.content for reply in replies),
+        criteria=(
+            "The agent under test replied to the peer agent's echo message, "
+            "engaging with it (addressing the peer and/or repeating its token)."
+        ),
+        transcript=transcript,
     )
     assert verdict.passed, verdict.reasoning
 
@@ -250,11 +258,16 @@ async def test_recall_across_chat_sessions(
             sender_name="the user",
             message=seed,
             instruction=(
-                "Store the project codename in your Band memory with "
-                "band_store_memory, then confirm in the room that it is saved."
+                f"Store the project codename in your Band memory with "
+                f"band_store_memory, recording which room it belongs to — "
+                f"content like 'project codename for room {room_id}: {fact}'. "
+                f"Then confirm in the room that it is saved."
             ),
-            deadline_s=vscode_settings.turn_timeout,
+            deadline_s=vscode_settings.vscode_chat_timeout,
         )
+        # Store-side barrier: separates a store failure (band-mcp/tool call
+        # never landed a record) from a retrieval failure in the next turn.
+        (await capture.memory(copilot_identity)).stored.assert_stored(content=fact)
 
         ask = "What is the project codename?"
         await user_ops.send_message(
@@ -272,10 +285,12 @@ async def test_recall_across_chat_sessions(
             message=ask,
             instruction=(
                 "Recall the project codename from your Band memory using "
-                "band_list_memories (and band_get_memory if needed) — do not "
-                "guess — and reply stating it exactly."
+                "band_list_memories (and band_get_memory if needed) — the "
+                "record for THIS room (match the chat_id above); the memory "
+                "store may hold unrelated records. Do not guess — reply "
+                "stating the codename exactly."
             ),
-            deadline_s=vscode_settings.turn_timeout,
+            deadline_s=vscode_settings.vscode_chat_timeout,
             new_session=True,
         )
     replies.assert_contains_any([fact])
@@ -290,8 +305,15 @@ async def test_no_leak_between_rooms(
     reply_capture: CaptureFactory,
     driver: CodeChatDriver,
 ) -> None:
-    """L2 isolation: replies stay scoped to their room — room B's answer names
-    room B's token and never room A's."""
+    """L2 isolation: room-scoped facts stay scoped — room B's answer names room
+    B's marker and never room A's.
+
+    Each ``code chat`` invocation is a fresh chat session and band-mcp has no
+    history tool, so room context lives in agent-wide platform memory. The
+    seeds record each marker *keyed by its room id*; isolation is then the
+    retrieval staying scoped to the asking room — pulling the sibling room's
+    marker instead is exactly the leak this cell exists to catch.
+    """
     token_a, token_b = f"alpha-{_token()}", f"bravo-{_token()}"
     room_a = await resource_manager.provision_room(
         title="e2e-vscode-isolation-a", participants=[copilot_identity.id]
@@ -301,7 +323,7 @@ async def test_no_leak_between_rooms(
     )
 
     async def seed(room_id: str, capture: ReplyCapture, token: str) -> None:
-        text = f"The marker for THIS room is {token}. Acknowledge it."
+        text = f"The marker for THIS room is {token}."
         await user_ops.send_message(
             room_id,
             text,
@@ -315,9 +337,17 @@ async def test_no_leak_between_rooms(
             identity=copilot_identity,
             sender_name="the user",
             message=text,
-            instruction="Acknowledge this room's marker by repeating it.",
-            deadline_s=vscode_settings.turn_timeout,
+            instruction=(
+                f"Store this room's marker with band_store_memory, recording "
+                f"which room it belongs to — content like 'marker for room "
+                f"{room_id}: {token}'. Then verify with band_list_memories "
+                f"that the record exists (store it again if not), and only "
+                f"then acknowledge it in the room."
+            ),
+            deadline_s=vscode_settings.vscode_chat_timeout,
         )
+        # Store-side barrier (see test_recall_across_chat_sessions).
+        (await capture.memory(copilot_identity)).stored.assert_stored(content=token)
 
     async with reply_capture(room_a) as capture_a:
         await seed(room_a, capture_a, token_a)
@@ -339,10 +369,12 @@ async def test_no_leak_between_rooms(
             sender_name="the user",
             message=ask,
             instruction=(
-                "Reply with the marker that was stated in this room only. "
-                "Never mention markers from any other room or conversation."
+                "Look up the stored markers with band_list_memories and reply "
+                "with the one recorded for THIS room (match the chat_id above). "
+                "Never mention markers recorded for other rooms."
             ),
-            deadline_s=vscode_settings.turn_timeout,
+            deadline_s=vscode_settings.vscode_chat_timeout,
+            new_session=True,
         )
     replies.assert_contains_any([token_b])
     replies.assert_contains_none([token_a])
@@ -390,7 +422,7 @@ async def test_restart_recall_and_function(
                 "Store the deploy phase in your Band memory with "
                 "band_store_memory, then confirm in the room."
             ),
-            deadline_s=vscode_settings.turn_timeout,
+            deadline_s=vscode_settings.vscode_chat_timeout,
         )
 
         await band_mcp.restart()
@@ -415,7 +447,7 @@ async def test_restart_recall_and_function(
                 f"Also create a file named '{filename}' in the workspace root "
                 f"containing that phase, to confirm your editor tools still work."
             ),
-            deadline_s=vscode_settings.turn_timeout,
+            deadline_s=vscode_settings.vscode_chat_timeout,
             new_session=True,
         )
 

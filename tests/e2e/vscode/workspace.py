@@ -11,12 +11,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-# VS Code's tool auto-approval knob (Manage approvals docs, VS Code 1.103+).
-# Security trade-off is deliberate and bounded: the workspace is a throwaway
-# temp dir and the only MCP server is the harness's own band-mcp. If the
-# installed VS Code rejects the key (or scopes it user-level only), the runbook
-# fallback is one manual "Always allow" click per tool on the first turn.
-AUTO_APPROVE_SETTING = "chat.tools.global.autoApprove"
+# Auto-answer agent questions so a driven turn never stalls on a chat-side
+# question (Manage approvals docs). Deliberately NOT chat.tools.global.autoApprove:
+# that is machine-wide "YOLO mode" — VS Code escalates it to a global consent
+# dialog and it disables tool approval in every workspace on the host. Tool
+# approvals instead rely on remembered per-tool "Always allow" choices in this
+# (persistent) workspace — one click per tool, ever (see README).
+AUTO_REPLY_SETTING = "chat.autoReply"
 
 # MCP support is on by default in current VS Code; setting it explicitly keeps
 # the run independent of a user-profile override. Unknown keys are ignored.
@@ -32,7 +33,7 @@ def scaffold_workspace(root: Path, sse_url: str) -> None:
     vscode_dir.mkdir(parents=True, exist_ok=True)
 
     mcp_config = {"servers": {MCP_SERVER_NAME: {"type": "sse", "url": sse_url}}}
-    settings = {AUTO_APPROVE_SETTING: True, MCP_ENABLED_SETTING: True}
+    settings = {AUTO_REPLY_SETTING: True, MCP_ENABLED_SETTING: True}
 
     (vscode_dir / "mcp.json").write_text(json.dumps(mcp_config, indent=2) + "\n")
     (vscode_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
