@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 import logging
 import random
-from typing import Any
+from typing import Any, Literal
 
 from phoenix_channels_python_client.client import (
     PHXChannelsClient,
@@ -230,6 +230,27 @@ class ContactRemovedPayload(BaseModel):
     id: str
 
 
+class AgentControlPayload(BaseModel):
+    """Payload for ``agent.control`` events on the agent_control channel.
+
+    Pushed by the platform to interrupt, stop, or resume (play) an agent.
+    ``room_id`` is null for agent-scoped fan-out (all of the agent's rooms);
+    set for a single (agent, room) target. The server does not deduplicate, so
+    consumers should dedup on ``correlation_id``.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    mode: Literal["interrupt", "stop", "play"]
+    scope: Literal["agent", "room"]
+    agent_id: str
+    type: str | None = None
+    execution_id: str | None = None
+    room_id: str | None = None
+    reason: str | None = None
+    correlation_id: str | None = None
+
+
 class SupersedePayload(BaseModel):
     """Payload for terminal agent_control supersede events."""
 
@@ -268,6 +289,7 @@ _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
     "contact_added": ContactAddedPayload,
     "contact_removed": ContactRemovedPayload,
     "supersede": SupersedePayload,
+    "agent.control": AgentControlPayload,
 }
 
 
@@ -438,13 +460,24 @@ class WebSocketClient:
         self,
         agent_id: str,
         on_supersede: Callable[[SupersedePayload], Awaitable[None]],
+        on_control: Callable[[AgentControlPayload], Awaitable[None]] | None = None,
     ):
-        """Subscribe to terminal agent-control events for this agent."""
+        """Subscribe to agent-control events for this agent.
+
+        Handles terminal ``supersede`` events and, when ``on_control`` is
+        provided, ``agent.control`` interrupt/stop/play signals.
+        """
         topic = f"agent_control:{agent_id}"
         logger.info("[WebSocket] Subscribing to topic: %s", topic)
 
+        handlers: dict[str, Callable[..., Awaitable[None]]] = {
+            "supersede": on_supersede
+        }
+        if on_control is not None:
+            handlers["agent.control"] = on_control
+
         async def message_handler(message):
-            await self._handle_events(message, {"supersede": on_supersede})
+            await self._handle_events(message, handlers)
 
         result = await self._require_client().subscribe_to_topic(topic, message_handler)
         logger.info("[WebSocket] Subscribed to topic: %s", topic)
