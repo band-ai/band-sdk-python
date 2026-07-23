@@ -25,6 +25,7 @@ from tests.e2e.baseline.agents import (
     PER_ADAPTER_MARKER,
     Adapter,
     ExcludedAdapter,
+    ExpectedFailure,
     PerAdapter,
     per_adapter,
 )
@@ -84,6 +85,28 @@ def test_per_adapter_rejects_unregistered_exclusion() -> None:
     # Adapter is a StrEnum, so a plain unregistered string is an unknown id.
     with pytest.raises(ValueError, match="unregistered adapters"):
         per_adapter(exclude=[ExcludedAdapter("no-such-adapter", "typo")])(lambda: None)  # type: ignore[arg-type]
+
+
+def test_per_adapter_marks_only_declared_adapter_as_xfail() -> None:
+    @per_adapter(
+        Adapter.ANTHROPIC,
+        Adapter.CREWAI,
+        xfail=[ExpectedFailure(Adapter.CREWAI, "known usage limitation")],
+    )
+    def fn() -> None: ...
+
+    params = next(mark.args[1] for mark in fn.pytestmark if mark.name == "parametrize")
+    marks_by_id = {param.id: {mark.name for mark in param.marks} for param in params}
+    assert "xfail" not in marks_by_id[str(Adapter.ANTHROPIC)]
+    assert "xfail" in marks_by_id[str(Adapter.CREWAI)]
+
+
+def test_per_adapter_rejects_overlapping_exclusion_and_xfail() -> None:
+    with pytest.raises(ValueError, match="both exclude and xfail"):
+        per_adapter(
+            exclude=[ExcludedAdapter(Adapter.CREWAI, "unsupported")],
+            xfail=[ExpectedFailure(Adapter.CREWAI, "unsupported")],
+        )
 
 
 # --- na_rows: marker exclusions become N/A rows -------------------------------------

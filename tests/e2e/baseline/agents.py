@@ -50,6 +50,7 @@ __all__ = [
     "Adapter",
     "Lane",
     "ExcludedAdapter",
+    "ExpectedFailure",
     "WithAdapters",
     "PerAdapter",
     "adapter_params",
@@ -145,6 +146,20 @@ class ExcludedAdapter:
 
 
 @dataclass(frozen=True)
+class ExpectedFailure:
+    """An adapter expected to fail a matrix test, with a documented reason."""
+
+    adapter: Adapter
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not self.reason.strip():
+            raise ValueError(
+                f"@per_adapter xfail of {self.adapter} needs a non-empty reason"
+            )
+
+
+@dataclass(frozen=True)
 class PerAdapter(MarkerPayload):
     """Per-cell construction steering for ``@per_adapter`` (carried on its marker).
 
@@ -161,6 +176,7 @@ class PerAdapter(MarkerPayload):
     tools: list[ToolSpec] | None
     peer: Adapter | None = None
     exclude: tuple[ExcludedAdapter, ...] = ()
+    xfail: tuple[ExpectedFailure, ...] = ()
 
 
 def with_adapters(
@@ -200,6 +216,7 @@ def adapter_params(
     runs_tool_loop: bool | None = None,
     lane: Lane | None = None,
     peer: Adapter | None = None,
+    xfail: dict[Adapter, str] | None = None,
 ) -> list[ParameterSet]:
     """One ``pytest.param`` per registered adapter (narrowed by the filters), each gated
     by its requirements.
@@ -215,10 +232,18 @@ def adapter_params(
     the parameter source ``@per_adapter`` feeds to the ``adapter_id`` fixture.
     """
     peer_deps = spec_for(peer).requires if peer is not None else ()
+    xfail = xfail or {}
     return [
         pytest.param(
             spec.id,
-            marks=requires(*dict.fromkeys((*spec.requires, *peer_deps))),
+            marks=(
+                requires(*dict.fromkeys((*spec.requires, *peer_deps))),
+                *(
+                    (pytest.mark.xfail(reason=xfail[spec.id], strict=True),)
+                    if spec.id in xfail
+                    else ()
+                ),
+            ),
             id=str(spec.id),
         )
         for spec in specs(
@@ -235,6 +260,7 @@ def adapter_params(
 def per_adapter(
     *adapters: Adapter,
     exclude: Collection[ExcludedAdapter] | None = None,
+    xfail: Collection[ExpectedFailure] | None = None,
     supports: Collection[Capability] | None = None,
     without: Collection[Capability] | None = None,
     runs_tool_loop: bool | None = None,
@@ -254,6 +280,7 @@ def per_adapter(
 
         @per_adapter()                                   # full matrix
         @per_adapter(exclude=[ExcludedAdapter(Adapter.CREWAI, "no per-turn usage")])
+        @per_adapter(xfail=[ExpectedFailure(Adapter.COPILOT_ACP, "no usage support")])
         @per_adapter(Adapter.ANTHROPIC, Adapter.AGNO)    # only these
         @per_adapter(supports={Capability.MEMORY})       # by capability
         @per_adapter(lane=Lane.CORE, peer=Adapter.LANGGRAPH)  # each cell + a foreign peer
@@ -266,13 +293,19 @@ def per_adapter(
     """
     include = frozenset(adapters) or None
     excluded = tuple(exclude or ())
+    expected_failures = tuple(xfail or ())
     exclude_ids = frozenset(e.adapter for e in excluded)
+    xfail_ids = frozenset(e.adapter for e in expected_failures)
     registered = {s.id for s in specs(include_pending=True)}
-    unknown = exclude_ids - registered
+    unknown = (exclude_ids | xfail_ids) - registered
     if unknown:
         # A typo'd or stale exclusion would otherwise silently no-op (nothing to drop).
         raise ValueError(
             f"@per_adapter(exclude=...) names unregistered adapters: {sorted(unknown)}"
+        )
+    if overlap := exclude_ids & xfail_ids:
+        raise ValueError(
+            f"@per_adapter cannot both exclude and xfail adapters: {sorted(overlap)}"
         )
     if peer is not None:
         if peer not in registered:
@@ -292,6 +325,7 @@ def per_adapter(
         runs_tool_loop=runs_tool_loop,
         lane=lane,
         peer=peer,
+        xfail={failure.adapter: failure.reason for failure in expected_failures},
     )
     # Fail loud rather than let an empty parametrize skip silently (a mis-specified
     # filter or registry drift). A bare @per_adapter() is never empty.
@@ -304,7 +338,12 @@ def per_adapter(
             "the filter or fix the registry drift"
         )
     build = PerAdapter(
-        prompt=prompt, features=features, tools=tools, peer=peer, exclude=excluded
+        prompt=prompt,
+        features=features,
+        tools=tools,
+        peer=peer,
+        exclude=excluded,
+        xfail=expected_failures,
     )
 
     def decorate(fn: Callable[..., object]) -> Callable[..., object]:

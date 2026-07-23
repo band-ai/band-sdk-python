@@ -38,7 +38,12 @@ from __future__ import annotations
 
 import pytest
 
-from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.agents import (
+    Adapter,
+    ExcludedAdapter,
+    ExpectedFailure,
+    per_adapter,
+)
 from tests.e2e.baseline.smoke.samples.sample_agents import (
     COST_AGENT,
     COST_MULTI_TURN_AGENT,
@@ -58,6 +63,12 @@ from tests.e2e.baseline.toolkit.user_ops import UserOps
         ExcludedAdapter(
             Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
         ),
+    ],
+    xfail=[
+        ExpectedFailure(
+            Adapter.COPILOT_ACP,
+            "Copilot ACP does not expose per-turn usage through ACP",
+        )
     ],
     **COST_AGENT,
 )
@@ -145,6 +156,12 @@ async def test_usage_recorded_for_a_turn(
         ExcludedAdapter(
             Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
         ),
+    ],
+    xfail=[
+        ExpectedFailure(
+            Adapter.COPILOT_ACP,
+            "Copilot ACP does not expose per-turn usage through ACP",
+        )
     ],
     **COST_MULTI_TURN_AGENT,
 )
