@@ -72,6 +72,7 @@ class CollectionGateSettings(BaseSettings):
     e2e_tests_enabled: bool = False  # E2E_TESTS_ENABLED
     docker_tests_enabled: bool = False  # DOCKER_TESTS_ENABLED
     sandbox_tests_enabled: bool = False  # SANDBOX_TESTS_ENABLED
+    vscode_chat_tests_enabled: bool = False  # VSCODE_CHAT_TESTS_ENABLED
 
 
 def pytest_ignore_collect(collection_path: Path) -> bool | None:
@@ -110,6 +111,9 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     skip_sandbox = pytest.mark.skip(
         reason="set SANDBOX_TESTS_ENABLED=true to run sbx sandbox tests"
     )
+    skip_vscode_chat = pytest.mark.skip(
+        reason="set VSCODE_CHAT_TESTS_ENABLED=true to run VS Code Copilot chat tests"
+    )
     for item in items:
         if not gates.e2e_tests_enabled and item.get_closest_marker("e2e"):
             item.add_marker(skip_e2e)
@@ -117,6 +121,10 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
             item.add_marker(skip_docker)
         if not gates.sandbox_tests_enabled and item.get_closest_marker("sandbox"):
             item.add_marker(skip_sandbox)
+        if not gates.vscode_chat_tests_enabled and item.get_closest_marker(
+            "vscode_chat"
+        ):
+            item.add_marker(skip_vscode_chat)
 
 
 @pytest.fixture(autouse=True)

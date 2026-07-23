@@ -23,6 +23,7 @@ def test_empty_collection_gate_vars_read_as_disabled(
         "E2E_TESTS_ENABLED",
         "DOCKER_TESTS_ENABLED",
         "SANDBOX_TESTS_ENABLED",
+        "VSCODE_CHAT_TESTS_ENABLED",
     ):
         monkeypatch.setenv(var, "")
     gates = CollectionGateSettings()
@@ -30,6 +31,7 @@ def test_empty_collection_gate_vars_read_as_disabled(
     assert gates.e2e_tests_enabled is False
     assert gates.docker_tests_enabled is False
     assert gates.sandbox_tests_enabled is False
+    assert gates.vscode_chat_tests_enabled is False
 
 
 def test_empty_baseline_vars_fall_back_to_defaults(
