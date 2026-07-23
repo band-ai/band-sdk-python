@@ -1,20 +1,24 @@
 """Unit guards for the Copilot-in-VS-Code harness toolkit (``tests/e2e/vscode``).
 
 The live suite needs a signed-in VS Code window and can never run in CI, so
-these pure-function tests are the only ones protecting its plumbing on every
-PR: the prompt shape Copilot receives, the workspace files VS Code reads, the
-version evidence recorded with a run, and the scorecard rows the run emits.
+these tests are the only ones protecting its plumbing on every PR: the prompt
+shape Copilot receives, the workspace files VS Code reads, the band-mcp
+process lifecycle, the version evidence recorded with a run, and the scorecard
+rows the run emits.
 """
 
 from __future__ import annotations
 
 import json
+import socket
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
+from tests.e2e.vscode import server as server_module
 from tests.e2e.vscode.driver import (
     PreflightError,
     capture_versions,
@@ -27,8 +31,11 @@ from tests.e2e.vscode.scorecard import (
     VSCodeScorecard,
     outcome_status,
 )
+from tests.e2e.vscode.server import BandMCPServer
 from tests.e2e.vscode.workspace import (
     AUTO_REPLY_SETTING,
+    MCP_ACCESS_ALL,
+    MCP_ACCESS_SETTING,
     MCP_SERVER_NAME,
     scaffold_workspace,
 )
@@ -72,6 +79,7 @@ def test_scaffold_workspace_writes_mcp_entry_and_auto_reply(tmp_path: Path) -> N
 
     settings = json.loads((tmp_path / ".vscode" / "settings.json").read_text())
     assert settings[AUTO_REPLY_SETTING] is True
+    assert settings[MCP_ACCESS_SETTING] == MCP_ACCESS_ALL
 
 
 # --- driver preflight + version evidence --------------------------------------------
@@ -114,6 +122,42 @@ def test_capture_versions_records_failures_instead_of_raising() -> None:
     versions = capture_versions(["code"], ["band-mcp"], run=failing)
     assert "unavailable" in versions["vscode"]
     assert "unavailable" in versions["band_mcp"]
+
+
+# --- band-mcp server lifecycle: startup failure modes --------------------------------
+
+
+def _server(command: list[str], port: int = 0) -> BandMCPServer:
+    return BandMCPServer(command, agent_key="key", base_url="http://band", port=port)
+
+
+async def test_start_rejects_port_held_by_another_process() -> None:
+    """A stale listener must fail the run loud, not answer the readiness probe
+    for a child that could never bind (the suite would then talk to the stale
+    server's Band identity)."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(1)
+        server = _server([sys.executable], port=sock.getsockname()[1])
+        with pytest.raises(RuntimeError, match="already in use"):
+            await server.start()
+    assert not server.running  # no child was ever spawned
+
+
+async def test_failed_startup_never_orphans_the_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child that stays alive but never binds must be terminated when start()
+    gives up — the session fixture's teardown never runs on a startup failure,
+    so an orphan would squat the stable port across reruns."""
+    monkeypatch.setattr(server_module, "READY_TIMEOUT_S", 0.5)
+    never_binds = [sys.executable, "-c", "import time; time.sleep(60)"]
+    server = _server(never_binds)
+
+    with pytest.raises(RuntimeError, match="not accepting connections"):
+        await server.start()
+
+    assert not server.running
 
 
 # --- scorecard: outcome mapping + emitted artifact ----------------------------------
