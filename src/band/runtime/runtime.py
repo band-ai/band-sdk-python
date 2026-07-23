@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
 
 from band.platform.event import PlatformEvent
 
+from .claims import MessageClaimRegistry
 from .execution import Execution, ExecutionContext, ExecutionHandler
 from .presence import RoomPresence
 from .types import (
@@ -130,6 +131,10 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
+
+        # Shared by default contexts so a room/message pair executes at most
+        # once per runtime, including across context recreation.
+        self._claim_registry = MessageClaimRegistry()
 
         # Set up presence callbacks
         self.presence.on_room_joined = self._on_room_joined
@@ -273,6 +278,7 @@ class AgentRuntime:
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
                 hub_room_id=self._hub_room_id,
+                claim_registry=self._claim_registry,
             )
 
         self.executions[room_id] = execution
@@ -299,6 +305,11 @@ class AgentRuntime:
 
         execution = self.executions.pop(room_id)
         graceful = await execution.stop(timeout=timeout)
+
+        # Durable completion state is safe to release with the room. Pending
+        # acknowledgements remain in the shared registry so a later rejoin
+        # retries only the ack instead of replaying handler side effects.
+        self._claim_registry.discard_completed(room_id)
 
         # Call cleanup callback (for adapter to clean up checkpointer, etc.)
         if self._on_session_cleanup:
