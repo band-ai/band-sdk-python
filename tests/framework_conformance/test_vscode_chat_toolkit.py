@@ -163,7 +163,7 @@ async def test_failed_startup_never_orphans_the_child(
 # --- scorecard: outcome mapping + emitted artifact ----------------------------------
 
 
-def _report(when: str, outcome: str, nodeid: str, fspath: str) -> pytest.TestReport:
+def _report(when: str, outcome: str, nodeid: str) -> pytest.TestReport:
     """A minimal stand-in carrying the only report fields the plugin reads."""
     return cast(
         pytest.TestReport,
@@ -173,7 +173,6 @@ def _report(when: str, outcome: str, nodeid: str, fspath: str) -> pytest.TestRep
             failed=outcome == "failed",
             passed=outcome == "passed",
             nodeid=nodeid,
-            fspath=fspath,
         ),
     )
 
@@ -190,23 +189,23 @@ def _report(when: str, outcome: str, nodeid: str, fspath: str) -> pytest.TestRep
     ],
 )
 def test_outcome_status_mapping(when: str, outcome: str, expected: str | None) -> None:
-    report = _report(when, outcome, "tests/e2e/vscode/test_x.py::t", "x")
+    report = _report(when, outcome, "tests/e2e/vscode/test_x.py::t")
     assert outcome_status(report) == expected
 
 
 def test_scorecard_keeps_suite_rows_plus_fixed_na_row(tmp_path: Path) -> None:
-    """One row per suite test plus the fixed L4 N/A; foreign reports ignored."""
-    suite_dir = tmp_path / "suite"
-    suite_dir.mkdir()
-    suite_test = suite_dir / "test_copilot_chat.py"
-    suite_test.touch()
+    """One row per suite test plus the fixed L4 N/A; foreign reports ignored.
+
+    The filter is a nodeid prefix — nodeids stay rootdir-relative wherever
+    pytest is invoked from, unlike report file paths.
+    """
     nodeid = "tests/e2e/vscode/test_copilot_chat.py::test_participation"
 
-    plugin = VSCodeScorecard(tmp_path / "scorecard.json", suite_dir)
+    plugin = VSCodeScorecard(tmp_path / "scorecard.json", "tests/e2e/vscode/")
     for report in (
-        _report("setup", "passed", nodeid, str(suite_test)),
-        _report("call", "passed", nodeid, str(suite_test)),
-        _report("call", "passed", "tests/other.py::t", str(tmp_path / "other.py")),
+        _report("setup", "passed", nodeid),
+        _report("call", "passed", nodeid),
+        _report("call", "passed", "tests/other.py::t"),
     ):
         plugin.pytest_runtest_logreport(report)
 
@@ -219,7 +218,7 @@ def test_scorecard_keeps_suite_rows_plus_fixed_na_row(tmp_path: Path) -> None:
 
 def test_sessionfinish_writes_scorecard_and_metadata_sidecar(tmp_path: Path) -> None:
     out = tmp_path / "scorecard.json"
-    plugin = VSCodeScorecard(out, tmp_path)
+    plugin = VSCodeScorecard(out, "tests/e2e/vscode/")
     plugin.metadata = {"vscode": "1.103.0"}
 
     plugin.pytest_sessionfinish()

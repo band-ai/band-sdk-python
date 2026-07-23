@@ -55,14 +55,19 @@ class VSCodeScorecard:
     """Pytest plugin: one row per suite test plus the fixed L4 ``na`` row,
     written with a ``.meta.json`` environment sidecar at session end."""
 
-    def __init__(self, path: str | Path, suite_dir: Path) -> None:
+    def __init__(self, path: str | Path, suite_prefix: str) -> None:
+        """``suite_prefix``: the rootdir-relative nodeid prefix of the suite
+        (e.g. ``"tests/e2e/vscode/"``). Nodeids are rootdir-relative regardless
+        of the invocation directory — a filesystem-path filter would resolve
+        against the CWD and silently drop every row when pytest runs from
+        outside the repo root."""
         self._path = Path(path)
-        self._suite_dir = suite_dir
+        self._suite_prefix = suite_prefix
         self._rows: dict[str, ScorecardRow] = {}
         self.metadata: dict[str, str] = {}
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
-        if not Path(report.fspath).resolve().is_relative_to(self._suite_dir):
+        if not report.nodeid.startswith(self._suite_prefix):
             return
         status = outcome_status(report)
         if status is None:

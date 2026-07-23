@@ -108,9 +108,18 @@ class CodeChatDriver:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        output, _ = await asyncio.wait_for(
-            process.communicate(), timeout=SUBMIT_TIMEOUT_S
-        )
+        try:
+            output, _ = await asyncio.wait_for(
+                process.communicate(), timeout=SUBMIT_TIMEOUT_S
+            )
+        except TimeoutError:
+            # A hung CLI must not outlive the turn: left alone it could still
+            # deliver its prompt minutes later, into a rerun's session.
+            process.kill()
+            await process.wait()
+            raise RuntimeError(
+                f"code {args[0]} did not return within {SUBMIT_TIMEOUT_S}s"
+            ) from None
         if output:
             logger.debug("code %s: %s", args[0], output.decode(errors="replace"))
         if process.returncode != 0:

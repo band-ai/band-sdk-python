@@ -186,13 +186,20 @@ def surface_room(
 
 
 def pytest_configure(config: pytest.Config) -> None:
-    """Register the suite scorecard plugin when emission is enabled."""
+    """Register the suite scorecard plugin for an enabled live run.
+
+    Gated on the suite gate too, not just the artifact path: a lingering
+    VSCODE_CHAT_SCORECARD_JSON in the environment must not make an unrelated
+    (gate-off, all-skip) run shell out to ``code``/``band-mcp`` for version
+    evidence — a cold ``uvx band-mcp`` would stall collection on a download.
+    """
     settings = VSCodeChatSettings()
-    if not settings.vscode_chat_scorecard_json:
+    if not (settings.vscode_chat_tests_enabled and settings.vscode_chat_scorecard_json):
         return
-    plugin = VSCodeScorecard(
-        settings.vscode_chat_scorecard_json, Path(__file__).parent.resolve()
+    suite_prefix = (
+        Path(__file__).parent.resolve().relative_to(config.rootpath).as_posix() + "/"
     )
+    plugin = VSCodeScorecard(settings.vscode_chat_scorecard_json, suite_prefix)
     plugin.metadata = capture_versions(
         shlex.split(settings.code_command), shlex.split(settings.band_mcp_command)
     )

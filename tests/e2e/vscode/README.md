@@ -73,8 +73,12 @@ uv run pytest tests/e2e/vscode -v -s --no-cov
 During the run a VS Code window opens on the scaffolded workspace. The harness
 minimizes prompts, and after the first run reruns are unattended:
 
-- **Workspace trust**: suppressed — the window is launched with
-  `--disable-workspace-trust` (scoped to that launch, not a global setting).
+- **Workspace trust**: VS Code asks once per folder ("Do you trust the
+  authors…") — click **Trust Folder & Continue**. The workspace path is
+  stable by default, so the choice is remembered for every rerun. (The
+  launch deliberately does *not* use `--disable-workspace-trust`: Copilot's
+  AI features require a trusted workspace, so that flag would only defer
+  the same dialog to chat time.)
 - **MCP server trust**: VS Code asks once per server *configuration*. The
   workspace path and the band-mcp port are stable by default, so `mcp.json`
   is byte-identical across runs — allow the `band` server on the first run
