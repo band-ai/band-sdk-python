@@ -8,7 +8,7 @@ installation, no host pollution.
 
 Your workspace stays a plain `uv` project (`pyproject.toml` + committed
 `uv.lock`); the kit brings the Band SDK, the launcher, and the network
-policy. Tested with `sbx` v0.34.0.
+policy. Tested with `sbx` v0.35.0.
 
 ## Why use this kit?
 
@@ -56,7 +56,10 @@ curl -fsSL "https://codeload.github.com/band-ai/band-sdk-python/tar.gz/refs/tags
       "band-sdk-python-band-sdk-v<X.Y.Z>/docker/band_python_kit/echo-agent"
 #    Then, in ~/my-band-agent:
 #    - set agent.id in band.yaml
-#    - create .band/secrets.env from secrets.env.example (chmod 600)
+#    - provision your Band key: band.yaml defaults to proxy-managed, so run the
+#      `sbx secret set-custom` step from "Credential custody" below — NOT
+#      .band/secrets.env, which the proxy-managed launcher ignores. (The echo
+#      starter needs no LLM key.)
 
 # 4. Create the sandbox from the published kit — your agent starts immediately.
 sbx create --name my-band-agent \
@@ -82,17 +85,40 @@ deployment, override the endpoints in `band.yaml` (or via `BAND_REST_URL` /
 `BAND_WS_URL`) and grant that host per sandbox — never baked into the kit:
 
 ```bash
-sbx policy allow network --sandbox my-band-agent platform.dev.band.ai
+sbx policy allow network --sandbox my-band-agent <band-host>
 ```
 
-### Credential custody (v0.1)
+### Credential custody
 
-Credentials are supplied through the opt-in `.band/secrets.env` file
-(`credentials.acknowledgePlaintextInSandbox: true`). This is **laptop-equivalent
-custody**: the plaintext keys exist in your workspace and inside the sandbox VM.
-Proxy-injected credentials that never enter the VM come in a later release.
-Treat the keys as you would any local `.env`: git-ignored, `chmod 600`, rotated
-if leaked.
+Two tiers — prefer the first.
+
+**Injection tier — real keys never enter the VM.** A trusted host-side proxy
+holds the real keys and writes them onto outbound requests; the sandbox only ever
+sees a sentinel. Requires `sbx create --kit`.
+
+- **LLM providers** are built-in `sbx` services — store the one your agent uses:
+  ```bash
+  sbx secret set -g anthropic        # or openai, google, groq, mistral, …
+  ```
+- **Band** is provisioned host-side. The `**.band.ai` wildcard follows whichever
+  Band deployment you point the agent at via `BAND_REST_URL` (prod `app.band.ai`,
+  staging, self-hosted, …) — the endpoint config is the control knob:
+  ```bash
+  export BAND_API_KEY=<your-band-key>   # keep the value out of shell history
+  sbx secret set-custom -g --host '**.band.ai' \
+    --env BAND_API_KEY --placeholder proxy-managed --value "$BAND_API_KEY"
+  ```
+  `--value` is visible in shell history / process args — pass it from an exported
+  variable as above (and clear history if the real value ever appears literally).
+  The proxy then supplies the real key on outbound requests to that host (verified:
+  the Band host presents an `O=Docker Sandboxes` MITM cert inside the sandbox). For
+  a non-`band.ai` (self-hosted) deployment, use its host with `--host`.
+
+**Env-file tier — laptop-equivalent, less secure.** The opt-in `.band/secrets.env`
+file puts plaintext keys in both your workspace and the sandbox VM
+(`credentials.acknowledgePlaintextInSandbox: true`); the launcher **warns at
+startup** when this tier is active. Treat the file as any local `.env`:
+git-ignored, `chmod 600`, rotated if leaked. Prefer the injection tier.
 
 ## Your workspace
 
@@ -121,12 +147,12 @@ override the file:
 
 ### Credentials
 
-`.band/secrets.env` is an explicit opt-in
-(`credentials.acknowledgePlaintextInSandbox: true` in `band.yaml`): the
-plaintext keys exist in both your workspace and the sandbox VM, and the
-launcher enforces the guardrails around the file. Setup and the accepted
-names: [`echo-agent/README.md`](echo-agent/README.md#credentials) and its
-`secrets.env.example`.
+See [Credential custody](#credential-custody) for the two tiers and the
+`sbx secret` commands. The env-file (fallback) tier's setup and accepted names
+live in [`echo-agent/README.md`](echo-agent/README.md#credentials) and its
+`secrets.env.example`; the launcher enforces that file's guardrails (gitignored,
+never Git-tracked, owner-only, no symlinks) and warns that it is the less-secure
+tier.
 
 ## How the launch works
 
@@ -156,15 +182,44 @@ secret values.
 
 ## Network access
 
-The kit allows only what the launch flow and the supported LLM backends
-(OpenAI, Anthropic/Claude, GitHub Copilot) need: Band, PyPI, and each
-backend's API hosts. Everything else is denied by the sandbox proxy.
-
-To reach an additional host — or a non-production Band deployment — grant it
-per sandbox instead of editing the kit:
+The kit's immutable baseline allows only Band Cloud and the two PyPI hosts
+needed for `uv sync --locked` on a fresh sandbox. Everything else is denied by
+the sandbox proxy, including LLM providers, source-control hosts, and custom
+APIs. Grant only the exact host an agent needs, scoped to that sandbox:
 
 ```bash
-sbx policy allow network --sandbox my-band-agent platform.dev.band.ai
+# Direct LLM providers
+sbx policy allow network --sandbox my-band-agent api.anthropic.com
+sbx policy allow network --sandbox my-band-agent api.openai.com
+
+# Clone a repository hosted on GitHub
+sbx policy allow network --sandbox my-band-agent github.com
+
+# Non-production or self-hosted Band
+sbx policy allow network --sandbox my-band-agent <band-host>
+```
+
+GitHub Copilot needs several hosts. Grant its documented minimal set only when
+the agent uses Copilot:
+
+```bash
+sbx policy allow network --sandbox my-band-agent \
+  "github.com,api.github.com,release-assets.githubusercontent.com,*.githubcopilot.com,*.individual.githubcopilot.com,*.business.githubcopilot.com,*.enterprise.githubcopilot.com"
+```
+
+If a service is still blocked, inspect its exact hostname and allow that host
+rather than widening the policy:
+
+```bash
+sbx policy log my-band-agent
+```
+
+For a host required during startup (for example, a configured repository
+clone), add the rule and start the sandbox again:
+
+```bash
+sbx stop my-band-agent
+sbx run --name my-band-agent
 ```
 
 Do not set `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` yourself: the sandbox

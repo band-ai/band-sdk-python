@@ -25,14 +25,20 @@ construction (settings, REST client):
     uv run probe.py --label after-daemon-restart    # after the daemon bounce
     uv run probe.py --label cleanup                # final teardown
 
-`provision` prints exactly four `KEY=value` lines to stdout — the fresh
-agent's `BAND_AGENT_ID`/`BAND_API_KEY` plus the *validated* `BAND_WS_URL`/
-`BAND_REST_URL` (the same values `load_settings()` guarded, alias-resolved
-from `.env.test`) — for `run.sh` to capture and inject into the sandboxed
-process's environment. Nothing else goes to stdout, and no credential is
-written to `.sandbox-smoke/state.json` (see `state.py`). Emitting the URLs
-here keeps run.sh's agent on exactly the endpoints the production guard
-checked, instead of whatever the raw shell environment happens to hold.
+`provision` prints three non-secret `KEY=value` lines to stdout — the fresh
+agent's `BAND_AGENT_ID` plus the *validated* `BAND_WS_URL`/`BAND_REST_URL`
+(the same values `load_settings()` guarded, alias-resolved from `.env.test`)
+— for `run.sh` to capture and inject into the sandboxed process's
+environment. The fresh agent's `BAND_API_KEY` is a secret, so it never goes
+to stdout (a stream that could be captured into a log): it is written only to
+the private env file named by `--api-key-env-file` (a single
+`BAND_API_KEY=<key>` line), which `run.sh` creates 0600, feeds to
+`sbx exec --env-file`, and removes on exit — so the key never becomes a host
+shell variable or command-line argument either. Nothing else goes to stdout,
+and no credential is written to
+`.sandbox-smoke/state.json` (see `state.py`). Emitting the URLs here keeps
+run.sh's agent on exactly the endpoints the production guard checked, instead
+of whatever the raw shell environment happens to hold.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import uuid
 
@@ -144,7 +151,32 @@ async def _reap_recorded_resources(
     return all_reaped
 
 
-async def provision(sandbox_name: str, sbx_version: str, sdk_version: str) -> None:
+def write_api_key_env_file(api_key: str, path: str) -> None:
+    """Hand the freshly minted agent key to run.sh via a private (0600) env file.
+
+    The file holds a single ``BAND_API_KEY=<key>`` line so run.sh can pass it
+    straight to ``sbx exec --env-file`` — the key never becomes a shell
+    variable or a command-line argument on the host, so it stays out of the
+    process listing. Kept off stdout too (a stream that could be logged); the
+    0600 mode is forced at creation for the case where the file does not
+    already exist (run.sh pre-creates it 0600). With no path — an operator
+    running ``provision`` by hand — the key is simply not emitted; the agent is
+    disposable and gets reaped.
+    """
+    if not path:
+        logger.warning(
+            "No --api-key-env-file given; the agent key was not emitted "
+            "(the agent is disposable and will be reaped)."
+        )
+        return
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as env_file:
+        env_file.write(f"BAND_API_KEY={api_key}\n")
+
+
+async def provision(
+    sandbox_name: str, sbx_version: str, sdk_version: str, api_key_env_file: str
+) -> None:
     settings, client = bootstrap()
     run_state = state.begin_provision()
     manager = ResourceManager(
@@ -206,13 +238,15 @@ async def provision(sandbox_name: str, sbx_version: str, sdk_version: str) -> No
         raise
 
     logger.info("Provisioned agent %s and room %s", agent.id, room_id)
-    # The only stdout output: run.sh captures these four lines verbatim.
-    # The URLs are the validated settings values, so the sandboxed agent can
-    # only ever target the endpoints the production guard checked.
+    # stdout carries only these three non-secret lines, which run.sh captures
+    # verbatim. The URLs are the validated settings values, so the sandboxed
+    # agent can only ever target the endpoints the production guard checked.
     sys.stdout.write(f"BAND_AGENT_ID={agent.id}\n")
-    sys.stdout.write("BAND_API_KEY=[REDACTED]\n")
     sys.stdout.write(f"BAND_WS_URL={settings.endpoints.ws_url}\n")
     sys.stdout.write(f"BAND_REST_URL={settings.endpoints.rest_url}\n")
+    # The agent key is a secret: it rides a private 0600 env file that run.sh
+    # feeds to `sbx exec --env-file`, never stdout and never the host's argv.
+    write_api_key_env_file(agent.api_key, api_key_env_file)
 
 
 async def _run_probe(label: str) -> None:
@@ -302,12 +336,18 @@ def main() -> None:
     parser.add_argument("--sandbox-name", default="")
     parser.add_argument("--sbx-version", default="")
     parser.add_argument("--sdk-version", default="")
+    parser.add_argument("--api-key-env-file", default="")
     args = parser.parse_args()
 
     match args.label:
         case "provision":
             asyncio.run(
-                provision(args.sandbox_name, args.sbx_version, args.sdk_version)
+                provision(
+                    args.sandbox_name,
+                    args.sbx_version,
+                    args.sdk_version,
+                    args.api_key_env_file,
+                )
             )
         case "cleanup":
             asyncio.run(cleanup())

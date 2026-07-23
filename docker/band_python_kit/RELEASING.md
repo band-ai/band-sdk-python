@@ -59,7 +59,7 @@ human owns triage of their failures and of the rebuild scan reports.
 | When | What runs | Result |
 |---|---|---|
 | On every band-sdk release | `release.yml` → `publish-kit` (calls `kit-publish.yml`) | Fresh image + kit publish at `X.Y.Z`, floating tags moved. |
-| Weekly, Mondays 05:00 UTC | `kit-image-rebuild.yml` (schedule) | Rebuilds the latest released version **only if** a pinned base has a newer digest than `dev`'s Dockerfile pins, or the currently published image (`X.Y.Z-rN` when rebuilt, else `X.Y.Z`) has a fixable HIGH/CRITICAL; publishes the next `X.Y.Z-rN`, moves floating tags, opens a digest-pin bump PR **against `dev`**; skips entirely (even when forced) if the version was never published — the initial `X.Y.Z` belongs to the release workflow (the repo convention — `main` receives it via the promote workflow). A no-change week publishes nothing. **Merge the bump PR promptly**: `dev`'s pins are the comparison ledger, so while the PR sits unmerged the next scheduled run re-detects the same digest delta and rebuilds redundantly. |
+| Weekly, Mondays 05:00 UTC | `kit-image-rebuild.yml` (schedule) | Rebuilds the latest released version **only if** a pinned base has a newer digest than `main`'s Dockerfile pins, or the currently published image (`X.Y.Z-rN` when rebuilt, else `X.Y.Z`) has a fixable HIGH/CRITICAL; publishes the next `X.Y.Z-rN`, moves floating tags, opens a digest-pin bump PR **against `main`**; skips entirely (even when forced) if the version was never published — the initial `X.Y.Z` belongs to the release workflow. A no-change week publishes nothing. **Merge the bump PR promptly**: `main`'s pins are the comparison ledger, so while the PR sits unmerged the next scheduled run re-detects the same digest delta and rebuilds redundantly. |
 | Ad hoc (critical CVE) | `kit-image-rebuild.yml` via `workflow_dispatch` (`force: true`, `reason:`) | Same as weekly but unconditional; the reason is recorded in the run log. |
 | Manual publish/rehearsal | `kit-publish-manual.yml` via `workflow_dispatch` | Calls the same pipeline under the same publish lock. Rehearsals leave `move-floating` false; emergency recovery can opt in after review. |
 
@@ -95,8 +95,16 @@ the Dockerfile.
 The check covers the **whole** lockfile, so the gate can trip on a fresh
 **dev-only** dependency bump (pytest, ruff, …) that never enters the
 image — not only on a poisoned runtime dependency. Benign trips are therefore
-expected. A trip leaves a **split release**: the PyPI publish (`publish-band`, an
-independent job) has already succeeded, but no kit artifacts were produced.
+expected. A trip leaves a **split release**: the PyPI publish (`band-publish.yml`,
+an independent release-triggered workflow) has already succeeded, but no kit
+artifacts were produced.
+
+Packages Band publishes itself are **exempt** (`FIRST_PARTY` in
+`scripts/check-lock-age.py`): the gate models *upstream* compromise, and
+ageing our own releases would deadlock every kit publish that follows a
+first-party dependency bump. The gate script runs from the checked-out
+release tag, so tags cut before the exemption existed still gate those
+packages — republish those with the override below.
 
 ### Recovery
 
@@ -117,9 +125,12 @@ independent job) has already succeeded, but no kit artifacts were produced.
 
 ## Supported `sbx` version
 
-Validated against **`sbx` v0.34.0** at ship time (OCI v2 kit artifacts,
-`kit.allowedSources` default). The kit surface of `sbx` is experimental and has
-moved between releases, so on **every** CLI upgrade, revalidate:
+Targets **`sbx` v0.35.0** — the version whose kit-spec v2 schema the credential
+injection uses (`credentials[].apiKey.inject[]`). `sbx kit validate` passes clean
+on the repo `spec.yaml` under 0.35.0; run the full push → pull → OCI-consume
+roundtrip below at the next release cut. The kit surface of `sbx` is
+experimental and has moved between releases, so on **every** CLI upgrade,
+revalidate:
 
 - `sbx kit validate` on the repo `spec.yaml`,
 - a `kit push` → `kit pull` roundtrip,

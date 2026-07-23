@@ -31,20 +31,31 @@ SDK_VERSION="$(sbx exec --workdir "$SBX_WORKSPACE" "$SBX_SANDBOX" \
   2>/dev/null || echo unknown)"
 
 echo "Provisioning a fresh Band agent + room for this run..."
-PROVISION_OUTPUT="$(uv run probe.py --label provision \
-  --sandbox-name "$SBX_SANDBOX" --sbx-version "$SBX_VERSION" --sdk-version "$SDK_VERSION")"
+# The fresh agent key is a secret, so probe.py writes it — as a single
+# `BAND_API_KEY=<key>` line — to this private 0600 env file rather than to
+# stdout (a stream that could be captured into a log). It is fed straight to
+# `sbx exec --env-file` below, so the key never becomes a shell variable or a
+# command-line argument on the host, where it would otherwise show in the
+# process listing. The three non-secret KEY=value lines still come back on
+# stdout. The file lives in the 700 .sandbox-smoke/ dir and is shredded on exit.
+KEY_ENV_FILE="$(mktemp "$(pwd)/.sandbox-smoke/agent-env.XXXXXX")"
+chmod 600 "$KEY_ENV_FILE"
+trap 'rm -f "$KEY_ENV_FILE"' EXIT
 
-if [[ "$(echo "$PROVISION_OUTPUT" | wc -l | tr -d ' ')" != "4" ]]; then
-  echo "Provisioning stdout was not exactly the expected four KEY=value lines; aborting." >&2
+PROVISION_OUTPUT="$(uv run probe.py --label provision \
+  --sandbox-name "$SBX_SANDBOX" --sbx-version "$SBX_VERSION" \
+  --sdk-version "$SDK_VERSION" --api-key-env-file "$KEY_ENV_FILE")"
+
+if [[ "$(echo "$PROVISION_OUTPUT" | wc -l | tr -d ' ')" != "3" ]]; then
+  echo "Provisioning stdout was not exactly the expected three KEY=value lines; aborting." >&2
   exit 1
 fi
 
 BAND_AGENT_ID="$(echo "$PROVISION_OUTPUT" | sed -n 's/^BAND_AGENT_ID=//p')"
-BAND_API_KEY="$(echo "$PROVISION_OUTPUT" | sed -n 's/^BAND_API_KEY=//p')"
 BAND_WS_URL="$(echo "$PROVISION_OUTPUT" | sed -n 's/^BAND_WS_URL=//p')"
 BAND_REST_URL="$(echo "$PROVISION_OUTPUT" | sed -n 's/^BAND_REST_URL=//p')"
 
-if [[ -z "$BAND_AGENT_ID" || -z "$BAND_API_KEY" || -z "$BAND_WS_URL" || -z "$BAND_REST_URL" ]]; then
+if [[ -z "$BAND_AGENT_ID" || ! -s "$KEY_ENV_FILE" || -z "$BAND_WS_URL" || -z "$BAND_REST_URL" ]]; then
   echo "Provisioning did not return the agent credentials and endpoints; aborting." >&2
   exit 1
 fi
@@ -53,18 +64,18 @@ echo "Agent provisioned: $BAND_AGENT_ID"
 echo "Starting the sandboxed agent (sbx exec)..."
 echo "Log: .sandbox-smoke/agent.log"
 
-# The freshly-minted credentials are passed via `sbx exec`'s own `-e` flags
-# (verified against `sbx exec --help`, sbx v0.34.0 — it mirrors `docker exec`),
-# not a file, so nothing sensitive touches disk. This is visible in the
-# host's own process listing for as long as `sbx exec` runs — acceptable for
-# an operator-controlled local smoke; a later, separate credential-injection
-# effort can replace this with Docker's proxy-based injection so the value
-# never appears even there.
+# The non-secret ids/URLs ride `sbx exec`'s `-e` flags; the API key rides
+# `--env-file` (both verified against `sbx exec --help` — it mirrors
+# `docker exec`), so only the non-secret values ever appear in the host's
+# process listing, never the key. This shell-sandbox smoke still hands the real
+# key to the VM by design (a plain shell sandbox has no proxy-injection path);
+# the never-in-VM custody — the key stays host-side, the VM sees only the
+# `proxy-managed` sentinel — is proven by the kit-based E2E.
 sbx exec \
   -e "BAND_AGENT_ID=$BAND_AGENT_ID" \
-  -e "BAND_API_KEY=$BAND_API_KEY" \
   -e "BAND_WS_URL=$BAND_WS_URL" \
   -e "BAND_REST_URL=$BAND_REST_URL" \
+  --env-file "$KEY_ENV_FILE" \
   --workdir "$SBX_WORKSPACE" \
   "$SBX_SANDBOX" uv run agent.py \
   2>&1 | tee -a .sandbox-smoke/agent.log

@@ -9,7 +9,7 @@ from typing import Any
 
 import yaml
 
-from band.docker.launcher import LauncherEnv
+from band.docker.launcher import CredentialSource, LauncherEnv
 
 
 @dataclass
@@ -118,4 +118,10 @@ def enable_credentials(config: dict[str, Any]) -> dict[str, Any]:
         "path": ".band/secrets.env",
         "acknowledgePlaintextInSandbox": True,
     }
+    return config
+
+
+def enable_proxy_managed(config: dict[str, Any]) -> dict[str, Any]:
+    """Select proxy-managed custody: no file, no plaintext acknowledgement."""
+    config["credentials"] = {"source": CredentialSource.PROXY_MANAGED.value}
     return config

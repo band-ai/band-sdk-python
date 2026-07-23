@@ -2,24 +2,14 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 from band.docker.launcher import LaunchError, resolve_launch
+from tests.docker.markers import requires_posix_absolute_paths
 
 from .fakes import Workspace, default_config, enable_repo, make_env, write_config
-
-# DEFAULT_SDK_HOME is the hardcoded POSIX path "/opt/band". pathlib only
-# treats it as absolute under a POSIX flavour — WindowsPath("/opt/band")
-# is relative — and path resolution only ever runs inside the Linux sandbox
-# container in production, so this is a real platform gap, not a bug to work
-# around.
-requires_posix_absolute_paths = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="DEFAULT_SDK_HOME ('/opt/band') is only absolute under PosixPath",
-)
 
 
 def test_project_traversal_rejected(workspace: Workspace) -> None:

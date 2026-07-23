@@ -5,117 +5,153 @@ this repository.
 
 ## Overview
 
-The repository uses a branch promotion model with two long-lived branches:
+The repository uses **GitHub Flow** on a single long-lived trunk:
 
 ```
-feature branches ──(squash)──▶ dev ──(merge)──▶ main (release)
+feature branch ──(squash PR)──▶ main ──(merge release PR)──▶ release (PyPI + GHCR)
 ```
 
-- `dev` — integration branch. All feature work is squash-merged here.
-- `main` — release branch. Merges to `main` trigger an automated PyPI release
-  via release-please.
+- `main` — the single trunk. All feature work is squash-merged here, and it is
+  also the release branch.
+- There is no `dev`/`develop` branch and no promotion hop. Release Please keeps a
+  standing **release PR** up to date on `main`; merging that release PR is the
+  deliberate "cut a release" action.
 
-There is no `staging` branch; promotion is a single hop `dev → main`.
+Because feature work and release commits live on the same branch, there is no
+back-merge to reconcile after a release.
 
 ## Branch Protection (GitHub Rulesets)
 
 Protection is enforced with GitHub Rulesets, not classic branch protection.
 
 | Branch | Merge Method | Required Reviews | Stale Dismissed | Thread Resolution | Strict Checks |
-|--------|--------------|------------------|-----------------|-------------------|---------------|
-| `dev`  | Squash only  | 1                | No              | No                | No            |
-| `main` | Merge commit | 1                | Yes             | Yes               | Yes           |
+|--------|--------------|------------------|-------------------|---------------|---------------|
+| `main` | Squash (features) / Merge (release PR) | 1 | Yes | Yes | Yes |
 
-Both branches block deletion and non-fast-forward (force) pushes.
+`main` blocks deletion and non-fast-forward (force) pushes.
 
-**Required status checks (both branches):**
+**Required status checks:**
 
 - `lint`
-- `test (3.11)`
-- `test (3.12)`
+- `test (ubuntu-latest, 3.11)`
+- `test (ubuntu-latest, 3.12)`
+- `test (windows-latest, 3.11)`
+- `test (windows-latest, 3.12)`
 - `packaging`
 - `Validate PR Title`
 
-> `main` uses **strict** required status checks: the PR branch must be up to date
-> with `main` before it can merge.
+> **Matrix context names:** the `test` job is a 2×2 matrix (`os` ×
+> `python-version`), so GitHub reports one check context *per cell* named
+> `test (<os>, <python-version>)` — not `test (3.11)`. Configure the ruleset with
+> the exact strings above; a name that doesn't match a real context silently
+> never becomes required. The `test-crewai` job (run in the `dev-crewai` extra)
+> follows the same pattern — `test-crewai (<os>, <python-version>)` — if you add
+> it to the required set.
+
+> `main` uses **strict** required status checks: a PR branch must be up to date
+> with `main` before it can merge. After each merge, other open PRs go stale and
+> must click **Update branch** (which re-runs the required checks) before they can
+> merge. This keeps `main` provably green at every commit at the cost of some
+> update-branch churn on concurrent PRs.
 
 ## PR Workflows
 
 ### CI — `ci.yml`
 
-Runs on every PR to `dev` and `main`.
+Runs on every PR to `main`.
 
 - `lint` — `pre-commit run --all-files`
-- `test` — pytest on Python 3.11 and 3.12
-- `test-parlant` — parlant adapter/converter tests in an isolated extra
+- `test` — pytest on Python 3.11 and 3.12 (Linux + Windows)
+- `test-crewai` — crewai adapter/converter tests in an isolated extra
 - `packaging` — builds the wheel and verifies core and full imports
 
 ### PR Title — `pr-title.yml`
 
 Validates the PR title against Conventional Commits (`Validate PR Title`).
-Skipped for bot actors (dependabot, release-please, the promote workflow's
-GitHub App). Promotion PRs are titled `chore: promote dev to main` so they remain
-valid Conventional Commits if the check does run.
+Skipped for bot actors (dependabot, release-please).
 
 ## Release Workflow
 
 ### Release — `release.yml`
 
-Triggered on push to `main` (i.e. after a promotion PR merges).
+Triggered on push to `main` (i.e. on every merge, and again when a release PR
+merges).
 
-1. release-please opens/updates a release PR, or — when a release PR merges —
+1. Release Please opens/updates a release PR, or — when a release PR merges —
    tags the release and updates the changelog and version.
-2. On a created release, publishes `band-sdk` to PyPI (`publish-band`).
-3. In parallel, publishes the sandbox kit to GHCR via the reusable
+2. On a created release, publishes the sandbox kit to GHCR via the reusable
    `kit-publish.yml` pipeline (`publish-kit`): the multi-arch attested image
    `ghcr.io/band-ai/band-python-kit/image` and the OCI kit artifact
    `ghcr.io/band-ai/band-python-kit`, gated by the supply-chain quarantine
-   check. A kit failure never blocks the PyPI publish (independent jobs).
-4. After a successful kit publish, opens an automated version-bump PR against
+   check.
+3. After a successful kit publish, opens an automated version-bump PR against
    `band-ai/add-band` (`bump-add-band`; merging it stays a human step).
-5. `summary` reports every artifact's outcome.
+4. `summary` reports each artifact's outcome.
+
+### PyPI publish — `band-publish.yml`
+
+Not a job in `release.yml`: publishing `band-sdk` to PyPI reacts to the
+`release: published` event (the release workflow's App token makes that event
+fire), so no failure inside the release run can strand a tagged release
+unpublished, and neither publish blocks the other. It is deliberately a
+top-level workflow rather than a reusable one — PyPI trusted publishing binds
+the publisher to the top-level workflow filename and does not support reusable
+workflows. Its `workflow_dispatch` republishes any pre-existing tag
+(`skip-existing` makes re-runs idempotent), which is the recovery path for a
+release whose publish failed — no retag or re-release needed.
+
+Hardening follows [PyPI's trusted-publishing security model](https://docs.pypi.org/trusted-publishers/security-model/):
+the build job validates the tag (a `band-sdk-vX.Y.Z` tag, on `main`, version
+matching `pyproject.toml`) and hands distributions to an
+environment-privileged publish job that runs only two steps and never
+executes project code; the `release` environment's deployment policy
+(`main` + `band-sdk-v*` tags) blocks a modified workflow on a side branch
+from reaching the OIDC credential; and a repository tag ruleset restricts
+creating/moving/deleting `band-sdk-v*` tags to the release App (plus repo
+admins), so the tag namespace the policy trusts can't be claimed by a
+write collaborator. The release event runs the workflow file at the tagged
+commit, which is why the tag namespace itself must be protected.
 
 Related: `kit-image-rebuild.yml` (weekly CVE rebuild of the published kit
 image), `kit-publish-manual.yml` (serialized manual recovery/rehearsal), and
 `docker/band_python_kit/RELEASING.md` (tag policy, quarantine gate, rehearsal
 and recovery runbook).
 
-## Promotion Workflow
+## Validating workflow changes before merge
 
-### Promote Dev to Main — `promote-dev-to-main.yml`
+Workflow defects historically surfaced only when a real release or dispatch
+run executed server-side. Use this ladder, cheapest rung first:
 
-A manual (`workflow_dispatch`) workflow that opens the promotion PR for you.
-
-**How to use:**
-
-1. Go to **Actions → Promote Dev to Main**.
-2. Click **Run workflow**.
-3. Optionally enable **Dry run** to preview the PR description without creating a PR.
-4. Review and merge the created PR (normal review + checks still apply).
-
-**What it does:**
-
-1. Mints a GitHub App token (via the local `./.github/actions/GithubToken` action).
-2. Checks out `dev` and fetches `main`.
-3. Counts commits ahead (`origin/main..dev`). If zero, it reports "already up to
-   date" and creates nothing.
-4. Builds a PR description from git history — commit list, `git diff --stat`,
-   referenced PR numbers, and a metadata footer. (No external AI service is used.)
-5. Creates a PR from `dev` → `main` titled `chore: promote dev to main`, assigned
-   to whoever triggered the run — unless **Dry run** is enabled, in which case the
-   description is printed to the run summary and no PR is created.
-
-The workflow never merges; a human reviews and merges, so all rulesets apply.
+1. **actionlint (automatic).** Runs via pre-commit on every commit, and the CI
+   `lint` job runs the same hooks over all files — syntax, expression, and
+   shellcheck errors in `run:` blocks never reach a PR unchecked. One known
+   false positive is ignored in `.pre-commit-config.yaml`:
+   `concurrency.queue` is valid workflow syntax actionlint doesn't know yet.
+2. **Probe-branch dispatch (server-side ground truth).** Some semantics only
+   exist in GitHub's startup validation — env templates are evaluated even
+   under a false `if:`, and reusable-workflow `with:` values are type-checked
+   (a dispatch `number` input arrives as a string; booleans coerce, numbers
+   need `fromJSON`). To validate those without merging: push a branch and run
+   `gh workflow run <file> --ref <branch>` — startup validation and job
+   creation run against the branch's copy of the workflow. Safe by
+   construction: the `release` environment's deployment policy rejects
+   non-main refs before a job can reach publishing credentials, so the probe
+   fails at the environment gate — which doubles as a check that the
+   guardrail still works.
+3. **Rehearsal publish.** `kit-publish-manual` can publish a real, disposable
+   artifact without touching customers: version `0.0.0-rcN`,
+   `move-floating: false` (see `docker/band_python_kit/RELEASING.md`).
 
 ## Typical Development Flow
 
-1. Branch off `dev` (e.g. `feat/...-INT-123`).
-2. Open a PR to `dev` → CI + PR-title checks run.
-3. Get 1 approval, **squash** merge to `dev`.
-4. When ready to release, run **Promote Dev to Main** and merge the resulting PR.
-5. The merge to `main` triggers `release.yml`, which publishes to PyPI.
+1. Branch off `main` (e.g. `feat/...-INT-123`).
+2. Open a PR to `main` → CI + PR-title checks run.
+3. Get 1 approval, **squash** merge to `main`.
+4. Release Please updates the standing release PR to reflect the new commit.
+5. When ready to release, review and **merge the release PR**. That tags the
+   release, publishes the kit to GHCR (`release.yml`), and the published
+   release triggers the PyPI publish (`band-publish.yml`).
 
-> **Note on strict checks:** because `main` uses strict required status checks, a
-> release commit that release-please lands on `main` will leave `dev` behind. The
-> next `dev → main` promotion PR cannot merge until `dev` contains that commit, so
-> `main` must be brought back into `dev` before promoting again.
+> **No back-merge:** the release commit Release Please lands (version bump +
+> CHANGELOG) goes onto `main` — the same branch everyone works from — so there is
+> nothing to reconcile back into a separate integration branch.

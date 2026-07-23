@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "band-sdk"
-version = "1.2.0"
+version = "1.4.2"
 description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,7 +23,7 @@ classifiers = [
 
 dependencies = [
     "band-client-rest==0.0.10",
-    "phoenix-channels-python-client>=0.2.1",
+    "phoenix-channels-python-client>=0.2.2",
     "python-dotenv>=1.2.2",
     "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
@@ -48,7 +48,7 @@ letta = [
 ]
 pydantic-ai = [
     "pydantic-ai-slim[anthropic]>=1.56.0",
-    "openai>=1.0.0",
+    "openai>=2.0.0",
 ]
 anthropic = [
     "anthropic>=0.75.0",
@@ -61,7 +61,7 @@ langgraph = [
     "langchain-anthropic>=0.3.0",
     "langchain-community>=0.4.0",  # 0.4.0+ required for langchain 1.0 compatibility
     "langchain-text-splitters>=0.3.0",
-    "openai>=1.0.0",
+    "openai>=2.0.0",
     "beautifulsoup4>=4.12.0",
 ]
 claude_sdk = [
@@ -74,11 +74,11 @@ parlant = [
     # Floor at 3.3.2: older versions stall the in-process server's post-preamble
     # message generation (event-loop starvation).
     "parlant>=3.3.2",
-    "openai>=1.0.0",
+    "openai>=2.0.0",
     "werkzeug>=3.1.6",
 ]
 crewai = [
-    "crewai==1.14.3",
+    "crewai==1.15.5",
     "openai>=2.0.0",  # crewai 1.14.3 requires openai>=2.0.0
     "nest-asyncio>=1.6.0",  # Required for sync-to-async bridging in CrewAI tools
     "pillow>=12.1.1",
@@ -156,6 +156,7 @@ dev = [
     "pytest-timeout>=2.4.0",
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",  # Already in main deps, for mocking
+    "pytest-httpx>=0.35.0",  # httpx_mock fixture: REST header-emission proof
     # Include pydantic-ai for testing
     "pydantic-ai-slim>=1.56.0",
     # Include anthropic for testing
@@ -172,7 +173,7 @@ dev = [
     "langchain-anthropic>=0.3.0",
     "langchain-community>=0.4.0",
     "langchain-text-splitters>=0.3.0",
-    "openai>=1.0.0",
+    "openai>=2.0.0",
     "beautifulsoup4>=4.12.0",
     # Include a2a-sdk for testing
     "a2a-sdk>=0.3.22",
@@ -226,7 +227,7 @@ dev-crewai = [
     "band-testing-python==0.1.4",
     "httpx>=0.24.0",
     # CrewAI and its deps
-    "crewai==1.14.3",
+    "crewai==1.15.5",
     "openai>=2.0.0",
     "nest-asyncio>=1.6.0",
     "pillow>=12.1.1",
@@ -270,6 +271,7 @@ markers = [
     "e2e: marks tests as end-to-end (requires live services)",
     "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
     "docker_build: builds/runs a real Docker image via subprocess (requires a local Docker daemon; skipped unless DOCKER_TESTS_ENABLED=true, including in CI, which has Docker but shouldn't pay this cost by default)",
+    "sandbox: drives a Docker Sandbox via the sbx CLI (needs sbx + a nested-virtualization-capable host + live Band; skipped unless SANDBOX_TESTS_ENABLED=true — CI has neither the CLI nor nested virt)",
 ]
 
 [tool.uv]

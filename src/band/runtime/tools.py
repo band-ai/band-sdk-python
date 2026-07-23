@@ -1574,7 +1574,7 @@ class AgentTools(AgentToolsProtocol):
         first. Used by state-reconstruction adapters (e.g. CrewAI Flow) to
         rebuild durable run state from task events.
         """
-        from band.runtime._context_serialization import context_item_to_dict
+        from band.runtime.context_serialization import context_item_to_dict
 
         response = await self.rest.agent_api_context.get_agent_chat_context(
             chat_id=room_id,

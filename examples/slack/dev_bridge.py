@@ -16,12 +16,12 @@ Run with:
 
     # HTTP transport (default) — needs a public URL pointing at port 3000:
     export SLACK_SIGNING_SECRET=...
-    uv run python examples/slack/_dev_bridge.py
+    uv run python examples/slack/dev_bridge.py
 
     # Socket Mode — no public URL or signing secret needed:
     export SLACK_TRANSPORT=socket
     export SLACK_APP_TOKEN=xapp-...
-    uv run python examples/slack/_dev_bridge.py
+    uv run python examples/slack/dev_bridge.py
 
     # optional:
     export BAND_REST_URL=https://app.band.ai
