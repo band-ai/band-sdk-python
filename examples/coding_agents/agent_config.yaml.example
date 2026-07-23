@@ -1,30 +1,35 @@
-# Agent credentials for all agents in this example.
-# Copy to agent_config.yaml and fill in values from the Band platform.
+# Template for agent_config.yaml (the combined, keyed credentials file that
+# docker-compose.yml consumes).
+#
+# You normally do NOT copy this by hand — `create_agents.py` registers both
+# agents and writes agent_config.yaml for you. Use this file only as a reference
+# for the format, or to add a `repo:` block after the fact.
+#
 # NEVER commit real credentials to version control.
 #
-# Keys must match:
-#   - AGENT_KEY env var for the Claude SDK planner (default: "planner")
-#   - REVIEWER_AGENT_KEY in .env (default: "reviewer")
+# Keys must match the runner AGENT_KEY:
+#   planner  -> AGENT_KEY=planner            (compose service "planner")
+#   reviewer -> REVIEWER_AGENT_KEY=reviewer  (compose service "reviewer")
 
 planner:
-  agent_id: ""    # Agent UUID from Band platform
+  agent_id: ""    # Agent UUID from Band
   api_key: ""     # Agent-specific Band API key
   role: planner
-  repo:
-    # Supports either SSH or HTTPS:
-    #   git@github.com:org/repo.git
-    #   https://github.com/org/repo.git
-    url: "git@github.com:org/repo.git"
-    path: "/workspace/repo"
-    branch: "main"   # Optional
-    index: true      # Optional: generate /workspace/context/*.md
+  # Optional — omit entirely for a chat-only stack (no GitHub/SSH). Add an
+  # identical block under reviewer so both containers target the same repo.
+  # repo:
+  #   # SSH (git@github.com:org/repo.git) or HTTPS (https://github.com/org/repo.git)
+  #   url: "git@github.com:org/repo.git"
+  #   path: "/workspace/repo"
+  #   branch: "main"   # Optional
+  #   index: true      # Optional: generate /workspace/context/*.md
 
 reviewer:
-  agent_id: ""    # Agent UUID from Band platform
+  agent_id: ""    # Agent UUID from Band
   api_key: ""     # Agent-specific Band API key
-  repo:
-    # Keep this in sync with planner.repo so both containers target the same repo.
-    url: "git@github.com:org/repo.git"
-    path: "/workspace/repo"
-    branch: "main"   # Optional
-    index: true      # Optional: enabled by default in this example
+  role: reviewer
+  # repo:
+  #   url: "git@github.com:org/repo.git"
+  #   path: "/workspace/repo"
+  #   branch: "main"
+  #   index: true
