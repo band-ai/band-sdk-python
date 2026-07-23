@@ -18,7 +18,8 @@ import logging
 import platform
 import shutil
 import subprocess
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Protocol
 
@@ -78,22 +79,21 @@ def turn_prompt(
     )
 
 
+# Seconds after opening the workspace for the window, extension host, and MCP
+# client to come up before the first prompt is submitted.
+WINDOW_OPEN_GRACE_S = 20
+
+
 class CodeChatDriver:
-    """Submit prompts via ``code chat -m agent`` against the workspace's window."""
+    """Submit prompts via ``code chat -m agent`` against the workspace's window.
+
+    Construct through :func:`vscode_window`, which owns the ready-to-drive
+    lifecycle (preflight -> open -> readiness grace).
+    """
 
     def __init__(self, code_command: list[str], workspace: Path) -> None:
         self._code_command = code_command
         self._workspace = workspace
-
-    async def open_window(self) -> None:
-        """Open the scaffolded workspace so ``code chat`` targets its window.
-
-        Deliberately without ``--disable-workspace-trust``: Copilot's AI
-        features require a *trusted* workspace, so an untrusted launch just
-        defers the dialog to chat time. The workspace path is stable — one
-        "Trust Folder & Continue" click is remembered for every rerun.
-        """
-        await self._run(str(self._workspace))
 
     async def submit_prompt(self, prompt: str, *, new_session: bool = False) -> None:
         if new_session:
@@ -118,6 +118,30 @@ class CodeChatDriver:
                 f"code {args[0]} exited with {process.returncode}: "
                 f"{output.decode(errors='replace').strip()}"
             )
+
+
+@asynccontextmanager
+async def vscode_window(
+    code_command: list[str], workspace: Path
+) -> AsyncIterator[CodeChatDriver]:
+    """A ready-to-drive VS Code window on ``workspace``.
+
+    Entry owns the whole becoming-drivable flow: preflight the CLI (raises
+    :class:`PreflightError` with the runbook pointer), open the workspace
+    window, and wait out the startup grace so the extension host and MCP
+    client are up before the first prompt. Opened deliberately *without*
+    ``--disable-workspace-trust``: Copilot's AI features require a trusted
+    workspace, so an untrusted launch only defers the dialog to chat time —
+    the stable workspace path makes "Trust Folder & Continue" a one-time click.
+
+    Exit is a no-op by contract: the window is human-owned (the human signed
+    in to Copilot there) and stays open across runs.
+    """
+    preflight(code_command)
+    driver = CodeChatDriver(code_command, workspace)
+    await driver._run(str(workspace))
+    await asyncio.sleep(WINDOW_OPEN_GRACE_S)
+    yield driver
 
 
 Runner = Callable[[list[str]], str]

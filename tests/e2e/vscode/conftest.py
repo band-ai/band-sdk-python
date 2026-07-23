@@ -13,10 +13,10 @@ extension signed in, and the window the ``driver`` fixture opens left alone.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import shlex
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
@@ -39,8 +39,9 @@ from tests.e2e.vscode.driver import (
     CodeChatDriver,
     PreflightError,
     capture_versions,
-    preflight,
+    vscode_window,
 )
+from tests.e2e.vscode.rooms import SurfaceRoom
 from tests.e2e.vscode.scorecard import VSCodeScorecard
 from tests.e2e.vscode.server import BandMCPServer
 from tests.e2e.vscode.settings import VSCodeChatSettings
@@ -63,14 +64,11 @@ __all__ = [
     "reap_leaked_agents",
     "reply_capture",
     "resource_manager",
+    "surface_room",
     "user_ops",
     "vscode_settings",
     "vscode_workspace",
 ]
-
-# Seconds after `code <workspace>` for the window, extension host, and MCP
-# client to come up before the first prompt is submitted.
-WINDOW_OPEN_GRACE_S = 20
 
 
 @pytest.fixture(scope="session")
@@ -138,17 +136,53 @@ def vscode_workspace(
 @pytest.fixture(scope="session")
 async def driver(
     vscode_settings: VSCodeChatSettings, vscode_workspace: Path
-) -> CodeChatDriver:
-    """Preflight the VS Code CLI, open the workspace window once, yield the driver."""
-    code_command = shlex.split(vscode_settings.code_command)
+) -> AsyncGenerator[CodeChatDriver, None]:
+    """One ready-to-drive VS Code window for the session (see ``vscode_window``)."""
     try:
-        preflight(code_command)
+        async with vscode_window(
+            shlex.split(vscode_settings.code_command), vscode_workspace
+        ) as chat_driver:
+            yield chat_driver
     except PreflightError as error:
         pytest.fail(str(error))
-    chat_driver = CodeChatDriver(code_command, vscode_workspace)
-    await chat_driver.open_window()
-    await asyncio.sleep(WINDOW_OPEN_GRACE_S)
-    return chat_driver
+
+
+@pytest.fixture
+def surface_room(
+    resource_manager: ResourceManager,
+    user_ops,
+    reply_capture,
+    driver: CodeChatDriver,
+    copilot_identity: ProvisionedAgent,
+    vscode_settings: VSCodeChatSettings,
+):
+    """Factory: open a provisioned room with the Copilot surface bound.
+
+    ``async with surface_room("recall") as room:`` yields a ``SurfaceRoom``
+    (see ``rooms.py``) — the cells' one intent object; all turn plumbing
+    (mentions, prompt relay, reply wait) lives behind it.
+    """
+
+    @asynccontextmanager
+    async def open_room(
+        label: str, *, participants: tuple[str, ...] = ()
+    ) -> AsyncGenerator[SurfaceRoom, None]:
+        room_id = await resource_manager.provision_room(
+            title=f"e2e-vscode-{label}",
+            participants=[copilot_identity.id, *participants],
+        )
+        async with reply_capture(room_id) as capture:
+            yield SurfaceRoom(
+                room_id=room_id,
+                capture=capture,
+                driver=driver,
+                identity=copilot_identity,
+                user_ops=user_ops,
+                resources=resource_manager,
+                turn_timeout=vscode_settings.vscode_chat_timeout,
+            )
+
+    return open_room
 
 
 def pytest_configure(config: pytest.Config) -> None:

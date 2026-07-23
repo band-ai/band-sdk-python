@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
@@ -65,7 +66,11 @@ def test_scaffold_workspace_writes_mcp_entry_and_auto_reply(tmp_path: Path) -> N
     scaffold_workspace(tmp_path, sse_url)
 
     mcp = json.loads((tmp_path / ".vscode" / "mcp.json").read_text())
-    assert mcp["servers"][MCP_SERVER_NAME] == {"type": "sse", "url": sse_url}
+    # Assert the contract fields, not the whole dict — a new optional key in
+    # the scaffold must not break this guard.
+    server = mcp["servers"][MCP_SERVER_NAME]
+    assert server["type"] == "sse"
+    assert server["url"] == sse_url
 
     settings = json.loads((tmp_path / ".vscode" / "settings.json").read_text())
     assert settings[AUTO_REPLY_SETTING] is True
@@ -97,11 +102,15 @@ def test_capture_versions_shape_with_stub_runner() -> None:
         ["code"], ["band-mcp"], run=lambda cmd: outputs[" ".join(cmd)]
     )
 
-    assert versions["vscode"] == "1.103.0 abc123 arm64"
-    assert versions["copilot_extensions"] == (
-        "github.copilot@1.5.0; github.copilot-chat@0.32.0"
-    )
-    assert versions["band_mcp"] == "band-mcp 1.3.2"
+    # Behavioral contract only (what the sidecar must convey), not join format:
+    # the VS Code version+build survive on one line, copilot extensions are
+    # kept while unrelated ones are filtered, band-mcp passes through.
+    assert "1.103.0" in versions["vscode"] and "abc123" in versions["vscode"]
+    assert "\n" not in versions["vscode"]
+    assert "github.copilot@1.5.0" in versions["copilot_extensions"]
+    assert "github.copilot-chat@0.32.0" in versions["copilot_extensions"]
+    assert "ms-python" not in versions["copilot_extensions"]
+    assert "band-mcp 1.3.2" in versions["band_mcp"]
     assert versions["os"]
 
 
@@ -123,14 +132,18 @@ def test_fresh_session_preamble_is_prependable_text() -> None:
 # --- scorecard: outcome mapping + emitted artifact ----------------------------------
 
 
-def _report(when: str, outcome: str, nodeid: str, fspath: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        when=when,
-        skipped=outcome == "skipped",
-        failed=outcome == "failed",
-        passed=outcome == "passed",
-        nodeid=nodeid,
-        fspath=fspath,
+def _report(when: str, outcome: str, nodeid: str, fspath: str) -> pytest.TestReport:
+    """A minimal stand-in carrying the only report fields the plugin reads."""
+    return cast(
+        pytest.TestReport,
+        SimpleNamespace(
+            when=when,
+            skipped=outcome == "skipped",
+            failed=outcome == "failed",
+            passed=outcome == "passed",
+            nodeid=nodeid,
+            fspath=fspath,
+        ),
     )
 
 
@@ -147,7 +160,7 @@ def _report(when: str, outcome: str, nodeid: str, fspath: str) -> SimpleNamespac
 )
 def test_outcome_status_mapping(when: str, outcome: str, expected: str | None) -> None:
     report = _report(when, outcome, "tests/e2e/vscode/test_x.py::t", "x")
-    assert outcome_status(report) == expected  # type: ignore[arg-type]
+    assert outcome_status(report) == expected
 
 
 def test_usage_na_row_carries_surface_and_reason() -> None:
@@ -156,29 +169,36 @@ def test_usage_na_row_carries_surface_and_reason() -> None:
     assert USAGE_NA_ROW.reason
 
 
-def test_scorecard_writes_rows_metadata_and_fixed_na_row(tmp_path: Path) -> None:
+def test_scorecard_keeps_suite_rows_plus_fixed_na_row(tmp_path: Path) -> None:
+    """One row per suite test plus the fixed L4 N/A; foreign reports ignored."""
     suite_dir = tmp_path / "suite"
     suite_dir.mkdir()
-    test_file = suite_dir / "test_copilot_chat.py"
-    test_file.touch()
-    out = tmp_path / "scorecard.json"
-
-    plugin = VSCodeScorecard(out, suite_dir)
-    plugin.metadata = {"vscode": "1.103.0"}
+    suite_test = suite_dir / "test_copilot_chat.py"
+    suite_test.touch()
     nodeid = "tests/e2e/vscode/test_copilot_chat.py::test_participation"
-    plugin.pytest_runtest_logreport(_report("setup", "passed", nodeid, str(test_file)))  # type: ignore[arg-type]
-    plugin.pytest_runtest_logreport(_report("call", "passed", nodeid, str(test_file)))  # type: ignore[arg-type]
-    # A report from outside the suite dir must not add a row.
-    plugin.pytest_runtest_logreport(
-        _report("call", "passed", "tests/other.py::t", str(tmp_path / "other.py"))  # type: ignore[arg-type]
-    )
+
+    plugin = VSCodeScorecard(tmp_path / "scorecard.json", suite_dir)
+    for report in (
+        _report("setup", "passed", nodeid, str(suite_test)),
+        _report("call", "passed", nodeid, str(suite_test)),
+        _report("call", "passed", "tests/other.py::t", str(tmp_path / "other.py")),
+    ):
+        plugin.pytest_runtest_logreport(report)
+
+    rows = {row.test: row for row in plugin.scorecard()}
+    assert rows[nodeid].status == "pass"
+    assert rows[nodeid].adapter == SURFACE_ID
+    assert rows[USAGE_NA_ROW.test] == USAGE_NA_ROW
+    assert len(rows) == 2  # the foreign report contributed nothing
+
+
+def test_sessionfinish_writes_scorecard_and_metadata_sidecar(tmp_path: Path) -> None:
+    out = tmp_path / "scorecard.json"
+    plugin = VSCodeScorecard(out, tmp_path)
+    plugin.metadata = {"vscode": "1.103.0"}
+
     plugin.pytest_sessionfinish()
 
-    rows = {row["test"]: row for row in json.loads(out.read_text())}
-    assert rows[nodeid]["status"] == "pass"
-    assert rows[nodeid]["adapter"] == SURFACE_ID
-    assert rows[USAGE_NA_ROW.test]["status"] == "na"
-    assert len(rows) == 2
-
+    assert json.loads(out.read_text())  # the rows artifact (N/A row at minimum)
     meta = json.loads((tmp_path / "scorecard.json.meta.json").read_text())
     assert meta == {"vscode": "1.103.0"}
