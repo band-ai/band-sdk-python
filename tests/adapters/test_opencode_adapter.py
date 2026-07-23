@@ -1789,6 +1789,72 @@ class TestOpencodeAdapter:
         )
 
     @pytest.mark.asyncio
+    async def test_tool_reports_canonicalize_server_prefixed_names(self) -> None:
+        """OpenCode surfaces a remote MCP server's tools as `{server}_{tool}`
+        (band_store_memory arrives as band_band_store_memory); reported
+        tool_call events must carry the canonical band name so consumers
+        match one vocabulary across all adapters."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_message_updated("sess-1", "msg-1"),
+                    event_tool_part(
+                        "sess-1",
+                        "msg-1",
+                        tool="band_band_store_memory",
+                        call_id="call-1",
+                        status="running",
+                        input_data={"content": "note"},
+                    ),
+                    event_tool_part(
+                        "sess-1",
+                        "msg-1",
+                        tool="band_band_store_memory",
+                        call_id="call-1",
+                        status="completed",
+                        input_data={"content": "note"},
+                        output="stored",
+                    ),
+                    event_session_idle("sess-1"),
+                ]
+            ]
+        )
+        adapter = OpencodeAdapter(
+            client_factory=lambda _config: fake_client,
+            features=AdapterFeatures(
+                capabilities={Capability.MEMORY}, emit={Emit.EXECUTION}
+            ),
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        tool_calls = [
+            json.loads(e["content"])
+            for e in tools.events_sent
+            if e["message_type"] == "tool_call"
+        ]
+        assert [c["name"] for c in tool_calls] == ["band_store_memory"]
+
+    @pytest.mark.asyncio
+    async def test_turn_system_prompt_carries_room_context(self) -> None:
+        """The per-turn system prompt must name the current room_id (band MCP
+        tool schemas require a room_id argument, so an untold model cannot
+        call any platform tool) and the requester."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[[event_session_idle("sess-1")]]
+        )
+        adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        system = fake_client.prompt_calls[0]["system"]
+        assert "Current room_id: room-1" in system
+        assert "Current requester name: Alice" in system
+        assert "Current requester id: user-1" in system
+
+    @pytest.mark.asyncio
     async def test_band_tool_permission_auto_approved_in_manual_mode(self) -> None:
         """A permission ask naming the adapter's own band tool is granted
         `always` without any room prompt, even in manual mode -- platform
