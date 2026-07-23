@@ -678,7 +678,7 @@ _Inlined from the former shared `claude-config` submodule (`.claude/rules/`), no
 
 Every module should have a module-level logger:
 
-```python
+```python notest
 import logging
 
 logger = logging.getLogger(__name__)
@@ -698,7 +698,7 @@ Use the appropriate level for each message:
 
 ##### Converting Print to Logging
 
-```python
+```python notest
 # Bad
 print(f"Processing {item}")
 print(f"Error: {e}")
@@ -712,7 +712,7 @@ logger.error("Failed to process: %s", e)
 
 Use `%s` placeholders instead of f-strings for log messages:
 
-```python
+```python notest
 # Preferred - lazy evaluation, better performance
 logger.debug("User %s performed action %s", user_id, action)
 
@@ -724,7 +724,7 @@ logger.debug(f"User {user_id} performed action {action}")
 
 Include relevant context in log messages:
 
-```python
+```python notest
 logger.info("Request completed", extra={"user_id": user_id, "duration_ms": duration})
 logger.error("API call failed: %s", error, extra={"endpoint": url, "status": status_code})
 ```
@@ -770,7 +770,7 @@ logger.error("API call failed: %s", error, extra={"endpoint": url, "status": sta
 - Log full error details but return concise messages to LLM
 
 Example:
-```python
+```python notest
 from pydantic import ValidationError
 
 try:
@@ -805,7 +805,7 @@ except Exception as e:
 - Fail fast with clear error messages
 
 Example:
-```python
+```python notest
 # Good
 if not api_key:
     raise ValueError("OPENAI_API_KEY environment variable is required")
@@ -973,7 +973,7 @@ Use type ignores only when:
 
 Always include a comment explaining why:
 
-```python
+```python notest
 # type: ignore[arg-type]  # langgraph returns untyped dict
 result = some_dynamic_call()
 
@@ -1050,7 +1050,7 @@ uv run pytest tests/integration/ -v -s --no-cov
 - Use `AsyncMock` for mocking async methods
 - Use `MagicMock` for sync methods
 
-```python
+```python notest
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -1082,7 +1082,7 @@ tests/
 - Use `MockDataFactory` or similar for creating test data
 - Scope fixtures appropriately (function, class, module, session)
 
-```python
+```python notest
 # conftest.py
 import pytest
 from unittest.mock import AsyncMock
@@ -1100,7 +1100,7 @@ def sample_message():
 
 Create a factory class for generating consistent test data:
 
-```python
+```python notest
 # tests/fixtures.py
 from dataclasses import dataclass
 
@@ -1121,7 +1121,7 @@ class MockDataFactory:
 
 Use in tests:
 
-```python
+```python notest
 from tests.fixtures import MockDataFactory
 
 def test_message_handling():
@@ -1133,7 +1133,7 @@ def test_message_handling():
 
 Use markers to categorize tests:
 
-```python
+```python notest
 @pytest.mark.requires_api
 async def test_real_api_call():
     """Skipped in CI, requires real API credentials."""
@@ -1188,7 +1188,7 @@ dev = ["pytest", "pytest-asyncio", "ruff", "pyrefly"]
 
 Adapters should import framework dependencies lazily to avoid import errors when the optional dependency is not installed.
 
-```python
+```python notest
 # Good - lazy import inside the adapter
 class LangGraphAdapter:
     def __init__(self):
@@ -1212,7 +1212,7 @@ class LangGraphAdapter:
 
 Skip tests when optional dependencies are missing:
 
-```python
+```python notest
 import pytest
 
 try:
@@ -1229,7 +1229,7 @@ def test_langgraph_adapter():
 
 Or use a marker:
 
-```python
+```python notest
 requires_langgraph = pytest.mark.skipif(
     not HAS_LANGGRAPH,
     reason="langgraph not installed"
