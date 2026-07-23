@@ -22,6 +22,13 @@ def load_script_module(path: str | Path, module_name: str) -> ModuleType:
     Registers the module in ``sys.modules`` before executing it (the canonical
     importlib recipe) — dataclasses and other reflection resolve a class's
     module through ``sys.modules``, so an unregistered module breaks them.
+
+    Restores ``sys.path`` afterwards: example scripts insert their package root
+    at ``sys.path[0]`` on import, and leaking that would reorder the global path
+    for the rest of the session — shadowing a sibling test's top-level import
+    (two example trees both expose a ``prompts`` module). The loaded module's
+    own imports resolve during ``exec_module`` and stay cached in ``sys.modules``,
+    so the path is only needed for the duration of the load.
     """
     path = Path(path)
     if not path.is_absolute():
@@ -31,9 +38,12 @@ def load_script_module(path: str | Path, module_name: str) -> ModuleType:
         raise ImportError(f"could not load {path}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
+    saved_path = list(sys.path)
     try:
         spec.loader.exec_module(module)
     except BaseException:
         sys.modules.pop(module_name, None)
         raise
+    finally:
+        sys.path[:] = saved_path
     return module
