@@ -743,7 +743,7 @@ logger.error("API call failed: %s", error, extra={"endpoint": url, "status": sta
 
 #### Python Version
 
-- Target Python 3.10+ (match statements are OK)
+- Target Python 3.11+ (match statements are OK)
 - Use modern syntax: `list[str]` instead of `List[str]`
 - Use `|` for union types: `str | None` instead of `Optional[str]`
 
@@ -915,13 +915,18 @@ uv run ruff check . --fix
 - `UP` - pyupgrade (modern Python syntax)
 - `B` - flake8-bugbear (common bugs)
 
-##### Typical Ruff Configuration
+##### Ruff Configuration
+
+This repo has **no `[tool.ruff]` block** in `pyproject.toml` — it relies on
+ruff's defaults. The following is a generic example of the shape such a block
+takes, not this repo's config; don't add it unless you intend to override the
+defaults.
 
 ```toml
 # pyproject.toml
 [tool.ruff]
 line-length = 88
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
@@ -930,7 +935,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["thenvoi"]  # Replace with your package name
+known-first-party = ["band"]
 ```
 
 #### Formatting with Ruff

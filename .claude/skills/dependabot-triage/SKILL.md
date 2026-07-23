@@ -88,8 +88,9 @@ don't fold it into the lock branch.
 
 Create one issue in the Integrations team for this triage run before touching
 git, so the batch PR and any follow-ups link back to it. Record the surveyed
-queue (the table from Step 1) in the description. Use the Linear MCP tools
-(`create_issue` / `save_issue`). Keep the whole run under this issue.
+queue (the table from Step 1) in the description. Use the Linear MCP
+`save_issue` tool (it both creates and updates). Keep the whole run under this
+issue.
 
 Set the tracking issue (and each Step 8 sub-issue) to **Todo**, **assign it to
 the triager**, and put it in the **current cycle** — resolve "current" via
