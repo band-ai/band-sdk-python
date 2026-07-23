@@ -137,6 +137,12 @@ agentcore_runtime = [
 ]
 google_adk = [
     "google-adk>=1.0.0,<2",
+    # google-adk pulls opentelemetry-exporter-gcp-trace, which only depends on
+    # pre-release (alpha) builds of opentelemetry-resourcedetector-gcp. A plain
+    # install excludes pre-releases by default and the one stable build (1.13.0)
+    # was yanked upstream, leaving no solution — so request it explicitly with a
+    # pre-release specifier to allow the alpha.
+    "opentelemetry-resourcedetector-gcp>=1.11.0a0",
 ]
 agno = [
     "agno>=2.6.0",
@@ -194,6 +200,9 @@ dev = [
     "google-genai>=1.43.0",
     # Include google-adk for testing
     "google-adk>=1.0.0,<2",
+    # See the google_adk extra: force the pre-release resourcedetector build so
+    # a plain (non-locked) install of this extra can resolve.
+    "opentelemetry-resourcedetector-gcp>=1.11.0a0",
     # Include Agno for testing
     "agno>=2.6.0",
     # Include letta-client for testing

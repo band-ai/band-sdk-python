@@ -146,6 +146,20 @@ uv run python examples/parlant/03_support_agent.py
 
 > **Note:** The config loader looks for `agent_config.yaml` in the current working directory. Running from a subdirectory will cause a `FileNotFoundError`.
 
+### Running two agents locally (Tom and Jerry)
+
+Each Parlant agent starts its own in-process server. The examples pass
+`port=0` and `tool_service_port=0` so the OS assigns free ports, which lets
+several agents run side by side without colliding on a fixed default port:
+
+```bash
+# terminal 1
+uv run python examples/parlant/04_tom_agent.py
+
+# terminal 2 (while Tom is still running)
+uv run python examples/parlant/05_jerry_agent.py
+```
+
 ---
 
 ## Adapter Options
