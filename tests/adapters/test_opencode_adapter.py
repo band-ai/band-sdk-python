@@ -171,13 +171,15 @@ def event_tool_part(
     }
 
 
-def event_permission(session_id: str, request_id: str) -> dict[str, Any]:
+def event_permission(
+    session_id: str, request_id: str, *, permission: str = "bash"
+) -> dict[str, Any]:
     return {
         "type": "permission.asked",
         "properties": {
             "id": request_id,
             "sessionID": session_id,
-            "permission": "bash",
+            "permission": permission,
             "patterns": ["rm -rf tmp"],
         },
     }
@@ -1767,3 +1769,223 @@ class TestOpencodeAdapter:
         assert any(msg["content"] == "survived the junk" for msg in tools.messages_sent)
 
         await adapter.on_cleanup("room-1")
+
+    async def _run_single_turn(
+        self,
+        adapter: OpencodeAdapter,
+        tools: FakeAgentTools,
+        *,
+        content: str = "hello",
+    ) -> None:
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(content=content),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_band_tool_permission_auto_approved_in_manual_mode(self) -> None:
+        """A permission ask naming the adapter's own band tool is granted
+        `always` without any room prompt, even in manual mode -- platform
+        plumbing must never stall on a human approval."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_permission(
+                        "sess-1", "perm-band", permission="band_send_message"
+                    )
+                ]
+            ],
+            reply_permission_events={
+                "perm-band": [
+                    event_message_updated("sess-1", "msg-band"),
+                    event_text_part("sess-1", "msg-band", "tool ran"),
+                    event_session_idle("sess-1"),
+                ]
+            },
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="manual"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-band",
+                "response": "always",
+            }
+        ]
+        assert not any(
+            "approval requested" in m["content"].lower() for m in tools.messages_sent
+        )
+        assert any(msg["content"] == "tool ran" for msg in tools.messages_sent)
+
+    @pytest.mark.asyncio
+    async def test_band_tool_permission_matches_server_prefixed_custom_tool(
+        self,
+    ) -> None:
+        """OpenCode may report an MCP tool ask under its `{server}_{tool}`
+        naming; a server-prefixed custom tool still auto-approves."""
+
+        class EchoInput(BaseModel):
+            """Echo text."""
+
+            text: str
+
+        def echo_tool(input_data: EchoInput) -> str:
+            return input_data.text
+
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-echo", permission="band_echo")]
+            ],
+            reply_permission_events={"perm-echo": [event_session_idle("sess-1")]},
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="manual"),
+            additional_tools=[(EchoInput, echo_tool)],
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-echo",
+                "response": "always",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_band_tool_permission_bypasses_auto_decline(self) -> None:
+        """auto_decline rejects ordinary asks, but the adapter's own band
+        tools are still granted -- declining band_store_memory would break
+        the platform plumbing the adapter itself registered."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-mem", permission="band_store_memory")]
+            ],
+            reply_permission_events={"perm-mem": [event_session_idle("sess-1")]},
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="auto_decline"),
+            features=AdapterFeatures(capabilities={Capability.MEMORY}),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-mem",
+                "response": "always",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_doom_loop_permission_auto_accepted_in_auto_accept_mode(
+        self,
+    ) -> None:
+        """Pins the E2E-lane behavior: a non-tool ask (doom_loop) under
+        auto_accept is granted `once` -- the safety heuristic keeps firing
+        server-side, each trip is just answered without a room prompt."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-loop", permission="doom_loop")]
+            ],
+            reply_permission_events={"perm-loop": [event_session_idle("sess-1")]},
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="auto_accept"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-loop",
+                "response": "once",
+            }
+        ]
+        assert not any(
+            "approval requested" in m["content"].lower() for m in tools.messages_sent
+        )
+
+    @pytest.mark.asyncio
+    async def test_doom_loop_permission_still_relayed_in_manual_mode(self) -> None:
+        """Guards the interactive path: non-band asks keep the manual relay
+        (room prompt + reply flow), only the adapter's own tools bypass it."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-loop", permission="doom_loop")]
+            ],
+            reply_permission_events={
+                "perm-loop": [
+                    event_message_updated("sess-1", "msg-loop"),
+                    event_text_part("sess-1", "msg-loop", "continued"),
+                    event_session_idle("sess-1"),
+                ]
+            },
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="manual"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        first_turn = asyncio.create_task(
+            adapter.on_message(
+                make_platform_message(),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+        )
+
+        await wait_for(
+            lambda: any(
+                "approval requested for `doom_loop`" in m["content"].lower()
+                for m in tools.messages_sent
+            )
+        )
+        await wait_for(lambda: first_turn.done())
+        assert fake_client.permission_replies == []
+
+        await adapter.on_message(
+            make_platform_message(content="approve perm-loop"),
+            tools_protocol(tools),
+            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+        await first_turn
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-loop",
+                "response": "once",
+            }
+        ]
