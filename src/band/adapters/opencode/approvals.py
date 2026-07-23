@@ -56,6 +56,7 @@ class ApprovalPorts:
     tools: Callable[[], AgentToolsProtocol | None]
     turn_mentions: Callable[[], list[dict[str, str]]]
     release_turn_wait: Callable[[], None]
+    is_own_band_tool: Callable[[str], bool]
 
 
 def parse_permission_reply(
@@ -116,6 +117,15 @@ class RoomApprovals:
     async def on_permission_asked(self, request: OpencodePermissionRequest) -> None:
         request_id = request.id
         if not request_id:
+            return
+
+        # The adapter's own band tools are platform plumbing and must never
+        # stall on an approval, in ANY mode (codex parity: it executes band
+        # tools with no approval gate at all). Reply "always" so the server
+        # installs an allow rule and stops asking; no pending state, no room
+        # message -- the turn keeps running.
+        if self._ports.is_own_band_tool(request.permission):
+            await self._approve_own_band_tool(request_id)
             return
 
         pending = PendingPermission(
@@ -239,6 +249,18 @@ class RoomApprovals:
         _cancel_timeout(self._pending_question)
         self._pending_permission = None
         self._pending_question = None
+
+    async def _approve_own_band_tool(self, request_id: str) -> None:
+        client = self._ports.client()
+        session_id = self._ports.session_id()
+        if client is None or not session_id:
+            logger.warning(
+                "Cannot auto-approve band tool permission %s for room %s",
+                request_id,
+                self._ports.room_id,
+            )
+            return
+        await client.reply_permission(session_id, request_id, response="always")
 
     async def _reply_permission(self, reply: ApprovalReply) -> None:
         pending = self._pending_permission

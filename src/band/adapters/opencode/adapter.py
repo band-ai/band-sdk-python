@@ -49,7 +49,7 @@ from band.integrations.opencode import (
     describe_error,
     parse_opencode_event,
 )
-from band.runtime.custom_tools import CustomToolDef
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import iter_tool_definitions
 
@@ -101,6 +101,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         configurable timeout (``approval_wait_timeout_s``).
       * ``auto_accept`` -- every permission is approved with ``once``.
       * ``auto_decline`` -- every permission is rejected immediately.
+
+    Exception, in every mode: a permission ask naming one of the adapter's
+    OWN registered tools (band platform tools + ``additional_tools``) is
+    auto-approved with ``always`` -- platform plumbing must never stall on a
+    human approval, matching the codex adapter, which executes band tools
+    with no approval gate. Non-tool asks such as OpenCode's ``doom_loop``
+    heuristic still follow ``approval_mode``; headless deployments (no human
+    in the room) should run ``auto_accept``.
 
     Question lifecycle (``question_mode``):
       * ``manual`` -- questions are forwarded to the room; the user replies
@@ -177,6 +185,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
         self._system_prompt: str = ""
+        # Names of the tools this adapter itself registers with OpenCode
+        # (band platform tools + custom tools); populated when the shared MCP
+        # backend is built. Permission asks for these are auto-approved.
+        self._own_tool_names: frozenset[str] = frozenset()
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
@@ -353,6 +365,27 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         state = self._rooms.get(room_id)
         return state.tools if state else None
 
+    def _is_own_band_tool(self, permission: str) -> bool:
+        """Whether a permission ask names a tool this adapter registered.
+
+        The ask's ``permission`` field is the flat tool name (verified against
+        OpenCode 1.18.4); the prefix-stripped check additionally covers
+        OpenCode's ``{server}_{tool}`` MCP naming so a server-prefixed custom
+        tool matches too. Non-matches are logged at debug so any OpenCode
+        naming drift shows up in live logs instead of silently regressing.
+        """
+        prefix = f"{self.config.mcp_server_name}_"
+        if (
+            permission in self._own_tool_names
+            or permission.removeprefix(prefix) in self._own_tool_names
+        ):
+            return True
+        logger.debug(
+            "OpenCode permission %r does not name a registered band tool",
+            permission,
+        )
+        return False
+
     async def _get_or_create_room_state(self, room_id: str) -> _RoomState:
         async with self._state_lock:
             state = self._rooms.get(room_id)
@@ -367,6 +400,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         tools=lambda: state.tools,
                         turn_mentions=lambda: state.pending_mentions,
                         release_turn_wait=lambda: self._release_turn_wait(state),
+                        is_own_band_tool=self._is_own_band_tool,
                     ),
                 )
                 self._rooms[room_id] = state
@@ -393,6 +427,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 include_memory=Capability.MEMORY in self.features.capabilities,
                 include_contacts=Capability.CONTACTS in self.features.capabilities,
             )
+        )
+        self._own_tool_names = frozenset(
+            {definition.name for definition in tool_definitions}
+            | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
         )
         backend = await create_band_mcp_backend(
             kind="sse",
