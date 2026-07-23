@@ -322,7 +322,12 @@ def _build_codex(
     )
 
 
-@adapter(Adapter.OPENCODE, requires=[Dep.OPENCODE_SERVER], runs_tool_loop=False)
+@adapter(
+    Adapter.OPENCODE,
+    requires=[Dep.OPENCODE_SERVER],
+    supports=_LLM_TOOL_LOOP,
+    runs_tool_loop=False,
+)
 def _build_opencode(
     s: BaselineSettings,
     *,
@@ -338,6 +343,11 @@ def _build_opencode(
             provider_id=s.backends.opencode_provider_id,
             model_id=s.backends.opencode_model_id,
             custom_section=prompt or "",
+            # Headless rooms have no approver: OpenCode's non-tool asks (e.g.
+            # its doom_loop repetition heuristic, which the multi-tool memory
+            # smokes trip) would stall to the manual-mode timeout and fail the
+            # turn. Mirrors codex, whose baseline runs approvalPolicy="never".
+            approval_mode="auto_accept",
         ),
         additional_tools=_custom_tool_defs(tools),
         features=features,

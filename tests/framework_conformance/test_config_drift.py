@@ -22,14 +22,16 @@ from tests.framework_configs.converters import (
 
 
 def _discover_modules(package_dir: Path) -> set[str]:
-    """Return base names (no .py) of public modules in *package_dir*.
+    """Return base names of public modules in *package_dir*.
 
-    Skips ``__init__.py`` and any non-``.py`` files.
+    A module is either a ``.py`` file (skipping ``__init__.py``) or a package
+    directory with an ``__init__.py`` (e.g. ``adapters/opencode/``).
     """
     return {
         p.stem
         for p in package_dir.iterdir()
-        if p.suffix == ".py" and p.name != "__init__.py"
+        if (p.suffix == ".py" and p.name != "__init__.py")
+        or (p.is_dir() and (p / "__init__.py").exists())
     }
 
 

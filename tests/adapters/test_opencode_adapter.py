@@ -14,9 +14,17 @@ import pytest
 from pydantic import BaseModel
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
-from band.core.types import AdapterFeatures, Emit, PlatformMessage, TurnUsage
+from band.core.types import (
+    AdapterFeatures,
+    Capability,
+    Emit,
+    PlatformMessage,
+    TurnUsage,
+)
 from band.integrations.opencode.types import OpencodeSessionState
+from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools
 from tests.adapters.usage_events import recorded_usage_payloads
 
@@ -100,6 +108,22 @@ def event_part_delta(
     }
 
 
+def event_message_updated_with_tokens(
+    session_id: str, message_id: str, tokens: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "type": "message.updated",
+        "properties": {
+            "info": {
+                "id": message_id,
+                "sessionID": session_id,
+                "role": "assistant",
+                "tokens": tokens,
+            }
+        },
+    }
+
+
 def event_user_message_updated(session_id: str, message_id: str) -> dict[str, Any]:
     return {
         "type": "message.updated",
@@ -148,13 +172,15 @@ def event_tool_part(
     }
 
 
-def event_permission(session_id: str, request_id: str) -> dict[str, Any]:
+def event_permission(
+    session_id: str, request_id: str, *, permission: str = "bash"
+) -> dict[str, Any]:
     return {
         "type": "permission.asked",
         "properties": {
             "id": request_id,
             "sessionID": session_id,
-            "permission": "bash",
+            "permission": permission,
             "patterns": ["rm -rf tmp"],
         },
     }
@@ -187,6 +213,20 @@ def event_session_error(session_id: str, message: str) -> dict[str, Any]:
 
 def tools_protocol(tools: FakeAgentTools) -> AgentToolsProtocol:
     return cast(AgentToolsProtocol, tools)
+
+
+class MentionEnforcingTools(FakeAgentTools):
+    """FakeAgentTools that enforces the real send_message contract: a message
+    needs at least one mention. FakeAgentTools silently accepts mention-less
+    sends (which once hid a live crash), so a regression test for the
+    sender-less turn must use a boundary that rejects them like production."""
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
+        if not mentions:
+            raise BandToolError("At least one mention is required")
+        return await super().send_message(content, mentions)
 
 
 class FakeOpencodeClient:
@@ -377,7 +417,7 @@ class TestOpencodeAdapter:
     def _patch_mcp_backend(self) -> Any:
         """Patch MCP backend creation for all tests by default."""
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(),
         ):
             yield
@@ -409,7 +449,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -447,7 +487,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -568,6 +608,15 @@ class TestOpencodeAdapter:
         )
         await wait_for(lambda: first_turn.done())
         assert all(msg["content"] != "Approved and done" for msg in tools.messages_sent)
+        # Regression: FakeAgentTools records a call made with no mentions instead
+        # of rejecting it like the real AgentTools.send_message does, so this must
+        # be asserted explicitly -- it silently passed before mentions was wired.
+        approval_requested = next(
+            m
+            for m in tools.messages_sent
+            if "approval requested" in m["content"].lower()
+        )
+        assert approval_requested["mentions"]
 
         await adapter.on_message(
             make_platform_message(content="approve req-1"),
@@ -589,6 +638,10 @@ class TestOpencodeAdapter:
             {"session_id": "sess-1", "permission_id": "req-1", "response": "once"}
         ]
         assert any(msg["content"] == "Approved and done" for msg in tools.messages_sent)
+        handled_with = next(
+            m for m in tools.messages_sent if "handled with" in m["content"].lower()
+        )
+        assert handled_with["mentions"]
 
     @pytest.mark.asyncio
     async def test_manual_question_reply_from_follow_up_message(self) -> None:
@@ -627,6 +680,13 @@ class TestOpencodeAdapter:
             )
         )
         await wait_for(lambda: first_turn.done())
+        # Regression: FakeAgentTools accepts a call made with no mentions instead
+        # of rejecting it like the real AgentTools.send_message does, so this must
+        # be asserted explicitly -- it silently passed before mentions was wired.
+        asked_question = next(
+            m for m in tools.messages_sent if "asked question" in m["content"].lower()
+        )
+        assert asked_question["mentions"]
 
         await adapter.on_message(
             make_platform_message(content="Ship the adapter"),
@@ -647,6 +707,13 @@ class TestOpencodeAdapter:
         assert fake_client.question_replies == [
             {"request_id": "q-1", "answers": [["Ship the adapter"]]}
         ]
+        answered = next(
+            m
+            for m in tools.messages_sent
+            if "opencode question" in m["content"].lower()
+            and "answered" in m["content"].lower()
+        )
+        assert answered["mentions"]
 
     @pytest.mark.asyncio
     async def test_prompt_submission_failure_does_not_leave_room_stuck(self) -> None:
@@ -1076,7 +1143,7 @@ class TestOpencodeAdapter:
         tools = FakeAgentTools()
 
         with patch(
-            "band.adapters.opencode.create_band_mcp_backend",
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
             _make_fake_mcp_backend_factory(fake_backend),
         ):
             await adapter.on_started("OpenCode Agent", "A coding agent")
@@ -1482,3 +1549,602 @@ class TestOpencodeAdapter:
         # Cleanup room 2 shuts down the client
         await adapter.on_cleanup("room-2")
         assert fake_client.closed
+
+    @pytest.mark.asyncio
+    async def test_always_permission_reply_from_follow_up_message(self) -> None:
+        """The `always <id>` reply maps to the `always` ApprovalReply (distinct
+        from the one-shot `approve <id>` -> `once`)."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[[event_permission("sess-1", "req-always")]],
+            reply_permission_events={
+                "req-always": [
+                    event_message_updated("sess-1", "msg-always"),
+                    event_text_part("sess-1", "msg-always", "Always approved"),
+                    event_session_idle("sess-1"),
+                ]
+            },
+        )
+        adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        first_turn = asyncio.create_task(
+            adapter.on_message(
+                make_platform_message(content="Please continue"),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+        )
+
+        await wait_for(
+            lambda: any(
+                "approval requested" in m["content"].lower()
+                for m in tools.messages_sent
+            )
+        )
+        await wait_for(lambda: first_turn.done())
+
+        await adapter.on_message(
+            make_platform_message(content="always req-always"),
+            tools_protocol(tools),
+            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+        await first_turn
+        await wait_for(
+            lambda: any(
+                msg["content"] == "Always approved" for msg in tools.messages_sent
+            )
+        )
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "req-always",
+                "response": "always",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_turn_timeout_aborts_session_and_emits_error(self) -> None:
+        """A turn that never reaches session.idle times out, aborts the
+        OpenCode session, and reports an error instead of hanging the room."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[[]],  # no events at all; the turn never finishes
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(turn_timeout_s=0.05),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        assert fake_client.aborted_sessions == ["sess-1"]
+        error_events = [e for e in tools.events_sent if e["message_type"] == "error"]
+        assert any("timed out" in e["content"].lower() for e in error_events)
+
+        await adapter.on_cleanup("room-1")
+
+    @pytest.mark.asyncio
+    async def test_emits_turn_usage_folding_reasoning_into_output(self) -> None:
+        """Emit.USAGE aggregates the assistant message's ``tokens``, folding
+        OpenCode's disjoint ``reasoning`` count into ``output_tokens``."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_message_updated_with_tokens(
+                        "sess-1",
+                        "msg-1",
+                        {
+                            "input": 10,
+                            "output": 5,
+                            "reasoning": 3,
+                            "cache": {"read": 1, "write": 2},
+                        },
+                    ),
+                    event_text_part("sess-1", "msg-1", "done"),
+                    event_session_idle("sess-1"),
+                ]
+            ]
+        )
+        adapter = OpencodeAdapter(
+            client_factory=lambda _config: fake_client,
+            features=AdapterFeatures(emit={Emit.USAGE}),
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        assert recorded_usage_payloads(tools) == [
+            {
+                "input_tokens": 10,
+                "output_tokens": 8,
+                "cache_read_tokens": 1,
+                "cache_write_tokens": 2,
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_capability_gating_controls_registered_tool_set(self) -> None:
+        """Capability.MEMORY / Capability.CONTACTS gate which platform tools
+        the adapter registers with OpenCode's shared MCP backend, since a
+        bare adapter (no capabilities) must not expose them."""
+        captured_tool_names: list[frozenset[str]] = []
+
+        async def capturing_factory(**kwargs: Any) -> FakeMCPBackend:
+            captured_tool_names.append(
+                frozenset(definition.name for definition in kwargs["tool_definitions"])
+            )
+            return FakeMCPBackend()
+
+        with patch(
+            "band.adapters.opencode.adapter.create_band_mcp_backend",
+            AsyncMock(side_effect=capturing_factory),
+        ):
+            bare_adapter = OpencodeAdapter(
+                client_factory=lambda _config: FakeOpencodeClient(
+                    prompt_event_sequences=[[event_session_idle("sess-1")]]
+                ),
+            )
+            await bare_adapter.on_started("OpenCode Agent", "A coding agent")
+            await bare_adapter.on_message(
+                make_platform_message(),
+                tools_protocol(FakeAgentTools()),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+            await bare_adapter.on_cleanup("room-1")
+
+            full_adapter = OpencodeAdapter(
+                client_factory=lambda _config: FakeOpencodeClient(
+                    prompt_event_sequences=[[event_session_idle("sess-1")]]
+                ),
+                features=AdapterFeatures(
+                    capabilities={Capability.MEMORY, Capability.CONTACTS}
+                ),
+            )
+            await full_adapter.on_started("OpenCode Agent", "A coding agent")
+            await full_adapter.on_message(
+                make_platform_message(),
+                tools_protocol(FakeAgentTools()),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+            await full_adapter.on_cleanup("room-1")
+
+        bare_tool_names, full_tool_names = captured_tool_names
+        assert bare_tool_names.isdisjoint(MEMORY_TOOL_NAMES)
+        assert bare_tool_names.isdisjoint(CONTACT_TOOL_NAMES)
+        assert MEMORY_TOOL_NAMES <= full_tool_names
+        assert CONTACT_TOOL_NAMES <= full_tool_names
+
+    @pytest.mark.asyncio
+    async def test_malformed_events_do_not_kill_event_loop(self) -> None:
+        """Junk SSE payloads degrade to ignored events; the turn that follows
+        them completes normally instead of the event loop dying mid-stream."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    {"type": "bizarre.event", "properties": {"sessionID": "sess-1"}},
+                    {"type": "permission.asked", "properties": "garbage"},
+                    {},
+                    {"type": "message.updated", "properties": {"info": "not-a-dict"}},
+                    event_message_updated("sess-1", "msg-1"),
+                    event_text_part("sess-1", "msg-1", "survived the junk"),
+                    event_session_idle("sess-1"),
+                ]
+            ]
+        )
+        adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+        assert any(msg["content"] == "survived the junk" for msg in tools.messages_sent)
+
+        await adapter.on_cleanup("room-1")
+
+    async def _run_single_turn(
+        self,
+        adapter: OpencodeAdapter,
+        tools: FakeAgentTools,
+        *,
+        content: str = "hello",
+    ) -> None:
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await adapter.on_message(
+            make_platform_message(content=content),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_tool_reports_canonicalize_server_prefixed_names(self) -> None:
+        """OpenCode surfaces a remote MCP server's tools as `{server}_{tool}`
+        (band_store_memory arrives as band_band_store_memory); reported
+        tool_call events must carry the canonical band name so consumers
+        match one vocabulary across all adapters."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_message_updated("sess-1", "msg-1"),
+                    event_tool_part(
+                        "sess-1",
+                        "msg-1",
+                        tool="band_band_store_memory",
+                        call_id="call-1",
+                        status="running",
+                        input_data={"content": "note"},
+                    ),
+                    event_tool_part(
+                        "sess-1",
+                        "msg-1",
+                        tool="band_band_store_memory",
+                        call_id="call-1",
+                        status="completed",
+                        input_data={"content": "note"},
+                        output="stored",
+                    ),
+                    event_session_idle("sess-1"),
+                ]
+            ]
+        )
+        adapter = OpencodeAdapter(
+            client_factory=lambda _config: fake_client,
+            features=AdapterFeatures(
+                capabilities={Capability.MEMORY}, emit={Emit.EXECUTION}
+            ),
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        tool_calls = [
+            json.loads(e["content"])
+            for e in tools.events_sent
+            if e["message_type"] == "tool_call"
+        ]
+        assert [c["name"] for c in tool_calls] == ["band_store_memory"]
+
+    @pytest.mark.asyncio
+    async def test_turn_system_prompt_carries_room_context(self) -> None:
+        """The per-turn system prompt must name the current room_id (band MCP
+        tool schemas require a room_id argument, so an untold model cannot
+        call any platform tool) and the requester."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[[event_session_idle("sess-1")]]
+        )
+        adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        system = fake_client.prompt_calls[0]["system"]
+        assert "Current room_id: room-1" in system
+        assert "Current requester name: Alice" in system
+        assert "Current requester id: user-1" in system
+
+    @pytest.mark.asyncio
+    async def test_band_tool_permission_auto_approved_in_manual_mode(self) -> None:
+        """A permission ask naming the adapter's own band tool is granted
+        `always` without any room prompt, even in manual mode -- platform
+        plumbing must never stall on a human approval."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_permission(
+                        "sess-1", "perm-band", permission="band_send_message"
+                    )
+                ]
+            ],
+            reply_permission_events={
+                "perm-band": [
+                    event_message_updated("sess-1", "msg-band"),
+                    event_text_part("sess-1", "msg-band", "tool ran"),
+                    event_session_idle("sess-1"),
+                ]
+            },
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="manual"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-band",
+                "response": "always",
+            }
+        ]
+        assert not any(
+            "approval requested" in m["content"].lower() for m in tools.messages_sent
+        )
+        assert any(msg["content"] == "tool ran" for msg in tools.messages_sent)
+
+    @pytest.mark.asyncio
+    async def test_band_tool_permission_matches_server_prefixed_custom_tool(
+        self,
+    ) -> None:
+        """OpenCode may report an MCP tool ask under its `{server}_{tool}`
+        naming; a server-prefixed custom tool still auto-approves."""
+
+        class EchoInput(BaseModel):
+            """Echo text."""
+
+            text: str
+
+        def echo_tool(input_data: EchoInput) -> str:
+            return input_data.text
+
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-echo", permission="band_echo")]
+            ],
+            reply_permission_events={"perm-echo": [event_session_idle("sess-1")]},
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="manual"),
+            additional_tools=[(EchoInput, echo_tool)],
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-echo",
+                "response": "always",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_band_tool_permission_bypasses_auto_decline(self) -> None:
+        """auto_decline rejects ordinary asks, but the adapter's own band
+        tools are still granted -- declining band_store_memory would break
+        the platform plumbing the adapter itself registered."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-mem", permission="band_store_memory")]
+            ],
+            reply_permission_events={"perm-mem": [event_session_idle("sess-1")]},
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="auto_decline"),
+            features=AdapterFeatures(capabilities={Capability.MEMORY}),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-mem",
+                "response": "always",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_doom_loop_permission_auto_accepted_in_auto_accept_mode(
+        self,
+    ) -> None:
+        """Pins the E2E-lane behavior: a non-tool ask (doom_loop) under
+        auto_accept is granted `once` -- the safety heuristic keeps firing
+        server-side, each trip is just answered without a room prompt."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-loop", permission="doom_loop")]
+            ],
+            reply_permission_events={"perm-loop": [event_session_idle("sess-1")]},
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="auto_accept"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await self._run_single_turn(adapter, tools)
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-loop",
+                "response": "once",
+            }
+        ]
+        assert not any(
+            "approval requested" in m["content"].lower() for m in tools.messages_sent
+        )
+
+    @pytest.mark.asyncio
+    async def test_doom_loop_permission_still_relayed_in_manual_mode(self) -> None:
+        """Guards the interactive path: non-band asks keep the manual relay
+        (room prompt + reply flow), only the adapter's own tools bypass it."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-loop", permission="doom_loop")]
+            ],
+            reply_permission_events={
+                "perm-loop": [
+                    event_message_updated("sess-1", "msg-loop"),
+                    event_text_part("sess-1", "msg-loop", "continued"),
+                    event_session_idle("sess-1"),
+                ]
+            },
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="manual"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        first_turn = asyncio.create_task(
+            adapter.on_message(
+                make_platform_message(),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            )
+        )
+
+        await wait_for(
+            lambda: any(
+                "approval requested for `doom_loop`" in m["content"].lower()
+                for m in tools.messages_sent
+            )
+        )
+        await wait_for(lambda: first_turn.done())
+        assert fake_client.permission_replies == []
+
+        await adapter.on_message(
+            make_platform_message(content="approve perm-loop"),
+            tools_protocol(tools),
+            OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=False,
+            room_id="room-1",
+        )
+        await first_turn
+
+        assert fake_client.permission_replies == [
+            {
+                "session_id": "sess-1",
+                "permission_id": "perm-loop",
+                "response": "once",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_manual_relay_releases_turn_when_mentionless_send_rejected(
+        self,
+    ) -> None:
+        """A sender-less turn yields no mentions, which the platform rejects.
+        The manual approval relay must still release the turn (best-effort
+        post) rather than stranding on_message until the turn timeout."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-loop", permission="doom_loop")]
+            ],
+            reply_permission_events={"perm-loop": [event_session_idle("sess-1")]},
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="manual"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = MentionEnforcingTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        # No hang: on_message returns once the relay releases the turn wait,
+        # even though the mention-less room post was rejected.
+        await asyncio.wait_for(
+            adapter.on_message(
+                make_platform_message(sender_id="", sender_name=""),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            ),
+            timeout=5,
+        )
+
+        # Relay was attempted and dropped (nothing recorded), and manual mode
+        # did not auto-reply the pending permission.
+        assert tools.messages_sent == []
+        assert fake_client.permission_replies == []
+        await adapter.on_cleanup("room-1")
+
+    @pytest.mark.asyncio
+    async def test_turn_completes_when_fallback_reply_send_rejected(self) -> None:
+        """A sender-less turn's reply has no one to @mention, so the platform
+        rejects it. The watch task must still release on_message (release is
+        in finally) instead of stranding it on the captured release_future."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_message_updated("sess-1", "msg-1"),
+                    event_text_part("sess-1", "msg-1", "here is the reply"),
+                    event_session_idle("sess-1"),
+                ]
+            ],
+        )
+        adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+        tools = MentionEnforcingTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await asyncio.wait_for(
+            adapter.on_message(
+                make_platform_message(sender_id="", sender_name=""),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            ),
+            timeout=5,
+        )
+
+        # The reply could not be delivered (no mention), so it surfaced as an
+        # error event rather than hanging or vanishing silently.
+        assert tools.messages_sent == []
+        assert any(e["message_type"] == "error" for e in tools.events_sent)
+        await adapter.on_cleanup("room-1")

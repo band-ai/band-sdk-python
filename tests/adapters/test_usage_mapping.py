@@ -20,8 +20,8 @@ from band.adapters.codex import CodexAdapter
 from band.adapters.gemini import GeminiAdapter
 from band.adapters.google_adk import GoogleADKAdapter
 from band.adapters.letta import LettaAdapter
-from band.adapters.opencode import OpencodeAdapter
 from band.core.types import TurnUsage
+from band.integrations.opencode import OpencodeMessageInfo
 
 
 class TestTurnUsageConstructors:
@@ -221,15 +221,18 @@ class TestOpencodeUsageMapping:
         input + output + reasoning + cache), so reasoning folds into
         output_tokens: 20 + 7 = 27.
         """
-        info = {
-            "tokens": {
-                "input": 100,
-                "output": 20,
-                "reasoning": 7,
-                "cache": {"read": 5, "write": 3},
+        info = OpencodeMessageInfo.model_validate(
+            {
+                "tokens": {
+                    "input": 100,
+                    "output": 20,
+                    "reasoning": 7,
+                    "cache": {"read": 5, "write": 3},
+                }
             }
-        }
-        assert OpencodeAdapter._usage_from_info(info) == TurnUsage(
+        )
+        assert info.tokens is not None
+        assert info.tokens.to_turn_usage() == TurnUsage(
             input_tokens=100,
             output_tokens=27,
             cache_read_tokens=5,
@@ -237,9 +240,9 @@ class TestOpencodeUsageMapping:
         )
 
     def test_missing_or_malformed_tokens_is_empty(self):
-        """No tokens (or a non-dict tokens) yields empty usage."""
-        assert OpencodeAdapter._usage_from_info({}) == TurnUsage()
-        assert OpencodeAdapter._usage_from_info({"tokens": "nope"}) == TurnUsage()
+        """No tokens (or a non-dict tokens) parses as absent usage."""
+        assert OpencodeMessageInfo.model_validate({}).tokens is None
+        assert OpencodeMessageInfo.model_validate({"tokens": "nope"}).tokens is None
 
 
 class TestCodexUsageMapping:

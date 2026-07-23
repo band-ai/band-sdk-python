@@ -45,6 +45,12 @@ LOCAL_MCP_HTTP_PATH = "/mcp"
 LOCAL_MCP_MESSAGE_PATH = "/messages/"
 LOCAL_MCP_HEALTH_PATH = "/healthz"
 SERVER_START_TIMEOUT_S = 5.0
+# uvicorn's own default (None) waits forever for existing connections to close
+# on `stop()` -- fatal here, since an MCP client (e.g. OpenCode) holds its `/sse`
+# GET open for the life of its session and may never close it on its own after
+# we deregister. Bound it so `stop()` force-cancels that connection instead of
+# hanging the adapter's cleanup indefinitely.
+SERVER_STOP_TIMEOUT_S = 5.0
 
 MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 
@@ -407,6 +413,7 @@ class LocalMCPServer:
                 lifespan="on",
                 log_level="warning",
                 access_log=False,
+                timeout_graceful_shutdown=SERVER_STOP_TIMEOUT_S,
             )
         )
         serve_task = asyncio.create_task(
