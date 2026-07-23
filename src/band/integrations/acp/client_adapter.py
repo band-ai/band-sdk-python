@@ -181,7 +181,9 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         self._runtime.reset_session(session_id)
 
         replay_messages = (
-            history.replay_messages if is_session_bootstrap and not session_loaded else None
+            history.replay_messages
+            if is_session_bootstrap and not session_loaded
+            else None
         )
         prompt_text = await self._build_prompt_text(
             room_id,
@@ -427,9 +429,8 @@ class ACPClientAdapter(SimpleAdapter[ACPClientSessionState]):
         system_context = self._build_system_context(room_id, msg)
         history_context = ""
         if replay_messages:
-            history_context = (
-                "\n\n[Recovered Room History]\n"
-                + "\n".join(replay_messages)
+            history_context = "\n\n[Recovered Room History]\n" + "\n".join(
+                replay_messages
             )
         return f"{system_context}{history_context}\n\n{msg.content}"
 
