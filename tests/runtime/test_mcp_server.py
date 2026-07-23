@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import suppress
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,6 +13,7 @@ from pydantic import BaseModel
 from band.runtime.custom_tools import get_custom_tool_name
 from band.runtime.mcp_server import (
     LOCAL_MCP_HOST,
+    SERVER_STOP_TIMEOUT_S,
     MCPToolRegistration,
     LocalMCPServer,
     build_band_mcp_tool_registrations,
@@ -172,6 +175,60 @@ class TestLocalMcpServer:
                     assert result.structuredContent == {"echo": "hello"}
         finally:
             await server.stop()
+
+    @pytest.mark.timeout(SERVER_STOP_TIMEOUT_S + 15.0)
+    @pytest.mark.asyncio
+    async def test_stop_returns_promptly_with_a_still_open_sse_connection(
+        self,
+    ) -> None:
+        """Regression: an MCP client (e.g. OpenCode) holds its `/sse` GET open
+        for the life of its own session and may never close it after we ask
+        it to deregister. uvicorn's own graceful-shutdown wait is unbounded by
+        default, so ``stop()`` used to hang forever waiting for a connection
+        that never closes on its own; it must now force it closed instead.
+
+        Measures wall-clock time around a bare ``await server.stop()`` (no
+        wrapping ``asyncio.wait_for``, which would cancel ``stop()`` from the
+        outside and let its own ``except CancelledError`` swallow that
+        cancellation -- masking a real hang as a false pass). The
+        ``pytest.mark.timeout`` above is the sole backstop, matching how the
+        live baseline run actually surfaced this hang (pytest-timeout, not an
+        internal asyncio timeout).
+        """
+        server = LocalMCPServer(
+            name="test-local-mcp-stop",
+            tool_registrations=[],
+            port_min=0,
+            port_max=0,
+        )
+        await server.start()
+
+        connection_ready = asyncio.Event()
+
+        async def hold_connection_open() -> None:
+            with suppress(Exception):
+                async with sse_client(server.url) as (read_stream, write_stream):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        connection_ready.set()
+                        await asyncio.sleep(60)  # never closes on its own
+
+        holder = asyncio.create_task(hold_connection_open())
+        try:
+            await asyncio.wait_for(connection_ready.wait(), timeout=5.0)
+
+            started_at = asyncio.get_running_loop().time()
+            await server.stop()
+            elapsed = asyncio.get_running_loop().time() - started_at
+
+            assert elapsed < SERVER_STOP_TIMEOUT_S + 5.0, (
+                f"stop() took {elapsed:.1f}s -- graceful shutdown is not "
+                "bounded by SERVER_STOP_TIMEOUT_S"
+            )
+        finally:
+            holder.cancel()
+            with suppress(asyncio.CancelledError):
+                await holder
 
     # 30s default barely fits on GitHub Actions Python 3.12 runners — the
     # streamable-HTTP loopback initialization spends most of that on uvicorn
