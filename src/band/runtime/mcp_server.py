@@ -50,7 +50,7 @@ SERVER_START_TIMEOUT_S = 5.0
 # GET open for the life of its session and may never close it on its own after
 # we deregister. Bound it so `stop()` force-cancels that connection instead of
 # hanging the adapter's cleanup indefinitely.
-SERVER_STOP_TIMEOUT_S = 5
+SERVER_STOP_TIMEOUT_S = 5.0
 
 MCPToolExecutor = Callable[[dict[str, Any]], Awaitable[Any]]
 

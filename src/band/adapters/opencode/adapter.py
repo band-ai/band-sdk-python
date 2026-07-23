@@ -617,7 +617,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 usage = info.tokens.to_turn_usage()
                 if not usage.is_empty:
                     room_state.usage_by_message[info.id] = usage
-        if info.error is not None:
+        if info.error is not None and not info.error.is_empty:
             room_state.last_error_message = info.error.describe()
 
     async def _handle_part_update(
@@ -772,12 +772,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             # Tokens spent before the timeout were still spent — emit them, same
             # as the success path (best-effort; no-op if none captured).
             await self._emit_turn_usage(room_state, usage_by_message)
-            self._release_turn_wait(room_state)
         else:
             await self._deliver_fallback_text(room_state)
             await self._emit_turn_usage(room_state, usage_by_message)
-            self._release_turn_wait(room_state)
         finally:
+            # Release the on_message waiter even if delivering the reply or
+            # emitting usage raised (e.g. a sender-less turn has no one to
+            # @mention, which the platform rejects) — otherwise on_message
+            # waits on the captured release_future forever.
+            self._release_turn_wait(room_state)
             self._clear_turn_state(
                 room_state,
                 expected_future=turn_future,

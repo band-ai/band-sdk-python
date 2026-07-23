@@ -14,6 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.core.types import (
     AdapterFeatures,
@@ -212,6 +213,20 @@ def event_session_error(session_id: str, message: str) -> dict[str, Any]:
 
 def tools_protocol(tools: FakeAgentTools) -> AgentToolsProtocol:
     return cast(AgentToolsProtocol, tools)
+
+
+class MentionEnforcingTools(FakeAgentTools):
+    """FakeAgentTools that enforces the real send_message contract: a message
+    needs at least one mention. FakeAgentTools silently accepts mention-less
+    sends (which once hid a live crash), so a regression test for the
+    sender-less turn must use a boundary that rejects them like production."""
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
+        if not mentions:
+            raise BandToolError("At least one mention is required")
+        return await super().send_message(content, mentions)
 
 
 class FakeOpencodeClient:
@@ -2055,3 +2070,81 @@ class TestOpencodeAdapter:
                 "response": "once",
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_manual_relay_releases_turn_when_mentionless_send_rejected(
+        self,
+    ) -> None:
+        """A sender-less turn yields no mentions, which the platform rejects.
+        The manual approval relay must still release the turn (best-effort
+        post) rather than stranding on_message until the turn timeout."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [event_permission("sess-1", "perm-loop", permission="doom_loop")]
+            ],
+            reply_permission_events={"perm-loop": [event_session_idle("sess-1")]},
+        )
+        adapter = OpencodeAdapter(
+            config=OpencodeAdapterConfig(approval_mode="manual"),
+            client_factory=lambda _config: fake_client,
+        )
+        tools = MentionEnforcingTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        # No hang: on_message returns once the relay releases the turn wait,
+        # even though the mention-less room post was rejected.
+        await asyncio.wait_for(
+            adapter.on_message(
+                make_platform_message(sender_id="", sender_name=""),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            ),
+            timeout=5,
+        )
+
+        # Relay was attempted and dropped (nothing recorded), and manual mode
+        # did not auto-reply the pending permission.
+        assert tools.messages_sent == []
+        assert fake_client.permission_replies == []
+        await adapter.on_cleanup("room-1")
+
+    @pytest.mark.asyncio
+    async def test_turn_completes_when_fallback_reply_send_rejected(self) -> None:
+        """A sender-less turn's reply has no one to @mention, so the platform
+        rejects it. The watch task must still release on_message (release is
+        in finally) instead of stranding it on the captured release_future."""
+        fake_client = FakeOpencodeClient(
+            prompt_event_sequences=[
+                [
+                    event_message_updated("sess-1", "msg-1"),
+                    event_text_part("sess-1", "msg-1", "here is the reply"),
+                    event_session_idle("sess-1"),
+                ]
+            ],
+        )
+        adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+        tools = MentionEnforcingTools()
+
+        await adapter.on_started("OpenCode Agent", "A coding agent")
+        await asyncio.wait_for(
+            adapter.on_message(
+                make_platform_message(sender_id="", sender_name=""),
+                tools_protocol(tools),
+                OpencodeSessionState(),
+                participants_msg=None,
+                contacts_msg=None,
+                is_session_bootstrap=True,
+                room_id="room-1",
+            ),
+            timeout=5,
+        )
+
+        # The reply could not be delivered (no mention), so it surfaced as an
+        # error event rather than hanging or vanishing silently.
+        assert tools.messages_sent == []
+        assert any(e["message_type"] == "error" for e in tools.events_sent)
+        await adapter.on_cleanup("room-1")
