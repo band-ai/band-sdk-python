@@ -206,6 +206,27 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         self._log_startup_config(agent_name)
 
+    def _build_turn_system(self, room_id: str, msg: PlatformMessage) -> str:
+        """Per-turn system prompt: the static base plus this room's context.
+
+        The band MCP tools' schemas require a ``room_id`` argument (the shared
+        backend dispatches tool calls by room), so the model must be told the
+        current room id every turn or the platform tools are uncallable —
+        the same per-turn room context the ACP client adapter injects.
+        """
+        requester_name = msg.sender_name or msg.sender_id or "Unknown"
+        requester_id = msg.sender_id or "unknown"
+        room_context = (
+            "## Room Context\n"
+            f"Current room_id: {room_id}\n"
+            f"Current requester name: {requester_name}\n"
+            f"Current requester id: {requester_id}\n"
+            "\n"
+            "Use each MCP tool's schema for its argument names. When a tool "
+            "needs the current room, use the Current room_id value above.\n"
+        )
+        return f"{self._system_prompt}\n\n{room_context}".strip()
+
     def _log_startup_config(self, agent_name: str) -> None:
         logger.info(
             "OpenCode adapter started: agent=%s, base_url=%s, "
@@ -290,7 +311,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         # not replay and double it.
                         replay_messages=(history.replay_messages if created else None),
                     ),
-                    system=self._system_prompt,
+                    system=self._build_turn_system(room_id, msg),
                     model=self._build_model_payload(),
                     agent=self.config.agent,
                     variant=self.config.variant,
@@ -365,19 +386,31 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         state = self._rooms.get(room_id)
         return state.tools if state else None
 
+    def _canonical_tool_name(self, name: str) -> str:
+        """Strip OpenCode's ``{server}_`` MCP prefix off one of our own tools.
+
+        OpenCode registers a remote MCP server's tools under
+        ``{server}_{tool}`` (verified live: the band server's
+        ``band_store_memory`` surfaces as ``band_band_store_memory``). Room
+        ``tool_call``/``tool_result`` events must carry the canonical band
+        tool name like every other adapter's, so consumers match on one
+        vocabulary. Names that aren't ours pass through untouched.
+        """
+        stripped = name.removeprefix(f"{self.config.mcp_server_name}_")
+        return stripped if stripped in self._own_tool_names else name
+
     def _is_own_band_tool(self, permission: str) -> bool:
         """Whether a permission ask names a tool this adapter registered.
 
-        The ask's ``permission`` field is the flat tool name (verified against
-        OpenCode 1.18.4); the prefix-stripped check additionally covers
-        OpenCode's ``{server}_{tool}`` MCP naming so a server-prefixed custom
-        tool matches too. Non-matches are logged at debug so any OpenCode
-        naming drift shows up in live logs instead of silently regressing.
+        The ask's ``permission`` field is the flat registered tool name, which
+        for an MCP tool carries OpenCode's ``{server}_{tool}`` prefix (see
+        ``_canonical_tool_name``); a bare name is accepted too. Non-matches
+        are logged at debug so any OpenCode naming drift shows up in live
+        logs instead of silently regressing.
         """
-        prefix = f"{self.config.mcp_server_name}_"
         if (
             permission in self._own_tool_names
-            or permission.removeprefix(prefix) in self._own_tool_names
+            or self._canonical_tool_name(permission) in self._own_tool_names
         ):
             return True
         logger.debug(
@@ -615,7 +648,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if state is None:
             return
 
-        tool_name = part.tool or "unknown"
+        tool_name = self._canonical_tool_name(part.tool or "unknown")
         call_id = part.call_id or part_id
         if state.status in {"pending", "running"}:
             if call_id not in room_state.reported_tool_calls:
