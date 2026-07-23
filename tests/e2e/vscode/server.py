@@ -59,7 +59,12 @@ class BandMCPServer:
     def sse_url(self) -> str:
         return f"http://127.0.0.1:{self._port}/sse"
 
+    @property
+    def running(self) -> bool:
+        return self._process is not None and self._process.returncode is None
+
     async def start(self) -> None:
+        await self._reject_occupied_port()
         env = dict(os.environ) | {
             "BAND_AGENT_KEY": self._agent_key,
             "BAND_BASE_URL": self._base_url,
@@ -77,7 +82,13 @@ class BandMCPServer:
             TOOL_GROUPS,
             env=env,
         )
-        await self._wait_ready()
+        try:
+            await self._wait_ready()
+        except Exception:
+            # A failed startup must not orphan the child: the session fixture
+            # never reaches its yield, so its teardown would never stop() it.
+            await self.stop()
+            raise
         logger.info("band-mcp serving on %s", self.sse_url)
 
     async def stop(self) -> None:
@@ -97,6 +108,25 @@ class BandMCPServer:
         """Stop and start on the same port — the workspace mcp.json stays valid."""
         await self.stop()
         await self.start()
+
+    async def _reject_occupied_port(self) -> None:
+        """Fail loud when something already listens on the port.
+
+        The readiness probe is a bare TCP connect — a stale listener (e.g. a
+        band-mcp orphaned by a crashed run, holding an already-reaped agent
+        key) would answer it for a child that failed to bind, and the suite
+        would run against the wrong Band identity.
+        """
+        try:
+            _, writer = await asyncio.open_connection("127.0.0.1", self._port)
+        except OSError:
+            return
+        writer.close()
+        await writer.wait_closed()
+        raise RuntimeError(
+            f"port {self._port} is already in use — a stale band-mcp from a "
+            f"previous run? Stop it (or set BAND_MCP_PORT) and rerun."
+        )
 
     async def _wait_ready(self) -> None:
         deadline = asyncio.get_running_loop().time() + READY_TIMEOUT_S

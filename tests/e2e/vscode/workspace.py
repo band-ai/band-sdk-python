@@ -20,8 +20,11 @@ from pathlib import Path
 AUTO_REPLY_SETTING = "chat.autoReply"
 
 # MCP support is on by default in current VS Code; setting it explicitly keeps
-# the run independent of a user-profile override. Unknown keys are ignored.
-MCP_ENABLED_SETTING = "chat.mcp.enabled"
+# the run independent of a user-profile override ("none"). This is the current
+# key — the boolean chat.mcp.enabled it replaced only works via VS Code's
+# settings-migration shim.
+MCP_ACCESS_SETTING = "chat.mcp.access"
+MCP_ACCESS_ALL = "all"
 
 # The one MCP server name the prompts refer to ("the band tools").
 MCP_SERVER_NAME = "band"
@@ -33,7 +36,7 @@ def scaffold_workspace(root: Path, sse_url: str) -> None:
     vscode_dir.mkdir(parents=True, exist_ok=True)
 
     mcp_config = {"servers": {MCP_SERVER_NAME: {"type": "sse", "url": sse_url}}}
-    settings = {AUTO_REPLY_SETTING: True, MCP_ENABLED_SETTING: True}
+    settings = {AUTO_REPLY_SETTING: True, MCP_ACCESS_SETTING: MCP_ACCESS_ALL}
 
     (vscode_dir / "mcp.json").write_text(json.dumps(mcp_config, indent=2) + "\n")
     (vscode_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
