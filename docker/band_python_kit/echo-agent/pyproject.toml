@@ -7,4 +7,4 @@ requires-python = ">=3.11"
 # x-api-key handshake header, which proxy-managed credential custody (the
 # kit's default tier) requires — older SDKs only put the key in the URL query,
 # which the sandbox proxy never rewrites, so the agent cannot connect.
-dependencies = ["band-sdk>=1.4.0", "pydantic-settings>=2.0.0"]
+dependencies = ["band-sdk>=1.4.2", "pydantic-settings>=2.0.0"]
