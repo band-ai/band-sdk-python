@@ -103,6 +103,24 @@ class TestControlWiring:
 
         assert link.on_control == runner._control.handle
 
+    async def test_connect_handles_control_signal_arriving_during_subscription(
+        self,
+    ) -> None:
+        runner, _, link = _build_runner()
+        handler = AsyncMock()
+        runner._control.handle = handler
+        control = _control("interrupt", scope="room", room_id="r1")
+
+        async def connect() -> None:
+            await link.on_control(control)
+
+        link.connect.side_effect = connect
+        link.__anext__ = AsyncMock(side_effect=StopAsyncIteration())
+
+        await runner._connect_and_consume()
+
+        handler.assert_awaited_once_with(control)
+
 
 # ---------------------------------------------------------------------------
 # Interrupt / stop — cancel an in-flight forward

@@ -44,7 +44,7 @@ LOCAL_MCP_SSE_PATH = "/sse"
 LOCAL_MCP_HTTP_PATH = "/mcp"
 LOCAL_MCP_MESSAGE_PATH = "/messages/"
 LOCAL_MCP_HEALTH_PATH = "/healthz"
-SERVER_START_TIMEOUT_S = 5.0
+SERVER_START_TIMEOUT_S = 5
 # uvicorn's own default (None) waits forever for existing connections to close
 # on `stop()` -- fatal here, since an MCP client (e.g. OpenCode) holds its `/sse`
 # GET open for the life of its session and may never close it on its own after

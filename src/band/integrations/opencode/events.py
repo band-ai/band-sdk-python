@@ -221,6 +221,7 @@ class OpencodePart(OpencodeModel):
     call_id: str | None = Field(default=None, alias="callID")
     state: OpencodeToolState | None = None
 
+    _coerce_scalars = field_validator("type", "text", mode="before")(_coerce_str)
     _lenient_state = field_validator("state", mode="wrap")(_lenient)
 
 

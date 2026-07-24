@@ -298,6 +298,27 @@ class TestDegradation:
             assert isinstance(event, MessagePartDeltaEvent)
             assert event.properties.delta == expected
 
+    def test_text_part_coerces_non_string_scalars(self) -> None:
+        event = parse_opencode_event(
+            {
+                "type": "message.part.updated",
+                "properties": {
+                    "part": {
+                        "id": "p",
+                        "sessionID": "s",
+                        "messageID": "m",
+                        "type": 7,
+                        "text": 42,
+                    }
+                },
+            }
+        )
+
+        assert isinstance(event, MessagePartUpdatedEvent)
+        assert event.properties.part is not None
+        assert event.properties.part.type == "7"
+        assert event.properties.part.text == "42"
+
 
 class TestToolStateOutputPresence:
     def test_present_falsy_output_is_preserved(self) -> None:
