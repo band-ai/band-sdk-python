@@ -564,7 +564,17 @@ async def reply_capture(
     try:
         yield capture
     finally:
-        await ws.leave_chat_room_channel(room_id)
+        # Best-effort: a leave/unsubscribe that times out (the server never acks,
+        # e.g. a WS starved during a long turn) must not fail an otherwise-passing
+        # test -- and must not replace the body's real exception on an error exit.
+        try:
+            await ws.leave_chat_room_channel(room_id)
+        except Exception:
+            logger.warning(
+                "reply_capture: leaving room %s failed on teardown",
+                room_id,
+                exc_info=True,
+            )
 
 
 # Type of the ``reply_capture`` fixture: call with a room id, get a
