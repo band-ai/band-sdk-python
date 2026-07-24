@@ -754,9 +754,6 @@ async def test_band_tool_permission_matches_server_prefixed_custom_tool(
         return input_data.text
 
     fake_client = FakeOpencodeClient(
-        prompt_event_sequences=[
-            [event_permission("sess-1", "perm-echo", permission="band_echo")]
-        ],
         reply_permission_events={"perm-echo": [event_session_idle("sess-1")]},
     )
     adapter = OpencodeAdapter(
@@ -764,6 +761,16 @@ async def test_band_tool_permission_matches_server_prefixed_custom_tool(
         additional_tools=[(EchoInput, echo_tool)],
         client_factory=lambda _config: fake_client,
     )
+    # OpenCode prefixes MCP tools with this instance's unique server name, so
+    # the ask names the custom tool as ``{server}_echo`` -- built from the real
+    # per-instance name so this keeps exercising the prefix strip.
+    fake_client._prompt_event_sequences = [
+        [
+            event_permission(
+                "sess-1", "perm-echo", permission=f"{adapter._mcp_server_name}_echo"
+            )
+        ]
+    ]
     tools = FakeAgentTools()
 
     await _run_single_turn(adapter, tools)

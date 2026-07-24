@@ -397,37 +397,40 @@ async def test_tool_reports_canonicalize_server_prefixed_names(
     (band_store_memory arrives as band_band_store_memory); reported
     tool_call events must carry the canonical band name so consumers
     match one vocabulary across all adapters."""
-    fake_client = FakeOpencodeClient(
-        prompt_event_sequences=[
-            [
-                event_message_updated("sess-1", "msg-1"),
-                event_tool_part(
-                    "sess-1",
-                    "msg-1",
-                    tool="band_band_store_memory",
-                    call_id="call-1",
-                    status="running",
-                    input_data={"content": "note"},
-                ),
-                event_tool_part(
-                    "sess-1",
-                    "msg-1",
-                    tool="band_band_store_memory",
-                    call_id="call-1",
-                    status="completed",
-                    input_data={"content": "note"},
-                    output="stored",
-                ),
-                event_session_idle("sess-1"),
-            ]
-        ]
-    )
+    fake_client = FakeOpencodeClient()
     adapter = OpencodeAdapter(
         client_factory=lambda _config: fake_client,
         features=AdapterFeatures(
             capabilities={Capability.MEMORY}, emit={Emit.EXECUTION}
         ),
     )
+    # OpenCode prefixes the band MCP tool with this instance's unique server
+    # name (band_store_memory -> {server}_band_store_memory); built from the
+    # real per-instance name so canonicalization is genuinely exercised.
+    prefixed = f"{adapter._mcp_server_name}_band_store_memory"
+    fake_client._prompt_event_sequences = [
+        [
+            event_message_updated("sess-1", "msg-1"),
+            event_tool_part(
+                "sess-1",
+                "msg-1",
+                tool=prefixed,
+                call_id="call-1",
+                status="running",
+                input_data={"content": "note"},
+            ),
+            event_tool_part(
+                "sess-1",
+                "msg-1",
+                tool=prefixed,
+                call_id="call-1",
+                status="completed",
+                input_data={"content": "note"},
+                output="stored",
+            ),
+            event_session_idle("sess-1"),
+        ]
+    ]
     tools = FakeAgentTools()
 
     await _run_single_turn(adapter, tools)

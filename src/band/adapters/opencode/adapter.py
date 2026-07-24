@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable
@@ -244,6 +245,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             features=features,
         )
         self.config = self._config
+        # Register this instance's MCP server under a unique name. OpenCode's
+        # ``POST /mcp`` keys the registration by ``name`` (global on the serve),
+        # so multiple adapter instances sharing one ``opencode serve`` would
+        # otherwise clobber each other's registration (last writer wins) and
+        # cross-wire their band tool calls. The name is also OpenCode's
+        # ``{server}_{tool}`` prefix, and every use below reads this one value,
+        # so tool-name canonicalization stays self-consistent.
+        self._mcp_server_name = f"{self._config.mcp_server_name}_{uuid.uuid4().hex[:8]}"
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
@@ -309,7 +318,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self.config.question_mode,
             self.config.enable_execution_reporting,
             self.config.enable_task_events,
-            self.config.mcp_server_name,
+            self._mcp_server_name,
             len(self._custom_tools),
         )
 
@@ -464,7 +473,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         tool name like every other adapter's, so consumers match on one
         vocabulary. Names that aren't ours pass through untouched.
         """
-        stripped = name.removeprefix(f"{self.config.mcp_server_name}_")
+        stripped = name.removeprefix(f"{self._mcp_server_name}_")
         return stripped if stripped in self._own_tool_names else name
 
     def _is_own_band_tool(self, permission: str) -> bool:
@@ -569,18 +578,18 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         try:
             await self._client.register_mcp_server(
-                name=self.config.mcp_server_name,
+                name=self._mcp_server_name,
                 url=local_server.sse_url,
             )
             logger.info(
                 "Registered MCP server %s at %s with OpenCode",
-                self.config.mcp_server_name,
+                self._mcp_server_name,
                 local_server.sse_url,
             )
         except Exception:
             logger.exception(
                 "Failed to register MCP server %s with OpenCode",
-                self.config.mcp_server_name,
+                self._mcp_server_name,
             )
 
     async def _shutdown_client(self) -> None:
@@ -595,11 +604,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if mcp_backend is not None:
             if client is not None:
                 try:
-                    await client.deregister_mcp_server(self.config.mcp_server_name)
+                    await client.deregister_mcp_server(self._mcp_server_name)
                 except Exception:
                     logger.debug(
                         "Failed to deregister MCP server %s (OpenCode may already be stopped)",
-                        self.config.mcp_server_name,
+                        self._mcp_server_name,
                     )
             await mcp_backend.stop()
 

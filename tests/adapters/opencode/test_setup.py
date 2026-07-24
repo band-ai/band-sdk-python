@@ -73,7 +73,7 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
         )
 
     assert fake_client.registered_mcp_servers == [
-        {"name": "band", "url": "http://127.0.0.1:50000/sse"},
+        {"name": adapter._mcp_server_name, "url": "http://127.0.0.1:50000/sse"},
     ]
 
     await adapter.on_cleanup("room-1")
@@ -111,11 +111,11 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
         )
 
     assert fake_client.registered_mcp_servers == [
-        {"name": "band", "url": "http://127.0.0.1:50000/sse"}
+        {"name": adapter._mcp_server_name, "url": "http://127.0.0.1:50000/sse"}
     ]
 
     await adapter.on_cleanup("room-1")
-    assert fake_client.deregistered_mcp_servers == ["band"]
+    assert fake_client.deregistered_mcp_servers == [adapter._mcp_server_name]
     assert fake_backend.stop_calls == 1
 
 
