@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, TypeAlias, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -19,6 +19,8 @@ from band.core.types import (
 )
 from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools
+
+RawOpencodeEvent: TypeAlias = dict[str, Any]
 
 
 def make_platform_message(
@@ -40,7 +42,7 @@ def make_platform_message(
     )
 
 
-def event_message_updated(session_id: str, message_id: str) -> dict[str, Any]:
+def event_message_updated(session_id: str, message_id: str) -> RawOpencodeEvent:
     return {
         "type": "message.updated",
         "properties": {
@@ -53,7 +55,7 @@ def event_message_updated(session_id: str, message_id: str) -> dict[str, Any]:
     }
 
 
-def event_text_part(session_id: str, message_id: str, text: str) -> dict[str, Any]:
+def event_text_part(session_id: str, message_id: str, text: str) -> RawOpencodeEvent:
     return {
         "type": "message.part.updated",
         "properties": {
@@ -70,7 +72,7 @@ def event_text_part(session_id: str, message_id: str, text: str) -> dict[str, An
 
 def event_reasoning_part(
     session_id: str, message_id: str, part_id: str = "reasoning-part"
-) -> dict[str, Any]:
+) -> RawOpencodeEvent:
     return {
         "type": "message.part.updated",
         "properties": {
@@ -87,7 +89,7 @@ def event_reasoning_part(
 
 def event_part_delta(
     session_id: str, message_id: str, part_id: str, delta: str
-) -> dict[str, Any]:
+) -> RawOpencodeEvent:
     return {
         "type": "message.part.delta",
         "properties": {
@@ -102,7 +104,7 @@ def event_part_delta(
 
 def event_message_updated_with_tokens(
     session_id: str, message_id: str, tokens: dict[str, Any]
-) -> dict[str, Any]:
+) -> RawOpencodeEvent:
     return {
         "type": "message.updated",
         "properties": {
@@ -116,7 +118,7 @@ def event_message_updated_with_tokens(
     }
 
 
-def event_user_message_updated(session_id: str, message_id: str) -> dict[str, Any]:
+def event_user_message_updated(session_id: str, message_id: str) -> RawOpencodeEvent:
     return {
         "type": "message.updated",
         "properties": {
@@ -138,7 +140,7 @@ def event_tool_part(
     status: str,
     input_data: dict[str, Any],
     output: Any = None,
-) -> dict[str, Any]:
+) -> RawOpencodeEvent:
     state: dict[str, Any] = {"status": status, "input": input_data}
     if status == "running":
         state["time"] = {"start": 1}
@@ -166,7 +168,7 @@ def event_tool_part(
 
 def event_permission(
     session_id: str, request_id: str, *, permission: str = "bash"
-) -> dict[str, Any]:
+) -> RawOpencodeEvent:
     return {
         "type": "permission.asked",
         "properties": {
@@ -178,7 +180,9 @@ def event_permission(
     }
 
 
-def event_question(session_id: str, request_id: str, *questions: str) -> dict[str, Any]:
+def event_question(
+    session_id: str, request_id: str, *questions: str
+) -> RawOpencodeEvent:
     return {
         "type": "question.asked",
         "properties": {
@@ -189,11 +193,11 @@ def event_question(session_id: str, request_id: str, *questions: str) -> dict[st
     }
 
 
-def event_session_idle(session_id: str) -> dict[str, Any]:
+def event_session_idle(session_id: str) -> RawOpencodeEvent:
     return {"type": "session.idle", "properties": {"sessionID": session_id}}
 
 
-def event_session_error(session_id: str, message: str) -> dict[str, Any]:
+def event_session_error(session_id: str, message: str) -> RawOpencodeEvent:
     return {
         "type": "session.error",
         "properties": {
@@ -225,10 +229,10 @@ class FakeOpencodeClient:
     def __init__(
         self,
         *,
-        prompt_event_sequences: list[list[dict[str, Any]]] | None = None,
-        reply_permission_events: dict[str, list[dict[str, Any]]] | None = None,
-        reply_question_events: dict[str, list[dict[str, Any]]] | None = None,
-        reject_question_events: dict[str, list[dict[str, Any]]] | None = None,
+        prompt_event_sequences: list[list[RawOpencodeEvent]] | None = None,
+        reply_permission_events: dict[str, list[RawOpencodeEvent]] | None = None,
+        reply_question_events: dict[str, list[RawOpencodeEvent]] | None = None,
+        reject_question_events: dict[str, list[RawOpencodeEvent]] | None = None,
         get_session_missing: set[str] | None = None,
         prompt_exceptions: list[Exception] | None = None,
     ) -> None:
@@ -242,7 +246,7 @@ class FakeOpencodeClient:
         self.deregistered_mcp_servers: list[str] = []
         self.closed = False
         self._session_counter = 0
-        self._queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        self._queue: asyncio.Queue[RawOpencodeEvent | None] = asyncio.Queue()
         self._prompt_event_sequences = list(prompt_event_sequences or [])
         self._reply_permission_events = reply_permission_events or {}
         self._reply_question_events = reply_question_events or {}
