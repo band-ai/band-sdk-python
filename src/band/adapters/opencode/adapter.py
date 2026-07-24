@@ -626,13 +626,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if not part.id:
             return
 
-        if part.type in {"text", "reasoning"}:
-            self._track_assistant_part(room_state, part)
-            return
-
-        if part.type != "tool":
-            return
-        await self._report_tool_part(room_state, part)
+        match part.type:
+            case "text" | "reasoning":
+                self._track_assistant_part(room_state, part)
+            case "tool":
+                await self._report_tool_part(room_state, part)
 
     def _track_assistant_part(self, room_state: _RoomState, part: OpencodePart) -> None:
         """Remember text and reasoning parts belonging to the assistant reply."""
