@@ -13,7 +13,7 @@ Prerequisites:
 2. Start the server: `opencode serve --hostname=127.0.0.1 --port=4096`
 3. Set `BAND_WS_URL` and `BAND_REST_URL`
 4. Add agent credentials to `agent_config.yaml`
-5. The example defaults to the locally available free model `opencode/minimax-m2.5-free`
+5. The example defaults to the locally available free model `opencode/mimo-v2.5-free`
 
 Run with:
     uv run examples/opencode/01_basic_agent.py

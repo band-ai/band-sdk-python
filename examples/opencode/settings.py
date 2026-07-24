@@ -15,7 +15,7 @@ class OpenCodeExampleSettings(BaseSettings):
     agent_key: str = "darter"
     opencode_base_url: str = "http://127.0.0.1:4096"
     opencode_provider_id: str = "opencode"
-    opencode_model_id: str = "minimax-m2.5-free"
+    opencode_model_id: str = "mimo-v2.5-free"
     opencode_agent: str | None = None
     opencode_directory: str | None = None
     opencode_workspace: str | None = None

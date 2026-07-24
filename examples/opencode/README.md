@@ -42,7 +42,7 @@ uv run examples/opencode/03_custom_tools_agent.py
 |---|---|---|
 | `OPENCODE_BASE_URL` | `http://127.0.0.1:4096` | OpenCode server URL. |
 | `OPENCODE_PROVIDER_ID` | `opencode` | Provider sent with each prompt. |
-| `OPENCODE_MODEL_ID` | `minimax-m2.5-free` | Model sent with each prompt. |
+| `OPENCODE_MODEL_ID` | `mimo-v2.5-free` | Model sent with each prompt. |
 | `OPENCODE_AGENT` | unset | Optional OpenCode agent profile. |
 | `OPENCODE_DIRECTORY` | unset | Repository directory for the workspace example. |
 | `OPENCODE_WORKSPACE` | unset | Optional OpenCode workspace selector. |
