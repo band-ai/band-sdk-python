@@ -41,6 +41,7 @@ codex = [
 ]
 opencode = [
     "httpx>=0.24.0",
+    "mcp>=1.25.0",
 ]
 letta = [
     "letta-client>=0.1.0",

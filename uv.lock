@@ -674,6 +674,7 @@ logging = [
 ]
 opencode = [
     { name = "httpx" },
+    { name = "mcp" },
 ]
 parlant = [
     { name = "openai" },
@@ -757,6 +758,7 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.25.0" },
     { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.25.0" },
     { name = "mcp", marker = "extra == 'letta'", specifier = ">=1.25.0" },
+    { name = "mcp", marker = "extra == 'opencode'", specifier = ">=1.25.0" },
     { name = "nest-asyncio", marker = "extra == 'crewai'", specifier = ">=1.6.0" },
     { name = "nest-asyncio", marker = "extra == 'dev-crewai'", specifier = ">=1.6.0" },
     { name = "openai", marker = "extra == 'crewai'", specifier = ">=2.0.0" },

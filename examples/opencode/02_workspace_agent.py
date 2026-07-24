@@ -5,18 +5,19 @@
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
-"""
-Basic OpenCode adapter agent example.
+"""OpenCode coding agent scoped to one local workspace.
 
-Prerequisites:
-1. Install OpenCode: `npm install -g opencode-ai`
-2. Start the server: `opencode serve --hostname=127.0.0.1 --port=4096`
-3. Set `BAND_WS_URL` and `BAND_REST_URL`
-4. Add agent credentials to `agent_config.yaml`
-5. The example defaults to the locally available free model `opencode/minimax-m2.5-free`
+Set ``OPENCODE_DIRECTORY`` to the repository OpenCode may inspect or change.
+``OPENCODE_WORKSPACE`` is optional and selects an OpenCode workspace when the
+server has more than one configured.
+
+The default approval mode is ``manual``. When OpenCode asks to run a command
+or modify a file, reply in the Band room with ``approve``, ``always``, or
+``reject``. Do not use ``auto_accept`` for a workspace you do not trust.
 
 Run with:
-    uv run examples/opencode/01_basic_agent.py
+    OPENCODE_DIRECTORY=/absolute/path/to/project \
+      uv run examples/opencode/02_workspace_agent.py
 """
 
 from __future__ import annotations
@@ -40,16 +41,25 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     settings = OpenCodeExampleSettings()
+    if not settings.opencode_directory:
+        raise ValueError("OPENCODE_DIRECTORY environment variable is required")
+
     adapter = OpencodeAdapter(
         config=OpencodeAdapterConfig(
             base_url=settings.opencode_base_url,
+            directory=settings.opencode_directory,
+            workspace=settings.opencode_workspace,
             provider_id=settings.opencode_provider_id,
             model_id=settings.opencode_model_id,
             agent=settings.opencode_agent,
-            custom_section="You are a helpful assistant. Keep replies concise.",
             approval_mode=settings.opencode_approval_mode,
+            custom_section=(
+                "You are a careful coding assistant. Inspect the workspace before "
+                "proposing changes, explain the change and its verification, and do "
+                "not modify files or run commands without the user's approval."
+            ),
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        features=AdapterFeatures(emit={Emit.EXECUTION, Emit.TASK_EVENTS}),
     )
 
     agent = Agent.from_config(
@@ -59,7 +69,7 @@ async def main() -> None:
         rest_url=settings.band_rest_url,
     )
 
-    logger.info("Starting OpenCode agent: %s", settings.agent_key)
+    logger.info("Starting workspace agent for %s", settings.opencode_directory)
     await agent.run()
 
 

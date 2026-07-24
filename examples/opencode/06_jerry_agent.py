@@ -5,18 +5,13 @@
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
-"""
-Basic OpenCode adapter agent example.
+"""Jerry the mouse, powered by OpenCode.
 
-Prerequisites:
-1. Install OpenCode: `npm install -g opencode-ai`
-2. Start the server: `opencode serve --hostname=127.0.0.1 --port=4096`
-3. Set `BAND_WS_URL` and `BAND_REST_URL`
-4. Add agent credentials to `agent_config.yaml`
-5. The example defaults to the locally available free model `opencode/minimax-m2.5-free`
+Start this alongside ``05_tom_agent.py``, then add both agents to the same
+Band room for a light-weight multi-agent conversation.
 
 Run with:
-    uv run examples/opencode/01_basic_agent.py
+    uv run examples/opencode/06_jerry_agent.py
 """
 
 from __future__ import annotations
@@ -26,7 +21,9 @@ import logging
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+
+from prompts.characters import generate_jerry_prompt  # pyrefly: ignore[missing-import]
 
 from setup_logging import setup_logging  # pyrefly: ignore[missing-import]
 from settings import OpenCodeExampleSettings  # pyrefly: ignore[missing-import]
@@ -46,20 +43,20 @@ async def main() -> None:
             provider_id=settings.opencode_provider_id,
             model_id=settings.opencode_model_id,
             agent=settings.opencode_agent,
-            custom_section="You are a helpful assistant. Keep replies concise.",
             approval_mode=settings.opencode_approval_mode,
+            custom_section=generate_jerry_prompt("Jerry"),
         ),
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
     agent = Agent.from_config(
-        settings.agent_key,
+        "jerry_agent",
         adapter=adapter,
         ws_url=settings.band_ws_url,
         rest_url=settings.band_rest_url,
     )
 
-    logger.info("Starting OpenCode agent: %s", settings.agent_key)
+    logger.info("Jerry is cozy in his hole, watching for Tom")
     await agent.run()
 
 

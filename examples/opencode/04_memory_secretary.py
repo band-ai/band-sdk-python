@@ -5,18 +5,14 @@
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
-"""
-Basic OpenCode adapter agent example.
+"""OpenCode agent with durable Band memory.
 
-Prerequisites:
-1. Install OpenCode: `npm install -g opencode-ai`
-2. Start the server: `opencode serve --hostname=127.0.0.1 --port=4096`
-3. Set `BAND_WS_URL` and `BAND_REST_URL`
-4. Add agent credentials to `agent_config.yaml`
-5. The example defaults to the locally available free model `opencode/minimax-m2.5-free`
+Try prompts like:
+- "Remember that I prefer concise status updates."
+- "What do you remember about my update style?"
 
 Run with:
-    uv run examples/opencode/01_basic_agent.py
+    uv run examples/opencode/04_memory_secretary.py
 """
 
 from __future__ import annotations
@@ -32,10 +28,19 @@ from setup_logging import setup_logging  # pyrefly: ignore[missing-import]
 from settings import OpenCodeExampleSettings  # pyrefly: ignore[missing-import]
 from band import Agent
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
-from band.core.types import AdapterFeatures, Emit
+from band.core.types import AdapterFeatures, Capability, Emit
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+MEMORY_INSTRUCTIONS = (
+    "You are a personal secretary who preserves useful long-term context. "
+    "Store durable preferences, profile facts, standing instructions, important "
+    "project facts, and reusable workflows with Band memory tools before replying. "
+    "Do not store one-off requests, temporary chat context, or sensitive information "
+    "unless the user clearly asks you to remember it. Search memory before answering "
+    "questions about prior preferences or facts. Keep responses short."
+)
 
 
 async def main() -> None:
@@ -46,10 +51,13 @@ async def main() -> None:
             provider_id=settings.opencode_provider_id,
             model_id=settings.opencode_model_id,
             agent=settings.opencode_agent,
-            custom_section="You are a helpful assistant. Keep replies concise.",
             approval_mode=settings.opencode_approval_mode,
+            custom_section=MEMORY_INSTRUCTIONS,
         ),
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        features=AdapterFeatures(
+            capabilities={Capability.MEMORY},
+            emit={Emit.EXECUTION},
+        ),
     )
 
     agent = Agent.from_config(
@@ -59,7 +67,7 @@ async def main() -> None:
         rest_url=settings.band_rest_url,
     )
 
-    logger.info("Starting OpenCode agent: %s", settings.agent_key)
+    logger.info("Starting OpenCode memory secretary")
     await agent.run()
 
 
