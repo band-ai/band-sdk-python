@@ -33,6 +33,7 @@ import pytest
 from tests.e2e.baseline.flaky import flaky_infra
 
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
+from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ResourceManager
@@ -50,7 +51,7 @@ INSTANCES = 3  # the spec's Test Agent + Calc + Greeter trio
         )
     ]
 )
-@flaky_infra("only transient reruns")
+@flaky_infra("reruns only for rare provider transience, not slow-turn timeouts")
 @pytest.mark.timeout(extra=300)  # three concurrent boots + three turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_concurrent_same_adapter_instances_each_reply(
@@ -58,6 +59,7 @@ async def test_concurrent_same_adapter_instances_each_reply(
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
+    baseline_settings: BaselineSettings,
 ) -> None:
     """K co-resident instances of one adapter each answer their own mention."""
     async with cell.run_many(INSTANCES) as instances:
@@ -82,5 +84,15 @@ async def test_concurrent_same_adapter_instances_each_reply(
             # wait_for_reply blocks until that instance's own reply is captured, or
             # raises TimeoutError naming the stalled turn — so completing this loop is
             # itself the proof that all K instances co-resided and each replied.
+            #
+            # Widen the per-reply deadline: this fires K turns at once, and the
+            # backend lanes (codex/opencode) funnel them through one shared serve
+            # against a throttled free model, so a healthy turn can legitimately
+            # take longer than the default single-turn deadline. The default made
+            # a slow-but-completing turn trip the barrier while it was still
+            # running (spurious "no reply"); the adapter's own turn budget is far
+            # higher. Fast adapters reply well within this, so it only raises the
+            # failure ceiling for the loaded case, never the success latency.
+            deadline_s = baseline_settings.e2e_timeout * 2
             for instance, mid in zip(instances, mids):
-                await capture.wait_for_reply(mid, instance.id)
+                await capture.wait_for_reply(mid, instance.id, deadline_s=deadline_s)
