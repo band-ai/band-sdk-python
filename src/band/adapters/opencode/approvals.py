@@ -186,11 +186,13 @@ class RoomApprovals:
         Returns True when the message was a permission/question reply (the
         adapter must then NOT forward it to OpenCode as a prompt).
         """
-        content = strip_leading_mentions(content).strip()
-        if not content:
+        raw = content.strip()
+        if not raw:
             return False
 
-        lowered = content.lower()
+        # A command/keyword never *is* an @mention, so skip the whole leading
+        # mention block to find it (robust to several leading mentions).
+        command = strip_leading_mentions(raw).strip()
         # Mention the sender of THIS control message, not the turn mentions --
         # those belong to whichever turn is currently open (_begin_turn), which
         # a manual approve/reject reply does not itself start.
@@ -198,7 +200,7 @@ class RoomApprovals:
 
         if self._pending_permission:
             pending_request_id = self._pending_permission.request_id
-            reply = parse_permission_reply(content, self._pending_permission)
+            reply = parse_permission_reply(command, self._pending_permission)
             if reply:
                 await self._reply_permission(reply)
                 await self._notify_room(
@@ -209,7 +211,7 @@ class RoomApprovals:
 
         if self._pending_question:
             pending_request_id = self._pending_question.request_id
-            if lowered in {"reject", "/reject"}:
+            if command.lower() in {"reject", "/reject"}:
                 await self._reject_question()
                 await self._notify_room(
                     f"OpenCode question `{pending_request_id}` rejected.",
@@ -217,7 +219,10 @@ class RoomApprovals:
                 )
                 return True
 
-            answers = parse_question_answers(content, self._pending_question)
+            # Free text: strip only the delivery mention so an answer that
+            # legitimately begins with an @handle (naming a person) survives.
+            answer = strip_leading_mentions(raw, only_first=True).strip()
+            answers = parse_question_answers(answer, self._pending_question)
             if answers is None:
                 await self._notify_room(
                     (

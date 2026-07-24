@@ -235,8 +235,22 @@ class TestStripLeadingMentions:
         )
 
     def test_strips_a_run_of_leading_mentions(self):
-        # A human typing the mention inline doubles it (metadata + typed token).
+        # Greedy (default) mode, used for command detection: a command never IS
+        # an @token, so skipping the whole leading block only helps matching --
+        # e.g. a human doubling the mention inline (metadata + typed token).
         assert strip_leading_mentions("@team/bot @team/bot reject") == "reject"
+
+    def test_only_first_preserves_an_at_handle_answer(self):
+        # Free-text answers use only_first: an answer that legitimately begins
+        # with an @handle (naming a person) must survive -- greedy would eat it.
+        assert strip_leading_mentions("@team/bot @alice", only_first=True) == "@alice"
+        assert (
+            strip_leading_mentions("@team/bot @alice review it", only_first=True)
+            == "@alice review it"
+        )
+
+    def test_only_first_strips_the_single_delivery_mention(self):
+        assert strip_leading_mentions("@team/bot ship it", only_first=True) == "ship it"
 
     def test_preserves_a_reply_with_no_leading_mention(self):
         # Bare replies (no delivery mention) must pass through untouched.

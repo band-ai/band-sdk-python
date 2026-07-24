@@ -173,6 +173,24 @@ async def test_notify_room_send_failure_does_not_strand_turn() -> None:
     assert released == [True]
 
 
+async def test_question_answer_beginning_with_a_mention_is_preserved() -> None:
+    """A free-text answer that legitimately starts with an @handle (naming a
+    person) survives: only the leading delivery mention is stripped, not the
+    answer's own content."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+
+    # Questions arrive as wire dicts (the model's before-validator keeps dicts,
+    # not OpencodeQuestion instances) -- so a single question actually populates
+    # and parse_question_answers takes its one-answer branch.
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who should review?"}])
+    )
+
+    assert await approvals.try_handle_reply("@alexander.zaikman/tom @alice", "user-1")
+    assert client.question_replies == [{"request_id": "q-1", "answers": [["@alice"]]}]
+
+
 async def test_new_permission_ask_survives_previous_reply() -> None:
     client = BlockingReplyClient("permission")
     approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
