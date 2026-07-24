@@ -371,6 +371,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             turn_future = room_state.turn_future
             usage_by_message = room_state.usage_by_message
             try:
+                # Turn-phase diagnostics (classify a stuck turn from CI logs):
+                # if 'returned' never follows 'start', prompt_async is blocking
+                # (submission/scheduling), which no watcher bounds -- see the
+                # note below on _watch_turn_completion owning the timeout.
+                logger.info(
+                    "OpenCode turn: prompt_async start room=%s session=%s",
+                    room_id,
+                    session_id,
+                )
                 await client.prompt_async(
                     session_id,
                     parts=self._build_prompt_parts(
@@ -392,6 +401,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     model=self._build_model_payload(),
                     agent=self.config.agent,
                     variant=self.config.variant,
+                )
+                logger.info(
+                    "OpenCode turn: prompt_async returned room=%s session=%s",
+                    room_id,
+                    session_id,
                 )
             except Exception:
                 self._clear_turn_state(room_state, expected_future=turn_future)
@@ -669,6 +683,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 room_state.last_error_message = describe_error(event.properties.error)
                 self._finish_turn(room_state)
             case SessionIdleEvent():
+                logger.info(
+                    "OpenCode turn: session.idle room=%s session=%s",
+                    room_state.room_id,
+                    event.session_id,
+                )
                 self._finish_turn(room_state)
 
     async def _room_state_for_session(
@@ -788,6 +807,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if turn_future is None:
             return
 
+        # 'watcher started' after 'prompt_async returned' but no later
+        # 'session.idle' points at a lost/late SSE terminal event, not a slow
+        # model -- distinct from the 'timed out' branch below firing at 300s.
+        logger.info(
+            "OpenCode turn: watcher started room=%s session=%s timeout=%ss",
+            room_id,
+            room_state.session_id,
+            self.config.turn_timeout_s,
+        )
         try:
             await asyncio.wait_for(turn_future, self.config.turn_timeout_s)
         except asyncio.TimeoutError:
@@ -888,6 +916,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             for part_text in room_state.text_parts.values()
             if part_text.strip()
         ).strip()
+
+        # If this logs but the room never sees a reply, the fallback REST post
+        # (or the test's observer WebSocket) is the fault, not model completion.
+        logger.info(
+            "OpenCode turn: delivering fallback room=%s (text=%d chars, error=%s)",
+            room_state.room_id,
+            len(text),
+            bool(room_state.last_error_message),
+        )
 
         if text:
             await room_state.tools.send_message(
