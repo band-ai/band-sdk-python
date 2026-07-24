@@ -18,7 +18,7 @@ from band.testing import FakeAgentTools
 from tests.adapters.usage_events import recorded_usage_payloads
 
 
-from .conftest import (
+from .helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
     _make_fake_mcp_backend_factory,

@@ -15,7 +15,7 @@ from band.integrations.opencode.types import OpencodeSessionState
 from band.testing import FakeAgentTools
 
 
-from .conftest import (
+from .helpers import (
     FakeOpencodeClient,
     _run_single_turn,
     event_message_updated,
