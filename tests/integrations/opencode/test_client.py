@@ -124,7 +124,7 @@ class FakeOpencodeServer:
                     lines.append(f"event: {frame['event']}")
                 if "id" in frame:
                     lines.append(f"id: {frame['id']}")
-                for data_line in frame["data"].splitlines():
+                for data_line in frame.get("data", "").splitlines():
                     lines.append(f"data: {data_line}")
                 lines.append("")
                 yield ("\n".join(lines) + "\n").encode()
@@ -436,6 +436,74 @@ async def test_iter_events_resumes_with_last_event_id_header(
 
         assert fake_server.requests[-1]["path"] == "/event"
         assert fake_server.requests[-1]["headers"]["last-event-id"] == "evt-42"
+    finally:
+        await client.close()
+
+
+async def test_iter_events_commits_id_before_yielding_event(
+    fake_server: FakeOpencodeServer,
+) -> None:
+    fake_server.sse_frames = [
+        {
+            "id": "evt-before-yield",
+            "data": json.dumps({"type": "session.idle", "properties": {}}),
+        }
+    ]
+    client = make_client(fake_server)
+    try:
+        stream = client.iter_events()
+        await anext(stream)
+        await stream.aclose()
+
+        fake_server.sse_frames = []
+        async for _event in client.iter_events():
+            pass
+
+        assert fake_server.requests[-1]["headers"]["last-event-id"] == (
+            "evt-before-yield"
+        )
+    finally:
+        await client.close()
+
+
+async def test_iter_events_applies_id_only_frame(
+    fake_server: FakeOpencodeServer,
+) -> None:
+    fake_server.sse_frames = [
+        {"id": "evt-id-only"},
+        {"data": json.dumps({"type": "session.idle", "properties": {}})},
+    ]
+    client = make_client(fake_server)
+    try:
+        async for _event in client.iter_events():
+            pass
+
+        fake_server.sse_frames = []
+        async for _event in client.iter_events():
+            pass
+
+        assert fake_server.requests[-1]["headers"]["last-event-id"] == "evt-id-only"
+    finally:
+        await client.close()
+
+
+async def test_event_stream_has_connect_timeout_but_no_read_timeout() -> None:
+    seen_timeout: dict[str, float | None] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen_timeout.update(request.extensions["timeout"])
+        return httpx.Response(200, content=b"", request=request)
+
+    client = HttpOpencodeClient(
+        base_url="http://opencode.test",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        async for _event in client.iter_events():
+            pass
+
+        assert seen_timeout["connect"] == 30.0
+        assert seen_timeout["read"] is None
     finally:
         await client.close()
 

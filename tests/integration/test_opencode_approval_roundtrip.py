@@ -108,6 +108,7 @@ async def test_manual_approval_survives_a_real_platform_round_trip(
             # A real participant id: the platform validates the send's mentions.
             turn_mentions=lambda: [{"id": shared_user_peer.id}],
             release_turn_wait=lambda: None,
+            fail_turn=lambda _message: None,
             is_own_band_tool=lambda _permission: False,
         ),
     )

@@ -272,49 +272,49 @@ async def test_concurrent_message_rejected(make_adapter, tools) -> None:
 
 
 async def test_two_rooms_active_concurrently(tools) -> None:
-    """Two rooms with separate sessions route events correctly."""
-    fake_client = FakeOpencodeClient(
-        prompt_event_sequences=[
-            # Room 1 prompt events
-            [
-                event_message_updated("sess-1", "msg-r1"),
-                event_text_part("sess-1", "msg-r1", "reply to room 1"),
-                event_session_idle("sess-1"),
-            ],
-            # Room 2 prompt events
-            [
-                event_message_updated("sess-2", "msg-r2"),
-                event_text_part("sess-2", "msg-r2", "reply to room 2"),
-                event_session_idle("sess-2"),
-            ],
-        ]
-    )
+    """Interleaved turns keep events and platform tools scoped by room."""
+
+    class InterleavedClient(FakeOpencodeClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started_sessions: set[str] = set()
+            self.both_started = asyncio.Event()
+
+        async def prompt_async(self, session_id: str, **kwargs: Any) -> None:  # pyrefly: ignore[bad-override]
+            await super().prompt_async(session_id, **kwargs)
+            self.started_sessions.add(session_id)
+            if len(self.started_sessions) == 2:
+                self.both_started.set()
+            await self.both_started.wait()
+            suffix = session_id.removeprefix("sess-")
+            await self._queue.put(event_message_updated(session_id, f"msg-r{suffix}"))
+            await self._queue.put(
+                event_text_part(session_id, f"msg-r{suffix}", f"reply to room {suffix}")
+            )
+            await self._queue.put(event_session_idle(session_id))
+
+    fake_client = InterleavedClient()
     adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
     tools_r1 = FakeAgentTools()
     tools_r2 = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
 
-    # Start room 1
-    await adapter.on_message(
-        make_platform_message(room_id="room-1", content="hello room 1"),
-        tools_protocol(tools_r1),
-        OpencodeSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-1",
-    )
+    async def run_room(room_number: int, room_tools: FakeAgentTools) -> None:
+        room_id = f"room-{room_number}"
+        await adapter.on_message(
+            make_platform_message(room_id=room_id, content=f"hello room {room_number}"),
+            tools_protocol(room_tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id=room_id,
+        )
 
-    # Start room 2 (shared client, different session)
-    await adapter.on_message(
-        make_platform_message(room_id="room-2", content="hello room 2"),
-        tools_protocol(tools_r2),
-        OpencodeSessionState(),
-        participants_msg=None,
-        contacts_msg=None,
-        is_session_bootstrap=True,
-        room_id="room-2",
+    await asyncio.gather(
+        run_room(1, tools_r1),
+        run_room(2, tools_r2),
     )
 
     # Each room got its own session

@@ -315,6 +315,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         """Expose this agent's MCP tools while hiding sibling registrations."""
         namespace = f"{self.config.mcp_server_name}_*"
         current_registration = f"{self._mcp_server_name}_*"
+        # OpenCode applies the last matching rule, so the narrow allow follows
+        # the namespace-wide deny.
         return {namespace: False, current_registration: True}
 
     def _build_turn_system(self, room_id: str, msg: PlatformMessage) -> str:
@@ -564,6 +566,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         tools=lambda: state.tools,
                         turn_mentions=lambda: state.pending_mentions,
                         release_turn_wait=lambda: self._release_turn_wait(state),
+                        fail_turn=lambda message: self._fail_turn(state, message),
                         is_own_band_tool=self._is_own_band_tool,
                     ),
                 )
@@ -952,6 +955,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def _finish_turn(self, room_state: _RoomState) -> None:
         self._resolve_future(room_state.turn_future)
         self._resolve_future(room_state.turn_release_future)
+
+    def _fail_turn(self, room_state: _RoomState, message: str) -> None:
+        room_state.last_error_message = message
+        self._finish_turn(room_state)
 
     def _clear_turn_state(
         self,

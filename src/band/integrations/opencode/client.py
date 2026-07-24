@@ -222,16 +222,19 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             "/event",
             params=self._query_params(),
             headers=headers,
-            timeout=httpx.Timeout(None, read=60.0),
+            timeout=httpx.Timeout(None, connect=self._client.timeout.connect),
         ) as response:
             response.raise_for_status()
 
             event_name: str | None = None
             event_id: str | None = None
+            event_id_seen = False
             data_lines: list[str] = []
 
             async for line in response.aiter_lines():
                 if line == "":
+                    if event_id_seen:
+                        self._last_event_id = event_id or None
                     if data_lines:
                         payload = "\n".join(data_lines)
                         try:
@@ -250,10 +253,9 @@ class HttpOpencodeClient(OpencodeClientProtocol):
                                 event["type"] = event_name
                             if isinstance(event, dict):
                                 yield event
-                        if event_id is not None:
-                            self._last_event_id = event_id
                     event_name = None
                     event_id = None
+                    event_id_seen = False
                     data_lines = []
                     continue
 
@@ -262,11 +264,17 @@ class HttpOpencodeClient(OpencodeClientProtocol):
                     continue
 
                 if line.startswith("id:"):
-                    event_id = line[3:].strip() or None
+                    event_id_seen = True
+                    event_id = line[3:]
+                    if event_id.startswith(" "):
+                        event_id = event_id[1:]
                     continue
 
                 if line.startswith("data:"):
-                    data_lines.append(line[5:].lstrip())
+                    data = line[5:]
+                    if data.startswith(" "):
+                        data = data[1:]
+                    data_lines.append(data)
 
     async def close(self) -> None:
         await self._client.aclose()

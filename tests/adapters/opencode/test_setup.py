@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from pydantic import BaseModel
 
-from band.adapters.opencode import OpencodeAdapter
+from band import BandConfigError
+from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -104,10 +106,11 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
         client_factory=lambda _config: fake_client,
     )
     tools = FakeAgentTools()
+    backend_factory = _make_fake_mcp_backend_factory(fake_backend)
 
     with patch(
         "band.adapters.opencode.adapter.create_band_mcp_backend",
-        _make_fake_mcp_backend_factory(fake_backend),
+        backend_factory,
     ):
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await adapter.on_message(
@@ -122,6 +125,9 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
 
     assert fake_client.registered_mcp_servers == [
         {"name": adapter._mcp_server_name, "url": "http://127.0.0.1:50000/sse"},
+    ]
+    assert backend_factory.await_args.kwargs["additional_tools"] == [
+        (EchoInput, echo_tool)
     ]
 
     await adapter.on_cleanup("room-1")
@@ -165,10 +171,22 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
         "band_*": False,
         f"{adapter._mcp_server_name}_*": True,
     }
+    assert list(fake_client.prompt_calls[0]["tools"]) == [
+        "band_*",
+        f"{adapter._mcp_server_name}_*",
+    ]
 
     await adapter.on_cleanup("room-1")
     assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
     assert fake_backend.stop_calls == 1
+
+
+def test_legacy_feature_flags_cannot_mix_with_features() -> None:
+    with pytest.raises(BandConfigError, match="Cannot pass both legacy boolean flags"):
+        OpencodeAdapter(
+            config=OpencodeAdapterConfig(enable_memory_tools=True),
+            features=AdapterFeatures(),
+        )
 
 
 async def test_bootstrap_creates_session_relays_text_and_persists_task(

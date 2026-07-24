@@ -10,8 +10,8 @@ import re
 # a human may type more inline. These match that leading block so a terse control
 # reply can be read from the text after it. Whitespace after each token is
 # consumed, so newlines separating a multi-answer reply survive only past it.
-_LEADING_MENTIONS = re.compile(r"^\s*(?:@\S+\s+)+")
-_LEADING_MENTION = re.compile(r"^\s*@\S+\s+")
+_LEADING_MENTIONS = re.compile(r"^\s*(?:@\S+(?:\s+|$))+")
+_LEADING_MENTION = re.compile(r"^\s*@\S+(?:\s+|$)")
 
 
 def strip_leading_mentions(content: str, *, only_first: bool = False) -> str:

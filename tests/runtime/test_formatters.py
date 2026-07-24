@@ -267,6 +267,9 @@ class TestStripLeadingMentions:
     def test_ignores_a_mention_that_is_not_at_the_start(self):
         assert strip_leading_mentions("ping @team/bot later") == "ping @team/bot later"
 
+    def test_strips_a_mention_only_reply(self):
+        assert strip_leading_mentions("@team/bot") == ""
+
 
 class TestFormatMessageForLlmWithParticipants:
     def test_replaces_mentions_when_participants_provided(self):

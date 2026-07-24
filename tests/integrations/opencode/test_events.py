@@ -13,6 +13,7 @@ from band.integrations.opencode import (
     QuestionAskedEvent,
     SessionErrorEvent,
     SessionIdleEvent,
+    UNKNOWN_OPENCODE_ERROR,
     UnknownOpencodeEvent,
     describe_error,
     parse_opencode_event,
@@ -20,6 +21,19 @@ from band.integrations.opencode import (
 
 
 class TestKnownEventParsing:
+    def test_terminal_events_coerce_scalar_session_ids(self) -> None:
+        idle = parse_opencode_event(
+            {"type": "session.idle", "properties": {"sessionID": 42}}
+        )
+        error = parse_opencode_event(
+            {"type": "session.error", "properties": {"sessionID": 42}}
+        )
+
+        assert isinstance(idle, SessionIdleEvent)
+        assert idle.session_id == "42"
+        assert isinstance(error, SessionErrorEvent)
+        assert error.session_id == "42"
+
     def test_message_updated_with_wire_aliases(self) -> None:
         event = parse_opencode_event(
             {
@@ -334,7 +348,7 @@ class TestToolStateOutputPresence:
 
 class TestErrorDescriptions:
     def test_none_error_is_unknown(self) -> None:
-        assert describe_error(None) == "OpenCode reported an unknown error."
+        assert describe_error(None) == UNKNOWN_OPENCODE_ERROR
 
     def test_error_without_message_uses_name(self) -> None:
         error = OpencodeErrorInfo.model_validate({"name": "ProviderAuthError"})

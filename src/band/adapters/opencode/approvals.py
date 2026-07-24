@@ -57,6 +57,7 @@ class ApprovalPorts:
     tools: Callable[[], AgentToolsProtocol | None]
     turn_mentions: Callable[[], list[dict[str, str]]]
     release_turn_wait: Callable[[], None]
+    fail_turn: Callable[[str], None]
     is_own_band_tool: Callable[[str], bool]
 
 
@@ -71,7 +72,12 @@ def parse_permission_reply(
         return None
 
     command = tokens[0].lstrip("/").lower()
-    request_id = tokens[1] if len(tokens) > 1 else pending.request_id
+    trailing = tokens[1:]
+    request_id = (
+        pending.request_id
+        if not trailing or all(token.lower() == "please" for token in trailing)
+        else trailing[0]
+    )
     if request_id != pending.request_id:
         return None
 
@@ -89,8 +95,11 @@ def parse_question_answers(
     content: str, pending: PendingQuestion
 ) -> list[list[str]] | None:
     """One answer line per question; ``None`` when too few lines arrived."""
+    if not pending.questions:
+        return None
     if len(pending.questions) == 1:
-        return [[content.strip()]]
+        answer = content.strip()
+        return [[answer]] if answer else None
 
     lines = [line.strip() for line in content.splitlines() if line.strip()]
     if len(lines) < len(pending.questions):
@@ -218,21 +227,21 @@ class RoomApprovals:
             pending_request_id = self._pending_permission.request_id
             reply = parse_permission_reply(command, self._pending_permission)
             if reply:
-                await self._reply_permission(reply)
-                await self._notify_room(
-                    f"OpenCode approval `{pending_request_id}` handled with `{reply}`.",
-                    mentions,
-                )
+                if await self._reply_permission(reply):
+                    await self._notify_room(
+                        f"OpenCode approval `{pending_request_id}` handled with `{reply}`.",
+                        mentions,
+                    )
                 return True
 
         if self._pending_question:
             pending_request_id = self._pending_question.request_id
             if command.lower() in {"reject", "/reject"}:
-                await self._reject_question()
-                await self._notify_room(
-                    f"OpenCode question `{pending_request_id}` rejected.",
-                    mentions,
-                )
+                if await self._reject_question():
+                    await self._notify_room(
+                        f"OpenCode question `{pending_request_id}` rejected.",
+                        mentions,
+                    )
                 return True
 
             # Free text: strip only the delivery mention so an answer that
@@ -249,11 +258,11 @@ class RoomApprovals:
                 )
                 return True
 
-            await self._reply_question(answers)
-            await self._notify_room(
-                f"OpenCode question `{pending_request_id}` answered.",
-                mentions,
-            )
+            if await self._reply_question(answers):
+                await self._notify_room(
+                    f"OpenCode question `{pending_request_id}` answered.",
+                    mentions,
+                )
             return True
 
         return False
@@ -289,58 +298,80 @@ class RoomApprovals:
         client = self._ports.client()
         session_id = self._ports.session_id()
         if client is None or not session_id:
-            logger.warning(
-                "Cannot auto-approve band tool permission %s for room %s",
+            self._fail_request(
+                "auto-approve permission",
                 request_id,
-                self._ports.room_id,
             )
             return
-        await client.reply_permission(session_id, request_id, response="always")
+        try:
+            await client.reply_permission(session_id, request_id, response="always")
+        except Exception as error:
+            self._fail_request("auto-approve permission", request_id, error=error)
 
-    async def _reply_permission(self, reply: ApprovalReply) -> None:
+    async def _reply_permission(self, reply: ApprovalReply) -> bool:
         pending = self._pending_permission
         client = self._ports.client()
-        if pending is None or client is None:
-            return
+        if pending is None:
+            return False
+        if client is None:
+            self._fail_request("reply to permission", pending.request_id)
+            return False
         session_id = self._ports.session_id()
         if not session_id:
-            logger.warning(
-                "Cannot reply to permission %s: no session_id for room %s",
-                pending.request_id,
-                self._ports.room_id,
-            )
-            return
+            self._fail_request("reply to permission", pending.request_id)
+            return False
         _cancel_timeout(pending)
-        await client.reply_permission(
-            session_id,
-            pending.request_id,
-            response=reply,
-        )
-        self._idle.set()
+        try:
+            await client.reply_permission(
+                session_id,
+                pending.request_id,
+                response=reply,
+            )
+        except Exception as error:
+            self._fail_request("reply to permission", pending.request_id, error=error)
+            return False
         if self._pending_permission is pending:
             self._pending_permission = None
+            self._idle.set()
+        return True
 
-    async def _reply_question(self, answers: list[list[str]]) -> None:
+    async def _reply_question(self, answers: list[list[str]]) -> bool:
         pending = self._pending_question
         client = self._ports.client()
-        if pending is None or client is None:
-            return
+        if pending is None:
+            return False
+        if client is None:
+            self._fail_request("answer question", pending.request_id)
+            return False
         _cancel_timeout(pending)
-        await client.reply_question(pending.request_id, answers=answers)
-        self._idle.set()
+        try:
+            await client.reply_question(pending.request_id, answers=answers)
+        except Exception as error:
+            self._fail_request("answer question", pending.request_id, error=error)
+            return False
         if self._pending_question is pending:
             self._pending_question = None
+            self._idle.set()
+        return True
 
-    async def _reject_question(self) -> None:
+    async def _reject_question(self) -> bool:
         pending = self._pending_question
         client = self._ports.client()
-        if pending is None or client is None:
-            return
+        if pending is None:
+            return False
+        if client is None:
+            self._fail_request("reject question", pending.request_id)
+            return False
         _cancel_timeout(pending)
-        await client.reject_question(pending.request_id)
-        self._idle.set()
+        try:
+            await client.reject_question(pending.request_id)
+        except Exception as error:
+            self._fail_request("reject question", pending.request_id, error=error)
+            return False
         if self._pending_question is pending:
             self._pending_question = None
+            self._idle.set()
+        return True
 
     async def _expire_permission(self, request_id: str) -> None:
         try:
@@ -352,14 +383,37 @@ class RoomApprovals:
             self._pending_permission is not None
             and self._pending_permission.request_id == request_id
         ):
-            await self._reply_permission(self._config.approval_timeout_reply)
-            tools = self._ports.tools()
-            if tools:
-                await tools.send_event(
-                    f"OpenCode approval `{request_id}` timed out and was handled "
-                    f"with `{self._config.approval_timeout_reply}`.",
-                    "error",
-                )
+            if await self._reply_permission(self._config.approval_timeout_reply):
+                tools = self._ports.tools()
+                if tools:
+                    await tools.send_event(
+                        f"OpenCode approval `{request_id}` timed out and was handled "
+                        f"with `{self._config.approval_timeout_reply}`.",
+                        "error",
+                    )
+
+    def _fail_request(
+        self, action: str, request_id: str, *, error: Exception | None = None
+    ) -> None:
+        message = f"OpenCode failed to {action} `{request_id}`."
+        logger.error(
+            "%s Room: %s",
+            message,
+            self._ports.room_id,
+            exc_info=error is not None,
+        )
+        self._idle.set()
+        if (
+            self._pending_permission is not None
+            and self._pending_permission.request_id == request_id
+        ):
+            self._pending_permission = None
+        if (
+            self._pending_question is not None
+            and self._pending_question.request_id == request_id
+        ):
+            self._pending_question = None
+        self._ports.fail_turn(message)
 
     async def _expire_question(self, request_id: str) -> None:
         try:
@@ -371,15 +425,19 @@ class RoomApprovals:
             self._pending_question is not None
             and self._pending_question.request_id == request_id
         ):
-            await self._reject_question()
-            tools = self._ports.tools()
-            if tools:
-                await tools.send_event(
-                    f"OpenCode question `{request_id}` timed out and was rejected.",
-                    "error",
-                )
+            if await self._reject_question():
+                tools = self._ports.tools()
+                if tools:
+                    await tools.send_event(
+                        f"OpenCode question `{request_id}` timed out and was rejected.",
+                        "error",
+                    )
 
 
 def _cancel_timeout(pending: PendingPermission | PendingQuestion | None) -> None:
-    if pending and pending.timeout_task:
+    if (
+        pending
+        and pending.timeout_task
+        and pending.timeout_task is not asyncio.current_task()
+    ):
         pending.timeout_task.cancel()

@@ -350,6 +350,7 @@ class SessionErrorProps(OpencodeModel):
     session_id: str | None = Field(default=None, alias="sessionID")
     error: OpencodeErrorInfo | None = None
 
+    _coerce_session_id = field_validator("session_id", mode="before")(_coerce_str)
     _lenient_error = field_validator("error", mode="wrap")(_lenient)
 
 
@@ -364,6 +365,8 @@ class SessionErrorEvent(OpencodeModel):
 
 class SessionIdleProps(OpencodeModel):
     session_id: str | None = Field(default=None, alias="sessionID")
+
+    _coerce_session_id = field_validator("session_id", mode="before")(_coerce_str)
 
 
 class SessionIdleEvent(OpencodeModel):
