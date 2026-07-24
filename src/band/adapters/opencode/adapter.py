@@ -53,7 +53,11 @@ from band.integrations.opencode import (
 )
 from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import iter_tool_definitions
+from band.runtime.tools import (
+    ToolDefinition,
+    is_room_posting_tool,
+    iter_tool_definitions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +82,9 @@ class _RoomState:
     assistant_part_types: dict[str, str] = field(default_factory=dict)
     reported_tool_calls: set[str] = field(default_factory=set)
     reported_tool_results: set[str] = field(default_factory=set)
+    # Set when a room-posting band tool (band_send_message) completed this turn,
+    # so the text fallback stays silent instead of double-posting the reply.
+    replied_via_room_tool: bool = False
     # Bound in _get_or_create_room_state, immediately after construction.
     approvals: RoomApprovals = field(init=False)
     last_error_message: str | None = None
@@ -99,6 +106,7 @@ class _RoomState:
         self.assistant_part_types.clear()
         self.reported_tool_calls.clear()
         self.reported_tool_results.clear()
+        self.replied_via_room_tool = False
         # A new dict preserves the prior turn's snapshot for its watch task.
         self.usage_by_message = {}
         self.last_error_message = None
@@ -262,10 +270,22 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
         self._system_prompt: str = ""
-        # Names of the tools this adapter itself registers with OpenCode
-        # (band platform tools + custom tools); populated when the shared MCP
-        # backend is built. Permission asks for these are auto-approved.
-        self._own_tool_names: frozenset[str] = frozenset()
+        # The tools this adapter registers with OpenCode (band platform tools +
+        # custom tools). Computed once at construction -- both inputs are known
+        # here -- and reused when the shared MCP backend is built. Deriving the
+        # names eagerly keeps the "is this our own band tool?" auto-approve
+        # check (and room-posting detection) independent of MCP-registration
+        # timing, so a second room's first turn can't race an empty set.
+        self._tool_definitions: list[ToolDefinition] = list(
+            iter_tool_definitions(
+                include_memory=Capability.MEMORY in self.features.capabilities,
+                include_contacts=Capability.CONTACTS in self.features.capabilities,
+            )
+        )
+        self._own_tool_names: frozenset[str] = frozenset(
+            {definition.name for definition in self._tool_definitions}
+            | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
+        )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
@@ -546,19 +566,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if self._mcp_backend is not None:
             return self._mcp_backend
 
-        tool_definitions = list(
-            iter_tool_definitions(
-                include_memory=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
-            )
-        )
-        self._own_tool_names = frozenset(
-            {definition.name for definition in tool_definitions}
-            | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
-        )
         backend = await create_band_mcp_backend(
             kind="sse",
-            tool_definitions=tool_definitions,
+            tool_definitions=self._tool_definitions,
             get_tools=self._get_room_tools,
             additional_tools=self._custom_tools or None,
         )
@@ -722,11 +732,30 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     async def _report_tool_part(
         self, room_state: _RoomState, part: OpencodePart
     ) -> None:
-        """Report one tool part's call and, once terminal, its result."""
-        if Emit.EXECUTION not in self.features.emit or part.state is None:
+        """Note a room-posting reply and report the tool's call/result.
+
+        Room-posting detection runs regardless of ``Emit.EXECUTION`` (which only
+        governs the tool_call/tool_result narration); the text-fallback
+        suppression must hold even when execution reporting is off.
+        """
+        if part.state is None:
             return
 
         state = part.state
+        tool_name = self._canonical_tool_name(part.tool or "unknown")
+
+        # A completed room-posting band tool IS the turn's reply -- suppress the
+        # text fallback (codex/copilot_sdk/ACP parity). An errored call did not
+        # post, so it must not suppress. ``status`` is the raw wire string, so
+        # compare by value (the StrEnum member equals its string).
+        if state.status == OpencodeToolStatus.COMPLETED and is_room_posting_tool(
+            tool_name
+        ):
+            room_state.replied_via_room_tool = True
+
+        if Emit.EXECUTION not in self.features.emit:
+            return
+
         match state.status:
             case (
                 OpencodeToolStatus.PENDING
@@ -739,7 +768,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return
 
         assert part.id is not None
-        tool_name = self._canonical_tool_name(part.tool or "unknown")
         call_id = part.call_id or part.id
 
         if room_state.mark_tool_call(call_id):
@@ -817,7 +845,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self.config.turn_timeout_s,
         )
         try:
-            await asyncio.wait_for(turn_future, self.config.turn_timeout_s)
+            await self._await_turn(room_state, turn_future)
         except asyncio.TimeoutError:
             logger.warning(
                 "OpenCode turn timed out for room %s (session=%s)",
@@ -854,6 +882,30 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 expected_future=turn_future,
                 expected_task=asyncio.current_task(),
             )
+
+    async def _await_turn(
+        self, room_state: _RoomState, turn_future: asyncio.Future[None]
+    ) -> None:
+        """Await turn completion, but don't charge human-approval time to the
+        compute budget.
+
+        A manual permission/question parks the turn on a human reply, which is
+        bounded by the ask's own expiry timer -- not by ``turn_timeout_s``. So
+        on a timeout we abort only if nothing is awaiting a human; otherwise we
+        wait the ask out and grant a fresh budget slice for the work that
+        follows the reply. ``shield`` keeps a timed-out slice from cancelling
+        the still-running turn.
+        """
+        while True:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(turn_future), self.config.turn_timeout_s
+                )
+                return
+            except asyncio.TimeoutError:
+                if not room_state.approvals.awaiting_human():
+                    raise
+                await room_state.approvals.wait_until_idle()
 
     def _release_turn_wait(self, room_state: _RoomState) -> None:
         self._resolve_future(room_state.turn_release_future)
@@ -896,15 +948,26 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return
 
         created_at = datetime.now(timezone.utc).isoformat()
-        await room_state.tools.send_event(
-            f"OpenCode session {status}: `{room_state.session_id}`",
-            "task",
-            metadata={
-                "opencode_session_id": room_state.session_id,
-                "opencode_room_id": room_state.room_id,
-                "opencode_created_at": created_at,
-            },
-        )
+        # Best-effort bookkeeping: a transient post failure must not abort the
+        # turn before the model runs (the outer on_message handler would catch
+        # it and drop the user's message). Leave persisted_session_id unset on
+        # failure so the next turn retries the event.
+        try:
+            await room_state.tools.send_event(
+                f"OpenCode session {status}: `{room_state.session_id}`",
+                "task",
+                metadata={
+                    "opencode_session_id": room_state.session_id,
+                    "opencode_room_id": room_state.room_id,
+                    "opencode_created_at": created_at,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Failed to emit OpenCode session task event for room %s",
+                room_state.room_id,
+            )
+            return
         room_state.persisted_session_id = room_state.session_id
 
     async def _deliver_fallback_text(self, room_state: _RoomState) -> None:
@@ -920,30 +983,34 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # If this logs but the room never sees a reply, the fallback REST post
         # (or the test's observer WebSocket) is the fault, not model completion.
         logger.info(
-            "OpenCode turn: delivering fallback room=%s (text=%d chars, error=%s)",
+            "OpenCode turn: delivering fallback room=%s "
+            "(text=%d chars, error=%s, replied_via_tool=%s)",
             room_state.room_id,
             len(text),
             bool(room_state.last_error_message),
+            room_state.replied_via_room_tool,
         )
 
-        if text:
-            await room_state.tools.send_message(
-                text,
-                mentions=room_state.pending_mentions,
-            )
+        # A room-posting band tool already delivered the reply; don't double-post
+        # its plain text or a "no reply" filler. An error is still surfaced --
+        # it is not a text reply.
+        replied = room_state.replied_via_room_tool
+        try:
+            if text and not replied:
+                await room_state.tools.send_message(
+                    text, mentions=room_state.pending_mentions
+                )
+            elif room_state.last_error_message:
+                await room_state.tools.send_event(
+                    room_state.last_error_message, "error"
+                )
+            elif not replied:
+                await room_state.tools.send_message(
+                    "OpenCode completed the turn without a text reply.",
+                    mentions=room_state.pending_mentions,
+                )
+        finally:
             room_state.pending_mentions = []
-            return
-
-        if room_state.last_error_message:
-            await room_state.tools.send_event(room_state.last_error_message, "error")
-            room_state.pending_mentions = []
-            return
-
-        await room_state.tools.send_message(
-            "OpenCode completed the turn without a text reply.",
-            mentions=room_state.pending_mentions,
-        )
-        room_state.pending_mentions = []
 
     async def _emit_turn_usage(
         self,

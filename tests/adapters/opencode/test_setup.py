@@ -282,6 +282,28 @@ async def test_capability_gating_controls_registered_tool_set(
     assert CONTACT_TOOL_NAMES <= full_tool_names
 
 
+def test_own_band_tools_recognized_before_mcp_registration() -> None:
+    """The auto-approve check for the adapter's own band tools must not wait on
+    MCP registration: a second room's first turn can hit a band-tool permission
+    ask while the first room is still registering. The names are derived at
+    construction, so recognition holds immediately -- before on_started,
+    on_message, or any register_mcp_server call."""
+    adapter = OpencodeAdapter(
+        client_factory=lambda _config: FakeOpencodeClient(),
+        features=AdapterFeatures(
+            capabilities={Capability.MEMORY, Capability.CONTACTS}
+        ),
+    )
+
+    # Nothing has been registered with OpenCode yet.
+    assert adapter._is_own_band_tool("band_send_message")
+    # OpenCode reports MCP tools with the server-name prefix; that is recognized.
+    assert adapter._is_own_band_tool(f"{adapter._mcp_server_name}_band_send_message")
+    # Capability-gated tools are present because the capability was enabled.
+    assert MEMORY_TOOL_NAMES <= adapter._own_tool_names
+    assert CONTACT_TOOL_NAMES <= adapter._own_tool_names
+
+
 async def test_turn_system_prompt_carries_room_context(make_adapter, tools) -> None:
     """The per-turn system prompt must name the current room_id (band MCP
     tool schemas require a room_id argument, so an untold model cannot

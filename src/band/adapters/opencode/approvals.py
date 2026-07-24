@@ -114,6 +114,20 @@ class RoomApprovals:
         self._ports = ports
         self._pending_permission: PendingPermission | None = None
         self._pending_question: PendingQuestion | None = None
+        # Set while NO manual ask is parked on a human. Cleared only when we
+        # actually forward an ask to the room and wait; set again the moment it
+        # resolves. The turn watcher reads this to stop counting human-wait time
+        # against the compute budget (the ask has its own expiry timer).
+        self._idle = asyncio.Event()
+        self._idle.set()
+
+    def awaiting_human(self) -> bool:
+        """Whether a manual permission/question is parked on a human reply."""
+        return not self._idle.is_set()
+
+    async def wait_until_idle(self) -> None:
+        """Block until no manual ask is awaiting a human reply."""
+        await self._idle.wait()
 
     async def on_permission_asked(self, request: OpencodePermissionRequest) -> None:
         request_id = request.id
@@ -146,6 +160,7 @@ class RoomApprovals:
             return
 
         pending.timeout_task = asyncio.create_task(self._expire_permission(request_id))
+        self._idle.clear()
         pattern_text = ", ".join(pending.patterns) if pending.patterns else "n/a"
         await self._notify_room(
             (
@@ -174,6 +189,7 @@ class RoomApprovals:
             return
 
         pending.timeout_task = asyncio.create_task(self._expire_question(request_id))
+        self._idle.clear()
         await self._notify_room(
             format_question_prompt(pending.questions, request_id),
             self._ports.turn_mentions(),
@@ -266,6 +282,8 @@ class RoomApprovals:
         _cancel_timeout(self._pending_question)
         self._pending_permission = None
         self._pending_question = None
+        # No ask is parked anymore -- release any watcher waiting on us.
+        self._idle.set()
 
     async def _approve_own_band_tool(self, request_id: str) -> None:
         client = self._ports.client()
@@ -298,6 +316,7 @@ class RoomApprovals:
             pending.request_id,
             response=reply,
         )
+        self._idle.set()
         if self._pending_permission is pending:
             self._pending_permission = None
 
@@ -308,6 +327,7 @@ class RoomApprovals:
             return
         _cancel_timeout(pending)
         await client.reply_question(pending.request_id, answers=answers)
+        self._idle.set()
         if self._pending_question is pending:
             self._pending_question = None
 
@@ -318,6 +338,7 @@ class RoomApprovals:
             return
         _cancel_timeout(pending)
         await client.reject_question(pending.request_id)
+        self._idle.set()
         if self._pending_question is pending:
             self._pending_question = None
 

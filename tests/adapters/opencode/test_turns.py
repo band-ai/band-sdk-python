@@ -21,6 +21,7 @@ from .helpers import (
     AnyHTTPStatusError,
     FakeOpencodeClient,
     MentionEnforcingTools,
+    TaskEventFailingTools,
     _run_single_turn,
     event_message_updated,
     event_message_updated_with_tokens,
@@ -34,6 +35,7 @@ from .helpers import (
     event_user_message_updated,
     make_platform_message,
     tools_protocol,
+    wait_for,
 )
 
 
@@ -521,3 +523,152 @@ async def test_turn_completes_when_fallback_reply_send_rejected(
     assert tools.messages_sent == []
     assert any(e["message_type"] == "error" for e in tools.events_sent)
     await adapter.on_cleanup("room-1")
+
+
+async def test_room_posting_tool_reply_suppresses_text_fallback(
+    make_adapter, tools
+) -> None:
+    """When the model replies via band_send_message, the adapter must not also
+    post the assistant's plain text (double-post). Detection holds without
+    execution reporting: Emit.EXECUTION governs only the tool_call/tool_result
+    narration, not the text-fallback suppression."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_message_updated("sess-1", "msg-1"),
+                event_text_part("sess-1", "msg-1", "I sent it via the tool."),
+                event_tool_part(
+                    "sess-1",
+                    "msg-1",
+                    tool="band_send_message",
+                    call_id="c1",
+                    status="completed",
+                    input_data={"content": "hi"},
+                ),
+                event_session_idle("sess-1"),
+            ]
+        ]
+    )
+    adapter = make_adapter(fake_client)
+
+    await _run_single_turn(adapter, tools)
+
+    # The tool (not executed by the fake) was the reply; the fallback stays
+    # silent, so the adapter posts no message of its own.
+    assert tools.messages_sent == []
+
+
+async def test_non_room_posting_tool_does_not_suppress_text(make_adapter, tools) -> None:
+    """A non-posting tool (bash) is not a reply, so the assistant text is still
+    delivered -- suppression must not over-reach."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_message_updated("sess-1", "msg-1"),
+                event_text_part("sess-1", "msg-1", "Ran the command."),
+                event_tool_part(
+                    "sess-1",
+                    "msg-1",
+                    tool="bash",
+                    call_id="c1",
+                    status="completed",
+                    input_data={"command": "ls"},
+                ),
+                event_session_idle("sess-1"),
+            ]
+        ]
+    )
+    adapter = make_adapter(fake_client)
+
+    await _run_single_turn(adapter, tools)
+
+    assert [m["content"] for m in tools.messages_sent] == ["Ran the command."]
+
+
+async def test_task_event_post_failure_does_not_drop_the_turn(make_adapter) -> None:
+    """A transient failure posting the session task event must not abort the
+    turn before the model runs -- otherwise the user's message is silently
+    dropped. The event is best-effort; the prompt still goes out and the reply
+    lands."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_message_updated("sess-1", "msg-1"),
+                event_text_part(
+                    "sess-1", "msg-1", "Handled despite the event failure."
+                ),
+                event_session_idle("sess-1"),
+            ]
+        ]
+    )
+    adapter = make_adapter(fake_client)
+    tools = TaskEventFailingTools()
+
+    await _run_single_turn(adapter, tools)
+
+    assert len(fake_client.prompt_calls) == 1
+    assert [m["content"] for m in tools.messages_sent] == [
+        "Handled despite the event failure."
+    ]
+    assert not any(
+        "failed while processing" in e["content"].lower() for e in tools.events_sent
+    )
+
+
+async def test_manual_approval_pauses_the_turn_timeout(make_adapter, tools) -> None:
+    """A human deliberating over a manual permission must not be charged to the
+    compute budget: with a tiny turn_timeout_s but a generous approval window,
+    the watcher must NOT abort the parked turn, and the reply must land once the
+    human approves."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [
+                event_message_updated("sess-1", "msg-1"),
+                event_permission("sess-1", "req-1"),
+            ]
+        ],
+        reply_permission_events={
+            "req-1": [
+                event_text_part("sess-1", "msg-1", "Approved and done."),
+                event_session_idle("sess-1"),
+            ]
+        },
+    )
+    config = OpencodeAdapterConfig(
+        approval_mode="manual",
+        turn_timeout_s=0.3,
+        approval_wait_timeout_s=10.0,
+    )
+    adapter = make_adapter(fake_client, config=config)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    # Returns once the permission ask releases the turn wait.
+    await adapter.on_message(
+        make_platform_message(content="run it"),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    # Deliberate well past turn_timeout_s while parked on the human.
+    await asyncio.sleep(0.6)
+    assert fake_client.aborted_sessions == []
+
+    # The human approves via a room reply; the held turn completes and delivers.
+    await adapter.on_message(
+        make_platform_message(content="approve req-1"),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+    await wait_for(
+        lambda: any("Approved and done." in m["content"] for m in tools.messages_sent)
+    )
+    assert fake_client.aborted_sessions == []

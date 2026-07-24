@@ -236,6 +236,22 @@ class RaisingSendTools(FakeAgentTools):
         raise BandToolError("send failed")
 
 
+class TaskEventFailingTools(FakeAgentTools):
+    """FakeAgentTools whose ``task`` events fail, to prove a transient
+    task-event post failure does not abort the turn before the model runs.
+    Other event types (e.g. ``error``) still succeed."""
+
+    async def send_event(
+        self,
+        content: str,
+        message_type: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if message_type == "task":
+            raise BandToolError("task event post failed")
+        return await super().send_event(content, message_type, metadata)
+
+
 class FakeOpencodeClient:
     def __init__(
         self,
