@@ -311,6 +311,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         ]
         return f"{self.config.mcp_server_name}_{digest}"
 
+    def _mcp_tool_visibility(self) -> dict[str, bool]:
+        """Expose this agent's MCP tools while hiding sibling registrations."""
+        namespace = f"{self.config.mcp_server_name}_*"
+        current_registration = f"{self._mcp_server_name}_*"
+        return {namespace: False, current_registration: True}
+
     def _build_turn_system(self, room_id: str, msg: PlatformMessage) -> str:
         """Per-turn system prompt: the static base plus this room's context.
 
@@ -434,6 +440,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                     model=self._build_model_payload(),
                     agent=self.config.agent,
                     variant=self.config.variant,
+                    tools=self._mcp_tool_visibility(),
                 )
                 logger.info(
                     "OpenCode turn: prompt_async returned room=%s session=%s",

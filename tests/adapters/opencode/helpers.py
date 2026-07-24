@@ -309,6 +309,7 @@ class FakeOpencodeClient:
         model: dict[str, str] | None = None,
         agent: str | None = None,
         variant: str | None = None,
+        tools: dict[str, bool] | None = None,
     ) -> None:
         self.prompt_calls.append(
             {
@@ -318,6 +319,7 @@ class FakeOpencodeClient:
                 "model": model,
                 "agent": agent,
                 "variant": variant,
+                "tools": tools,
             }
         )
         if self._prompt_exceptions:

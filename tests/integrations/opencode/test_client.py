@@ -264,6 +264,7 @@ async def test_prompt_async_sends_all_optional_fields_when_given(
             model={"providerID": "opencode", "modelID": "some-model"},
             agent="build",
             variant="fast",
+            tools={"band_*": False, "band_current_*": True},
         )
         assert fake_server.requests[-1]["body"] == {
             "parts": [{"type": "text", "text": "hi"}],
@@ -271,6 +272,7 @@ async def test_prompt_async_sends_all_optional_fields_when_given(
             "model": {"providerID": "opencode", "modelID": "some-model"},
             "agent": "build",
             "variant": "fast",
+            "tools": {"band_*": False, "band_current_*": True},
         }
     finally:
         await client.close()

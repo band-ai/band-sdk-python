@@ -32,6 +32,7 @@ class OpencodeClientProtocol(Protocol):
         model: dict[str, str] | None = None,
         agent: str | None = None,
         variant: str | None = None,
+        tools: dict[str, bool] | None = None,
     ) -> None: ...
 
     async def reply_permission(
@@ -133,6 +134,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         model: dict[str, str] | None = None,
         agent: str | None = None,
         variant: str | None = None,
+        tools: dict[str, bool] | None = None,
     ) -> None:
         payload: dict[str, Any] = {"parts": parts}
         if system:
@@ -143,6 +145,8 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             payload["agent"] = agent
         if variant:
             payload["variant"] = variant
+        if tools:
+            payload["tools"] = tools
 
         response = await self._client.post(
             f"/session/{session_id}/prompt_async",
