@@ -12,6 +12,14 @@ repos:
       - id: commitizen
         stages: [commit-msg]
 
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        # concurrency.queue (single|max) is valid workflow syntax that
+        # actionlint doesn't know yet.
+        args: ["-ignore", 'unexpected key "queue"']
+
   - repo: local
     hooks:
       - id: ruff-check

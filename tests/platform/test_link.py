@@ -116,6 +116,7 @@ class TestBandLinkConnection:
         mock_ws_client.join_agent_control_channel.assert_called_once_with(
             link.agent_id,
             on_supersede=link._on_supersede,
+            on_control=link._on_control,
         )
         assert link.is_connected is True
 

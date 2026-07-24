@@ -8,10 +8,12 @@ Framework-light users can use RoomPresence or BandLink directly.
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Awaitable, Callable, Protocol
 
 from band.platform.event import PlatformEvent
 
+from .claims import MessageClaimRegistry
 from .execution import Execution, ExecutionContext, ExecutionHandler
 from .presence import RoomPresence
 from .types import (
@@ -21,6 +23,7 @@ from .types import (
 )
 
 if TYPE_CHECKING:
+    from band.client.streaming import AgentControlPayload
     from band.platform.link import BandLink
 
 logger = logging.getLogger(__name__)
@@ -130,6 +133,16 @@ class AgentRuntime:
 
         # Per-room executions
         self.executions: dict[str, Execution] = {}
+
+        # Control-signal dedup. The server does not deduplicate
+        # agent.control pushes, so we drop repeats by correlation_id. Bounded
+        # LRU; only touched from the WebSocket receive task.
+        self._seen_control_ids: OrderedDict[str, bool] = OrderedDict()
+        self._max_seen_control_ids: int = 256
+
+        # Shared by default contexts so a room/message pair executes at most
+        # once per runtime, including across context recreation.
+        self._claim_registry = MessageClaimRegistry()
 
         # Set up presence callbacks
         self.presence.on_room_joined = self._on_room_joined
@@ -243,6 +256,106 @@ class AgentRuntime:
             except Exception as e:
                 logger.warning("Failed to request resync for room %s: %s", room_id, e)
 
+    # --- Control signals ---
+
+    async def handle_control(self, payload: "AgentControlPayload") -> None:
+        """Apply an ``agent.control`` signal (interrupt/stop/play) to executions.
+
+        Invoked directly from the WebSocket receive task (via
+        ``BandLink.on_control``) so it can preempt a cycle already in flight.
+
+        Routing:
+        - ``scope == "agent"`` with no ``room_id`` → fan out to all executions.
+        - any signal with a ``room_id`` → that room only.
+        - unknown room → no-op.
+
+        Dedupes on ``correlation_id`` (the server does not). Note: exceptions
+        raised here are swallowed-and-logged by the channel handler, so this
+        method must not rely on propagating errors to signal anything.
+        """
+        cid = payload.correlation_id
+        if cid is not None:
+            if cid in self._seen_control_ids:
+                logger.debug("Duplicate control signal %s ignored", cid)
+                return
+            self._seen_control_ids[cid] = True
+            self._seen_control_ids.move_to_end(cid)
+            if len(self._seen_control_ids) > self._max_seen_control_ids:
+                self._seen_control_ids.popitem(last=False)
+        else:
+            logger.debug(
+                "Control signal mode=%s has no correlation_id; not deduped",
+                payload.mode,
+            )
+
+        # Resolve target executions.
+        if payload.room_id is not None:
+            execution = self.executions.get(payload.room_id)
+            if execution is None:
+                logger.info(
+                    "Control signal (mode=%s) for unknown room %s; no-op",
+                    payload.mode,
+                    payload.room_id,
+                )
+                return
+            targets = [execution]
+        elif payload.scope == "agent":
+            targets = list(self.executions.values())
+        else:
+            logger.warning(
+                "Control signal scope=%s with no room_id; no-op", payload.scope
+            )
+            return
+
+        logger.info(
+            "Applying control mode=%s scope=%s to %d room(s) "
+            "(correlation_id=%s execution_id=%s)",
+            payload.mode,
+            payload.scope,
+            len(targets),
+            cid,
+            payload.execution_id,
+        )
+
+        for execution in targets:
+            await self._apply_control(execution, payload.mode)
+
+    async def _apply_control(self, execution: Execution, mode: str) -> None:
+        """Dispatch one control mode to one execution, degrading gracefully.
+
+        Custom ``Execution`` implementations that omit the control methods are
+        skipped with a log (mirrors how ``request_resync`` degrades).
+        """
+        if mode == "interrupt":
+            fn = getattr(execution, "interrupt", None)
+            if fn is None:
+                logger.debug(
+                    "Execution for room %s has no interrupt(); skipping",
+                    getattr(execution, "room_id", "?"),
+                )
+                return
+            fn()
+        elif mode == "stop":
+            fn = getattr(execution, "stop_room", None)
+            if fn is None:
+                logger.debug(
+                    "Execution for room %s has no stop_room(); skipping",
+                    getattr(execution, "room_id", "?"),
+                )
+                return
+            fn()
+        elif mode == "play":
+            fn = getattr(execution, "resume_room", None)
+            if fn is None:
+                logger.debug(
+                    "Execution for room %s has no resume_room(); skipping",
+                    getattr(execution, "room_id", "?"),
+                )
+                return
+            await fn()
+        else:
+            logger.warning("Unknown control mode %r; ignoring", mode)
+
     # --- Execution management ---
 
     async def _create_execution(self, room_id: str) -> Execution:
@@ -273,6 +386,7 @@ class AgentRuntime:
                 on_participant_added=self._on_participant_added,
                 on_participant_removed=self._on_participant_removed,
                 hub_room_id=self._hub_room_id,
+                claim_registry=self._claim_registry,
             )
 
         self.executions[room_id] = execution
@@ -299,6 +413,11 @@ class AgentRuntime:
 
         execution = self.executions.pop(room_id)
         graceful = await execution.stop(timeout=timeout)
+
+        # Durable completion state is safe to release with the room. Pending
+        # acknowledgements remain in the shared registry so a later rejoin
+        # retries only the ack instead of replaying handler side effects.
+        self._claim_registry.discard_completed(room_id)
 
         # Call cleanup callback (for adapter to clean up checkpointer, etc.)
         if self._on_session_cleanup:

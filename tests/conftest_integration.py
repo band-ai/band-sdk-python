@@ -20,8 +20,11 @@ Room reuse strategy:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +33,9 @@ import pytest_asyncio
 from dotenv import load_dotenv
 from band_rest import AsyncRestClient, ChatRoomRequest
 from band_rest.core.api_error import ApiError
+from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
+    CreateMyChatRoomRequestChat,
+)
 from band_rest.types import ParticipantRequest
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
 from thenvoi_testing.settings import BaseTestSettings
@@ -381,6 +387,23 @@ async def is_room_alive(api_client: AsyncRestClient, chat_id: str) -> bool:
         return False
 
 
+async def wait_until(
+    pred: Callable[[], bool], *, timeout: float, interval: float = 1.0
+) -> bool:
+    """Poll ``pred`` until it returns True or ``timeout`` seconds elapse.
+
+    Generic polling helper for integration tests that wait on eventual state
+    (e.g. a message replayed via /next, a cycle cancelled). Returns the final
+    value of ``pred`` so callers can assert on it directly.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return True
+        await asyncio.sleep(interval)
+    return pred()
+
+
 @pytest_asyncio.fixture(scope="session")
 async def shared_room(
     session_api_client: AsyncRestClient | None,
@@ -477,6 +500,65 @@ async def shared_multi_agent_room(
     if shared_user_peer is not None:
         await _ensure_participant(session_api_client, chat_id, shared_user_peer.id)
 
+    return chat_id
+
+
+# Marker title stamped on rooms this fixture creates. list_my_chats returns
+# every room the user is *in* (owned or merely added to), and the model exposes
+# no ownership field — but room-scope stop/play is owner-only. Reusing only
+# rooms bearing this marker guarantees we picked one the user created (owns),
+# so those signals don't 403.
+_USER_OWNED_ROOM_TITLE = "sdk-integration-user-owned"
+
+
+@pytest_asyncio.fixture
+async def shared_user_owned_room(
+    user_api_client: AsyncRestClient | None,
+    session_api_client: AsyncRestClient | None,
+    shared_agent1_info: AgentInfo | None,
+) -> str | None:
+    """A **user-owned** chat with Agent 1 as a participant (reused across runs).
+
+    User ownership is what lets the user issue room-scope signals (stop/play)
+    and other owner-only operations, so control- and permission-oriented
+    integration tests share this instead of each re-implementing the
+    reuse-or-create + ``is_room_alive`` dance. The reuse logic keeps it within
+    the platform's per-agent room limit even though the fixture is
+    function-scoped. Returns None when credentials/agent are unavailable so
+    callers can skip cleanly.
+    """
+    if (
+        user_api_client is None
+        or session_api_client is None
+        or shared_agent1_info is None
+    ):
+        return None
+
+    agent_id = shared_agent1_info.id
+
+    # Reuse a live room WE created (marker title => user-owned) that still has
+    # the agent. Reusing a merely-participating room would 403 on stop/play.
+    chats = await user_api_client.human_api_chats.list_my_chats()
+    for room in reversed(chats.data or []):
+        if room.title != _USER_OWNED_ROOM_TITLE:
+            continue
+        if not await is_room_alive(session_api_client, room.id):
+            continue
+        parts = await user_api_client.human_api_participants.list_my_chat_participants(
+            room.id
+        )
+        if any(p.id == agent_id for p in (parts.data or [])):
+            logger.info("Reusing user-owned room: %s", room.id)
+            return room.id
+
+    created = await user_api_client.human_api_chats.create_my_chat_room(
+        chat=CreateMyChatRoomRequestChat(title=_USER_OWNED_ROOM_TITLE)
+    )
+    chat_id = created.data.id
+    await user_api_client.human_api_participants.add_my_chat_participant(
+        chat_id, participant=ParticipantRequest(participant_id=agent_id, role="member")
+    )
+    logger.info("Created user-owned room: %s", chat_id)
     return chat_id
 
 

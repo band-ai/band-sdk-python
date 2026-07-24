@@ -245,13 +245,13 @@ class TestResyncPendingMessages:
         await ctx.stop()
 
     async def test_skips_duplicate_message(self, mock_link, mock_handler):
-        """A message whose ID is already in _processed_ids should be skipped."""
+        """A message already recorded as completed should be skipped."""
         msg = make_platform_message(msg_id="dup-1", room_id="room-1")
         mock_link.get_next_message.side_effect = [msg, None]
 
         ctx = ExecutionContext("room-1", mock_link, mock_handler)
         # Mark the message as already processed
-        ctx._processed_ids["dup-1"] = True
+        ctx.claims.remember_completed(ctx.room_id, "dup-1")
 
         await ctx._resync_pending_messages()
 

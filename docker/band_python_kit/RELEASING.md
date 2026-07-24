@@ -95,8 +95,16 @@ the Dockerfile.
 The check covers the **whole** lockfile, so the gate can trip on a fresh
 **dev-only** dependency bump (pytest, ruff, …) that never enters the
 image — not only on a poisoned runtime dependency. Benign trips are therefore
-expected. A trip leaves a **split release**: the PyPI publish (`publish-band`, an
-independent job) has already succeeded, but no kit artifacts were produced.
+expected. A trip leaves a **split release**: the PyPI publish (`band-publish.yml`,
+an independent release-triggered workflow) has already succeeded, but no kit
+artifacts were produced.
+
+Packages Band publishes itself are **exempt** (`FIRST_PARTY` in
+`scripts/check-lock-age.py`): the gate models *upstream* compromise, and
+ageing our own releases would deadlock every kit publish that follows a
+first-party dependency bump. The gate script runs from the checked-out
+release tag, so tags cut before the exemption existed still gate those
+packages — republish those with the override below.
 
 ### Recovery
 
