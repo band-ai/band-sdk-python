@@ -30,7 +30,9 @@ from .helpers import (
 )
 
 
-async def test_registers_shared_mcp_backend_with_additional_tools() -> None:
+async def test_registers_shared_mcp_backend_with_additional_tools(
+    make_adapter, tools
+) -> None:
     class EchoInput(BaseModel):
         """Echo text."""
 
@@ -117,7 +119,9 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
     assert fake_backend.stop_calls == 1
 
 
-async def test_bootstrap_creates_session_relays_text_and_persists_task() -> None:
+async def test_bootstrap_creates_session_relays_text_and_persists_task(
+    make_adapter, tools
+) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -127,8 +131,7 @@ async def test_bootstrap_creates_session_relays_text_and_persists_task() -> None
             ]
         ]
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
@@ -149,7 +152,7 @@ async def test_bootstrap_creates_session_relays_text_and_persists_task() -> None
     assert task_events[0]["metadata"]["opencode_session_id"] == "sess-1"
 
 
-async def test_reuses_persisted_session() -> None:
+async def test_reuses_persisted_session(make_adapter, tools) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -159,8 +162,7 @@ async def test_reuses_persisted_session() -> None:
             ]
         ]
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
@@ -178,7 +180,9 @@ async def test_reuses_persisted_session() -> None:
     assert tools.messages_sent[0]["content"] == "Reused session"
 
 
-async def test_missing_session_replays_history_into_new_prompt() -> None:
+async def test_missing_session_replays_history_into_new_prompt(
+    make_adapter, tools
+) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -189,8 +193,7 @@ async def test_missing_session_replays_history_into_new_prompt() -> None:
         ],
         get_session_missing={"sess-missing"},
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
@@ -217,7 +220,9 @@ async def test_missing_session_replays_history_into_new_prompt() -> None:
     assert "[OpenCode Agent]: Earlier answer" in prompt_text
 
 
-async def test_capability_gating_controls_registered_tool_set() -> None:
+async def test_capability_gating_controls_registered_tool_set(
+    make_adapter, tools
+) -> None:
     """Capability.MEMORY / Capability.CONTACTS gate which platform tools
     the adapter registers with OpenCode's shared MCP backend, since a
     bare adapter (no capabilities) must not expose them."""
@@ -277,15 +282,14 @@ async def test_capability_gating_controls_registered_tool_set() -> None:
     assert CONTACT_TOOL_NAMES <= full_tool_names
 
 
-async def test_turn_system_prompt_carries_room_context() -> None:
+async def test_turn_system_prompt_carries_room_context(make_adapter, tools) -> None:
     """The per-turn system prompt must name the current room_id (band MCP
     tool schemas require a room_id argument, so an untold model cannot
     call any platform tool) and the requester."""
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[[event_session_idle("sess-1")]]
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await _run_single_turn(adapter, tools)
 

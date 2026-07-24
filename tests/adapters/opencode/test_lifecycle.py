@@ -83,7 +83,9 @@ async def test_watch_task_drains_the_turn_that_started_it() -> None:
     ], f"expected the first turn's snapshot to be drained, got {usage_payloads}"
 
 
-async def test_new_turn_does_not_wipe_prior_turns_pending_usage() -> None:
+async def test_new_turn_does_not_wipe_prior_turns_pending_usage(
+    make_adapter, tools
+) -> None:
     """Regression: a message racing in between turn completion and the usage
     drain must not empty the prior turn's usage. The dict is turn-owned (a
     fresh instance per _begin_turn), so the watch task sums the instance it
@@ -118,7 +120,7 @@ async def test_new_turn_does_not_wipe_prior_turns_pending_usage() -> None:
     ], f"expected the first turn's usage to survive, got {usage_payloads}"
 
 
-async def test_cleanup_is_idempotent() -> None:
+async def test_cleanup_is_idempotent(make_adapter, tools) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -128,8 +130,7 @@ async def test_cleanup_is_idempotent() -> None:
             ]
         ]
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
@@ -147,7 +148,9 @@ async def test_cleanup_is_idempotent() -> None:
     assert fake_client.closed is True
 
 
-async def test_cleanup_race_creates_a_fresh_client_for_the_next_room() -> None:
+async def test_cleanup_race_creates_a_fresh_client_for_the_next_room(
+    make_adapter, tools
+) -> None:
     stop_started = asyncio.Event()
     stop_release = asyncio.Event()
     fake_backend = FakeMCPBackend(
@@ -217,7 +220,7 @@ async def test_cleanup_race_creates_a_fresh_client_for_the_next_room() -> None:
     assert second_client.closed is True
 
 
-async def test_concurrent_message_rejected() -> None:
+async def test_concurrent_message_rejected(make_adapter, tools) -> None:
     """Sending a second message while a turn is active returns an error."""
     # First prompt never completes (no session.idle event)
     fake_client = FakeOpencodeClient(
@@ -226,8 +229,7 @@ async def test_concurrent_message_rejected() -> None:
             [],  # second prompt gets empty events
         ]
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_task = asyncio.create_task(
@@ -269,7 +271,7 @@ async def test_concurrent_message_rejected() -> None:
     await adapter.on_cleanup("room-1")
 
 
-async def test_two_rooms_active_concurrently() -> None:
+async def test_two_rooms_active_concurrently(tools) -> None:
     """Two rooms with separate sessions route events correctly."""
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[

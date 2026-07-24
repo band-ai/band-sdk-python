@@ -29,7 +29,9 @@ from .helpers import (
 )
 
 
-async def test_manual_permission_reply_from_follow_up_message() -> None:
+async def test_manual_permission_reply_from_follow_up_message(
+    make_adapter, tools
+) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[[event_permission("sess-1", "req-1")]],
         reply_permission_events={
@@ -40,8 +42,7 @@ async def test_manual_permission_reply_from_follow_up_message() -> None:
             ]
         },
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_turn = asyncio.create_task(
@@ -97,7 +98,9 @@ async def test_manual_permission_reply_from_follow_up_message() -> None:
     assert handled_with["mentions"]
 
 
-async def test_manual_question_reply_from_follow_up_message() -> None:
+async def test_manual_question_reply_from_follow_up_message(
+    make_adapter, tools
+) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [event_question("sess-1", "q-1", "What should I do next?")]
@@ -110,8 +113,7 @@ async def test_manual_question_reply_from_follow_up_message() -> None:
             ]
         },
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_turn = asyncio.create_task(
@@ -418,7 +420,9 @@ async def test_cleanup_with_pending_question() -> None:
     assert fake_client.question_rejections == []
 
 
-async def test_always_permission_reply_from_follow_up_message() -> None:
+async def test_always_permission_reply_from_follow_up_message(
+    make_adapter, tools
+) -> None:
     """The `always <id>` reply maps to the `always` ApprovalReply (distinct
     from the one-shot `approve <id>` -> `once`)."""
     fake_client = FakeOpencodeClient(
@@ -431,8 +435,7 @@ async def test_always_permission_reply_from_follow_up_message() -> None:
             ]
         },
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     first_turn = asyncio.create_task(
@@ -477,7 +480,9 @@ async def test_always_permission_reply_from_follow_up_message() -> None:
     ]
 
 
-async def test_band_tool_permission_auto_approved_in_manual_mode() -> None:
+async def test_band_tool_permission_auto_approved_in_manual_mode(
+    make_adapter, tools
+) -> None:
     """A permission ask naming the adapter's own band tool is granted
     `always` without any room prompt, even in manual mode -- platform
     plumbing must never stall on a human approval."""
@@ -514,7 +519,9 @@ async def test_band_tool_permission_auto_approved_in_manual_mode() -> None:
     assert any(msg["content"] == "tool ran" for msg in tools.messages_sent)
 
 
-async def test_band_tool_permission_matches_server_prefixed_custom_tool() -> None:
+async def test_band_tool_permission_matches_server_prefixed_custom_tool(
+    make_adapter, tools
+) -> None:
     """OpenCode may report an MCP tool ask under its `{server}_{tool}`
     naming; a server-prefixed custom tool still auto-approves."""
 
@@ -578,7 +585,9 @@ async def test_band_tool_permission_bypasses_auto_decline() -> None:
     ]
 
 
-async def test_doom_loop_permission_auto_accepted_in_auto_accept_mode() -> None:
+async def test_doom_loop_permission_auto_accepted_in_auto_accept_mode(
+    make_adapter, tools
+) -> None:
     """Pins the E2E-lane behavior: a non-tool ask (doom_loop) under
     auto_accept is granted `once` -- the safety heuristic keeps firing
     server-side, each trip is just answered without a room prompt."""
@@ -608,7 +617,9 @@ async def test_doom_loop_permission_auto_accepted_in_auto_accept_mode() -> None:
     )
 
 
-async def test_doom_loop_permission_still_relayed_in_manual_mode() -> None:
+async def test_doom_loop_permission_still_relayed_in_manual_mode(
+    make_adapter, tools
+) -> None:
     """Guards the interactive path: non-band asks keep the manual relay
     (room prompt + reply flow), only the adapter's own tools bypass it."""
     fake_client = FakeOpencodeClient(

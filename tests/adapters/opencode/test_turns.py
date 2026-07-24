@@ -37,7 +37,9 @@ from .helpers import (
 )
 
 
-async def test_prompt_submission_failure_does_not_leave_room_stuck() -> None:
+async def test_prompt_submission_failure_does_not_leave_room_stuck(
+    make_adapter, tools
+) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -48,8 +50,7 @@ async def test_prompt_submission_failure_does_not_leave_room_stuck() -> None:
         ],
         prompt_exceptions=[AnyHTTPStatusError(500, "sess-1")],
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
@@ -133,7 +134,9 @@ async def test_reports_tool_events_when_enabled() -> None:
     assert json.loads(tool_results[0]["content"])["output"] == "ok"
 
 
-async def test_preserves_falsy_tool_result_outputs_when_reporting() -> None:
+async def test_preserves_falsy_tool_result_outputs_when_reporting(
+    make_adapter, tools
+) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -172,7 +175,9 @@ async def test_preserves_falsy_tool_result_outputs_when_reporting() -> None:
     assert json.loads(tool_results[0]["content"])["output"] == 0
 
 
-async def test_does_not_echo_user_text_parts_as_assistant_output() -> None:
+async def test_does_not_echo_user_text_parts_as_assistant_output(
+    make_adapter, tools
+) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -204,7 +209,9 @@ async def test_does_not_echo_user_text_parts_as_assistant_output() -> None:
     )
 
 
-async def test_ignores_reasoning_deltas_and_relays_final_text_only() -> None:
+async def test_ignores_reasoning_deltas_and_relays_final_text_only(
+    make_adapter, tools
+) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[
             [
@@ -231,8 +238,7 @@ async def test_ignores_reasoning_deltas_and_relays_final_text_only() -> None:
             ]
         ]
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
@@ -248,12 +254,11 @@ async def test_ignores_reasoning_deltas_and_relays_final_text_only() -> None:
     assert tools.messages_sent[0]["content"] == "pong"
 
 
-async def test_session_error_emits_error_event() -> None:
+async def test_session_error_emits_error_event(make_adapter, tools) -> None:
     fake_client = FakeOpencodeClient(
         prompt_event_sequences=[[event_session_error("sess-1", "boom")]]
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
@@ -301,7 +306,9 @@ async def test_turn_timeout_aborts_session_and_emits_error() -> None:
     await adapter.on_cleanup("room-1")
 
 
-async def test_emits_turn_usage_folding_reasoning_into_output() -> None:
+async def test_emits_turn_usage_folding_reasoning_into_output(
+    make_adapter, tools
+) -> None:
     """Emit.USAGE aggregates the assistant message's ``tokens``, folding
     OpenCode's disjoint ``reasoning`` count into ``output_tokens``."""
     fake_client = FakeOpencodeClient(
@@ -349,7 +356,7 @@ async def test_emits_turn_usage_folding_reasoning_into_output() -> None:
     ]
 
 
-async def test_malformed_events_do_not_kill_event_loop() -> None:
+async def test_malformed_events_do_not_kill_event_loop(make_adapter, tools) -> None:
     """Junk SSE payloads degrade to ignored events; the turn that follows
     them completes normally instead of the event loop dying mid-stream."""
     fake_client = FakeOpencodeClient(
@@ -365,8 +372,7 @@ async def test_malformed_events_do_not_kill_event_loop() -> None:
             ]
         ]
     )
-    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = FakeAgentTools()
+    adapter = make_adapter(fake_client)
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await adapter.on_message(
@@ -384,7 +390,9 @@ async def test_malformed_events_do_not_kill_event_loop() -> None:
     await adapter.on_cleanup("room-1")
 
 
-async def test_tool_reports_canonicalize_server_prefixed_names() -> None:
+async def test_tool_reports_canonicalize_server_prefixed_names(
+    make_adapter, tools
+) -> None:
     """OpenCode surfaces a remote MCP server's tools as `{server}_{tool}`
     (band_store_memory arrives as band_band_store_memory); reported
     tool_call events must carry the canonical band name so consumers
@@ -432,7 +440,9 @@ async def test_tool_reports_canonicalize_server_prefixed_names() -> None:
     assert [c["name"] for c in tool_calls] == ["band_store_memory"]
 
 
-async def test_manual_relay_releases_turn_when_mentionless_send_rejected() -> None:
+async def test_manual_relay_releases_turn_when_mentionless_send_rejected(
+    make_adapter, tools
+) -> None:
     """A sender-less turn yields no mentions, which the platform rejects.
     The manual approval relay must still release the turn (best-effort
     post) rather than stranding on_message until the turn timeout."""
@@ -471,7 +481,9 @@ async def test_manual_relay_releases_turn_when_mentionless_send_rejected() -> No
     await adapter.on_cleanup("room-1")
 
 
-async def test_turn_completes_when_fallback_reply_send_rejected() -> None:
+async def test_turn_completes_when_fallback_reply_send_rejected(
+    make_adapter, tools
+) -> None:
     """A sender-less turn's reply has no one to @mention, so the platform
     rejects it. The watch task must still release on_message (release is
     in finally) instead of stranding it on the captured release_future."""
