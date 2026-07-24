@@ -625,44 +625,53 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     ) -> None:
         if not part.id:
             return
-        part_id = part.id
-        message_id = part.message_id
 
+        if part.type in {"text", "reasoning"}:
+            self._track_assistant_part(room_state, part)
+            return
+
+        if part.type != "tool":
+            return
+        await self._report_tool_part(room_state, part)
+
+    def _track_assistant_part(self, room_state: _RoomState, part: OpencodePart) -> None:
+        """Remember text and reasoning parts belonging to the assistant reply."""
+        if (
+            not part.message_id
+            or part.message_id not in room_state.assistant_message_ids
+        ):
+            return
+
+        assert part.id is not None
+        room_state.assistant_part_types[part.id] = part.type
         if part.type == "text":
-            if not message_id or message_id not in room_state.assistant_message_ids:
-                return
-            room_state.assistant_part_types[part_id] = "text"
-            room_state.text_parts[part_id] = part.text or ""
-            return
+            room_state.text_parts[part.id] = part.text or ""
 
-        if part.type == "reasoning":
-            if not message_id or message_id not in room_state.assistant_message_ids:
-                return
-            room_state.assistant_part_types[part_id] = "reasoning"
-            return
-
-        if part.type != "tool" or Emit.EXECUTION not in self.features.emit:
+    async def _report_tool_part(
+        self, room_state: _RoomState, part: OpencodePart
+    ) -> None:
+        """Report one tool part's call and, once terminal, its result."""
+        if Emit.EXECUTION not in self.features.emit or part.state is None:
             return
 
         state = part.state
-        if state is None:
+        if state.status not in {"pending", "running", "completed", "error"}:
             return
 
+        assert part.id is not None
         tool_name = self._canonical_tool_name(part.tool or "unknown")
-        call_id = part.call_id or part_id
-        if state.status in {"pending", "running"}:
-            if call_id not in room_state.reported_tool_calls:
-                room_state.reported_tool_calls.add(call_id)
-                await self._report_tool_call(room_state, tool_name, state, call_id)
-            return
+        call_id = part.call_id or part.id
 
-        if state.status in {"completed", "error"}:
-            if call_id not in room_state.reported_tool_calls:
-                room_state.reported_tool_calls.add(call_id)
-                await self._report_tool_call(room_state, tool_name, state, call_id)
-            if call_id not in room_state.reported_tool_results:
-                room_state.reported_tool_results.add(call_id)
-                await self._report_tool_result(room_state, state, call_id)
+        if call_id not in room_state.reported_tool_calls:
+            room_state.reported_tool_calls.add(call_id)
+            await self._report_tool_call(room_state, tool_name, state, call_id)
+
+        if (
+            state.status in {"completed", "error"}
+            and call_id not in room_state.reported_tool_results
+        ):
+            room_state.reported_tool_results.add(call_id)
+            await self._report_tool_result(room_state, state, call_id)
 
     def _apply_part_delta(
         self, room_state: _RoomState, event: MessagePartDeltaEvent
