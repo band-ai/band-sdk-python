@@ -15,6 +15,7 @@ semantic guards (e.g. skipping a request with no id) instead.
 from __future__ import annotations
 
 import logging
+from enum import StrEnum
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -191,6 +192,15 @@ class OpencodeToolState(OpencodeModel):
     @property
     def reported_output(self) -> Any:
         return self.output if self.has_output else ""
+
+
+class OpencodeToolStatus(StrEnum):
+    """Tool states the adapter reports to Band."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    ERROR = "error"
 
 
 class OpencodePart(OpencodeModel):

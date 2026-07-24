@@ -42,6 +42,7 @@ from band.integrations.opencode import (
     OpencodePart,
     OpencodeSessionState,
     OpencodeToolState,
+    OpencodeToolStatus,
     PermissionAskedEvent,
     QuestionAskedEvent,
     SessionErrorEvent,
@@ -698,8 +699,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return
 
         state = part.state
-        if state.status not in {"pending", "running", "completed", "error"}:
-            return
+        match state.status:
+            case (
+                OpencodeToolStatus.PENDING
+                | OpencodeToolStatus.RUNNING
+                | OpencodeToolStatus.COMPLETED
+                | OpencodeToolStatus.ERROR
+            ):
+                pass
+            case _:
+                return
 
         assert part.id is not None
         tool_name = self._canonical_tool_name(part.tool or "unknown")
@@ -708,10 +717,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if room_state.mark_tool_call(call_id):
             await self._report_tool_call(room_state, tool_name, state, call_id)
 
-        if state.status in {"completed", "error"} and room_state.mark_tool_result(
-            call_id
-        ):
-            await self._report_tool_result(room_state, state, call_id)
+        match state.status:
+            case OpencodeToolStatus.COMPLETED | OpencodeToolStatus.ERROR:
+                if room_state.mark_tool_result(call_id):
+                    await self._report_tool_result(room_state, state, call_id)
 
     def _apply_part_delta(
         self, room_state: _RoomState, event: MessagePartDeltaEvent
@@ -942,7 +951,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if room_state.tools is None:
             return
         output: Any
-        if state.status == "error":
+        if state.status == OpencodeToolStatus.ERROR:
             output = {"error": state.error or "OpenCode tool failed"}
         else:
             output = state.reported_output
