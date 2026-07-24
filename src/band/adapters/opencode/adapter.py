@@ -85,6 +85,73 @@ class _RoomState:
     # end — a tool loop produces several assistant messages.
     usage_by_message: dict[str, TurnUsage] = field(default_factory=dict)
 
+    def begin_turn(self, sender_id: str | None) -> None:
+        """Reset reply state and create the futures for one new turn."""
+        loop = asyncio.get_running_loop()
+        self.turn_future = loop.create_future()
+        self.turn_release_future = loop.create_future()
+        self.turn_task = None
+        self.pending_mentions = [{"id": sender_id}] if sender_id else []
+        self.text_parts.clear()
+        self.assistant_message_ids.clear()
+        self.assistant_part_types.clear()
+        self.reported_tool_calls.clear()
+        self.reported_tool_results.clear()
+        # A new dict preserves the prior turn's snapshot for its watch task.
+        self.usage_by_message = {}
+        self.last_error_message = None
+
+    def record_message(
+        self, info: OpencodeMessageInfo | None, *, emit_usage: bool
+    ) -> None:
+        """Record the assistant message metadata relevant to the current turn."""
+        if info is None or info.role != "assistant":
+            return
+        if info.id:
+            self.assistant_message_ids.add(info.id)
+            if emit_usage and info.tokens is not None:
+                usage = info.tokens.to_turn_usage()
+                if not usage.is_empty:
+                    self.usage_by_message[info.id] = usage
+        if info.error is not None and not info.error.is_empty:
+            self.last_error_message = info.error.describe()
+
+    def track_assistant_part(self, part: OpencodePart) -> None:
+        """Remember text and reasoning parts belonging to the assistant reply."""
+        if not part.id or part.message_id not in self.assistant_message_ids:
+            return
+        self.assistant_part_types[part.id] = part.type
+        if part.type == "text":
+            self.text_parts[part.id] = part.text or ""
+
+    def append_text_delta(self, event: MessagePartDeltaEvent) -> None:
+        """Append a text delta only after its assistant text part is known."""
+        props = event.properties
+        if (
+            props.field != "text"
+            or not props.part_id
+            or props.message_id not in self.assistant_message_ids
+            or self.assistant_part_types.get(props.part_id) != "text"
+        ):
+            return
+        self.text_parts[props.part_id] = (
+            self.text_parts.get(props.part_id, "") + props.delta
+        )
+
+    def mark_tool_call(self, call_id: str) -> bool:
+        """Return whether this is the first report for a tool call."""
+        if call_id in self.reported_tool_calls:
+            return False
+        self.reported_tool_calls.add(call_id)
+        return True
+
+    def mark_tool_result(self, call_id: str) -> bool:
+        """Return whether this is the first report for a tool result."""
+        if call_id in self.reported_tool_results:
+            return False
+        self.reported_tool_results.add(call_id)
+        return True
+
 
 class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     """Band adapter for the OpenCode HTTP server.
@@ -609,16 +676,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def _apply_message_update(
         self, room_state: _RoomState, info: OpencodeMessageInfo | None
     ) -> None:
-        if info is None or info.role != "assistant":
-            return
-        if info.id:
-            room_state.assistant_message_ids.add(info.id)
-            if Emit.USAGE in self.features.emit and info.tokens is not None:
-                usage = info.tokens.to_turn_usage()
-                if not usage.is_empty:
-                    room_state.usage_by_message[info.id] = usage
-        if info.error is not None and not info.error.is_empty:
-            room_state.last_error_message = info.error.describe()
+        room_state.record_message(info, emit_usage=Emit.USAGE in self.features.emit)
 
     async def _handle_part_update(
         self, room_state: _RoomState, part: OpencodePart
@@ -628,22 +686,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         match part.type:
             case "text" | "reasoning":
-                self._track_assistant_part(room_state, part)
+                room_state.track_assistant_part(part)
             case "tool":
                 await self._report_tool_part(room_state, part)
-
-    def _track_assistant_part(self, room_state: _RoomState, part: OpencodePart) -> None:
-        """Remember text and reasoning parts belonging to the assistant reply."""
-        if (
-            not part.message_id
-            or part.message_id not in room_state.assistant_message_ids
-        ):
-            return
-
-        assert part.id is not None
-        room_state.assistant_part_types[part.id] = part.type
-        if part.type == "text":
-            room_state.text_parts[part.id] = part.text or ""
 
     async def _report_tool_part(
         self, room_state: _RoomState, part: OpencodePart
@@ -660,33 +705,18 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         tool_name = self._canonical_tool_name(part.tool or "unknown")
         call_id = part.call_id or part.id
 
-        if call_id not in room_state.reported_tool_calls:
-            room_state.reported_tool_calls.add(call_id)
+        if room_state.mark_tool_call(call_id):
             await self._report_tool_call(room_state, tool_name, state, call_id)
 
-        if (
-            state.status in {"completed", "error"}
-            and call_id not in room_state.reported_tool_results
+        if state.status in {"completed", "error"} and room_state.mark_tool_result(
+            call_id
         ):
-            room_state.reported_tool_results.add(call_id)
             await self._report_tool_result(room_state, state, call_id)
 
     def _apply_part_delta(
         self, room_state: _RoomState, event: MessagePartDeltaEvent
     ) -> None:
-        props = event.properties
-        if props.field != "text":
-            return
-        if not props.part_id:
-            return
-        message_id = props.message_id
-        if not message_id or message_id not in room_state.assistant_message_ids:
-            return
-        if room_state.assistant_part_types.get(props.part_id) != "text":
-            return
-        room_state.text_parts[props.part_id] = (
-            room_state.text_parts.get(props.part_id, "") + props.delta
-        )
+        room_state.append_text_delta(event)
 
     async def _ensure_session(
         self, room_state: _RoomState, history: OpencodeSessionState
@@ -728,22 +758,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         return session_id, created
 
     def _begin_turn(self, room_state: _RoomState, *, sender_id: str | None) -> None:
-        loop = asyncio.get_running_loop()
-        room_state.turn_future = loop.create_future()
-        room_state.turn_release_future = loop.create_future()
-        room_state.turn_task = None
-        room_state.pending_mentions = [{"id": sender_id}] if sender_id else []
-        room_state.text_parts.clear()
-        room_state.assistant_message_ids.clear()
-        room_state.assistant_part_types.clear()
-        room_state.reported_tool_calls.clear()
-        room_state.reported_tool_results.clear()
-        # A fresh dict, not .clear(): the previous turn's watch task drains the
-        # dict instance it captured, so a new turn must not empty it out from
-        # under a still-pending _emit_turn_usage (same snapshot idea as passing
-        # turn_future into _watch_turn_completion).
-        room_state.usage_by_message = {}
-        room_state.last_error_message = None
+        room_state.begin_turn(sender_id)
 
     async def _watch_turn_completion(
         self,
