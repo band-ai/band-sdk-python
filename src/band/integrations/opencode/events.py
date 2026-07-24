@@ -15,7 +15,7 @@ semantic guards (e.g. skipping a request with no id) instead.
 from __future__ import annotations
 
 import logging
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -39,7 +39,9 @@ class OpencodeModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
-def lenient(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+# Coercion is deliberately local to this wire-format boundary. The adapter
+# receives a useful partial event instead of losing an entire SSE frame.
+def _lenient(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
     """Wrap-validator: a malformed *optional* nested model becomes ``None``.
 
     Applied to nested optional models so garbage in one corner of an event
@@ -52,19 +54,19 @@ def lenient(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
         return None
 
 
-def coerce_str_list(value: Any) -> list[str]:
+def _coerce_str_list(value: Any) -> list[str]:
     """Before-validator: junk becomes ``[]``; items stringify, ``None``s drop."""
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if item is not None]
 
 
-def coerce_dict(value: Any) -> dict[str, Any]:
+def _coerce_dict(value: Any) -> dict[str, Any]:
     """Before-validator: a non-dict becomes ``{}``."""
     return value if isinstance(value, dict) else {}
 
 
-def coerce_str(value: Any) -> str:
+def _coerce_str(value: Any) -> str:
     """Before-validator: a present scalar always stringifies; ``None`` -> ``""``.
 
     Applied to the scalar fields whose *event* must not be dropped on a type
@@ -91,7 +93,7 @@ class OpencodeTokens(OpencodeModel):
     reasoning: int = 0
     cache: OpencodeTokenCache = Field(default_factory=OpencodeTokenCache)
 
-    _coerce_cache = field_validator("cache", mode="before")(coerce_dict)
+    _coerce_cache = field_validator("cache", mode="before")(_coerce_dict)
 
     def to_turn_usage(self) -> TurnUsage:
         """Map onto ``TurnUsage``.
@@ -116,7 +118,7 @@ class OpencodeErrorInfo(OpencodeModel):
     name: str | None = None
     data: dict[str, Any] = Field(default_factory=dict)
 
-    _coerce_data = field_validator("data", mode="before")(coerce_dict)
+    _coerce_data = field_validator("data", mode="before")(_coerce_dict)
 
     @model_validator(mode="before")
     @classmethod
@@ -164,7 +166,7 @@ class OpencodeMessageInfo(OpencodeModel):
     tokens: OpencodeTokens | None = None
     error: OpencodeErrorInfo | None = None
 
-    _lenient_nested = field_validator("tokens", "error", mode="wrap")(lenient)
+    _lenient_nested = field_validator("tokens", "error", mode="wrap")(_lenient)
 
 
 class OpencodeToolState(OpencodeModel):
@@ -175,7 +177,7 @@ class OpencodeToolState(OpencodeModel):
     output: Any = None
     error: Any = None
 
-    _coerce_input = field_validator("input", mode="before")(coerce_dict)
+    _coerce_input = field_validator("input", mode="before")(_coerce_dict)
 
     @property
     def has_output(self) -> bool:
@@ -209,7 +211,7 @@ class OpencodePart(OpencodeModel):
     call_id: str | None = Field(default=None, alias="callID")
     state: OpencodeToolState | None = None
 
-    _lenient_state = field_validator("state", mode="wrap")(lenient)
+    _lenient_state = field_validator("state", mode="wrap")(_lenient)
 
 
 class OpencodePermissionToolRef(OpencodeModel):
@@ -234,17 +236,17 @@ class OpencodePermissionRequest(OpencodeModel):
     tool: OpencodePermissionToolRef | None = None
 
     _coerce_lists = field_validator("patterns", "always", mode="before")(
-        coerce_str_list
+        _coerce_str_list
     )
-    _coerce_metadata = field_validator("metadata", mode="before")(coerce_dict)
-    _coerce_permission = field_validator("permission", mode="before")(coerce_str)
-    _lenient_tool = field_validator("tool", mode="wrap")(lenient)
+    _coerce_metadata = field_validator("metadata", mode="before")(_coerce_dict)
+    _coerce_permission = field_validator("permission", mode="before")(_coerce_str)
+    _lenient_tool = field_validator("tool", mode="wrap")(_lenient)
 
 
 class OpencodeQuestion(OpencodeModel):
     question: str = "Question"
 
-    _coerce_question = field_validator("question", mode="before")(coerce_str)
+    _coerce_question = field_validator("question", mode="before")(_coerce_str)
 
 
 class OpencodeQuestionRequest(OpencodeModel):
@@ -265,7 +267,7 @@ class OpencodeQuestionRequest(OpencodeModel):
 class MessageUpdatedProps(OpencodeModel):
     info: OpencodeMessageInfo | None = None
 
-    _lenient_info = field_validator("info", mode="wrap")(lenient)
+    _lenient_info = field_validator("info", mode="wrap")(_lenient)
 
 
 class MessageUpdatedEvent(OpencodeModel):
@@ -281,7 +283,7 @@ class MessageUpdatedEvent(OpencodeModel):
 class MessagePartUpdatedProps(OpencodeModel):
     part: OpencodePart | None = None
 
-    _lenient_part = field_validator("part", mode="wrap")(lenient)
+    _lenient_part = field_validator("part", mode="wrap")(_lenient)
 
 
 class MessagePartUpdatedEvent(OpencodeModel):
@@ -301,7 +303,7 @@ class MessagePartDeltaProps(OpencodeModel):
     field: str | None = None
     delta: str = ""
 
-    _coerce_delta = field_validator("delta", mode="before")(coerce_str)
+    _coerce_delta = field_validator("delta", mode="before")(_coerce_str)
 
 
 class MessagePartDeltaEvent(OpencodeModel):
@@ -337,7 +339,7 @@ class SessionErrorProps(OpencodeModel):
     session_id: str | None = Field(default=None, alias="sessionID")
     error: OpencodeErrorInfo | None = None
 
-    _lenient_error = field_validator("error", mode="wrap")(lenient)
+    _lenient_error = field_validator("error", mode="wrap")(_lenient)
 
 
 class SessionErrorEvent(OpencodeModel):
@@ -375,19 +377,17 @@ class UnknownOpencodeEvent(OpencodeModel):
 
 
 KnownOpencodeEvent = Annotated[
-    Union[
-        MessageUpdatedEvent,
-        MessagePartUpdatedEvent,
-        MessagePartDeltaEvent,
-        PermissionAskedEvent,
-        QuestionAskedEvent,
-        SessionErrorEvent,
-        SessionIdleEvent,
-    ],
+    MessageUpdatedEvent
+    | MessagePartUpdatedEvent
+    | MessagePartDeltaEvent
+    | PermissionAskedEvent
+    | QuestionAskedEvent
+    | SessionErrorEvent
+    | SessionIdleEvent,
     Field(discriminator="type"),
 ]
 
-OpencodeEvent = Union[KnownOpencodeEvent, UnknownOpencodeEvent]
+OpencodeEvent = KnownOpencodeEvent | UnknownOpencodeEvent
 
 _EVENT_ADAPTER: TypeAdapter[KnownOpencodeEvent] = TypeAdapter(KnownOpencodeEvent)
 
