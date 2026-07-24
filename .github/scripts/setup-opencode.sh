@@ -16,6 +16,9 @@ read -r -d '' OPENCODE_CONFIG_JSON <<'JSON' || true
   "small_model": "opencode/mimo-v2.5-free",
   "provider": {
     "opencode": { "options": { "apiKey": "{env:OPENCODE_ZEN_API_KEY}" } }
+  },
+  "permission": {
+    "bash": "ask"
   }
 }
 JSON
