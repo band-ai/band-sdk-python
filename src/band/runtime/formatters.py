@@ -2,6 +2,27 @@
 
 from __future__ import annotations
 
+import re
+
+# A room message is delivered to an agent only when it @mentions it, so the
+# platform prepends one ``@handle`` token per mention to the content (a
+# normalized ``@[[uuid]]`` that replace_uuid_mentions() rewrites to ``@handle``);
+# a human may type more inline. This matches that leading run so a terse control
+# reply (``approve <id>`` / ``reject`` / a question answer) can be read from the
+# text after it. Whitespace after each token is consumed, so newlines separating
+# a multi-answer reply survive only past the block.
+_LEADING_MENTIONS = re.compile(r"^\s*(?:@\S+\s+)+")
+
+
+def strip_leading_mentions(content: str) -> str:
+    """Drop the platform's leading ``@handle`` mention block from a reply.
+
+    A delivered room reply arrives with the mention run in front (see
+    ``_LEADING_MENTIONS``); parsing a command or answer off ``tokens[0]`` would
+    otherwise read the mention, not the reply. Content past the block is left
+    verbatim (including the newlines a multi-question answer relies on)."""
+    return _LEADING_MENTIONS.sub("", content, count=1)
+
 
 def replace_uuid_mentions(content: str, participants: list[dict]) -> str:
     """

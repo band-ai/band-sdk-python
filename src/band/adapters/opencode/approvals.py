@@ -27,6 +27,7 @@ from band.integrations.opencode import (
 )
 
 from band.adapters.opencode.config import ApprovalReply, OpencodeAdapterConfig
+from band.runtime.formatters import strip_leading_mentions
 
 logger = logging.getLogger(__name__)
 
@@ -60,16 +61,16 @@ class ApprovalPorts:
 
 
 def parse_permission_reply(
-    lowered_content: str, pending: PendingPermission
+    content: str, pending: PendingPermission
 ) -> ApprovalReply | None:
     """Map a room reply (``approve <id>`` / ``always <id>`` / ``reject <id>``)
     onto the OpenCode reply vocabulary; ``None`` when it is not a reply to
     this pending request."""
-    tokens = lowered_content.split()
+    tokens = content.split()
     if not tokens:
         return None
 
-    command = tokens[0].lstrip("/")
+    command = tokens[0].lstrip("/").lower()
     request_id = tokens[1] if len(tokens) > 1 else pending.request_id
     if request_id != pending.request_id:
         return None
@@ -185,7 +186,7 @@ class RoomApprovals:
         Returns True when the message was a permission/question reply (the
         adapter must then NOT forward it to OpenCode as a prompt).
         """
-        content = content.strip()
+        content = strip_leading_mentions(content).strip()
         if not content:
             return False
 
@@ -197,7 +198,7 @@ class RoomApprovals:
 
         if self._pending_permission:
             pending_request_id = self._pending_permission.request_id
-            reply = parse_permission_reply(lowered, self._pending_permission)
+            reply = parse_permission_reply(content, self._pending_permission)
             if reply:
                 await self._reply_permission(reply)
                 await self._notify_room(
@@ -292,7 +293,8 @@ class RoomApprovals:
             pending.request_id,
             response=reply,
         )
-        self._pending_permission = None
+        if self._pending_permission is pending:
+            self._pending_permission = None
 
     async def _reply_question(self, answers: list[list[str]]) -> None:
         pending = self._pending_question
@@ -301,7 +303,8 @@ class RoomApprovals:
             return
         _cancel_timeout(pending)
         await client.reply_question(pending.request_id, answers=answers)
-        self._pending_question = None
+        if self._pending_question is pending:
+            self._pending_question = None
 
     async def _reject_question(self) -> None:
         pending = self._pending_question
@@ -310,7 +313,8 @@ class RoomApprovals:
             return
         _cancel_timeout(pending)
         await client.reject_question(pending.request_id)
-        self._pending_question = None
+        if self._pending_question is pending:
+            self._pending_question = None
 
     async def _expire_permission(self, request_id: str) -> None:
         try:

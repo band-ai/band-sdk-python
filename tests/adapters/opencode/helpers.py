@@ -225,6 +225,17 @@ class MentionEnforcingTools(FakeAgentTools):
         return await super().send_message(content, mentions)
 
 
+class RaisingSendTools(FakeAgentTools):
+    """FakeAgentTools whose send_message always fails, to exercise the
+    best-effort ``_notify_room`` path: a room post that raises must be
+    swallowed so the turn still unblocks."""
+
+    async def send_message(
+        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
+    ) -> dict[str, Any]:
+        raise BandToolError("send failed")
+
+
 class FakeOpencodeClient:
     def __init__(
         self,

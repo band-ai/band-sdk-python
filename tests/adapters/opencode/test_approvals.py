@@ -3,20 +3,33 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from typing import Literal, cast
 
 from pydantic import BaseModel
 
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
+from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
+from band.core.protocols import AgentToolsProtocol
 from band.core.types import (
     AdapterFeatures,
     Capability,
 )
-from band.integrations.opencode.types import OpencodeSessionState
+from band.integrations.opencode import (
+    OpencodeClientProtocol,
+    OpencodePermissionRequest,
+    OpencodeQuestion,
+    OpencodeQuestionRequest,
+)
+from band.integrations.opencode.types import (
+    OpencodeSessionState,
+)
 from band.testing import FakeAgentTools
 
 
 from .helpers import (
     FakeOpencodeClient,
+    RaisingSendTools,
     _run_single_turn,
     event_message_updated,
     event_permission,
@@ -27,6 +40,213 @@ from .helpers import (
     tools_protocol,
     wait_for,
 )
+
+
+class BlockingReplyClient(FakeOpencodeClient):
+    """Pause one reply request to deterministically interleave a new ask."""
+
+    def __init__(self, operation: Literal["permission", "question", "reject"]) -> None:
+        super().__init__()
+        self.operation = operation
+        self.reply_started = asyncio.Event()
+        self.allow_reply = asyncio.Event()
+
+    async def _block(self, operation: str) -> None:
+        if self.operation != operation:
+            return
+        self.reply_started.set()
+        await self.allow_reply.wait()
+
+    async def reply_permission(
+        self,
+        session_id: str,
+        permission_id: str,
+        *,
+        response: str,
+    ) -> None:
+        await super().reply_permission(session_id, permission_id, response=response)
+        await self._block("permission")
+
+    async def reply_question(
+        self, request_id: str, *, answers: list[list[str]]
+    ) -> None:
+        await super().reply_question(request_id, answers=answers)
+        await self._block("question")
+
+    async def reject_question(self, request_id: str) -> None:
+        await super().reject_question(request_id)
+        await self._block("reject")
+
+
+def make_room_approvals(
+    client: OpencodeClientProtocol,
+    *,
+    tools: FakeAgentTools | None = None,
+    release_turn_wait: Callable[[], None] = lambda: None,
+) -> RoomApprovals:
+    tools = tools if tools is not None else FakeAgentTools()
+    return RoomApprovals(
+        OpencodeAdapterConfig(),
+        ApprovalPorts(
+            room_id="room-1",
+            session_id=lambda: "sess-1",
+            client=lambda: client,
+            tools=lambda: cast(AgentToolsProtocol, tools),
+            turn_mentions=lambda: [],
+            release_turn_wait=release_turn_wait,
+            is_own_band_tool=lambda _permission: False,
+        ),
+    )
+
+
+async def test_manual_permission_reply_preserves_mixed_case_request_id() -> None:
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="Req-AbC-123", permission="bash")
+    )
+
+    assert await approvals.try_handle_reply("APPROVE Req-AbC-123", "user-1")
+    assert client.permission_replies == [
+        {
+            "session_id": "sess-1",
+            "permission_id": "Req-AbC-123",
+            "response": "once",
+        }
+    ]
+
+
+async def test_mentioned_permission_reply_is_recognized() -> None:
+    """A real reply reaches on_message with the platform's ``@handle`` block
+    prepended (a room message is delivered only when it mentions the agent).
+    The reply must still be recognized -- and the server's mixed-case id
+    preserved -- not misread as a new prompt."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="Req-AbC-123", permission="bash")
+    )
+
+    assert await approvals.try_handle_reply(
+        "@alexander.zaikman/tom approve Req-AbC-123", "user-1"
+    )
+    assert client.permission_replies == [
+        {
+            "session_id": "sess-1",
+            "permission_id": "Req-AbC-123",
+            "response": "once",
+        }
+    ]
+
+
+async def test_reply_to_nonmatching_request_id_is_not_consumed() -> None:
+    """A reply naming a different id is not for this pending ask: it is left
+    alone (forwarded as an ordinary prompt), not swallowed."""
+    client = FakeOpencodeClient()
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-current", permission="bash")
+    )
+
+    assert not await approvals.try_handle_reply("approve req-stale", "user-1")
+    assert client.permission_replies == []
+
+
+async def test_notify_room_send_failure_does_not_strand_turn() -> None:
+    """The approval-request post is best-effort: if send_message raises, the
+    failure is swallowed so the turn still unblocks (``release_turn_wait``
+    runs) instead of stranding the paused session or crashing the event loop."""
+    released: list[bool] = []
+    approvals = make_room_approvals(
+        cast(OpencodeClientProtocol, FakeOpencodeClient()),
+        tools=RaisingSendTools(),
+        release_turn_wait=lambda: released.append(True),
+    )
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+
+    assert released == [True]
+
+
+async def test_new_permission_ask_survives_previous_reply() -> None:
+    client = BlockingReplyClient("permission")
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="request-old", permission="bash")
+    )
+
+    old_reply = asyncio.create_task(
+        approvals.try_handle_reply("approve request-old", "user-1")
+    )
+    await client.reply_started.wait()
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="request-new", permission="bash")
+    )
+    client.allow_reply.set()
+
+    assert await old_reply
+    assert await approvals.try_handle_reply("reject request-new", "user-1")
+    assert [reply["permission_id"] for reply in client.permission_replies] == [
+        "request-old",
+        "request-new",
+    ]
+
+
+async def test_new_question_ask_survives_previous_answer() -> None:
+    client = BlockingReplyClient("question")
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(
+            id="question-old", questions=[OpencodeQuestion(question="Old?")]
+        )
+    )
+
+    old_reply = asyncio.create_task(approvals.try_handle_reply("old answer", "user-1"))
+    await client.reply_started.wait()
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(
+            id="question-new", questions=[OpencodeQuestion(question="New?")]
+        )
+    )
+    client.allow_reply.set()
+
+    assert await old_reply
+    assert await approvals.try_handle_reply("new answer", "user-1")
+    assert [reply["request_id"] for reply in client.question_replies] == [
+        "question-old",
+        "question-new",
+    ]
+
+
+async def test_new_question_ask_survives_previous_rejection() -> None:
+    client = BlockingReplyClient("reject")
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client))
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(
+            id="question-old", questions=[OpencodeQuestion(question="Old?")]
+        )
+    )
+
+    old_reply = asyncio.create_task(approvals.try_handle_reply("reject", "user-1"))
+    await client.reply_started.wait()
+    await approvals.on_question_asked(
+        OpencodeQuestionRequest(
+            id="question-new", questions=[OpencodeQuestion(question="New?")]
+        )
+    )
+    client.allow_reply.set()
+
+    assert await old_reply
+    assert await approvals.try_handle_reply("new answer", "user-1")
+    assert client.question_rejections == ["question-old"]
+    assert [reply["request_id"] for reply in client.question_replies] == [
+        "question-new"
+    ]
 
 
 async def test_manual_permission_reply_from_follow_up_message(

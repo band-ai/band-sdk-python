@@ -7,6 +7,7 @@ from band.runtime.formatters import (
     format_history_for_llm,
     build_participants_message,
     replace_uuid_mentions,
+    strip_leading_mentions,
 )
 
 
@@ -219,6 +220,38 @@ class TestReplaceUuidMentions:
         content = "Hello @[[uuid1]]"
         result = replace_uuid_mentions(content, [])
         assert result == "Hello @[[uuid1]]"
+
+
+class TestStripLeadingMentions:
+    """A delivered room reply arrives with the platform's ``@handle`` mention
+    block prepended; these pin that it is dropped so a terse command/answer
+    parses from the text after it, without disturbing the rest."""
+
+    def test_strips_the_platform_injected_leading_mention(self):
+        # The exact shape a mentioned "approve <id>" reply reaches on_message as.
+        assert (
+            strip_leading_mentions("@alexander.zaikman/tom approve REQ-Aa1")
+            == "approve REQ-Aa1"
+        )
+
+    def test_strips_a_run_of_leading_mentions(self):
+        # A human typing the mention inline doubles it (metadata + typed token).
+        assert strip_leading_mentions("@team/bot @team/bot reject") == "reject"
+
+    def test_preserves_a_reply_with_no_leading_mention(self):
+        # Bare replies (no delivery mention) must pass through untouched.
+        assert strip_leading_mentions("approve req-1") == "approve req-1"
+
+    def test_preserves_newlines_after_the_block(self):
+        # A multi-question answer is one line per question -- the block strip
+        # must not flatten the answer lines behind it.
+        assert (
+            strip_leading_mentions("@team/bot yes please\nno thanks")
+            == "yes please\nno thanks"
+        )
+
+    def test_ignores_a_mention_that_is_not_at_the_start(self):
+        assert strip_leading_mentions("ping @team/bot later") == "ping @team/bot later"
 
 
 class TestFormatMessageForLlmWithParticipants:
