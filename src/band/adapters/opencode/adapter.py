@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
-import uuid
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable
@@ -66,6 +66,8 @@ Responses are relayed back into the Band room by the adapter.
 Use the band_ prefixed tools (e.g. band_send_message) for Band platform actions when available.
 When you need approval or clarification, ask clearly and wait for the user's next room message.
 """
+
+_MCP_SERVER_ID_LENGTH = 8
 
 
 @dataclass
@@ -253,14 +255,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             features=features,
         )
         self.config = self._config
-        # Register this instance's MCP server under a unique name. OpenCode's
-        # ``POST /mcp`` keys the registration by ``name`` (global on the serve),
-        # so multiple adapter instances sharing one ``opencode serve`` would
-        # otherwise clobber each other's registration (last writer wins) and
-        # cross-wire their band tool calls. The name is also OpenCode's
-        # ``{server}_{tool}`` prefix, and every use below reads this one value,
-        # so tool-name canonicalization stays self-consistent.
-        self._mcp_server_name = f"{self._config.mcp_server_name}_{uuid.uuid4().hex[:8]}"
+        # Set in ``on_started`` from the agent identity. OpenCode keys MCP
+        # registrations globally by name, so this must stay stable across an
+        # agent restart (to refresh the same registration) yet differ for
+        # concurrent agents sharing one serve.
+        self._mcp_server_name = self._config.mcp_server_name
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
@@ -290,6 +289,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
 
+        self._mcp_server_name = self._agent_mcp_server_name(agent_name)
+
         self._system_prompt = render_system_prompt(
             agent_name=agent_name,
             agent_description=agent_description,
@@ -302,6 +303,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         )
 
         self._log_startup_config(agent_name)
+
+    def _agent_mcp_server_name(self, agent_identity: str) -> str:
+        """Return a stable, serve-global MCP name for one Band identity."""
+        digest = hashlib.sha256(agent_identity.encode()).hexdigest()[
+            :_MCP_SERVER_ID_LENGTH
+        ]
+        return f"{self.config.mcp_server_name}_{digest}"
 
     def _build_turn_system(self, room_id: str, msg: PlatformMessage) -> str:
         """Per-turn system prompt: the static base plus this room's context.
@@ -329,7 +337,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             "OpenCode adapter started: agent=%s, base_url=%s, "
             "provider=%s, model=%s, approval_mode=%s, "
             "question_mode=%s, execution_reporting=%s, "
-            "task_events=%s, mcp_server=%s, custom_tools=%d",
+            "task_events=%s, custom_tools=%d",
             agent_name,
             self.config.base_url,
             self.config.provider_id or "default",
@@ -338,7 +346,6 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self.config.question_mode,
             self.config.enable_execution_reporting,
             self.config.enable_task_events,
-            self._mcp_server_name,
             len(self._custom_tools),
         )
 
@@ -355,6 +362,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     ) -> None:
         room_state = await self._get_or_create_room_state(room_id)
         room_state.tools = tools
+
+        if self._client is None:
+            agent_id = getattr(tools, "agent_id", None)
+            self._mcp_server_name = self._agent_mcp_server_name(
+                agent_id or self.agent_name
+            )
 
         if await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
             return
@@ -618,6 +631,12 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     async def _shutdown_client(self) -> None:
         async with self._state_lock:
+            # ``on_cleanup`` decides to shut down after removing the last room,
+            # then releases the lock before stopping network resources. A new
+            # room may arrive in that gap; keep the shared client registered for
+            # it and let that room's eventual cleanup own shutdown instead.
+            if self._rooms:
+                return
             event_task = self._event_task
             client = self._client
             mcp_backend = self._mcp_backend
@@ -628,10 +647,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if mcp_backend is not None:
             if client is not None:
                 try:
-                    await client.deregister_mcp_server(self._mcp_server_name)
+                    await client.disconnect_mcp_server(self._mcp_server_name)
                 except Exception:
                     logger.debug(
-                        "Failed to deregister MCP server %s (OpenCode may already be stopped)",
+                        "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
                         self._mcp_server_name,
                     )
             await mcp_backend.stop()
@@ -789,7 +808,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if self._client is None:
             raise RuntimeError("OpenCode client is not initialized")
 
-        restored_session_id = room_state.session_id or history.session_id
+        restored_session_id = room_state.session_id
+        if (
+            restored_session_id is None
+            and history.mcp_server_name == self._mcp_server_name
+        ):
+            restored_session_id = history.session_id
+        elif restored_session_id is None and history.session_id:
+            logger.info(
+                "OpenCode session %s belongs to MCP registration %s; "
+                "creating a new session for %s",
+                history.session_id,
+                history.mcp_server_name or "unknown",
+                self._mcp_server_name,
+            )
         created = False
 
         if restored_session_id:
@@ -958,6 +990,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 "task",
                 metadata={
                     "opencode_session_id": room_state.session_id,
+                    "opencode_mcp_server_name": self._mcp_server_name,
                     "opencode_room_id": room_state.room_id,
                     "opencode_created_at": created_at,
                 },

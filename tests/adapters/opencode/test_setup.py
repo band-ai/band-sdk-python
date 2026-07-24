@@ -30,6 +30,54 @@ from .helpers import (
 )
 
 
+async def test_mcp_server_name_is_stable_per_agent_and_distinct_per_agent() -> None:
+    first = OpencodeAdapter()
+    restarted = OpencodeAdapter()
+    other = OpencodeAdapter()
+
+    await first.on_started("Tom", "A cat")
+    await restarted.on_started("Tom", "A cat")
+    await other.on_started("Jerry", "A mouse")
+
+    assert first._mcp_server_name == restarted._mcp_server_name
+    assert first._mcp_server_name != other._mcp_server_name
+
+
+async def test_mcp_registration_uses_band_agent_id_before_startup() -> None:
+    class IdentityTools(FakeAgentTools):
+        @property
+        def agent_id(self) -> str:
+            return "agent-123"
+
+    fake_backend = FakeMCPBackend()
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[[event_session_idle("sess-1")]]
+    )
+    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+
+    with patch(
+        "band.adapters.opencode.adapter.create_band_mcp_backend",
+        _make_fake_mcp_backend_factory(fake_backend),
+    ):
+        await adapter.on_started("Renameable Agent", "")
+        await adapter.on_message(
+            make_platform_message(),
+            tools_protocol(IdentityTools()),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+
+    expected = adapter._agent_mcp_server_name("agent-123")
+    assert fake_client.registered_mcp_servers == [
+        {"name": expected, "url": "http://127.0.0.1:50000/sse"}
+    ]
+
+    await adapter.on_cleanup("room-1")
+
+
 async def test_registers_shared_mcp_backend_with_additional_tools(
     make_adapter, tools
 ) -> None:
@@ -115,7 +163,7 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
     ]
 
     await adapter.on_cleanup("room-1")
-    assert fake_client.deregistered_mcp_servers == [adapter._mcp_server_name]
+    assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
     assert fake_backend.stop_calls == 1
 
 
@@ -150,6 +198,10 @@ async def test_bootstrap_creates_session_relays_text_and_persists_task(
     task_events = [e for e in tools.events_sent if e["message_type"] == "task"]
     assert task_events
     assert task_events[0]["metadata"]["opencode_session_id"] == "sess-1"
+    assert (
+        task_events[0]["metadata"]["opencode_mcp_server_name"]
+        == adapter._mcp_server_name
+    )
 
 
 async def test_reuses_persisted_session(make_adapter, tools) -> None:
@@ -168,7 +220,11 @@ async def test_reuses_persisted_session(make_adapter, tools) -> None:
     await adapter.on_message(
         make_platform_message(),
         tools_protocol(tools),
-        OpencodeSessionState(session_id="sess-existing", room_id="room-1"),
+        OpencodeSessionState(
+            session_id="sess-existing",
+            mcp_server_name=adapter._mcp_server_name,
+            room_id="room-1",
+        ),
         participants_msg=None,
         contacts_msg=None,
         is_session_bootstrap=True,
@@ -178,6 +234,33 @@ async def test_reuses_persisted_session(make_adapter, tools) -> None:
     assert fake_client.created_sessions == []
     assert fake_client.prompt_calls[0]["session_id"] == "sess-existing"
     assert tools.messages_sent[0]["content"] == "Reused session"
+
+
+async def test_replaces_session_from_another_mcp_registration(
+    make_adapter, tools
+) -> None:
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[[event_session_idle("sess-1")]]
+    )
+    adapter = make_adapter(fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools_protocol(tools),
+        OpencodeSessionState(
+            session_id="sess-stale",
+            mcp_server_name="band_old",
+            room_id="room-1",
+        ),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    assert fake_client.created_sessions[0]["id"] == "sess-1"
+    assert fake_client.prompt_calls[0]["session_id"] == "sess-1"
 
 
 async def test_missing_session_replays_history_into_new_prompt(
@@ -290,9 +373,7 @@ def test_own_band_tools_recognized_before_mcp_registration() -> None:
     on_message, or any register_mcp_server call."""
     adapter = OpencodeAdapter(
         client_factory=lambda _config: FakeOpencodeClient(),
-        features=AdapterFeatures(
-            capabilities={Capability.MEMORY, Capability.CONTACTS}
-        ),
+        features=AdapterFeatures(capabilities={Capability.MEMORY, Capability.CONTACTS}),
     )
 
     # Nothing has been registered with OpenCode yet.

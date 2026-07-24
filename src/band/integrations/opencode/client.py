@@ -52,7 +52,7 @@ class OpencodeClientProtocol(Protocol):
 
     async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]: ...
 
-    async def deregister_mcp_server(self, name: str) -> None: ...
+    async def disconnect_mcp_server(self, name: str) -> None: ...
 
     def iter_events(self) -> AsyncIterator[dict[str, Any]]: ...
 
@@ -201,9 +201,9 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         response.raise_for_status()
         return response.json()
 
-    async def deregister_mcp_server(self, name: str) -> None:
-        response = await self._client.delete(
-            f"/mcp/{name}",
+    async def disconnect_mcp_server(self, name: str) -> None:
+        response = await self._client.post(
+            f"/mcp/{name}/disconnect",
             params=self._query_params(),
         )
         response.raise_for_status()

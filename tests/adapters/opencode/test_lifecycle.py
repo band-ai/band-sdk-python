@@ -330,7 +330,38 @@ async def test_two_rooms_active_concurrently(tools) -> None:
     await adapter.on_cleanup("room-1")
     # Client should still be alive (room 2 exists)
     assert not fake_client.closed
+    assert fake_client.disconnected_mcp_servers == []
 
     # Cleanup room 2 shuts down the client
     await adapter.on_cleanup("room-2")
     assert fake_client.closed
+    assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
+
+
+async def test_shutdown_rechecks_for_room_arriving_after_cleanup_decision(
+    tools,
+) -> None:
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[[event_session_idle("sess-1")]]
+    )
+    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(room_id="room-1"),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    await adapter._get_or_create_room_state("room-2")
+    await adapter._shutdown_client()
+
+    assert not fake_client.closed
+    assert fake_client.disconnected_mcp_servers == []
+
+    await adapter.on_cleanup("room-1")
+    await adapter.on_cleanup("room-2")

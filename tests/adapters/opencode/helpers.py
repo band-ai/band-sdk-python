@@ -270,7 +270,7 @@ class FakeOpencodeClient:
         self.question_rejections: list[str] = []
         self.aborted_sessions: list[str] = []
         self.registered_mcp_servers: list[dict[str, str]] = []
-        self.deregistered_mcp_servers: list[str] = []
+        self.disconnected_mcp_servers: list[str] = []
         self.closed = False
         self._session_counter = 0
         self._queue: asyncio.Queue[RawOpencodeEvent | None] = asyncio.Queue()
@@ -362,8 +362,8 @@ class FakeOpencodeClient:
         self.registered_mcp_servers.append({"name": name, "url": url})
         return {"name": name, "url": url}
 
-    async def deregister_mcp_server(self, name: str) -> None:
-        self.deregistered_mcp_servers.append(name)
+    async def disconnect_mcp_server(self, name: str) -> None:
+        self.disconnected_mcp_servers.append(name)
 
     async def iter_events(self):
         while True:

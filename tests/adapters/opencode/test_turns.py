@@ -406,9 +406,9 @@ async def test_tool_reports_canonicalize_server_prefixed_names(
             capabilities={Capability.MEMORY}, emit={Emit.EXECUTION}
         ),
     )
-    # OpenCode prefixes the band MCP tool with this instance's unique server
-    # name (band_store_memory -> {server}_band_store_memory); built from the
-    # real per-instance name so canonicalization is genuinely exercised.
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    # OpenCode prefixes the band MCP tool with the agent-scoped server name
+    # (band_store_memory -> {server}_band_store_memory).
     prefixed = f"{adapter._mcp_server_name}_band_store_memory"
     fake_client._prompt_event_sequences = [
         [
@@ -558,7 +558,9 @@ async def test_room_posting_tool_reply_suppresses_text_fallback(
     assert tools.messages_sent == []
 
 
-async def test_non_room_posting_tool_does_not_suppress_text(make_adapter, tools) -> None:
+async def test_non_room_posting_tool_does_not_suppress_text(
+    make_adapter, tools
+) -> None:
     """A non-posting tool (bash) is not a reply, so the assistant text is still
     delivered -- suppression must not over-reach."""
     fake_client = FakeOpencodeClient(

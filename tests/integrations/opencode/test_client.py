@@ -58,7 +58,7 @@ class FakeOpencodeServer:
                     "/session/{session_id}/abort", self._abort_session, methods=["POST"]
                 ),
                 Route("/mcp", self._register_mcp, methods=["POST"]),
-                Route("/mcp/{name}", self._deregister_mcp, methods=["DELETE"]),
+                Route("/mcp/{name}/disconnect", self._disconnect_mcp, methods=["POST"]),
                 Route("/event", self._event_stream, methods=["GET"]),
             ]
         )
@@ -110,7 +110,7 @@ class FakeOpencodeServer:
         await self._record(request)
         return JSONResponse({"ok": True})
 
-    async def _deregister_mcp(self, request: Request) -> Response:
+    async def _disconnect_mcp(self, request: Request) -> Response:
         await self._record(request)
         return Response(status_code=200)
 
@@ -336,15 +336,15 @@ async def test_register_mcp_server_sends_remote_config(
         await client.close()
 
 
-async def test_deregister_mcp_server_deletes_by_name(
+async def test_disconnect_mcp_server_posts_by_name(
     fake_server: FakeOpencodeServer,
 ) -> None:
     client = make_client(fake_server)
     try:
-        await client.deregister_mcp_server("band")
+        await client.disconnect_mcp_server("band")
         request = fake_server.requests[-1]
-        assert request["method"] == "DELETE"
-        assert request["path"] == "/mcp/band"
+        assert request["method"] == "POST"
+        assert request["path"] == "/mcp/band/disconnect"
     finally:
         await client.close()
 

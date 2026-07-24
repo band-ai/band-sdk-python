@@ -184,7 +184,9 @@ async def test_question_answer_beginning_with_a_mention_is_preserved() -> None:
     # not OpencodeQuestion instances) -- so a single question actually populates
     # and parse_question_answers takes its one-answer branch.
     await approvals.on_question_asked(
-        OpencodeQuestionRequest(id="q-1", questions=[{"question": "Who should review?"}])
+        OpencodeQuestionRequest(
+            id="q-1", questions=[{"question": "Who should review?"}]
+        )
     )
 
     assert await approvals.try_handle_reply("@alexander.zaikman/tom @alice", "user-1")
@@ -779,9 +781,9 @@ async def test_band_tool_permission_matches_server_prefixed_custom_tool(
         additional_tools=[(EchoInput, echo_tool)],
         client_factory=lambda _config: fake_client,
     )
-    # OpenCode prefixes MCP tools with this instance's unique server name, so
-    # the ask names the custom tool as ``{server}_echo`` -- built from the real
-    # per-instance name so this keeps exercising the prefix strip.
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    # OpenCode prefixes MCP tools with the agent-scoped server name, so the ask
+    # names the custom tool as ``{server}_echo``.
     fake_client._prompt_event_sequences = [
         [
             event_permission(
