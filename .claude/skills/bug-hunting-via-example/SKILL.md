@@ -123,6 +123,13 @@ For this repository, use `scripts/runner.py` when the scenario fits its proven s
 
 Create a temporary declarative plan; do not add adapter branches to the runner:
 
+> **A plan file is arbitrary code execution.** `command` is argv the runner
+> spawns with the user's own privileges; it is not sandboxed, need not reference
+> `path`, and is not inspected. `path` is validated to exist inside the
+> repository so a typo fails before provisioning — that check is not a
+> confinement boundary. Read a plan you did not write exactly as carefully as a
+> shell script you are about to run, and never run one from an untrusted source.
+
 ```yaml
 version: 1
 examples:
@@ -133,7 +140,8 @@ examples:
     command: ["{repo}/.venv/bin/python", "{path}"]
     env:
       ACP_AGENT_CWD: "{workdir}"
-    unset_env: [GITHUB_TOKEN]
+    # Ambient variables the example needs, forwarded by name (never by value)
+    forward_env: [ANTHROPIC_API_KEY]
     steps:
       - prompt: "Inspect room {room_id}, then reply with marker {marker}."
         barrier: reply
@@ -157,11 +165,15 @@ uv run python .claude/skills/bug-hunting-via-example/scripts/runner.py /tmp/exam
 uv run python .claude/skills/bug-hunting-via-example/scripts/runner.py /tmp/example-plan.yaml --json-out /tmp/example-scorecard.json
 ```
 
-The runner always executes both independent and together topologies; this is not a manifest option. The default command is the current Python interpreter plus the exact example path. Override it only when the documented launch command has meaningful semantics. Use the per-example `env` mapping for non-secret launch configuration and `unset_env` to prevent ambient variables from changing an example's documented path; both support `{repo}`, `{path}`, and `{workdir}` placeholders. `BAND_REST_URL` and `BAND_WS_URL` belong to the harness and cannot be overridden or removed by a plan. Keep secrets in the inherited test environment, never in a manifest. Step prompts and expectations support the correlated `{marker}` and actual `{room_id}`. `reply` waits for both processed delivery and the selected agent's reply; `processed` is for turns where a reply is optional. `contains_any` is case-insensitive and intentionally semantic-tolerant. Use `tools` for exact promised tool names and `tool_calls_at_least` only when the contract is tool use without a stable vendor-specific name; both read all durable tool events, including memory tools, after the completion barrier. Each step uses its triggering message's persisted platform timestamp, so tool evidence is scoped by the server clock even when a processed step has no reply. Together mode covers separate concurrent rooms and one shared room for every selected example; `collaborations` adds directed agent-to-agent probes without assuming particular names or adapters.
+The runner always executes both independent and together topologies; this is not a manifest option. The default command is the current Python interpreter plus the exact example path. Override it only when the documented launch command has meaningful semantics.
 
-The runner emits each completed scenario result immediately and writes the final scorecard at the end. Long silence is not a useful test interface: incremental output must identify only completed pass/fail outcomes, never speculative progress or credentials. Child output goes to a permission-restricted temporary log rather than stdout. Successful runs remove it; startup and process-exit failures preserve it and report only its path, so diagnostics remain available without copying inherited secrets into the scorecard.
+A child example receives a built environment, never the runner's own: process basics (`PATH`, `HOME`, locale, TLS trust store, tooling caches), whatever the plan's `env` mapping sets, whatever `forward_env` names, and the harness endpoints. This matters because an example is an LLM-driven agent that runs shell commands, while the runner authenticates as the human driver that owns every provisioned room and agent and loads `.env.test` into its own process; inheriting that would let the example under test act as the identity testing it. So a Band user key is never forwarded — a plan naming one is rejected — and the example's own identity arrives solely through the generated `agent_config.yaml`. Name a credential in `forward_env` (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, …) to hand it over deliberately; values still live in the environment, never in a manifest. `env` values support the `{repo}`, `{path}`, and `{workdir}` placeholders. `BAND_REST_URL` and `BAND_WS_URL` belong to the harness and cannot be set by a plan.
 
-The runner requires `E2E_TESTS_ENABLED=true` and `BAND_API_KEY_USER`, loaded through the baseline settings and `.env.test`. It never prints credentials. Cleanup is the default; use `--keep` only when the user explicitly wants live resources preserved for investigation, and reap them afterward. If a selected example needs a shared server, port allocation, a non-reply capability assertion, or other behavior the runner does not model, use the baseline toolkit directly first. Generalize that seam only after the concrete run proves it is reusable.
+Step prompts and expectations support the correlated `{marker}` and actual `{room_id}`. `reply` waits for both processed delivery and the selected agent's reply; `processed` is for turns where a reply is optional. `contains_any` is case-insensitive and intentionally semantic-tolerant. Use `tools` for exact promised tool names and `tool_calls_at_least` only when the contract is tool use without a stable vendor-specific name; both read all durable tool events, including memory tools, after the completion barrier. Each step uses its triggering message's persisted platform timestamp, so tool evidence is scoped by the server clock even when a processed step has no reply. Together mode covers separate concurrent rooms and one shared room for every selected example; `collaborations` adds directed agent-to-agent probes without assuming particular names or adapters.
+
+The runner emits each completed scenario result immediately and writes the final scorecard even when the run itself fails, so a crashed observer or failed cleanup never discards the outcomes already earned. Long silence is not a useful test interface: incremental output must identify only completed pass/fail outcomes, never speculative progress or credentials. Child output goes to a permission-restricted temporary log rather than stdout. Successful runs remove it; startup and process-exit failures preserve it and report only its path, so diagnostics remain available without copying secrets into the scorecard. Startup is confirmed by waiting a short readiness budget: an example that dies on import is reported as a startup failure with its log, not as a barrier timeout minutes later.
+
+The runner requires `E2E_TESTS_ENABLED=true` and `BAND_API_KEY_USER`, loaded through the baseline settings and `.env.test`. It never prints credentials. Cleanup is the default; use `--keep` only when the user explicitly wants live resources preserved for investigation, and reap them afterward. `SIGINT`, `SIGTERM`, and `SIGHUP` all unwind through that cleanup, so interrupting a run stops the example processes instead of orphaning detached children that hold provisioned identities. It is POSIX-only: each example runs in its own process group so its whole tree is torn down with it. If a selected example needs a shared server, port allocation, a non-reply capability assertion, or other behavior the runner does not model, use the baseline toolkit directly first. Generalize that seam only after the concrete run proves it is reusable.
 
 ## 4. Validate Behavior
 

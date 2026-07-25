@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Run real examples through the repository's live baseline E2E boundaries."""
+"""Run real examples through the repository's live baseline E2E boundaries.
+
+POSIX only: every example runs in its own process group so the runner can tear
+down the whole tree (``os.killpg``), which Windows has no equivalent for.
+
+A plan file is executable input, not a sandbox: it names a program and argv the
+runner spawns. Treat one exactly like a shell script you are about to run — see
+the trust note in ``SKILL.md`` beside the plan schema.
+
+stdout is this tool's interface: the incremental pass/fail lines and the final
+scorecard are what a caller reads or pipes, so ``print`` is deliberate here. The
+repository's no-``print`` rule governs library code under ``src/band``, not
+standalone CLI entry points (see ``scripts/`` for precedent).
+"""
 
 from __future__ import annotations
 
@@ -11,13 +24,60 @@ import signal
 import sys
 import tempfile
 import uuid
-from contextlib import AsyncExitStack, contextmanager
+from collections.abc import Coroutine, Iterator
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator
+from typing import IO, TYPE_CHECKING, Any, TypeVar
 
 import yaml
+
+if TYPE_CHECKING:  # Real toolkit types, so drift against it is visible here.
+    from band.client.streaming import MessageCreatedPayload
+
+    # pyrefly: ignore[missing-import]
+    from tests.e2e.baseline.settings import BaselineSettings
+
+    # pyrefly: ignore[missing-import]
+    from tests.e2e.baseline.toolkit.capture import ReplyCapture
+
+    # pyrefly: ignore[missing-import]
+    from tests.e2e.baseline.toolkit.observations.replies import Replies
+
+    # pyrefly: ignore[missing-import]
+    from tests.e2e.baseline.toolkit.provisioning import (
+        ProvisionedAgent,
+        ResourceManager,
+    )
+
+    # pyrefly: ignore[missing-import]
+    from tests.e2e.baseline.toolkit.user_ops import UserOps
+
+    # pyrefly: ignore[missing-import]
+    from tests.e2e.baseline.toolkit.ws import TrackingWebSocketClient
+
+T = TypeVar("T")
+
+
+def repository_root() -> Path:
+    """This script's repository root, refusing anything that is not this repo.
+
+    The script is a standalone ``uv run`` entry point and cannot import
+    ``tests.paths``, so the anchor is derived once, here. Verifying it means a
+    moved or copied skill directory fails loudly instead of silently resolving
+    to some parent directory and driving the wrong tree.
+    """
+    root = Path(__file__).resolve().parents[4]
+    if not (root / "pyproject.toml").is_file() or not (root / "src" / "band").is_dir():
+        raise RuntimeError(
+            f"{Path(__file__).name} must live at <repo>/.claude/skills/<skill>/"
+            f"scripts/; resolved a non-repository root: {root}"
+        )
+    return root
+
+
+REPO_ROOT = repository_root()
 
 STEP_TEMPLATE_VALUES = {"marker": "MARKER", "room_id": "room-id"}
 PROCESS_TEMPLATE_VALUES = {
@@ -33,6 +93,58 @@ COLLABORATION_TEMPLATE_VALUES = {
     "target_name": "target-name",
 }
 HARNESS_ENDPOINT_VARIABLES = frozenset({"BAND_REST_URL", "BAND_WS_URL"})
+
+# A child example's environment is built from this allowlist, never inherited.
+# These are the variables a child needs merely to be a working process; anything
+# else is set explicitly by the plan (``env``) or named by it (``forward_env``).
+PROCESS_ENVIRONMENT = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "TERM",
+        "SHELL",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TZ",
+        # Without a trust store an example cannot verify the platform's TLS.
+        "SSL_CERT_DIR",
+        "SSL_CERT_FILE",
+        "REQUESTS_CA_BUNDLE",
+        # Interpreter and tool roots, so `uv run` and the repo venv resolve the
+        # same way for the child as they do for the runner.
+        "VIRTUAL_ENV",
+        "UV_CACHE_DIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+    }
+)
+
+# The runner authenticates as the human driver that owns every provisioned room
+# and agent, and importing the baseline settings loads `.env.test` into this
+# process. A child is an LLM-driven agent that runs shell commands, so it never
+# receives a Band user key: holding one would let the example under test act as
+# the identity testing it. Its own identity arrives via ``agent_config.yaml``.
+DRIVER_CREDENTIAL_PREFIX = "BAND_API_KEY"
+
+# A child that dies on import exits well inside this budget. A healthy example
+# never exits, so this is a flat per-launch cost, paid to keep a dead-on-import
+# example from being reported as a mysterious barrier timeout minutes later.
+STARTUP_READINESS_S = 2.0
+
+# Shutdown escalation budgets. SIGINT first, because examples install their own
+# handlers and unwind cleanly; then SIGTERM; then SIGKILL.
+TERMINATE_GRACE_S = 8.0
+TERMINATE_ESCALATION_S = 4.0
+
+# Signals whose default disposition would kill the runner outright, orphaning
+# detached children that hold provisioned identities. SIGINT already unwinds
+# through ``asyncio.run``, so it is deliberately absent.
+TERMINATION_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 
 
 @dataclass(frozen=True)
@@ -51,7 +163,7 @@ class ExampleSpec:
     config_key: str
     command: tuple[str, ...] = ()
     environment: tuple[tuple[str, str], ...] = ()
-    unset_env: tuple[str, ...] = ()
+    forward_env: tuple[str, ...] = ()
     steps: tuple[Step, ...] = ()
 
 
@@ -86,7 +198,7 @@ class ChildLog:
 @dataclass
 class RunningExample:
     spec: ExampleSpec
-    agent: Any
+    agent: ProvisionedAgent
     process: asyncio.subprocess.Process
     workdir: str
     log: ChildLog
@@ -119,9 +231,15 @@ def required_string(raw: dict[str, Any], field: str, label: str) -> str:
 
 
 def validate_template(value: str, field_name: str, allowed: dict[str, str]) -> None:
+    """Reject a template `format` cannot fill, before anything is provisioned.
+
+    ``IndexError`` covers positional placeholders (``{}`` and ``{0}``): only
+    named values are ever supplied, so a plan using one must fail at validation
+    rather than after the live agents exist.
+    """
     try:
         value.format(**allowed)
-    except (KeyError, ValueError) as error:
+    except (IndexError, KeyError, ValueError) as error:
         raise ValueError(f"invalid {field_name} template: {error}") from error
 
 
@@ -156,6 +274,13 @@ def parse_steps(raw: Any, label: str) -> tuple[Step, ...]:
 
 
 def resolve_example_path(repo: Path, relative_path: str) -> Path:
+    """Resolve a plan's ``path`` to a real file inside the repository.
+
+    An existence-and-location check, not a sandbox: it catches a typo or a stale
+    path before anything is provisioned, and supplies the ``{path}`` placeholder.
+    The plan's ``command`` is arbitrary argv and need not reference this file, so
+    running a plan is exactly as privileged as running its author's script.
+    """
     path = (repo / relative_path).resolve()
     if not path.is_relative_to(repo.resolve()) or not path.is_file():
         raise ValueError(
@@ -180,12 +305,21 @@ def validate_process_templates(spec: ExampleSpec) -> None:
 
 
 def validate_environment_ownership(spec: ExampleSpec) -> None:
-    configured = {name for name, _ in spec.environment} | set(spec.unset_env)
+    """Reject a plan claiming variables the harness owns or must never hand over."""
+    configured = {name for name, _ in spec.environment} | set(spec.forward_env)
     reserved = sorted(configured & HARNESS_ENDPOINT_VARIABLES)
     if reserved:
         raise ValueError(
             "harness endpoint variables cannot be configured by a plan: "
             + ", ".join(reserved)
+        )
+    driver = sorted(
+        name for name in configured if name.startswith(DRIVER_CREDENTIAL_PREFIX)
+    )
+    if driver:
+        raise ValueError(
+            "a child example must never receive the run's Band credentials: "
+            + ", ".join(driver)
         )
 
 
@@ -193,6 +327,12 @@ def parse_example(raw: Any, index: int, repo: Path) -> ExampleSpec:
     label = f"examples[{index}]"
     if not isinstance(raw, dict):
         raise ValueError(f"{label} must be a mapping")
+    if "unset_env" in raw:
+        raise ValueError(
+            f"{label}.unset_env is obsolete: the child environment is an "
+            "allowlist, so nothing ambient leaks in; name what it needs in "
+            "forward_env instead"
+        )
     example_id = required_string(raw, "id", label)
     config_key = required_string(raw, "config_key", label)
     relative_path = required_string(raw, "path", label)
@@ -202,7 +342,7 @@ def parse_example(raw: Any, index: int, repo: Path) -> ExampleSpec:
         config_key=config_key,
         command=strings(raw.get("command"), "command"),
         environment=parse_environment(raw.get("env", {}), f"{label}.env"),
-        unset_env=strings(raw.get("unset_env"), "unset_env"),
+        forward_env=strings(raw.get("forward_env"), "forward_env"),
         steps=parse_steps(raw.get("steps", []), f"{label}.steps"),
     )
     validate_process_templates(spec)
@@ -271,25 +411,43 @@ def format_value(
     return value.format(**values)
 
 
-def reply_capture_context(*args: Any, **kwargs: Any) -> Any:
+def reply_capture_context(
+    ws: TrackingWebSocketClient,
+    room_id: str,
+    *,
+    user_ops: UserOps,
+    settings: BaselineSettings,
+    deadline_s: float,
+) -> AbstractAsyncContextManager[ReplyCapture]:
+    """Open a baseline reply capture; imported late, after ``sys.path`` is set."""
+    # pyrefly: ignore[missing-import]
     from tests.e2e.baseline.toolkit.capture import reply_capture
 
-    return reply_capture(*args, **kwargs)
+    return reply_capture(
+        ws, room_id, user_ops=user_ops, settings=settings, deadline_s=deadline_s
+    )
 
 
 def process_values(spec: ExampleSpec, repo: Path, workdir: str) -> dict[str, str]:
     return {"repo": str(repo), "path": str(spec.path), "workdir": workdir}
 
 
-def write_agent_config(spec: ExampleSpec, agent: Any, workdir: str) -> None:
-    path = Path(workdir) / "agent_config.yaml"
-    path.write_text(
-        yaml.safe_dump(
-            {spec.config_key: {"agent_id": agent.id, "api_key": agent.api_key}}
-        ),
-        encoding="utf-8",
+def write_agent_config(
+    spec: ExampleSpec, agent: ProvisionedAgent, workdir: str
+) -> None:
+    """Write the child's generated config, owner-only from the moment it exists.
+
+    It carries the provisioned agent's API key, so the mode is passed to
+    ``open`` rather than chmod-ed afterwards: a create-then-chmod leaves the key
+    world-readable for the window in between.
+    """
+    document = yaml.safe_dump(
+        {spec.config_key: {"agent_id": agent.id, "api_key": agent.api_key}}
     )
-    path.chmod(0o600)
+    path = Path(workdir) / "agent_config.yaml"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(document)
 
 
 def example_command(spec: ExampleSpec, repo: Path, workdir: str) -> tuple[str, ...]:
@@ -301,27 +459,40 @@ def example_command(spec: ExampleSpec, repo: Path, workdir: str) -> tuple[str, .
 
 
 def example_environment(
-    spec: ExampleSpec, repo: Path, workdir: str, settings: Any
+    spec: ExampleSpec, repo: Path, workdir: str, settings: BaselineSettings
 ) -> dict[str, str]:
+    """Build the child's whole environment from an allowlist, never inheriting.
+
+    An example is an LLM-driven agent that runs shell commands, so it gets the
+    process basics, exactly what its plan declares, and the harness endpoints —
+    not the runner's own credential-laden environment. Reading ``os.environ``
+    here is deliberate process construction, not configuration lookup.
+    """
     values = process_values(spec, repo, workdir)
-    environment = os.environ.copy()
-    for name in spec.unset_env:
-        environment.pop(name, None)
+    environment = {
+        name: os.environ[name]
+        for name in PROCESS_ENVIRONMENT | set(spec.forward_env)
+        if name in os.environ
+    }
     environment.update(
         {name: value.format(**values) for name, value in spec.environment}
     )
     environment.update(
         BAND_REST_URL=settings.endpoints.rest_url,
         BAND_WS_URL=settings.endpoints.ws_url,
-        PYTHONPATH=os.pathsep.join(
-            filter(None, (str(repo), environment.get("PYTHONPATH", "")))
-        ),
+        PYTHONPATH=str(repo),
     )
-    return environment
+    # Defence in depth: plan validation already rejects these, but the one place
+    # a child environment is built is where the guarantee is worth restating.
+    return {
+        name: value
+        for name, value in environment.items()
+        if not name.startswith(DRIVER_CREDENTIAL_PREFIX)
+    }
 
 
 @contextmanager
-def child_log(spec: ExampleSpec) -> Iterator[tuple[ChildLog, BinaryIO]]:
+def child_log(spec: ExampleSpec) -> Iterator[tuple[ChildLog, IO[bytes]]]:
     log_file = tempfile.NamedTemporaryFile(
         mode="ab", prefix=f"band-example-{spec.id}-", suffix=".log", delete=False
     )
@@ -337,9 +508,15 @@ def child_log(spec: ExampleSpec) -> Iterator[tuple[ChildLog, BinaryIO]]:
 
 
 async def start_example(
-    spec: ExampleSpec, agent: Any, repo: Path, settings: Any
+    spec: ExampleSpec,
+    agent: ProvisionedAgent,
+    repo: Path,
+    settings: BaselineSettings,
 ) -> RunningExample:
     resources = AsyncExitStack()
+    # One cleanup path for every way startup can fail, the readiness wait
+    # included: a cancellation there would otherwise leak a spawned child that
+    # nothing else owns yet.
     try:
         workdir = resources.enter_context(
             tempfile.TemporaryDirectory(prefix=f"band-example-{spec.id}-")
@@ -354,49 +531,69 @@ async def start_example(
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
+        resources.push_async_callback(terminate_process, process)
+        running = RunningExample(
+            spec=spec,
+            agent=agent,
+            process=process,
+            workdir=workdir,
+            log=log,
+            resources=resources,
+        )
+        await confirm_started(running)
+        return running
     except BaseException:
         await resources.aclose()
         raise
-    resources.push_async_callback(terminate_process, process)
-    running = RunningExample(
-        spec=spec,
-        agent=agent,
-        process=process,
-        workdir=workdir,
-        log=log,
-        resources=resources,
+
+
+async def confirm_started(running: RunningExample) -> None:
+    """Fail if the example dies during startup — a bad import, config, or command.
+
+    Waiting is the only honest check: a child that has just exited still reports
+    ``returncode is None`` until something awaits it, so polling right after the
+    spawn always says "running" and lets a dead example through.
+    """
+    try:
+        status = await asyncio.wait_for(running.process.wait(), STARTUP_READINESS_S)
+    except TimeoutError:
+        return
+    running.log.preserve = True
+    raise RuntimeError(
+        f"{running.spec.id} exited with status {status} during startup; "
+        f"child log: {running.log.path}"
     )
-    await asyncio.sleep(0)
-    if process.returncode is not None:
-        running.log.preserve = True
-        await stop_example(running)
-        raise RuntimeError(
-            f"{spec.id} exited during startup; child log: {running.log.path}"
-        )
-    return running
 
 
-async def wait_or_exit(running: RunningExample, awaitable: Any) -> Any:
+async def wait_or_exit(running: RunningExample, awaitable: Coroutine[Any, Any, T]) -> T:
+    """Await a scenario barrier, failing fast if the example exits first.
+
+    Both tasks are cancelled on the way out, including when this coroutine is
+    itself cancelled (a failing sibling step cancels the whole task group):
+    ``asyncio.wait`` leaves what it waited on running, and a leaked reply wait
+    keeps polling a capture whose channel has already been left.
+    """
     boundary = asyncio.create_task(awaitable)
     exited = asyncio.create_task(running.process.wait())
-    done, pending = await asyncio.wait(
-        {boundary, exited}, return_when=asyncio.FIRST_COMPLETED
-    )
-    for task in pending:
-        task.cancel()
-    await asyncio.gather(*pending, return_exceptions=True)
-    if exited in done:
-        boundary.cancel()
-        await asyncio.gather(boundary, return_exceptions=True)
-        running.log.preserve = True
-        raise RuntimeError(
-            f"{running.spec.id} exited with status {exited.result()}; "
-            f"child log: {running.log.path}"
+    try:
+        done, _ = await asyncio.wait(
+            {boundary, exited}, return_when=asyncio.FIRST_COMPLETED
         )
-    return boundary.result()
+        if exited in done:
+            running.log.preserve = True
+            raise RuntimeError(
+                f"{running.spec.id} exited with status {exited.result()}; "
+                f"child log: {running.log.path}"
+            )
+        return boundary.result()
+    finally:
+        boundary.cancel()
+        exited.cancel()
+        await asyncio.gather(boundary, exited, return_exceptions=True)
 
 
 def signal_process(process: asyncio.subprocess.Process, signal_number: int) -> None:
+    """Signal the example's whole process group, so its own children die with it."""
     try:
         os.killpg(process.pid, signal_number)
     except ProcessLookupError:
@@ -404,39 +601,77 @@ def signal_process(process: asyncio.subprocess.Process, signal_number: int) -> N
 
 
 async def terminate_process(process: asyncio.subprocess.Process) -> None:
-    if process.returncode is None:
-        signal_process(process, signal.SIGINT)
+    """Escalate through the process group until the example is gone."""
+    if process.returncode is not None:
+        return
+    escalation = (
+        (signal.SIGINT, TERMINATE_GRACE_S),
+        (signal.SIGTERM, TERMINATE_ESCALATION_S),
+        (signal.SIGKILL, None),
+    )
+    for number, budget in escalation:
+        signal_process(process, number)
+        if budget is None:
+            await process.wait()
+            return
         try:
-            await asyncio.wait_for(process.wait(), timeout=8)
+            await asyncio.wait_for(process.wait(), timeout=budget)
+            return
         except TimeoutError:
-            signal_process(process, signal.SIGTERM)
-            try:
-                await asyncio.wait_for(process.wait(), timeout=4)
-            except TimeoutError:
-                signal_process(process, signal.SIGKILL)
-                await process.wait()
+            continue
+
+
+@contextmanager
+def cancel_on_termination() -> Iterator[None]:
+    """Turn SIGTERM/SIGHUP into cancellation of the running task.
+
+    Their default disposition kills the runner outright, so the cleanup that
+    stops examples and reaps provisioned identities never runs and detached
+    children survive as orphans burning LLM budget. Cancelling instead unwinds
+    the same path Ctrl-C already takes.
+    """
+    loop = asyncio.get_running_loop()
+    task = asyncio.current_task()
+    if task is None:
+        raise RuntimeError("cancel_on_termination requires a running task")
+    for number in TERMINATION_SIGNALS:
+        loop.add_signal_handler(number, task.cancel)
+    try:
+        yield
+    finally:
+        for number in TERMINATION_SIGNALS:
+            loop.remove_signal_handler(number)
 
 
 async def stop_example(running: RunningExample) -> None:
     await running.resources.aclose()
 
 
-def assert_contains(messages: Any, expected: tuple[str, ...]) -> None:
+def assert_contains(messages: Replies, expected: tuple[str, ...]) -> None:
+    """Assert some reply carries an expected value, when the step declared any.
+
+    ``assert_contains_any`` takes one iterable of options; splatting the tuple
+    passes the first string *as* the iterable, so its characters become the
+    options and any reply containing any single letter of a marker passes.
+    """
     if expected:
-        messages.assert_contains_any(*expected)
+        messages.assert_contains_any(expected)
 
 
-def parse_server_timestamp(value: Any) -> datetime:
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    if not isinstance(value, str):
-        raise TypeError("platform message timestamp must be a string or datetime")
-    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+def parse_server_timestamp(value: datetime | str | None) -> datetime:
+    """Coerce a platform timestamp to an aware UTC stamp (the platform stores UTC)."""
+    if value is None:
+        raise TypeError("platform message timestamp is missing")
+    stamp = (
+        value
+        if isinstance(value, datetime)
+        else datetime.fromisoformat(value.replace("Z", "+00:00"))
+    )
     return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
 
 
 async def message_server_timestamp(
-    user_ops: Any, room_id: str, message_id: str
+    user_ops: UserOps, room_id: str, message_id: str
 ) -> datetime:
     messages = await user_ops.list_messages(room_id, limit=100)
     message = next((item for item in messages if item.id == message_id), None)
@@ -448,9 +683,9 @@ async def message_server_timestamp(
 async def wait_for_step(
     step: Step,
     running: RunningExample,
-    capture: Any,
+    capture: ReplyCapture,
     message_id: str,
-    cursor: Any,
+    cursor: int,
     marker: str,
     room_id: str,
 ) -> None:
@@ -471,7 +706,7 @@ async def wait_for_step(
 
 
 async def assert_step_tools(
-    step: Step, running: RunningExample, capture: Any, since: datetime
+    step: Step, running: RunningExample, capture: ReplyCapture, since: datetime
 ) -> None:
     if not step.tools and not step.tool_calls_at_least:
         return
@@ -492,8 +727,8 @@ async def assert_step_tools(
 async def exercise_step(
     step: Step,
     running: RunningExample,
-    resources: Any,
-    capture: Any,
+    resources: ResourceManager,
+    capture: ReplyCapture,
     room_id: str,
 ) -> None:
     marker = f"HUNT-{uuid.uuid4().hex[:10]}"
@@ -512,9 +747,9 @@ async def exercise_step(
 
 async def exercise_steps(
     running: RunningExample,
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     scenario: str,
     results: list[Result],
 ) -> None:
@@ -541,9 +776,9 @@ async def exercise_steps(
 
 async def exercise_steps_reported(
     running: RunningExample,
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     scenario: str,
     results: list[Result],
 ) -> None:
@@ -559,9 +794,9 @@ async def exercise_steps_reported(
 async def exercise_collaboration(
     collaboration: Collaboration,
     running: dict[str, RunningExample],
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     results: list[Result],
 ) -> None:
     source = running[collaboration.source]
@@ -593,8 +828,10 @@ async def exercise_collaboration(
             for value in collaboration.contains_any
         )
 
-        def target_replied(messages: Any) -> bool:
-            replies = messages.since(cursor).from_sender(target.agent.id)
+        # Reads the capture's own ``Replies`` rather than the predicate argument,
+        # which the toolkit declares as a plain list and so has no window helpers.
+        def target_replied(_messages: list[MessageCreatedPayload]) -> bool:
+            replies = capture.messages.since(cursor).from_sender(target.agent.id)
             if not replies:
                 return False
             return not expected or any(
@@ -612,8 +849,8 @@ async def exercise_collaboration(
 
 async def start_group_examples(
     plan: Plan,
-    resources: Any,
-    settings: Any,
+    resources: ResourceManager,
+    settings: BaselineSettings,
     repo: Path,
     results: list[Result],
 ) -> dict[str, RunningExample]:
@@ -632,9 +869,9 @@ async def start_group_examples(
 
 async def exercise_group_steps(
     running: dict[str, RunningExample],
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     results: list[Result],
 ) -> None:
     async with asyncio.TaskGroup() as group:
@@ -648,8 +885,8 @@ async def exercise_group_steps(
 
 async def exercise_shared_turn(
     running: RunningExample,
-    resources: Any,
-    capture: Any,
+    resources: ResourceManager,
+    capture: ReplyCapture,
     room_id: str,
 ) -> None:
     marker = f"HUNT-{uuid.uuid4().hex[:10]}"
@@ -664,13 +901,13 @@ async def exercise_shared_turn(
         running,
         capture.wait_for_reply(message_id, running.agent.id, since=cursor),
     )
-    replies.assert_contains_any(marker)
+    assert_contains(replies, (marker,))
 
 
 async def exercise_shared_turn_reported(
     running: RunningExample,
-    resources: Any,
-    capture: Any,
+    resources: ResourceManager,
+    capture: ReplyCapture,
     room_id: str,
     results: list[Result],
 ) -> None:
@@ -694,9 +931,9 @@ def record_shared_setup_failure(
 
 async def exercise_shared_room(
     running: dict[str, RunningExample],
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     results: list[Result],
 ) -> None:
     if not running:
@@ -732,9 +969,9 @@ async def exercise_shared_room(
 async def exercise_collaborations(
     collaborations: tuple[Collaboration, ...],
     running: dict[str, RunningExample],
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     results: list[Result],
 ) -> None:
     for collaboration in collaborations:
@@ -775,9 +1012,9 @@ async def stop_examples(
 
 async def run_group(
     plan: Plan,
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     repo: Path,
     results: list[Result],
 ) -> None:
@@ -794,9 +1031,9 @@ async def run_group(
 
 async def run_independent_example(
     spec: ExampleSpec,
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     repo: Path,
     results: list[Result],
 ) -> None:
@@ -817,9 +1054,9 @@ async def run_independent_example(
 
 async def run_independent_examples(
     plan: Plan,
-    resources: Any,
-    ws: Any,
-    settings: Any,
+    resources: ResourceManager,
+    ws: TrackingWebSocketClient,
+    settings: BaselineSettings,
     repo: Path,
     results: list[Result],
 ) -> None:
@@ -827,13 +1064,23 @@ async def run_independent_examples(
         await run_independent_example(spec, resources, ws, settings, repo, results)
 
 
-async def run_live(plan: Plan, repo: Path, keep: bool) -> list[Result]:
+async def run_live(plan: Plan, repo: Path, keep: bool, results: list[Result]) -> None:
+    """Drive the whole plan, accumulating into the caller's ``results``.
+
+    The caller owns the list so the scorecard survives a crashed run: a failure
+    in the observer or in cleanup must not discard the outcomes already earned.
+    """
     sys.path.insert(0, str(repo))
+    # pyrefly: ignore[missing-import]
     from tests.e2e.baseline.settings import BaselineSettings
+
+    # pyrefly: ignore[missing-import]
     from tests.e2e.baseline.toolkit.provisioning import (
         ResourceManager,
         user_rest_client,
     )
+
+    # pyrefly: ignore[missing-import]
     from tests.e2e.baseline.toolkit.ws import user_ws_observer
 
     settings = BaselineSettings()
@@ -846,25 +1093,37 @@ async def run_live(plan: Plan, repo: Path, keep: bool) -> list[Result]:
         settings=settings,
         run_id=f"hunt-{uuid.uuid4().hex[:8]}",
     )
-    results: list[Result] = []
-    try:
-        async with user_ws_observer(settings) as ws:
-            await run_independent_examples(plan, resources, ws, settings, repo, results)
-            try:
-                await run_group(plan, resources, ws, settings, repo, results)
-            except Exception as error:
-                record_result(results, Result("together", "group", "fail", str(error)))
-    finally:
-        if not keep:
-            await resources.reap_all()
-    return results
+    with cancel_on_termination():
+        try:
+            async with user_ws_observer(settings) as ws:
+                await run_independent_examples(
+                    plan, resources, ws, settings, repo, results
+                )
+                try:
+                    await run_group(plan, resources, ws, settings, repo, results)
+                except Exception as error:
+                    record_result(
+                        results, Result("together", "group", "fail", str(error))
+                    )
+        finally:
+            if not keep:
+                await resources.reap_all()
+
+
+def report_scorecard(results: list[Result], json_out: Path | None) -> None:
+    """Emit the run's final scorecard, whatever ended the run."""
+    if json_out:
+        payload = [result.__dict__ for result in results]
+        json_out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    passed = sum(result.status == "pass" for result in results)
+    failed = sum(result.status == "fail" for result in results)
+    print(f"SUMMARY passed={passed} failed={failed}")
 
 
 def parser() -> argparse.ArgumentParser:
-    default_repo = Path(__file__).resolve().parents[4]
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("plan", type=Path)
-    result.add_argument("--repo", type=Path, default=default_repo)
+    result.add_argument("--repo", type=Path, default=REPO_ROOT)
     result.add_argument("--dry-run", action="store_true")
     result.add_argument(
         "--keep", action="store_true", help="Keep provisioned rooms and agents"
@@ -883,13 +1142,11 @@ def main() -> None:
             "topologies=independent,together"
         )
         return
-    results = asyncio.run(run_live(plan, repo, args.keep))
-    payload = [result.__dict__ for result in results]
-    if args.json_out:
-        args.json_out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-    passed = sum(result.status == "pass" for result in results)
-    failed = sum(result.status == "fail" for result in results)
-    print(f"SUMMARY passed={passed} failed={failed}")
+    results: list[Result] = []
+    try:
+        asyncio.run(run_live(plan, repo, args.keep, results))
+    finally:
+        report_scorecard(results, args.json_out)
     if any(result.status == "fail" for result in results):
         raise SystemExit(1)
 

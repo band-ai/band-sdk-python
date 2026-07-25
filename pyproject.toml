@@ -328,6 +328,11 @@ conflicts = [
 [tool.pyrefly]
 project_includes = [
     "src/**/*.py",              # Only check source files
+    # Skill scripts are checked-in tooling with real process/subprocess logic and
+    # no other type gate. Narrow glob on purpose: a bare `.claude/**` would drag
+    # in `.claude/worktrees/` checkouts, which the excludes heuristic below no
+    # longer filters out.
+    ".claude/skills/**/*.py",
 ]
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Discover runnable examples and the configuration they actually consume."""
+"""Discover runnable examples and the configuration they actually consume.
+
+stdout is this tool's interface: the inventory table and ``--json`` payload are
+what a caller reads or pipes, so ``print`` is deliberate here. The repository's
+no-``print`` rule governs library code under ``src/band``, not standalone CLI
+entry points (see ``scripts/`` for precedent).
+"""
 
 from __future__ import annotations
 
@@ -11,6 +17,32 @@ import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
+
+# Documented launch forms actually used by this repository's example docstrings:
+# `uv run …` (the overwhelming majority) and a bare `python …` / `python3 …`,
+# including `python -m app …`. The trailing `\S` keeps captured commands free of
+# trailing whitespace.
+DOCUMENTED_COMMAND = re.compile(r"(?m)^\s*(uv run\s+[^\n]*\S|python3?\s+[^\n]*\S)\s*$")
+
+
+def repository_root() -> Path:
+    """This script's repository root, refusing anything that is not this repo.
+
+    The script is a standalone ``uv run`` entry point and cannot import
+    ``tests.paths``, so the anchor is derived once, here. Verifying it means a
+    moved or copied skill directory fails loudly instead of silently resolving
+    to some parent directory and inventorying the wrong tree.
+    """
+    root = Path(__file__).resolve().parents[4]
+    if not (root / "pyproject.toml").is_file() or not (root / "src" / "band").is_dir():
+        raise RuntimeError(
+            f"{Path(__file__).name} must live at <repo>/.claude/skills/<skill>/"
+            f"scripts/; resolved a non-repository root: {root}"
+        )
+    return root
+
+
+REPO_ROOT = repository_root()
 
 
 @dataclass(frozen=True)
@@ -166,7 +198,7 @@ def settings_instances(
 ) -> dict[str, dict[str, SettingField]]:
     instances: dict[str, dict[str, SettingField]] = {}
     for node in ast.walk(tree):
-        targets: list[ast.AST] = []
+        targets: list[ast.expr] = []
         value: ast.AST | None = None
         if isinstance(node, ast.Assign):
             targets = node.targets
@@ -237,18 +269,25 @@ def docstring_summary(docstring: str) -> str:
 
 
 def documented_commands(docstring: str) -> tuple[str, ...]:
-    return tuple(
-        dict.fromkeys(
-            re.findall(
-                r"(?m)^\s*((?:uv|python) run [^\n]+|uv run [^\n]+)\s*$",
-                docstring,
-            )
-        )
-    )
+    return tuple(dict.fromkeys(DOCUMENTED_COMMAND.findall(docstring)))
 
 
-def inspect_example(path: Path, root: Path) -> Example | None:
-    source = path.read_text(encoding="utf-8")
+def example_family(relative_to_examples: Path) -> str:
+    """The ``examples/<family>/`` directory an example lives under.
+
+    Empty for an example sitting directly in the examples root, which belongs to
+    no family — naming it after its own filename would invent one.
+    """
+    parts = relative_to_examples.parts
+    return parts[0] if len(parts) > 1 else ""
+
+
+def inspect_example(path: Path, root: Path, examples_root: Path) -> Example | None:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        # One unreadable or non-UTF-8 file must not abort the whole inventory.
+        return None
     dependencies = metadata_dependencies(source)
     if dependencies is None:
         return None
@@ -259,13 +298,10 @@ def inspect_example(path: Path, root: Path) -> Example | None:
     if not has_main(tree):
         return None
     config_keys, environment = inspect_configuration(tree, path)
-    relative = path.relative_to(root)
     docstring = ast.get_docstring(tree) or ""
     return Example(
-        path=relative.as_posix(),
-        family=relative.parts[1]
-        if len(relative.parts) > 1
-        else relative.parent.as_posix(),
+        path=path.relative_to(root).as_posix(),
+        family=example_family(path.relative_to(examples_root)),
         summary=docstring_summary(docstring),
         config_keys=tuple(sorted(config_keys)),
         environment=tuple(sorted(environment)),
@@ -279,15 +315,16 @@ def discover(repo: Path, examples_root: str, family: str | None) -> list[Example
     search_root = root / examples_root
     paths = sorted(search_root.rglob("*.py"))
     found = [
-        item for path in paths if (item := inspect_example(path, root)) is not None
+        item
+        for path in paths
+        if (item := inspect_example(path, root, search_root)) is not None
     ]
     return [item for item in found if family is None or item.family == family]
 
 
 def parser() -> argparse.ArgumentParser:
-    default_repo = Path(__file__).resolve().parents[4]
     result = argparse.ArgumentParser(description=__doc__)
-    result.add_argument("--repo", type=Path, default=default_repo)
+    result.add_argument("--repo", type=Path, default=REPO_ROOT)
     result.add_argument("--root", default="examples")
     result.add_argument("--family", help="Restrict to one examples/<family> directory")
     result.add_argument("--json", action="store_true", dest="as_json")
