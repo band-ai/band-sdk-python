@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from band.adapters.opencode import ApprovalMode
+
+# Anchored to the repository root so every example reads the same `.env`
+# whatever the working directory, like the other examples' `load_dotenv()`.
+ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class OpenCodeExampleSettings(BaseSettings):
@@ -19,10 +25,10 @@ class OpenCodeExampleSettings(BaseSettings):
     opencode_agent: str | None = None
     opencode_directory: str | None = None
     opencode_workspace: str | None = None
-    opencode_approval_mode: Literal["manual", "auto_accept", "auto_decline"] = "manual"
+    opencode_approval_mode: ApprovalMode = "manual"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         extra="ignore",
         case_sensitive=False,
         env_ignore_empty=True,

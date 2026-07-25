@@ -1,15 +1,15 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[opencode]", "mcp>=1.25.0"]
+# dependencies = ["band-sdk[opencode]"]
 #
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
 # ///
 """OpenCode coding agent scoped to one local workspace.
 
-Set ``OPENCODE_DIRECTORY`` to the repository OpenCode may inspect or change.
-``OPENCODE_WORKSPACE`` is optional and selects an OpenCode workspace when the
-server has more than one configured.
+Set ``OPENCODE_DIRECTORY`` to the absolute path of the repository OpenCode may
+inspect or change. ``OPENCODE_WORKSPACE`` is optional and is forwarded to the
+server as its workspace selector (the ``x-opencode-workspace`` header).
 
 The default approval mode is ``manual``. When OpenCode asks to run a command
 or modify a file, reply in the Band room with ``approve``, ``always``, or
@@ -29,8 +29,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging  # pyrefly: ignore[missing-import]
-from settings import OpenCodeExampleSettings  # pyrefly: ignore[missing-import]
+from setup_logging import setup_logging
+from settings import OpenCodeExampleSettings
 from band import Agent
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import AdapterFeatures, Emit
@@ -43,6 +43,10 @@ async def main() -> None:
     settings = OpenCodeExampleSettings()
     if not settings.opencode_directory:
         raise ValueError("OPENCODE_DIRECTORY environment variable is required")
+    # The server resolves the directory itself, so a relative path would point
+    # at the server's working directory rather than the caller's.
+    if not os.path.isabs(settings.opencode_directory):
+        raise ValueError("OPENCODE_DIRECTORY must be an absolute path")
 
     adapter = OpencodeAdapter(
         config=OpencodeAdapterConfig(

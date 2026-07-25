@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[opencode]", "mcp>=1.25.0"]
+# dependencies = ["band-sdk[opencode]"]
 #
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
@@ -28,8 +28,8 @@ from pydantic import BaseModel, Field
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging  # pyrefly: ignore[missing-import]
-from settings import OpenCodeExampleSettings  # pyrefly: ignore[missing-import]
+from setup_logging import setup_logging
+from settings import OpenCodeExampleSettings
 from band import Agent
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import AdapterFeatures, Emit

@@ -101,8 +101,12 @@ class CopilotSDKAdapterConfig:
             automatically: the token wins when set, otherwise the locally
             logged-in GitHub user is used. Not required when ``provider``
             configures BYOK inference.
-        use_logged_in_user: Force using the logged-in GitHub user; None
-            (default) lets the SDK resolve it from ``github_token``.
+        use_logged_in_user: ``True`` forces the logged-in GitHub user;
+            ``False`` opts out of GitHub identity entirely (the CLI runs
+            with ``--no-auto-login``), which is the BYOK path — pair it
+            with a ``provider`` or the runtime has no credentials at all;
+            ``None`` (default) lets the SDK resolve it from
+            ``github_token``.
         turn_timeout_s: Max seconds to wait for a turn to complete.
         ask_user: Routing for Copilot's built-in ``ask_user``
             human-in-the-loop tool; ``None`` (default) keeps the tool

@@ -116,6 +116,9 @@ class TestControlWiring:
         control = _control("interrupt", scope="room", room_id="r1")
 
         async def connect() -> None:
+            # connect() joins the control channel, so a push can land before it
+            # returns — the hook has to be installed by now, not after.
+            assert link.on_control == handler
             await link.on_control(control)
 
         link.connect.side_effect = connect

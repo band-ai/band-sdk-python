@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[opencode]", "mcp>=1.25.0"]
+# dependencies = ["band-sdk[opencode]"]
 #
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
@@ -8,12 +8,15 @@
 """
 Basic OpenCode adapter agent example.
 
-Prerequisites:
+Prerequisites (see `examples/opencode/README.md` for the full setup):
 1. Install OpenCode: `npm install -g opencode-ai`
-2. Start the server: `opencode serve --hostname=127.0.0.1 --port=4096`
-3. Set `BAND_WS_URL` and `BAND_REST_URL`
-4. Add agent credentials to `agent_config.yaml`
-5. The example defaults to the locally available free model `opencode/mimo-v2.5-free`
+2. Give the server a provider key: the default provider is OpenCode Zen, whose
+   models are hosted and need a Zen API key
+3. Start the server from an empty throwaway directory, so a small model answers
+   instead of exploring a checkout:
+   `cd "$(mktemp -d)" && opencode serve --hostname=127.0.0.1 --port=4096`
+4. Set `BAND_WS_URL` and `BAND_REST_URL`
+5. Add agent credentials to `agent_config.yaml`
 
 Run with:
     uv run examples/opencode/01_basic_agent.py
@@ -28,8 +31,8 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from setup_logging import setup_logging  # pyrefly: ignore[missing-import]
-from settings import OpenCodeExampleSettings  # pyrefly: ignore[missing-import]
+from setup_logging import setup_logging
+from settings import OpenCodeExampleSettings
 from band import Agent
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import AdapterFeatures, Emit
