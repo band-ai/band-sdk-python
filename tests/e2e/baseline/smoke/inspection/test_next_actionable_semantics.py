@@ -8,35 +8,49 @@ mocks /next, so it cannot cover this cross-system half; this does.
 
 Fails loudly if the platform ever tightens /next to also exclude 'processing':
 stopped messages would then be silently dropped on play.
+
+The invariant is the platform's, not any framework's, so the test runs no adapter
+and is pinned to one lane — otherwise it would re-prove the same platform fact in
+every lane's job.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 
 import pytest
 
 from band.platform.link import BandLink
+from band.runtime.types import PlatformMessage
+
+from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.toolkit.provisioning import ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
-logger = logging.getLogger(__name__)
-
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
+# Nothing is *delivered* when a message becomes actionable, so ``/next`` (a plain
+# REST read) has no platform event behind it and the capture waiters don't apply —
+# a bounded poll is the only barrier available here.
+POLL_INTERVAL_S = 0.5
 
-async def _poll_next(link: BandLink, room_id: str, expect_id: str):
-    """Give the platform a moment to make a fresh message actionable."""
-    for _ in range(20):
-        msg = await link.get_next_message(room_id)
-        if msg is not None and msg.id == expect_id:
-            return msg
-        await asyncio.sleep(0.5)
+
+async def _poll_next(
+    link: BandLink, room_id: str, expect_id: str, *, deadline_s: float
+) -> PlatformMessage | None:
+    """Poll ``/next`` until it hands back ``expect_id``, or ``deadline_s`` elapses."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + deadline_s
+    while loop.time() < deadline:
+        message = await link.get_next_message(room_id)
+        if message is not None and message.id == expect_id:
+            return message
+        await asyncio.sleep(POLL_INTERVAL_S)
     return None
 
 
+@lane(Lane.CORE)  # adapter-agnostic platform invariant; prove it once per run
 async def test_next_includes_processing_messages(
     resource_manager: ResourceManager,
     user_ops: UserOps,
@@ -56,7 +70,9 @@ async def test_next_includes_processing_messages(
     )
 
     # Baseline: /next hands back the fresh, unprocessed message.
-    before = await _poll_next(link, room_id, mid)
+    before = await _poll_next(
+        link, room_id, mid, deadline_s=baseline_settings.e2e_timeout
+    )
     assert before is not None, "sanity: /next never returned the fresh message"
     assert before.id == mid
 

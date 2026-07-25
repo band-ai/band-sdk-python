@@ -134,6 +134,15 @@ class Backends(BaseSettings):
     # A current OpenCode Zen *free* model (the catalogue shifts; confirm against the
     # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
     opencode_model_id: str = "mimo-v2.5-free"  # OPENCODE_MODEL_ID
+    # Whether the serve behind opencode_base_url gates its `bash` tool to `ask`.
+    # Only the server's own permission rules decide when it raises a
+    # `permission.asked`, so the manual-approval smoke has no way to provoke one
+    # unless the serve is configured for it (setup-opencode.sh does; an arbitrary
+    # local serve does not). Declared, not probed: a running serve exposes its
+    # effective permission rules nowhere, and requirement predicates are env-only.
+    opencode_bash_asks: bool = Field(
+        default=False, validation_alias="E2E_OPENCODE_BASH_ASKS"
+    )
 
     # Letta (Cloud or self-hosted). The Letta server executes platform tools by
     # calling a Band MCP server: by default the adapter self-hosts one in-process

@@ -44,6 +44,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from band_rest import AsyncRestClient
+from phoenix_channels_python_client.exceptions import PHXClientError
 
 from band.client.streaming import (
     DeliveryStatus,
@@ -564,12 +565,15 @@ async def reply_capture(
     try:
         yield capture
     finally:
-        # Best-effort: a leave/unsubscribe that times out (the server never acks,
-        # e.g. a WS starved during a long turn) must not fail an otherwise-passing
-        # test -- and must not replace the body's real exception on an error exit.
+        # Best-effort, but only for the transport: a leave the server never acks
+        # (``PHXTopicError``) or one attempted while the socket is down (
+        # ``PHXConnectionError``) -- both plausible for a WS starved during a long
+        # turn -- must not fail an otherwise-passing test, nor replace the body's
+        # real exception on an error exit. Anything else (e.g. the ``RuntimeError``
+        # from an unstarted client) is misuse and fails loudly.
         try:
             await ws.leave_chat_room_channel(room_id)
-        except Exception:
+        except PHXClientError:
             logger.warning(
                 "reply_capture: leaving room %s failed on teardown",
                 room_id,

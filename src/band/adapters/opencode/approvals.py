@@ -113,6 +113,14 @@ def parse_question_answers(
     return [[line] for line in lines[: len(pending.questions)]]
 
 
+# The room-visible wording of an approval relay. Defined here, beside the code
+# that renders it, so a consumer that has to recognize these lines (the E2E
+# smoke waiting for a real permission round trip) matches one definition instead
+# of re-typing the sentence.
+APPROVAL_REQUESTED_PREFIX = "OpenCode approval requested for"
+APPROVAL_HANDLED_TEMPLATE = "OpenCode approval `{request_id}` handled with `{reply}`."
+
+
 def format_question_prompt(questions: list[OpencodeQuestion], request_id: str) -> str:
     prompt_lines = [f"OpenCode asked question `{request_id}`:"]
     for index, question in enumerate(questions, start=1):
@@ -229,7 +237,7 @@ class RoomApprovals:
         pattern_text = ", ".join(pending.patterns) if pending.patterns else "n/a"
         await self._notify_room(
             (
-                f"OpenCode approval requested for `{pending.permission}` "
+                f"{APPROVAL_REQUESTED_PREFIX} `{pending.permission}` "
                 f"({pattern_text}). Reply with `approve {request_id}`, "
                 f"`always {request_id}`, or `reject {request_id}`."
             ),
@@ -289,8 +297,9 @@ class RoomApprovals:
             if pending is not None:
                 if await self._reply_permission(pending, approval.reply):
                     await self._notify_room(
-                        f"OpenCode approval `{pending.request_id}` handled with "
-                        f"`{approval.reply}`.",
+                        APPROVAL_HANDLED_TEMPLATE.format(
+                            request_id=pending.request_id, reply=approval.reply
+                        ),
                         mentions,
                     )
                 return True

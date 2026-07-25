@@ -11,12 +11,14 @@ is the true end-to-end guard for reading a mentioned reply.
 Construction is bespoke (the matrix builder hardcodes auto_accept and its
 ``prompt``/``features``/``tools`` contract can't express ``approval_mode``), so —
 like ``test_copilot_sdk.py`` — there is no ``@with_adapters``/``@per_adapter``
-binding; gating is explicit (``@requires(Dep.OPENCODE_SERVER)``) and the home lane
-is pinned with ``@lane(Lane.BACKENDS)``.
+binding; gating is explicit (``@requires``) and the home lane is pinned with
+``@lane(Lane.BACKENDS)``.
 
-Requires an OpenCode server whose permission rules gate a shell/edit tool to
+The hard prerequisite is a serve whose permission rules gate a shell/edit tool to
 ``ask`` (so a real ``permission.asked`` fires); the adapter's ``approval_mode``
-only decides how the SDK *responds*, not when the server asks.
+only decides how the SDK *responds*, not when the server asks. That is gated by
+``Dep.OPENCODE_BASH_ASKS`` so a differently-configured serve fails naming the
+reason instead of stalling every barrier.
 
 Run with:
     E2E_TESTS_ENABLED=true BAND_E2E_LANE=backends uv run pytest \\
@@ -29,10 +31,17 @@ import re
 
 import pytest
 
+from band.adapters.opencode.approvals import (
+    APPROVAL_HANDLED_TEMPLATE,
+    APPROVAL_REQUESTED_PREFIX,
+)
+from band.client.streaming import MessageCreatedPayload
+
 from tests.e2e.baseline.agents import Lane, lane
 from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.requires import Dep, requires
 from tests.e2e.baseline.settings import BaselineSettings
+from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import (
     ResourceManager,
@@ -40,7 +49,29 @@ from tests.e2e.baseline.toolkit.provisioning import (
 )
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
-_APPROVE_ID = re.compile(r"`approve (\S+?)`")
+# The adapter's approval narration comes from ``RoomApprovals`` itself, so a reworded
+# prompt or confirmation cannot silently turn this smoke into a deadline stall: the
+# prompt is anchored on the adapter's own prefix, and the confirmation is matched as
+# the exact line its template renders. Only the ``approve <id>`` fragment is local --
+# it is the room command vocabulary, not the narration.
+APPROVAL_ASKED = re.compile(
+    re.escape(APPROVAL_REQUESTED_PREFIX) + r" `bash`.*?`approve (\S+?)`", re.S
+)
+
+# Two sequential live turns: the gated tool use, then the resumed turn.
+BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=2)
+
+
+def _asked_id(messages: list[MessageCreatedPayload]) -> str | None:
+    """The request id from the adapter's approval prompt, if it posted one."""
+    matches = (APPROVAL_ASKED.search(m.content or "") for m in messages)
+    return next((m.group(1) for m in matches if m), None)
+
+
+def _handled(messages: list[MessageCreatedPayload], request_id: str) -> bool:
+    """Whether the adapter confirmed it answered ``request_id`` with ``once``."""
+    expected = APPROVAL_HANDLED_TEMPLATE.format(request_id=request_id, reply="once")
+    return any(expected in (m.content or "") for m in messages)
 
 
 def _manual_opencode_adapter(settings: BaselineSettings):
@@ -59,9 +90,9 @@ def _manual_opencode_adapter(settings: BaselineSettings):
 
 
 @lane(Lane.BACKENDS)  # bespoke build exposes no framework; pin scheduling here
-@requires(Dep.OPENCODE_SERVER)
+@requires(Dep.OPENCODE_SERVER, Dep.OPENCODE_BASH_ASKS)
 @flaky_infra("one free-model round trip to trigger the bash tool can time out")
-@pytest.mark.timeout(extra=120)
+@pytest.mark.timeout(extra=BUDGET.extra_s)
 @pytest.mark.asyncio(loop_scope="session")
 async def test_manual_bash_permission_approved_from_a_mentioned_reply(
     baseline_settings: BaselineSettings,
@@ -85,7 +116,6 @@ async def test_manual_bash_permission_approved_from_a_mentioned_reply(
     reply and answering the permission is the fix's actual guarantee.
     """
     adapter = _manual_opencode_adapter(baseline_settings)
-    deadline = baseline_settings.e2e_timeout * 2
 
     async with running_provisioned_agent(
         adapter, resource_manager, label="opencode-manual-approval"
@@ -102,21 +132,12 @@ async def test_manual_bash_permission_approved_from_a_mentioned_reply(
                 mention_id=agent.id,
                 mention_name=agent.name,
             )
-            await capture.wait_until(
-                lambda msgs: any(
-                    "approval requested for `bash`" in (m.content or "").lower()
-                    for m in msgs
-                ),
-                deadline_s=deadline,
+            asked = await capture.wait_until(
+                lambda msgs: _asked_id(msgs) is not None,
+                deadline_s=BUDGET.deadline_s,
             )
-            approval = next(
-                m
-                for m in capture.messages
-                if "approval requested for `bash`" in (m.content or "").lower()
-            )
-            match = _APPROVE_ID.search(approval.content or "")
-            assert match, f"no approve <id> in approval prompt: {approval.content!r}"
-            request_id = match.group(1)
+            request_id = _asked_id(asked)
+            assert request_id is not None  # the predicate guarantees one
 
             # Turn 2: the mentioned `approve <id>` reply must be RECOGNIZED. The
             # adapter's `handled with once` confirmation echoing the parsed id is
@@ -128,10 +149,6 @@ async def test_manual_bash_permission_approved_from_a_mentioned_reply(
                 mention_name=agent.name,
             )
             await capture.wait_until(
-                lambda msgs: any(
-                    request_id in (m.content or "")
-                    and "handled with `once`" in (m.content or "").lower()
-                    for m in msgs
-                ),
-                deadline_s=deadline,
+                lambda msgs: _handled(msgs, request_id),
+                deadline_s=BUDGET.deadline_s,
             )

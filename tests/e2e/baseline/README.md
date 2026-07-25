@@ -231,14 +231,15 @@ These three are why the toolkit is shaped the way it is — keep them when exten
 | `toolkit/observations/` | list subclasses that own their assertions: `Replies` (replies; `snapshot()`/`since()`, `mentioning(id)` to filter to replies mentioning a participant, `assert_contains_any`/`assert_mentions`), `ToolCalls`/`ToolCall` + `MemoryToolCalls`, `Events`→`Thoughts`/`Errors`/`Tasks`, `Memories`/`MemoryObservation`; shared `tolerant_match` + `ContentAssertions` |
 | `settings.py` | `BaselineSettings`: endpoints, credentials, run policy, LLM creds + models |
 | `requires.py` | `@requires(Dep.X)` decorator (the pytest glue; re-exports `Dep` from `toolkit/deps.py`, where the enum and its facts actually live) |
+| `timeouts.py` | `slow_turn_budget(e2e_timeout, barriers=N)` → the paired `deadline_s` (per barrier) + `extra_s` (`@pytest.mark.timeout(extra=)`) for a test awaiting N sequential slow-backend turns, so the soft barrier always fires before the hard backstop |
 | `conftest.py` | fixtures (below) + the always-on E2E gate |
 | `guards/` | E2E-tree harness self-tests (E2E-gated): `test_adapter_registry.py` (static discovery/lane guard), `test_provisioning.py`, `test_user_ops.py`, `test_adapter_cell.py`, `test_tool_spec.py`, and `test_agent_wiring.py` (only the `pytester` real-collection cases). **Pure policy tests run every PR from `tests/framework_conformance/`** — see the note below the table |
 | `smoke/` | proof tests that exercise the tools end to end — read these as worked examples — grouped by subject (below) |
 | `smoke/samples/` | shared driving glue (not tests): `sample_agents.py`, `sample_tools.py` |
 | `smoke/matrix/` | runs across the adapter matrix: `test_adapter_matrix.py`, `test_capability_matrix.py` (memory store + recall), `test_context_recall.py` (in-session + rejoin), `test_rehydration_offline.py` / `test_rehydration_partial.py` (cold-boot / partial-reboot `/context` recall), `test_rehydration_cross_framework.py` (a different-framework `peer=` authors, A rehydrates), `test_room_isolation.py`, `test_noisy_room.py`, `test_tool_round_trip.py` (custom-tool subgroup) |
 | `smoke/behavior/` | platform/transport + scenario behavior: `test_delivery_status.py`, `test_processing_barrier.py`, `test_isolation.py`, `test_agent_scenarios.py` |
-| `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py` |
-| `smoke/adapters/` | adapter-specific showcases: `test_agno.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_parlant.py` |
+| `smoke/inspection/` | `capture.*` observation worked-examples: `test_tool_calls.py`, `test_events.py`, `test_memory.py`, `test_usage.py` (the `Emit.USAGE` fan), plus `test_next_actionable_semantics.py` (a platform `/next` invariant, `@lane`-pinned since it runs no adapter) |
+| `smoke/adapters/` | adapter-specific showcases: `test_agno.py`, `test_copilot_acp.py`, `test_copilot_sdk.py`, `test_crewai.py`, `test_letta.py`, `test_opencode.py`, `test_parlant.py` |
 
 The `toolkit/` modules are pytest-free and reusable anywhere. The package root
 (`settings`, `requires`, `agents`, `conftest`) is the pytest wiring.
@@ -557,7 +558,7 @@ the `dev` extra but are split out for isolation.
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth |
 | `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
-| `backends` | `dev` | codex, opencode | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), and a running `opencode serve` (`OPENCODE_BASE_URL`) |
+| `backends` | `dev` | codex, opencode, copilot_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`, gating `bash` to `ask` → `E2E_OPENCODE_BASH_ASKS`), and the `copilot` CLI (`Dep.COPILOT_CLI`, auth via `GITHUB_TOKEN`) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 
 `backends` folds codex + opencode into one job (both install `dev`, differ only in

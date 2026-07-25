@@ -18,11 +18,12 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import cast
 from uuid import uuid4
 
 import pytest
+from band_rest import AsyncRestClient
 
 from band.adapters.opencode import OpencodeAdapterConfig
 from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
@@ -38,11 +39,14 @@ from tests.integration.conftest import (
 )
 
 
-async def _poll(fetch: Callable[[], object], *, timeout: float = 30.0) -> object:
-    """Await ``fetch()`` until it returns a truthy value or the timeout."""
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        value = await fetch()  # type: ignore[misc]
+async def _poll(
+    fetch: Callable[[], Awaitable[str | None]], *, timeout: float = 30.0
+) -> str | None:
+    """Await ``fetch()`` until it returns content or the timeout."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        value = await fetch()
         if value:
             return value
         await asyncio.sleep(1.0)
@@ -53,7 +57,9 @@ async def _poll(fetch: Callable[[], object], *, timeout: float = 30.0) -> object
 # (the agent's own outbound approval-request AND the user's reply) in the raw
 # ``@[[uuid]]`` form. The agent client's list is its inbound queue and does not
 # echo the agent's own posts.
-async def _content_of(user_client, chat_id: str, message_id: str) -> str | None:
+async def _content_of(
+    user_client: AsyncRestClient, chat_id: str, message_id: str
+) -> str | None:
     resp = await user_client.human_api_messages.list_my_chat_messages(
         chat_id, page=1, page_size=100
     )
@@ -63,7 +69,9 @@ async def _content_of(user_client, chat_id: str, message_id: str) -> str | None:
     )
 
 
-async def _content_containing(user_client, chat_id: str, needle: str) -> str | None:
+async def _content_containing(
+    user_client: AsyncRestClient, chat_id: str, needle: str
+) -> str | None:
     resp = await user_client.human_api_messages.list_my_chat_messages(
         chat_id, page=1, page_size=100
     )
@@ -140,7 +148,7 @@ async def test_manual_approval_survives_a_real_platform_round_trip(
         # Mirror the inbound preprocessing (uuid mentions -> @handle) that runs
         # before on_message, then drive the reply exactly as the adapter would.
         participants = [{"id": agent_id, "handle": shared_agent1_info.handle}]
-        delivered = replace_uuid_mentions(cast(str, raw_reply), participants)
+        delivered = replace_uuid_mentions(raw_reply, participants)
         assert delivered.startswith("@"), "platform did not prepend a mention block"
 
         consumed = await approvals.try_handle_reply(delivered, shared_user_peer.id)

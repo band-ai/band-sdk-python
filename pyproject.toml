@@ -138,8 +138,6 @@ agentcore_runtime = [
 ]
 google_adk = [
     "google-adk>=1.0.0,<2",
-    # 1.13.0 is yanked; permit the latest compatible pre-release meanwhile.
-    "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
 ]
 agno = [
     "agno>=2.6.0",
@@ -197,7 +195,6 @@ dev = [
     "google-genai>=1.43.0",
     # Include google-adk for testing
     "google-adk>=1.0.0,<2",
-    "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
     # Include Agno for testing
     "agno>=2.6.0",
     # Include letta-client for testing
@@ -279,6 +276,15 @@ markers = [
 ]
 
 [tool.uv]
+# google-adk pulls opentelemetry-resourcedetector-gcp transitively, whose 1.13.0 is
+# yanked and whose only newer release is a pre-release. Steering that resolution is
+# ours to do, but the package is not ours to depend on (nothing under src/band
+# imports it), so it is a constraint — resolution-only, no direct dependency and no
+# pre-release opt-in inherited by `band-sdk[google_adk]` consumers.
+constraint-dependencies = [
+    "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
+]
+
 # Ensure uv.lock stays installable on the platforms we use locally and in CI
 # when a dependency only publishes wheels and no source distribution.
 required-environments = [

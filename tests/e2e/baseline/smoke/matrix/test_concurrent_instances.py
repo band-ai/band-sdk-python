@@ -35,11 +35,15 @@ from tests.e2e.baseline.flaky import flaky_infra
 from tests.e2e.baseline.agents import Adapter, ExcludedAdapter, per_adapter
 from tests.e2e.baseline.settings import BaselineSettings
 from tests.e2e.baseline.smoke.samples.sample_agents import liveness_probe, unique_marker
+from tests.e2e.baseline.timeouts import slow_turn_budget
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
 from tests.e2e.baseline.toolkit.provisioning import AdapterCell, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 INSTANCES = 3  # the spec's Test Agent + Calc + Greeter trio
+
+# One barrier per instance, each awaiting a turn slowed by the other two.
+BUDGET = slow_turn_budget(BaselineSettings().e2e_timeout, barriers=INSTANCES)
 
 
 @per_adapter(
@@ -58,14 +62,13 @@ INSTANCES = 3  # the spec's Test Agent + Calc + Greeter trio
 # non-completion (rerun-worthy infra transience), distinct from the healthy-slow
 # case the widened barrier below covers; it is not an adapter bug.
 @flaky_infra("shared serve may delay a turn's terminal event past the 300s budget")
-@pytest.mark.timeout(extra=300)  # three concurrent boots + three turns
+@pytest.mark.timeout(extra=BUDGET.extra_s)  # three concurrent boots + three turns
 @pytest.mark.asyncio(loop_scope="session")
 async def test_concurrent_same_adapter_instances_each_reply(
     cell: AdapterCell,
     resource_manager: ResourceManager,
     user_ops: UserOps,
     reply_capture: CaptureFactory,
-    baseline_settings: BaselineSettings,
 ) -> None:
     """K co-resident instances of one adapter each answer their own mention."""
     async with cell.run_many(INSTANCES) as instances:
@@ -94,11 +97,14 @@ async def test_concurrent_same_adapter_instances_each_reply(
             # Widen the per-reply deadline: this fires K turns at once, and the
             # backend lanes (codex/opencode) funnel them through one shared serve
             # against a throttled free model, so a healthy turn can legitimately
-            # take longer than the default single-turn deadline. The default made
-            # a slow-but-completing turn trip the barrier while it was still
-            # running (spurious "no reply"); the adapter's own turn budget is far
-            # higher. Fast adapters reply well within this, so it only raises the
-            # failure ceiling for the loaded case, never the success latency.
-            deadline_s = baseline_settings.e2e_timeout * 2
+            # take longer than the default single-turn deadline, and the default
+            # tripped the barrier on a turn that was still running (spurious "no
+            # reply"). ``slow_turn_budget`` sizes each barrier at the adapters' own
+            # turn budget -- past which no reply can still be coming -- and sets the
+            # marker's ``extra`` above all K, so a genuine stall reports the stalled
+            # turn rather than a phase-less pytest-timeout kill. Fast adapters reply
+            # well within this: it raises only the failure ceiling, never latency.
             for instance, mid in zip(instances, mids):
-                await capture.wait_for_reply(mid, instance.id, deadline_s=deadline_s)
+                await capture.wait_for_reply(
+                    mid, instance.id, deadline_s=BUDGET.deadline_s
+                )

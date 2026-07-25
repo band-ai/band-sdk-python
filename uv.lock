@@ -98,6 +98,9 @@ conflicts = [[
     { package = "band-sdk", extra = "pydantic-ai" },
 ]]
 
+[manifest]
+constraints = [{ name = "opentelemetry-resourcedetector-gcp", specifier = ">=1.12.0a0,!=1.13.0" }]
+
 [[package]]
 name = "a2a-sdk"
 version = "0.3.26"
@@ -602,7 +605,6 @@ dev = [
     { name = "letta-client" },
     { name = "mcp" },
     { name = "openai" },
-    { name = "opentelemetry-resourcedetector-gcp" },
     { name = "parlant" },
     { name = "pre-commit" },
     { name = "pydantic-ai-slim" },
@@ -650,7 +652,6 @@ gemini = [
 ]
 google-adk = [
     { name = "google-adk" },
-    { name = "opentelemetry-resourcedetector-gcp" },
 ]
 langgraph = [
     { name = "beautifulsoup4" },
@@ -767,8 +768,6 @@ requires-dist = [
     { name = "openai", marker = "extra == 'langgraph'", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'parlant'", specifier = ">=2.0.0" },
     { name = "openai", marker = "extra == 'pydantic-ai'", specifier = ">=2.0.0" },
-    { name = "opentelemetry-resourcedetector-gcp", marker = "extra == 'dev'", specifier = ">=1.12.0a0,!=1.13.0" },
-    { name = "opentelemetry-resourcedetector-gcp", marker = "extra == 'google-adk'", specifier = ">=1.12.0a0,!=1.13.0" },
     { name = "parlant", marker = "extra == 'dev'", specifier = ">=3.3.2" },
     { name = "parlant", marker = "extra == 'parlant'", specifier = ">=3.3.2" },
     { name = "phoenix-channels-python-client", specifier = ">=0.2.2" },
