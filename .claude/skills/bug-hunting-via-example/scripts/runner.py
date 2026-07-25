@@ -11,10 +11,11 @@ import signal
 import sys
 import tempfile
 import uuid
+from contextlib import AsyncExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, Iterator
 
 import yaml
 
@@ -31,6 +32,7 @@ COLLABORATION_TEMPLATE_VALUES = {
     "target_id": "target-id",
     "target_name": "target-name",
 }
+HARNESS_ENDPOINT_VARIABLES = frozenset({"BAND_REST_URL", "BAND_WS_URL"})
 
 
 @dataclass(frozen=True)
@@ -76,11 +78,19 @@ class Result:
 
 
 @dataclass
+class ChildLog:
+    path: Path
+    preserve: bool = False
+
+
+@dataclass
 class RunningExample:
     spec: ExampleSpec
     agent: Any
     process: asyncio.subprocess.Process
-    workdir: tempfile.TemporaryDirectory[str]
+    workdir: str
+    log: ChildLog
+    resources: AsyncExitStack
 
 
 def record_result(results: list[Result], result: Result) -> None:
@@ -169,6 +179,16 @@ def validate_process_templates(spec: ExampleSpec) -> None:
         validate_template(value, "environment", PROCESS_TEMPLATE_VALUES)
 
 
+def validate_environment_ownership(spec: ExampleSpec) -> None:
+    configured = {name for name, _ in spec.environment} | set(spec.unset_env)
+    reserved = sorted(configured & HARNESS_ENDPOINT_VARIABLES)
+    if reserved:
+        raise ValueError(
+            "harness endpoint variables cannot be configured by a plan: "
+            + ", ".join(reserved)
+        )
+
+
 def parse_example(raw: Any, index: int, repo: Path) -> ExampleSpec:
     label = f"examples[{index}]"
     if not isinstance(raw, dict):
@@ -186,6 +206,7 @@ def parse_example(raw: Any, index: int, repo: Path) -> ExampleSpec:
         steps=parse_steps(raw.get("steps", []), f"{label}.steps"),
     )
     validate_process_templates(spec)
+    validate_environment_ownership(spec)
     return spec
 
 
@@ -284,6 +305,11 @@ def example_environment(
 ) -> dict[str, str]:
     values = process_values(spec, repo, workdir)
     environment = os.environ.copy()
+    for name in spec.unset_env:
+        environment.pop(name, None)
+    environment.update(
+        {name: value.format(**values) for name, value in spec.environment}
+    )
     environment.update(
         BAND_REST_URL=settings.endpoints.rest_url,
         BAND_WS_URL=settings.endpoints.ws_url,
@@ -291,36 +317,62 @@ def example_environment(
             filter(None, (str(repo), environment.get("PYTHONPATH", "")))
         ),
     )
-    for name in spec.unset_env:
-        environment.pop(name, None)
-    environment.update(
-        {name: value.format(**values) for name, value in spec.environment}
-    )
     return environment
+
+
+@contextmanager
+def child_log(spec: ExampleSpec) -> Iterator[tuple[ChildLog, BinaryIO]]:
+    log_file = tempfile.NamedTemporaryFile(
+        mode="ab", prefix=f"band-example-{spec.id}-", suffix=".log", delete=False
+    )
+    log_path = Path(log_file.name)
+    log_path.chmod(0o600)
+    artifact = ChildLog(log_path)
+    try:
+        yield artifact, log_file
+    finally:
+        log_file.close()
+        if not artifact.preserve:
+            log_path.unlink(missing_ok=True)
 
 
 async def start_example(
     spec: ExampleSpec, agent: Any, repo: Path, settings: Any
 ) -> RunningExample:
-    workdir = tempfile.TemporaryDirectory(prefix=f"band-example-{spec.id}-")
-    write_agent_config(spec, agent, workdir.name)
+    resources = AsyncExitStack()
     try:
+        workdir = resources.enter_context(
+            tempfile.TemporaryDirectory(prefix=f"band-example-{spec.id}-")
+        )
+        log, log_file = resources.enter_context(child_log(spec))
+        write_agent_config(spec, agent, workdir)
         process = await asyncio.create_subprocess_exec(
-            *example_command(spec, repo, workdir.name),
-            cwd=workdir.name,
-            env=example_environment(spec, repo, workdir.name, settings),
-            stdout=asyncio.subprocess.DEVNULL,
+            *example_command(spec, repo, workdir),
+            cwd=workdir,
+            env=example_environment(spec, repo, workdir, settings),
+            stdout=log_file,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
     except BaseException:
-        workdir.cleanup()
+        await resources.aclose()
         raise
-    running = RunningExample(spec=spec, agent=agent, process=process, workdir=workdir)
+    resources.push_async_callback(terminate_process, process)
+    running = RunningExample(
+        spec=spec,
+        agent=agent,
+        process=process,
+        workdir=workdir,
+        log=log,
+        resources=resources,
+    )
     await asyncio.sleep(0)
     if process.returncode is not None:
+        running.log.preserve = True
         await stop_example(running)
-        raise RuntimeError(f"{spec.id} exited during startup")
+        raise RuntimeError(
+            f"{spec.id} exited during startup; child log: {running.log.path}"
+        )
     return running
 
 
@@ -336,38 +388,61 @@ async def wait_or_exit(running: RunningExample, awaitable: Any) -> Any:
     if exited in done:
         boundary.cancel()
         await asyncio.gather(boundary, return_exceptions=True)
-        raise RuntimeError(f"{running.spec.id} exited with status {exited.result()}")
+        running.log.preserve = True
+        raise RuntimeError(
+            f"{running.spec.id} exited with status {exited.result()}; "
+            f"child log: {running.log.path}"
+        )
     return boundary.result()
 
 
-async def stop_example(running: RunningExample) -> None:
-    process = running.process
+def signal_process(process: asyncio.subprocess.Process, signal_number: int) -> None:
+    try:
+        os.killpg(process.pid, signal_number)
+    except ProcessLookupError:
+        pass
+
+
+async def terminate_process(process: asyncio.subprocess.Process) -> None:
     if process.returncode is None:
-        try:
-            os.killpg(process.pid, signal.SIGINT)
-        except ProcessLookupError:
-            pass
+        signal_process(process, signal.SIGINT)
         try:
             await asyncio.wait_for(process.wait(), timeout=8)
         except TimeoutError:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            signal_process(process, signal.SIGTERM)
             try:
                 await asyncio.wait_for(process.wait(), timeout=4)
             except TimeoutError:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                signal_process(process, signal.SIGKILL)
                 await process.wait()
-    running.workdir.cleanup()
+
+
+async def stop_example(running: RunningExample) -> None:
+    await running.resources.aclose()
 
 
 def assert_contains(messages: Any, expected: tuple[str, ...]) -> None:
     if expected:
         messages.assert_contains_any(*expected)
+
+
+def parse_server_timestamp(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not isinstance(value, str):
+        raise TypeError("platform message timestamp must be a string or datetime")
+    stamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+async def message_server_timestamp(
+    user_ops: Any, room_id: str, message_id: str
+) -> datetime:
+    messages = await user_ops.list_messages(room_id, limit=100)
+    message = next((item for item in messages if item.id == message_id), None)
+    if message is None:
+        raise RuntimeError(f"trigger message {message_id} is missing from room history")
+    return parse_server_timestamp(message.inserted_at)
 
 
 async def wait_for_step(
@@ -424,13 +499,13 @@ async def exercise_step(
     marker = f"HUNT-{uuid.uuid4().hex[:10]}"
     cursor = capture.messages.snapshot()
     prompt = format_value(step.prompt, marker=marker, room_id=room_id)
-    since = datetime.now(timezone.utc)
     message_id = await resources.user_ops.send_message(
         room_id,
         prompt,
         mention_id=running.agent.id,
         mention_name=running.agent.name,
     )
+    since = await message_server_timestamp(resources.user_ops, room_id, message_id)
     await wait_for_step(step, running, capture, message_id, cursor, marker, room_id)
     await assert_step_tools(step, running, capture, since)
 

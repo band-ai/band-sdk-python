@@ -4,7 +4,7 @@ import asyncio
 import importlib.util
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -49,7 +49,11 @@ async def test_each_step_uses_its_own_tool_boundary(
     runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     tool_reads: list[dict[str, Any]] = []
-    sent_at: list[datetime] = []
+    sent_messages: list[Any] = []
+    server_times = (
+        "2001-01-01T00:00:00.100000Z",
+        "2001-01-01T00:00:00.200000Z",
+    )
 
     class Messages:
         def snapshot(self) -> list[Any]:
@@ -82,8 +86,17 @@ async def test_each_step_uses_its_own_tool_boundary(
 
     class UserOps:
         async def send_message(self, *args: Any, **kwargs: Any) -> str:
-            sent_at.append(datetime.now().astimezone())
-            return f"message-{len(sent_at)}"
+            message_id = f"message-{len(sent_messages) + 1}"
+            sent_messages.append(
+                SimpleNamespace(
+                    id=message_id,
+                    inserted_at=server_times[len(sent_messages)],
+                )
+            )
+            return message_id
+
+        async def list_messages(self, *args: Any, **kwargs: Any) -> list[Any]:
+            return list(sent_messages)
 
     class Resources:
         user_ops = UserOps()
@@ -123,9 +136,9 @@ async def test_each_step_uses_its_own_tool_boundary(
     assert len(results) == 2
     assert len(tool_reads) == 1
     assert tool_reads[0]["include_memory"] is True
-    assert tool_reads[0]["since"].tzinfo is not None
-    assert tool_reads[0]["since"] > sent_at[0]
-    assert tool_reads[0]["since"] <= sent_at[1]
+    assert tool_reads[0]["since"] == datetime(
+        2001, 1, 1, 0, 0, 0, 200000, tzinfo=timezone.utc
+    )
 
 
 @pytest.mark.asyncio
@@ -188,7 +201,7 @@ async def test_group_startup_failure_is_reported_per_example(
 
 
 @pytest.mark.asyncio
-async def test_process_exit_does_not_include_child_output(runner: ModuleType) -> None:
+async def test_process_exit_preserves_private_child_log(runner: ModuleType) -> None:
     class ExitedProcess:
         async def wait(self) -> int:
             return 7
@@ -196,7 +209,83 @@ async def test_process_exit_does_not_include_child_output(runner: ModuleType) ->
     running = SimpleNamespace(
         spec=SimpleNamespace(id="example"),
         process=ExitedProcess(),
+        log=SimpleNamespace(path=Path("/tmp/example.log"), preserve=False),
     )
 
-    with pytest.raises(RuntimeError, match=r"^example exited with status 7$"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"^example exited with status 7; child log: /tmp/example.log$",
+    ):
         await runner.wait_or_exit(running, asyncio.Event().wait())
+    assert running.log.preserve is True
+
+
+def test_harness_endpoints_cannot_be_overridden(runner: ModuleType) -> None:
+    spec = runner.ExampleSpec(
+        "example",
+        Path("example.py"),
+        "agent",
+        environment=(("BAND_REST_URL", "https://production.invalid"),),
+        unset_env=("BAND_WS_URL",),
+    )
+    with pytest.raises(
+        ValueError,
+        match="BAND_REST_URL, BAND_WS_URL",
+    ):
+        runner.validate_environment_ownership(spec)
+
+    settings = SimpleNamespace(
+        endpoints=SimpleNamespace(
+            rest_url="https://test.invalid",
+            ws_url="wss://test.invalid/socket",
+        )
+    )
+    environment = runner.example_environment(spec, Path("/repo"), "/tmp/run", settings)
+    assert environment["BAND_REST_URL"] == "https://test.invalid"
+    assert environment["BAND_WS_URL"] == "wss://test.invalid/socket"
+
+
+def test_child_log_is_private(runner: ModuleType) -> None:
+    spec = runner.ExampleSpec("example", Path("example.py"), "agent")
+    with runner.child_log(spec) as (artifact, log_file):
+        log_file.write(b"private diagnostic\n")
+        log_file.flush()
+        assert artifact.path.stat().st_mode & 0o777 == 0o600
+        assert artifact.path.read_bytes() == b"private diagnostic\n"
+    assert not artifact.path.exists()
+
+
+@pytest.mark.asyncio
+async def test_startup_failure_preserves_child_diagnostic(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class ExitedProcess:
+        returncode = 2
+
+        async def wait(self) -> int:
+            return self.returncode
+
+    async def create_process(*args: Any, **kwargs: Any) -> ExitedProcess:
+        kwargs["stdout"].write(b"startup diagnostic\n")
+        kwargs["stdout"].flush()
+        return ExitedProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    spec = runner.ExampleSpec("example", Path("example.py"), "agent")
+    agent = SimpleNamespace(id="agent-id", api_key="private-key")
+    settings = SimpleNamespace(
+        endpoints=SimpleNamespace(
+            rest_url="https://test.invalid",
+            ws_url="wss://test.invalid/socket",
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="exited during startup") as failure:
+        await runner.start_example(spec, agent, Path.cwd(), settings)
+
+    log_path = Path(str(failure.value).partition("child log: ")[2])
+    try:
+        assert log_path.stat().st_mode & 0o777 == 0o600
+        assert log_path.read_text(encoding="utf-8") == "startup diagnostic\n"
+    finally:
+        log_path.unlink(missing_ok=True)
