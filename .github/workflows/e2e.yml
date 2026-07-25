@@ -37,8 +37,8 @@ name: E2E (baseline)
 #                  server it stands up.
 #
 # CopilotSDKAdapter (BYOK on Anthropic) runs in `core`: the SDK self-downloads its
-# CLI runtime (no setup step), so it needs no isolated lane — it only needs the
-# Copilot-entitled GITHUB_TOKEN, which every lane's job env carries.
+# CLI runtime (no setup step), so it needs no isolated lane or GitHub auth. The
+# Copilot-entitled GITHUB_TOKEN remains for CopilotACPAdapter in `backends`.
 #
 # An unwired backend still fails loudly (the @requires gate reports the missing
 # CLI/server) until its setup block lands. `fail-fast: false`
@@ -201,8 +201,8 @@ jobs:
       GOOGLE_API_KEY: ${{ secrets.E2E_GOOGLE_API_KEY }}
       # A PAT from a GitHub account with Copilot entitlement — NOT the ambient
       # secrets.GITHUB_TOKEN (a repo-scoped installation token with no such
-      # entitlement). The copilot_sdk adapter (in the `core` lane) needs it;
-      # exposed to every lane's job env so `core` picks it up.
+      # entitlement). CopilotACPAdapter in the `backends` lane needs it; the
+      # Anthropic-BYOK copilot_sdk adapter does not.
       GITHUB_TOKEN: ${{ secrets.E2E_GITHUB_TOKEN }}
       # Per-lane scorecard: each lane writes its own adapter×test slice (pass/fail for
       # its cells, skip for out-of-lane cells, N/A + reason for exclusions). The final

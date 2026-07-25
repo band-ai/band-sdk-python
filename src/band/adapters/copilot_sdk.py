@@ -99,8 +99,8 @@ class CopilotSDKAdapterConfig:
             agents sharing a host.
         github_token: GitHub token for Copilot auth. Auth resolves
             automatically: the token wins when set, otherwise the locally
-            logged-in GitHub user is used — so both fields can usually stay
-            at their defaults.
+            logged-in GitHub user is used. Not required when ``provider``
+            configures BYOK inference.
         use_logged_in_user: Force using the logged-in GitHub user; None
             (default) lets the SDK resolve it from ``github_token``.
         turn_timeout_s: Max seconds to wait for a turn to complete.
@@ -314,9 +314,12 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
             self.config.model or "<copilot default>",
         )
 
-    @staticmethod
-    async def _check_auth(client: Any) -> None:
-        """Fail fast with an actionable message when Copilot auth is missing."""
+    async def _check_auth(self, client: Any) -> None:
+        """Require GitHub auth only when inference uses the Copilot service."""
+        # A singular provider replaces Copilot-hosted inference. Current Copilot
+        # SDKs intentionally allow that BYOK path with no GitHub identity.
+        if self.config.provider is not None:
+            return
         get_auth_status = getattr(client, "get_auth_status", None)
         if get_auth_status is None:  # test fakes / exotic clients
             return
@@ -326,7 +329,8 @@ class CopilotSDKAdapter(SimpleAdapter[CopilotSDKSessionState]):
                 "Not authenticated with GitHub Copilot: "
                 f"{getattr(status, 'statusMessage', None) or 'no credentials found'}. "
                 "Log in with the GitHub CLI (gh auth login) or set a token via "
-                "CopilotSDKAdapterConfig(github_token=...)."
+                "CopilotSDKAdapterConfig(github_token=...), or configure provider=... "
+                "for BYOK inference."
             )
 
     async def on_cleanup(self, room_id: str) -> None:

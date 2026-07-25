@@ -76,9 +76,8 @@ def _build_claude_sdk(
 
 @adapter(
     Adapter.COPILOT_SDK,
-    # Gate on the Anthropic BYOK key only, not a GitHub token: Copilot auth is
-    # flexible (env token OR a stored login) and provided out-of-band — a stored
-    # login locally, or GITHUB_TOKEN in the CI job env. Same reasoning as copilot_acp.
+    # Singular BYOK replaces Copilot-hosted inference and needs only the
+    # Anthropic provider key; GitHub auth is deliberately disabled below.
     requires=[Dep.ANTHROPIC],
     supports=_LLM_TOOL_LOOP,
 )
@@ -104,9 +103,7 @@ def _build_copilot_sdk(
                 base_url="https://api.anthropic.com",
                 api_key=s.llm_credentials.anthropic_api_key,
             ),
-            # A configured token wins; empty -> None so the SDK falls back to the
-            # stored `copilot login` (an empty string would not).
-            github_token=s.backends.github_token or None,
+            use_logged_in_user=False,
             custom_section=prompt or "",
         ),
         additional_tools=_custom_tool_defs(tools),
