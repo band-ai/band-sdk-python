@@ -26,8 +26,8 @@ Before launching, modifying, or provisioning anything, establish the exact examp
 
 1. Discover the repository's available runnable examples and their documented purpose so the question is grounded in real choices.
 2. If the user has not already named an exact example set, ask: **Which example or examples should I use?** Present a concise list or relevant subset using repository paths or stable IDs.
-3. For more than one selected example, also ask whether to run them independently, together, or both, unless the requested topology already makes that clear.
-4. Repeat the chosen paths/IDs and topology before starting so the scope is auditable.
+3. Always run the selected examples both independently and together. Do not ask the user to choose between those topologies; isolated correctness and interaction correctness are both required.
+4. Repeat the chosen paths/IDs and the two topologies before starting so the scope is auditable.
 
 Do not silently select a familiar pair, default example, adapter, or “all examples.” A user request that already identifies exact examples, a directory-wide set, or an explicit selection rule counts as the answer; do not ask again.
 
@@ -56,11 +56,14 @@ Before running anything:
 Create a concise inventory for each selected example:
 
 - stable example ID and exact command
+- protocol direction and the real ingress boundary that drives it
 - adapter and backend/service requirements
 - credential gates
-- agent identity/config source
+- actor for every operation: provisioner, room owner, participant, driver, and observer
+- agent identity/config source and required identity relationships across services
 - expected capabilities and observable outcome
 - whether its backend may or must be shared
+- installed dependency versions and the actual executable/entry point used
 - readiness and shutdown behavior
 
 Do not hardcode adapter branches in orchestration. Keep adapter-specific launch knowledge in an existing registry or a small declarative example/backend specification.
@@ -106,6 +109,10 @@ discover selected examples
 
 Determine readiness through the real system boundary where possible: online presence, subscriptions, and a deterministic probe turn. Log matching alone is insufficient.
 
+For deployment examples, perform a clean build as well as a warm start. Inspect the executable entry points installed by the resolved dependency version instead of assuming an old command still exists. Treat a running process or container as process liveness only; verify each dependent service and one promised capability before declaring the deployment ready.
+
+Make cross-process identity relationships explicit. A credential is an actor, not merely a secret: record which identity owns a room, which identity a remote tool acts as, and how that identity becomes authorized for the target resource. Validate required equality or membership before capability tests.
+
 Deduplicate shared services by logical service identity and reference-count their users. Stopping one example must not disable a backend or registration still owned by another active example.
 
 If the repository has no general runner yet, first run the documented commands directly and record the missing reusable seam. Do not invent a large framework before the first concrete use proves what must be generalized.
@@ -118,18 +125,21 @@ Create a temporary declarative plan; do not add adapter branches to the runner:
 
 ```yaml
 version: 1
-topologies: [independent, together]
 examples:
   - id: first
     path: examples/framework/01-first.py
     config_key: first_agent
     # Optional override; placeholders: {repo}, {path}, {workdir}
     command: ["{repo}/.venv/bin/python", "{path}"]
+    env:
+      ACP_AGENT_CWD: "{workdir}"
     unset_env: [GITHUB_TOKEN]
     steps:
-      - prompt: "Reply with the exact marker {marker}."
+      - prompt: "Inspect room {room_id}, then reply with marker {marker}."
         barrier: reply
         contains_any: ["{marker}"]
+        tools: [band_get_participants]
+        tool_calls_at_least: 1
   - id: second
     path: examples/another/02-second.py
     config_key: second_agent
@@ -147,7 +157,9 @@ uv run python .claude/skills/bug-hunting-via-example/scripts/runner.py /tmp/exam
 uv run python .claude/skills/bug-hunting-via-example/scripts/runner.py /tmp/example-plan.yaml --json-out /tmp/example-scorecard.json
 ```
 
-The default command is the current Python interpreter plus the exact example path. Override it only when the documented launch command has meaningful semantics. `reply` waits for both processed delivery and the selected agent's reply; `processed` is for turns where a reply is optional. `contains_any` is case-insensitive and intentionally semantic-tolerant. Together mode covers separate concurrent rooms and one shared room for every selected example; `collaborations` adds directed agent-to-agent probes without assuming particular names or adapters.
+The runner always executes both independent and together topologies; this is not a manifest option. The default command is the current Python interpreter plus the exact example path. Override it only when the documented launch command has meaningful semantics. Use the per-example `env` mapping for non-secret launch configuration and `unset_env` to prevent ambient variables from changing an example's documented path; both support `{repo}`, `{path}`, and `{workdir}` placeholders. Keep secrets in the inherited test environment, never in a manifest. Step prompts and expectations support the correlated `{marker}` and actual `{room_id}`. `reply` waits for both processed delivery and the selected agent's reply; `processed` is for turns where a reply is optional. `contains_any` is case-insensitive and intentionally semantic-tolerant. Use `tools` for exact promised tool names and `tool_calls_at_least` only when the contract is tool use without a stable vendor-specific name; both read all durable tool events, including memory tools, after the completion barrier. Each step gets its own pre-send UTC boundary, so a silent processed step cannot satisfy a later assertion. Together mode covers separate concurrent rooms and one shared room for every selected example; `collaborations` adds directed agent-to-agent probes without assuming particular names or adapters.
+
+The runner emits each completed scenario result immediately and writes the final scorecard at the end. Long silence is not a useful test interface: incremental output must identify only completed pass/fail outcomes, never speculative progress or credentials. Child stdout is suppressed because inherited environments may contain secrets; reproduce a failure directly when raw backend logs are required.
 
 The runner requires `E2E_TESTS_ENABLED=true` and `BAND_API_KEY_USER`, loaded through the baseline settings and `.env.test`. It never prints credentials. Cleanup is the default; use `--keep` only when the user explicitly wants live resources preserved for investigation, and reap them afterward. If a selected example needs a shared server, port allocation, a non-reply capability assertion, or other behavior the runner does not model, use the baseline toolkit directly first. Generalize that seam only after the concrete run proves it is reusable.
 
@@ -159,6 +171,8 @@ For each example:
 2. Wait for the correct event-driven barrier: reply for reply assertions; processed/durable completion for tool, event, usage, or memory assertions.
 3. Assert the capability promised by that example, not exact prose.
 4. Exercise at least one meaningful interaction; merely keeping the process alive does not pass.
+
+Classify examples by protocol direction before choosing a driver. A family may contain both platform-to-backend clients and protocol-to-platform servers. Drive each through its public ingress with a real compatible client or peer; do not force reverse-direction examples through a platform-message runner that cannot exercise their contract.
 
 Then run grouped scenarios:
 
@@ -176,6 +190,7 @@ Record correlation identifiers without secrets:
 
 - run and example ID
 - immutable agent ID
+- authenticated actor and resource owner at each REST/WebSocket boundary
 - room ID
 - triggering message ID
 - adapter and backend session IDs
@@ -243,6 +258,8 @@ Keep every fault domain open until evidence closes it:
 
 Do not infer that a timeout is a model problem, that a 404 is harmless, that an online process is ready, or that a passing single-agent run proves isolation. Validate each claim at its boundary.
 
+Treat authorization failures as evidence about actor/resource ownership before treating them as missing resources. Re-run the same operation through the documented owner or participant identity. If that control succeeds, distinguish a test-driver actor mistake from a product orchestration defect; the latter exists only when the shipped example's documented identity relationship leads to the failure.
+
 A root cause requires all of the following:
 
 1. A reliable reproducer or captured causal trace.
@@ -295,3 +312,7 @@ Report:
 - residual infrastructure flakiness separated from product defects
 
 Always stop only scoped example processes and services, reap provisioned resources according to repository policy, and verify ports, registrations, sessions, and tasks are clean. Identify unrelated processes explicitly and leave them running.
+
+After cleanup, review the investigation for reusable lessons and update this skill when the run proved a new cross-example invariant or reusable seam. Add only conclusions supported by a controlled reproducer, causal trace, or successful counterfactual. Generalize the invariant, driver rule, assertion, or lifecycle seam; do not append a chronology, environment-specific IDs, temporary commands, unresolved hypotheses, or work-in-progress notes. Revalidate the skill and its bundled tools after every such update.
+
+The final handoff must summarize the completed process: discovery, documented contracts consulted, topologies exercised, capability results, controlled root-cause comparisons, issues or fixes produced, cleanup verification, and any factual skill improvements. Separate confirmed defects from external prerequisites and unvalidated cases.
