@@ -38,7 +38,7 @@ from band.platform.event import (
     ReconnectedEvent,
 )
 
-from .types import (
+from band.runtime.types import (
     ConversationContext,
     PlatformMessage,
     ParticipantAddedCallback,

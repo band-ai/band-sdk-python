@@ -26,7 +26,7 @@ from band.integrations.opencode.types import (
 from band.testing import FakeAgentTools
 
 
-from .helpers import (
+from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     RaisingSendTools,
     _run_single_turn,

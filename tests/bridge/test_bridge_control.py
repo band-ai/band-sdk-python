@@ -20,8 +20,12 @@ import pytest
 
 from band.client.streaming import AgentControlPayload
 
-from .conftest import FakeForwarder
-from .test_bridge import _build_runner, _make_message_event, _make_platform_message
+from tests.bridge.conftest import FakeForwarder
+from tests.bridge.test_bridge import (
+    _build_runner,
+    _make_message_event,
+    _make_platform_message,
+)
 
 pytestmark = pytest.mark.asyncio
 

@@ -13,7 +13,10 @@ from band.core.types import AdapterFeatures
 from band.runtime.custom_tools import CustomToolDef
 from band.testing import FakeAgentTools
 
-from .helpers import FakeOpencodeClient, _make_fake_mcp_backend_factory
+from tests.adapters.opencode.helpers import (
+    FakeOpencodeClient,
+    _make_fake_mcp_backend_factory,
+)
 
 
 @pytest.fixture

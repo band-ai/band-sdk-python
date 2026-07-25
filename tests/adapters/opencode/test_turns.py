@@ -17,7 +17,7 @@ from band.testing import FakeAgentTools
 from tests.adapters.usage_events import recorded_usage_payloads
 
 
-from .helpers import (
+from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
     FakeOpencodeClient,
     MentionEnforcingTools,

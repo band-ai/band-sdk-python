@@ -19,7 +19,7 @@ from band.runtime.tools import CONTACT_TOOL_NAMES, MEMORY_TOOL_NAMES
 from band.testing import FakeAgentTools
 
 
-from .helpers import (
+from tests.adapters.opencode.helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
     _make_fake_mcp_backend_factory,
