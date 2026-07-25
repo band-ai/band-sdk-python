@@ -40,7 +40,7 @@ uv run python .claude/skills/bug-hunting-via-example/scripts/discover.py
 uv run python .claude/skills/bug-hunting-via-example/scripts/discover.py --family copilot_sdk --json
 ```
 
-It reports PEP 723 runnable scripts, config keys, environment inputs, dependencies, and documented commands. Review its output against example documentation; discovery is an inventory aid, not proof that a capability works.
+It parses complete PEP 723 blocks and follows local `BaseSettings` imports to report runnable scripts, config keys, environment inputs, dependencies, and documented commands. Review its output against example documentation; discovery is an inventory aid, not proof that a capability works.
 
 ## 1. Learn the Repository Contract
 
@@ -311,7 +311,7 @@ Report:
 - regression tests added
 - residual infrastructure flakiness separated from product defects
 
-Always stop only scoped example processes and services, reap provisioned resources according to repository policy, and verify ports, registrations, sessions, and tasks are clean. Identify unrelated processes explicitly and leave them running.
+Always stop only scoped example processes and services, reap provisioned resources according to repository policy, and verify ports, registrations, sessions, and tasks are clean. Treat any process or artifact cleanup exception as a failed scenario; never discard it to produce a green scorecard. Identify unrelated processes explicitly and leave them running.
 
 After cleanup, review the investigation for reusable lessons and update this skill when the run proved a new cross-example invariant or reusable seam. Add only conclusions supported by a controlled reproducer, causal trace, or successful counterfactual. Generalize the invariant, driver rule, assertion, or lifecycle seam; do not append a chronology, environment-specific IDs, temporary commands, unresolved hypotheses, or work-in-progress notes. Revalidate the skill and its bundled tools after every such update.
 

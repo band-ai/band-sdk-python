@@ -201,6 +201,33 @@ async def test_group_startup_failure_is_reported_per_example(
 
 
 @pytest.mark.asyncio
+async def test_group_cleanup_failure_is_reported(
+    runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def stop(running: Any) -> None:
+        if running.spec.id == "second":
+            raise RuntimeError("termination failed")
+
+    monkeypatch.setattr(runner, "stop_example", stop)
+    running = {
+        name: SimpleNamespace(spec=SimpleNamespace(id=name))
+        for name in ("first", "second")
+    }
+    results: list[Any] = []
+
+    await runner.stop_examples(running, results)
+
+    assert [result.__dict__ for result in results] == [
+        {
+            "scenario": "cleanup",
+            "example": "second",
+            "status": "fail",
+            "detail": "termination failed",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_process_exit_preserves_private_child_log(runner: ModuleType) -> None:
     class ExitedProcess:
         async def wait(self) -> int:

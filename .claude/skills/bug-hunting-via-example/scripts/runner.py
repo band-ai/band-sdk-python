@@ -758,10 +758,19 @@ async def exercise_collaborations(
             record_result(results, Result("collaboration", label, "fail", str(error)))
 
 
-async def stop_examples(running: dict[str, RunningExample]) -> None:
-    await asyncio.gather(
+async def stop_examples(
+    running: dict[str, RunningExample], results: list[Result]
+) -> None:
+    examples = list(running.values())
+    outcomes = await asyncio.gather(
         *(stop_example(item) for item in running.values()), return_exceptions=True
     )
+    for item, outcome in zip(examples, outcomes, strict=True):
+        if isinstance(outcome, BaseException):
+            record_result(
+                results,
+                Result("cleanup", item.spec.id, "fail", str(outcome)),
+            )
 
 
 async def run_group(
@@ -780,7 +789,7 @@ async def run_group(
             plan.collaborations, running, resources, ws, settings, results
         )
     finally:
-        await stop_examples(running)
+        await stop_examples(running, results)
 
 
 async def run_independent_example(
@@ -800,7 +809,10 @@ async def run_independent_example(
         record_result(results, Result("independent", spec.id, "fail", str(error)))
     finally:
         if running is not None:
-            await stop_example(running)
+            try:
+                await stop_example(running)
+            except Exception as error:
+                record_result(results, Result("cleanup", spec.id, "fail", str(error)))
 
 
 async def run_independent_examples(
