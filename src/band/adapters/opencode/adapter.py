@@ -170,9 +170,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     Maps each Band room to an OpenCode session. Messages from the room
     are forwarded as prompts; SSE events from OpenCode are relayed back as
-    room messages, tool-call/result reports, and error events. Platform
-    tools come from band-mcp, while `additional_tools` are exposed through
-    a separate local MCP server.
+    room messages, tool-call/result reports, and error events. Band platform
+    tools and `additional_tools` are served together by one in-process MCP
+    server, registered with OpenCode over SSE.
 
     Approval lifecycle (``approval_mode``):
       * ``manual`` -- permission prompts are forwarded to the room; the user
@@ -352,8 +352,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self.config.model_id or "default",
             self.config.approval_mode,
             self.config.question_mode,
-            self.config.enable_execution_reporting,
-            self.config.enable_task_events,
+            Emit.EXECUTION in self.features.emit,
+            Emit.TASK_EVENTS in self.features.emit,
             len(self._custom_tools),
         )
 
@@ -913,8 +913,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             # as the success path (best-effort; no-op if none captured).
             await self._emit_turn_usage(room_state, usage_by_message)
         else:
-            await self._deliver_fallback_text(room_state)
-            await self._emit_turn_usage(room_state, usage_by_message)
+            try:
+                await self._deliver_fallback_text(room_state)
+                await self._emit_turn_usage(room_state, usage_by_message)
+            except Exception:
+                logger.exception(
+                    "Failed to deliver the OpenCode turn result for room %s", room_id
+                )
+                await self._report_delivery_failure(room_state)
         finally:
             # Release the on_message waiter even if delivering the reply or
             # emitting usage raised (e.g. a sender-less turn has no one to
@@ -927,6 +933,26 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 expected_task=asyncio.current_task(),
             )
 
+    async def _report_delivery_failure(self, room_state: _RoomState) -> None:
+        """Tell the room the turn finished but its result could not be posted.
+
+        An event needs no mentions, so it still lands when the reply itself was
+        rejected for having none.
+        """
+        if room_state.tools is None:
+            return
+        try:
+            await room_state.tools.send_event(
+                "OpenCode finished the turn but the result could not be posted "
+                "to the room.",
+                "error",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to report the OpenCode delivery failure for room %s",
+                room_state.room_id,
+            )
+
     async def _await_turn(
         self, room_state: _RoomState, turn_future: asyncio.Future[None]
     ) -> None:
@@ -935,21 +961,33 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         A manual permission/question parks the turn on a human reply, which is
         bounded by the ask's own expiry timer -- not by ``turn_timeout_s``. So
-        on a timeout we abort only if nothing is awaiting a human; otherwise we
-        wait the ask out and grant a fresh budget slice for the work that
-        follows the reply. ``shield`` keeps a timed-out slice from cancelling
-        the still-running turn.
+        the deadline is ``turn_timeout_s`` of *compute*: it moves out by however
+        long the turn sat on a human, which is why the budget is recomputed each
+        slice rather than fixed when the watcher started -- an approval that
+        arrives before the deadline still has to leave the resumed work its full
+        budget. ``shield`` keeps a timed-out slice from cancelling the
+        still-running turn.
         """
+        loop = asyncio.get_running_loop()
+        approvals = room_state.approvals
+        started = loop.time()
+
+        def deadline() -> float:
+            return started + self.config.turn_timeout_s + approvals.human_wait_seconds
+
         while True:
             try:
                 await asyncio.wait_for(
-                    asyncio.shield(turn_future), self.config.turn_timeout_s
+                    asyncio.shield(turn_future), max(deadline() - loop.time(), 0.0)
                 )
                 return
             except asyncio.TimeoutError:
-                if not room_state.approvals.awaiting_human():
+                # Genuinely out of compute budget with nobody deliberating.
+                if not approvals.awaiting_human() and deadline() <= loop.time():
                     raise
-                await room_state.approvals.wait_until_idle()
+                # Otherwise wait out any parked ask (a no-op if none) and retry
+                # against the extended deadline.
+                await approvals.wait_until_idle()
 
     def _release_turn_wait(self, room_state: _RoomState) -> None:
         self._resolve_future(room_state.turn_release_future)

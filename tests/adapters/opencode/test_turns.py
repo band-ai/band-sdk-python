@@ -20,9 +20,8 @@ from tests.adapters.usage_events import recorded_usage_payloads
 from tests.adapters.opencode.helpers import (
     AnyHTTPStatusError,
     FakeOpencodeClient,
-    MentionEnforcingTools,
     TaskEventFailingTools,
-    _run_single_turn,
+    run_single_turn,
     event_message_updated,
     event_message_updated_with_tokens,
     event_part_delta,
@@ -435,7 +434,7 @@ async def test_tool_reports_canonicalize_server_prefixed_names(
     ]
     tools = FakeAgentTools()
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     tool_calls = [
         json.loads(e["content"])
@@ -461,7 +460,7 @@ async def test_manual_relay_releases_turn_when_mentionless_send_rejected(
         config=OpencodeAdapterConfig(approval_mode="manual"),
         client_factory=lambda _config: fake_client,
     )
-    tools = MentionEnforcingTools()
+    tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     # No hang: on_message returns once the relay releases the turn wait,
@@ -502,7 +501,7 @@ async def test_turn_completes_when_fallback_reply_send_rejected(
         ],
     )
     adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
-    tools = MentionEnforcingTools()
+    tools = FakeAgentTools()
 
     await adapter.on_started("OpenCode Agent", "A coding agent")
     await asyncio.wait_for(
@@ -551,7 +550,7 @@ async def test_room_posting_tool_reply_suppresses_text_fallback(
     )
     adapter = make_adapter(fake_client)
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     # The tool (not executed by the fake) was the reply; the fallback stays
     # silent, so the adapter posts no message of its own.
@@ -582,7 +581,7 @@ async def test_non_room_posting_tool_does_not_suppress_text(
     )
     adapter = make_adapter(fake_client)
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     assert [m["content"] for m in tools.messages_sent] == ["Ran the command."]
 
@@ -606,7 +605,7 @@ async def test_task_event_post_failure_does_not_drop_the_turn(make_adapter) -> N
     adapter = make_adapter(fake_client)
     tools = TaskEventFailingTools()
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     assert len(fake_client.prompt_calls) == 1
     assert [m["content"] for m in tools.messages_sent] == [
@@ -674,3 +673,74 @@ async def test_manual_approval_pauses_the_turn_timeout(make_adapter, tools) -> N
         lambda: any("Approved and done." in m["content"] for m in tools.messages_sent)
     )
     assert fake_client.aborted_sessions == []
+
+
+async def test_approval_wait_does_not_shorten_the_resumed_turn(
+    make_adapter, tools
+) -> None:
+    """``turn_timeout_s`` bounds compute, not deliberation — including when the
+    human replies *before* the deadline. The work resumed after the approval
+    must get its own full budget instead of whatever the wait left over."""
+
+    class LateFinishClient(FakeOpencodeClient):
+        """Finishes the turn 0.3s after the approval lands."""
+
+        async def reply_permission(
+            self, session_id: str, permission_id: str, *, response: str
+        ) -> None:
+            await super().reply_permission(session_id, permission_id, response=response)
+
+            async def finish() -> None:
+                await asyncio.sleep(0.3)
+                await self.push_event(event_text_part("sess-1", "msg-1", "Done late."))
+                await self.push_event(event_session_idle("sess-1"))
+
+            asyncio.create_task(finish())
+
+    fake_client = LateFinishClient(
+        prompt_event_sequences=[
+            [
+                event_message_updated("sess-1", "msg-1"),
+                event_permission("sess-1", "req-1"),
+            ]
+        ],
+    )
+    # 0.25s of deliberation + 0.3s of work exceeds the 0.4s budget, but only
+    # 0.3s of it is compute.
+    config = OpencodeAdapterConfig(
+        approval_mode="manual",
+        turn_timeout_s=0.4,
+        approval_wait_timeout_s=10.0,
+    )
+    adapter = make_adapter(fake_client, config=config)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(content="run it"),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=True,
+        room_id="room-1",
+    )
+
+    await asyncio.sleep(0.25)
+    await adapter.on_message(
+        make_platform_message(content="approve req-1"),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-1", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+    await wait_for(
+        lambda: any("Done late." in m["content"] for m in tools.messages_sent),
+        timeout_s=2.0,
+    )
+    assert fake_client.aborted_sessions == []
+    assert not any(
+        "timed out" in event["content"].lower() for event in tools.events_sent
+    )

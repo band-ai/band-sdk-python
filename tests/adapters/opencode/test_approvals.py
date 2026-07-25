@@ -29,7 +29,7 @@ from band.testing import FakeAgentTools
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
     RaisingSendTools,
-    _run_single_turn,
+    run_single_turn,
     event_message_updated,
     event_permission,
     event_question,
@@ -155,6 +155,69 @@ async def test_mentioned_permission_reply_is_recognized() -> None:
             "response": "once",
         }
     ]
+
+
+async def test_concurrent_permission_asks_are_both_answerable() -> None:
+    """OpenCode can have several asks outstanding (its own clients keep a
+    per-session list). A second ask must not evict the first, whose tool call
+    would then block server-side until the turn timed out."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-2", permission="edit")
+    )
+
+    assert await approvals.try_handle_reply("approve req-2", "user-1")
+    assert await approvals.try_handle_reply("reject req-1", "user-1")
+    assert [
+        (reply["permission_id"], reply["response"])
+        for reply in client.permission_replies
+    ] == [("req-2", "once"), ("req-1", "reject")]
+    # Both asks resolved, so the turn watcher is no longer parked on a human.
+    assert not approvals.awaiting_human()
+
+
+async def test_unnamed_reply_asks_which_of_several_approvals() -> None:
+    """A bare `approve` cannot pick between two pending asks. Naming them beats
+    both guessing and forwarding the reply to the model as a fresh prompt."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-2", permission="edit")
+    )
+
+    assert await approvals.try_handle_reply("approve", "user-1")
+    assert client.permission_replies == []
+    assert "`req-1`, `req-2`" in tools.messages_sent[-1]["content"]
+    assert approvals.awaiting_human()
+
+
+async def test_one_resolved_ask_keeps_the_other_parked() -> None:
+    """The watcher must stay parked while a second ask still owes a reply,
+    otherwise its human-wait time is charged to the compute budget."""
+    client = FakeOpencodeClient()
+    tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+    approvals = make_room_approvals(cast(OpencodeClientProtocol, client), tools=tools)
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-1", permission="bash")
+    )
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="req-2", permission="edit")
+    )
+
+    assert await approvals.try_handle_reply("approve req-1", "user-1")
+    assert approvals.awaiting_human()
 
 
 async def test_polite_permission_reply_uses_pending_request() -> None:
@@ -849,7 +912,7 @@ async def test_band_tool_permission_auto_approved_in_manual_mode(
     )
     tools = FakeAgentTools()
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     assert fake_client.permission_replies == [
         {
@@ -898,7 +961,7 @@ async def test_band_tool_permission_matches_server_prefixed_custom_tool(
     ]
     tools = FakeAgentTools()
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     assert fake_client.permission_replies == [
         {
@@ -926,7 +989,7 @@ async def test_band_tool_permission_bypasses_auto_decline() -> None:
     )
     tools = FakeAgentTools()
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     assert fake_client.permission_replies == [
         {
@@ -955,7 +1018,7 @@ async def test_doom_loop_permission_auto_accepted_in_auto_accept_mode(
     )
     tools = FakeAgentTools()
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     assert fake_client.permission_replies == [
         {

@@ -15,7 +15,7 @@ from band.testing import FakeAgentTools
 
 from tests.adapters.opencode.helpers import (
     FakeOpencodeClient,
-    _make_fake_mcp_backend_factory,
+    make_fake_mcp_backend_factory,
 )
 
 
@@ -51,6 +51,6 @@ def patch_mcp_backend() -> Any:
     """Patch MCP backend creation for every OpenCode adapter test."""
     with patch(
         "band.adapters.opencode.adapter.create_band_mcp_backend",
-        _make_fake_mcp_backend_factory(),
+        make_fake_mcp_backend_factory(),
     ):
         yield

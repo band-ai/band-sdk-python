@@ -74,7 +74,10 @@ def _coerce_str(value: Any) -> str:
     mismatch. Unlike a non-blocking event (which may degrade to
     ``UnknownOpencodeEvent`` freely), a blocking ask (``permission`` /
     ``question``) that failed to parse would strand the session until the turn
-    timeout, and a lost text ``delta`` corrupts the streamed reply.
+    timeout, and a lost text ``delta`` corrupts the streamed reply. That covers
+    the *identity* fields too (``id``, ``sessionID``, ``partID``): an ask whose
+    id degrades is an ask nothing can reply to, which strands the session just
+    as surely as losing the whole event.
     """
     if value is None:
         return ""
@@ -250,7 +253,9 @@ class OpencodePermissionRequest(OpencodeModel):
         _coerce_str_list
     )
     _coerce_metadata = field_validator("metadata", mode="before")(_coerce_dict)
-    _coerce_permission = field_validator("permission", mode="before")(_coerce_str)
+    _coerce_scalars = field_validator("id", "session_id", "permission", mode="before")(
+        _coerce_str
+    )
     _lenient_tool = field_validator("tool", mode="wrap")(_lenient)
 
 
@@ -266,6 +271,8 @@ class OpencodeQuestionRequest(OpencodeModel):
     id: str | None = None
     session_id: str | None = Field(default=None, alias="sessionID")
     questions: list[OpencodeQuestion] = Field(default_factory=list)
+
+    _coerce_scalars = field_validator("id", "session_id", mode="before")(_coerce_str)
 
     @field_validator("questions", mode="before")
     @classmethod
@@ -314,7 +321,9 @@ class MessagePartDeltaProps(OpencodeModel):
     field: str | None = None
     delta: str = ""
 
-    _coerce_delta = field_validator("delta", mode="before")(_coerce_str)
+    _coerce_scalars = field_validator(
+        "session_id", "message_id", "part_id", "delta", mode="before"
+    )(_coerce_str)
 
 
 class MessagePartDeltaEvent(OpencodeModel):

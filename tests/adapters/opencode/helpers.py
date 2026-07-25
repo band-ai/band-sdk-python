@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from collections.abc import AsyncIterator, Callable
 from typing import Any, TypeAlias, cast
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -211,20 +212,6 @@ def tools_protocol(tools: FakeAgentTools) -> AgentToolsProtocol:
     return cast(AgentToolsProtocol, tools)
 
 
-class MentionEnforcingTools(FakeAgentTools):
-    """FakeAgentTools that enforces the real send_message contract: a message
-    needs at least one mention. FakeAgentTools silently accepts mention-less
-    sends (which once hid a live crash), so a regression test for the
-    sender-less turn must use a boundary that rejects them like production."""
-
-    async def send_message(
-        self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
-    ) -> dict[str, Any]:
-        if not mentions:
-            raise BandToolError("At least one mention is required")
-        return await super().send_message(content, mentions)
-
-
 class RaisingSendTools(FakeAgentTools):
     """FakeAgentTools whose send_message always fails, to exercise the
     best-effort ``_notify_room`` path: a room post that raises must be
@@ -367,7 +354,11 @@ class FakeOpencodeClient:
     async def disconnect_mcp_server(self, name: str) -> None:
         self.disconnected_mcp_servers.append(name)
 
-    async def iter_events(self):
+    async def push_event(self, event: RawOpencodeEvent) -> None:
+        """Inject one SSE event, as the server would mid-turn."""
+        await self._queue.put(event)
+
+    async def iter_events(self) -> AsyncIterator[RawOpencodeEvent]:
         while True:
             event = await self._queue.get()
             if event is None:
@@ -415,7 +406,7 @@ class FakeMCPBackend:
             await self._stop_release.wait()
 
 
-def _make_fake_mcp_backend_factory(
+def make_fake_mcp_backend_factory(
     backend: FakeMCPBackend | None = None,
 ) -> AsyncMock:
     """Return an AsyncMock that produces a FakeMCPBackend."""
@@ -428,7 +419,7 @@ def _make_fake_mcp_backend_factory(
     return mock
 
 
-async def wait_for(predicate, timeout_s: float = 1.0) -> None:
+async def wait_for(predicate: Callable[[], bool], timeout_s: float = 1.0) -> None:
     deadline = asyncio.get_running_loop().time() + timeout_s
     while asyncio.get_running_loop().time() < deadline:
         if predicate():
@@ -437,7 +428,7 @@ async def wait_for(predicate, timeout_s: float = 1.0) -> None:
     pytest.fail("Timed out waiting for condition")
 
 
-async def _run_single_turn(
+async def run_single_turn(
     adapter: OpencodeAdapter,
     tools: FakeAgentTools,
     *,

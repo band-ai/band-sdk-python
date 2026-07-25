@@ -1,5 +1,8 @@
 """Tests for FakeAgentTools testing utility."""
 
+import pytest
+
+from band.core.exceptions import BandToolError
 from band.core.protocols import AgentToolsProtocol
 from band.testing import FakeAgentTools
 
@@ -20,11 +23,29 @@ class TestSendMessage:
         """Should track all sent messages."""
         tools = FakeAgentTools()
 
-        result = await tools.send_message(content="Hello!")
+        result = await tools.send_message(content="Hello!", mentions=["user-1"])
 
         assert len(tools.messages_sent) == 1
         assert tools.messages_sent[0]["content"] == "Hello!"
         assert result["content"] == "Hello!"
+
+    async def test_rejects_a_message_with_no_mentions(self):
+        """The platform requires at least one mention, so the fake must too --
+        otherwise a mention-less send passes every unit test and fails only
+        against the real API."""
+        tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+
+        with pytest.raises(BandToolError, match="At least one mention is required"):
+            await tools.send_message(content="Hello!")
+
+        assert tools.messages_sent == []
+
+    async def test_rejection_lists_the_handles_available_to_retry_with(self):
+        """Same actionable hint the real tool returns, so an LLM can retry."""
+        tools = FakeAgentTools(participants=[{"id": "user-1", "handle": "@alice"}])
+
+        with pytest.raises(BandToolError, match=r"Available handles: \['@alice'\]"):
+            await tools.send_message(content="Hello!")
 
     async def test_tracks_mentions(self):
         """Should track mentions in sent messages."""
@@ -38,8 +59,8 @@ class TestSendMessage:
         """Should generate unique IDs for each message."""
         tools = FakeAgentTools()
 
-        await tools.send_message(content="First")
-        await tools.send_message(content="Second")
+        await tools.send_message(content="First", mentions=["user-1"])
+        await tools.send_message(content="Second", mentions=["user-1"])
 
         assert tools.messages_sent[0]["id"] == "msg-0"
         assert tools.messages_sent[1]["id"] == "msg-1"
@@ -195,7 +216,7 @@ class TestUsageInAdapterTests:
 
         # Simulate adapter behavior
         await tools.send_event(content="Starting...", message_type="thought")
-        await tools.send_message(content="Hello, user!")
+        await tools.send_message(content="Hello, user!", mentions=["user-1"])
         await tools.send_event(content="Done", message_type="thought")
 
         # Assertions

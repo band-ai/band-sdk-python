@@ -22,8 +22,8 @@ from band.testing import FakeAgentTools
 from tests.adapters.opencode.helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
-    _make_fake_mcp_backend_factory,
-    _run_single_turn,
+    make_fake_mcp_backend_factory,
+    run_single_turn,
     event_message_updated,
     event_session_idle,
     event_text_part,
@@ -59,7 +59,7 @@ async def test_mcp_registration_uses_band_agent_id_before_startup() -> None:
 
     with patch(
         "band.adapters.opencode.adapter.create_band_mcp_backend",
-        _make_fake_mcp_backend_factory(fake_backend),
+        make_fake_mcp_backend_factory(fake_backend),
     ):
         await adapter.on_started("Renameable Agent", "")
         await adapter.on_message(
@@ -106,7 +106,7 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
         client_factory=lambda _config: fake_client,
     )
     tools = FakeAgentTools()
-    backend_factory = _make_fake_mcp_backend_factory(fake_backend)
+    backend_factory = make_fake_mcp_backend_factory(fake_backend)
 
     with patch(
         "band.adapters.opencode.adapter.create_band_mcp_backend",
@@ -133,6 +133,27 @@ async def test_registers_shared_mcp_backend_with_additional_tools(
     await adapter.on_cleanup("room-1")
 
 
+async def test_prompt_scopes_tools_to_this_agents_mcp_registration(
+    make_adapter, tools
+) -> None:
+    """Concurrent agents share one `opencode serve`, which keys MCP
+    registrations globally. Every turn therefore denies the shared `band_*`
+    namespace and re-allows only this agent's own registration -- in that order,
+    because OpenCode applies the LAST matching rule."""
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[[event_session_idle("sess-1")]]
+    )
+    adapter = make_adapter(fake_client)
+
+    await run_single_turn(adapter, tools)
+
+    registered = fake_client.registered_mcp_servers[0]["name"]
+    assert list(fake_client.prompt_calls[0]["tools"].items()) == [
+        ("band_*", False),
+        (f"{registered}_*", True),
+    ]
+
+
 async def test_registers_shared_mcp_backend_on_startup() -> None:
     fake_backend = FakeMCPBackend()
     fake_client = FakeOpencodeClient(
@@ -151,7 +172,7 @@ async def test_registers_shared_mcp_backend_on_startup() -> None:
 
     with patch(
         "band.adapters.opencode.adapter.create_band_mcp_backend",
-        _make_fake_mcp_backend_factory(fake_backend),
+        make_fake_mcp_backend_factory(fake_backend),
     ):
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await adapter.on_message(
@@ -416,7 +437,7 @@ async def test_turn_system_prompt_carries_room_context(make_adapter, tools) -> N
     )
     adapter = make_adapter(fake_client)
 
-    await _run_single_turn(adapter, tools)
+    await run_single_turn(adapter, tools)
 
     system = fake_client.prompt_calls[0]["system"]
     assert "Current room_id: room-1" in system

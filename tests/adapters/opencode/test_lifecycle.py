@@ -21,7 +21,7 @@ from tests.adapters.usage_events import recorded_usage_payloads
 from tests.adapters.opencode.helpers import (
     FakeMCPBackend,
     FakeOpencodeClient,
-    _make_fake_mcp_backend_factory,
+    make_fake_mcp_backend_factory,
     event_message_updated,
     event_session_idle,
     event_text_part,
@@ -183,7 +183,7 @@ async def test_cleanup_race_creates_a_fresh_client_for_the_next_room(
 
     with patch(
         "band.adapters.opencode.adapter.create_band_mcp_backend",
-        _make_fake_mcp_backend_factory(fake_backend),
+        make_fake_mcp_backend_factory(fake_backend),
     ):
         await adapter.on_started("OpenCode Agent", "A coding agent")
         await adapter.on_message(

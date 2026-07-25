@@ -294,6 +294,47 @@ class TestDegradation:
         assert isinstance(question, QuestionAskedEvent)
         assert [q.question for q in question.properties.questions] == ["5"]
 
+    def test_blocking_ask_survives_non_string_identity(self) -> None:
+        """The identity fields matter most: an ask whose ``id``/``sessionID``
+        degraded is one nothing can route or reply to, so the session stalls to
+        the turn timeout exactly as if the event had been dropped."""
+        permission = parse_opencode_event(
+            {
+                "type": "permission.asked",
+                "properties": {"id": 5, "sessionID": 7, "permission": "bash"},
+            }
+        )
+        assert isinstance(permission, PermissionAskedEvent)
+        assert (permission.properties.id, permission.session_id) == ("5", "7")
+
+        question = parse_opencode_event(
+            {
+                "type": "question.asked",
+                "properties": {"id": 9, "sessionID": 3, "questions": []},
+            }
+        )
+        assert isinstance(question, QuestionAskedEvent)
+        assert (question.properties.id, question.session_id) == ("9", "3")
+
+    def test_text_delta_survives_non_string_identity(self) -> None:
+        """Same reasoning for a delta: without its part id the fragment cannot
+        be appended to the right run, so the streamed reply is corrupted."""
+        event = parse_opencode_event(
+            {
+                "type": "message.part.delta",
+                "properties": {
+                    "sessionID": 1,
+                    "messageID": 2,
+                    "partID": 3,
+                    "field": "text",
+                    "delta": "hi",
+                },
+            }
+        )
+        assert isinstance(event, MessagePartDeltaEvent)
+        props = event.properties
+        assert (props.session_id, props.message_id, props.part_id) == ("1", "2", "3")
+
     def test_text_delta_coerces_non_string(self) -> None:
         """A null or non-string delta coerces rather than dropping the whole
         streaming fragment (the old raw-dict path did ``str(delta or "")``)."""

@@ -239,6 +239,11 @@ class HttpOpencodeClient(OpencodeClientProtocol):
 
             async for line in response.aiter_lines():
                 if line == "":
+                    # Commit the id on dispatch, before yielding: the SSE spec
+                    # sets the last-event-id buffer from the field itself, not
+                    # from whether the consumer handled the event. So a
+                    # reconnect resumes after this event even if handling it
+                    # raised -- replaying it forever would be worse.
                     if event_id_seen:
                         self._last_event_id = event_id or None
                     if data_lines:

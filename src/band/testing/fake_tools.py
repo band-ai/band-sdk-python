@@ -5,7 +5,12 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from band.runtime.tools import ToolCallOutcome
+from band.core.exceptions import BandToolError
+from band.runtime.tools import (
+    ToolCallOutcome,
+    append_mention_handles_hint,
+    available_mention_handles,
+)
 
 
 class FakeAgentTools:
@@ -63,6 +68,22 @@ class FakeAgentTools:
     async def send_message(
         self, content: str, mentions: list[str] | list[dict[str, str]] | None = None
     ) -> dict[str, Any]:
+        """Record a sent message, enforcing the platform's mention requirement.
+
+        The API rejects a mention-less message, so ``AgentTools.send_message``
+        raises before any request. A fake that accepts one lets that bug pass
+        every unit test and surface only in production — which it did. Handle
+        *resolution* is deliberately not mirrored: a fake that dropped
+        unresolvable handles would force every test to configure a participant
+        roster, and it is emptiness the platform rejects universally.
+        """
+        if not (mentions or []):
+            raise BandToolError(
+                append_mention_handles_hint(
+                    "At least one mention is required",
+                    available_mention_handles(self._participants),
+                )
+            )
         msg = {
             "id": f"msg-{len(self.messages_sent)}",
             "content": content,
