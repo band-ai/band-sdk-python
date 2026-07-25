@@ -371,8 +371,15 @@ tests/
 ├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
 │   └── baseline/   # The only E2E suite: reusable toolkit + smokes (see baseline/README.md)
+├── skills/         # Tests for .claude/skills scripts (paths via tests/paths.py anchors)
 └── conftest.py     # Shared fixtures
 ```
+
+`testpaths = ["tests"]`, so **every** test lives here — including tests for code
+outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->
+`tests/docker`, `.claude/skills` -> `tests/skills`). A `test_*.py` placed next to
+non-package code is never collected by CI's bare `uv run pytest`; address the code
+under test through an anchor in `tests/paths.py` instead.
 
 Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
 — it documents the reusable baseline toolkit (provisioning, user ops, reply

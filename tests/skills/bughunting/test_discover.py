@@ -1,22 +1,10 @@
+"""Tests for the bug-hunting skill's example inventory script."""
+
 from __future__ import annotations
 
-import importlib.util
-import sys
-from pathlib import Path
 from types import ModuleType
 
-import pytest
-
-
-@pytest.fixture
-def discovery() -> ModuleType:
-    path = Path(__file__).with_name("discover.py")
-    spec = importlib.util.spec_from_file_location("bug_hunting_discovery", path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+from tests.paths import REPO_ROOT
 
 
 def test_multiline_pep723_dependencies(discovery: ModuleType) -> None:
@@ -35,16 +23,15 @@ def test_multiline_pep723_dependencies(discovery: ModuleType) -> None:
 
 
 def test_repository_multiline_examples_are_discovered(discovery: ModuleType) -> None:
-    repo = Path(__file__).resolve().parents[4]
-    paths = {item.path for item in discovery.discover(repo, "examples", None)}
+    paths = {item.path for item in discovery.discover(REPO_ROOT, "examples", None)}
     assert "examples/agentcore/agentcore_llm_server.py" in paths
     assert "examples/run_agent.py" in paths
 
 
 def test_imported_settings_are_reported(discovery: ModuleType) -> None:
-    repo = Path(__file__).resolve().parents[4]
     examples = {
-        item.path: item for item in discovery.discover(repo, "examples", "opencode")
+        item.path: item
+        for item in discovery.discover(REPO_ROOT, "examples", "opencode")
     }
     basic = examples["examples/opencode/01_basic_agent.py"]
     assert basic.config_keys == ("darter",)
