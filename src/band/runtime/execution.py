@@ -1124,8 +1124,9 @@ class ExecutionContext:
         )
 
         try:
-            # Recover messages stuck in 'processing' state from a previous crash.
-            # The /next endpoint skips these, so we must handle them explicitly.
+            # Recover messages stuck in 'processing' from a previous crash. /next
+            # returns these too (it excludes only 'processed'); this sweep just
+            # drains all of them up front instead of one-per-/next-poll.
             if not await self._recover_stale_processing_messages():
                 return False
             while True:  # Cancellation handles exit
@@ -1687,7 +1688,8 @@ class ExecutionContext:
         # (Chat.get_next_actionable_message) excluding ONLY 'processed' — a
         # 'processing' message must still be returned. If the platform ever also
         # excludes 'processing', stopped messages are silently dropped on play.
-        # Covered by the stop->play replay test.
+        # Guarded live by the /next-actionable-semantics baseline E2E; the unit
+        # replay test mocks /next and so cannot cover this cross-system half.
         logger.info(
             "ExecutionContext %s: cycle %s (message %s) — nothing sent",
             self.room_id,

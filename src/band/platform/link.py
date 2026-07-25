@@ -526,7 +526,9 @@ class BandLink:
         """
         Mark message as being processed on the server.
 
-        Tells the server this message is being handled, so /next won't return it.
+        This does NOT remove it from /next: the actionable set excludes only
+        'processed', so a crashed or stopped attempt stays replayable. Only
+        mark_processed clears the message from /next.
         """
         logger.debug("Marking message %s as processing", message_id)
         try:
