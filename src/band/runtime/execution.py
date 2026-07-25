@@ -1207,9 +1207,9 @@ class ExecutionContext:
         Recover messages stuck in 'processing' state from a previous crash.
 
         When an agent crashes mid-processing, the message stays in 'processing'
-        state on the server. The /next endpoint skips these messages, so the
-        agent would never pick them up again. This method finds such messages
-        and re-processes them by calling mark_processing (creates a new attempt).
+        state on the server. The /next endpoint returns these messages one at a
+        time, while this sweep finds and re-processes all of them up front by
+        calling mark_processing (creates a new attempt).
 
         Skipped while stopped: the stop path deliberately leaves the interrupted
         message in 'processing', and a reconnect must not resurrect it through
@@ -1626,6 +1626,10 @@ class ExecutionContext:
         self._active_cycle_task = asyncio.create_task(self._invoke_handler(event))
         try:
             await self._active_cycle_task
+            # A handler may suppress CancelledError and return normally. In
+            # that case the control signal was consumed by this cycle and must
+            # not misclassify a later shutdown cancellation as an interrupt.
+            self._interrupt_kind = None
             return True
         except asyncio.CancelledError:
             # Read-and-clear is atomic here (no await between the two lines).

@@ -487,7 +487,7 @@ async def test_iter_events_applies_id_only_frame(
         await client.close()
 
 
-async def test_event_stream_has_connect_timeout_but_no_read_timeout() -> None:
+async def test_event_stream_has_connect_and_liveness_timeouts() -> None:
     seen_timeout: dict[str, float | None] = {}
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -503,7 +503,7 @@ async def test_event_stream_has_connect_timeout_but_no_read_timeout() -> None:
             pass
 
         assert seen_timeout["connect"] == 30.0
-        assert seen_timeout["read"] is None
+        assert seen_timeout["read"] == 60.0
     finally:
         await client.close()
 

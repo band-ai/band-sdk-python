@@ -338,6 +338,37 @@ async def test_two_rooms_active_concurrently(tools) -> None:
     assert fake_client.disconnected_mcp_servers == [adapter._mcp_server_name]
 
 
+async def test_concurrent_room_start_waits_for_mcp_registration() -> None:
+    """Every room start waits for the shared client's MCP startup barrier."""
+
+    class SlowRegistrationClient(FakeOpencodeClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.registration_started = asyncio.Event()
+            self.release_registration = asyncio.Event()
+
+        async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]:
+            self.registration_started.set()
+            await self.release_registration.wait()
+            return await super().register_mcp_server(name=name, url=url)
+
+    fake_client = SlowRegistrationClient()
+    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+
+    first = asyncio.create_task(adapter._ensure_client_started())
+    await fake_client.registration_started.wait()
+    second = asyncio.create_task(adapter._ensure_client_started())
+    await asyncio.sleep(0)
+
+    assert not second.done()
+
+    fake_client.release_registration.set()
+    await asyncio.gather(first, second)
+
+    assert len(fake_client.registered_mcp_servers) == 1
+    await adapter._shutdown_client()
+
+
 async def test_shutdown_rechecks_for_room_arriving_after_cleanup_decision(
     tools,
 ) -> None:

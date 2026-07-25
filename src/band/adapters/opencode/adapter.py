@@ -580,9 +580,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 self._client = self._client_factory(self.config)
             if self._event_task is None or self._event_task.done():
                 self._event_task = asyncio.create_task(self._run_event_loop())
-
-        if was_new:
-            await self._register_mcp_backend()
+            if was_new:
+                # Registration is part of client startup. Keep concurrent room
+                # starts behind the same barrier so no first turn can run before
+                # this client's Band tools are visible to OpenCode.
+                await self._register_mcp_backend()
 
     async def _ensure_mcp_backend(self) -> BandMCPBackend:
         """Create the shared Band MCP backend (LocalMCPServer with SSE)."""

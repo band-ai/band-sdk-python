@@ -11,6 +11,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_EVENT_READ_TIMEOUT_S = 60.0
+
 
 class OpencodeClientProtocol(Protocol):
     """Interface used by the adapter for OpenCode transport calls."""
@@ -222,7 +224,11 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             "/event",
             params=self._query_params(),
             headers=headers,
-            timeout=httpx.Timeout(None, connect=self._client.timeout.connect),
+            timeout=httpx.Timeout(
+                None,
+                connect=self._client.timeout.connect,
+                read=_EVENT_READ_TIMEOUT_S,
+            ),
         ) as response:
             response.raise_for_status()
 
