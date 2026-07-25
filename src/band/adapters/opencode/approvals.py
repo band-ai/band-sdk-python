@@ -281,20 +281,18 @@ class RoomApprovals:
         approval = parse_permission_reply(command)
         if approval and self._permissions:
             pending = self._resolve_permission(approval.request_id)
-            if pending is None:
-                if approval.request_id is None:
-                    # Ambiguous rather than unknown: name the ask instead of
-                    # forwarding the reply to the model as a prompt.
-                    await self._notify_room(self._which_permission_hint(), mentions)
-                    return True
-            elif await self._reply_permission(pending, approval.reply):
-                await self._notify_room(
-                    f"OpenCode approval `{pending.request_id}` handled with "
-                    f"`{approval.reply}`.",
-                    mentions,
-                )
+            if pending is None and approval.request_id is None:
+                # Ambiguous rather than unknown: name the asks instead of
+                # forwarding the reply to the model as a fresh prompt.
+                await self._notify_room(self._which_permission_hint(), mentions)
                 return True
-            else:
+            if pending is not None:
+                if await self._reply_permission(pending, approval.reply):
+                    await self._notify_room(
+                        f"OpenCode approval `{pending.request_id}` handled with "
+                        f"`{approval.reply}`.",
+                        mentions,
+                    )
                 return True
 
         question = self._resolve_question(command)
