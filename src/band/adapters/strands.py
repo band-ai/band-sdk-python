@@ -81,14 +81,38 @@ def _result_text(result: ToolResult) -> str:
     """Flatten a ToolResult's content blocks to text for error detection/reporting."""
     parts: list[str] = []
     for block in result.get("content", []):
-        if "text" in block:
-            parts.append(block["text"])
-        elif "json" in block:
-            try:
-                parts.append(json.dumps(block["json"]))
-            except (TypeError, ValueError):
-                parts.append(str(block["json"]))
+        match block:
+            case {"text": text}:
+                parts.append(text)
+            case {"json": value}:
+                try:
+                    parts.append(json.dumps(value))
+                except (TypeError, ValueError):
+                    parts.append(str(value))
     return "\n".join(parts)
+
+
+def _build_custom_tools(
+    additional_tools: list[Callable[..., Any] | CustomToolDef] | None,
+) -> tuple[list[Any], frozenset[str]]:
+    """Convert portable tools and collect the custom terminal actions."""
+    converted = [
+        _CustomToolBridge(tool_def) if isinstance(tool_def, tuple) else tool_def
+        for tool_def in additional_tools or []
+    ]
+    terminal_names = {
+        tool.tool_name
+        if isinstance(tool, AgentTool)
+        else getattr(tool, "__name__", str(tool))
+        for raw, tool in zip(additional_tools or [], converted)
+        if is_marked_terminal(raw[1] if isinstance(raw, tuple) else raw)
+    }
+    return converted, frozenset(terminal_names)
+
+
+def _as_strands_tool(name: str, fn: Callable[..., Any]) -> Any:
+    """Wrap a Band tool with its canonical description and Strands context."""
+    return tool(description=get_tool_description(name), context=True)(fn)
 
 
 class _CustomToolBridge(AgentTool):
@@ -283,27 +307,9 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         # cross-turn persistence.
         self._message_history: dict[str, StrandsMessages] = {}
 
-        # Custom tools: accept native Strands forms and the portable CustomToolDef
-        # (InputModel, handler) tuple the other adapters take — tuples are bridged
-        # to native Strands AgentTools; callables pass through unchanged.
-        self._custom_tools: list[Any] = [
-            _CustomToolBridge(t) if isinstance(t, tuple) else t
-            for t in (additional_tools or [])
-        ]
-        # Custom tools that opt in as terminal actions (band_terminal=True on the
-        # handler/function). Only these let a turn with no Band-tool action count
-        # as productive; an undeclared custom tool does not (fail-loud — see
-        # is_terminal_success).
-        terminal_names: set[str] = set()
-        for raw, converted in zip(additional_tools or [], self._custom_tools):
-            handler = raw[1] if isinstance(raw, tuple) else raw
-            if is_marked_terminal(handler):
-                terminal_names.add(
-                    converted.tool_name
-                    if isinstance(converted, AgentTool)
-                    else getattr(converted, "__name__", str(converted))
-                )
-        self._custom_terminal_names: frozenset[str] = frozenset(terminal_names)
+        self._custom_tools, self._custom_terminal_names = _build_custom_tools(
+            additional_tools
+        )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         """Render the system prompt and build the tool set after metadata is fetched."""
@@ -346,9 +352,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         exceptions and return "Error ..." strings so the LLM can see failures
         (and so terminal detection can tell a failed Band tool from a success).
         """
-
-        def band(name: str, fn: Callable[..., Any]) -> Any:
-            return tool(description=get_tool_description(name), context=True)(fn)
 
         async def band_send_message(
             content: str,
@@ -426,13 +429,13 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
                 return f"Error creating chatroom (task_id={task_id}): {e}"
 
         strands_tools = [
-            band("band_send_message", band_send_message),
-            band("band_send_event", band_send_event),
-            band("band_add_participant", band_add_participant),
-            band("band_remove_participant", band_remove_participant),
-            band("band_lookup_peers", band_lookup_peers),
-            band("band_get_participants", band_get_participants),
-            band("band_create_chatroom", band_create_chatroom),
+            _as_strands_tool("band_send_message", band_send_message),
+            _as_strands_tool("band_send_event", band_send_event),
+            _as_strands_tool("band_add_participant", band_add_participant),
+            _as_strands_tool("band_remove_participant", band_remove_participant),
+            _as_strands_tool("band_lookup_peers", band_lookup_peers),
+            _as_strands_tool("band_get_participants", band_get_participants),
+            _as_strands_tool("band_create_chatroom", band_create_chatroom),
         ]
 
         # Contact management tools (opt-in via Capability.CONTACTS)
@@ -509,11 +512,15 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
 
             strands_tools.extend(
                 [
-                    band("band_list_contacts", band_list_contacts),
-                    band("band_add_contact", band_add_contact),
-                    band("band_remove_contact", band_remove_contact),
-                    band("band_list_contact_requests", band_list_contact_requests),
-                    band("band_respond_contact_request", band_respond_contact_request),
+                    _as_strands_tool("band_list_contacts", band_list_contacts),
+                    _as_strands_tool("band_add_contact", band_add_contact),
+                    _as_strands_tool("band_remove_contact", band_remove_contact),
+                    _as_strands_tool(
+                        "band_list_contact_requests", band_list_contact_requests
+                    ),
+                    _as_strands_tool(
+                        "band_respond_contact_request", band_respond_contact_request
+                    ),
                 ]
             )
 
@@ -603,15 +610,46 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
 
             strands_tools.extend(
                 [
-                    band("band_list_memories", band_list_memories),
-                    band("band_store_memory", band_store_memory),
-                    band("band_get_memory", band_get_memory),
-                    band("band_supersede_memory", band_supersede_memory),
-                    band("band_archive_memory", band_archive_memory),
+                    _as_strands_tool("band_list_memories", band_list_memories),
+                    _as_strands_tool("band_store_memory", band_store_memory),
+                    _as_strands_tool("band_get_memory", band_get_memory),
+                    _as_strands_tool("band_supersede_memory", band_supersede_memory),
+                    _as_strands_tool("band_archive_memory", band_archive_memory),
                 ]
             )
 
         return strands_tools
+
+    def _history_for_turn(
+        self,
+        room_id: str,
+        history: StrandsMessages,
+        *,
+        is_session_bootstrap: bool,
+    ) -> StrandsMessages:
+        """Return the room history, rehydrating it once when a session starts."""
+        if is_session_bootstrap:
+            self._message_history[room_id] = list(history)
+            if history:
+                logger.debug(
+                    "Room %s: rehydrated %s message(s) from platform history",
+                    room_id,
+                    len(history),
+                )
+        return self._message_history.setdefault(room_id, [])
+
+    @staticmethod
+    def _append_system_context(
+        history: StrandsMessages,
+        participants_msg: str | None,
+        contacts_msg: str | None,
+    ) -> None:
+        """Append platform context that changed since the prior turn."""
+        for message in (participants_msg, contacts_msg):
+            if message:
+                history.append(
+                    {"role": "user", "content": [{"text": f"[System]: {message}"}]}
+                )
 
     async def on_message(
         self,
@@ -629,35 +667,10 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             # Safety: build tools if not yet built (should be done in on_started)
             self._strands_tools = self._build_platform_tools() + self._custom_tools
 
-        # Initialize message history for this room on first message
-        # Note: history is already converted by SimpleAdapter via history_converter
-        if is_session_bootstrap:
-            if history:
-                self._message_history[room_id] = list(history)
-                logger.debug(
-                    "Room %s: rehydrated %s message(s) from platform history",
-                    room_id,
-                    len(history),
-                )
-            else:
-                self._message_history[room_id] = []
-        elif room_id not in self._message_history:
-            # Safety: ensure history exists even if not first message
-            self._message_history[room_id] = []
-
-        # Inject participants message if changed
-        if participants_msg:
-            self._message_history[room_id].append(
-                {"role": "user", "content": [{"text": f"[System]: {participants_msg}"}]}
-            )
-            logger.debug("Room %s: Injected participant update into history", room_id)
-
-        # Inject contacts message if present
-        if contacts_msg:
-            self._message_history[room_id].append(
-                {"role": "user", "content": [{"text": f"[System]: {contacts_msg}"}]}
-            )
-            logger.debug("Room %s: Injected contacts broadcast into history", room_id)
+        room_history = self._history_for_turn(
+            room_id, history, is_session_bootstrap=is_session_bootstrap
+        )
+        self._append_system_context(room_history, participants_msg, contacts_msg)
 
         # Build user message with sender prefix
         user_message = msg.format_for_llm()
@@ -665,7 +678,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         logger.debug(
             "Room %s: Running Strands agent (history: %s msgs, prompt: %s...)",
             room_id,
-            len(self._message_history[room_id]),
+            len(room_history),
             user_message[:80],
         )
 
@@ -674,7 +687,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             emit_execution=Emit.EXECUTION in self.features.emit,
             custom_terminal_names=self._custom_terminal_names,
         )
-        agent = self._build_agent(self._message_history[room_id], turn_hooks)
+        agent = self._build_agent(room_history, turn_hooks)
         try:
             await agent.invoke_async(
                 user_message,
