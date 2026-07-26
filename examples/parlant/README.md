@@ -30,6 +30,9 @@ uv sync --extra parlant
 
 The adapter uses the Parlant SDK directly - no separate HTTP server needed:
 
+> Running more than one Parlant agent on this machine? Pass reserved ports instead of
+> Parlant's fixed defaults — see [Running two agents locally](#running-two-agents-locally-tom-and-jerry).
+
 ```python
 import parlant.sdk as p
 from band import Agent

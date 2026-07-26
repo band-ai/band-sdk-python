@@ -5,7 +5,8 @@ This module provides the integration with the official Parlant SDK
 (https://github.com/emcie-co/parlant) for building guideline-based
 conversational AI agents.
 
-Usage:
+Usage (to run several agents on one host, pass ``reserve_server_ports()`` to
+``p.Server`` instead of letting it take its fixed default ports):
     import parlant.sdk as p
     from band import Agent
     from band.adapters import ParlantAdapter

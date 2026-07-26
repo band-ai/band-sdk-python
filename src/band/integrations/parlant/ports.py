@@ -39,7 +39,11 @@ class ServerPorts(NamedTuple):
 
 
 def reserve_server_ports() -> ServerPorts:
-    """Reserve two distinct loopback ports and log them.
+    """Reserve two distinct ports and log them.
+
+    Bound on all interfaces rather than on the loopback address Parlant will use:
+    an ``INADDR_ANY`` reservation is the stricter of the two, so it can never hand
+    back a port that some other process already holds on ``127.0.0.1``.
 
     Logged so that a refused connection or a stuck listener can be traced back to a
     known pair — with the ports varying per run, there is otherwise nothing to match
