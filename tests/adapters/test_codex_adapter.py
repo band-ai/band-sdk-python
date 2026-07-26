@@ -6830,6 +6830,9 @@ class TestSlashCommandExtraction:
             # Unresolved mentions stay in the platform's normalized @[[uuid]] form.
             ("@[[3029eb1d-d998-4567-bdf3-d82fc6b89a58]] /approvals", ("approvals", "")),
             ("@team/bot /approve", ("approve", "")),
+            # Any whitespace separates a command from its argument, not just " ".
+            ("@team/bot /approve\treq-1", ("approve", "req-1")),
+            ("/approve\nreq-1", ("approve", "req-1")),
         ],
     )
     def test_command_behind_the_mention_block_is_recognised(

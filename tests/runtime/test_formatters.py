@@ -282,8 +282,10 @@ class TestStripLeadingMentions:
         )
 
     def test_strips_the_platform_block_ahead_of_a_typed_handle(self):
-        # The platform prepends its own token even when the client already typed
-        # the handle, so a delivered message carries both.
+        # Typing "@handle" is not the normalized form, so the platform still
+        # prepends its own @[[uuid]] and the message carries both tokens. (It
+        # skips the prepend only when the content already leads with the
+        # @[[uuid]] itself -- the case the test above covers.)
         assert (
             strip_leading_mentions("@[[uuid-1]] @owner/support-b /approve req-1")
             == "/approve req-1"

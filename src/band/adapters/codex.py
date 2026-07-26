@@ -3115,11 +3115,13 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         stripped = strip_leading_mentions(content).lstrip()
         if not stripped.startswith("/"):
             return None
-        head, _, args = stripped.removeprefix("/").partition(" ")
-        command = head.lower()
+        # Split on any whitespace, so a tab- or newline-separated argument still
+        # reaches the command it belongs to.
+        parts = stripped.removeprefix("/").split(maxsplit=1)
+        command = parts[0].lower() if parts else ""
         if command not in _LOCAL_COMMANDS:
             return None
-        return command, args.strip()
+        return command, parts[1].strip() if len(parts) > 1 else ""
 
     @staticmethod
     def _approval_token(request_id: int | str, params: dict[str, Any]) -> str:
