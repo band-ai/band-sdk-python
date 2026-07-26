@@ -322,9 +322,8 @@ def _build_crewai_config() -> AdapterConfig:
 def _get_crewai_flow_adapter_cls() -> type:
     """The CrewAIFlowAdapter class for the conformance config.
 
-    Plain import, as for ``_get_crewai_adapter_cls``. The module-level
-    ``from crewai.flow.flow import Flow`` is already guarded by try/except, so it
-    binds ``Flow = None`` when crewai is absent.
+    Plain import, as for ``_get_crewai_adapter_cls``. The adapter no longer
+    imports ``Flow`` at module scope, so this remains safe when crewai is absent.
     """
     from band.adapters.crewai_flow import CrewAIFlowAdapter
 

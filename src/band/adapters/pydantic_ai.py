@@ -150,9 +150,11 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
 def _takes_run_context(fn: Callable[..., Any]) -> bool:
     """Whether ``fn`` takes pydantic-ai's ``RunContext`` as its first parameter.
 
-    Decides the registration path: ``agent.tool`` requires a RunContext-first
-    callable and raises ``UserError`` for anything else, while ``agent.tool_plain``
-    takes context-free ones — the shape ``_custom_tool_def_to_callable`` produces.
+    Decides the registration path: ``agent.tool`` handles RunContext-first
+    callables, while ``agent.tool_plain`` handles context-free ones — the shape
+    ``_custom_tool_def_to_callable`` produces. pydantic-ai injects an unannotated
+    first parameter as context; a non-RunContext annotation is invalid on the
+    former path.
     Annotations are resolved, so a caller using ``from __future__ import
     annotations`` is classified on the real type rather than the string.
     """
@@ -163,6 +165,8 @@ def _takes_run_context(fn: Callable[..., Any]) -> bool:
         annotation = get_type_hints(fn).get(first)
     except (NameError, TypeError):  # unresolvable annotation: treat as plain
         return False
+    if annotation is None:
+        return True
     return annotation is RunContext or get_origin(annotation) is RunContext
 
 

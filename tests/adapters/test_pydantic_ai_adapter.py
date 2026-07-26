@@ -336,6 +336,28 @@ class TestInitialization:
         }
         assert get_custom_tool_name(Echo) in registered
 
+    def test_create_agent_registers_unannotated_context_custom_tool(self):
+        """pydantic-ai injects an unannotated first parameter as context."""
+
+        def echo(ctx, message: str) -> str:
+            return message
+
+        adapter = PydanticAIAdapter(
+            model=TestModel(),  # type: ignore[arg-type]  # real Agent, no network
+            additional_tools=[echo],
+        )
+        adapter.agent_name = "TestBot"
+
+        agent = adapter._create_agent()
+        echo_tool = next(
+            tool
+            for toolset in agent.toolsets
+            for tool in getattr(toolset, "tools", {}).values()
+            if tool.name == "echo"
+        )
+
+        assert echo_tool.function_schema.json_schema["required"] == ["message"]
+
     async def test_unsatisfiable_output_never_reruns_a_side_effecting_tool(self):
         """One turn must post to the room exactly once, however the run ends.
 
