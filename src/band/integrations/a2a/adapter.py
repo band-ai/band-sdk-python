@@ -23,7 +23,10 @@ from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.integrations.a2a.protocol import (
     TERMINAL_TASK_STATES,
+    apply_task_stream_event,
     state_name,
+    task_id_from_stream_event,
+    task_response_text,
     text_from_message,
     text_message,
 )
@@ -178,26 +181,14 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
                 )
             return
 
-        if event.HasField("task"):
-            task = event.task
-            self._task_cache[(room_id, task.id)] = Task()
-            self._task_cache[(room_id, task.id)].CopyFrom(task)
-        elif event.HasField("status_update"):
-            update = event.status_update
-            task = self._task_cache.setdefault(
-                (room_id, update.task_id),
-                Task(id=update.task_id, context_id=update.context_id),
-            )
-            task.status.CopyFrom(update.status)
-        elif event.HasField("artifact_update"):
-            update = event.artifact_update
-            task = self._task_cache.setdefault(
-                (room_id, update.task_id),
-                Task(id=update.task_id, context_id=update.context_id),
-            )
-            task.artifacts.add().CopyFrom(update.artifact)
-        else:
+        task_id = task_id_from_stream_event(event)
+        if task_id is None:
             return
+        key = (room_id, task_id)
+        task = apply_task_stream_event(self._task_cache.get(key), event)
+        if task is None:
+            return
+        self._task_cache[(room_id, task.id)] = task
 
         key = (room_id, task.id)
 
@@ -297,28 +288,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         2. Status message
         3. Last agent message in history
         """
-        # First: check artifacts
-        if task.artifacts:
-            for artifact in task.artifacts:
-                for part in artifact.parts:
-                    if part.text:
-                        return part.text
-
-        # Fallback: check status message
-        if task.status.message:
-            text = text_from_message(task.status.message)
-            if text:
-                return text
-
-        # Last resort: check history for last agent message
-        if task.history:
-            for msg in reversed(task.history):
-                if msg.role == Role.ROLE_AGENT:
-                    text = text_from_message(msg)
-                    if text:
-                        return text
-
-        return ""
+        return task_response_text(task)
 
     async def on_cleanup(self, room_id: str) -> None:
         """Clean up A2A context for room."""

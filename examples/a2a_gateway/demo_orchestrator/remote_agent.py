@@ -9,7 +9,11 @@ import httpx
 from a2a.client import ClientConfig, ClientFactory
 from a2a.types import Message, Part, Role, SendMessageRequest, Task
 
-from band.integrations.a2a.protocol import text_from_message
+from band.integrations.a2a.protocol import (
+    apply_task_stream_event,
+    task_response_text,
+    text_from_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,39 +81,12 @@ class GatewayClient:
             async for event in client.send_message(request):
                 if event.HasField("message"):
                     return text_from_message(event.message)
-                if event.HasField("task"):
-                    task = Task()
-                    task.CopyFrom(event.task)
-                elif event.HasField("status_update"):
-                    if task is None:
-                        task = Task(
-                            id=event.status_update.task_id,
-                            context_id=event.status_update.context_id,
-                        )
-                    task.status.CopyFrom(event.status_update.status)
-                elif event.HasField("artifact_update"):
-                    if task is None:
-                        task = Task(
-                            id=event.artifact_update.task_id,
-                            context_id=event.artifact_update.context_id,
-                        )
-                    task.artifacts.add().CopyFrom(event.artifact_update.artifact)
-            return self._extract_response(task) if task else "No response from peer"
+                task = apply_task_stream_event(task, event) or task
+            return task_response_text(task) or "No response from peer"
         except Exception as exc:
             error_msg = f"Failed to call peer '{peer_id}': {exc}"
             logger.error(error_msg)
             raise RuntimeError(error_msg) from exc
-
-    def _extract_response(self, task: Task) -> str:
-        for artifact in task.artifacts:
-            text = "\n".join(part.text for part in artifact.parts if part.text)
-            if text:
-                return text
-        if task.status.message:
-            text = text_from_message(task.status.message)
-            if text:
-                return text
-        return "No response from peer"
 
     async def __aenter__(self) -> GatewayClient:
         return self
