@@ -20,7 +20,6 @@ from .parsing import parse_tool_call, parse_tool_result
 
 logger = logging.getLogger(__name__)
 
-# Type alias for Strands conversation history (Bedrock-Converse-shaped messages)
 StrandsMessages = list[Message]
 
 
@@ -48,23 +47,7 @@ def _flush_pending_tool_results(
 
 
 class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
-    """
-    Converts platform history to Strands (Bedrock Converse) message format.
-
-    Output:
-    - user messages → {"role": "user", "content": [{"text": ...}]}
-    - other agents' messages → user role with [name] prefix
-    - tool_call → assistant message with a toolUse content block
-    - tool_result → user message with a toolResult content block
-      (status "error" when is_error=True)
-    - this agent's text messages → {"role": "assistant", "content": [{"text": ...}]}
-      (dropped when emitted mid tool call, where it would split the toolUse
-      from its toolResult)
-
-    Tool events are stored in platform as JSON:
-    - tool_call: {"name": "...", "args": {...}, "tool_call_id": "..."}
-    - tool_result: {"name": "...", "output": "...", "tool_call_id": "...", "is_error": bool}
-    """
+    """Convert Band history to Strands Converse messages."""
 
     def __init__(self, agent_name: str = ""):
         """

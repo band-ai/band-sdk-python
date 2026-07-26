@@ -1,22 +1,4 @@
-"""Capability-filtered matrix smokes — demonstrate ``@per_adapter`` filtering.
-
-Three complementary scenarios driven entirely by capability filters, with no
-hard-coded adapter lists:
-
-* ``supports={Capability.MEMORY}`` selects the memory-capable adapters and runs a
-  store-then-read-back memory scenario (``features=memory_features()`` exposes the
-  memory tools per cell);
-* ``without={Capability.MEMORY}`` selects the exact complement (the non-memory
-  adapters) and runs a basic reply turn.
-* ``supports={Capability.CONTACTS}`` selects adapters with contact tools enabled
-  and proves they can list contacts through the real platform API.
-
-The two sets partition the matrix, so adding/removing an adapter or flipping its
-``supports`` in the registry re-balances both tests automatically — the point of
-the demonstration. Under fail-never-skip a cell whose backend/key is absent ERRORs
-with the reason (e.g. ``GOOGLE_API_KEY`` for gemini, ``OPENCODE_BASE_URL`` for
-opencode); that is the honest "not wired up" signal, not a regression.
-"""
+"""Grid tests for adapters that expose memory or contacts capabilities."""
 
 from __future__ import annotations
 
@@ -50,11 +32,7 @@ async def test_store_memory_across_memory_adapters(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """Every memory-capable adapter can store a memory that lands in the store.
-
-    The matrix here is *exactly* the adapters advertising ``Capability.MEMORY`` —
-    selected by the filter, not a list — each built with the memory tools enabled.
-    """
+    """Store an organization-scoped memory through each memory-capable adapter."""
     marker = unique_marker("xmem")
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-memory-{agent.adapter_id}", participants=[agent.id]
@@ -84,15 +62,7 @@ async def test_recall_memory_across_memory_adapters(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """Every memory-capable adapter can store a memory and read it back.
-
-    The complement of ``test_store_memory_across_memory_adapters`` (which proves the
-    *store* lands): the same subgroup drives a store -> list -> get sequence in one
-    turn, so the assertion covers the memory tools' *read* path too. The record must
-    land AND the agent must both query (``assert_list_called``) and fetch it back by
-    id (``assert_get_called``) — list alone would pass on a mis-wired read that
-    returns nothing, so the get hop is what proves an actual read-back.
-    """
+    """Store, list, and fetch a memory through each memory-capable adapter."""
     marker = unique_marker("rmem")
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-recall-{agent.adapter_id}", participants=[agent.id]
@@ -109,9 +79,7 @@ async def test_recall_memory_across_memory_adapters(
             agent, scope=MemoryListScope.ORGANIZATION, content_query=marker
         )
 
-    # Write side: the record landed in the store.
     mem.stored.assert_stored(content=marker)
-    # Read side: the agent queried its memory and fetched the record back by id.
     mem.calls.assert_list_called()
     mem.calls.assert_get_called()
 

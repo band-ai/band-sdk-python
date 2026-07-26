@@ -1,10 +1,4 @@
-"""
-Strands Agents adapter using SimpleAdapter pattern.
-
-Modeled on the pydantic-ai adapter: the framework owns the agent loop, the
-model object is injectable at the public ``Agent(model=...)`` seam, and Band
-platform tools are registered as native framework tools.
-"""
+"""Band adapter for Strands Agents."""
 
 from __future__ import annotations
 
@@ -59,10 +53,7 @@ from band.runtime.tools import (
 
 logger = logging.getLogger(__name__)
 
-# invocation_state key carrying the current turn's AgentToolsProtocol handle.
-# Strands threads invocation_state from Agent.invoke_async(...) into every tool
-# body (via ToolContext) and hook event, which is what lets the tool functions
-# be built once while each turn binds its own tools handle.
+# Per-turn Band tools are passed through Strands invocation state.
 _BAND_TOOLS_STATE_KEY = "band_tools"
 
 
@@ -116,13 +107,7 @@ def _as_strands_tool(name: str, fn: Callable[..., Any]) -> Any:
 
 
 class _CustomToolBridge(AgentTool):
-    """A portable ``CustomToolDef`` (InputModel, handler) as a native Strands tool.
-
-    The tool spec is derived from the Pydantic input model (same name/schema the
-    other adapters expose), and dispatch validates + executes via
-    ``execute_custom_tool`` so the argument-validation contract matches the
-    tuple form everywhere else.
-    """
+    """Expose a portable custom tool as a native Strands tool."""
 
     def __init__(self, tool_def: CustomToolDef):
         super().__init__()
@@ -168,12 +153,7 @@ class _CustomToolBridge(AgentTool):
 
 
 class _BandTurnHooks(HookProvider):
-    """Per-turn hook provider: L6 execution events + terminal-action tracking.
-
-    A fresh instance is registered on each turn's Agent, so per-turn state
-    (whether a terminal Band action fired) needs no cross-turn bookkeeping.
-    Event emission is best-effort and never crashes the turn.
-    """
+    """Emit execution events and track terminal actions for one turn."""
 
     def __init__(
         self,
@@ -209,9 +189,7 @@ class _BandTurnHooks(HookProvider):
             logger.warning("Failed to send tool_call event: %s", e)
 
     async def _on_after_tool(self, event: AfterToolCallEvent) -> None:
-        # Custom tools count as terminal only if they opted in (band_terminal);
-        # undeclared customs fail loud. A failed Band tool (its wrapper returns
-        # an "Error " string, or Strands recorded an error status) is not terminal.
+        # Only successful Band tools and marked custom tools end a turn.
         name = event.tool_use["name"]
         output = _result_text(event.result)
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
@@ -241,22 +219,7 @@ class _BandTurnHooks(HookProvider):
 
 
 class StrandsAdapter(SimpleAdapter[StrandsMessages]):
-    """
-    Strands Agents adapter using SimpleAdapter pattern.
-
-    Uses a Strands Agent for LLM interactions, with platform tools registered
-    as native Strands ``@tool`` functions.
-
-    Example:
-        from strands.models.openai import OpenAIModel
-
-        adapter = StrandsAdapter(
-            model=OpenAIModel(model_id="gpt-5.4-mini"),
-            custom_section="You are a helpful assistant.",
-        )
-        agent = Agent.create(adapter=adapter, agent_id="...", api_key="...")
-        await agent.run()
-    """
+    """Run a Strands model in a Band room."""
 
     SUPPORTED_EMIT: ClassVar[frozenset[Emit]] = frozenset({Emit.EXECUTION, Emit.USAGE})
     SUPPORTED_CAPABILITIES: ClassVar[frozenset[Capability]] = frozenset(
@@ -298,13 +261,10 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         self.custom_section = custom_section
         self._system_prompt: str | None = None
 
-        # Platform + custom tools, built once in on_started (tool bodies bind the
-        # per-turn tools handle via invocation_state, so they carry no turn state).
+        # Tool definitions are shared; invocation state supplies per-turn tools.
         self._strands_tools: list[Any] = []
 
-        # Conversation history per room (Converse-shaped Messages). Band owns
-        # this state; Strands sessions/conversation managers are not used for
-        # cross-turn persistence.
+        # Band owns per-room conversation history.
         self._message_history: dict[str, StrandsMessages] = {}
 
         self._custom_tools, self._custom_terminal_names = _build_custom_tools(
@@ -324,17 +284,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         logger.info("Strands adapter started for agent: %s", agent_name)
 
     def _build_agent(self, messages: StrandsMessages, hooks: _BandTurnHooks) -> Agent:
-        """Construct the Strands Agent for one turn, over the room's history.
-
-        A Strands Agent is stateful (it owns ``messages`` and per-agent metrics)
-        and raises on concurrent invocation, while the Band runtime runs one
-        asyncio task per room — so a single shared Agent would break under
-        multi-room concurrency. Instead the heavy pieces (prompt, tool set) are
-        built once in on_started and a lightweight Agent shell is constructed
-        per turn over the room's messages (mirrors the google_adk adapter's
-        fresh-runner-per-message pattern). Bonus: a fresh Agent has fresh
-        metrics, so accumulated usage is exactly this turn's usage.
-        """
+        """Build an isolated agent for one room turn and its usage metrics."""
         return Agent(
             model=self.model,
             messages=messages,
@@ -346,12 +296,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         )
 
     def _build_platform_tools(self) -> list[Any]:
-        """Build the Band platform tools as native Strands ``@tool`` functions.
-
-        Descriptions come from the centralized tool definitions. All tools catch
-        exceptions and return "Error ..." strings so the LLM can see failures
-        (and so terminal detection can tell a failed Band tool from a success).
-        """
+        """Build Band platform tools as native Strands tools."""
 
         async def band_send_message(
             content: str,
@@ -655,7 +600,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         self,
         msg: PlatformMessage,
         tools: AgentToolsProtocol,
-        history: StrandsMessages,  # Already converted by SimpleAdapter
+        history: StrandsMessages,
         participants_msg: str | None,
         contacts_msg: str | None,
         *,
@@ -664,7 +609,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
     ) -> None:
         """Handle incoming platform message."""
         if not self._strands_tools:
-            # Safety: build tools if not yet built (should be done in on_started)
             self._strands_tools = self._build_platform_tools() + self._custom_tools
 
         room_history = self._history_for_turn(
@@ -672,7 +616,6 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         )
         self._append_system_context(room_history, participants_msg, contacts_msg)
 
-        # Build user message with sender prefix
         user_message = msg.format_for_llm()
 
         logger.debug(
@@ -694,17 +637,11 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
                 invocation_state={_BAND_TOOLS_STATE_KEY: tools},
             )
         finally:
-            # Persist whatever the run recorded (also on a failed turn, so the
-            # room keeps the user prompt + any completed tool work), and emit
-            # this turn's usage: the per-turn Agent has per-turn metrics, so
-            # accumulated_usage is exactly this run's total across its model
-            # calls. emit_usage itself gates on Emit.USAGE and never raises.
+            # Preserve completed work and usage when the turn fails.
             self._message_history[room_id] = agent.messages
             await self.emit_usage(tools, self._usage_from_agent(agent))
 
-        # A clean run with no terminal work means the model answered in plain text
-        # without calling band_send_message — a silently dropped reply. Surface it
-        # as an error (mirrors the pydantic-ai/crewai adapters).
+        # Plain-text answers are not delivered to the room.
         if not turn_hooks.terminal_fired:
             await self._report_error(
                 tools,
@@ -721,13 +658,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
 
     @staticmethod
     def _usage_from_agent(agent: Agent) -> TurnUsage:
-        """Map the turn's accumulated token usage onto TurnUsage.
-
-        Strands accumulates usage on the agent's EventLoopMetrics across all of
-        the run's model calls; reading it from the agent (not the AgentResult)
-        also covers turns that raised mid-run. totalTokens is derived
-        (input + output) and deliberately not mapped.
-        """
+        """Map the agent's turn usage to Band usage."""
         try:
             usage = dict(agent.event_loop_metrics.accumulated_usage)
         except Exception:  # pragma: no cover - defensive; usage is best-effort
@@ -741,12 +672,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         )
 
     async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send an error event to the room (best effort).
-
-        Narrowed to the REST call's real failure modes (ApiError = HTTP status,
-        httpx = transport) so a failed error-report never crashes the turn —
-        while a real bug still raises.
-        """
+        """Send a best-effort error event."""
         try:
             await tools.send_event(content=f"Error: {error}", message_type="error")
         except (ApiError, httpx.HTTPError) as e:
