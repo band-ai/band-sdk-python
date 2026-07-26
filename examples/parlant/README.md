@@ -153,7 +153,7 @@ uv run python examples/parlant/03_support_agent.py
 
 Each Parlant agent starts its own in-process server, and Parlant's tool-service
 port defaults to a fixed `8818` — so a second agent on the same machine fails to
-start while the first holds it, with a `SystemExit: 1` out of uvicorn. The examples
+start while the first holds it, with a `SystemExit` out of uvicorn startup. The examples
 call `reserve_server_ports()` to get a free pair from the OS instead, which lets
 them run side by side:
 
