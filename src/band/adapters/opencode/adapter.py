@@ -656,8 +656,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self._client = None
             self._mcp_backend = None
 
-        if mcp_backend is not None:
-            if client is not None:
+            # OpenCode keys MCP registrations globally by name, so the
+            # disconnect stays under the lock that also guards registration.
+            # Released early, it could land after a successor room registered
+            # the same name and strip tools that nothing would re-register.
+            if mcp_backend is not None and client is not None:
                 try:
                     await client.disconnect_mcp_server(self._mcp_server_name)
                 except Exception:
@@ -665,6 +668,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
                         self._mcp_server_name,
                     )
+
+        # What follows acts only on objects already detached from ``self``, so
+        # no successor can be affected — and the lock must not be held across a
+        # stop that waits out OpenCode's open SSE read.
+        if mcp_backend is not None:
             await mcp_backend.stop()
 
         if event_task is not None:

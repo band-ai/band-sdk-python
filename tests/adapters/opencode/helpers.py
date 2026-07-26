@@ -249,7 +249,13 @@ class FakeOpencodeClient:
         reject_question_events: dict[str, list[RawOpencodeEvent]] | None = None,
         get_session_missing: set[str] | None = None,
         prompt_exceptions: list[Exception] | None = None,
+        serve_registrations: dict[str, str] | None = None,
     ) -> None:
+        # A real ``opencode serve`` keys MCP registrations globally by name, so
+        # clients sharing one serve share this mapping.
+        self.serve_registrations = (
+            serve_registrations if serve_registrations is not None else {}
+        )
         self.created_sessions: list[dict[str, Any]] = []
         self.prompt_calls: list[dict[str, Any]] = []
         self.permission_replies: list[dict[str, Any]] = []
@@ -349,10 +355,12 @@ class FakeOpencodeClient:
 
     async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]:
         self.registered_mcp_servers.append({"name": name, "url": url})
+        self.serve_registrations[name] = url
         return {"name": name, "url": url}
 
     async def disconnect_mcp_server(self, name: str) -> None:
         self.disconnected_mcp_servers.append(name)
+        self.serve_registrations.pop(name, None)
 
     async def push_event(self, event: RawOpencodeEvent) -> None:
         """Inject one SSE event, as the server would mid-turn."""

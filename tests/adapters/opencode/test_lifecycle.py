@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any
 from unittest.mock import patch
 
@@ -26,6 +27,7 @@ from tests.adapters.opencode.helpers import (
     event_session_idle,
     event_text_part,
     make_platform_message,
+    run_single_turn,
     tools_protocol,
     wait_for,
 )
@@ -367,6 +369,68 @@ async def test_concurrent_room_start_waits_for_mcp_registration() -> None:
 
     assert len(fake_client.registered_mcp_servers) == 1
     await adapter._shutdown_client()
+
+
+async def test_teardown_does_not_disconnect_a_successor_registration(tools) -> None:
+    """A superseded teardown must not strip the next client's MCP registration.
+
+    ``opencode serve`` keys MCP registrations globally by name, so a late
+    name-only disconnect from the outgoing client would unregister the
+    incoming one — which has no path back, since registration only runs on
+    the turn that creates the client.
+    """
+    serve: dict[str, str] = {}
+
+    class BlockingDisconnectClient(FakeOpencodeClient):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(serve_registrations=serve, **kwargs)
+            self.disconnect_started = asyncio.Event()
+            self.release_disconnect = asyncio.Event()
+
+        async def disconnect_mcp_server(self, name: str) -> None:
+            self.disconnect_started.set()
+            await self.release_disconnect.wait()
+            await super().disconnect_mcp_server(name)
+
+    outgoing = BlockingDisconnectClient(
+        prompt_event_sequences=[[event_session_idle("sess-1")]]
+    )
+    incoming = FakeOpencodeClient(
+        serve_registrations=serve,
+        prompt_event_sequences=[[event_session_idle("sess-1")]],
+    )
+    clients: list[FakeOpencodeClient] = [outgoing, incoming]
+    adapter = OpencodeAdapter(client_factory=lambda _config: clients.pop(0))
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await run_single_turn(adapter, tools)
+
+    cleanup = asyncio.create_task(adapter.on_cleanup("room-1"))
+    await outgoing.disconnect_started.wait()
+
+    successor = asyncio.create_task(
+        adapter.on_message(
+            make_platform_message(room_id="room-2", content="next room"),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-2",
+        )
+    )
+    # Give the successor every chance to register ahead of the pending
+    # disconnect; correct teardown holds it off instead.
+    with suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(successor), 0.2)
+
+    outgoing.release_disconnect.set()
+    await asyncio.gather(cleanup, successor)
+
+    assert incoming.registered_mcp_servers, "successor never registered"
+    assert adapter._mcp_server_name in serve
+
+    await adapter.on_cleanup("room-2")
 
 
 async def test_shutdown_rechecks_for_room_arriving_after_cleanup_decision(
