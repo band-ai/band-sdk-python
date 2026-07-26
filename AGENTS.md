@@ -440,16 +440,18 @@ uv run pyrefly check
 
 ## Dependency Conflicts
 
-**crewai cannot coexist** with parlant or pydantic-ai in the same Python
-environment due to conflicting transitive dependencies:
+**crewai is resolved apart from** parlant and pydantic-ai: it carries the
+narrowest transitive pins of the three, and they have repeatedly collided.
 
-| Conflict | crewai 1.14.3 requires | Other package requires |
+| Package | crewai 1.15.5 pins | Other package requires |
 |---|---|---|
-| pydantic | `~=2.11.9` (<2.12) | pydantic-ai-slim >=1.61 needs `>=2.12` |
-| opentelemetry-sdk | `~=1.34.0` (<1.35) | parlant >=3.1 needs `>=1.37` |
+| pydantic | `>=2.11.9,<2.13` | pydantic-ai-slim 2.x needs `>=2.12` |
+| opentelemetry-sdk | `~=1.42.0` (<1.43) | parlant >=3.1 needs `>=1.37` |
 
-This is declared in `pyproject.toml` via `[tool.uv] conflicts` so `uv lock`
-resolves each in a separate fork.
+The current versions happen to overlap, but crewai's ceilings move with every
+release, so `pyproject.toml` declares the extras as `[tool.uv] conflicts` and
+`uv lock` resolves each in its own fork — no upgrade waits on crewai's slowest
+pin.
 
 **Extras layout:**
 - `dev` — includes all framework deps **except** crewai

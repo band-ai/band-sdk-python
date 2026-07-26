@@ -692,14 +692,14 @@ The SDK reconnects automatically and resubscribes to active rooms. No action is 
 
 ### Adapter Dependency Conflicts
 
-Three extras have mutually exclusive transitive dependencies and cannot share an environment:
+Three extras are resolved separately, because crewai carries the narrowest transitive pins and they have repeatedly collided:
 
-| Conflict | Reason |
-| -------- | ------ |
-| `crewai` + `parlant` | crewai pins `opentelemetry-sdk~=1.34`, parlant requires `>=1.37` |
-| `crewai` + `pydantic-ai` | crewai pins `pydantic~=2.11.9` (<2.12), pydantic-ai-slim >=1.61 requires `pydantic>=2.12` |
+| Pair | crewai's pin | Other side |
+| ---- | ------------ | ---------- |
+| `crewai` + `parlant` | `opentelemetry-sdk~=1.42.0` | parlant requires `>=1.37` |
+| `crewai` + `pydantic-ai` | `pydantic>=2.11.9,<2.13` | pydantic-ai-slim 2.x requires `pydantic>=2.12` |
 
-Install one per environment. The lockfile declares these as `[tool.uv] conflicts` so `uv lock` resolves each in a separate fork automatically.
+Install one per environment. The lockfile declares these as `[tool.uv] conflicts` so `uv lock` resolves each in a separate fork automatically — an upgrade on one side never waits for crewai's ceiling to move.
 
 ---
 

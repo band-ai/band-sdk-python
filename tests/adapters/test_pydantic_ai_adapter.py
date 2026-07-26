@@ -7,52 +7,61 @@ This file contains PydanticAI-specific behavior: agent creation, tool registrati
 stream event handling, execution reporting, and custom tools.
 """
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from typing import Any, AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from pydantic import BaseModel
 from pydantic_ai import (
     AgentRunResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    RunContext,
     UnexpectedModelBehavior,
 )
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
-    BuiltinToolCallPart,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     TextPart,
     ThinkingPart,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.test import TestModel
 
 from band.adapters.pydantic_ai import (
     PydanticAIAdapter,
     _drop_non_replayable_messages,
     _is_replayable_history_message,
 )
+from band.core.protocols import AgentToolsProtocol
 from band.core.types import AdapterFeatures, Capability, PlatformMessage
+from band.runtime.custom_tools import get_custom_tool_name
 
 
 def make_stream_events(
     result_messages: list | None = None,
     tool_calls: list[tuple[str, dict, str]] | None = None,
     tool_results: list[tuple[str, str, str]] | None = None,
-) -> AsyncIterator:
-    """Create a mock async iterator of stream events.
+):
+    """Stand in for ``Agent.run_stream_events()``: an async CM over stream events.
+
+    pydantic-ai 2.x makes ``run_stream_events()`` an async context manager that
+    yields the event iterator (it starts the run on first iteration and tears the
+    background task down on exit), so the fake has to be one too.
 
     Args:
         result_messages: Messages to return in AgentRunResultEvent
         tool_calls: List of (tool_name, args, tool_call_id) tuples
         tool_results: List of (tool_name, output, tool_call_id) tuples
-
-    Returns:
-        Async iterator of stream events
     """
 
     async def stream():
@@ -70,9 +79,9 @@ def make_stream_events(
         if tool_results:
             for tool_name, output, tool_call_id in tool_results:
                 event = MagicMock(spec=FunctionToolResultEvent)
-                event.result = MagicMock()
-                event.result.tool_name = tool_name  # tool_name is on result, not event
-                event.result.content = output
+                event.part = MagicMock()
+                event.part.tool_name = tool_name  # tool_name is on the part, not event
+                event.part.content = output
                 event.tool_call_id = tool_call_id
                 yield event
 
@@ -82,7 +91,11 @@ def make_stream_events(
         result_event.result.all_messages.return_value = result_messages or []
         yield result_event
 
-    return stream()
+    @asynccontextmanager
+    async def events() -> AsyncIterator[AsyncIterator]:
+        yield stream()
+
+    return events()
 
 
 def make_usage_response(
@@ -149,48 +162,39 @@ def mock_pydantic_agent():
 class TestUsageMapping:
     """Tests for the Emit.USAGE seam's usage mapping."""
 
-    def test_usage_from_result_current_field_names(self):
-        """Maps RunUsage.input_tokens/output_tokens to TurnUsage."""
-        from types import SimpleNamespace
+    def test_usage_from_result_reads_the_usage_property(self):
+        """Maps the run result's ``usage`` (a property since 2.x) onto TurnUsage.
 
+        Reading it as a method instead would raise, and the guarded read would then
+        report zeros for every turn — silent, so this is the guard.
+        """
         from band.core.types import TurnUsage
 
-        result = MagicMock()
-        result.usage.return_value = SimpleNamespace(
-            input_tokens=100,
-            output_tokens=20,
-            cache_read_tokens=5,
-            cache_write_tokens=0,
+        result = SimpleNamespace(
+            usage=SimpleNamespace(
+                input_tokens=100,
+                output_tokens=20,
+                cache_read_tokens=5,
+                cache_write_tokens=0,
+            )
         )
         assert PydanticAIAdapter._usage_from_result(result) == TurnUsage(
             input_tokens=100,
             output_tokens=20,
             cache_read_tokens=5,
             cache_write_tokens=0,
-        )
-
-    def test_usage_from_result_legacy_field_names(self):
-        """Falls back to the older request_tokens/response_tokens names."""
-        from types import SimpleNamespace
-
-        from band.core.types import TurnUsage
-
-        result = MagicMock()
-        result.usage.return_value = SimpleNamespace(
-            request_tokens=130,
-            response_tokens=8,
-        )
-        assert PydanticAIAdapter._usage_from_result(result) == TurnUsage(
-            input_tokens=130, output_tokens=8
         )
 
     def test_usage_from_result_swallows_errors(self):
-        """A usage() that raises yields empty usage, never propagates."""
+        """Usage that fails to read yields empty usage, never propagates."""
         from band.core.types import TurnUsage
 
-        result = MagicMock()
-        result.usage.side_effect = RuntimeError("no usage")
-        assert PydanticAIAdapter._usage_from_result(result) == TurnUsage()
+        class Unreadable:
+            @property
+            def usage(self) -> Any:
+                raise RuntimeError("no usage")
+
+        assert PydanticAIAdapter._usage_from_result(Unreadable()) == TurnUsage()
 
     def test_usage_from_messages_sums_model_responses(self):
         """The benign-path fallback sums usage across captured ModelResponses.
@@ -282,9 +286,9 @@ class TestInitialization:
     def test_create_agent_registers_content_null_history_processor(self):
         """The agent must sanitize content:null responses on every request.
 
-        Registering the drop as a history processor (not just the post-run
-        storage filter) is what closes the mid-run gap: the model can emit an
-        empty/thinking-only response within a single turn, and pydantic-ai would
+        Registering the drop as a history-processing capability (not just the
+        post-run storage filter) is what closes the mid-run gap: the model can emit
+        an empty/thinking-only response within a single turn, and pydantic-ai would
         otherwise replay it to the provider as assistant content:null.
         """
         adapter = PydanticAIAdapter(model="openai:gpt-5.4")
@@ -292,9 +296,40 @@ class TestInitialization:
 
         with patch("band.adapters.pydantic_ai.Agent") as MockAgent:
             adapter._create_agent()
-            assert MockAgent.call_args.kwargs["history_processors"] == [
-                _drop_non_replayable_messages
-            ]
+            (capability,) = MockAgent.call_args.kwargs["capabilities"]
+            assert isinstance(capability, ProcessHistory)
+            assert capability.processor is _drop_non_replayable_messages
+
+    def test_create_agent_registers_context_free_custom_tool(self):
+        """A CustomToolDef-derived tool takes no RunContext, so it needs tool_plain.
+
+        pydantic-ai 2.x rejects a context-free callable passed to ``agent.tool()``
+        ("First parameter of tools that take context must be annotated with
+        RunContext[...]"), which would break every tuple-form custom tool at agent
+        creation. Built against a real Agent (TestModel, no network) because a
+        patched Agent accepts either path and would prove nothing.
+        """
+
+        class Echo(BaseModel):
+            """Echo the text back."""
+
+            text: str
+
+        async def handler(args: Echo) -> str:
+            return args.text
+
+        adapter = PydanticAIAdapter(
+            model=TestModel(),  # type: ignore[arg-type]  # real Agent, no network
+            additional_tools=[(Echo, handler)],
+        )
+        adapter.agent_name = "TestBot"
+
+        agent = adapter._create_agent()
+
+        registered = {
+            name for toolset in agent.toolsets for name in getattr(toolset, "tools", ())
+        }
+        assert get_custom_tool_name(Echo) in registered
 
 
 class TestOnStarted:
@@ -615,11 +650,11 @@ class TestHistoryManagement:
         ]
         assert content_null_response not in stored_history
 
-    def test_keeps_response_with_only_builtin_tool_part(self):
-        """Builtin tool calls carry content the provider expects — keep them."""
+    def test_keeps_response_with_only_native_tool_part(self):
+        """Native tool calls carry content the provider expects — keep them."""
         response = ModelResponse(
             parts=[
-                BuiltinToolCallPart(
+                NativeToolCallPart(
                     tool_name="web_search",
                     args={"query": "weather"},
                     tool_call_id="call_1",
@@ -915,8 +950,8 @@ def make_raising_stream(
     tool_result: bool,
     tool_name: str = "band_send_message",
     tool_content: Any = None,
-) -> AsyncIterator:
-    """Async run stream that optionally fires a tool-result event, then raises.
+):
+    """Run stream (async CM, as 2.x returns) that fires a tool result, then raises.
 
     ``tool_name``/``tool_content`` let a test pick a read-only tool or an error
     result to verify those do not count as terminal productive work.
@@ -925,16 +960,20 @@ def make_raising_stream(
     async def stream():
         if tool_result:
             event = MagicMock(spec=FunctionToolResultEvent)
-            event.result = MagicMock()
-            event.result.tool_name = tool_name
-            event.result.content = (
+            event.part = MagicMock()
+            event.part.tool_name = tool_name
+            event.part.content = (
                 {"id": "msg_1"} if tool_content is None else tool_content
             )
             event.tool_call_id = "call_1"
             yield event
         raise error
 
-    return stream()
+    @asynccontextmanager
+    async def events() -> AsyncIterator[AsyncIterator]:
+        yield stream()
+
+    return events()
 
 
 class TestEmptyFinalAnswer:
@@ -1228,7 +1267,7 @@ class TestCustomTools:
     def test_accepts_additional_tools_parameter(self):
         """Adapter accepts list of callables."""
 
-        async def my_tool(ctx, message: str) -> str:
+        async def my_tool(ctx: RunContext[AgentToolsProtocol], message: str) -> str:
             """A custom tool."""
             return f"Echo: {message}"
 
@@ -1243,15 +1282,17 @@ class TestCustomTools:
     def test_multiple_custom_tools(self):
         """Should accept multiple custom tools."""
 
-        async def tool_one(ctx, a: int) -> int:
+        async def tool_one(ctx: RunContext[AgentToolsProtocol], a: int) -> int:
             """Tool one."""
             return a + 1
 
-        def tool_two(ctx, b: str) -> str:
+        def tool_two(ctx: RunContext[AgentToolsProtocol], b: str) -> str:
             """Tool two."""
             return b.upper()
 
-        async def tool_three(ctx, x: float, y: float) -> float:
+        async def tool_three(
+            ctx: RunContext[AgentToolsProtocol], x: float, y: float
+        ) -> float:
             """Tool three."""
             return x + y
 
@@ -1266,7 +1307,7 @@ class TestCustomTools:
     async def test_registers_custom_tools_with_agent(self):
         """Custom tools should be registered via agent.tool()."""
 
-        async def my_echo(ctx, message: str) -> str:
+        async def my_echo(ctx: RunContext[AgentToolsProtocol], message: str) -> str:
             """Echo the message."""
             return f"Echo: {message}"
 
@@ -1297,7 +1338,9 @@ class TestCustomTools:
     ):
         """Custom tool should appear in agent._function_tools after registration."""
 
-        async def calculator(ctx, a: float, b: float) -> float:
+        async def calculator(
+            ctx: RunContext[AgentToolsProtocol], a: float, b: float
+        ) -> float:
             """Add two numbers."""
             return a + b
 
@@ -1327,7 +1370,7 @@ class TestCustomTools:
     ):
         """Custom tools should work during message handling."""
 
-        async def my_helper(ctx, value: str) -> str:
+        async def my_helper(ctx: RunContext[AgentToolsProtocol], value: str) -> str:
             """Helper tool."""
             return f"Helped: {value}"
 
