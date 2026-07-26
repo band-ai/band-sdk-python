@@ -10,6 +10,7 @@ stream event handling, execution reporting, and custom tools.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,8 +39,10 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.test import TestModel
 
 from band.adapters.pydantic_ai import (
+    OUTPUT_RETRIES_EXHAUSTED,
     PydanticAIAdapter,
     _drop_non_replayable_messages,
+    _is_output_retries_exhausted,
     _is_replayable_history_message,
 )
 from band.core.protocols import AgentToolsProtocol
@@ -271,10 +274,10 @@ class TestInitialization:
         assert adapter.model == "openai:gpt-5.4"
 
     def test_create_agent_uses_str_output_type(self):
-        """INT-488: Agent must be constructed with output_type=str, never None.
+        """Agent must be constructed with output_type=str, never None.
 
-        pydantic-ai-slim 1.87+ raises UserError("At least one output type must
-        be provided other than `None`") when output_type is None or omitted.
+        pydantic-ai raises UserError("At least one output type must be provided
+        other than `None`") when output_type is None.
         """
         adapter = PydanticAIAdapter(model="openai:gpt-5.4")
         adapter.agent_name = "TestBot"
@@ -978,25 +981,42 @@ def make_raising_stream(
 
 class TestEmptyFinalAnswer:
     """gpt-5.4-mini can return an empty final answer after the agent already
-    replied/acted via tools, exhausting pydantic-ai's output_type=str validation
-    retries. That is benign — the work already went out — so it must not fail the
+    replied/acted via tools, exhausting pydantic-ai's output_type=str retry
+    budget. That is benign — the work already went out — so it must not fail the
     message, but a genuine no-work failure must still surface.
     """
+
+    def test_swallow_matches_the_wording_pydantic_ai_actually_raises(self) -> None:
+        """The swallow keys on message text, since pydantic-ai exposes no code for it.
+
+        Every other test here builds the exception by hand, so a reword upstream
+        would leave them green while the swallow quietly stopped matching — which is
+        exactly what 2.x did to the 1.x phrasing ("Exceeded maximum retries (N) for
+        output validation"). Read the real source so a future reword fails here.
+        """
+        from pydantic_ai import _tool_execution
+
+        source = Path(_tool_execution.__file__).read_text(encoding="utf-8").lower()
+        assert OUTPUT_RETRIES_EXHAUSTED in source
+        assert _is_output_retries_exhausted(
+            UnexpectedModelBehavior("Exceeded maximum output retries (3)")
+        )
+        assert not _is_output_retries_exhausted(
+            UnexpectedModelBehavior("Invalid response, unable to find output")
+        )
 
     @pytest.mark.asyncio
     async def test_empty_output_after_tool_is_benign(
         self, sample_message, mock_tools, mock_pydantic_agent
     ):
-        """Output-validation exhaustion after a tool ran is swallowed."""
+        """Output-retry exhaustion after a tool ran is swallowed."""
         adapter = PydanticAIAdapter(model="openai:gpt-5.4")
         with patch.object(adapter, "_create_agent", return_value=mock_pydantic_agent):
             await adapter.on_started("TestBot", "Test bot")
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
-                UnexpectedModelBehavior(
-                    "Exceeded maximum retries (1) for output validation"
-                ),
+                UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
                 tool_result=True,
             )
         )
@@ -1046,9 +1066,7 @@ class TestEmptyFinalAnswer:
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
-                UnexpectedModelBehavior(
-                    "Exceeded maximum retries (1) for output validation"
-                ),
+                UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
                 tool_result=True,
             )
         )
@@ -1091,9 +1109,7 @@ class TestEmptyFinalAnswer:
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
-                UnexpectedModelBehavior(
-                    "Exceeded maximum retries (1) for output validation"
-                ),
+                UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
                 tool_result=False,
             )
         )
@@ -1132,7 +1148,7 @@ class TestEmptyFinalAnswer:
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
-                UnexpectedModelBehavior("Received empty model response"),
+                UnexpectedModelBehavior("Invalid response, unable to find output"),
                 tool_result=True,
             )
         )
@@ -1180,7 +1196,7 @@ class TestEmptyFinalAnswer:
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
-                UnexpectedModelBehavior("Received empty model response"),
+                UnexpectedModelBehavior("Invalid response, unable to find output"),
                 tool_result=True,
             )
         )
@@ -1208,9 +1224,7 @@ class TestEmptyFinalAnswer:
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
-                UnexpectedModelBehavior(
-                    "Exceeded maximum retries (1) for output validation"
-                ),
+                UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
                 tool_result=True,
                 tool_name="band_lookup_peers",
                 tool_content=[{"id": "peer_1"}],
@@ -1240,9 +1254,7 @@ class TestEmptyFinalAnswer:
 
         adapter._agent.run_stream_events = MagicMock(
             return_value=make_raising_stream(
-                UnexpectedModelBehavior(
-                    "Exceeded maximum retries (1) for output validation"
-                ),
+                UnexpectedModelBehavior("Exceeded maximum output retries (1)"),
                 tool_result=True,
                 tool_name="band_send_message",
                 tool_content="Error sending message: no mentions",

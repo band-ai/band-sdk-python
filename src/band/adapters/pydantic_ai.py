@@ -65,18 +65,23 @@ from band.runtime.tools import (
 logger = logging.getLogger(__name__)
 
 
-def _is_output_validation_exhausted(exc: UnexpectedModelBehavior) -> bool:
-    """Whether ``exc`` is pydantic-ai's "exhausted output-validation retries".
+OUTPUT_RETRIES_EXHAUSTED = "exceeded maximum output retries"
+"""pydantic-ai's wording when a run burns its output-retry budget.
 
-    pydantic-ai exposes no structured code for this — it only carries the cause in
-    the ``UnexpectedModelBehavior`` message (e.g. "Exceeded maximum retries (N) for
-    output validation"), so we match that text. The coupling to pydantic-ai's
-    wording is deliberate and **fail-safe**: if a future release rewords it, a
-    benign post-tool turn propagates as an error (never the reverse), and the
-    dependency is version-pinned. Must stay distinct from "Received empty model
-    response", which propagates even after tool work.
+It exposes no structured code for this, so the message text is the only signal —
+matched case-insensitively. A guard test asserts pydantic-ai still raises this
+exact phrase, because a silent reword would disable the swallow below rather than
+announce itself.
+"""
+
+
+def _is_output_retries_exhausted(exc: UnexpectedModelBehavior) -> bool:
+    """Whether ``exc`` is pydantic-ai's exhausted output-retry budget.
+
+    The coupling to pydantic-ai's wording is deliberate and **fail-safe**: on a
+    reword a benign post-tool turn propagates as an error, never the reverse.
     """
-    return "output validation" in str(exc).lower()
+    return OUTPUT_RETRIES_EXHAUSTED in str(exc).lower()
 
 
 # A response made up only of these (or with no parts at all) serializes to
@@ -283,10 +288,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
         self._system_prompt = system
 
-        # We respond via tools only, so the model output is unused. Using `str`
-        # (instead of `None`) keeps newer pydantic-ai-slim versions happy —
-        # 1.87+ rejects `output_type=None` with `UserError("At least one output
-        # type must be provided other than `None`")`.
+        # We respond via tools only, so the model output is unused — but it must
+        # still be a type: pydantic-ai rejects `output_type=None` with
+        # `UserError("At least one output type must be provided other than
+        # `None`")`, so `str` stands in for "we don't care".
         agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
             # Pass the rendered prompt as `instructions`, not `system_prompt`.
@@ -786,14 +791,14 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             # pydantic-ai forces a final str output (output_type=str). After the
             # agent has already acted via tools this turn (a band_send_message
             # reply, a band_store_memory, ...) gpt-5.4-mini sometimes returns a
-            # genuinely empty final response, so output-validation retries are
+            # genuinely empty final response, so the output-retry budget is
             # exhausted and this raises. The work already went out, so the empty
             # final answer is benign — mirror the crewai adapter and swallow it.
             # Genuine no-response failures (no terminal tool ran — only read-only
             # lookups or failed tools) still propagate.
-            if tool_executed and _is_output_validation_exhausted(e):
+            if tool_executed and _is_output_retries_exhausted(e):
                 logger.warning(
-                    "Room %s: Pydantic AI exhausted output-validation retries after "
+                    "Room %s: Pydantic AI exhausted its output retries after "
                     "the agent already did productive work this turn; treating as "
                     "non-fatal: %s",
                     room_id,
