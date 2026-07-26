@@ -10,7 +10,7 @@ Coverage is registry-derived, not a hand-maintained list: the fan is the whole
 matrix minus the adapters that cannot emit usage — ``CREWAI_FLOW`` (usage lives in
 user-supplied flow internals — N-A), ``CREWAI`` (usage capture deferred: its
 result counter is cumulative-lifetime, not per-turn), and ``COPILOT_ACP``
-(vanilla ACP carries no token-usage updates). Every other adapter runs, letta
+(ACP exposes no per-turn token-usage updates). Every other adapter runs, letta
 included (it emits via ``Emit.USAGE`` from the per-room
 ``LettaResponse.usage``). Deriving from ``exclude=`` rather than an explicit
 include-list means a newly-registered usage-capable adapter is exercised
@@ -56,9 +56,7 @@ USAGE_EXCLUSIONS = (
     ExcludedAdapter(
         Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
     ),
-    ExcludedAdapter(
-        Adapter.COPILOT_ACP, "vanilla ACP does not expose token-usage updates"
-    ),
+    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
 )
 
 
