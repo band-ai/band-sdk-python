@@ -39,11 +39,18 @@ class ServerPorts(NamedTuple):
 
 
 def reserve_server_ports() -> ServerPorts:
-    """Reserve two distinct ports and log them.
+    """Reserve two distinct loopback ports and log them.
 
-    Bound on all interfaces rather than on the loopback address Parlant will use:
-    an ``INADDR_ANY`` reservation is the stricter of the two, so it can never hand
-    back a port that some other process already holds on ``127.0.0.1``.
+    Both are reserved on ``127.0.0.1``, never on all interfaces: the tool service —
+    the port that actually collides — is bound by Parlant on ``127.0.0.1``
+    explicitly, so a loopback reservation is exactly the guarantee it needs. The API
+    server instead binds the ``host`` given to ``p.Server``, all interfaces by
+    default, for which a loopback reservation is very strong but not airtight: a
+    port free here could in principle be held by another process on some other
+    interface. Reserving that one on all interfaces to close the gap would mean
+    briefly opening a socket to the network for a port we only ever hand back as an
+    integer, which is not a trade worth making — and in an agent that stays inside
+    the ``async with`` body the API port is never bound at all.
 
     Logged so that a refused connection or a stuck listener can be traced back to a
     known pair — with the ports varying per run, there is otherwise nothing to match
@@ -54,8 +61,8 @@ def reserve_server_ports() -> ServerPorts:
         socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tool_service,
     ):
         # Both are held open at once so the OS cannot hand back the same port twice.
-        api.bind(("", 0))
-        tool_service.bind(("", 0))
+        api.bind(("127.0.0.1", 0))
+        tool_service.bind(("127.0.0.1", 0))
         ports = ServerPorts(api.getsockname()[1], tool_service.getsockname()[1])
 
     logger.info(
