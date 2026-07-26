@@ -8,6 +8,7 @@ Asserts:
 
 from __future__ import annotations
 
+import importlib
 import sys
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -35,28 +36,19 @@ def crewai_mocks(monkeypatch):
     mock_crewai_module.LLM = MagicMock()
     mock_crewai_tools_module.BaseTool = MockBaseTool
 
-    for mod in (
-        "band.adapters.crewai",
-        "band.integrations.crewai",
-        "band.integrations.crewai.runtime",
-        "band.integrations.crewai.tools",
-    ):
-        sys.modules.pop(mod, None)
+    # `_nest_asyncio_applied` is process-global. Any test running with a mocked
+    # nest_asyncio can flip it True without anything actually being patched, which
+    # then silently disables the real patch for every later test — so isolate it.
+    runtime = importlib.import_module("band.integrations.crewai.runtime")
+    monkeypatch.setattr(runtime, "_nest_asyncio_applied", False)
 
+    # No sys.modules surgery: every crewai import in the band modules is
+    # TYPE_CHECKING-only or function-local, so they pick the mocks up at call time.
     monkeypatch.setitem(sys.modules, "crewai", mock_crewai_module)
     monkeypatch.setitem(sys.modules, "crewai.tools", mock_crewai_tools_module)
     monkeypatch.setitem(sys.modules, "nest_asyncio", mock_nest_asyncio)
 
-    try:
-        yield {"crewai": mock_crewai_module, "nest_asyncio": mock_nest_asyncio}
-    finally:
-        for mod in (
-            "band.adapters.crewai",
-            "band.integrations.crewai",
-            "band.integrations.crewai.runtime",
-            "band.integrations.crewai.tools",
-        ):
-            sys.modules.pop(mod, None)
+    yield {"crewai": mock_crewai_module, "nest_asyncio": mock_nest_asyncio}
 
 
 def _make_msg(idx: int, room_id: str) -> PlatformMessage:

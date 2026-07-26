@@ -530,7 +530,8 @@ legitimate skip is `E2E_TESTS_ENABLED` (the on/off switch for the whole live sui
 `BAND_API_KEY_USER` missing while E2E is enabled **fails** (the always-on gate), and
 any `@requires(Dep.X)` requirement **fails** when absent, naming the missing env
 var/CLI/server. Consequence: no single environment turns the full adapter matrix
-green in one job (crewai needs its own venv; codex/opencode/letta need a backend) —
+green in one job (crewai needs its own venv; codex/opencode/copilot_acp/letta need a
+backend) —
 a red cell means "this backend isn't wired up", which is intended. The one
 deliberate exception is **lane scoping** (`BAND_E2E_LANE`, see CI lanes below): an
 *out-of-lane* adapter *skips with a reason* (it's covered by its own lane, so this
@@ -555,15 +556,15 @@ the `dev` extra but are split out for isolation.
 | Lane | `uv` extra | Adapters | Backend the CI job provides |
 |------|-----------|----------|------------------------------|
 | `core` | `dev` | anthropic, claude_sdk, agno, langgraph, pydantic_ai, copilot_sdk | provider keys (secrets); copilot_sdk self-downloads its CLI runtime and needs a Copilot-entitled `GITHUB_TOKEN` (BYOK inference reuses `ANTHROPIC_API_KEY`) |
-| `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai conflicts with `dev`'s deps — `pyproject.toml [tool.uv] conflicts`) |
+| `crewai` | `dev-crewai` | crewai, crewai_flow | provider keys; isolated venv (crewai is declared conflicting with `dev`'s framework extras — `pyproject.toml [tool.uv] conflicts` — so one `uv sync` can't hold both) |
 | `google` | `dev` | gemini, google_adk | provider keys; split from `core` so Google free-tier rate-limit flakiness is isolated |
-| `backends` | `dev` | codex, opencode | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), and a running `opencode serve` (`OPENCODE_BASE_URL`) |
+| `backends` | `dev` | codex, opencode, copilot_acp | the CLI/server coding agents in one job: the `codex` CLI + login + a disposable `CODEX_CWD` (+ the codex-acp e2e), a running `opencode serve` (`OPENCODE_BASE_URL`), and the `copilot` CLI (`.github/scripts/setup-copilot.sh`; auth is the job-env `GITHUB_TOKEN`) |
 | `letta` | `dev` | letta | a self-hosted Letta server (docker — `.github/scripts/setup-letta.sh`); the adapter self-hosts its Band MCP server inside pytest (see "Letta lane" below). **Linux-only** (`LINUX_ONLY_LANES`) — no Windows cells |
 
-`backends` folds codex + opencode into one job (both install `dev`, differ only in
-the backend their job stands up) so a job-per-backend isn't needed; the cost is that
-one backend failing to come up can redden the other's cells (the per-adapter report
-still shows which). `google` gets its own lane so Google free-tier rate-limit
+`backends` folds codex, opencode, and copilot_acp into one job (all install `dev`,
+differing only in the CLI/server their job stands up) so a job-per-backend isn't
+needed; the cost is that one backend failing to come up can redden the others' cells
+(the per-adapter report still shows which). `google` gets its own lane so Google free-tier rate-limit
 flakiness is isolated; `letta` stands alone for the live Letta server its job stands up.
 
 **The knob:** `BAND_E2E_LANE=<lane id>`. Scheduling is *derived*: a test's lane is the
