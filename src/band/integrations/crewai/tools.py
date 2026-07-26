@@ -70,6 +70,7 @@ from band.runtime.tools import (
     append_available_mention_handles,
     get_tool_description,
     is_terminal_success,
+    serialize_tool_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -226,13 +227,12 @@ class NoopReporter:
 def serialize_success_result(result: Any) -> str:
     """Serialize a successful tool result without losing domain status fields.
 
-    Pydantic models are converted via model_dump at the serialization boundary.
+    Pydantic models are converted via serialize_tool_result at the boundary.
     Dicts that already carry a "status" key (e.g. domain status from REST
     responses) get that field renamed to "result_status" so the wrapper's
     own "status": "success" envelope stays unambiguous.
     """
-    if hasattr(result, "model_dump"):
-        result = result.model_dump()
+    result = serialize_tool_result(result)
     if isinstance(result, dict):
         payload = dict(result)
         result_status = payload.pop("status", None)

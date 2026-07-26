@@ -1,7 +1,127 @@
 """Tests for FakeAgentTools testing utility."""
 
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
 from band.core.protocols import AgentToolsProtocol
+from band.runtime.tools import serialize_tool_result
 from band.testing import FakeAgentTools
+
+
+async def store_fact(tools: FakeAgentTools, content: str) -> None:
+    """Store a memory with the platform-required fields filled in."""
+    await tools.store_memory(
+        content=content,
+        system="long_term",
+        type="semantic",
+        segment="user",
+        thought="noted",
+        scope="organization",
+    )
+
+
+async def listing_seen_by_adapter(
+    tools: FakeAgentTools, **kwargs: Any
+) -> dict[str, Any]:
+    """The serialized envelope an adapter receives from band_list_memories."""
+    return serialize_tool_result(await tools.list_memories(**kwargs))
+
+
+def listed_contents(listing: dict[str, Any]) -> list[str]:
+    """Each listed memory's content, in listing order."""
+    return [memory["content"] for memory in listing["data"]]
+
+
+class TestMemoryListing:
+    """list_memories must serve the real SDK's Fern envelope (data/meta)."""
+
+    async def test_stored_memories_come_back_in_the_real_envelope(self) -> None:
+        tools = FakeAgentTools()
+        await store_fact(tools, "prefers dark mode")
+
+        listing = await listing_seen_by_adapter(tools)
+
+        assert set(listing) == {"data", "meta"}, (
+            f"Envelope keys {set(listing)} drifted from the real SDK's "
+            "{data, meta} — adapters reading .data/.meta would go untested"
+        )
+        assert listed_contents(listing) == ["prefers dark mode"], (
+            "A stored memory must be visible in the listing's data"
+        )
+        assert listing["meta"] == {"page_size": 1, "total_count": 1}, (
+            "meta must report this page's size and the total match count"
+        )
+
+    async def test_page_size_serves_the_first_page(self) -> None:
+        tools = FakeAgentTools()
+        for content in ("first", "second", "third"):
+            await store_fact(tools, content)
+
+        listing = await listing_seen_by_adapter(tools, page_size=2)
+
+        assert listed_contents(listing) == ["first", "second"], (
+            "page_size must truncate to the first page, oldest first"
+        )
+        assert listing["meta"] == {"page_size": 2, "total_count": 3}, (
+            "meta.page_size is the served page's size, "
+            "total_count the whole store — the platform's semantics"
+        )
+
+    async def test_seeded_memories_are_listed(self) -> None:
+        seeded = {
+            "id": "mem-1",
+            "content": "seeded fact",
+            "system": "long_term",
+            "type": "semantic",
+            "segment": "user",
+            "scope": "organization",
+            "inserted_at": "2025-01-01T00:00:00Z",
+        }
+        tools = FakeAgentTools(memories=[seeded])
+
+        listing = await listing_seen_by_adapter(tools)
+
+        assert listed_contents(listing) == ["seeded fact"], (
+            "Constructor-seeded memories must be served by list_memories, "
+            "so tests can start from a pre-populated store"
+        )
+
+    async def test_memory_tools_are_coherent_across_the_lifecycle(self) -> None:
+        tools = FakeAgentTools()
+        stored = await tools.store_memory(
+            content="lifecycle fact",
+            system="long_term",
+            type="semantic",
+            segment="user",
+            thought="noted",
+            scope="subject",
+            subject_id="subject-1",
+            metadata={"k": "v"},
+        )
+
+        fetched = await tools.get_memory(stored["id"])
+        archived = await tools.archive_memory(stored["id"])
+        listing = await listing_seen_by_adapter(tools)
+
+        assert stored["subject_id"] == "subject-1", (
+            "store_memory must persist the supplied subject_id"
+        )
+        assert stored["metadata"] == {"k": "v"}, (
+            "store_memory must persist the supplied metadata"
+        )
+        assert fetched == stored, (
+            "get_memory must return the same serialized shape store_memory returned"
+        )
+        assert listing["data"][0] == {**stored, "status": "archived"}, (
+            "The listing must serve the stored memory, one shape everywhere, "
+            "with archive_memory's status change applied"
+        )
+        assert archived["status"] == "archived"
+        with pytest.raises(RuntimeError, match="Failed to get memory"):
+            await tools.get_memory("unknown-id")
 
 
 class TestFakeAgentToolsProtocol:
@@ -109,18 +229,50 @@ class TestParticipantOperations:
 
 
 class TestLookupPeers:
-    """Tests for lookup_peers."""
+    """lookup_peers must serve the real SDK's Fern envelope (data/metadata)."""
 
-    async def test_returns_empty_peers(self):
-        """Should return empty peers list with metadata."""
+    async def test_returns_empty_peers_in_the_real_envelope(self) -> None:
         tools = FakeAgentTools()
 
-        result = await tools.lookup_peers(page=2, page_size=25)
+        listing = serialize_tool_result(await tools.lookup_peers(page=2, page_size=25))
 
-        assert result["peers"] == []
-        assert result["metadata"]["page"] == 2
-        assert result["metadata"]["page_size"] == 25
-        assert result["metadata"]["total"] == 0
+        assert set(listing) == {"data", "metadata"}, (
+            f"Envelope keys {set(listing)} drifted from the real SDK's "
+            "{data, metadata}"
+        )
+        assert listing["data"] == []
+        assert listing["metadata"] == {
+            "page": 2,
+            "page_size": 25,
+            "total_count": 0,
+            "total_pages": 0,
+        }
+
+    async def test_pages_serve_distinct_slices(self) -> None:
+        peers = [
+            {
+                "id": f"u{index}",
+                "name": f"Peer {index}",
+                "type": "user",
+                "handle": f"@peer{index}",
+                "is_contact": False,
+                "source": "internal",
+            }
+            for index in range(3)
+        ]
+        tools = FakeAgentTools(peers=peers)
+
+        page_two = serialize_tool_result(await tools.lookup_peers(page=2, page_size=2))
+
+        assert [peer["name"] for peer in page_two["data"]] == ["Peer 2"], (
+            "Page 2 must serve the items after the first page, not repeat it"
+        )
+        assert page_two["metadata"] == {
+            "page": 2,
+            "page_size": 2,
+            "total_count": 3,
+            "total_pages": 2,
+        }
 
 
 class TestCreateChatroom:

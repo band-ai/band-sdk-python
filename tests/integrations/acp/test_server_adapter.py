@@ -284,7 +284,7 @@ class TestBandACPServerAdapterOnMessage:
         )
 
         assert not pending.done_event.is_set()
-        await asyncio.sleep(0.02)
+        await asyncio.wait_for(pending.done_event.wait(), timeout=1)
         assert pending.done_event.is_set()
         assert "room-123" not in adapter._pending_prompts
 
@@ -319,7 +319,6 @@ class TestBandACPServerAdapterOnMessage:
             is_session_bootstrap=False,
             room_id="room-123",
         )
-        await asyncio.sleep(0.01)
         await adapter.on_message(
             second,
             tools,
@@ -330,9 +329,8 @@ class TestBandACPServerAdapterOnMessage:
             room_id="room-123",
         )
 
-        await asyncio.sleep(0.015)
         assert not pending.done_event.is_set()
-        await asyncio.sleep(0.02)
+        await asyncio.wait_for(pending.done_event.wait(), timeout=1)
         assert pending.done_event.is_set()
         assert mock_acp_client.session_update.await_count == 2
 

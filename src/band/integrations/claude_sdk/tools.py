@@ -38,6 +38,7 @@ from band.runtime.tools import (
     append_mention_handles_hint,
     iter_tool_definitions,
     mcp_tool_names,
+    serialize_tool_result,
     validate_tool_arguments,
 )
 
@@ -163,9 +164,7 @@ def _format_success_payload(
             "message": "Chat room created",
             "room_id": result,
         }
-    # Convert Pydantic models to dicts at serialization boundary
-    if hasattr(result, "model_dump"):
-        result = result.model_dump()
+    result = serialize_tool_result(result)
     if isinstance(result, dict):
         return {"status": "success", **result}
     return {"status": "success", "result": result}

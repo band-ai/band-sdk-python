@@ -276,7 +276,7 @@ class TestParlantToolFunctions:
         tools.remove_participant = AsyncMock()
         tools.lookup_peers = AsyncMock(
             return_value={
-                "peers": [
+                "data": [
                     {"name": "Agent1", "description": "Test agent", "type": "Agent"}
                 ],
                 "metadata": {"page": 1, "total_pages": 1},
@@ -460,7 +460,7 @@ class TestParlantToolFunctions:
         self, parlant_tools, mock_tools, mock_context
     ):
         """Should handle empty peers list."""
-        mock_tools.lookup_peers.return_value = {"peers": [], "metadata": {}}
+        mock_tools.lookup_peers.return_value = {"data": [], "metadata": {}}
         set_session_tools(mock_context.session_id, mock_tools)
 
         lookup_peers = parlant_tools["band_lookup_peers"]
