@@ -270,6 +270,37 @@ class TestStripLeadingMentions:
     def test_strips_a_mention_only_reply(self):
         assert strip_leading_mentions("@team/bot") == ""
 
+    def test_strips_the_platforms_normalized_uuid_mention(self):
+        # The platform prepends its mentions as @[[uuid]]. replace_uuid_mentions()
+        # rewrites those to @handle first, but only for participants it can
+        # resolve -- an unresolved one reaches the parsers in this raw form.
+        assert (
+            strip_leading_mentions(
+                "@[[3029eb1d-d998-4567-bdf3-d82fc6b89a58]] /approve req-1"
+            )
+            == "/approve req-1"
+        )
+
+    def test_strips_the_platform_block_ahead_of_a_typed_handle(self):
+        # The platform prepends its own token even when the client already typed
+        # the handle, so a delivered message carries both.
+        assert (
+            strip_leading_mentions("@[[uuid-1]] @owner/support-b /approve req-1")
+            == "/approve req-1"
+        )
+
+    def test_a_multi_word_display_name_never_reaches_the_content(self):
+        # Handles are slugified and truncated, so an agent displayed as
+        # "Support Bot Probe" is mentioned as one whitespace-free token. This is
+        # what makes matching on @\S+ sufficient: no display name can survive
+        # the block and be misread as the start of the message body.
+        assert (
+            strip_leading_mentions(
+                "@alexander.zaikman/e2e-band-0d453-support-b approve"
+            )
+            == "approve"
+        )
+
 
 class TestFormatMessageForLlmWithParticipants:
     def test_replaces_mentions_when_participants_provided(self):

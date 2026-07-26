@@ -993,7 +993,7 @@ class TestCodexAdapter:
 
         await adapter.on_started("Codex Agent", "A coding agent")
         await adapter.on_message(
-            make_platform_message(content="@AR-2 Darter /status"),
+            make_platform_message(content="@thenvoi/ar-2-darter /status"),
             tools,
             CodexSessionState(),
             participants_msg=None,
@@ -6798,38 +6798,49 @@ class TestDiffByteCap:
         assert meta["codex_diff_original_bytes"] > _MAX_DIFF_METADATA_BYTES
 
 
-class TestSlashCommandTokenBoundary:
-    """``_extract_local_command`` scans a bounded prefix for slash commands."""
+class TestSlashCommandExtraction:
+    """``_extract_local_command`` reads a command only when one leads the message."""
 
-    def test_command_past_search_limit_is_ignored(self) -> None:
-        """A slash command buried after the token limit must not fire."""
-        from band.adapters.codex import _COMMAND_TOKEN_SEARCH_LIMIT
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "@team/bot Please don't /approve req-1 yet",
+            "@team/bot do not /approve",
+            "@team/bot ignore the /decline suggestion",
+            "@team/bot use /tmp as scratch",
+        ],
+    )
+    def test_prose_mentioning_a_command_is_not_a_command(self, content: str) -> None:
+        """Prose that argues *against* a command must not invoke it.
 
-        prefix = " ".join(f"word{i}" for i in range(_COMMAND_TOKEN_SEARCH_LIMIT + 1))
-        content = f"{prefix} /approve a-1"
+        ``/approve`` resolves a pending tool-execution request, and the handler
+        takes the first argument token as its id — so a scan that found a slash
+        word anywhere in the prefix turned "don't /approve req-1 yet" into an
+        approval of ``req-1``.
+        """
         assert CodexAdapter._extract_local_command(content) is None
 
-    def test_command_at_last_scanned_token_is_recognised(self) -> None:
-        """The boundary itself is inclusive of the search limit."""
-        from band.adapters.codex import _COMMAND_TOKEN_SEARCH_LIMIT
+    @pytest.mark.parametrize(
+        ("content", "expected"),
+        [
+            ("/approve req-1", ("approve", "req-1")),
+            ("@owner/agent-name /approve req-1", ("approve", "req-1")),
+            # Every mentioned participant contributes a token to the block.
+            ("@owner/agent-name @owner/other-bot /approve req-1", ("approve", "req-1")),
+            # Unresolved mentions stay in the platform's normalized @[[uuid]] form.
+            ("@[[3029eb1d-d998-4567-bdf3-d82fc6b89a58]] /approvals", ("approvals", "")),
+            ("@team/bot /approve", ("approve", "")),
+        ],
+    )
+    def test_command_behind_the_mention_block_is_recognised(
+        self, content: str, expected: tuple[str, str]
+    ) -> None:
+        """The delivery mention block must never hide a real command."""
+        assert CodexAdapter._extract_local_command(content) == expected
 
-        prefix = " ".join(f"word{i}" for i in range(_COMMAND_TOKEN_SEARCH_LIMIT - 1))
-        content = f"{prefix} /approve a-1"
-        result = CodexAdapter._extract_local_command(content)
-        assert result == ("approve", "a-1")
-
-    def test_command_after_many_mentions_is_recognised(self) -> None:
-        """A long mention block (``@handle DisplayName`` × N) must not bury the command.
-
-        Regression against the old 5-token limit which could drop a legit
-        ``/approve`` behind only two or three concurrent mentions.
-        """
-        mentions = " ".join(
-            f"@user{i} Display{i}" for i in range(8)
-        )  # 16 tokens (8 mentions × 2) + /approve + id
-        content = f"{mentions} /approve a-1"
-        result = CodexAdapter._extract_local_command(content)
-        assert result == ("approve", "a-1")
+    @pytest.mark.parametrize("content", ["@team/bot /", "@team/bot /notacommand x", ""])
+    def test_non_commands_are_ignored(self, content: str) -> None:
+        assert CodexAdapter._extract_local_command(content) is None
 
 
 class TestDoubleEmitStartupWarning:
