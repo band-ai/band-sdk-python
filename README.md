@@ -335,7 +335,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
 
-> `crewai` and `parlant` cannot be installed together because their transitive dependencies conflict. `crewai` and `pydantic-ai` are also incompatible (crewai pins `pydantic<2.12`, pydantic-ai requires `>=2.12`). Install one per environment.
+> Install `crewai` in its own environment, apart from `parlant` and `pydantic-ai` — it carries the narrowest transitive pins of the three and the lockfile resolves it in a separate fork. See [Adapter Dependency Conflicts](#adapter-dependency-conflicts) for the current pins.
 
 ### Bridge Adapters
 

@@ -119,7 +119,7 @@ uv lock \
   -P langgraph==1.2.9 \
   -P uvicorn==0.51.0 \
   -P pytest-rerunfailures==16.4 \
-  -P crewai==1.15.4 \
+  -P crewai==1.15.5 \
   -P pydantic-ai-slim==2.13.0 \
   -P langchain-community==0.4.2 \
   -P pytest-asyncio==1.4.0 \
