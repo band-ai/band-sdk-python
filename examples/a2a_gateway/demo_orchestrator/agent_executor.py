@@ -15,11 +15,9 @@ from a2a.types import (
     InternalError,
     Part,
     TaskState,
-    TextPart,
     UnsupportedOperationError,
 )
-from a2a.utils import new_agent_text_message, new_task
-from a2a.utils.errors import ServerError
+from band.integrations.a2a.protocol import new_task, text_message
 
 try:
     from .agent import OrchestratorAgent
@@ -59,7 +57,9 @@ class OrchestratorAgentExecutor(AgentExecutor):
         task = context.current_task
 
         if not task:
-            task = new_task(context.message)  # type: ignore
+            if context.message is None:
+                raise ValueError("A2A request is missing its message")
+            task = new_task(context.message)
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, task.context_id)
@@ -73,29 +73,28 @@ class OrchestratorAgentExecutor(AgentExecutor):
                 if not is_task_complete and not require_user_input:
                     # Working status update
                     await updater.update_status(
-                        TaskState.working,
-                        new_agent_text_message(
+                        TaskState.TASK_STATE_WORKING,
+                        text_message(
                             content,
-                            task.context_id,
-                            task.id,
+                            context_id=task.context_id,
+                            task_id=task.id,
                         ),
                     )
                 elif require_user_input:
                     # Need more input from user
                     await updater.update_status(
-                        TaskState.input_required,
-                        new_agent_text_message(
+                        TaskState.TASK_STATE_INPUT_REQUIRED,
+                        text_message(
                             content,
-                            task.context_id,
-                            task.id,
+                            context_id=task.context_id,
+                            task_id=task.id,
                         ),
-                        final=True,
                     )
                     break
                 else:
                     # Task complete - add artifact and finish
                     await updater.add_artifact(
-                        [Part(root=TextPart(text=content))],
+                        [Part(text=content)],
                         name="orchestrator_result",
                     )
                     await updater.complete()
@@ -103,7 +102,7 @@ class OrchestratorAgentExecutor(AgentExecutor):
 
         except Exception as e:
             logger.error("Error executing orchestrator agent: %s", e)
-            raise ServerError(error=InternalError()) from e
+            raise InternalError() from e
 
     async def cancel(
         self,
@@ -119,4 +118,4 @@ class OrchestratorAgentExecutor(AgentExecutor):
         Raises:
             ServerError: Cancellation not supported
         """
-        raise ServerError(error=UnsupportedOperationError())
+        raise UnsupportedOperationError()

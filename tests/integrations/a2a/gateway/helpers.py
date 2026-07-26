@@ -1,4 +1,4 @@
-"""Shared fixtures and builders for gateway tests."""
+"""Shared test-data builders for the A2A gateway."""
 
 from __future__ import annotations
 

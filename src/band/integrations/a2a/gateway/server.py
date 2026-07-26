@@ -8,13 +8,14 @@ from collections.abc import Callable
 from typing import Any
 
 from a2a.server.agent_execution import AgentExecutor
-from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
-from a2a.server.apps.rest.rest_adapter import RESTAdapter
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes.agent_card_routes import create_agent_card_routes
+from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
+from a2a.server.routes.rest_routes import create_rest_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from starlette.applications import Starlette
-from starlette.routing import Route
+from starlette.routing import BaseRoute, Route
 
 from band_rest import Peer
 
@@ -62,7 +63,13 @@ class GatewayServer:
         return AgentCard(
             name=peer.name,
             description=peer.description or "",
-            url=rpc_url,
+            supported_interfaces=[
+                AgentInterface(
+                    protocol_binding="JSONRPC",
+                    protocol_version="1.0",
+                    url=rpc_url,
+                )
+            ],
             version="1.0.0",
             capabilities=AgentCapabilities(streaming=True),
             skills=[
@@ -75,42 +82,53 @@ class GatewayServer:
             ],
             default_input_modes=["text/plain"],
             default_output_modes=["text/plain"],
-            preferred_transport="JSONRPC",
-            additional_interfaces=[AgentInterface(transport="JSONRPC", url=rpc_url)],
         )
 
     def _build_app(self) -> Starlette:
-        routes: list[Route] = [
+        routes: list[BaseRoute] = [
             Route("/peers", self._handle_list_peers, methods=["GET"]),
         ]
+        protocol_routes: list[BaseRoute] = []
+        rest_routes: list[BaseRoute] = []
 
         for slug, peer in self.peers.items():
-            card = self._agent_card(slug, peer)
-            handler = DefaultRequestHandler(
-                agent_executor=self.executor_factory(slug),
-                task_store=InMemoryTaskStore(),
-            )
-            jsonrpc_app = A2AStarletteApplication(
-                agent_card=card,
-                http_handler=handler,
-            )
-            rest_adapter = RESTAdapter(agent_card=card, http_handler=handler)
-            routes.extend(
-                jsonrpc_app.routes(
-                    agent_card_url=f"/agents/{slug}/.well-known/agent.json",
-                    rpc_url=f"/agents/{slug}",
+            aliases = dict.fromkeys((slug, peer.id))
+            for alias in aliases:
+                card = self._agent_card(alias, peer)
+                executor = self.executor_factory(slug)
+                handler = DefaultRequestHandler(
+                    agent_executor=executor,
+                    task_store=InMemoryTaskStore(),
+                    agent_card=card,
                 )
-            )
-            routes.extend(
-                Route(
-                    f"/agents/{slug}{path}",
-                    endpoint,
-                    methods=[method],
+                protocol_routes.extend(
+                    create_agent_card_routes(
+                        card,
+                        card_url=f"/agents/{alias}/.well-known/agent-card.json",
+                    )
                 )
-                for (path, method), endpoint in rest_adapter.routes().items()
-            )
+                protocol_routes.extend(
+                    create_agent_card_routes(
+                        card,
+                        card_url=f"/agents/{alias}/.well-known/agent.json",
+                    )
+                )
+                protocol_routes.extend(
+                    create_jsonrpc_routes(
+                        handler,
+                        rpc_url=f"/agents/{alias}",
+                        enable_v0_3_compat=True,
+                    )
+                )
+                rest_routes.extend(
+                    create_rest_routes(
+                        handler,
+                        enable_v0_3_compat=True,
+                        path_prefix=f"/agents/{alias}",
+                    )
+                )
 
-        return Starlette(routes=routes)
+        return Starlette(routes=routes + protocol_routes + rest_routes)
 
     async def _handle_list_peers(self, _request: Any) -> Any:
         from starlette.responses import JSONResponse

@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from a2a.server.events import EventQueue
 from a2a.types import Task, TaskStatusUpdateEvent
 
+from band.integrations.a2a.protocol import is_terminal_state
+
 
 @dataclass
 class GatewaySessionState:
@@ -49,5 +51,5 @@ class PendingA2ATask:
     async def publish_response(self, event: TaskStatusUpdateEvent) -> None:
         """Publish a response and release the executor on terminal events."""
         await self.event_queue.enqueue_event(event)
-        if event.final:
+        if is_terminal_state(event.status.state):
             self.done.set()

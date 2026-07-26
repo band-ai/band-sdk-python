@@ -14,16 +14,11 @@ from uuid import uuid4
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import (
-    Message as A2AMessage,
-    Part,
-    Role,
     Task,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
-    TextPart,
 )
-from a2a.utils import get_message_text
 
 from band.client.rest import (
     AsyncRestClient,
@@ -41,6 +36,12 @@ from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.integrations.a2a.gateway.server import GatewayServer
 from band.integrations.a2a.gateway.config import A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
+from band.integrations.a2a.protocol import (
+    is_terminal_state,
+    snapshot_task,
+    text_from_message,
+    text_message,
+)
 from band_rest import Peer
 from band_rest.agent_api_peers.types.list_agent_peers_response import (
     ListAgentPeersResponse,
@@ -298,7 +299,26 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         """
         pending = self._pending_tasks.pop(room_id, None)
         if pending:
-            pending.done.set()
+            if not is_terminal_state(pending.task.status.state):
+                pending.task.status.CopyFrom(
+                    TaskStatus(
+                        state=TaskState.TASK_STATE_FAILED,
+                        message=text_message(
+                            "Band room closed before the A2A response completed",
+                            context_id=pending.task.context_id,
+                            task_id=pending.task.id,
+                        ),
+                    )
+                )
+                await pending.publish_response(
+                    TaskStatusUpdateEvent(
+                        task_id=pending.task.id,
+                        context_id=pending.task.context_id,
+                        status=pending.task.status,
+                    )
+                )
+            else:
+                pending.done.set()
         logger.debug("Cleaned up gateway resources for room %s", room_id)
 
     async def stop(self) -> None:
@@ -328,7 +348,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         return Task(
             id=context.task_id,
             context_id=context.context_id,
-            status=TaskStatus(state=TaskState.working),
+            status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
         )
 
     async def _execute_a2a(
@@ -360,9 +380,9 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         )
         try:
             async with self.pending_task(room_id, pending):
-                await event_queue.enqueue_event(task)
+                await event_queue.enqueue_event(snapshot_task(task))
                 await self._emit_context_event(room_id, context_id)
-                content = get_message_text(context.message) or ""
+                content = text_from_message(context.message)
 
                 await self._rest.agent_api_messages.create_agent_chat_message(
                     chat_id=room_id,
@@ -392,26 +412,21 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                         task.id,
                         self.config.response_timeout_s,
                     )
-                    task.status = TaskStatus(
-                        state=TaskState.failed,
-                        message=A2AMessage(
-                            role=Role.agent,
-                            message_id=str(uuid4()),
-                            parts=[
-                                Part(
-                                    root=TextPart(
-                                        text="Timed out waiting for a Band response"
-                                    )
-                                )
-                            ],
-                        ),
+                    task.status.CopyFrom(
+                        TaskStatus(
+                            state=TaskState.TASK_STATE_FAILED,
+                            message=text_message(
+                                "Timed out waiting for a Band response",
+                                context_id=task.context_id,
+                                task_id=task.id,
+                            ),
+                        )
                     )
                     await event_queue.enqueue_event(
                         TaskStatusUpdateEvent(
                             task_id=task.id,
                             context_id=task.context_id,
                             status=task.status,
-                            final=True,
                         )
                     )
         except asyncio.CancelledError:
@@ -452,13 +467,12 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     ) -> None:
         """Publish the official terminal cancellation event."""
         task = context.current_task or self._make_task(context)
-        task.status = TaskStatus(state=TaskState.canceled)
+        task.status.CopyFrom(TaskStatus(state=TaskState.TASK_STATE_CANCELED))
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(
                 task_id=task.id,
                 context_id=task.context_id,
                 status=task.status,
-                final=True,
             )
         )
 
@@ -565,31 +579,29 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         message_type = getattr(msg, "message_type", "text")
 
         if message_type == "error":
-            state = TaskState.failed
-            final = True
+            state = TaskState.TASK_STATE_FAILED
         elif message_type in ("thought", "tool_call", "tool_result"):
-            state = TaskState.working
-            final = False
+            state = TaskState.TASK_STATE_WORKING
         else:
             # Regular text message = completed response
-            state = TaskState.completed
-            final = True
+            state = TaskState.TASK_STATE_COMPLETED
 
         # Update task status
-        task.status = TaskStatus(
-            state=state,
-            message=A2AMessage(
-                role=Role.agent,
-                message_id=str(uuid4()),
-                parts=[Part(root=TextPart(text=msg.content))],
-            ),
+        task.status.CopyFrom(
+            TaskStatus(
+                state=state,
+                message=text_message(
+                    msg.content,
+                    context_id=task.context_id,
+                    task_id=task.id,
+                ),
+            )
         )
 
         return TaskStatusUpdateEvent(
             task_id=task.id,
             context_id=task.context_id,
             status=task.status,
-            final=final,
         )
 
     async def _emit_context_event(self, room_id: str, context_id: str) -> None:

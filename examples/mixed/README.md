@@ -130,8 +130,8 @@ uv run examples/mixed/04_risk_reviewer_a2a.py
 Optional smoke checks before bridging:
 
 ```bash
-curl http://127.0.0.1:10121/.well-known/agent.json
-curl http://127.0.0.1:10122/.well-known/agent.json
+curl http://127.0.0.1:10121/.well-known/agent-card.json
+curl http://127.0.0.1:10122/.well-known/agent-card.json
 ```
 
 At this point they are still remote A2A services only. They are not Band participants yet.
@@ -203,8 +203,8 @@ The bridge is the missing piece. Starting `03_fact_checker_a2a.py` and `04_risk_
 
 Check that:
 
-- `http://127.0.0.1:10121/.well-known/agent.json` works
-- `http://127.0.0.1:10122/.well-known/agent.json` works
+- `http://127.0.0.1:10121/.well-known/agent-card.json` works
+- `http://127.0.0.1:10122/.well-known/agent-card.json` works
 - the bridge process is using the right `MIXED_FACT_URL` and `MIXED_RISK_URL`
 
 ### The CrewAI agents start but do not respond
