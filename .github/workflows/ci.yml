@@ -2,10 +2,10 @@ name: CI
 
 on:
   pull_request:
-    # Keep dev here until the single-trunk cutover completes (default branch
-    # flipped to main and dev retired). Removing dev early would stop CI on
-    # dev-targeted PRs — including this migration PR — blocking their merge.
-    branches: [dev, main]
+    branches: [main]
+  # Run on the merge queue's temporary branch so these required checks report
+  # against the queued merge result. Without this the queue would wait forever.
+  merge_group:
 
 jobs:
 
@@ -35,8 +35,15 @@ jobs:
       # kit image build's `uv sync --locked`.
       run: uv lock --check
 
+    - name: Verify the echo-agent starter lock is in sync with its pyproject
+      # The starter ships a committed uv.lock that the kit launcher installs
+      # verbatim (`uv sync --locked`), so a lock that no longer satisfies the
+      # starter's constraints (e.g. a band-sdk floor bump without a relock)
+      # would break every fresh kit workspace.
+      run: uv lock --check --directory docker/band_python_kit/echo-agent
+
     - name: Install dependencies
-      run: uv sync --extra dev
+      run: uv sync --locked --extra dev
 
     - name: Run pre-commit hooks
       run: uv run pre-commit run --all-files
@@ -75,7 +82,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
-      run: uv sync --extra dev
+      run: uv sync --locked --extra dev
 
     - name: Run tests
       run: uv run pytest
@@ -123,7 +130,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install crewai dependencies
-      run: uv sync --extra dev-crewai
+      run: uv sync --locked --extra dev-crewai
 
     - name: Run crewai tests
       env:

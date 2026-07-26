@@ -177,3 +177,6 @@ uv.toml
 # Scripts config (contains local paths)
 scripts/config.yaml
 .a5c/
+
+# Local Claude Code settings (machine-specific, not shared)
+.claude/settings.local.json

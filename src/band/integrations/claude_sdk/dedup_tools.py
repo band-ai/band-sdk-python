@@ -13,9 +13,9 @@ same ``band_send_message`` MCP tool call for a single LLM-intended send:
   chat).
 
 The platform happily accepts every POST, so the duplicate becomes a visible
-chat message and a charged LLM call. ``ExecutionContext._processed_ids`` only
-dedupes *inbound* user messages from the platform; it has no view of outbound
-tool calls produced by Claude.
+chat message and a charged LLM call. The runtime's ``MessageClaimRegistry``
+only dedupes *inbound* user messages from the platform; it has no view of
+outbound tool calls produced by Claude.
 
 This wrapper sits in front of the per-room ``AgentToolsProtocol`` that the
 ``ClaudeSDKAdapter`` registers in ``_room_tools[room_id]``. It dedupes

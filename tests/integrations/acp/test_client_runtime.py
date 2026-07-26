@@ -747,15 +747,20 @@ class TestACPRuntime:
             )
 
     @pytest.mark.asyncio
-    async def test_load_session_propagates_non_session_errors(self) -> None:
+    async def test_load_session_treats_non_session_errors_as_miss(self) -> None:
+        """Any protocol error on session/load is a recoverable load-miss: the
+        caller falls back to a fresh session instead of the turn dying."""
         mock_conn = AsyncMock()
         mock_conn.load_session = AsyncMock(side_effect=RequestError.invalid_params())
         runtime = ACPRuntime(command=["codex"])
         runtime._conn = mock_conn
         runtime._agent_supports_session_load = True
 
-        with pytest.raises(RequestError, match="Invalid params"):
-            await runtime.load_session(cwd="/tmp", session_id="sess-1", mcp_servers=[])
+        loaded = await runtime.load_session(
+            cwd="/tmp", session_id="sess-1", mcp_servers=[]
+        )
+
+        assert loaded is False
 
     @pytest.mark.asyncio
     async def test_start_cleans_up_failed_initialize(self) -> None:

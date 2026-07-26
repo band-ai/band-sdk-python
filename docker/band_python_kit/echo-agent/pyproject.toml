@@ -3,4 +3,8 @@ name = "band-kit-example"
 version = "0.1.0"
 description = "Example customer workspace for the Band Python Sandbox kit."
 requires-python = ">=3.11"
+# band-sdk floor: 1.4.0 is the first release whose WebSocket auth sends the
+# x-api-key handshake header, which proxy-managed credential custody (the
+# kit's default tier) requires — older SDKs only put the key in the URL query,
+# which the sandbox proxy never rewrites, so the agent cannot connect.
 dependencies = ["band-sdk>=1.4.2", "pydantic-settings>=2.0.0"]

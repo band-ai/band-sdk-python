@@ -484,10 +484,7 @@ class TestACPClientAdapterOnMessage:
         adapter_with_mocks._runtime._conn.load_session = AsyncMock(
             return_value=object()
         )
-        history = ACPClientSessionState(
-            room_to_session={"room-123": "session-abc"},
-            replay_messages=["[User]: prior note"],
-        )
+        history = ACPClientSessionState(room_to_session={"room-123": "session-abc"})
 
         await adapter_with_mocks.on_message(
             msg,
@@ -501,13 +498,9 @@ class TestACPClientAdapterOnMessage:
 
         assert adapter_with_mocks._room_to_session["room-123"] == "session-abc"
         adapter_with_mocks._runtime._conn.load_session.assert_awaited_once()
-        resumed_prompt = adapter_with_mocks._runtime._conn.prompt.call_args.kwargs[
-            "prompt"
-        ][0].text
-        assert "[Recovered Room History]" not in resumed_prompt
 
     @pytest.mark.asyncio
-    async def test_on_message_recovers_history_when_persisted_session_cannot_load(
+    async def test_on_message_creates_new_session_when_persisted_session_cannot_load(
         self, adapter_with_mocks: ACPClientAdapter
     ) -> None:
         """A rebooted ephemeral ACP agent creates a session before prompting."""
@@ -536,10 +529,7 @@ class TestACPClientAdapterOnMessage:
         await adapter_with_mocks.on_message(
             msg,
             tools,
-            ACPClientSessionState(
-                room_to_session={"room-123": stale_session},
-                replay_messages=["[User]: prior note"],
-            ),
+            ACPClientSessionState(room_to_session={"room-123": stale_session}),
             None,
             None,
             is_session_bootstrap=True,
@@ -549,10 +539,9 @@ class TestACPClientAdapterOnMessage:
         assert adapter_with_mocks._room_to_session["room-123"] == "fresh-session"
         adapter_with_mocks._runtime._conn.new_session.assert_awaited_once()
         adapter_with_mocks._runtime._conn.load_session.assert_awaited_once()
-        prompt_call = adapter_with_mocks._runtime._conn.prompt.call_args
-        assert prompt_call.kwargs["session_id"] == "fresh-session"
-        recovered_prompt = prompt_call.kwargs["prompt"][0].text
-        assert "[Recovered Room History]\n[User]: prior note" in recovered_prompt
+        prompt_calls = adapter_with_mocks._runtime._conn.prompt.call_args_list
+        assert [call.kwargs["session_id"] for call in prompt_calls] == ["fresh-session"]
+        assert "[System Context]" in prompt_calls[0].kwargs["prompt"][0].text
         assert tools.messages_sent[0]["content"] == "Recovered reply"
 
     @pytest.mark.asyncio

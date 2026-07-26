@@ -36,6 +36,7 @@ from tests.conftest_integration import (
     shared_agent2_info,
     shared_multi_agent_room,
     shared_room,
+    shared_user_owned_room,
     shared_user_peer,
     # Test fixtures
     test_chat,
@@ -48,6 +49,7 @@ from tests.conftest_integration import (
     # Helpers
     fetch_all_context,
     is_room_alive,
+    wait_until,
 )
 
 # NOTE: pytestmark in conftest.py is NOT applied to collected tests.
@@ -94,6 +96,7 @@ __all__ = [
     "shared_agent2_info",
     "shared_multi_agent_room",
     "shared_room",
+    "shared_user_owned_room",
     "shared_user_peer",
     # Test fixtures
     "test_chat",
@@ -106,4 +109,5 @@ __all__ = [
     # Helpers
     "fetch_all_context",
     "is_room_alive",
+    "wait_until",
 ]

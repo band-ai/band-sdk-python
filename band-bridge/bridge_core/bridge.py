@@ -43,6 +43,7 @@ from band.platform.event import (
 from band.platform.link import BandLink
 
 from .config import AgentConfig, BridgeConfig, ReconnectConfig
+from .control import ControlSignalHandler
 from .forwarder import Forwarder, build_forwarder
 from .health import HealthServer
 
@@ -105,6 +106,23 @@ class AgentRunner:
         self._shutdown_event = shutdown_event
         self._connected_event = asyncio.Event()
         self._processed_message_ids: OrderedDict[str, None] = OrderedDict()
+        # In-flight forward tasks per room, so a control signal (interrupt/stop)
+        # can cancel whatever forwards are currently live for a room. Tracked as
+        # a set because same-room events serialize on the per-room lock: while
+        # one task forwards, others wait on that lock, and all of them must be
+        # cancellable — otherwise interrupt cancels a queued waiter while the
+        # running forward keeps going. Populated by _safe_handle_event at the
+        # top of processing, discarded in its finally.
+        self._active_room_tasks: dict[str, set[asyncio.Task[None]]] = {}
+        # Control-signal handling (interrupt/stop/play) lives in its own type;
+        # it delegates cancel/nudge/room-list back to this runner but owns the
+        # correlation-id dedup and routing (see control.py).
+        self._control = ControlSignalHandler(self)
+        # Background tasks spawned by control signals (play nudges) so the WS
+        # receive task isn't blocked awaiting them. Tracked here to be
+        # cancelled on close() and to keep a strong ref (create_task alone
+        # doesn't).
+        self._control_tasks: set[asyncio.Task[None]] = set()
         # Per-room locks: events for the same room are forwarded sequentially
         # so the container always sees a settled history (its own prior reply
         # is already posted before the next invocation reads room context).
@@ -214,6 +232,8 @@ class AgentRunner:
 
     async def close(self) -> None:
         """Disconnect link and close forwarder. Idempotent."""
+        for task in tuple(self._control_tasks):
+            task.cancel()
         try:
             await self._link.disconnect()
         except Exception:
@@ -235,6 +255,11 @@ class AgentRunner:
         """Connect, subscribe, and consume events until shutdown."""
         await self._link.connect()
         self._connected_event.set()
+
+        # Route control signals (interrupt/stop/play) to the control handler.
+        # Set as soon as connected so the hook is live for the agent_control
+        # channel BandLink.connect() already joined.
+        self._link.on_control = self._control.handle
 
         await self._link.subscribe_agent_rooms(self._config.agent_id)
 
@@ -331,31 +356,36 @@ class AgentRunner:
         marking, so ``/next`` would return the same message until the container
         marks it processed. The container's own drain loop pulls the rest.
         """
-
-        async def nudge(room_id: str) -> None:
-            try:
-                msg = await self._link.get_next_message(room_id)
-            except Exception:
-                logger.warning(
-                    "Agent %s: rehydration /next failed for room %s",
-                    self._config.agent_id,
-                    room_id,
-                    exc_info=True,
-                )
-                return
-            if msg is None:
-                return
-            logger.info(
-                "Agent %s: rehydrating room %s with backlog message %s",
-                self._config.agent_id,
-                room_id,
-                msg.id,
-            )
-            await self._safe_handle_event(self._backlog_event(msg))
-
         # Rooms are independent; nudge concurrently. Per-room locks and dedup
         # still serialize each nudge against any live event for that room.
-        await asyncio.gather(*(nudge(rid) for rid in room_ids))
+        await asyncio.gather(*(self._nudge_room(rid) for rid in room_ids))
+
+    async def _nudge_room(self, room_id: str) -> None:
+        """Forward one backlog message for a room, if ``/next`` has one.
+
+        Shared by startup rehydration (:meth:`_rehydrate_backlog`) and a live
+        ``play`` control signal (``ControlSignalHandler.handle``) — both cases
+        are the same "catch up this room via /next" operation.
+        """
+        try:
+            msg = await self._link.get_next_message(room_id)
+        except Exception:
+            logger.warning(
+                "Agent %s: rehydration /next failed for room %s",
+                self._config.agent_id,
+                room_id,
+                exc_info=True,
+            )
+            return
+        if msg is None:
+            return
+        logger.info(
+            "Agent %s: rehydrating room %s with backlog message %s",
+            self._config.agent_id,
+            room_id,
+            msg.id,
+        )
+        await self._safe_handle_event(self._backlog_event(msg))
 
     def _backlog_event(self, msg: PlatformMessage) -> MessageEvent:
         """Wrap a ``/next`` PlatformMessage as a synthetic message_created event.
@@ -382,20 +412,36 @@ class AgentRunner:
         )
 
     async def _safe_handle_event(self, event: object) -> None:
-        # Semaphore caps concurrent in-flight forwards per agent. Holding it
-        # across ``_handle_event`` (which includes the per-room lock + the
-        # forwarder call) is the point — bursts wait here instead of stacking
-        # up inside the forwarder.
-        async with self._forward_semaphore:
-            try:
+        # Track this task among the in-flight forwards for its room so a control
+        # signal (interrupt/stop) can cancel it — whether it's the one holding
+        # the per-room lock and forwarding, or a same-room task still waiting on
+        # that lock. Room-less events (e.g. contact events) aren't tracked —
+        # there's nothing room-scoped to cancel for them.
+        room_id = getattr(event, "room_id", None)
+        task = asyncio.current_task()
+        if room_id and task is not None:
+            self._active_room_tasks.setdefault(room_id, set()).add(task)
+        try:
+            # Semaphore caps concurrent in-flight forwards per agent. Holding
+            # it across ``_handle_event`` (which includes the per-room lock +
+            # the forwarder call) is the point — bursts wait here instead of
+            # stacking up inside the forwarder.
+            async with self._forward_semaphore:
                 await self._handle_event(event)
-            except Exception:
-                logger.warning(
-                    "Agent %s: error handling event %s",
-                    self._config.agent_id,
-                    type(event).__name__,
-                    exc_info=True,
-                )
+        except Exception:
+            logger.warning(
+                "Agent %s: error handling event %s",
+                self._config.agent_id,
+                type(event).__name__,
+                exc_info=True,
+            )
+        finally:
+            if room_id:
+                tasks = self._active_room_tasks.get(room_id)
+                if tasks is not None:
+                    tasks.discard(task)
+                    if not tasks:
+                        self._active_room_tasks.pop(room_id, None)
 
     async def _handle_event(self, event: object) -> None:
         """Manage room subscriptions; forward forwardable events.
@@ -532,6 +578,56 @@ class AgentRunner:
         self._processed_message_ids[message_id] = None
         if len(self._processed_message_ids) > _DEDUP_MAX_SIZE:
             self._processed_message_ids.popitem(last=False)
+
+    # --- Control signals (interrupt/stop/play) ---
+    #
+    # Signal routing/dedup lives in ControlSignalHandler (control.py); it calls
+    # back into the operations below, which touch this runner's forwarding
+    # state (the per-room task registry) and the /next nudge path.
+
+    def _spawn_play_nudge(self, room_ids: list[str]) -> None:
+        """Fire ``play`` /next nudges as tracked background tasks.
+
+        Runs off the WS receive task so a following interrupt/stop isn't queued
+        behind the nudge's /next + forward. Each spawned forward still lands in
+        ``_active_room_tasks`` (via ``_safe_handle_event``), so a later
+        interrupt/stop can cancel it. Tasks are tracked in ``_control_tasks``
+        and cancelled on ``close()``.
+        """
+        for room_id in room_ids:
+            task = asyncio.create_task(self._nudge_room(room_id))
+            self._control_tasks.add(task)
+            task.add_done_callback(self._control_tasks.discard)
+
+    def _cancel_active_forward(self, room_id: str) -> None:
+        """Cancel all in-flight forward tasks for a room, if any.
+
+        Cancels both the task currently forwarding and any same-room tasks
+        still queued on the per-room lock, so a signal can't leave a waiter
+        behind to run the moment the cancelled forward releases the lock.
+
+        Best-effort: this stops the bridge from waiting and releases the room
+        lock immediately. It does not guarantee the remote invocation itself
+        stops — ``AgentCoreForwarder``'s underlying boto3 call runs in a
+        thread and isn't killed by cancelling the awaiting task (see
+        ``forwarder.py``); that is a pre-existing, documented limitation of
+        that transport, not something this signal can fix.
+        """
+        tasks = self._active_room_tasks.get(room_id)
+        if not tasks:
+            return
+        cancelled = 0
+        for task in tuple(tasks):
+            if not task.done():
+                task.cancel()
+                cancelled += 1
+        if cancelled:
+            logger.info(
+                "Agent %s: cancelled %d in-flight forward(s) for room %s",
+                self._config.agent_id,
+                cancelled,
+                room_id,
+            )
 
 
 class BandBridge:
