@@ -272,6 +272,27 @@ A turn's events must land in the room in the order they happened, because two th
 
 `RoomTurnEmitter` (`room_emitter.py`) is the sink: it posts narration (thought/tool_call/tool_result/plan) live for **every** tool call — including Band messaging tools, with no suppression — and holds **only** the assistant text until close (the text-fallback decision needs the whole turn). `ACPRuntime.prompt(..., on_chunk=emitter.emit)` registers the sink and `flush`es at turn end.
 
+### History replay fallback (Client Adapter)
+
+A **freshly created** ACP session owes the room a transcript replay; a restored one
+does not. On bootstrap the adapter first validates the room's persisted session id
+with ACP `session/load`; on any miss (no persisted id, unavailable, or erroring
+load) the fresh session is seeded with the room's text transcript
+(`ACPClientSessionState.replay_messages`, built by the shared
+`build_replay_messages` helper in `converters/helpers.py`). A session minted
+**off-bootstrap** (the previous runtime was torn down mid-run, e.g. after a prompt
+failure) re-fetches the transcript itself via `tools.fetch_room_context`, so a
+respawn never starts amnesiac. Replay is injected exactly once into the session's
+first prompt under `HISTORY_REPLAY_HEADER`: framed as read-only background (treat as
+already handled; never re-execute), with the current message attributed and last
+under a nonce'd `[New Message <nonce>]` boundary marker the header names (the nonce
+defeats a replayed message spoofing the boundary). Bootstrap history stops
+**strictly before** the triggering message (`messages_before` in
+`runtime/formatters.py`, applied in `preprocessing/default.py` for every adapter):
+later backlog entries are pending turns of their own and never replay. Adapter
+narration events (thought/tool_call/tool_result/task) never replay. A successfully
+loaded session gets no replay, so history is never doubled.
+
 ### Reply Delivery (Client Adapter)
 
 Tool-first with a text fallback, matching `copilot_sdk`/`codex`: if the turn posted via a Band messaging tool, the agent's plain text is **not** also relayed; otherwise the held text is relayed at turn close. The decision lives in `turn_replied_in_room()` (`room_emitter.py`), which reads the collected tool-call stream — the ACP adapter can't flip an in-process flag like the siblings, because its tools may execute out-of-process (remote band-mcp), so it matches `tool_call` title + `completed` status. Which tools count is defined once in `is_room_posting_tool()` / `ROOM_POSTING_TOOL_NAMES` (`src/band/runtime/tools.py`): the SDK's `band_send_message` (also what band-mcp 1.3.2+ advertises, since its registrar reuses the SDK tool definitions) plus the legacy `create_agent_chat_message` spelling from band-mcp ≤1.3.1. This suppression is about the text fallback only — the call's own `tool_call`/`tool_result` narration (below) is never suppressed.
