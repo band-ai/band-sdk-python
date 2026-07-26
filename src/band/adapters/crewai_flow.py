@@ -60,11 +60,6 @@ from band.runtime.custom_tools import (
     get_custom_tool_name,
 )
 
-try:  # pragma: no cover - optional dependency guard
-    from crewai.flow.flow import Flow  # type: ignore[import-not-found]
-except ImportError:  # pragma: no cover - exercised only when crewai missing
-    Flow = None  # type: ignore[assignment,misc]
-
 logger = logging.getLogger(__name__)
 
 

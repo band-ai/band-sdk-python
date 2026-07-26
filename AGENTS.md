@@ -440,24 +440,29 @@ uv run pyrefly check
 
 ## Dependency Conflicts
 
-**crewai cannot coexist** with parlant or pydantic-ai in the same Python
-environment due to conflicting transitive dependencies:
+**crewai is resolved apart from** parlant and pydantic-ai: it carries the
+narrowest transitive pins of the three, and they have repeatedly collided.
 
-| Conflict | crewai 1.14.3 requires | Other package requires |
+| Package | crewai 1.15.5 pins | Other package requires |
 |---|---|---|
-| pydantic | `~=2.11.9` (<2.12) | pydantic-ai-slim >=1.61 needs `>=2.12` |
-| opentelemetry-sdk | `~=1.34.0` (<1.35) | parlant >=3.1 needs `>=1.37` |
+| pydantic | `>=2.11.9,<2.13` | pydantic-ai-slim 2.x needs `>=2.12` |
+| opentelemetry-sdk | `~=1.42.0` (<1.43) | parlant >=3.1 needs `>=1.37` |
 
-This is declared in `pyproject.toml` via `[tool.uv] conflicts` so `uv lock`
-resolves each in a separate fork.
+The current versions happen to overlap, but crewai's ceilings move with every
+release, so `pyproject.toml` declares the extras as `[tool.uv] conflicts` and
+`uv lock` resolves each in its own fork — no upgrade waits on crewai's slowest
+pin.
 
 **Extras layout:**
 - `dev` — includes all framework deps **except** crewai
 - `dev-crewai` — includes crewai + test tooling only (no parlant/pydantic-ai)
-- `crewai` is mutually exclusive with `parlant` and `pydantic-ai` runtime extras
+- `crewai` is declared conflicting with the `parlant` and `pydantic-ai` runtime
+  extras, so one `uv sync` can install only one of them
 
-**For CI:** crewai adapter tests require a separate job/step using
-`uv sync --extra dev-crewai`.
+**For CI:** the `test-crewai` job (`uv sync --extra dev-crewai`) runs only the
+tests that need the real package — every other crewai test fakes it through
+`sys.modules` and already runs in the default `test` job. The list is kept honest
+by `tests/framework_conformance/test_crewai_job_coverage.py`.
 
 ## Environment Variables
 
@@ -480,7 +485,7 @@ resolves each in a separate fork.
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and authenticates via a stored `copilot login` or a Copilot-entitled `GITHUB_TOKEN`; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and authenticates via a stored `copilot login` or a Copilot-entitled `GITHUB_TOKEN`; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (the codex, opencode, and copilot_acp coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
