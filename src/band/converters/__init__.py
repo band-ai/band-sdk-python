@@ -18,8 +18,9 @@ Install the extra you need::
 
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING
+
+from band.exports import lazy_exports
 
 # Type-only imports for static analysis (pyrefly, mypy, etc.)
 if TYPE_CHECKING:
@@ -85,73 +86,25 @@ if TYPE_CHECKING:
         OpencodeHistoryConverter as OpencodeHistoryConverter,
     )
 
-__all__ = [
-    "LangChainHistoryConverter",
-    "LangChainMessages",
-    "AnthropicHistoryConverter",
-    "AnthropicMessages",
-    "PydanticAIHistoryConverter",
-    "PydanticAIMessages",
-    "ClaudeSDKHistoryConverter",
-    "CopilotSDKHistoryConverter",
-    "CopilotSDKSessionState",
-    "ParlantHistoryConverter",
-    "ParlantMessages",
-    "CrewAIHistoryConverter",
-    "CrewAIMessages",
-    "CrewAIFlowSessionState",
-    "CrewAIFlowStateConverter",
-    "A2AHistoryConverter",
-    "GatewayHistoryConverter",
-    "CodexHistoryConverter",
-    "ACPServerHistoryConverter",
-    "ACPClientHistoryConverter",
-    "AgnoHistoryConverter",
-    "AgnoMessages",
-    "GeminiHistoryConverter",
-    "GeminiMessages",
-    "GoogleADKHistoryConverter",
-    "GoogleADKMessages",
-    "OpencodeHistoryConverter",
-]
-
-
-# Submodule (under band.converters) providing each lazily imported name.
-_LAZY_IMPORTS: dict[str, str] = {
-    "LangChainHistoryConverter": "langchain",
-    "LangChainMessages": "langchain",
-    "AnthropicHistoryConverter": "anthropic",
-    "AnthropicMessages": "anthropic",
-    "PydanticAIHistoryConverter": "pydantic_ai",
-    "PydanticAIMessages": "pydantic_ai",
-    "ClaudeSDKHistoryConverter": "claude_sdk",
-    "CopilotSDKHistoryConverter": "copilot_sdk",
-    "CopilotSDKSessionState": "copilot_sdk",
-    "ParlantHistoryConverter": "parlant",
-    "ParlantMessages": "parlant",
-    "CrewAIHistoryConverter": "crewai",
-    "CrewAIMessages": "crewai",
-    "CrewAIFlowStateConverter": "crewai_flow",
-    "CrewAIFlowSessionState": "crewai_flow",
-    "A2AHistoryConverter": "a2a",
-    "GatewayHistoryConverter": "a2a_gateway",
-    "CodexHistoryConverter": "codex",
-    "ACPServerHistoryConverter": "acp_server",
-    "ACPClientHistoryConverter": "acp_client",
-    "AgnoHistoryConverter": "agno",
-    "AgnoMessages": "agno",
-    "GeminiHistoryConverter": "gemini",
-    "GeminiMessages": "gemini",
-    "GoogleADKHistoryConverter": "google_adk",
-    "GoogleADKMessages": "google_adk",
-    "OpencodeHistoryConverter": "opencode",
-}
-
-
-def __getattr__(name: str) -> type:
-    """Lazy import converters to avoid loading optional dependencies."""
-    module_name = _LAZY_IMPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = importlib.import_module(f".{module_name}", __name__)
-    return getattr(module, name)
+__all__, __getattr__, __dir__ = lazy_exports(
+    __name__,
+    {
+        "langchain": ("LangChainHistoryConverter", "LangChainMessages"),
+        "anthropic": ("AnthropicHistoryConverter", "AnthropicMessages"),
+        "pydantic_ai": ("PydanticAIHistoryConverter", "PydanticAIMessages"),
+        "claude_sdk": ("ClaudeSDKHistoryConverter",),
+        "copilot_sdk": ("CopilotSDKHistoryConverter", "CopilotSDKSessionState"),
+        "parlant": ("ParlantHistoryConverter", "ParlantMessages"),
+        "crewai": ("CrewAIHistoryConverter", "CrewAIMessages"),
+        "crewai_flow": ("CrewAIFlowStateConverter", "CrewAIFlowSessionState"),
+        "a2a": ("A2AHistoryConverter",),
+        "a2a_gateway": ("GatewayHistoryConverter",),
+        "codex": ("CodexHistoryConverter",),
+        "acp_server": ("ACPServerHistoryConverter",),
+        "acp_client": ("ACPClientHistoryConverter",),
+        "agno": ("AgnoHistoryConverter", "AgnoMessages"),
+        "gemini": ("GeminiHistoryConverter", "GeminiMessages"),
+        "google_adk": ("GoogleADKHistoryConverter", "GoogleADKMessages"),
+        "opencode": ("OpencodeHistoryConverter",),
+    },
+)

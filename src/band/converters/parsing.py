@@ -11,6 +11,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from band.core.types import ToolEventKey
+
 logger = logging.getLogger(__name__)
 
 
@@ -56,24 +58,24 @@ def parse_tool_call(content: str) -> ParsedToolCall | None:
         )
         return None
 
-    tool_call_id = event.get("tool_call_id")
-    tool_name = event.get("name")
+    tool_call_id = event.get(ToolEventKey.TOOL_CALL_ID)
+    tool_name = event.get(ToolEventKey.NAME)
 
-    if not tool_call_id:
+    if not isinstance(tool_call_id, str) or not tool_call_id:
         logger.warning(
             "Skipping tool_call with missing tool_call_id: %s",
             repr(content[:100]),
         )
         return None
 
-    if not tool_name:
+    if not isinstance(tool_name, str) or not tool_name:
         logger.warning(
             "Skipping tool_call with missing name: %s",
             repr(content[:100]),
         )
         return None
 
-    args = event.get("args", {})
+    args = event.get(ToolEventKey.ARGS, {})
     if not isinstance(args, dict):
         logger.warning(
             "Tool_call args were not an object; using empty args: %s",
@@ -111,17 +113,17 @@ def parse_tool_result(content: str) -> ParsedToolResult | None:
         )
         return None
 
-    tool_call_id = event.get("tool_call_id")
-    tool_name = event.get("name")
+    tool_call_id = event.get(ToolEventKey.TOOL_CALL_ID)
+    tool_name = event.get(ToolEventKey.NAME)
 
-    if not tool_call_id:
+    if not isinstance(tool_call_id, str) or not tool_call_id:
         logger.warning(
             "Skipping tool_result with missing tool_call_id: %s",
             repr(content[:100]),
         )
         return None
 
-    if not tool_name:
+    if not isinstance(tool_name, str) or not tool_name:
         logger.warning(
             "Skipping tool_result with missing name: %s",
             repr(content[:100]),
@@ -130,7 +132,7 @@ def parse_tool_result(content: str) -> ParsedToolResult | None:
 
     return ParsedToolResult(
         name=tool_name,
-        output=str(event.get("output", "")),
+        output=str(event.get(ToolEventKey.OUTPUT, "")),
         tool_call_id=tool_call_id,
-        is_error=event.get("is_error", False),
+        is_error=bool(event.get(ToolEventKey.IS_ERROR, False)),
     )

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, ClassVar
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any, ClassVar, cast
 
 import httpx
+from pydantic import BaseModel
 
 try:
-    from strands import Agent, ToolContext, tool
+    from strands import Agent
     from strands.hooks import HookProvider, HookRegistry
     from strands.hooks.events import AfterToolCallEvent, BeforeToolCallEvent
     from strands.models import Model
@@ -20,11 +22,11 @@ try:
         ToolSpec,
         ToolUse,
     )
-except ImportError as e:
+except ImportError as error:
     raise ImportError(
         "Strands Agents dependencies not installed. "
         "Install with: uv add band-sdk[strands]"
-    ) from e
+    ) from error
 
 from band_rest.core.api_error import ApiError
 
@@ -34,7 +36,9 @@ from band.core.types import (
     AdapterFeatures,
     Capability,
     Emit,
+    MessageType,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.strands import StrandsHistoryConverter, StrandsMessages
@@ -46,79 +50,84 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    ToolDefinition,
+    ToolCallOutcome,
     band_tool_errored,
-    get_tool_description,
     is_terminal_success,
+    iter_tool_definitions,
+    serialize_tool_result,
+    validate_tool_arguments,
 )
 
 logger = logging.getLogger(__name__)
 
-# Per-turn Band tools are passed through Strands invocation state.
-_BAND_TOOLS_STATE_KEY = "band_tools"
+
+def _format_tool_output(value: object) -> str:
+    """Return a stable text representation accepted by Strands tool results."""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return str(value)
 
 
-def _tools_from_context(tool_context: ToolContext) -> AgentToolsProtocol:
-    """The current turn's platform tools handle, bound via invocation_state."""
-    handle = tool_context.invocation_state.get(_BAND_TOOLS_STATE_KEY)
-    if handle is None:
-        raise RuntimeError(
-            "Band tools handle missing from invocation_state; platform tools "
-            "must be invoked through StrandsAdapter.on_message"
-        )
-    return handle
+def _tool_result(tool_use: ToolUse, *, value: object, ok: bool) -> ToolResult:
+    """Build the framework's typed result envelope at the Strands boundary."""
+    return {
+        "toolUseId": tool_use["toolUseId"],
+        "status": "success" if ok else "error",
+        "content": [{"text": _format_tool_output(value)}],
+    }
 
 
 def _result_text(result: ToolResult) -> str:
-    """Flatten a ToolResult's content blocks to text for error detection/reporting."""
+    """Flatten a tool result for execution events and terminal-state policy."""
     parts: list[str] = []
     for block in result.get("content", []):
         match block:
-            case {"text": text}:
+            case {"text": str() as text}:
                 parts.append(text)
             case {"json": value}:
-                try:
-                    parts.append(json.dumps(value))
-                except (TypeError, ValueError):
-                    parts.append(str(value))
+                parts.append(_format_tool_output(value))
     return "\n".join(parts)
 
 
 def _build_custom_tools(
     additional_tools: list[Callable[..., Any] | CustomToolDef] | None,
-) -> tuple[list[Any], frozenset[str]]:
-    """Convert portable tools and collect the custom terminal actions."""
-    converted = [
-        _CustomToolBridge(tool_def) if isinstance(tool_def, tuple) else tool_def
-        for tool_def in additional_tools or []
+) -> tuple[list[AgentTool | Callable[..., Any]], frozenset[str]]:
+    """Adapt portable custom tools and collect their terminal-action names."""
+    raw_tools = additional_tools or []
+    converted: list[AgentTool | Callable[..., Any]] = [
+        CustomToolBridge(tool_def) if isinstance(tool_def, tuple) else tool_def
+        for tool_def in raw_tools
     ]
-    terminal_names = {
+    terminal_names = frozenset(
         tool.tool_name
         if isinstance(tool, AgentTool)
-        else getattr(tool, "__name__", str(tool))
-        for raw, tool in zip(additional_tools or [], converted)
+        else str(getattr(tool, "__name__", tool))
+        for raw, tool in zip(raw_tools, converted)
         if is_marked_terminal(raw[1] if isinstance(raw, tuple) else raw)
-    }
-    return converted, frozenset(terminal_names)
+    )
+    return converted, terminal_names
 
 
-def _as_strands_tool(name: str, fn: Callable[..., Any]) -> Any:
-    """Wrap a Band tool with its canonical description and Strands context."""
-    return tool(description=get_tool_description(name), context=True)(fn)
+class StrandsToolBridge(AgentTool):
+    """Base class for native Strands tools backed by a Pydantic input model."""
 
-
-class _CustomToolBridge(AgentTool):
-    """Expose a portable custom tool as a native Strands tool."""
-
-    def __init__(self, tool_def: CustomToolDef):
+    def __init__(
+        self,
+        name: str,
+        input_model: type[BaseModel],
+        description: str,
+    ) -> None:
         super().__init__()
-        self._tool_def = tool_def
-        input_model, _ = tool_def
         schema = input_model.model_json_schema()
         schema.pop("title", None)
-        self._name = get_custom_tool_name(input_model)
+        self._name = name
         self._spec: ToolSpec = {
-            "name": self._name,
-            "description": input_model.__doc__ or self._name,
+            "name": name,
+            "description": description,
             "inputSchema": {"json": schema},
         }
 
@@ -134,26 +143,89 @@ class _CustomToolBridge(AgentTool):
     def tool_type(self) -> str:
         return "function"
 
+
+class CustomToolBridge(StrandsToolBridge):
+    """Expose a portable custom tool through Strands' native tool protocol."""
+
+    def __init__(self, tool_def: CustomToolDef):
+        self._tool_def = tool_def
+        input_model, _ = tool_def
+        name = get_custom_tool_name(input_model)
+        super().__init__(name, input_model, input_model.__doc__ or name)
+
     async def stream(
-        self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
+        self,
+        tool_use: ToolUse,
+        invocation_state: dict[str, Any],
+        **kwargs: Any,
     ) -> ToolGenerator:
+        del invocation_state, kwargs
         try:
-            result = await execute_custom_tool(self._tool_def, tool_use["input"] or {})
-            yield {
-                "toolUseId": tool_use["toolUseId"],
-                "status": "success",
-                "content": [{"text": str(result)}],
-            }
-        except Exception as e:
-            yield {
-                "toolUseId": tool_use["toolUseId"],
-                "status": "error",
-                "content": [{"text": f"Error executing tool '{self._name}': {e}"}],
-            }
+            result = await execute_custom_tool(
+                self._tool_def, dict(tool_use["input"] or {})
+            )
+        except Exception as error:
+            yield _tool_result(
+                tool_use,
+                value=f"Error executing tool '{self.tool_name}': {error}",
+                ok=False,
+            )
+            return
+        yield _tool_result(tool_use, value=result, ok=True)
 
 
-class _BandTurnHooks(HookProvider):
-    """Emit execution events and track terminal actions for one turn."""
+class PlatformToolBridge(StrandsToolBridge):
+    """Execute one registered Band tool against a turn-scoped capability.
+
+    Strands calls the typed ``AgentToolsProtocol`` method directly. This is
+    intentional: its framework-conformance contract observes those operations,
+    and the shared registry still supplies the method name, schema, validation,
+    and result serialization.
+    """
+
+    def __init__(self, definition: ToolDefinition, tools: AgentToolsProtocol):
+        self._definition = definition
+        self._tools = tools
+        super().__init__(
+            definition.name,
+            definition.input_model,
+            definition.input_model.__doc__ or definition.name,
+        )
+
+    async def stream(
+        self,
+        tool_use: ToolUse,
+        invocation_state: dict[str, Any],
+        **kwargs: Any,
+    ) -> ToolGenerator:
+        del invocation_state, kwargs
+        outcome = await self._execute(dict(tool_use["input"] or {}))
+        yield _tool_result(tool_use, value=outcome.value, ok=outcome.ok)
+
+    async def _execute(self, arguments: dict[str, Any]) -> ToolCallOutcome:
+        """Validate and dispatch through the registered typed protocol method."""
+        try:
+            validated = validate_tool_arguments(
+                self.tool_name, self._definition.input_model, arguments
+            )
+        except ValueError as error:
+            return ToolCallOutcome(value=str(error), ok=False, error_message=str(error))
+
+        try:
+            method = cast(
+                Callable[..., Awaitable[object]],
+                getattr(self._tools, self._definition.method_name),
+            )
+            value = await method(**validated)
+        except Exception as error:
+            logger.exception("Platform tool %s failed", self.tool_name)
+            message = f"Error executing {self.tool_name}: {error}"
+            return ToolCallOutcome(value=message, ok=False, error_message=message)
+        return ToolCallOutcome(value=serialize_tool_result(value), ok=True)
+
+
+class BandTurnHooks(HookProvider):
+    """Emit execution events and record whether a turn completed useful work."""
 
     def __init__(
         self,
@@ -161,35 +233,30 @@ class _BandTurnHooks(HookProvider):
         *,
         emit_execution: bool,
         custom_terminal_names: frozenset[str],
-    ):
+    ) -> None:
         self._tools = tools
         self._emit_execution = emit_execution
         self._custom_terminal_names = custom_terminal_names
         self.terminal_fired = False
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
+        del kwargs
         registry.add_callback(BeforeToolCallEvent, self._on_before_tool)
         registry.add_callback(AfterToolCallEvent, self._on_after_tool)
 
     async def _on_before_tool(self, event: BeforeToolCallEvent) -> None:
         if not self._emit_execution:
             return
-        try:
-            await self._tools.send_event(
-                content=json.dumps(
-                    {
-                        "name": event.tool_use["name"],
-                        "args": event.tool_use["input"],
-                        "tool_call_id": event.tool_use["toolUseId"],
-                    }
-                ),
-                message_type="tool_call",
-            )
-        except Exception as e:
-            logger.warning("Failed to send tool_call event: %s", e)
+        await self._emit_event(
+            MessageType.TOOL_CALL,
+            {
+                ToolEventKey.NAME: event.tool_use["name"],
+                ToolEventKey.ARGS: event.tool_use["input"],
+                ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
+            },
+        )
 
     async def _on_after_tool(self, event: AfterToolCallEvent) -> None:
-        # Only successful Band tools and marked custom tools end a turn.
         name = event.tool_use["name"]
         output = _result_text(event.result)
         succeeded = event.result.get("status") == "success" and not band_tool_errored(
@@ -203,19 +270,27 @@ class _BandTurnHooks(HookProvider):
             self.terminal_fired = True
         if not self._emit_execution:
             return
+        await self._emit_event(
+            MessageType.TOOL_RESULT,
+            {
+                ToolEventKey.NAME: name,
+                ToolEventKey.OUTPUT: output,
+                ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
+            },
+        )
+
+    async def _emit_event(
+        self,
+        message_type: MessageType,
+        payload: Mapping[ToolEventKey, object],
+    ) -> None:
         try:
             await self._tools.send_event(
-                content=json.dumps(
-                    {
-                        "name": name,
-                        "output": output,
-                        "tool_call_id": event.tool_use["toolUseId"],
-                    }
-                ),
-                message_type="tool_result",
+                content=json.dumps(payload, default=str),
+                message_type=message_type,
             )
-        except Exception as e:
-            logger.warning("Failed to send tool_result event: %s", e)
+        except Exception as error:
+            logger.warning("Failed to send %s event: %s", message_type, error)
 
 
 class StrandsAdapter(SimpleAdapter[StrandsMessages]):
@@ -234,45 +309,23 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         history_converter: StrandsHistoryConverter | None = None,
         additional_tools: list[Callable[..., Any] | CustomToolDef] | None = None,
         features: AdapterFeatures | None = None,
-    ):
-        """
-        Initialize the Strands adapter.
-
-        Args:
-            model: A Strands ``Model`` instance (e.g.
-                ``strands.models.openai.OpenAIModel(model_id="gpt-5.4-mini")``).
-                A plain string is passed through to Strands, which treats it as
-                a **Bedrock** model id (Strands has no provider-prefix shorthand).
-            system_prompt: Optional custom system prompt (overrides default)
-            custom_section: Optional custom section added to default system prompt
-            history_converter: Optional custom history converter
-            additional_tools: Optional list of Strands-compatible tools (plain
-                callables or ``@strands.tool``-decorated functions) and/or
-                portable ``CustomToolDef`` (InputModel, handler) tuples.
-            features: Shared adapter feature settings (capabilities, emit, tool filters).
-        """
+    ) -> None:
+        """Create an adapter around a Strands model or Bedrock model identifier."""
         super().__init__(
             history_converter=history_converter or StrandsHistoryConverter(),
             features=features,
         )
-
         self.model = model
         self.system_prompt = system_prompt
         self.custom_section = custom_section
         self._system_prompt: str | None = None
-
-        # Tool definitions are shared; invocation state supplies per-turn tools.
-        self._strands_tools: list[Any] = []
-
-        # Band owns per-room conversation history.
         self._message_history: dict[str, StrandsMessages] = {}
-
         self._custom_tools, self._custom_terminal_names = _build_custom_tools(
             additional_tools
         )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
-        """Render the system prompt and build the tool set after metadata is fetched."""
+        """Render the prompt after the platform supplies agent metadata."""
         await super().on_started(agent_name, agent_description)
         self._system_prompt = self.system_prompt or render_system_prompt(
             agent_name=self.agent_name,
@@ -280,290 +333,37 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             custom_section=self.custom_section or "",
             features=self.features,
         )
-        self._strands_tools = self._build_platform_tools() + self._custom_tools
         logger.info("Strands adapter started for agent: %s", agent_name)
 
-    def _build_agent(self, messages: StrandsMessages, hooks: _BandTurnHooks) -> Agent:
-        """Build an isolated agent for one room turn and its usage metrics."""
+    def _build_agent(
+        self,
+        messages: StrandsMessages,
+        tools: AgentToolsProtocol,
+        hooks: BandTurnHooks,
+    ) -> Agent:
+        """Create an isolated agent whose tools own one turn's capability."""
+        framework_tools = self._build_platform_tools(tools) + self._custom_tools
         return Agent(
             model=self.model,
             messages=messages,
-            tools=self._strands_tools,
+            # Strands accepts functions, dict specs, providers, and AgentTools,
+            # but its public annotation cannot express that mixed collection.
+            tools=cast(list[Any], framework_tools),
             system_prompt=self._system_prompt,
             hooks=[hooks],
             callback_handler=None,
             name=self.agent_name or None,
         )
 
-    def _build_platform_tools(self) -> list[Any]:
-        """Build Band platform tools as native Strands tools."""
-
-        async def band_send_message(
-            content: str,
-            mentions: list[str],
-            tool_context: ToolContext,
-        ) -> Any:
-            try:
-                return await _tools_from_context(tool_context).send_message(
-                    content, mentions
-                )
-            except Exception as e:
-                return f"Error sending message: {e}"
-
-        async def band_send_event(
-            content: str,
-            message_type: str,
-            tool_context: ToolContext,
-            metadata: dict[str, Any] | None = None,
-        ) -> Any:
-            try:
-                return await _tools_from_context(tool_context).send_event(
-                    content, message_type, metadata
-                )
-            except Exception as e:
-                return f"Error sending event: {e}"
-
-        async def band_add_participant(
-            identifier: str,
-            tool_context: ToolContext,
-            role: str = "member",
-        ) -> Any:
-            try:
-                return await _tools_from_context(tool_context).add_participant(
-                    identifier, role
-                )
-            except Exception as e:
-                return f"Error adding participant '{identifier}': {e}"
-
-        async def band_remove_participant(
-            identifier: str,
-            tool_context: ToolContext,
-        ) -> Any:
-            try:
-                return await _tools_from_context(tool_context).remove_participant(
-                    identifier
-                )
-            except Exception as e:
-                return f"Error removing participant '{identifier}': {e}"
-
-        async def band_lookup_peers(
-            tool_context: ToolContext,
-            page: int = 1,
-            page_size: int = 50,
-        ) -> Any:
-            try:
-                return await _tools_from_context(tool_context).lookup_peers(
-                    page, page_size
-                )
-            except Exception as e:
-                return f"Error looking up peers: {e}"
-
-        async def band_get_participants(tool_context: ToolContext) -> Any:
-            try:
-                return await _tools_from_context(tool_context).get_participants()
-            except Exception as e:
-                return f"Error getting participants: {e}"
-
-        async def band_create_chatroom(
-            tool_context: ToolContext,
-            task_id: str | None = None,
-        ) -> Any:
-            try:
-                return await _tools_from_context(tool_context).create_chatroom(task_id)
-            except Exception as e:
-                return f"Error creating chatroom (task_id={task_id}): {e}"
-
-        strands_tools = [
-            _as_strands_tool("band_send_message", band_send_message),
-            _as_strands_tool("band_send_event", band_send_event),
-            _as_strands_tool("band_add_participant", band_add_participant),
-            _as_strands_tool("band_remove_participant", band_remove_participant),
-            _as_strands_tool("band_lookup_peers", band_lookup_peers),
-            _as_strands_tool("band_get_participants", band_get_participants),
-            _as_strands_tool("band_create_chatroom", band_create_chatroom),
+    def _build_platform_tools(self, tools: AgentToolsProtocol) -> list[AgentTool]:
+        """Adapt the central Band tool registry to Strands for this turn."""
+        return [
+            PlatformToolBridge(definition, tools)
+            for definition in iter_tool_definitions(
+                include_memory=Capability.MEMORY in self.features.capabilities,
+                include_contacts=Capability.CONTACTS in self.features.capabilities,
+            )
         ]
-
-        # Contact management tools (opt-in via Capability.CONTACTS)
-        if Capability.CONTACTS in self.features.capabilities:
-
-            async def band_list_contacts(
-                tool_context: ToolContext,
-                page: int = 1,
-                page_size: int = 50,
-            ) -> Any:
-                try:
-                    return await _tools_from_context(tool_context).list_contacts(
-                        page, page_size
-                    )
-                except Exception as e:
-                    return f"Error listing contacts: {e}"
-
-            async def band_add_contact(
-                handle: str,
-                tool_context: ToolContext,
-                message: str | None = None,
-            ) -> Any:
-                try:
-                    return await _tools_from_context(tool_context).add_contact(
-                        handle, message
-                    )
-                except Exception as e:
-                    return f"Error adding contact '{handle}': {e}"
-
-            async def band_remove_contact(
-                tool_context: ToolContext,
-                handle: str | None = None,
-                contact_id: str | None = None,
-            ) -> Any:
-                try:
-                    return await _tools_from_context(tool_context).remove_contact(
-                        handle, contact_id
-                    )
-                except Exception as e:
-                    return f"Error removing contact: {e}"
-
-            async def band_list_contact_requests(
-                tool_context: ToolContext,
-                page: int = 1,
-                page_size: int = 50,
-                sent_status: str = "pending",
-            ) -> Any:
-                try:
-                    return await _tools_from_context(
-                        tool_context
-                    ).list_contact_requests(page, page_size, sent_status)
-                except Exception as e:
-                    return f"Error listing contact requests: {e}"
-
-            async def band_respond_contact_request(
-                action: str,
-                tool_context: ToolContext,
-                handle: str | None = None,
-                request_id: str | None = None,
-            ) -> Any:
-                tools = _tools_from_context(tool_context)
-                try:
-                    return await tools.respond_contact_request(
-                        action, handle, request_id
-                    )
-                except Exception as e:
-                    error_msg = f"Error responding to contact request: {e}"
-                    # Auto-send error event so it's visible in the room
-                    try:
-                        await tools.send_event(error_msg, "error")
-                    except Exception:
-                        pass  # Don't fail if error reporting fails
-                    return error_msg
-
-            strands_tools.extend(
-                [
-                    _as_strands_tool("band_list_contacts", band_list_contacts),
-                    _as_strands_tool("band_add_contact", band_add_contact),
-                    _as_strands_tool("band_remove_contact", band_remove_contact),
-                    _as_strands_tool(
-                        "band_list_contact_requests", band_list_contact_requests
-                    ),
-                    _as_strands_tool(
-                        "band_respond_contact_request", band_respond_contact_request
-                    ),
-                ]
-            )
-
-        # Memory management tools (enterprise only - opt-in)
-        if Capability.MEMORY in self.features.capabilities:
-
-            async def band_list_memories(
-                tool_context: ToolContext,
-                subject_id: str | None = None,
-                scope: str | None = None,
-                system: str | None = None,
-                type: str | None = None,
-                segment: str | None = None,
-                content_query: str | None = None,
-                page_size: int = 50,
-                status: str | None = None,
-            ) -> Any:
-                try:
-                    return await _tools_from_context(tool_context).list_memories(
-                        subject_id=subject_id,
-                        scope=scope,
-                        system=system,
-                        type=type,
-                        segment=segment,
-                        content_query=content_query,
-                        page_size=page_size,
-                        status=status,
-                    )
-                except Exception as e:
-                    return f"Error listing memories: {e}"
-
-            async def band_store_memory(
-                content: str,
-                system: str,
-                type: str,
-                segment: str,
-                thought: str,
-                scope: str,
-                tool_context: ToolContext,
-                subject_id: str | None = None,
-                metadata: dict[str, Any] | None = None,
-            ) -> Any:
-                try:
-                    return await _tools_from_context(tool_context).store_memory(
-                        content=content,
-                        system=system,
-                        type=type,
-                        segment=segment,
-                        thought=thought,
-                        scope=scope,
-                        subject_id=subject_id,
-                        metadata=metadata,
-                    )
-                except Exception as e:
-                    return f"Error storing memory: {e}"
-
-            async def band_get_memory(
-                memory_id: str,
-                tool_context: ToolContext,
-            ) -> Any:
-                try:
-                    return await _tools_from_context(tool_context).get_memory(memory_id)
-                except Exception as e:
-                    return f"Error getting memory: {e}"
-
-            async def band_supersede_memory(
-                memory_id: str,
-                tool_context: ToolContext,
-            ) -> Any:
-                try:
-                    return await _tools_from_context(tool_context).supersede_memory(
-                        memory_id
-                    )
-                except Exception as e:
-                    return f"Error superseding memory: {e}"
-
-            async def band_archive_memory(
-                memory_id: str,
-                tool_context: ToolContext,
-            ) -> Any:
-                try:
-                    return await _tools_from_context(tool_context).archive_memory(
-                        memory_id
-                    )
-                except Exception as e:
-                    return f"Error archiving memory: {e}"
-
-            strands_tools.extend(
-                [
-                    _as_strands_tool("band_list_memories", band_list_memories),
-                    _as_strands_tool("band_store_memory", band_store_memory),
-                    _as_strands_tool("band_get_memory", band_get_memory),
-                    _as_strands_tool("band_supersede_memory", band_supersede_memory),
-                    _as_strands_tool("band_archive_memory", band_archive_memory),
-                ]
-            )
-
-        return strands_tools
 
     def _history_for_turn(
         self,
@@ -572,15 +372,11 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         *,
         is_session_bootstrap: bool,
     ) -> StrandsMessages:
-        """Return the room history, rehydrating it once when a session starts."""
+        """Get the room transcript, using platform history only at session start."""
         if is_session_bootstrap:
             self._message_history[room_id] = list(history)
             if history:
-                logger.debug(
-                    "Room %s: rehydrated %s message(s) from platform history",
-                    room_id,
-                    len(history),
-                )
+                logger.debug("Room %s: rehydrated %s message(s)", room_id, len(history))
         return self._message_history.setdefault(room_id, [])
 
     @staticmethod
@@ -589,12 +385,29 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         participants_msg: str | None,
         contacts_msg: str | None,
     ) -> None:
-        """Append platform context that changed since the prior turn."""
+        """Append changed platform context to the transcript."""
         for message in (participants_msg, contacts_msg):
             if message:
                 history.append(
                     {"role": "user", "content": [{"text": f"[System]: {message}"}]}
                 )
+
+    async def _run_turn(
+        self,
+        *,
+        message: str,
+        room_id: str,
+        history: StrandsMessages,
+        tools: AgentToolsProtocol,
+        hooks: BandTurnHooks,
+    ) -> None:
+        """Run the framework loop while preserving transcript and usage on failure."""
+        agent = self._build_agent(history, tools, hooks)
+        try:
+            await agent.invoke_async(message)
+        finally:
+            self._message_history[room_id] = agent.messages
+            await self.emit_usage(tools, self._usage_from_agent(agent))
 
     async def on_message(
         self,
@@ -607,17 +420,12 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         is_session_bootstrap: bool,
         room_id: str,
     ) -> None:
-        """Handle incoming platform message."""
-        if not self._strands_tools:
-            self._strands_tools = self._build_platform_tools() + self._custom_tools
-
+        """Run one room turn and surface a missing tool-based reply."""
         room_history = self._history_for_turn(
             room_id, history, is_session_bootstrap=is_session_bootstrap
         )
         self._append_system_context(room_history, participants_msg, contacts_msg)
-
         user_message = msg.format_for_llm()
-
         logger.debug(
             "Room %s: Running Strands agent (history: %s msgs, prompt: %s...)",
             room_id,
@@ -625,31 +433,25 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             user_message[:80],
         )
 
-        turn_hooks = _BandTurnHooks(
+        hooks = BandTurnHooks(
             tools,
             emit_execution=Emit.EXECUTION in self.features.emit,
             custom_terminal_names=self._custom_terminal_names,
         )
-        agent = self._build_agent(room_history, turn_hooks)
-        try:
-            await agent.invoke_async(
-                user_message,
-                invocation_state={_BAND_TOOLS_STATE_KEY: tools},
-            )
-        finally:
-            # Preserve completed work and usage when the turn fails.
-            self._message_history[room_id] = agent.messages
-            await self.emit_usage(tools, self._usage_from_agent(agent))
-
-        # Plain-text answers are not delivered to the room.
-        if not turn_hooks.terminal_fired:
+        await self._run_turn(
+            message=user_message,
+            room_id=room_id,
+            history=room_history,
+            tools=tools,
+            hooks=hooks,
+        )
+        if not hooks.terminal_fired:
             await self._report_error(
                 tools,
                 "Strands agent completed without sending a Band message. This "
                 "usually means the agent returned a final answer as plain text "
                 "instead of using the band_send_message tool.",
             )
-
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,
@@ -658,10 +460,10 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
 
     @staticmethod
     def _usage_from_agent(agent: Agent) -> TurnUsage:
-        """Map the agent's turn usage to Band usage."""
+        """Map Strands' accumulated turn usage into the SDK value object."""
         try:
             usage = dict(agent.event_loop_metrics.accumulated_usage)
-        except Exception:  # pragma: no cover - defensive; usage is best-effort
+        except Exception:  # pragma: no cover - usage reporting is best-effort
             return TurnUsage()
         return TurnUsage.from_mapping(
             usage,
@@ -672,14 +474,16 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         )
 
     async def _report_error(self, tools: AgentToolsProtocol, error: str) -> None:
-        """Send a best-effort error event."""
+        """Post a best-effort room-visible adapter error."""
         try:
-            await tools.send_event(content=f"Error: {error}", message_type="error")
-        except (ApiError, httpx.HTTPError) as e:
-            logger.warning("Failed to send error event: %s", e)
+            await tools.send_event(
+                content=f"Error: {error}",
+                message_type=MessageType.ERROR,
+            )
+        except (ApiError, httpx.HTTPError) as report_error:
+            logger.warning("Failed to send error event: %s", report_error)
 
     async def on_cleanup(self, room_id: str) -> None:
-        """Clean up message history when agent leaves a room."""
-        if room_id in self._message_history:
-            del self._message_history[room_id]
+        """Discard the transcript when Band removes the adapter from a room."""
+        if self._message_history.pop(room_id, None) is not None:
             logger.debug("Room %s: Cleaned up message history", room_id)
