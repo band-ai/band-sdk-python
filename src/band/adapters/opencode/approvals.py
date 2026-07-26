@@ -499,8 +499,11 @@ class RoomApprovals:
             self._ports.room_id,
             exc_info=error is not None,
         )
-        self._permissions.pop(request_id, None)
-        self._questions.pop(request_id, None)
+        # Abandoning a request must stop its expiry timer in the same step:
+        # once popped, the entry is past cancel()'s reach, and a surviving
+        # timer holds this room's state alive until the wait timeout elapses.
+        _cancel_timeout(self._permissions.pop(request_id, None))
+        _cancel_timeout(self._questions.pop(request_id, None))
         self._release_if_idle()
         self._ports.fail_turn(message)
 

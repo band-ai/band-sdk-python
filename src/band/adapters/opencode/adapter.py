@@ -392,6 +392,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if client is None:
             raise RuntimeError("OpenCode client is not initialized")
 
+        turn_future: asyncio.Future[None] | None = None
         try:
             session_id, created = await self._ensure_session(room_state, history)
             if Emit.TASK_EVENTS in self.features.emit and (
@@ -475,6 +476,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # asyncio.wait_for), which aborts the session and emits the error event.
         # Nothing awaited here re-raises asyncio.TimeoutError, so on_message has no
         # timeout handler of its own.
+        except asyncio.CancelledError:
+            # The runtime interrupts a turn by cancelling this coroutine, but the
+            # watcher runs detached. Left alone it outlives the interrupt: it
+            # posts the very reply the user stopped, and holds the room's busy
+            # guard until turn_timeout_s. Drop the turn state first (that cancels
+            # the watcher), then ask OpenCode to stop working.
+            if turn_future is not None:
+                self._clear_turn_state(room_state, expected_future=turn_future)
+                await self._abort_session(room_state, "interrupted")
+            raise
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenCode request failed for room %s", room_id)
             await tools.send_event(
@@ -829,19 +840,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             raise RuntimeError("OpenCode client is not initialized")
 
         restored_session_id = room_state.session_id
-        if (
-            restored_session_id is None
-            and history.mcp_server_name == self._mcp_server_name
-        ):
-            restored_session_id = history.session_id
-        elif restored_session_id is None and history.session_id:
-            logger.info(
-                "OpenCode session %s belongs to MCP registration %s; "
-                "creating a new session for %s",
-                history.session_id,
-                history.mcp_server_name or "unknown",
-                self._mcp_server_name,
-            )
+        if restored_session_id is None and history.session_id:
+            # A session persisted before the adapter recorded its registration
+            # carries no name. Treating that as ours keeps the upgrade from
+            # discarding every existing room's server-side conversation.
+            if history.mcp_server_name in (None, self._mcp_server_name):
+                restored_session_id = history.session_id
+            else:
+                logger.info(
+                    "OpenCode session %s belongs to MCP registration %s; "
+                    "creating a new session for %s",
+                    history.session_id,
+                    history.mcp_server_name,
+                    self._mcp_server_name,
+                )
         created = False
 
         if restored_session_id:
@@ -904,14 +916,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 room_id,
                 room_state.session_id,
             )
-            if self._client and room_state.session_id:
-                try:
-                    await self._client.abort_session(room_state.session_id)
-                except Exception:
-                    logger.exception(
-                        "Failed to abort timed-out OpenCode session %s",
-                        room_state.session_id,
-                    )
+            await self._abort_session(room_state, "timed-out")
             if room_state.tools:
                 await room_state.tools.send_event(
                     "OpenCode timed out before completing the turn.",
@@ -939,6 +944,19 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 room_state,
                 expected_future=turn_future,
                 expected_task=asyncio.current_task(),
+            )
+
+    async def _abort_session(self, room_state: _RoomState, reason: str) -> None:
+        """Best-effort: tell OpenCode to stop working on this room's session."""
+        if not (self._client and room_state.session_id):
+            return
+        try:
+            await self._client.abort_session(room_state.session_id)
+        except Exception:
+            logger.exception(
+                "Failed to abort %s OpenCode session %s",
+                reason,
+                room_state.session_id,
             )
 
     async def _report_delivery_failure(self, room_state: _RoomState) -> None:

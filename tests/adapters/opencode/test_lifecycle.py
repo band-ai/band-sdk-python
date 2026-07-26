@@ -371,6 +371,62 @@ async def test_concurrent_room_start_waits_for_mcp_registration() -> None:
     await adapter._shutdown_client()
 
 
+async def test_interrupting_a_turn_stops_the_reply_and_frees_the_room(tools) -> None:
+    """Cancelling ``on_message`` must take the detached turn watcher with it.
+
+    The runtime interrupts a turn by cancelling ``on_message``. The watcher
+    runs as its own task, so left alone it still posts the reply the user just
+    stopped, and holds the room's busy guard until ``turn_timeout_s``.
+    """
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[
+            [],  # interrupted: no terminal event ever arrives
+            [
+                event_message_updated("sess-1", "msg-2"),
+                event_text_part("sess-1", "msg-2", "after the interrupt"),
+                event_session_idle("sess-1"),
+            ],
+        ]
+    )
+    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    interrupted = asyncio.create_task(
+        adapter.on_message(
+            make_platform_message(content="long task"),
+            tools_protocol(tools),
+            OpencodeSessionState(),
+            participants_msg=None,
+            contacts_msg=None,
+            is_session_bootstrap=True,
+            room_id="room-1",
+        )
+    )
+    await wait_for(lambda: bool(fake_client.prompt_calls))
+
+    interrupted.cancel()
+    with suppress(asyncio.CancelledError):
+        await interrupted
+
+    assert fake_client.aborted_sessions == ["sess-1"], "OpenCode kept working"
+    assert tools.messages_sent == [], "posted the reply the user interrupted"
+
+    # The room takes the next message instead of answering "still processing".
+    await adapter.on_message(
+        make_platform_message(content="next"),
+        tools_protocol(tools),
+        OpencodeSessionState(),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+    assert [m["content"] for m in tools.messages_sent] == ["after the interrupt"]
+
+    await adapter.on_cleanup("room-1")
+
+
 async def test_teardown_does_not_disconnect_a_successor_registration(tools) -> None:
     """A superseded teardown must not strip the next client's MCP registration.
 

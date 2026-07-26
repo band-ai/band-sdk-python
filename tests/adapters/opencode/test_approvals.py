@@ -743,6 +743,45 @@ async def test_failed_auto_replies_fail_only_the_affected_turn() -> None:
     ]
 
 
+async def test_abandoning_a_request_stops_its_expiry_timer() -> None:
+    """``_fail_request`` must cancel the timer it pops, or nothing ever can.
+
+    ``cancel()`` reaches only entries still in the registry, so a timer left
+    running past its entry's removal keeps the room's state alive — through the
+    ``ApprovalPorts`` closures — until the full wait timeout elapses.
+    """
+    client: dict[str, OpencodeClientProtocol | None] = {
+        "current": cast(OpencodeClientProtocol, FakeOpencodeClient())
+    }
+    approvals = RoomApprovals(
+        OpencodeAdapterConfig(approval_mode="manual"),
+        ApprovalPorts(
+            room_id="room-1",
+            session_id=lambda: "sess-1",
+            client=lambda: client["current"],
+            tools=lambda: cast(AgentToolsProtocol, FakeAgentTools()),
+            turn_mentions=lambda: [],
+            release_turn_wait=lambda: None,
+            fail_turn=lambda _message: None,
+            is_own_band_tool=lambda _permission: False,
+        ),
+    )
+
+    await approvals.on_permission_asked(
+        OpencodePermissionRequest(id="perm-1", permission="bash")
+    )
+    timer = approvals._permissions["perm-1"].timeout_task
+    assert timer is not None and not timer.done()
+
+    # The client is gone by the time the human replies — a teardown or a serve
+    # restart mid-approval, which sends the reply down the abandonment path.
+    client["current"] = None
+    await approvals.try_handle_reply("approve perm-1", "user-1")
+
+    approvals.cancel()
+    await wait_for(timer.done)
+
+
 async def test_cleanup_with_pending_permission() -> None:
     """Cleanup mid-permission cancels timeout without crash."""
     fake_client = FakeOpencodeClient(

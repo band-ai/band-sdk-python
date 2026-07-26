@@ -744,3 +744,31 @@ async def test_approval_wait_does_not_shorten_the_resumed_turn(
     assert not any(
         "timed out" in event["content"].lower() for event in tools.events_sent
     )
+
+
+async def test_session_saved_before_registration_tracking_is_reused(tools) -> None:
+    """Upgrading must not discard sessions persisted without a registration name.
+
+    ``mcp_server_name`` is only written to the session task event by adapters
+    that record it, so every session saved before that carries None. Treating
+    the unknown name as ours keeps an existing room's server-side conversation
+    instead of silently starting over on the first turn after deploy.
+    """
+    fake_client = FakeOpencodeClient(
+        prompt_event_sequences=[[event_session_idle("sess-legacy")]]
+    )
+    adapter = OpencodeAdapter(client_factory=lambda _config: fake_client)
+
+    await adapter.on_started("OpenCode Agent", "A coding agent")
+    await adapter.on_message(
+        make_platform_message(),
+        tools_protocol(tools),
+        OpencodeSessionState(session_id="sess-legacy", room_id="room-1"),
+        participants_msg=None,
+        contacts_msg=None,
+        is_session_bootstrap=False,
+        room_id="room-1",
+    )
+
+    assert fake_client.created_sessions == [], "abandoned a recoverable session"
+    assert [call["session_id"] for call in fake_client.prompt_calls] == ["sess-legacy"]
