@@ -43,7 +43,7 @@ jobs:
       run: uv lock --check --directory docker/band_python_kit/echo-agent
 
     - name: Install dependencies
-      run: uv sync --extra dev
+      run: uv sync --locked --extra dev
 
     - name: Run pre-commit hooks
       run: uv run pre-commit run --all-files
@@ -82,7 +82,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
-      run: uv sync --extra dev
+      run: uv sync --locked --extra dev
 
     - name: Run tests
       run: uv run pytest
@@ -130,7 +130,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
 
     - name: Install crewai dependencies
-      run: uv sync --extra dev-crewai
+      run: uv sync --locked --extra dev-crewai
 
     - name: Run crewai tests
       env:
