@@ -335,7 +335,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 
 LangGraph supports the built-in Band platform tools, custom LangChain tools through `additional_tools`, feature-gated contact and memory tools, and `Emit.EXECUTION` telemetry for tool calls/results.
 
-> `crewai` and `parlant` cannot be installed together because their transitive dependencies conflict. `crewai` and `pydantic-ai` are also incompatible (crewai pins `pydantic<2.12`, pydantic-ai requires `>=2.12`). Install one per environment.
+> Install `crewai` in its own environment, apart from `parlant` and `pydantic-ai` — it carries the narrowest transitive pins of the three and the lockfile resolves it in a separate fork. See [Adapter Dependency Conflicts](#adapter-dependency-conflicts) for the current pins.
 
 ### Bridge Adapters
 
@@ -692,14 +692,14 @@ The SDK reconnects automatically and resubscribes to active rooms. No action is 
 
 ### Adapter Dependency Conflicts
 
-Three extras have mutually exclusive transitive dependencies and cannot share an environment:
+Three extras are resolved separately, because crewai carries the narrowest transitive pins and they have repeatedly collided:
 
-| Conflict | Reason |
-| -------- | ------ |
-| `crewai` + `parlant` | crewai pins `opentelemetry-sdk~=1.34`, parlant requires `>=1.37` |
-| `crewai` + `pydantic-ai` | crewai pins `pydantic~=2.11.9` (<2.12), pydantic-ai-slim >=1.61 requires `pydantic>=2.12` |
+| Pair | crewai's pin | Other side |
+| ---- | ------------ | ---------- |
+| `crewai` + `parlant` | `opentelemetry-sdk~=1.42.0` | parlant requires `>=1.37` |
+| `crewai` + `pydantic-ai` | `pydantic>=2.11.9,<2.13` | pydantic-ai-slim 2.x requires `pydantic>=2.12` |
 
-Install one per environment. The lockfile declares these as `[tool.uv] conflicts` so `uv lock` resolves each in a separate fork automatically.
+Today's versions happen to overlap, but crewai's ceilings move with every release. So the lockfile declares these as `[tool.uv] conflicts` and `uv lock` resolves each in a separate fork — no upgrade on one side waits for crewai's ceiling to move. Consequence: install one per environment, because a single `uv sync` can only pick one fork.
 
 ---
 

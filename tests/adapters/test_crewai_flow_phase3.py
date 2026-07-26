@@ -691,12 +691,6 @@ class TestRuntimeTools:
         mock_tools_module = MagicMock()
         mock_tools_module.BaseTool = type("BaseTool", (), {})
         monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
-        for mod in (
-            "band.integrations.crewai",
-            "band.integrations.crewai.runtime",
-            "band.integrations.crewai.tools",
-        ):
-            sys.modules.pop(mod, None)
 
         class EmailsInput(BaseModel):
             """Return the user's recent emails."""
@@ -734,12 +728,6 @@ class TestRuntimeTools:
         mock_tools_module = MagicMock()
         mock_tools_module.BaseTool = type("BaseTool", (), {})
         monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
-        for mod in (
-            "band.integrations.crewai",
-            "band.integrations.crewai.runtime",
-            "band.integrations.crewai.tools",
-        ):
-            sys.modules.pop(mod, None)
 
         captured = {}
 
@@ -781,12 +769,6 @@ class TestRuntimeTools:
         mock_tools_module = MagicMock()
         mock_tools_module.BaseTool = type("BaseTool", (), {})
         monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
-        for mod in (
-            "band.integrations.crewai",
-            "band.integrations.crewai.runtime",
-            "band.integrations.crewai.tools",
-        ):
-            sys.modules.pop(mod, None)
 
         class FailingSendTools(FakeAgentTools):
             async def send_message(
@@ -837,12 +819,6 @@ class TestRuntimeTools:
         mock_tools_module = MagicMock()
         mock_tools_module.BaseTool = type("BaseTool", (), {})
         monkeypatch.setitem(sys.modules, "crewai.tools", mock_tools_module)
-        for mod in (
-            "band.integrations.crewai",
-            "band.integrations.crewai.runtime",
-            "band.integrations.crewai.tools",
-        ):
-            sys.modules.pop(mod, None)
 
         ns = "crewai_flow:agent-1"
         prior_payload = {

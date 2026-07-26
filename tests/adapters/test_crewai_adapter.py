@@ -9,6 +9,7 @@ platform tools, tool execution, verbose mode, delegation, and custom tools.
 
 from __future__ import annotations
 
+import importlib
 import asyncio
 import json
 from datetime import datetime, timezone
@@ -44,31 +45,19 @@ def crewai_mocks(monkeypatch):
     mock_crewai_module.LLM = MagicMock()
     mock_crewai_tools_module.BaseTool = MockBaseTool
 
-    # Evict any cached integration modules so they pick up the freshly-mocked
-    # `nest_asyncio`/`crewai.tools` from sys.modules on next import.
-    for mod in (
-        "band.adapters.crewai",
-        "band.integrations.crewai",
-        "band.integrations.crewai.runtime",
-        "band.integrations.crewai.tools",
-    ):
-        sys.modules.pop(mod, None)
+    # `_nest_asyncio_applied` is process-global. Any test running with a mocked
+    # nest_asyncio can flip it True without anything actually being patched, which
+    # then silently disables the real patch for every later test — so isolate it.
+    runtime = importlib.import_module("band.integrations.crewai.runtime")
+    monkeypatch.setattr(runtime, "_nest_asyncio_applied", False)
 
+    # No sys.modules surgery: every crewai import in the band modules is
+    # TYPE_CHECKING-only or function-local, so they pick the mocks up at call time.
     monkeypatch.setitem(sys.modules, "crewai", mock_crewai_module)
     monkeypatch.setitem(sys.modules, "crewai.tools", mock_crewai_tools_module)
     monkeypatch.setitem(sys.modules, "nest_asyncio", mock_nest_asyncio)
 
-    try:
-        yield mock_crewai_module
-    finally:
-        # Clean up adapter + integration modules to force reimport on next test
-        for mod in (
-            "band.adapters.crewai",
-            "band.integrations.crewai",
-            "band.integrations.crewai.runtime",
-            "band.integrations.crewai.tools",
-        ):
-            sys.modules.pop(mod, None)
+    yield mock_crewai_module
 
 
 @pytest.fixture
@@ -1458,27 +1447,35 @@ class TestExecutionReporting:
 
 class TestLazyNestAsyncio:
     def test_nest_asyncio_not_applied_on_import(self, crewai_mocks):
+        """Importing the adapter must not patch the event loop.
+
+        Reloaded rather than evicted-and-reimported: dropping a band module from
+        ``sys.modules`` re-executes it, but anything still holding a class from the
+        old module object then has a ``__module__`` that resolves to nothing, and
+        pydantic (which looks annotations up through that name) can no longer build
+        the tool models.
+        """
         import importlib
         import sys
 
-        sys.modules.pop("band.adapters.crewai", None)
-        sys.modules.pop("band.integrations.crewai", None)
-        sys.modules.pop("band.integrations.crewai.runtime", None)
+        nest_mock = sys.modules["nest_asyncio"]
+        nest_mock.reset_mock()
 
-        crewai_mocks_nest = sys.modules["nest_asyncio"]
-        crewai_mocks_nest.reset_mock()
+        importlib.reload(importlib.import_module("band.adapters.crewai"))
 
-        importlib.import_module("band.adapters.crewai")
+        nest_mock.apply.assert_not_called()
 
-        crewai_mocks_nest.apply.assert_not_called()
-
-    def test_ensure_nest_asyncio_applies_once(self, CrewAIAdapter, crewai_mocks):
+    def test_ensure_nest_asyncio_applies_once(
+        self, CrewAIAdapter, crewai_mocks, monkeypatch
+    ):
         import importlib
         import sys
 
         module = importlib.import_module("band.integrations.crewai.runtime")
 
-        module._nest_asyncio_applied = False
+        # Reset through monkeypatch so the flag is restored — it is process-global
+        # and a leaked True would silently disable a later test's assertion.
+        monkeypatch.setattr(module, "_nest_asyncio_applied", False)
         nest_mock = sys.modules["nest_asyncio"]
         nest_mock.reset_mock()
 
