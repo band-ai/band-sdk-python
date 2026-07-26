@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from uuid import uuid4
 
+import pytest
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
+from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from starlette.testclient import TestClient
 
 from band.integrations.a2a.gateway.server import GatewayServer
@@ -42,23 +45,35 @@ def build_server() -> GatewayServer:
     )
 
 
-def test_agent_card_is_served_at_standard_and_legacy_paths() -> None:
-    client = TestClient(build_server()._build_app())
-
-    for path in (
-        "/agents/weather-agent/.well-known/agent-card.json",
-        "/agents/weather-agent/.well-known/agent.json",
-    ):
-        response = client.get(path)
-        assert response.status_code == 200
-        card = response.json()
-        assert card["name"] == "Weather Agent"
-        assert card["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
-        assert card["supportedInterfaces"][0]["url"].endswith("/agents/weather-agent")
+@pytest.fixture
+def gateway_client() -> Iterator[TestClient]:
+    with TestClient(build_server()._build_app()) as client:
+        yield client
 
 
-def test_peers_listing_remains_gateway_owned() -> None:
-    response = TestClient(build_server()._build_app()).get("/peers")
+def test_agent_cards_use_the_schema_expected_by_each_protocol_version(
+    gateway_client: TestClient,
+) -> None:
+    standard = gateway_client.get("/agents/weather-agent/.well-known/agent-card.json")
+    assert standard.status_code == 200
+    standard_card = standard.json()
+    assert standard_card["name"] == "Weather Agent"
+    assert standard_card["supportedInterfaces"][0]["protocolBinding"] == "JSONRPC"
+    assert standard_card["supportedInterfaces"][0]["url"].endswith(
+        "/agents/weather-agent"
+    )
+
+    legacy = gateway_client.get("/agents/weather-agent/.well-known/agent.json")
+    assert legacy.status_code == 200
+    legacy_card = legacy.json()
+    assert legacy_card["name"] == "Weather Agent"
+    assert legacy_card["protocolVersion"] == PROTOCOL_VERSION_0_3
+    assert legacy_card["url"].endswith("/agents/weather-agent")
+    assert "supportedInterfaces" not in legacy_card
+
+
+def test_peers_listing_remains_gateway_owned(gateway_client: TestClient) -> None:
+    response = gateway_client.get("/peers")
 
     assert response.status_code == 200
     assert response.json()["peers"] == [
@@ -71,22 +86,18 @@ def test_peers_listing_remains_gateway_owned() -> None:
     ]
 
 
-def test_unknown_peer_is_not_resolved_by_a2a_routes() -> None:
-    response = TestClient(build_server()._build_app()).get(
-        "/agents/missing/.well-known/agent-card.json"
-    )
+def test_unknown_peer_is_not_resolved_by_a2a_routes(gateway_client: TestClient) -> None:
+    response = gateway_client.get("/agents/missing/.well-known/agent-card.json")
     assert response.status_code == 404
 
 
-def test_uuid_peer_alias_serves_the_same_agent_card() -> None:
-    response = TestClient(build_server()._build_app()).get(
-        "/agents/uuid-weather/.well-known/agent-card.json"
-    )
+def test_uuid_peer_alias_serves_the_same_agent_card(gateway_client: TestClient) -> None:
+    response = gateway_client.get("/agents/uuid-weather/.well-known/agent-card.json")
     assert response.status_code == 200
 
 
-def test_jsonrpc_method_errors_are_upstream_owned() -> None:
-    response = TestClient(build_server()._build_app()).post(
+def test_jsonrpc_method_errors_are_upstream_owned(gateway_client: TestClient) -> None:
+    response = gateway_client.post(
         "/agents/weather-agent",
         headers={"A2A-Version": "1.0"},
         json={"jsonrpc": "2.0", "id": str(uuid4()), "method": "missing", "params": {}},
@@ -96,8 +107,10 @@ def test_jsonrpc_method_errors_are_upstream_owned() -> None:
     assert response.json()["error"]["code"] == -32601
 
 
-def test_jsonrpc_send_runs_through_official_handler_and_executor() -> None:
-    response = TestClient(build_server()._build_app()).post(
+def test_jsonrpc_send_runs_through_official_handler_and_executor(
+    gateway_client: TestClient,
+) -> None:
+    response = gateway_client.post(
         "/agents/weather-agent",
         headers={"A2A-Version": "1.0"},
         json={
@@ -120,8 +133,8 @@ def test_jsonrpc_send_runs_through_official_handler_and_executor() -> None:
     assert body["result"]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
 
 
-def test_rest_stream_runs_through_upstream_handler() -> None:
-    response = TestClient(build_server()._build_app()).post(
+def test_rest_stream_runs_through_upstream_handler(gateway_client: TestClient) -> None:
+    response = gateway_client.post(
         "/agents/weather-agent/message:stream",
         headers={"A2A-Version": "1.0"},
         json={
@@ -139,8 +152,8 @@ def test_rest_stream_runs_through_upstream_handler() -> None:
     assert '"state": "TASK_STATE_COMPLETED"' in response.text
 
 
-def test_v03_jsonrpc_stream_accepts_legacy_payload() -> None:
-    response = TestClient(build_server()._build_app()).post(
+def test_v03_jsonrpc_stream_accepts_legacy_payload(gateway_client: TestClient) -> None:
+    response = gateway_client.post(
         "/agents/weather-agent",
         json={
             "jsonrpc": "2.0",

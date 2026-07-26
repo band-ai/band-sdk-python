@@ -83,7 +83,20 @@ def apply_task_stream_event(task: Task | None, event: StreamResponse) -> Task | 
     if event.HasField("artifact_update"):
         update = event.artifact_update
         task = task or Task(id=update.task_id, context_id=update.context_id)
-        task.artifacts.add().CopyFrom(update.artifact)
+        existing_artifact = next(
+            (
+                artifact
+                for artifact in task.artifacts
+                if artifact.artifact_id == update.artifact.artifact_id
+            ),
+            None,
+        )
+        if existing_artifact is None:
+            task.artifacts.add().CopyFrom(update.artifact)
+        elif update.append:
+            existing_artifact.parts.extend(update.artifact.parts)
+        else:
+            existing_artifact.CopyFrom(update.artifact)
         return task
 
     return None

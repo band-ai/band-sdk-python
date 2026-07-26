@@ -72,6 +72,27 @@ def status_event(task: Task) -> StreamResponse:
     )
 
 
+def artifact_event(
+    task: Task,
+    text: str,
+    *,
+    append: bool,
+    last_chunk: bool,
+) -> StreamResponse:
+    return StreamResponse(
+        artifact_update={
+            "task_id": task.id,
+            "context_id": task.context_id,
+            "artifact": Artifact(
+                artifact_id="artifact-123",
+                parts=[Part(text=text)],
+            ),
+            "append": append,
+            "last_chunk": last_chunk,
+        }
+    )
+
+
 async def stream(*events: StreamResponse):
     for event in events:
         yield event
@@ -165,6 +186,45 @@ class TestA2AAdapterMessageFlow:
         assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
             "TASK_STATE_COMPLETED"
         )
+
+    @pytest.mark.asyncio
+    async def test_streamed_artifact_chunks_are_posted_as_one_response(
+        self, adapter: A2AAdapter
+    ) -> None:
+        working = make_task(TaskState.TASK_STATE_WORKING)
+        completed = make_task(TaskState.TASK_STATE_COMPLETED)
+        adapter._client = MagicMock()
+        adapter._client.send_message = MagicMock(
+            return_value=stream(
+                task_event(working),
+                artifact_event(
+                    working,
+                    "Part one. ",
+                    append=False,
+                    last_chunk=False,
+                ),
+                artifact_event(
+                    working,
+                    "Part two.",
+                    append=True,
+                    last_chunk=True,
+                ),
+                status_event(completed),
+            )
+        )
+        tools = FakeAgentTools()
+
+        await adapter.on_message(
+            make_platform_message(),
+            tools,
+            A2ASessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+
+        assert tools.messages_sent[-1]["content"] == "Part one. \nPart two."
 
     @pytest.mark.asyncio
     async def test_status_update_is_applied_to_task_and_completes_flow(

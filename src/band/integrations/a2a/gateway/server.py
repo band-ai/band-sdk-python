@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from a2a.server.agent_execution import AgentExecutor
@@ -14,7 +14,10 @@ from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.routes.rest_routes import create_rest_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
+from a2a.compat.v0_3.conversions import to_compat_agent_card
+from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
 
 from band_rest import Peer
@@ -68,7 +71,12 @@ class GatewayServer:
                     protocol_binding="JSONRPC",
                     protocol_version="1.0",
                     url=rpc_url,
-                )
+                ),
+                AgentInterface(
+                    protocol_binding="JSONRPC",
+                    protocol_version=PROTOCOL_VERSION_0_3,
+                    url=rpc_url,
+                ),
             ],
             version="1.0.0",
             capabilities=AgentCapabilities(streaming=True),
@@ -108,10 +116,13 @@ class GatewayServer:
                     )
                 )
                 protocol_routes.extend(
-                    create_agent_card_routes(
-                        card,
-                        card_url=f"/agents/{alias}/.well-known/agent.json",
-                    )
+                    [
+                        Route(
+                            f"/agents/{alias}/.well-known/agent.json",
+                            self._legacy_agent_card(card),
+                            methods=["GET"],
+                        )
+                    ]
                 )
                 protocol_routes.extend(
                     create_jsonrpc_routes(
@@ -129,6 +140,23 @@ class GatewayServer:
                 )
 
         return Starlette(routes=routes + protocol_routes + rest_routes)
+
+    @staticmethod
+    def _legacy_agent_card(
+        card: AgentCard,
+    ) -> Callable[[Any], Awaitable[JSONResponse]]:
+        """Serve the SDK's v0.3 card representation for legacy discovery."""
+        legacy_card = to_compat_agent_card(card)
+        payload = legacy_card.model_dump(
+            by_alias=True,
+            mode="json",
+            exclude_none=True,
+        )
+
+        async def response(_request: Any) -> JSONResponse:
+            return JSONResponse(payload)
+
+        return response
 
     async def _handle_list_peers(self, _request: Any) -> Any:
         from starlette.responses import JSONResponse
