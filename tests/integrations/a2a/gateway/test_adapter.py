@@ -138,7 +138,9 @@ class TestGatewayStartup:
 
 class TestGatewayExecution:
     @pytest.mark.asyncio
-    async def test_initial_task_snapshot_stays_working_if_reply_is_immediate(self) -> None:
+    async def test_initial_task_snapshot_stays_working_if_reply_is_immediate(
+        self,
+    ) -> None:
         adapter = A2AGatewayAdapter()
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
         configure_room_creation(adapter)
