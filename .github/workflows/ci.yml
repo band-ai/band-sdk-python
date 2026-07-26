@@ -145,6 +145,7 @@ jobs:
         uv run pytest \
           tests/adapters/test_crewai_flow_phase3.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
+          tests/integrations/test_crewai_real_tools.py \
           tests/test_capability_gating_e2e.py \
           tests/framework_conformance/ -k crewai
 

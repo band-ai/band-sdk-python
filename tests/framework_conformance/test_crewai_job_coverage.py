@@ -126,13 +126,14 @@ def test_crewai_only_dependency_set_matches_pyproject() -> None:
 def test_detection_finds_the_tests_that_only_the_crewai_venv_can_run() -> None:
     """Guard the guard: if the pattern drifts, the tests above pass empty.
 
-    These three are the whole set today — `phase3` for its nest_asyncio cases,
-    the others for importing crewai itself.
+    These are the whole set today — `phase3` for its nest_asyncio cases, the rest
+    for importing crewai itself.
     """
     needed = _tests_needing_crewai_venv()
     assert needed == {
         Path("tests/adapters/test_crewai_flow_phase3.py"),
         Path("tests/integrations/test_crewai_flow_real_sdk.py"),
+        Path("tests/integrations/test_crewai_real_tools.py"),
         Path("tests/test_capability_gating_e2e.py"),
     }
 
