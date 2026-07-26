@@ -150,6 +150,7 @@ jobs:
           tests/converters/test_crewai_flow.py \
           tests/integrations/test_crewai_tools.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
+          tests/test_capability_gating_e2e.py \
           tests/framework_conformance/ -k crewai
 
     - name: Pyrefly check (crewai sources)

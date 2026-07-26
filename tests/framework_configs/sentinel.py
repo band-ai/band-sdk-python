@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from os import environ
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class MissingSentinel:
@@ -16,10 +16,31 @@ class MissingSentinel:
 
 MISSING = MissingSentinel()
 
-IN_CI = bool(environ.get("CI") or environ.get("GITHUB_ACTIONS"))
+
+class StrictnessSettings(BaseSettings):
+    """Env switches deciding whether a missing framework is fatal.
+
+    Parsed as booleans, not merely tested for presence: CI passes the opt-out
+    per matrix cell, so the disabled cells send ``BAND_ALLOW_MISSING_FRAMEWORKS=0``
+    — which a presence check reads as "opt out" and silently disables strictness
+    everywhere.
+    """
+
+    model_config = SettingsConfigDict(
+        extra="ignore", case_sensitive=False, env_ignore_empty=True
+    )
+
+    ci: bool = False
+    github_actions: bool = False
+    band_allow_missing_frameworks: bool = False
+
+
+_strictness = StrictnessSettings()
+
+IN_CI = _strictness.ci or _strictness.github_actions
 
 # Strict CI mode: framework config builders raise on import failure instead of
 # warning. Opt out via BAND_ALLOW_MISSING_FRAMEWORKS=1 for partial-deps CI
 # environments (e.g. the dev-crewai matrix job, which only has crewai
 # installed and cannot import langgraph/anthropic/parlant/pydantic-ai/etc.).
-STRICT_CI = IN_CI and not environ.get("BAND_ALLOW_MISSING_FRAMEWORKS")
+STRICT_CI = IN_CI and not _strictness.band_allow_missing_frameworks
