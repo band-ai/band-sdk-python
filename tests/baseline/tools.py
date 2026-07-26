@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from band.runtime.tools import ToolCallOutcome, serialize_tool_result
 from band.testing.fake_tools import FakeAgentTools
 
 
@@ -19,7 +20,6 @@ class BaselineTools(FakeAgentTools):
         super().__init__(**kwargs)
         self.schema_requests: list[dict[str, Any]] = []
         self.contact_requests: list[dict[str, Any]] = []
-        self.memories: list[dict[str, Any]] = []
 
     def get_anthropic_tool_schemas(
         self, *, include_memory: bool = False, include_contacts: bool = True
@@ -71,10 +71,25 @@ class BaselineTools(FakeAgentTools):
 
     async def execute_tool_call(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """Record and dispatch a platform call using the real tool method shape."""
+        return (await self.execute_tool_call_structured(tool_name, arguments)).value
+
+    async def execute_tool_call_structured(
+        self, tool_name: str, arguments: dict[str, Any]
+    ) -> ToolCallOutcome:
+        """Primary entry point, mirroring the real AgentTools relationship.
+
+        Unlike the real one, dispatch errors raise instead of becoming
+        ``ok=False`` outcomes — baseline tests want misuse to fail loudly.
+        """
         if not isinstance(arguments, dict):
             raise ValueError(f"{tool_name} arguments must be an object")
         self.tool_calls.append({"tool_name": tool_name, "arguments": arguments})
+        return ToolCallOutcome(
+            value=serialize_tool_result(await self._dispatch(tool_name, arguments)),
+            ok=True,
+        )
 
+    async def _dispatch(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         match tool_name:
             case "band_send_message":
                 content = self._required_text(tool_name, arguments, "content")
@@ -137,12 +152,24 @@ class BaselineTools(FakeAgentTools):
                 self.contact_requests.append({"action": action, "result": result})
                 return result
             case "band_list_memories":
-                return {
-                    "memories": list(self.memories),
-                    "metadata": {"total_count": len(self.memories)},
+                filters = {
+                    key: arguments[key]
+                    for key in (
+                        "subject_id",
+                        "scope",
+                        "system",
+                        "type",
+                        "segment",
+                        "content_query",
+                        "status",
+                    )
+                    if key in arguments
                 }
+                return await self.list_memories(
+                    page_size=arguments.get("page_size", 50), **filters
+                )
             case "band_store_memory":
-                memory = await self.store_memory(
+                return await self.store_memory(
                     self._required_text(tool_name, arguments, "content"),
                     self._required_text(tool_name, arguments, "system"),
                     self._required_text(tool_name, arguments, "type"),
@@ -152,24 +179,18 @@ class BaselineTools(FakeAgentTools):
                     subject_id=arguments.get("subject_id"),
                     metadata=arguments.get("metadata"),
                 )
-                self.memories.append(memory)
-                return memory
             case "band_get_memory":
-                memory_id = self._required_text(tool_name, arguments, "memory_id")
-                return next(
-                    (memory for memory in self.memories if memory["id"] == memory_id),
-                    None,
+                return await self.get_memory(
+                    self._required_text(tool_name, arguments, "memory_id")
                 )
-            case "band_supersede_memory" | "band_archive_memory":
-                memory_id = self._required_text(tool_name, arguments, "memory_id")
-                status = (
-                    "superseded" if tool_name == "band_supersede_memory" else "archived"
+            case "band_supersede_memory":
+                return await self.supersede_memory(
+                    self._required_text(tool_name, arguments, "memory_id")
                 )
-                for memory in self.memories:
-                    if memory["id"] == memory_id:
-                        memory["status"] = status
-                        return memory
-                raise ValueError(f"Unknown memory: {memory_id}")
+            case "band_archive_memory":
+                return await self.archive_memory(
+                    self._required_text(tool_name, arguments, "memory_id")
+                )
             case _:
                 raise ValueError(f"Unknown platform tool: {tool_name}")
 
