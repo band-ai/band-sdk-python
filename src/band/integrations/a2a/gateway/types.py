@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
+from a2a.server.events import EventQueue
 from a2a.types import Task, TaskStatusUpdateEvent
 
 
@@ -34,10 +35,19 @@ class PendingA2ATask:
 
     Attributes:
         task: The A2A Task object tracking this request.
-        sse_queue: Queue for streaming TaskStatusUpdateEvent to the client.
+        event_queue: Official A2A event queue owned by DefaultRequestHandler.
         peer_id: The target peer this request is for.
+        done: Set when the final Band reply has been emitted or the room is
+            cleaned up.
     """
 
     task: Task
-    sse_queue: asyncio.Queue[TaskStatusUpdateEvent]
+    event_queue: EventQueue
     peer_id: str
+    done: asyncio.Event
+
+    async def publish_response(self, event: TaskStatusUpdateEvent) -> None:
+        """Publish a response and release the executor on terminal events."""
+        await self.event_queue.enqueue_event(event)
+        if event.final:
+            self.done.set()

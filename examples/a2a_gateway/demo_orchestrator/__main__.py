@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import click
 import uvicorn
-from a2a.server.apps import A2AStarletteApplication
+from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import (
     InMemoryPushNotificationConfigStore,

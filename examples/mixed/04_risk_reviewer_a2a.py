@@ -25,7 +25,7 @@ import os
 
 import uvicorn
 from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.apps import A2AStarletteApplication
+from a2a.server.apps.jsonrpc.starlette_app import A2AStarletteApplication
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import (

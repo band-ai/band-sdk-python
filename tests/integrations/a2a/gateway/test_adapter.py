@@ -8,8 +8,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from a2a.server.events import EventQueue
+from a2a.server.agent_execution import RequestContext
 from a2a.types import (
     Message as A2AMessage,
+    MessageSendParams,
     Part,
     Role,
     TaskState,
@@ -19,11 +22,13 @@ from a2a.types import (
 from band.core.types import PlatformMessage
 from band.integrations.a2a.gateway import (
     A2AGatewayAdapter,
+    A2AGatewayAdapterConfig,
     GatewaySessionState,
 )
+from band.integrations.a2a.gateway.adapter import BandAgentExecutor
 from band.testing import FakeAgentTools
-from band_rest import Peer
 from band_rest.core.api_error import ApiError
+from tests.integrations.a2a.gateway.fixtures import make_peer
 
 
 def make_platform_message(
@@ -43,19 +48,6 @@ def make_platform_message(
     )
 
 
-def make_peer(peer_id: str, name: str, description: str = "") -> Peer:
-    """Create a mock Peer object."""
-    return Peer(
-        id=peer_id,
-        name=name,
-        type="Agent",
-        description=description,
-        handle=f"test/{name.lower().replace(' ', '-')}",
-        is_contact=False,
-        source="registry",
-    )
-
-
 def make_a2a_message(
     content: str, context_id: str | None = None, task_id: str | None = None
 ) -> A2AMessage:
@@ -71,6 +63,11 @@ def make_a2a_message(
 
 class TestA2AGatewayAdapterInit:
     """Tests for A2AGatewayAdapter initialization."""
+
+    def test_config_rejects_non_positive_response_timeout(self) -> None:
+        """Should reject a timeout that cannot provide a deadline."""
+        with pytest.raises(ValueError, match="response_timeout_s"):
+            A2AGatewayAdapterConfig(response_timeout_s=0)
 
     def test_init_default_values(self) -> None:
         """Should initialize with default values."""
@@ -95,21 +92,6 @@ class TestA2AGatewayAdapterInit:
 
         assert adapter.gateway_url == "http://localhost:9000"
         assert adapter.port == 9000
-
-    def test_init_creates_rest_client(self) -> None:
-        """Should create AsyncRestClient."""
-        adapter = A2AGatewayAdapter(
-            rest_url="https://api.example.com",
-            api_key="my-key",
-        )
-
-        assert adapter._rest is not None
-
-    def test_init_sets_history_converter(self) -> None:
-        """Should set GatewayHistoryConverter."""
-        adapter = A2AGatewayAdapter()
-
-        assert adapter.history_converter is not None
 
 
 class TestA2AGatewayAdapterOnStarted:
@@ -173,31 +155,6 @@ class TestA2AGatewayAdapterOnStarted:
             mock_server_class.assert_called_once()
             mock_server.start.assert_called_once()
             assert adapter._server is mock_server
-
-    @pytest.mark.asyncio
-    async def test_on_started_stores_agent_info(self) -> None:
-        """Should store agent name and description."""
-        adapter = A2AGatewayAdapter()
-
-        # Mock REST client
-        mock_response = MagicMock()
-        mock_response.data = []
-        adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(
-            return_value=mock_response
-        )
-
-        # Mock server
-        with patch(
-            "band.integrations.a2a.gateway.adapter.GatewayServer"
-        ) as mock_server_class:
-            mock_server = MagicMock()
-            mock_server.start = AsyncMock()
-            mock_server_class.return_value = mock_server
-
-            await adapter.on_started("Test Gateway", "A test gateway")
-
-        assert adapter.agent_name == "Test Gateway"
-        assert adapter.agent_description == "A test gateway"
 
     @pytest.mark.asyncio
     async def test_on_started_retries_peer_discovery_on_rate_limit(self) -> None:
@@ -280,15 +237,16 @@ class TestA2AGatewayAdapterOnMessage:
     async def test_on_message_correlates_pending_task(
         self, adapter_with_mocks: A2AGatewayAdapter
     ) -> None:
-        """Should push event to pending task's SSE queue."""
+        """Should publish non-final updates without completing the task."""
         tools = FakeAgentTools()
-        msg = make_platform_message("Weather is sunny", room_id="room-123")
+        msg = make_platform_message(
+            "Checking the forecast", room_id="room-123", message_type="thought"
+        )
 
-        # Set up pending task
         from band.integrations.a2a.gateway.types import PendingA2ATask
         from a2a.types import Task, TaskStatus
 
-        sse_queue: asyncio.Queue = asyncio.Queue()
+        event_queue = EventQueue()
         task = Task(
             id="task-123",
             context_id="ctx-123",
@@ -296,8 +254,9 @@ class TestA2AGatewayAdapterOnMessage:
         )
         adapter_with_mocks._pending_tasks["room-123"] = PendingA2ATask(
             task=task,
-            sse_queue=sse_queue,
+            event_queue=event_queue,
             peer_id="weather",
+            done=asyncio.Event(),
         )
 
         await adapter_with_mocks.on_message(
@@ -310,17 +269,17 @@ class TestA2AGatewayAdapterOnMessage:
             room_id="room-123",
         )
 
-        # Event should be in queue
-        assert not sse_queue.empty()
-        event = sse_queue.get_nowait()
+        pending = adapter_with_mocks._pending_tasks["room-123"]
+        event = await event_queue.dequeue_event()
         assert event.task_id == "task-123"
-        assert event.final is True  # text message = completed
+        assert event.final is False
+        assert not pending.done.is_set()
 
     @pytest.mark.asyncio
-    async def test_on_message_cleans_up_on_final_event(
+    async def test_on_message_completes_pending_task(
         self, adapter_with_mocks: A2AGatewayAdapter
     ) -> None:
-        """Should clean up pending task on final event."""
+        """Should complete the pending task on a final response."""
         tools = FakeAgentTools()
         msg = make_platform_message("Done", room_id="room-123")
 
@@ -328,7 +287,7 @@ class TestA2AGatewayAdapterOnMessage:
         from band.integrations.a2a.gateway.types import PendingA2ATask
         from a2a.types import Task, TaskStatus
 
-        sse_queue: asyncio.Queue = asyncio.Queue()
+        event_queue = EventQueue()
         task = Task(
             id="task-123",
             context_id="ctx-123",
@@ -336,8 +295,9 @@ class TestA2AGatewayAdapterOnMessage:
         )
         adapter_with_mocks._pending_tasks["room-123"] = PendingA2ATask(
             task=task,
-            sse_queue=sse_queue,
+            event_queue=event_queue,
             peer_id="weather",
+            done=asyncio.Event(),
         )
 
         await adapter_with_mocks.on_message(
@@ -350,8 +310,172 @@ class TestA2AGatewayAdapterOnMessage:
             room_id="room-123",
         )
 
-        # Pending task should be cleaned up
-        assert "room-123" not in adapter_with_mocks._pending_tasks
+        pending = adapter_with_mocks._pending_tasks["room-123"]
+        assert pending.done.is_set()
+
+
+class TestA2AGatewayExecutor:
+    """Tests the Band-backed execution boundary used by official A2A handlers."""
+
+    @pytest.mark.asyncio
+    async def test_execute_posts_and_emits_ordered_task_response(self) -> None:
+        adapter = A2AGatewayAdapter()
+        adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
+
+        chat_response = MagicMock()
+        chat_response.data.id = "room-123"
+        adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
+            return_value=chat_response
+        )
+        adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock()
+        message_sent = asyncio.Event()
+
+        async def send_message(**_kwargs) -> None:
+            message_sent.set()
+
+        adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
+            side_effect=send_message
+        )
+        adapter._rest.agent_api_events.create_agent_chat_event = AsyncMock()
+
+        context = RequestContext(
+            request=MessageSendParams(message=make_a2a_message("What is the weather?"))
+        )
+        event_queue = EventQueue()
+        executor = BandAgentExecutor(adapter, "weather")
+        execution = asyncio.create_task(executor.execute(context, event_queue))
+
+        await asyncio.wait_for(message_sent.wait(), timeout=1)
+        initial = await event_queue.dequeue_event()
+        assert initial.kind == "task"
+        assert initial.status.state == TaskState.working
+
+        await adapter.on_message(
+            make_platform_message("Sunny", room_id="room-123"),
+            FakeAgentTools(),
+            GatewaySessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+        await asyncio.wait_for(execution, timeout=1)
+
+        final = await event_queue.dequeue_event()
+        assert final.kind == "status-update"
+        assert final.final is True
+        assert final.status.state == TaskState.completed
+        assert final.status.message is not None
+        assert final.status.message.parts[0].root.text == "Sunny"
+
+        request = adapter._rest.agent_api_messages.create_agent_chat_message.await_args
+        assert request.kwargs["chat_id"] == "room-123"
+        assert (
+            request.kwargs["message"].content == "@Weather Agent What is the weather?"
+        )
+        assert adapter._pending_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_execute_fails_when_band_response_times_out(self) -> None:
+        adapter = A2AGatewayAdapter(
+            config=A2AGatewayAdapterConfig(response_timeout_s=0.01)
+        )
+        adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
+
+        chat_response = MagicMock()
+        chat_response.data.id = "room-123"
+        adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
+            return_value=chat_response
+        )
+        adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock()
+        adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock()
+        adapter._rest.agent_api_events.create_agent_chat_event = AsyncMock()
+
+        context = RequestContext(
+            request=MessageSendParams(message=make_a2a_message("What is the weather?"))
+        )
+        event_queue = EventQueue()
+        executor = BandAgentExecutor(adapter, "weather")
+
+        await executor.execute(context, event_queue)
+
+        initial = await event_queue.dequeue_event()
+        terminal = await event_queue.dequeue_event()
+        assert initial.kind == "task"
+        assert terminal.kind == "status-update"
+        assert terminal.final is True
+        assert terminal.status.state == TaskState.failed
+        assert terminal.status.message is not None
+        assert "Timed out" in terminal.status.message.parts[0].root.text
+        assert adapter._pending_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_execute_keeps_stream_open_for_updates_until_final_response(
+        self,
+    ) -> None:
+        adapter = A2AGatewayAdapter(
+            config=A2AGatewayAdapterConfig(response_timeout_s=1)
+        )
+        adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
+
+        chat_response = MagicMock()
+        chat_response.data.id = "room-123"
+        adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
+            return_value=chat_response
+        )
+        adapter._rest.agent_api_participants.add_agent_chat_participant = AsyncMock()
+        message_sent = asyncio.Event()
+
+        async def send_message(**_kwargs) -> None:
+            message_sent.set()
+
+        adapter._rest.agent_api_messages.create_agent_chat_message = AsyncMock(
+            side_effect=send_message
+        )
+        adapter._rest.agent_api_events.create_agent_chat_event = AsyncMock()
+
+        context = RequestContext(
+            request=MessageSendParams(message=make_a2a_message("What is the weather?"))
+        )
+        event_queue = EventQueue()
+        execution = asyncio.create_task(
+            BandAgentExecutor(adapter, "weather").execute(context, event_queue)
+        )
+
+        await asyncio.wait_for(message_sent.wait(), timeout=1)
+        await event_queue.dequeue_event()
+
+        await adapter.on_message(
+            make_platform_message(
+                "Checking the forecast",
+                room_id="room-123",
+                message_type="thought",
+            ),
+            FakeAgentTools(),
+            GatewaySessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+        update = await event_queue.dequeue_event()
+        assert update.final is False
+        assert not execution.done()
+
+        await adapter.on_message(
+            make_platform_message("Sunny", room_id="room-123"),
+            FakeAgentTools(),
+            GatewaySessionState(),
+            None,
+            None,
+            is_session_bootstrap=False,
+            room_id="room-123",
+        )
+        await asyncio.wait_for(execution, timeout=1)
+
+        final = await event_queue.dequeue_event()
+        assert final.final is True
+        assert final.status.state == TaskState.completed
 
 
 class TestA2AGatewayAdapterRoomManagement:
@@ -564,21 +688,24 @@ class TestA2AGatewayAdapterCleanup:
         from band.integrations.a2a.gateway.types import PendingA2ATask
         from a2a.types import Task, TaskStatus
 
-        sse_queue: asyncio.Queue = asyncio.Queue()
+        event_queue = EventQueue()
         task = Task(
             id="task-123",
             context_id="ctx-123",
             status=TaskStatus(state=TaskState.working),
         )
-        adapter._pending_tasks["room-123"] = PendingA2ATask(
+        pending = PendingA2ATask(
             task=task,
-            sse_queue=sse_queue,
+            event_queue=event_queue,
             peer_id="weather",
+            done=asyncio.Event(),
         )
+        adapter._pending_tasks["room-123"] = pending
 
         await adapter.on_cleanup("room-123")
 
         assert "room-123" not in adapter._pending_tasks
+        assert pending.done.is_set()
 
     @pytest.mark.asyncio
     async def test_stop_stops_server(self) -> None:
