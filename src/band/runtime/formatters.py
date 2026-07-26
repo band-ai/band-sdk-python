@@ -5,11 +5,13 @@ from __future__ import annotations
 import re
 
 # A room message is delivered to an agent only when it @mentions it, so the
-# platform prepends one ``@handle`` token per mention to the content (a
-# normalized ``@[[uuid]]`` that replace_uuid_mentions() rewrites to ``@handle``);
-# a human may type more inline. These match that leading block so a terse control
-# reply can be read from the text after it. Whitespace after each token is
-# consumed, so newlines separating a multi-answer reply survive only past it.
+# platform prepends one normalized ``@[[uuid]]`` token per mention to the
+# content, which replace_uuid_mentions() rewrites to ``@handle``; a human may
+# type more inline. Matching on ``@\S+`` is safe because handles are slugified
+# (``owner/agent-name``) and so never contain whitespace, whatever the display
+# name is. These match that leading block so a terse control reply can be read
+# from the text after it. Whitespace after each token is consumed, so newlines
+# separating a multi-answer reply survive only past it.
 _LEADING_MENTIONS = re.compile(r"^\s*(?:@\S+(?:\s+|$))+")
 _LEADING_MENTION = re.compile(r"^\s*@\S+(?:\s+|$)")
 

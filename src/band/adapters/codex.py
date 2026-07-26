@@ -3112,8 +3112,8 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
         """Return ``(command, args)`` when ``content`` opens with a slash command.
 
         Scans only the first ``_COMMAND_TOKEN_SEARCH_LIMIT`` tokens so the
-        platform's leading mention block (``@handle DisplayName`` per
-        participant, plus the occasional bare display name) can't bury a
+        platform's leading mention block (one ``@handle`` per mentioned
+        participant, plus whatever the sender typed inline) can't bury a
         legitimate ``/command``, while a slash word used as prose in the
         body of a longer message still reads as prose.
         """
