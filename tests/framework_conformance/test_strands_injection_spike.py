@@ -28,9 +28,9 @@ directly — ``band_send_message`` calls ``tools.send_message(...)`` — NOT
 
 STEP-0 FINDINGS (verified against installed strands-agents 1.47.0)
 ------------------------------------------------------------------
-1. Per-invocation context: ``agent.invoke_async(prompt, invocation_state={...})``
-   reaches tool bodies via ``@tool(context=True)`` (``tool_context.invocation_state``)
-   and every hook event (``event.invocation_state``). No fallback needed.
+1. Per-turn tool ownership: the adapter builds native tool closures for each
+   ``Agent`` invocation, binding that turn's ``AgentToolsProtocol`` directly.
+   This keeps a room capability out of Strands' untyped ``invocation_state``.
 2. Scripted model events (consumed by ``strands.event_loop.streaming``): one tool
    call is ``messageStart{role:assistant}`` ->
    ``contentBlockStart{start:{toolUse:{toolUseId,name}}}`` ->

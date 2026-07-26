@@ -17,7 +17,7 @@ from strands.types.content import Messages  # noqa: E402
 from strands.types.streaming import StreamEvent  # noqa: E402
 from strands.types.tools import ToolSpec  # noqa: E402
 
-from band.adapters.strands import StrandsAdapter, _CustomToolBridge  # noqa: E402
+from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
 from band.converters.strands import StrandsHistoryConverter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
@@ -164,7 +164,7 @@ class TestCustomToolWiring:
 
         assert len(adapter._custom_tools) == 1
         bridge = adapter._custom_tools[0]
-        assert isinstance(bridge, _CustomToolBridge)
+        assert isinstance(bridge, CustomToolBridge)
         assert bridge.tool_name == "weather"
         assert bridge.tool_spec["description"] == "Get the weather for a city."
         assert (
@@ -208,7 +208,7 @@ class TestToolRegistration:
         adapter = StrandsAdapter(model="m")
         await adapter.on_started("Bot", "A bot")
 
-        names = {t.tool_name for t in adapter._strands_tools}
+        names = {t.tool_name for t in adapter._build_platform_tools(FakeAgentTools())}
         assert names == {
             "band_send_message",
             "band_send_event",
@@ -229,7 +229,7 @@ class TestToolRegistration:
         )
         await adapter.on_started("Bot", "A bot")
 
-        names = {t.tool_name for t in adapter._strands_tools}
+        names = {t.tool_name for t in adapter._build_platform_tools(FakeAgentTools())}
         assert {"band_list_contacts", "band_respond_contact_request"} <= names
         assert {"band_store_memory", "band_archive_memory"} <= names
 
@@ -240,7 +240,10 @@ class TestToolRegistration:
         adapter = StrandsAdapter(model="m")
         await adapter.on_started("Bot", "A bot")
 
-        by_name = {t.tool_name: t for t in adapter._strands_tools}
+        by_name = {
+            tool.tool_name: tool
+            for tool in adapter._build_platform_tools(FakeAgentTools())
+        }
         assert by_name["band_send_message"].tool_spec[
             "description"
         ] == get_tool_description("band_send_message")
@@ -355,7 +358,7 @@ class TestOnMessage:
         assert tools.messages_sent == []
         errors = [e for e in tools.events_sent if e["message_type"] == "error"]
         assert len(errors) == 1
-        # The failed call is visible to the model as an "Error ..." tool result.
+        # The shared bridge returns a normalized, model-visible tool failure.
         result_texts = [
             item["text"]
             for message in adapter._message_history[room_id]
@@ -364,7 +367,9 @@ class TestOnMessage:
             for item in block["toolResult"]["content"]
             if "text" in item
         ]
-        assert any(t.startswith("Error sending message:") for t in result_texts)
+        assert any(
+            t.startswith("Error executing band_send_message:") for t in result_texts
+        )
 
     @pytest.mark.asyncio
     async def test_usage_emitted_once_per_turn(self):

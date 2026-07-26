@@ -22,8 +22,9 @@ Install the extra you need::
 
 from __future__ import annotations
 
-import importlib
 from typing import TYPE_CHECKING
+
+from band.exports import lazy_exports
 
 # Type-only imports for static analysis (pyrefly, mypy, etc.)
 if TYPE_CHECKING:
@@ -65,77 +66,28 @@ if TYPE_CHECKING:
     from band.adapters.slack import SlackSessionState as SlackSessionState
     from band.adapters.strands import StrandsAdapter as StrandsAdapter
 
-__all__ = [
-    "LangGraphAdapter",
-    "AnthropicAdapter",
-    "PydanticAIAdapter",
-    "ClaudeSDKAdapter",
-    "CopilotSDKAdapter",
-    "CopilotSDKAdapterConfig",
-    "CopilotACPAdapter",
-    "CopilotACPAdapterConfig",
-    "ParlantAdapter",
-    "CrewAIAdapter",
-    "CrewAIFlowAdapter",
-    "A2AAdapter",
-    "A2AGatewayAdapter",
-    "CodexAdapter",
-    "CodexAdapterConfig",
-    "ACPClientAdapter",
-    "ACPServer",
-    "BandACPServerAdapter",
-    "AgnoAdapter",
-    "GeminiAdapter",
-    "GoogleADKAdapter",
-    "OpencodeAdapter",
-    "OpencodeAdapterConfig",
-    "LettaAdapter",
-    "LettaAdapterConfig",
-    "SlackAdapter",
-    "SlackApp",
-    "SlackSessionState",
-    "StrandsAdapter",
-]
-
-
-# Submodule (under band.adapters) providing each lazily imported name.
-_LAZY_IMPORTS: dict[str, str] = {
-    "LangGraphAdapter": "langgraph",
-    "AnthropicAdapter": "anthropic",
-    "PydanticAIAdapter": "pydantic_ai",
-    "ClaudeSDKAdapter": "claude_sdk",
-    "CopilotSDKAdapter": "copilot_sdk",
-    "CopilotSDKAdapterConfig": "copilot_sdk",
-    "CopilotACPAdapter": "copilot_acp",
-    "CopilotACPAdapterConfig": "copilot_acp",
-    "ParlantAdapter": "parlant",
-    "CrewAIAdapter": "crewai",
-    "CrewAIFlowAdapter": "crewai_flow",
-    "A2AAdapter": "a2a",
-    "A2AGatewayAdapter": "a2a_gateway",
-    "CodexAdapter": "codex",
-    "CodexAdapterConfig": "codex",
-    "ACPClientAdapter": "acp",
-    "ACPServer": "acp",
-    "BandACPServerAdapter": "acp",
-    "AgnoAdapter": "agno",
-    "GeminiAdapter": "gemini",
-    "GoogleADKAdapter": "google_adk",
-    "OpencodeAdapter": "opencode",
-    "OpencodeAdapterConfig": "opencode",
-    "LettaAdapter": "letta",
-    "LettaAdapterConfig": "letta",
-    "SlackAdapter": "slack",
-    "SlackApp": "slack",
-    "SlackSessionState": "slack",
-    "StrandsAdapter": "strands",
-}
-
-
-def __getattr__(name: str) -> type:
-    """Lazy import adapters to avoid loading optional dependencies."""
-    module_name = _LAZY_IMPORTS.get(name)
-    if module_name is None:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    module = importlib.import_module(f".{module_name}", __name__)
-    return getattr(module, name)
+__all__, __getattr__, __dir__ = lazy_exports(
+    __name__,
+    {
+        "langgraph": ("LangGraphAdapter",),
+        "anthropic": ("AnthropicAdapter",),
+        "pydantic_ai": ("PydanticAIAdapter",),
+        "claude_sdk": ("ClaudeSDKAdapter",),
+        "copilot_sdk": ("CopilotSDKAdapter", "CopilotSDKAdapterConfig"),
+        "copilot_acp": ("CopilotACPAdapter", "CopilotACPAdapterConfig"),
+        "parlant": ("ParlantAdapter",),
+        "crewai": ("CrewAIAdapter",),
+        "crewai_flow": ("CrewAIFlowAdapter",),
+        "a2a": ("A2AAdapter",),
+        "a2a_gateway": ("A2AGatewayAdapter",),
+        "codex": ("CodexAdapter", "CodexAdapterConfig"),
+        "acp": ("ACPClientAdapter", "ACPServer", "BandACPServerAdapter"),
+        "agno": ("AgnoAdapter",),
+        "gemini": ("GeminiAdapter",),
+        "google_adk": ("GoogleADKAdapter",),
+        "opencode": ("OpencodeAdapter", "OpencodeAdapterConfig"),
+        "letta": ("LettaAdapter", "LettaAdapterConfig"),
+        "slack": ("SlackAdapter", "SlackApp", "SlackSessionState"),
+        "strands": ("StrandsAdapter",),
+    },
+)
