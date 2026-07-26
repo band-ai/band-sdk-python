@@ -24,6 +24,7 @@ import logging
 import os
 
 import uvicorn
+from a2a.helpers import new_task_from_user_message, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -42,10 +43,8 @@ from a2a.types import (
     AgentInterface,
     AgentSkill,
     Part,
-    TaskState,
     UnsupportedOperationError,
 )
-from band.integrations.a2a.protocol import new_task, text_message
 from dotenv import load_dotenv
 
 from setup_logging import setup_logging
@@ -79,16 +78,15 @@ class FactCheckerExecutor(AgentExecutor):
         request_text = context.get_user_input()
         task = context.current_task
 
-        if not task:
+        if task is None:
             if context.message is None:
                 raise ValueError("A2A request is missing its message")
-            task = new_task(context.message)
+            task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, task.context_id)
-        await updater.update_status(
-            TaskState.TASK_STATE_WORKING,
-            text_message(
+        await updater.start_work(
+            new_text_message(
                 "Reviewing the request for API, config, and test-surface details...",
                 context_id=task.context_id,
                 task_id=task.id,

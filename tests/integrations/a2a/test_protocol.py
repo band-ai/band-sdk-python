@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
+from a2a.helpers import new_text_message
 from a2a.types import Artifact, Part, StreamResponse, Task, TaskState, TaskStatus
 
 from band.integrations.a2a.protocol import (
     apply_task_stream_event,
     task_id_from_stream_event,
     task_response_text,
-    text_message,
 )
 
 
 def test_task_stream_updates_build_a_task_from_deltas() -> None:
     status = TaskStatus(
         state=TaskState.TASK_STATE_COMPLETED,
-        message=text_message("Sunny"),
+        message=new_text_message("Sunny"),
     )
     status_event = StreamResponse(
         status_update={

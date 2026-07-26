@@ -46,21 +46,6 @@ class GatewayServer:
         self._app: Starlette | None = None
         self._server_task: asyncio.Task[Any] | None = None
 
-    def _resolve_peer(self, peer_id: str) -> tuple[str, Peer] | None:
-        if peer_id in self.peers:
-            return peer_id, self.peers[peer_id]
-        peer = self.peers_by_uuid.get(peer_id)
-        if peer is None:
-            return None
-        return next(
-            (
-                (slug, candidate)
-                for slug, candidate in self.peers.items()
-                if candidate.id == peer.id
-            ),
-            None,
-        )
-
     def _agent_card(self, slug: str, peer: Peer) -> AgentCard:
         rpc_url = f"{self.gateway_url}/agents/{slug}"
         return AgentCard(

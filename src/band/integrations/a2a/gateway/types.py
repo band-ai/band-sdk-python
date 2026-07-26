@@ -6,9 +6,9 @@ import asyncio
 from dataclasses import dataclass, field
 
 from a2a.server.events import EventQueue
-from a2a.types import Task, TaskStatusUpdateEvent
-
-from band.integrations.a2a.protocol import is_terminal_state
+from a2a.server.tasks import TaskUpdater
+from a2a.helpers import new_text_message
+from a2a.types import Task
 
 
 @dataclass
@@ -38,18 +38,54 @@ class PendingA2ATask:
     Attributes:
         task: The A2A Task object tracking this request.
         event_queue: Official A2A event queue owned by DefaultRequestHandler.
-        peer_id: The target peer this request is for.
         done: Set when the final Band reply has been emitted or the room is
             cleaned up.
     """
 
     task: Task
     event_queue: EventQueue
-    peer_id: str
-    done: asyncio.Event
+    done: asyncio.Event = field(default_factory=asyncio.Event)
+    _updater: TaskUpdater = field(init=False, repr=False)
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
 
-    async def publish_response(self, event: TaskStatusUpdateEvent) -> None:
-        """Publish a response and release the executor on terminal events."""
-        await self.event_queue.enqueue_event(event)
-        if is_terminal_state(event.status.state):
+    def __post_init__(self) -> None:
+        self._updater = TaskUpdater(
+            self.event_queue, self.task.id, self.task.context_id
+        )
+
+    async def report_progress(self, content: str) -> None:
+        """Publish a non-terminal progress update from Band."""
+        async with self._lock:
+            if not self.done.is_set():
+                await self._updater.start_work(self._message(content))
+
+    async def complete_with_message(self, content: str) -> None:
+        """Publish Band's final response and release the request."""
+        async with self._lock:
+            if self.done.is_set():
+                return
+            await self._updater.complete(self._message(content))
             self.done.set()
+
+    async def fail(self, reason: str) -> None:
+        """Publish a terminal failure and release the request."""
+        async with self._lock:
+            if self.done.is_set():
+                return
+            await self._updater.failed(self._message(reason))
+            self.done.set()
+
+    async def cancel(self) -> None:
+        """Publish a terminal cancellation and release the request."""
+        async with self._lock:
+            if self.done.is_set():
+                return
+            await self._updater.cancel()
+            self.done.set()
+
+    def _message(self, content: str):
+        return new_text_message(
+            content,
+            context_id=self.task.context_id,
+            task_id=self.task.id,
+        )

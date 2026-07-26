@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+from a2a.helpers import new_task_from_user_message, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
@@ -17,7 +18,6 @@ from a2a.types import (
     TaskState,
     UnsupportedOperationError,
 )
-from band.integrations.a2a.protocol import new_task, text_message
 
 try:
     from .agent import OrchestratorAgent
@@ -56,10 +56,10 @@ class OrchestratorAgentExecutor(AgentExecutor):
         query = context.get_user_input()
         task = context.current_task
 
-        if not task:
+        if task is None:
             if context.message is None:
                 raise ValueError("A2A request is missing its message")
-            task = new_task(context.message)
+            task = new_task_from_user_message(context.message)
             await event_queue.enqueue_event(task)
 
         updater = TaskUpdater(event_queue, task.id, task.context_id)
@@ -72,19 +72,16 @@ class OrchestratorAgentExecutor(AgentExecutor):
 
                 if not is_task_complete and not require_user_input:
                     # Working status update
-                    await updater.update_status(
-                        TaskState.TASK_STATE_WORKING,
-                        text_message(
-                            content,
-                            context_id=task.context_id,
-                            task_id=task.id,
-                        ),
+                    await updater.start_work(
+                        new_text_message(
+                            content, context_id=task.context_id, task_id=task.id
+                        )
                     )
                 elif require_user_input:
                     # Need more input from user
                     await updater.update_status(
                         TaskState.TASK_STATE_INPUT_REQUIRED,
-                        text_message(
+                        new_text_message(
                             content,
                             context_id=task.context_id,
                             task_id=task.id,

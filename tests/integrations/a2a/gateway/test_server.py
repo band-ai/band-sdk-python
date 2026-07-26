@@ -9,12 +9,12 @@ import httpx
 import pytest_asyncio
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
+from a2a.helpers import new_task_from_user_message
 from a2a.types import TaskState, TaskStatus, TaskStatusUpdateEvent
 from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from httpx import ASGITransport
 
 from band.integrations.a2a.gateway.server import GatewayServer
-from band.integrations.a2a.protocol import new_task
 from tests.integrations.a2a.gateway.helpers import make_peer
 
 
@@ -24,7 +24,7 @@ class FakeExecutor(AgentExecutor):
         if task is None:
             if context.message is None:
                 raise ValueError("A2A request is missing its message")
-            task = new_task(context.message)
+            task = new_task_from_user_message(context.message)
         if context.current_task is None:
             await event_queue.enqueue_event(task)
         await event_queue.enqueue_event(

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from a2a.helpers import new_text_message
 from a2a.types import (
     Artifact,
     Part,
@@ -20,7 +21,6 @@ from a2a.types import (
 
 from band.core.types import PlatformMessage
 from band.integrations.a2a import A2AAdapter, A2AAuth, A2ASessionState
-from band.integrations.a2a.protocol import text_message
 from band.testing import FakeAgentTools
 
 
@@ -50,7 +50,7 @@ def make_task(
         status=TaskStatus(state=state),
     )
     if status_message:
-        task.status.message.CopyFrom(text_message(status_message))
+        task.status.message.CopyFrom(new_text_message(status_message))
     if artifact_text:
         task.artifacts.append(
             Artifact(artifact_id="artifact-1", parts=[Part(text=artifact_text)])
@@ -239,7 +239,7 @@ class TestA2AAdapterMessageFlow:
         task.status.CopyFrom(
             TaskStatus(
                 state=TaskState.TASK_STATE_COMPLETED,
-                message=text_message("Sunny"),
+                message=new_text_message("Sunny"),
             )
         )
         await adapter._handle_event(
@@ -248,6 +248,23 @@ class TestA2AAdapterMessageFlow:
 
         assert tools.messages_sent[-1]["content"] == "Sunny"
         assert adapter._tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_terminal_task_is_retained_when_band_delivery_fails(
+        self, adapter: A2AAdapter
+    ) -> None:
+        tools = FakeAgentTools()
+        tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
+        task = make_task(artifact_text="Final response")
+
+        with pytest.raises(RuntimeError, match="Band unavailable"):
+            await adapter._handle_event(
+                task_event(task), tools, "room-123", "user-456", "Test User"
+            )
+
+        retained = adapter._task_cache[("room-123", task.id)]
+        assert retained.status.state == TaskState.TASK_STATE_COMPLETED
+        assert adapter._tasks["room-123"] == task.id
 
     @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(
@@ -280,7 +297,7 @@ class TestA2AAdapterMessageFlow:
         tools = FakeAgentTools()
 
         await adapter._handle_event(
-            StreamResponse(message=text_message("Hello")),
+            StreamResponse(message=new_text_message("Hello")),
             tools,
             "room-123",
             "user-456",

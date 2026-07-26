@@ -7,6 +7,7 @@ from typing import ClassVar
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory
+from a2a.helpers import get_message_text, new_text_message
 from a2a.types import SendMessageRequest
 from a2a.types import (
     Message as A2AMessage,
@@ -27,8 +28,6 @@ from band.integrations.a2a.protocol import (
     state_name,
     task_id_from_stream_event,
     task_response_text,
-    text_from_message,
-    text_message,
 )
 from band.integrations.a2a.types import A2AAuth, A2ASessionState
 
@@ -173,89 +172,92 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
     ) -> None:
         """Handle A2A event and forward to Band platform."""
         if getattr(event, "HasField", lambda _name: False)("message"):
-            text = text_from_message(event.message)
-            if text:
-                await tools.send_message(
-                    content=text,
-                    mentions=[{"id": sender_id, "name": sender_name or ""}],
-                )
+            await self._deliver_message(event.message, tools, sender_id, sender_name)
             return
 
-        task_id = task_id_from_stream_event(event)
-        if task_id is None:
-            return
-        key = (room_id, task_id)
-        task = apply_task_stream_event(self._task_cache.get(key), event)
+        task = self._reduce_task_event(room_id, event)
         if task is None:
             return
-        self._task_cache[(room_id, task.id)] = task
-
         key = (room_id, task.id)
+        self._remember_task(room_id, task)
+        self._task_senders.setdefault(key, {"id": sender_id, "name": sender_name or ""})
 
-        # Store sender info on first event for this task
-        if key not in self._task_senders:
-            self._task_senders[key] = {"id": sender_id, "name": sender_name or ""}
+        await self._deliver_task_update(task, tools, self._task_senders[key])
+        if task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
+            await self._emit_task_event(tools, task, task.status.state)
+        elif task.status.state in TERMINAL_TASK_STATES:
+            await self._emit_task_event(tools, task, task.status.state)
+            self._finalize_task(room_id, task.id)
 
-        # Track task/context for multi-turn and resumption
+    async def _deliver_message(
+        self,
+        message: A2AMessage,
+        tools: AgentToolsProtocol,
+        sender_id: str,
+        sender_name: str | None,
+    ) -> None:
+        """Forward a direct A2A message to its Band sender."""
+        text = get_message_text(message)
+        if text:
+            await tools.send_message(
+                content=text,
+                mentions=[{"id": sender_id, "name": sender_name or ""}],
+            )
+
+    def _reduce_task_event(self, room_id: str, event: StreamResponse) -> Task | None:
+        """Reduce a raw task delta and retain its current snapshot."""
+        task_id = task_id_from_stream_event(event)
+        if task_id is None:
+            return None
+        task = apply_task_stream_event(self._task_cache.get((room_id, task_id)), event)
+        if task is not None:
+            self._task_cache[(room_id, task.id)] = task
+        return task
+
+    def _remember_task(self, room_id: str, task: Task) -> None:
+        """Record task identity needed for subsequent turns and resumption."""
         self._tasks[room_id] = task.id
         if task.context_id:
             self._contexts[room_id] = task.context_id
 
+    async def _deliver_task_update(
+        self,
+        task: Task,
+        tools: AgentToolsProtocol,
+        sender: dict[str, str],
+    ) -> None:
+        """Translate one reduced A2A task state into Band output."""
         state = task.status.state
+        if state == TaskState.TASK_STATE_WORKING:
+            status_text = self._get_status_text(task)
+            if status_text:
+                await tools.send_event(content=status_text, message_type="thought")
+            return
 
-        try:
-            # Handle based on task state
-            if state == TaskState.TASK_STATE_WORKING:
-                # Stream progress as thought event (no mentions needed for events)
-                status_text = self._get_status_text(task)
-                if status_text:
-                    await tools.send_event(content=status_text, message_type="thought")
+        if state == TaskState.TASK_STATE_INPUT_REQUIRED:
+            text = self._get_status_text(task) or "Please provide more information."
+            await tools.send_message(content=text, mentions=[sender])
+            return
 
-            elif state == TaskState.TASK_STATE_INPUT_REQUIRED:
-                # Agent needs more info - send as message with mention
-                text = self._get_status_text(task) or "Please provide more information."
-                sender = self._task_senders.get(key)
-                await tools.send_message(
-                    content=text,
-                    mentions=[sender] if sender else None,
-                )
-                # Emit task event for rehydration (input_required is resumable)
-                await self._emit_task_event(tools, task, state)
+        if state == TaskState.TASK_STATE_COMPLETED:
+            response = self._extract_response(task)
+            if response:
+                await tools.send_message(content=response, mentions=[sender])
+            return
 
-            elif state == TaskState.TASK_STATE_COMPLETED:
-                # Extract and send final response with mention
-                response = self._extract_response(task)
-                if response:
-                    sender = self._task_senders.get(key)
-                    await tools.send_message(
-                        content=response,
-                        mentions=[sender] if sender else None,
-                    )
+        if state in TERMINAL_TASK_STATES:
+            error_text = self._get_status_text(task) or f"Task {state_name(state)}"
+            await tools.send_event(
+                content=error_text,
+                message_type="error",
+                metadata={"a2a_state": state_name(state)},
+            )
 
-            elif state in (
-                TaskState.TASK_STATE_FAILED,
-                TaskState.TASK_STATE_CANCELED,
-                TaskState.TASK_STATE_REJECTED,
-                TaskState.TASK_STATE_AUTH_REQUIRED,
-            ):
-                # Error states - send as error event (no mentions needed)
-                error_text = self._get_status_text(task) or f"Task {state_name(state)}"
-                await tools.send_event(
-                    content=error_text,
-                    message_type="error",
-                    metadata={"a2a_state": state_name(state)},
-                )
-        finally:
-            # Clean up on terminal states
-            if state in TERMINAL_TASK_STATES:
-                # Emit task event for rehydration (records final state)
-                await self._emit_task_event(tools, task, state)
-                # Clean up sender tracking
-                self._task_senders.pop(key, None)
-                self._task_cache.pop(key, None)
-                # Clear task_id so next message starts a new task
-                # (context_id is preserved for multi-turn conversation)
-                self._tasks.pop(room_id, None)
+    def _finalize_task(self, room_id: str, task_id: str) -> None:
+        """Release a terminal task after its Band output and state are persisted."""
+        self._task_senders.pop((room_id, task_id), None)
+        self._task_cache.pop((room_id, task_id), None)
+        self._tasks.pop(room_id, None)
 
     def _to_a2a_message(self, msg: PlatformMessage, room_id: str) -> A2AMessage:
         """Convert Band message to A2A format."""
@@ -267,7 +269,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             context_id,
             task_id,
         )
-        return text_message(
+        return new_text_message(
             msg.content,
             role=Role.ROLE_USER,
             context_id=context_id,
@@ -277,7 +279,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
     def _get_status_text(self, task: Task) -> str | None:
         """Extract text from task status message."""
         if task.status.message:
-            return text_from_message(task.status.message)
+            return get_message_text(task.status.message)
         return None
 
     def _extract_response(self, task: Task) -> str:
@@ -365,23 +367,13 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             async for event in self._client.subscribe(
                 SubscribeToTaskRequest(id=task_id)
             ):
-                if event.HasField("task"):
-                    task = event.task
-                elif event.HasField("status_update"):
-                    update = event.status_update
-                    task = self._task_cache.setdefault(
-                        (room_id, update.task_id),
-                        Task(id=update.task_id, context_id=update.context_id),
-                    )
-                    task.status.CopyFrom(update.status)
-                else:
+                task = self._reduce_task_event(room_id, event)
+                if task is None:
                     continue
 
                 current_state = task.status.state
                 if current_state not in TERMINAL_TASK_STATES:
-                    self._tasks[room_id] = task_id
-                    if task.context_id:
-                        self._contexts[room_id] = task.context_id
+                    self._remember_task(room_id, task)
                     logger.info(
                         "Resumed A2A task %s (state=%s)",
                         task_id,

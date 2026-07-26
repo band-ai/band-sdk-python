@@ -21,11 +21,11 @@ from a2a.types import (
 )
 
 from band.core.types import PlatformMessage
+from band.client.rest import DEFAULT_REQUEST_OPTIONS
 from band.integrations.a2a.gateway import A2AGatewayAdapter, A2AGatewayAdapterConfig
 from band.integrations.a2a.gateway.adapter import BandAgentExecutor
 from band.integrations.a2a.gateway.types import GatewaySessionState, PendingA2ATask
 from band.testing import FakeAgentTools
-from band_rest.core.api_error import ApiError
 from tests.integrations.a2a.gateway.helpers import make_peer
 
 
@@ -73,8 +73,6 @@ def make_pending(event_queue: EventQueueLegacy) -> PendingA2ATask:
             status=TaskStatus(state=TaskState.TASK_STATE_WORKING),
         ),
         event_queue=event_queue,
-        peer_id="weather",
-        done=asyncio.Event(),
     )
 
 
@@ -112,28 +110,12 @@ class TestGatewayStartup:
 
         assert adapter._peers["weather-agent"].id == "weather"
         server.start.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_retries_peer_discovery_only_for_rate_limits(self) -> None:
-        adapter = A2AGatewayAdapter()
-        response = MagicMock()
-        response.data = []
-        adapter._rest.agent_api_peers.list_agent_peers = AsyncMock(
-            side_effect=[ApiError(status_code=429, headers={}, body=""), response]
+        assert (
+            adapter._rest.agent_api_peers.list_agent_peers.call_args.kwargs[
+                "request_options"
+            ]
+            == DEFAULT_REQUEST_OPTIONS
         )
-
-        with (
-            patch("band.integrations.a2a.gateway.adapter.GatewayServer") as server_type,
-            patch(
-                "band.integrations.a2a.gateway.adapter.asyncio.sleep",
-                new=AsyncMock(),
-            ) as sleep,
-        ):
-            server_type.return_value.start = AsyncMock()
-            await adapter.on_started("Gateway", "A2A Gateway")
-
-        assert adapter._rest.agent_api_peers.list_agent_peers.await_count == 2
-        sleep.assert_awaited_once()
 
 
 class TestGatewayExecution:
@@ -337,7 +319,7 @@ class TestGatewayRoomState:
         assert adapter._room_participants["new-room"] == {"weather"}
 
 
-class TestGatewayTranslation:
+class TestGatewayResponses:
     @pytest.mark.parametrize(
         ("message_type", "state"),
         [
@@ -346,13 +328,18 @@ class TestGatewayTranslation:
             ("error", TaskState.TASK_STATE_FAILED),
         ],
     )
-    def test_translates_band_message_state(self, message_type: str, state: int) -> None:
+    async def test_publishes_band_message_with_matching_task_state(
+        self, message_type: str, state: int
+    ) -> None:
         adapter = A2AGatewayAdapter()
-        task = make_pending(EventQueueLegacy()).task
+        queue = EventQueueLegacy()
+        pending = make_pending(queue)
 
-        event = adapter._translate_to_a2a(
-            make_platform_message("response", message_type=message_type), task
+        await adapter._publish_band_response(
+            pending,
+            make_platform_message("response", message_type=message_type),
         )
+        event = await queue.dequeue_event()
 
         assert event.status.state == state
         assert event.status.message.parts[0].text == "response"

@@ -7,12 +7,12 @@ from uuid import uuid4
 
 import httpx
 from a2a.client import ClientConfig, ClientFactory
+from a2a.helpers import get_message_text
 from a2a.types import Message, Part, Role, SendMessageRequest, Task
 
 from band.integrations.a2a.protocol import (
     apply_task_stream_event,
     task_response_text,
-    text_from_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,7 @@ class GatewayClient:
             task: Task | None = None
             async for event in client.send_message(request):
                 if event.HasField("message"):
-                    return text_from_message(event.message)
+                    return get_message_text(event.message)
                 task = apply_task_stream_event(task, event) or task
             return task_response_text(task) or "No response from peer"
         except Exception as exc:
