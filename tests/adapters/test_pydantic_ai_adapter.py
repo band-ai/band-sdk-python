@@ -27,6 +27,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -36,6 +37,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from band.adapters.pydantic_ai import (
@@ -333,6 +335,56 @@ class TestInitialization:
             name for toolset in agent.toolsets for name in getattr(toolset, "tools", ())
         }
         assert get_custom_tool_name(Echo) in registered
+
+    async def test_unsatisfiable_output_never_reruns_a_side_effecting_tool(self):
+        """One turn must post to the room exactly once, however the run ends.
+
+        This agent answers through tools, so ``output_type=str`` can never be
+        satisfied and its retry budget is always spent. pydantic-ai 2.x re-runs the
+        turn's tool calls on each output-validation retry, so a budget above zero
+        re-posts the reply once per attempt (a bare ``retries=N`` sets tools *and*
+        output, which is how that budget gets granted by accident).
+
+        The model here mimics one that keeps answering through the tool: a tool call,
+        then an empty final response, alternating. With output retries refused it
+        runs once; with any budget it would run again on the retry.
+        """
+        posted: list[str] = []
+
+        class Note(BaseModel):
+            """Post a note to the room."""
+
+            text: str
+
+        async def handler(args: Note) -> str:
+            posted.append(args.text)
+            return "posted"
+
+        tool_name = get_custom_tool_name(Note)
+        requests = 0
+
+        def reply_via_tool_then_nothing(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> ModelResponse:
+            nonlocal requests
+            requests += 1
+            if requests % 2:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=tool_name, args={"text": "hi"})]
+                )
+            return ModelResponse(parts=[TextPart(content="")])
+
+        adapter = PydanticAIAdapter(
+            model=FunctionModel(reply_via_tool_then_nothing),  # type: ignore[arg-type]
+            additional_tools=[(Note, handler)],
+        )
+        adapter.agent_name = "TestBot"
+
+        with pytest.raises(UnexpectedModelBehavior) as exc:
+            await adapter._create_agent().run("go", deps=MagicMock())
+
+        assert _is_output_retries_exhausted(exc.value)
+        assert posted == ["hi"]
 
 
 class TestOnStarted:

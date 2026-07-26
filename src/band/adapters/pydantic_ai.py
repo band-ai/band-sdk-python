@@ -309,13 +309,20 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             instructions=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
-            # pydantic-ai defaults to retries=1 for tool-arg and final-output
-            # validation. With a tool-only agent driven by a small model, one retry
-            # is too tight: the model occasionally needs another attempt to emit a
-            # valid tool call (e.g. band_create_chatroom) or a non-empty final
-            # answer before pydantic-ai raises UnexpectedModelBehavior. A modest
-            # budget makes the turn resilient without masking a genuinely stuck run.
-            retries=3,
+            # Two budgets, deliberately different — a bare int would set both.
+            #
+            # tools=3: one retry is too tight for a small model, which occasionally
+            # needs another attempt to emit a valid tool call (e.g.
+            # band_create_chatroom) before pydantic-ai gives up.
+            #
+            # output=0: this agent replies *through* tools, so the forced `str`
+            # output below is unsatisfiable by design and its budget can only ever
+            # be spent, never used. Spending it is not free — an output-validation
+            # retry re-runs the turn's tool calls, so every attempt re-posts the
+            # reply to the room. Refusing the retries keeps side effects at exactly
+            # one execution; the resulting UnexpectedModelBehavior is the benign
+            # empty-final case handled below.
+            retries={"tools": 3, "output": 0},
             # Strip content:null responses on every request, including mid-run
             # ones the storage filter can't reach (see the function docstring).
             capabilities=[ProcessHistory(_drop_non_replayable_messages)],
@@ -791,11 +798,12 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 dropped,
                             )
         except UnexpectedModelBehavior as e:
-            # pydantic-ai forces a final str output (output_type=str). After the
-            # agent has already acted via tools this turn (a band_send_message
-            # reply, a band_store_memory, ...) gpt-5.4-mini sometimes returns a
-            # genuinely empty final response, so the output-retry budget is
-            # exhausted and this raises. The work already went out, so the empty
+            # This is the ordinary way a productive turn ends, not a rare mishap.
+            # pydantic-ai forces a final str output (output_type=str), but the agent
+            # answers through tools — so once it has acted (a band_send_message
+            # reply, a band_store_memory, ...) it has nothing left to say and returns
+            # an empty final response. With output retries refused (see the budget
+            # above) that raises immediately. The work already went out, so the empty
             # final answer is benign — mirror the crewai adapter and swallow it.
             # Genuine no-response failures (no terminal tool ran — only read-only
             # lookups or failed tools) still propagate.
