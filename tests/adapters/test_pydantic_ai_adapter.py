@@ -340,14 +340,15 @@ class TestInitialization:
         """One turn must post to the room exactly once, however the run ends.
 
         This agent answers through tools, so ``output_type=str`` can never be
-        satisfied and its retry budget is always spent. pydantic-ai 2.x re-runs the
-        turn's tool calls on each output-validation retry, so a budget above zero
-        re-posts the reply once per attempt (a bare ``retries=N`` sets tools *and*
-        output, which is how that budget gets granted by accident).
+        satisfied and its retry budget is always spent. Each attempt sends the model a
+        retry prompt asking it to return text *or call a tool*, and an agent told to
+        answer only through tools calls one again — so a budget above zero re-posts the
+        reply once per attempt (a bare ``retries=N`` sets tools *and* output, which is
+        how that budget gets granted by accident).
 
-        The model here mimics one that keeps answering through the tool: a tool call,
-        then an empty final response, alternating. With output retries refused it
-        runs once; with any budget it would run again on the retry.
+        The FunctionModel below stands in for that model: a tool call, then an empty
+        final response, alternating — the shape a real run exhibits. With output
+        retries refused the tool runs once; with any budget it runs again per attempt.
         """
         posted: list[str] = []
 

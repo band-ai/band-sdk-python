@@ -317,11 +317,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             #
             # output=0: this agent replies *through* tools, so the forced `str`
             # output below is unsatisfiable by design and its budget can only ever
-            # be spent, never used. Spending it is not free — an output-validation
-            # retry re-runs the turn's tool calls, so every attempt re-posts the
-            # reply to the room. Refusing the retries keeps side effects at exactly
-            # one execution; the resulting UnexpectedModelBehavior is the benign
-            # empty-final case handled below.
+            # be spent, never used. Spending it is not free: each attempt sends the
+            # model a retry prompt asking it to "return text or call a tool", and an
+            # agent told to answer only through tools obliges by calling one — so a
+            # budget of N re-posts the reply to the room N more times, at N+1× the
+            # model round trips. Refusing the retries keeps side effects at exactly
+            # one; the resulting UnexpectedModelBehavior is the benign empty-final
+            # case handled below.
             retries={"tools": 3, "output": 0},
             # Strip content:null responses on every request, including mid-run
             # ones the storage filter can't reach (see the function docstring).
