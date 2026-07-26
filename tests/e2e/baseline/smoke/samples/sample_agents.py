@@ -29,7 +29,7 @@ from band.core.memory_types import (
 )
 
 from tests.e2e.baseline.smoke.samples.sample_tools import LOOKUP_PROMPT
-from tests.e2e.baseline.toolkit.observations import MemoryTool
+from tests.e2e.baseline.toolkit.observations import ContactTool, MemoryTool
 
 # Fixed role-setter: the actionable instruction (and marker) travels in the user
 # message, exactly like the opaque-tool smokes.
@@ -44,6 +44,11 @@ def memory_features() -> AdapterFeatures:
     """Features for the memory smokes: expose the memory tools, and record the
     tool call as a ``tool_call`` event so the call layer is observable."""
     return AdapterFeatures(capabilities={Capability.MEMORY}, emit={Emit.EXECUTION})
+
+
+def contacts_features() -> AdapterFeatures:
+    """Features for contacts smokes: expose contact tools and record their calls."""
+    return AdapterFeatures(capabilities={Capability.CONTACTS}, emit={Emit.EXECUTION})
 
 
 def usage_features() -> AdapterFeatures:
@@ -94,6 +99,7 @@ MEMORY_SECRETARY_PROMPT = (
 # the same shape instead of re-spelling it.
 TOOL_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT}
 MEMORY_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": memory_features()}
+CONTACTS_AGENT = {"prompt": TOOL_AGENT_SYSTEM_PROMPT, "features": contacts_features()}
 MEMORY_SECRETARY_AGENT = {
     "prompt": MEMORY_SECRETARY_PROMPT,
     "features": memory_features(),
@@ -174,6 +180,15 @@ def store_memory_instruction(marker: str) -> str:
         f"scope = {MemoryStoreScope.ORGANIZATION.value}; "
         "thought = a brief reason. Do not include subject_id. Do not call any "
         "other tool."
+    )
+
+
+def list_contacts_instruction() -> str:
+    """Drive a real contacts read and finish the turn with a Band reply."""
+    return (
+        f"First call {ContactTool.LIST.value} to inspect your contacts. Then use "
+        "band_send_message to briefly confirm that you checked them. Do not call "
+        "any other tools."
     )
 
 
