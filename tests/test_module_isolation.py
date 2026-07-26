@@ -5,10 +5,10 @@ lives on in every class and function already taken from it, but its name no long
 resolves. Pydantic looks a model's namespace up through ``cls.__module__``, so a
 model class from an evicted module can no longer resolve its own annotations, and
 building it fails with "... is not fully defined; you should define <name>". The
-crewai tool models hit exactly that: four test modules evicted
-``band.integrations.crewai.*`` and never restored it, so a later test that used the
-real package died — but only when it happened to run after one of them, which is
-why CI stayed green for so long.
+crewai tool models hit exactly that: tests evicted ``band.integrations.crewai.*``
+to fake the package and never put it back, so a later test using the real package
+died — but only when it happened to run after one of them, which is why CI stayed
+green for so long.
 
 ``monkeypatch.setitem`` and ``patch.dict(sys.modules, ...)`` both restore what they
 replaced, so there is no reason for a test to reach for a raw pop.

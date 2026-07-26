@@ -120,12 +120,10 @@ def _crewai_installed() -> bool:
 def _get_crewai_adapter_cls() -> type:
     """The CrewAIAdapter class for the conformance config.
 
-    A plain import: every crewai import in the adapter is TYPE_CHECKING-only or
-    function-local, so the module loads and the class constructs with crewai
-    absent. (This used to import under mocked crewai modules and then evict the
-    band.integrations.crewai tree from ``sys.modules``, which left the tool models
-    unable to resolve their own annotations — pydantic looks the defining module up
-    by name — so ``on_started`` died with "`SendMessageTool` is not fully defined".)
+    A plain import needs no crewai: every crewai import in the adapter is
+    TYPE_CHECKING-only or function-local, so the module loads and the class
+    constructs with the package absent. Do not fake crewai through ``sys.modules``
+    to get here — see ``tests/test_module_isolation.py`` for what that costs.
     """
     from band.adapters.crewai import CrewAIAdapter
 
@@ -142,10 +140,9 @@ async def _crewai_conformance_guard(*_args: Any, **_kw: Any) -> None:
 def _crewai_factory(**kw: Any) -> Any:
     cls = _get_crewai_adapter_cls()
     instance = cls(**kw)
-    # Guard the runtime methods unconditionally: mock-backed they would silently
-    # operate on MagicMocks, and real-backed they would build a Crew and call an
-    # LLM for real. on_cleanup is intentionally never guarded (dict.pop + logging,
-    # no CrewAI interaction).
+    # Guard the runtime methods in both venvs: without crewai they would fail on its
+    # function-local import, and with it they would build a Crew and call an LLM for
+    # real. on_cleanup is never guarded (dict.pop + logging, no CrewAI interaction).
     for method_name in ("on_message", "_invoke_crew"):
         if hasattr(instance, method_name):
             setattr(instance, method_name, _crewai_conformance_guard)

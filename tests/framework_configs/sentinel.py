@@ -20,10 +20,10 @@ MISSING = MissingSentinel()
 class StrictnessSettings(BaseSettings):
     """Env switches deciding whether a missing framework is fatal.
 
-    Parsed as booleans, not merely tested for presence: CI passes the opt-out
-    per matrix cell, so the disabled cells send ``BAND_ALLOW_MISSING_FRAMEWORKS=0``
-    — which a presence check reads as "opt out" and silently disables strictness
-    everywhere.
+    Parsed as booleans, not merely tested for presence: CI sets the opt-out
+    explicitly per matrix cell, so a cell that wants strictness sends
+    ``BAND_ALLOW_MISSING_FRAMEWORKS=0`` — which a presence check would read as
+    "opt out" and silently turn strictness off.
     """
 
     model_config = SettingsConfigDict(

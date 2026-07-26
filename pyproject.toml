@@ -143,8 +143,8 @@ agno = [
     "agno>=2.6.0",
 ]
 
-# dev extra includes ALL framework deps for testing EXCEPT crewai,
-# which conflicts with both parlant and pydantic-ai (see tool.uv.conflicts).
+# dev extra includes ALL framework deps for testing EXCEPT crewai, which is
+# declared conflicting with both parlant and pydantic-ai (see tool.uv.conflicts).
 # To run crewai tests, install with: uv sync --extra dev-crewai
 dev = [
     "pydantic-settings>=2.0.0",
@@ -216,8 +216,9 @@ dev = [
     "pytest-markdown-docs>=0.9.2",
 ]
 
-# CrewAI-only dev extra for testing crewai adapter in isolation.
-# Cannot be combined with dev/parlant/pydantic-ai due to pydantic + opentelemetry conflicts.
+# CrewAI-only dev extra for testing crewai adapter in isolation. Declared conflicting
+# with dev/parlant/pydantic-ai (pydantic + opentelemetry ceilings), so one uv sync
+# resolves either this extra or those, never both.
 dev-crewai = [
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",

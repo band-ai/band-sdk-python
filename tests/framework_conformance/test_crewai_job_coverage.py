@@ -144,9 +144,10 @@ def test_missing_framework_optout_is_parsed_as_a_boolean(
 ) -> None:
     """``BAND_ALLOW_MISSING_FRAMEWORKS=0`` must keep strict mode ON.
 
-    e2e.yml sets the flag per matrix cell and sends "0" for the lanes that should
-    stay strict; a presence check would read that as an opt-out and disable the
-    fail-loud framework-config guard for every lane.
+    The flag is set explicitly rather than conditionally: e2e.yml sends "0" for every
+    lane that should stay strict, and only ci.yml's crewai job sends "1". A presence
+    check reads that "0" as an opt-out — so the value has to be parsed as a boolean,
+    or a cell asking to stay strict silently disables the fail-loud guard instead.
     """
     monkeypatch.setenv("CI", "true")
     monkeypatch.setenv("BAND_ALLOW_MISSING_FRAMEWORKS", flag)

@@ -699,7 +699,7 @@ Three extras are resolved separately, because crewai carries the narrowest trans
 | `crewai` + `parlant` | `opentelemetry-sdk~=1.42.0` | parlant requires `>=1.37` |
 | `crewai` + `pydantic-ai` | `pydantic>=2.11.9,<2.13` | pydantic-ai-slim 2.x requires `pydantic>=2.12` |
 
-Install one per environment. The lockfile declares these as `[tool.uv] conflicts` so `uv lock` resolves each in a separate fork automatically — an upgrade on one side never waits for crewai's ceiling to move.
+Today's versions happen to overlap, but crewai's ceilings move with every release. So the lockfile declares these as `[tool.uv] conflicts` and `uv lock` resolves each in a separate fork — no upgrade on one side waits for crewai's ceiling to move. Consequence: install one per environment, because a single `uv sync` can only pick one fork.
 
 ---
 

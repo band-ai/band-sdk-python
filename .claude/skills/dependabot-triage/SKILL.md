@@ -181,20 +181,26 @@ E2E_TESTS_ENABLED=true uv run pytest tests/e2e/baseline/ -v --no-cov > /tmp/e2e.
 # then tail -f /tmp/e2e.log (watch for PASSED|FAILED|ERROR|403|429|Traceback and the final tally)
 ```
 
-**crewai must be tested in its own venv** — it conflicts with parlant/pydantic-ai
-and is absent from the `dev` extra, so the run above never exercises the crewai
-bump. Target the crewai test **files** explicitly: a bare `-k crewai` over
-`tests/adapters/` still tries to *collect* every adapter module, and the
-non-crewai ones fail to import in the crewai-only venv (collection error).
+**crewai must be tested in its own venv** — it is declared conflicting with
+parlant/pydantic-ai and absent from the `dev` extra, so the run above never
+exercises the crewai bump. Only a handful of tests import the real package (the rest
+fake it through `sys.modules` and already ran above), and those are exactly what
+`ci.yml`'s `test-crewai` job lists — run that list rather than inventing one, so a
+green local run means a green CI job:
 
 ```bash
 uv sync --extra dev-crewai
-uv run pytest tests/adapters/test_crewai_adapter.py \
-  tests/adapters/test_crewai_flow_adapter.py \
-  tests/adapters/test_crewai_flow_phase3.py tests/adapters/test_crewai_flow_phase4.py \
-  tests/adapters/test_crewai_flow_phase5.py tests/adapters/test_crewai_flow_state_source.py \
-  tests/adapters/test_crewai_adapter_soak.py tests/converters/test_crewai.py -v
+# the pytest targets from .github/workflows/ci.yml's "Run crewai tests" step
+uv run pytest tests/adapters/test_crewai_flow_phase3.py \
+  tests/integrations/test_crewai_flow_real_sdk.py \
+  tests/integrations/test_crewai_real_tools.py \
+  tests/test_capability_gating_e2e.py \
+  tests/framework_conformance/ -k crewai
 ```
+
+Do not widen this to `-k crewai` over `tests/adapters/`: pytest still *collects*
+every adapter module there, and the non-crewai ones fail to import in the
+crewai-only venv (collection error).
 
 ## Step 6 — Decide which bumps to keep (bisect on failure)
 
