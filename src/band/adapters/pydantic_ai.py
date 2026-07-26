@@ -6,10 +6,12 @@ Extracted from band.integrations.pydantic_ai.agent.BandPydanticAgent.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import warnings
-from typing import ClassVar, Any, Callable
+from collections.abc import Callable
+from typing import Any, ClassVar, get_origin, get_type_hints
 
 import httpx
 from pydantic_ai import (
@@ -21,6 +23,7 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     capture_run_messages,
 )
+from pydantic_ai.capabilities import ProcessHistory
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -62,18 +65,23 @@ from band.runtime.tools import (
 logger = logging.getLogger(__name__)
 
 
-def _is_output_validation_exhausted(exc: UnexpectedModelBehavior) -> bool:
-    """Whether ``exc`` is pydantic-ai's "exhausted output-validation retries".
+OUTPUT_RETRIES_EXHAUSTED = "exceeded maximum output retries"
+"""pydantic-ai's wording when a run burns its output-retry budget.
 
-    pydantic-ai exposes no structured code for this — it only carries the cause in
-    the ``UnexpectedModelBehavior`` message (e.g. "Exceeded maximum retries (N) for
-    output validation"), so we match that text. The coupling to pydantic-ai's
-    wording is deliberate and **fail-safe**: if a future release rewords it, a
-    benign post-tool turn propagates as an error (never the reverse), and the
-    dependency is version-pinned. Must stay distinct from "Received empty model
-    response", which propagates even after tool work.
+It exposes no structured code for this, so the message text is the only signal —
+matched case-insensitively. A guard test asserts pydantic-ai still raises this
+exact phrase, because a silent reword would disable the swallow below rather than
+announce itself.
+"""
+
+
+def _is_output_retries_exhausted(exc: UnexpectedModelBehavior) -> bool:
+    """Whether ``exc`` is pydantic-ai's exhausted output-retry budget.
+
+    The coupling to pydantic-ai's wording is deliberate and **fail-safe**: on a
+    reword a benign post-tool turn propagates as an error, never the reverse.
     """
-    return "output validation" in str(exc).lower()
+    return OUTPUT_RETRIES_EXHAUSTED in str(exc).lower()
 
 
 # A response made up only of these (or with no parts at all) serializes to
@@ -85,7 +93,7 @@ def _is_replayable_history_message(message: Any) -> bool:
     """Drop assistant responses that would replay as content:null.
 
     Keep any response with at least one content-bearing part (text, tool
-    calls, builtin tool calls/returns, files). Drop thinking-only and empty
+    calls, native tool calls/returns, files). Drop thinking-only and empty
     responses, which providers reject when sent back as history.
     """
     if isinstance(message, ModelResponse):
@@ -139,6 +147,29 @@ def _custom_tool_def_to_callable(tool_def: CustomToolDef) -> Callable[..., Any]:
     return native
 
 
+def _takes_run_context(fn: Callable[..., Any]) -> bool:
+    """Whether ``fn`` takes pydantic-ai's ``RunContext`` as its first parameter.
+
+    Decides the registration path: ``agent.tool`` handles RunContext-first
+    callables, while ``agent.tool_plain`` handles context-free ones — the shape
+    ``_custom_tool_def_to_callable`` produces. pydantic-ai injects an unannotated
+    first parameter as context; a non-RunContext annotation is invalid on the
+    former path.
+    Annotations are resolved, so a caller using ``from __future__ import
+    annotations`` is classified on the real type rather than the string.
+    """
+    first = next(iter(inspect.signature(fn).parameters), None)
+    if first is None:
+        return False
+    try:
+        annotation = get_type_hints(fn).get(first)
+    except (NameError, TypeError):  # unresolvable annotation: treat as plain
+        return False
+    if annotation is None:
+        return True
+    return annotation is RunContext or get_origin(annotation) is RunContext
+
+
 class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     """
     Pydantic AI adapter using SimpleAdapter pattern.
@@ -175,7 +206,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         Initialize the Pydantic AI adapter.
 
         Args:
-            model: Pydantic AI model string (e.g., "openai:gpt-5.4", "anthropic:claude-3-5-sonnet-latest")
+            model: Pydantic AI model string (e.g., "openai:gpt-5.4",
+                "anthropic:claude-3-5-sonnet-latest"). Since pydantic-ai 2.0 the bare
+                ``openai:`` prefix routes to OpenAI's Responses API; use
+                ``openai-chat:`` for Chat Completions.
             system_prompt: Optional custom system prompt (overrides default)
             custom_section: Optional custom section added to default system prompt
             enable_execution_reporting: Deprecated. Use features=AdapterFeatures(emit={Emit.EXECUTION}).
@@ -185,7 +219,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                 and/or portable ``CustomToolDef`` (InputModel, handler) tuples.
                 Each function should follow PydanticAI's tool signature:
                 `def my_tool(ctx: RunContext[AgentToolsProtocol], arg1: str, ...) -> T`
-                These are registered via agent.tool() alongside platform tools.
+                and is registered via agent.tool() alongside platform tools. A
+                context-free callable (no leading ``RunContext``) goes to
+                agent.tool_plain() instead — pydantic-ai rejects it on the other path.
             features: Shared adapter feature settings (capabilities, emit, tool filters).
         """
         # --- Deprecation shim: boolean → features migration ---
@@ -259,10 +295,10 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         )
         self._system_prompt = system
 
-        # We respond via tools only, so the model output is unused. Using `str`
-        # (instead of `None`) keeps newer pydantic-ai-slim versions happy —
-        # 1.87+ rejects `output_type=None` with `UserError("At least one output
-        # type must be provided other than `None`")`.
+        # We respond via tools only, so the model output is unused — but it must
+        # still be a type: pydantic-ai rejects `output_type=None` with
+        # `UserError("At least one output type must be provided other than
+        # `None`")`, so `str` stands in for "we don't care".
         agent: Agent[AgentToolsProtocol, str] = Agent(
             self.model,
             # Pass the rendered prompt as `instructions`, not `system_prompt`.
@@ -277,16 +313,25 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             instructions=system,
             deps_type=AgentToolsProtocol,
             output_type=str,
-            # pydantic-ai defaults to retries=1 for tool-arg and final-output
-            # validation. With a tool-only agent driven by a small model, one retry
-            # is too tight: the model occasionally needs another attempt to emit a
-            # valid tool call (e.g. band_create_chatroom) or a non-empty final
-            # answer before pydantic-ai raises UnexpectedModelBehavior. A modest
-            # budget makes the turn resilient without masking a genuinely stuck run.
-            retries=3,
+            # Two budgets, deliberately different — a bare int would set both.
+            #
+            # tools=3: one retry is too tight for a small model, which occasionally
+            # needs another attempt to emit a valid tool call (e.g.
+            # band_create_chatroom) before pydantic-ai gives up.
+            #
+            # output=0: this agent replies *through* tools, so the forced `str`
+            # output below is unsatisfiable by design and its budget can only ever
+            # be spent, never used. Spending it is not free: each attempt sends the
+            # model a retry prompt asking it to "return text or call a tool", and an
+            # agent told to answer only through tools obliges by calling one — so a
+            # budget of N re-posts the reply to the room N more times, at N+1× the
+            # model round trips. Refusing the retries keeps side effects at exactly
+            # one; the resulting UnexpectedModelBehavior is the benign empty-final
+            # case handled below.
+            retries={"tools": 3, "output": 0},
             # Strip content:null responses on every request, including mid-run
             # ones the storage filter can't reach (see the function docstring).
-            history_processors=[_drop_non_replayable_messages],
+            capabilities=[ProcessHistory(_drop_non_replayable_messages)],
         )
 
         # Register platform tools dynamically from centralized definitions
@@ -585,9 +630,13 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
             band_archive_memory.__doc__ = get_tool_description("band_archive_memory")
             agent.tool(band_archive_memory)
 
-        # Register custom tools (user-provided PydanticAI-compatible functions)
+        # Register custom tools (user-provided PydanticAI-compatible functions) on
+        # the path their signature calls for — pydantic-ai keeps the two apart.
         for custom_tool in self._custom_tools:
-            agent.tool(custom_tool)
+            if _takes_run_context(custom_tool):
+                agent.tool(custom_tool)
+            else:
+                agent.tool_plain(custom_tool)
             logger.debug("Registered custom tool: %s", custom_tool.__name__)
 
         return agent
@@ -657,7 +706,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # terminal, successful tool ran (excludes read-only lookups and failed
         # band tools) so we can tell a productive turn from a genuine no-op below.
         tool_executed = False
-        # pydantic-ai's result.usage() is already summed across the run's model
+        # pydantic-ai's result.usage is already summed across the run's model
         # calls, so it's set once (on the result event), not accumulated.
         turn_usage = TurnUsage()
         # Snapshot the prior messages' identities so the fallback usage path
@@ -678,84 +727,95 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         # before the AgentRunResultEvent that normally records history — can still
         # persist the *full* turn (user prompt + the agent's tool calls/results), not
         # just the user prompt. This is pydantic-ai's documented hook for a run that
-        # may raise; entered manually so the streaming loop below stays unindented.
+        # may raise; entered manually so the `finally` below can still read what the
+        # failed run captured.
         capture_cm = capture_run_messages()
         captured = capture_cm.__enter__()
         try:
-            async for event in self._agent.run_stream_events(
+            # run_stream_events is an async context manager: it starts the run on the
+            # first iteration and tears the background task down on exit.
+            async with self._agent.run_stream_events(
                 user_message,
                 deps=tools,
                 message_history=self._message_history[room_id],
-            ):
-                if isinstance(event, FunctionToolCallEvent):
-                    if Emit.EXECUTION in self.features.emit:
-                        try:
-                            await tools.send_event(
-                                content=json.dumps(
-                                    {
-                                        "name": event.part.tool_name,
-                                        "args": event.part.args,
-                                        "tool_call_id": event.part.tool_call_id,
-                                    }
-                                ),
-                                message_type="tool_call",
-                            )
-                        except Exception as e:
-                            logger.warning("Failed to send tool_call event: %s", e)
-                elif isinstance(event, FunctionToolResultEvent):
-                    # Custom tools count as terminal only if they opted in
-                    # (band_terminal); undeclared customs fail loud. A failed band
-                    # tool (its wrapper returns an "Error " string) is not terminal.
-                    result_name = event.result.tool_name
-                    if is_terminal_success(
-                        result_name,
-                        succeeded=not band_tool_errored(
-                            result_name, event.result.content
-                        ),
-                        custom_terminal=result_name in self._custom_terminal_names,
-                    ):
-                        tool_executed = True
-                    if Emit.EXECUTION in self.features.emit:
-                        try:
-                            await tools.send_event(
-                                content=json.dumps(
-                                    {
-                                        "name": event.result.tool_name,
-                                        "output": str(event.result.content),
-                                        "tool_call_id": event.tool_call_id,
-                                    }
-                                ),
-                                message_type="tool_result",
-                            )
-                        except Exception as e:
-                            logger.warning("Failed to send tool_result event: %s", e)
-                elif isinstance(event, AgentRunResultEvent):
-                    turn_usage = self._usage_from_result(event.result)
-                    # Keep native run history, but drop responses that replay as
-                    # content:null (e.g. thinking-only) — providers reject them next request.
-                    run_messages = list(event.result.all_messages())
-                    self._message_history[room_id] = _drop_non_replayable_messages(
-                        run_messages
-                    )
-                    dropped = len(run_messages) - len(self._message_history[room_id])
-                    if dropped:
-                        logger.debug(
-                            "Room %s: dropped %s content:null response(s) from history",
-                            room_id,
-                            dropped,
+            ) as events:
+                async for event in events:
+                    if isinstance(event, FunctionToolCallEvent):
+                        if Emit.EXECUTION in self.features.emit:
+                            try:
+                                await tools.send_event(
+                                    content=json.dumps(
+                                        {
+                                            "name": event.part.tool_name,
+                                            "args": event.part.args,
+                                            "tool_call_id": event.part.tool_call_id,
+                                        }
+                                    ),
+                                    message_type="tool_call",
+                                )
+                            except Exception as e:
+                                logger.warning("Failed to send tool_call event: %s", e)
+                    elif isinstance(event, FunctionToolResultEvent):
+                        # Custom tools count as terminal only if they opted in
+                        # (band_terminal); undeclared customs fail loud. A failed band
+                        # tool (its wrapper returns an "Error " string) is not terminal.
+                        result_name = event.part.tool_name
+                        if is_terminal_success(
+                            result_name,
+                            succeeded=not band_tool_errored(
+                                result_name, event.part.content
+                            ),
+                            custom_terminal=result_name in self._custom_terminal_names,
+                        ):
+                            tool_executed = True
+                        if Emit.EXECUTION in self.features.emit:
+                            try:
+                                await tools.send_event(
+                                    content=json.dumps(
+                                        {
+                                            "name": event.part.tool_name,
+                                            "output": str(event.part.content),
+                                            "tool_call_id": event.tool_call_id,
+                                        }
+                                    ),
+                                    message_type="tool_result",
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    "Failed to send tool_result event: %s", e
+                                )
+                    elif isinstance(event, AgentRunResultEvent):
+                        turn_usage = self._usage_from_result(event.result)
+                        # Keep native run history, but drop responses that replay as
+                        # content:null (e.g. thinking-only) — providers reject them
+                        # on the next request.
+                        run_messages = list(event.result.all_messages())
+                        self._message_history[room_id] = _drop_non_replayable_messages(
+                            run_messages
                         )
+                        dropped = len(run_messages) - len(
+                            self._message_history[room_id]
+                        )
+                        if dropped:
+                            logger.debug(
+                                "Room %s: dropped %s content:null response(s) from "
+                                "history",
+                                room_id,
+                                dropped,
+                            )
         except UnexpectedModelBehavior as e:
-            # pydantic-ai forces a final str output (output_type=str). After the
-            # agent has already acted via tools this turn (a band_send_message
-            # reply, a band_store_memory, ...) gpt-5.4-mini sometimes returns a
-            # genuinely empty final response, so output-validation retries are
-            # exhausted and this raises. The work already went out, so the empty
+            # This is the ordinary way a productive turn ends, not a rare mishap.
+            # pydantic-ai forces a final str output (output_type=str), but the agent
+            # answers through tools — so once it has acted (a band_send_message
+            # reply, a band_store_memory, ...) it has nothing left to say and returns
+            # an empty final response. With output retries refused (see the budget
+            # above) that raises immediately. The work already went out, so the empty
             # final answer is benign — mirror the crewai adapter and swallow it.
             # Genuine no-response failures (no terminal tool ran — only read-only
             # lookups or failed tools) still propagate.
-            if tool_executed and _is_output_validation_exhausted(e):
+            if tool_executed and _is_output_retries_exhausted(e):
                 logger.warning(
-                    "Room %s: Pydantic AI exhausted output-validation retries after "
+                    "Room %s: Pydantic AI exhausted its output retries after "
                     "the agent already did productive work this turn; treating as "
                     "non-fatal: %s",
                     room_id,
@@ -809,31 +869,33 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
     def _usage_from_usage_obj(usage: Any) -> TurnUsage:
         """Map a pydantic-ai usage object (RunUsage / RequestUsage) onto TurnUsage.
 
-        Field names moved across pydantic-ai versions (``request_tokens`` /
-        ``response_tokens`` → ``input_tokens`` / ``output_tokens``), so both are
-        read; the first int found wins.
+        Read defensively: both classes carry these fields, but a missing one costs
+        the turn's usage report, never the turn.
         """
 
-        def _int(*names: str) -> int:
-            for name in names:
-                value = getattr(usage, name, None)
-                if isinstance(value, int):
-                    return value
-            return 0
+        def _int(name: str) -> int:
+            value = getattr(usage, name, None)
+            return value if isinstance(value, int) else 0
 
         return TurnUsage(
-            input_tokens=_int("input_tokens", "request_tokens"),
-            output_tokens=_int("output_tokens", "response_tokens"),
+            input_tokens=_int("input_tokens"),
+            output_tokens=_int("output_tokens"),
             cache_read_tokens=_int("cache_read_tokens"),
             cache_write_tokens=_int("cache_write_tokens"),
         )
 
     @staticmethod
     def _usage_from_result(result: Any) -> TurnUsage:
-        """The run's total usage across all model requests (happy path)."""
+        """The run's total usage across all model requests (happy path).
+
+        Usage is telemetry, so a shape change must not fail the turn — but it must
+        not vanish silently either (pydantic-ai 2.x turned ``usage()`` into the
+        ``usage`` property, and a silent catch would just report zeros).
+        """
         try:
-            usage = result.usage()
-        except Exception:  # pragma: no cover - defensive; usage is best-effort
+            usage = result.usage
+        except Exception as e:  # pragma: no cover - defensive; usage is best-effort
+            logger.warning("Could not read pydantic-ai run usage: %s", e)
             return TurnUsage()
         return PydanticAIAdapter._usage_from_usage_obj(usage)
 
@@ -859,7 +921,7 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
         """Sum per-response usage across the given run messages.
 
         The fallback for the benign empty-final-response path, where no
-        ``AgentRunResultEvent`` fires (so ``result.usage()`` is unavailable) yet
+        ``AgentRunResultEvent`` fires (so ``result.usage`` is unavailable) yet
         the turn still spent tokens — each ``ModelResponse`` carries its own
         ``usage``. Pass only the *current run's* messages (the caller filters out
         the prior history by identity); summing the full captured list would

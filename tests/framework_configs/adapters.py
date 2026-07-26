@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import functools
 import inspect
-import threading
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from unittest.mock import MagicMock
@@ -103,117 +102,47 @@ def _langgraph_factory(**kw: Any) -> Any:
     return LangGraphAdapter(**kw)
 
 
-# CrewAI conformance instances are ONLY safe for inspecting primitive
-# attributes (model, role, etc.) and calling on_cleanup (which only does
-# dict.pop + logging, no CrewAI interaction).  Runtime methods that interact
-# with CrewAI objects (on_message, _invoke_crew) are guarded because the
-# class is imported with mocked crewai dependencies.
+# The CrewAI conformance instance is config-only: safe for inspecting primitive
+# attributes (model, role, etc.) and on_cleanup, never for runtime work — the
+# factories below guard the methods that would build a Crew or hit an LLM.
 # For runtime tests, use monkeypatch fixtures in tests/adapters/test_crewai_adapter.py.
 
 
-class _MockBaseTool:
-    """Minimal stand-in for ``crewai.tools.BaseTool`` at import time."""
-
-    name: str = ""
-    description: str = ""
-
-    def __init__(self):
-        pass
-
-
-_crewai_import_lock = threading.Lock()
+def _crewai_installed() -> bool:
+    """Whether the real crewai package is importable (the dev-crewai venv)."""
+    try:
+        import crewai  # noqa: F401
+    except ImportError:
+        return False
+    return True
 
 
-_CREWAI_AFFECTED_MODULES = (
-    "band.adapters.crewai",
-    "band.integrations.crewai",
-    "band.integrations.crewai.runtime",
-    "band.integrations.crewai.tools",
-    "crewai",
-    "crewai.tools",
-    "nest_asyncio",
-)
-
-
-@functools.lru_cache(maxsize=1)
 def _get_crewai_adapter_cls() -> type:
-    """Import CrewAIAdapter with mocked crewai dependencies.
+    """The CrewAIAdapter class for the conformance config.
 
-    Uses ``patch.dict(sys.modules, ...)`` to temporarily inject mock modules,
-    imports the adapter, then cleans up.  The returned class retains mock
-    references in its module globals — safe for attribute inspection only.
-
-    Cached so the heavy sys.modules teardown/reimport happens at most once.
-    Protected by ``_crewai_import_lock`` so concurrent pytest-xdist workers
-    cannot interleave the ``sys.modules`` snapshot / restore sequence.
-
-    **Save/restore semantics**: any modules that were already in
-    ``sys.modules`` before this function runs are restored afterwards,
-    preventing ordering-dependent failures when framework-specific tests
-    (which do their own mocking) import the real adapter module first.
+    A plain import needs no crewai: every crewai import in the adapter is
+    TYPE_CHECKING-only or function-local, so the module loads and the class
+    constructs with the package absent. Do not fake crewai through ``sys.modules``
+    to get here — see ``tests/test_module_isolation.py`` for what that costs.
     """
-    import importlib
-    import sys
-    from unittest.mock import patch
+    from band.adapters.crewai import CrewAIAdapter
 
-    adapter_module_name = "band.adapters.crewai"
-
-    with _crewai_import_lock:
-        # Snapshot modules that existed before we touch sys.modules.
-        saved: dict[str, Any] = {}
-        _sentinel = object()
-        for mod in _CREWAI_AFFECTED_MODULES:
-            prev = sys.modules.get(mod, _sentinel)
-            if prev is not _sentinel:
-                saved[mod] = prev
-            sys.modules.pop(mod, None)
-
-        mock_crewai = MagicMock()
-        mock_crewai.Agent = MagicMock()
-        mock_crewai.LLM = MagicMock()
-        mock_crewai_tools = MagicMock()
-        mock_crewai_tools.BaseTool = _MockBaseTool
-
-        mock_entries = {
-            "crewai": mock_crewai,
-            "crewai.tools": mock_crewai_tools,
-            "nest_asyncio": MagicMock(),
-        }
-
-        with patch.dict(sys.modules, mock_entries):
-            cls = importlib.import_module(adapter_module_name).CrewAIAdapter
-
-        # Restore pre-existing modules so framework-specific tests that
-        # already imported the real adapter/crewai are not disrupted.
-        # Modules that were absent before are removed (clean state).
-        for mod in _CREWAI_AFFECTED_MODULES:
-            if mod in saved:
-                sys.modules[mod] = saved[mod]
-            else:
-                sys.modules.pop(mod, None)
-
-    # Mark the class as conformance-only so accidental runtime use is detectable.
-    cls._CONFORMANCE_ONLY = True
-    return cls
+    return CrewAIAdapter
 
 
 async def _crewai_conformance_guard(*_args: Any, **_kw: Any) -> None:
     raise RuntimeError(
-        "CrewAI conformance instance has mocked dependencies — "
+        "CrewAI conformance instance is config-only — "
         "use tests/adapters/test_crewai_adapter.py fixtures for runtime tests."
     )
 
 
 def _crewai_factory(**kw: Any) -> Any:
     cls = _get_crewai_adapter_cls()
-    assert getattr(cls, "_CONFORMANCE_ONLY", False), (
-        "CrewAI adapter used here is for conformance config only; "
-        "use tests/adapters/test_crewai_adapter.py fixtures for runtime tests."
-    )
     instance = cls(**kw)
-    # Guard runtime methods that would silently operate on MagicMock objects.
-    # on_cleanup is intentionally NOT guarded — it only does dict.pop + logging
-    # and does not interact with CrewAI objects.
+    # Guard the runtime methods in both venvs: without crewai they would fail on its
+    # function-local import, and with it they would build a Crew and call an LLM for
+    # real. on_cleanup is never guarded (dict.pop + logging, no CrewAI interaction).
     for method_name in ("on_message", "_invoke_crew"):
         if hasattr(instance, method_name):
             setattr(instance, method_name, _crewai_conformance_guard)
@@ -347,13 +276,7 @@ def _build_langgraph_config() -> AdapterConfig:
 
 def _build_crewai_config() -> AdapterConfig:
     crewai_cls = _get_crewai_adapter_cls()
-
-    try:
-        import crewai  # noqa: F401
-
-        _crewai_available = True
-    except ImportError:
-        _crewai_available = False
+    _crewai_available = _crewai_installed()
 
     return AdapterConfig(
         framework_id="crewai",
@@ -396,63 +319,15 @@ def _build_crewai_config() -> AdapterConfig:
     )
 
 
-@functools.lru_cache(maxsize=1)
 def _get_crewai_flow_adapter_cls() -> type:
-    """Import CrewAIFlowAdapter with mocked crewai dependencies.
+    """The CrewAIFlowAdapter class for the conformance config.
 
-    The flow adapter has its own optional crewai.flow.flow import. The
-    integration tools module (used by build_band_crewai_tools when a
-    sub-Crew is constructed at runtime) imports crewai.tools, so the same
-    mock pattern as ``_get_crewai_adapter_cls`` is reused.
+    Plain import, as for ``_get_crewai_adapter_cls``. The adapter no longer
+    imports ``Flow`` at module scope, so this remains safe when crewai is absent.
     """
-    import importlib
-    import sys
-    from unittest.mock import patch
+    from band.adapters.crewai_flow import CrewAIFlowAdapter
 
-    adapter_module_name = "band.adapters.crewai_flow"
-    affected = _CREWAI_AFFECTED_MODULES + (
-        adapter_module_name,
-        "band.integrations.crewai",
-        "band.integrations.crewai.runtime",
-        "band.integrations.crewai.tools",
-    )
-
-    with _crewai_import_lock:
-        saved: dict[str, Any] = {}
-        _sentinel = object()
-        for mod in affected:
-            prev = sys.modules.get(mod, _sentinel)
-            if prev is not _sentinel:
-                saved[mod] = prev
-            sys.modules.pop(mod, None)
-
-        mock_crewai = MagicMock()
-        mock_crewai.Agent = MagicMock()
-        mock_crewai.LLM = MagicMock()
-        mock_crewai_tools = MagicMock()
-        mock_crewai_tools.BaseTool = _MockBaseTool
-        mock_flow_module = MagicMock()
-        mock_flow_module.Flow = type("Flow", (), {})
-
-        mock_entries = {
-            "crewai": mock_crewai,
-            "crewai.tools": mock_crewai_tools,
-            "crewai.flow": MagicMock(flow=mock_flow_module),
-            "crewai.flow.flow": mock_flow_module,
-            "nest_asyncio": MagicMock(),
-        }
-
-        with patch.dict(sys.modules, mock_entries):
-            cls = importlib.import_module(adapter_module_name).CrewAIFlowAdapter
-
-        for mod in affected:
-            if mod in saved:
-                sys.modules[mod] = saved[mod]
-            else:
-                sys.modules.pop(mod, None)
-
-    cls._CONFORMANCE_ONLY = True
-    return cls
+    return CrewAIFlowAdapter
 
 
 def _crewai_flow_factory(**kw: Any) -> Any:
@@ -463,7 +338,7 @@ def _crewai_flow_factory(**kw: Any) -> Any:
 
     async def _guard(*_a: Any, **_k: Any) -> None:
         raise RuntimeError(
-            "CrewAIFlow conformance instance has mocked dependencies — "
+            "CrewAIFlow conformance instance is config-only — "
             "use tests/adapters/test_crewai_flow_*.py fixtures for runtime tests."
         )
 

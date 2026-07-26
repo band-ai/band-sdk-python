@@ -269,9 +269,9 @@ docker build -f docker/band_python_kit/Dockerfile \
 ```
 
 `SDK_EXTRA` accepts any single extra from `pyproject.toml`'s
-`[project.optional-dependencies]`. One at a time — some extras have
-conflicting dependencies and cannot share a venv (e.g. `crewai` conflicts
-with `parlant`/`pydantic_ai`). Multi-arch builds work with
+`[project.optional-dependencies]`. One at a time — some extras are declared
+conflicting and resolve in separate lockfile forks, so a venv can only hold one
+of them (e.g. `crewai` versus `parlant`/`pydantic-ai`). Multi-arch builds work with
 `docker buildx build --platform linux/amd64,linux/arm64`.
 
 ### Layout

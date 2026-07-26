@@ -217,7 +217,8 @@ jobs:
       uses: ./.github/actions/setup-e2e
 
     # --- Backend setup: each step is gated to the lane whose server/CLI it stands
-    # up (the `backends` lane co-runs codex + opencode; letta is its own lane). ---
+    # up (the `backends` lane co-runs codex, opencode, and copilot_acp; letta is its
+    # own lane). ---
 
     - name: Set up Node (codex, opencode)
       if: matrix.lane == 'backends'

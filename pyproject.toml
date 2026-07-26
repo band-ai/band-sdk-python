@@ -48,7 +48,7 @@ letta = [
     "mcp>=1.25.0",
 ]
 pydantic-ai = [
-    "pydantic-ai-slim[anthropic]>=1.56.0",
+    "pydantic-ai-slim[anthropic]>=2.18.0",
     "openai>=2.0.0",
 ]
 anthropic = [
@@ -144,8 +144,8 @@ agno = [
     "agno>=2.6.0",
 ]
 
-# dev extra includes ALL framework deps for testing EXCEPT crewai,
-# which conflicts with both parlant and pydantic-ai (see tool.uv.conflicts).
+# dev extra includes ALL framework deps for testing EXCEPT crewai, which is
+# declared conflicting with both parlant and pydantic-ai (see tool.uv.conflicts).
 # To run crewai tests, install with: uv sync --extra dev-crewai
 dev = [
     "pydantic-settings>=2.0.0",
@@ -160,7 +160,7 @@ dev = [
     "httpx>=0.24.0",  # Already in main deps, for mocking
     "pytest-httpx>=0.35.0",  # httpx_mock fixture: REST header-emission proof
     # Include pydantic-ai for testing
-    "pydantic-ai-slim>=1.56.0",
+    "pydantic-ai-slim>=2.18.0",
     # Include anthropic for testing
     "anthropic>=0.75.0",
     # Include claude_sdk for testing
@@ -217,8 +217,9 @@ dev = [
     "pytest-markdown-docs>=0.9.2",
 ]
 
-# CrewAI-only dev extra for testing crewai adapter in isolation.
-# Cannot be combined with dev/parlant/pydantic-ai due to pydantic + opentelemetry conflicts.
+# CrewAI-only dev extra for testing crewai adapter in isolation. Declared conflicting
+# with dev/parlant/pydantic-ai (pydantic + opentelemetry ceilings), so one uv sync
+# resolves either this extra or those, never both.
 dev-crewai = [
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
@@ -297,10 +298,11 @@ required-environments = [
     "sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
 
-# crewai 1.14.3 conflicts with BOTH parlant and pydantic-ai:
-#   - parlant >=3.1 requires opentelemetry-sdk >=1.37, crewai 1.14.3 pins ~=1.34.0
-#   - pydantic-ai-slim >=1.61 requires pydantic>=2.12, crewai 1.14.3 pins pydantic~=2.11.9
-# Declaring them as conflicting extras lets uv resolve each in a separate fork.
+# crewai is resolved apart from BOTH parlant and pydantic-ai. crewai pins a narrow
+# pydantic range (<2.13) and an exact opentelemetry-sdk minor (~=1.42.0), while
+# pydantic-ai-slim 2.x requires pydantic>=2.12 and parlant requires
+# opentelemetry-sdk>=1.37. Declaring the extras as conflicting lets uv resolve each
+# side in its own fork instead of forcing one shared pin that satisfies everyone.
 conflicts = [
     [
         { extra = "crewai" },
