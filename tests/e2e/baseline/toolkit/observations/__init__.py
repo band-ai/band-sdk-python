@@ -9,7 +9,7 @@ methods, so a check lives with the data it inspects. ``ReplyCapture`` (see
 - :class:`Replies` -- captured agent reply messages.
 - :class:`ToolCall` / :class:`ToolCalls` -- the agent's tool calls (memory tools
   excluded by default); :class:`MemoryToolCalls` -- the call-layer memory view;
-  :class:`MemoryTool` -- canonical memory tool names.
+  :class:`MemoryTool` / :class:`ContactTool` -- canonical capability-tool names.
 - :class:`Events` / :class:`Thoughts` / :class:`Errors` / :class:`Tasks` -- the
   free-text emitted events.
 - :class:`Memories` -- the store-layer view: memory records that actually landed
@@ -34,6 +34,7 @@ from tests.e2e.baseline.toolkit.observations.memories import (
 )
 from tests.e2e.baseline.toolkit.observations.replies import Replies
 from tests.e2e.baseline.toolkit.observations.tool_calls import (
+    ContactTool,
     MemoryTool,
     MemoryToolCalls,
     ToolCall,
@@ -42,6 +43,7 @@ from tests.e2e.baseline.toolkit.observations.tool_calls import (
 from tests.e2e.baseline.toolkit.observations.usage import Usage, UsageRecord
 
 __all__ = [
+    "ContactTool",
     "Errors",
     "Events",
     "Memories",

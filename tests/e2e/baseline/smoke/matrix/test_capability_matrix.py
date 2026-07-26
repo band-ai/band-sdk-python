@@ -1,6 +1,6 @@
 """Capability-filtered matrix smokes — demonstrate ``@per_adapter`` filtering.
 
-Two complementary scenarios driven entirely by capability filters, with no
+Three complementary scenarios driven entirely by capability filters, with no
 hard-coded adapter lists:
 
 * ``supports={Capability.MEMORY}`` selects the memory-capable adapters and runs a
@@ -8,6 +8,8 @@ hard-coded adapter lists:
   memory tools per cell);
 * ``without={Capability.MEMORY}`` selects the exact complement (the non-memory
   adapters) and runs a basic reply turn.
+* ``supports={Capability.CONTACTS}`` selects adapters with contact tools enabled
+  and proves they can list contacts through the real platform API.
 
 The two sets partition the matrix, so adding/removing an adapter or flipping its
 ``supports`` in the registry re-balances both tests automatically — the point of
@@ -26,12 +28,15 @@ from band.core.types import Capability
 
 from tests.e2e.baseline.agents import per_adapter
 from tests.e2e.baseline.smoke.samples.sample_agents import (
+    CONTACTS_AGENT,
     MEMORY_AGENT,
+    list_contacts_instruction,
     recall_memory_instruction,
     store_memory_instruction,
     unique_marker,
 )
 from tests.e2e.baseline.toolkit.capture import CaptureFactory
+from tests.e2e.baseline.toolkit.observations import ContactTool
 from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceManager
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
@@ -109,6 +114,32 @@ async def test_recall_memory_across_memory_adapters(
     # Read side: the agent queried its memory and fetched the record back by id.
     mem.calls.assert_list_called()
     mem.calls.assert_get_called()
+
+
+@per_adapter(supports={Capability.CONTACTS}, **CONTACTS_AGENT)
+@flaky_infra("retry a transient live-turn timeout; assertion failures fail loud")
+@pytest.mark.asyncio(loop_scope="session")
+async def test_list_contacts_across_contacts_adapters(
+    agent: ProvisionedAgent,
+    resource_manager: ResourceManager,
+    user_ops: UserOps,
+    reply_capture: CaptureFactory,
+) -> None:
+    """Every contacts-capable adapter can list contacts through the platform."""
+    room_id = await resource_manager.provision_room(
+        title=f"e2e-cap-contacts-{agent.adapter_id}", participants=[agent.id]
+    )
+    async with reply_capture(room_id) as capture:
+        mid = await user_ops.send_message(
+            room_id,
+            list_contacts_instruction(),
+            mention_id=agent.id,
+            mention_name=agent.name,
+        )
+        await capture.wait_for_processed(mid, agent.id)
+        calls = await capture.tool_calls(sender_id=agent.id)
+
+    calls.assert_fired(ContactTool.LIST.value)
 
 
 @per_adapter(without={Capability.MEMORY})
