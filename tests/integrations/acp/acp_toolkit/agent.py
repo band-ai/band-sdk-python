@@ -16,9 +16,11 @@ from acp.helpers import (
     update_plan,
     update_tool_call,
 )
+from acp import RequestError
 from acp.schema import (
     AgentCapabilities,
     InitializeResponse,
+    LoadSessionResponse,
     McpCapabilities,
     NewSessionResponse,
     PermissionOption,
@@ -41,9 +43,18 @@ class FakeACPAgent:
     entirely with the ``@agent.on_prompt`` decorator.
     """
 
-    def __init__(self, *, http: bool = True, sse: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        http: bool = True,
+        sse: bool = False,
+        supports_session_load: bool = False,
+    ) -> None:
         self._http = http
         self._sse = sse
+        self._supports_session_load = supports_session_load
+        self._persisted_sessions: set[str] = set()
+        self._session_load_error: RequestError | None = None
         self._conn: AgentSideConnection | None = None
         self._script: list[PromptHandler] = []
         self._custom: PromptHandler | None = None
@@ -51,6 +62,7 @@ class FakeACPAgent:
         self.sessions: list[dict[str, Any]] = []
         self._mcp_servers_by_session: dict[str, list[Any]] = {}
         self.prompts: list[dict[str, Any]] = []
+        self.session_load_requests: list[str] = []
         self.permission_responses: list[Any] = []
         self.approved: bool | None = None
 
@@ -67,6 +79,16 @@ class FakeACPAgent:
 
     def will_say(self, text: str) -> FakeACPAgent:
         self._script.append(lambda a, sid: a.say(sid, text))
+        return self
+
+    def knows_session(self, session_id: str) -> FakeACPAgent:
+        """Register a persisted session id that ``session/load`` will restore."""
+        self._persisted_sessions.add(session_id)
+        return self
+
+    def breaks_session_load(self, error: RequestError | None = None) -> FakeACPAgent:
+        """Make every ``session/load`` fail with a non-missing-session error."""
+        self._session_load_error = error or RequestError.internal_error()
         return self
 
     def will_stream(self, *parts: str) -> FakeACPAgent:
@@ -289,9 +311,21 @@ class FakeACPAgent:
         return InitializeResponse(
             protocol_version=protocol_version,
             agent_capabilities=AgentCapabilities(
-                mcp_capabilities=McpCapabilities(http=self._http, sse=self._sse)
+                load_session=self._supports_session_load,
+                mcp_capabilities=McpCapabilities(http=self._http, sse=self._sse),
             ),
         )
+
+    async def load_session(
+        self, cwd: str, session_id: str, mcp_servers: Any = None, **kwargs: Any
+    ) -> LoadSessionResponse:
+        del cwd, mcp_servers, kwargs
+        self.session_load_requests.append(session_id)
+        if self._session_load_error is not None:
+            raise self._session_load_error
+        if session_id not in self._persisted_sessions:
+            raise RequestError.resource_not_found()
+        return LoadSessionResponse()
 
     async def new_session(
         self, cwd: str, mcp_servers: Any = None, **kwargs: Any
@@ -303,6 +337,17 @@ class FakeACPAgent:
         )
         self._mcp_servers_by_session[sid] = list(mcp_servers or [])
         return NewSessionResponse(session_id=sid)
+
+    def prompt_texts(self) -> list[str]:
+        """Each received prompt's text, one string per prompt, in arrival order."""
+        return [
+            "\n".join(
+                block.text
+                for block in received["prompt"]
+                if getattr(block, "text", None)
+            )
+            for received in self.prompts
+        ]
 
     async def prompt(
         self, prompt: Any, session_id: str, message_id: str | None = None, **kwargs: Any

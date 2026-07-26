@@ -499,3 +499,29 @@ class TestHistoryLoadingErrors:
         # Should still return AgentInput with empty history
         assert result is not None
         assert len(result.history) == 0
+
+
+class TestBootstrapHistoryTruncation:
+    """Backlog messages that arrived after the trigger must not enter bootstrap
+    history: they are pending turns of their own, and replaying them exposes
+    future requests and duplicates them when FIFO processing reaches them."""
+
+    async def test_history_stops_strictly_before_the_trigger(self):
+        history_messages = [
+            {"id": "old-1", "content": "earlier question", "message_type": "text"},
+            {"id": "msg-1", "content": "Hello", "message_type": "text"},  # trigger
+            {
+                "id": "backlog-1",
+                "content": "a later pending ask",
+                "message_type": "text",
+            },
+        ]
+        ctx = make_mock_ctx(history_messages=history_messages)
+        preprocessor = DefaultPreprocessor()
+
+        inp = await preprocessor.process(ctx, make_message_event(), agent_id="agent-1")
+
+        contents = [m["content"] for m in inp.history.raw]
+        assert contents == ["earlier question"], (
+            "the trigger and later backlog must not be replayed as history"
+        )

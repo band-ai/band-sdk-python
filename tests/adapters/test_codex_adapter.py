@@ -3013,7 +3013,7 @@ class TestHistoryInjection:
 
     @pytest.mark.asyncio
     async def test_history_filters_non_text_messages(self) -> None:
-        """Only text/message types appear in injected context."""
+        """Only canonical text messages appear in injected context."""
         events = [
             _event_notification(
                 "turn/completed",
@@ -3095,7 +3095,9 @@ class TestHistoryInjection:
         assert len(history_items) == 1
         text = history_items[0]["text"]
         assert "[Alice]: Hello world" in text
-        assert "[Bob]: Hi there" in text
+        # "message" is not a MessageType value; nothing on the platform
+        # produces it, so it does not survive replay.
+        assert "[Bob]: Hi there" not in text
         assert "task event" not in text
         assert "thinking..." not in text
         assert "oops" not in text

@@ -11,7 +11,11 @@ from band.core.types import AgentInput, HistoryProvider, PlatformMessage
 from band.platform.event import MessageEvent, PlatformEvent
 from band.runtime.execution import ExecutionContext
 from band.runtime.tools import AgentTools
-from band.runtime.formatters import format_history_for_llm, replace_uuid_mentions
+from band.runtime.formatters import (
+    format_history_for_llm,
+    messages_before,
+    replace_uuid_mentions,
+)
 from band.integrations.base import check_and_format_participants
 
 logger = logging.getLogger(__name__)
@@ -133,8 +137,11 @@ class DefaultPreprocessor(Preprocessor):
         try:
             logger.info("Room %s: Loading history...", ctx.room_id)
             context = await ctx.get_context()
+            # Strictly before the trigger: later entries are pending turns of
+            # their own; replaying them exposes future requests and duplicates
+            # them when their own turn arrives.
             history = format_history_for_llm(
-                context.messages,
+                messages_before(context.messages, msg.id),
                 exclude_id=msg.id,
                 participants=ctx.participants,
             )
