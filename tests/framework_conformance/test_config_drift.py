@@ -119,7 +119,9 @@ class TestCrewAIConformanceGuards:
     """Verify that CrewAI conformance instances guard runtime methods.
 
     If the guard loop in ``_crewai_factory`` is accidentally removed, these
-    tests will fail — preventing silent execution on MagicMock objects.
+    tests fail: a conformance instance would then either operate silently on
+    MagicMocks (no crewai installed) or build a Crew and call an LLM for real
+    (dev-crewai venv).
     """
 
     @staticmethod
