@@ -137,18 +137,13 @@ jobs:
         # dev-crewai venv lacks langgraph/anthropic/parlant/pydantic-ai/etc.;
         # tolerate missing framework configs instead of failing fast.
         BAND_ALLOW_MISSING_FRAMEWORKS: "1"
+      # Only the tests that *need* this venv. Every other crewai test fakes the
+      # package through sys.modules, so the `test` job above already runs it and
+      # a second pass here would add no signal — just a path to forget.
+      # tests/framework_conformance/test_crewai_job_coverage.py keeps this honest.
       run: |
         uv run pytest \
-          tests/adapters/test_crewai_adapter.py \
-          tests/adapters/test_crewai_adapter_soak.py \
-          tests/adapters/test_crewai_flow_adapter.py \
           tests/adapters/test_crewai_flow_phase3.py \
-          tests/adapters/test_crewai_flow_phase4.py \
-          tests/adapters/test_crewai_flow_phase5.py \
-          tests/adapters/test_crewai_flow_state_source.py \
-          tests/converters/test_crewai.py \
-          tests/converters/test_crewai_flow.py \
-          tests/integrations/test_crewai_tools.py \
           tests/integrations/test_crewai_flow_real_sdk.py \
           tests/test_capability_gating_e2e.py \
           tests/framework_conformance/ -k crewai
