@@ -146,6 +146,40 @@ uv run python examples/parlant/03_support_agent.py
 
 > **Note:** The config loader looks for `agent_config.yaml` in the current working directory. Running from a subdirectory will cause a `FileNotFoundError`.
 
+### Running two agents locally (Tom and Jerry)
+
+Each Parlant agent starts its own in-process server, and Parlant's tool-service
+port defaults to a fixed `8818` — so a second agent on the same machine fails to
+start while the first holds it, with a `SystemExit: 1` out of uvicorn. The examples
+call `reserve_server_ports()` to get a free pair from the OS instead, which lets
+them run side by side:
+
+```bash
+# terminal 1
+uv run python examples/parlant/04_tom_agent.py
+
+# terminal 2 (while Tom is still running)
+uv run python examples/parlant/05_jerry_agent.py
+```
+
+Each process logs the pair it reserved, so a refused connection can be traced back
+to a known port:
+
+```
+Parlant server ports: api=54231, tool_service=54232
+```
+
+Only `tool_service` is actually bound here: these examples block in `Agent.run()`
+inside the `async with` body, and Parlant starts its API/UI server on exit from
+that block — which never happens. The `api` port is reserved anyway, so the server
+has a free one if it ever does serve.
+
+> **Note:** Pass real port numbers, not `port=0`. Parlant formats the number it
+> was given into URLs rather than reading it back off the bound socket, so `0`
+> would register the tool service at `http://127.0.0.1:0` (breaking every tool
+> call) and point the readiness poll at a port that never answers (hanging
+> shutdown).
+
 ---
 
 ## Adapter Options

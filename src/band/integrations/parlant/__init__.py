@@ -29,4 +29,8 @@ Usage:
         await band_agent.run()
 """
 
-__all__: list[str] = []
+from __future__ import annotations
+
+from band.integrations.parlant.ports import ServerPorts, reserve_server_ports
+
+__all__ = ["ServerPorts", "reserve_server_ports"]

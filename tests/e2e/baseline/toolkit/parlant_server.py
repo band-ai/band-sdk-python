@@ -32,12 +32,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import socket
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
 import parlant.sdk as p
+
+from band.integrations.parlant.ports import reserve_server_ports
 
 logger = logging.getLogger(__name__)
 
@@ -45,26 +46,6 @@ logger = logging.getLogger(__name__)
 # teardown. Hitting it means we cancel a not-yet-serving exit (best-effort cleanup)
 # rather than hang the suite.
 _READY_TIMEOUT_S = 120.0
-
-
-def _reserve_two_ports() -> tuple[int, int]:
-    """Reserve two distinct loopback ports from the OS, then release them.
-
-    Parlant's default ports (8800/8818) collide under ``flaky`` reruns (the prior
-    server may not have released them yet) or two concurrent E2E sessions on one
-    host. Binding both sockets at once guarantees the OS hands back distinct ports;
-    we close them before passing the numbers to Parlant, which re-binds them itself.
-    The close->rebind gap is the standard ephemeral-port reservation race — far
-    smaller than the collision risk of two fixed ports (mirrors
-    ``mcp_server._reserve_socket``).
-    """
-    with (
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM) as a,
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM) as b,
-    ):
-        a.bind(("", 0))
-        b.bind(("", 0))
-        return a.getsockname()[1], b.getsockname()[1]
 
 
 @asynccontextmanager
@@ -82,7 +63,7 @@ async def running_parlant_server(
       defaults to Emcie's hosted service (``EMCIE_API_KEY``, which the env doesn't
       set).
     * ``port`` / ``tool_service_port`` default to freshly reserved ephemeral ports
-      (see ``_reserve_two_ports``) so reruns / concurrent sessions don't collide.
+      (see ``reserve_server_ports``) so reruns / concurrent sessions don't collide.
 
     The agent the caller builds on the yielded server runs against its in-process
     container; the HTTP server only ever comes up briefly during teardown, purely so
@@ -96,9 +77,9 @@ async def running_parlant_server(
     """
     server_kwargs.setdefault("nlp_service", p.NLPServices.openai)
     if "port" not in server_kwargs or "tool_service_port" not in server_kwargs:
-        port, tool_service_port = _reserve_two_ports()
-        server_kwargs.setdefault("port", port)
-        server_kwargs.setdefault("tool_service_port", tool_service_port)
+        ports = reserve_server_ports()
+        server_kwargs.setdefault("port", ports.port)
+        server_kwargs.setdefault("tool_service_port", ports.tool_service_port)
 
     server = p.Server(**server_kwargs)
     await server.__aenter__()  # setup only: build the DI container, no serving yet
