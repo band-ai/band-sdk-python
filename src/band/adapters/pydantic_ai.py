@@ -62,6 +62,7 @@ from band.runtime.tools import (
     band_tool_errored,
     get_tool_description,
     is_terminal_success,
+    missing_reply_error,
     serialize_tool_result,
 )
 
@@ -880,16 +881,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                     turn_usage = self._usage_from_messages(this_run)
                 await self.emit_usage(tools, turn_usage)
 
-        # A clean run with no terminal work means the model answered in plain text
-        # without calling band_send_message — a silently dropped reply. Surface it
-        # as an error (mirrors the crewai adapter) instead of letting it vanish.
+        # A clean run with no terminal work is a silently dropped reply: the model
+        # either answered in plain text or said nothing at all. Surface it as an
+        # error (mirrors the crewai adapter) instead of letting it vanish.
         if not tool_executed:
-            await self._report_error(
-                tools,
-                "Pydantic AI completed without sending a Band message. This "
-                "usually means the agent returned a final answer as plain text "
-                "instead of using the band_send_message tool.",
-            )
+            await self._report_error(tools, missing_reply_error("Pydantic AI"))
 
         logger.debug(
             "Room %s: Pydantic AI agent completed (history now has %s messages)",

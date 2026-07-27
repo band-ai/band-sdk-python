@@ -1146,6 +1146,23 @@ def is_terminal_success(
     return custom_terminal
 
 
+def missing_reply_error(framework: str, *, detail: str = "") -> str:
+    """The room-visible error for a turn that ended without a reply going out.
+
+    Raised by every adapter that answers through tools, so the wording lives
+    once. Both endings are named because they look identical from the room and
+    are told apart only by the model's last response: a plain-text final answer
+    the adapter cannot post, or no output at all (empty or thinking-only), which
+    is what a model that considers the exchange finished actually returns.
+    """
+    reasons = (
+        f"{framework} finished a turn without calling band_send_message, so "
+        "nothing reached the room. The model either answered in plain text "
+        "instead of using the tool, or returned no output at all."
+    )
+    return f"{reasons} {detail}" if detail else reasons
+
+
 # Fail fast on typos — catch at import time, not in a test run.
 # Use explicit checks instead of ``assert`` so they are not stripped by -O.
 if MEMORY_TOOL_NAMES - ALL_TOOL_NAMES:

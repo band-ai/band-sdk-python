@@ -56,6 +56,7 @@ from band.runtime.tools import (
     band_tool_errored,
     is_terminal_success,
     iter_tool_definitions,
+    missing_reply_error,
     serialize_tool_result,
     validate_tool_arguments,
 )
@@ -471,12 +472,7 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
             hooks=hooks,
         )
         if not hooks.terminal_fired:
-            await self._report_error(
-                tools,
-                "Strands agent completed without sending a Band message. This "
-                "usually means the agent returned a final answer as plain text "
-                "instead of using the band_send_message tool.",
-            )
+            await self._report_error(tools, missing_reply_error("Strands"))
         logger.debug(
             "Room %s: Strands agent completed (history now has %s messages)",
             room_id,
