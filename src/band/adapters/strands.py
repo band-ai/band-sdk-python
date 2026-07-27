@@ -95,6 +95,18 @@ def _result_text(result: ToolResult) -> str:
     return "\n".join(parts)
 
 
+def _input_schema(input_model: type[BaseModel]) -> dict[str, Any]:
+    """The JSON schema Strands advertises for a tool's input model.
+
+    Built fresh per bridge, never shared: Strands normalizes a tool spec by
+    writing defaults into the schema's nested ``properties`` in place, so a
+    cached schema would be mutated by the framework it was handed to.
+    """
+    schema = input_model.model_json_schema()
+    schema.pop("title", None)
+    return schema
+
+
 def _registered_name(tool: AgentTool | Callable[..., Any]) -> str:
     """Return the name Strands registers this tool under."""
     if isinstance(tool, AgentTool):
@@ -142,13 +154,11 @@ class StrandsToolBridge(AgentTool):
         description: str,
     ) -> None:
         super().__init__()
-        schema = input_model.model_json_schema()
-        schema.pop("title", None)
         self._name = name
         self._spec: ToolSpec = {
             "name": name,
             "description": description,
-            "inputSchema": {"json": schema},
+            "inputSchema": {"json": _input_schema(input_model)},
         }
 
     @property

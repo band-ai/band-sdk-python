@@ -23,6 +23,7 @@ __all__ = [
     "GeminiOutputAdapter",
     "StringOutputAdapter",
     "SenderDictListAdapter",
+    "StrandsOutputAdapter",
 ]
 
 

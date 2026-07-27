@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import sys
 from collections.abc import Callable, Sequence
 from typing import Any
 
@@ -31,6 +32,10 @@ def lazy_exports(
         module = owners.get(name)
         if module is None:
             raise AttributeError(f"module {package!r} has no attribute {name!r}")
-        return getattr(importlib.import_module(f".{module}", package), name)
+        value = getattr(importlib.import_module(f".{module}", package), name)
+        # Bind into the package namespace so PEP 562 stops consulting this
+        # resolver for the name — later reads are plain attribute lookups.
+        setattr(sys.modules[package], name, value)
+        return value
 
     return list(owners), resolve

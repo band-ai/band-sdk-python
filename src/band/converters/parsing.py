@@ -15,6 +15,10 @@ from band.core.types import ToolEventKey
 
 logger = logging.getLogger(__name__)
 
+INTERRUPTED_TOOL_TEXT = "Error: tool execution was interrupted"
+"""Stand-in result a converter synthesizes for a tool call the room never
+answered, so the provider still sees every call closed out."""
+
 
 @dataclass
 class ParsedToolCall:
