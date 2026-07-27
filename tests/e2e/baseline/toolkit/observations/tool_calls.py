@@ -273,9 +273,12 @@ class MemoryToolCalls(ToolCalls):
         }
         self.assert_fired(MemoryTool.STORE, with_args=with_args or None)
 
-    def assert_list_called(self) -> None:
-        """Assert ``band_list_memories`` fired."""
-        self.assert_fired(MemoryTool.LIST)
+    def assert_list_called(self, *, content_query: str | None = None) -> None:
+        """Assert ``band_list_memories`` fired, optionally for a content query."""
+        with_args = (
+            {"content_query": content_query} if content_query is not None else None
+        )
+        self.assert_fired(MemoryTool.LIST, with_args=with_args)
 
     def assert_get_called(self) -> None:
         """Assert ``band_get_memory`` fired."""

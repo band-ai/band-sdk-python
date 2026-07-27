@@ -270,6 +270,15 @@ def recall_memory_instruction(marker: str) -> str:
     )
 
 
+def retrieve_memory_instruction(marker: str) -> str:
+    """User message forcing retrieval of an already-stored org memory."""
+    return (
+        f"Call {MemoryTool.LIST.value} with content_query={marker} to find the "
+        f"memory. Then call {MemoryTool.GET.value} with memory_id set to the id "
+        "of a memory the list returned. Do not call any other tool."
+    )
+
+
 def store_two_memories_instruction(marker: str) -> str:
     """User message forcing two org-scoped stores that both carry ``marker`` but
     differ in system/type, so one ``content_query=marker`` read returns both and
