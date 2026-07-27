@@ -3,39 +3,34 @@
 from __future__ import annotations
 
 import importlib
-import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 
 def lazy_exports(
-    package_name: str,
-    module_exports: Mapping[str, Sequence[str]],
-) -> tuple[tuple[str, ...], Callable[[str], Any], Callable[[], list[str]]]:
-    """Create a lazy package export surface from module-owned names."""
-    export_modules: dict[str, str] = {}
-    exports: list[str] = []
-    for module_name, names in module_exports.items():
-        for name in names:
-            if name in export_modules:
-                raise ValueError(f"duplicate lazy export {name!r} in {package_name!r}")
-            export_modules[name] = module_name
-            exports.append(name)
+    package: str,
+    **module_exports: Sequence[str],
+) -> tuple[list[str], Callable[[str], Any]]:
+    """Build a package's ``__all__`` and PEP 562 ``__getattr__``.
+
+    Each keyword is a submodule of ``package`` and lists the exports it owns. A
+    submodule is imported only when one of its names is first read, so importing
+    the package never pulls in an optional extra::
+
+        __all__, __getattr__ = lazy_exports(
+            __name__,
+            anthropic=["AnthropicAdapter"],
+            codex=["CodexAdapter", "CodexAdapterConfig"],
+        )
+    """
+    owners = {
+        name: module for module, names in module_exports.items() for name in names
+    }
 
     def resolve(name: str) -> Any:
-        try:
-            module_name = export_modules[name]
-        except KeyError as error:
-            raise AttributeError(
-                f"module {package_name!r} has no attribute {name!r}"
-            ) from error
+        module = owners.get(name)
+        if module is None:
+            raise AttributeError(f"module {package!r} has no attribute {name!r}")
+        return getattr(importlib.import_module(f".{module}", package), name)
 
-        module = importlib.import_module(f".{module_name}", package_name)
-        value = getattr(module, name)
-        setattr(sys.modules[package_name], name, value)
-        return value
-
-    def exported_names() -> list[str]:
-        return sorted(set(sys.modules[package_name].__dict__) | set(exports))
-
-    return tuple(exports), resolve, exported_names
+    return list(owners), resolve

@@ -14,6 +14,7 @@ Install the extra you need::
     uv add band-sdk[codex]
     uv add band-sdk[google_adk]
     uv add band-sdk[opencode]
+    uv add band-sdk[strands]
 """
 
 from __future__ import annotations
@@ -85,26 +86,29 @@ if TYPE_CHECKING:
     from band.converters.opencode import (
         OpencodeHistoryConverter as OpencodeHistoryConverter,
     )
+    from band.converters.strands import (
+        StrandsHistoryConverter as StrandsHistoryConverter,
+        StrandsMessages as StrandsMessages,
+    )
 
-__all__, __getattr__, __dir__ = lazy_exports(
+__all__, __getattr__ = lazy_exports(
     __name__,
-    {
-        "langchain": ("LangChainHistoryConverter", "LangChainMessages"),
-        "anthropic": ("AnthropicHistoryConverter", "AnthropicMessages"),
-        "pydantic_ai": ("PydanticAIHistoryConverter", "PydanticAIMessages"),
-        "claude_sdk": ("ClaudeSDKHistoryConverter",),
-        "copilot_sdk": ("CopilotSDKHistoryConverter", "CopilotSDKSessionState"),
-        "parlant": ("ParlantHistoryConverter", "ParlantMessages"),
-        "crewai": ("CrewAIHistoryConverter", "CrewAIMessages"),
-        "crewai_flow": ("CrewAIFlowStateConverter", "CrewAIFlowSessionState"),
-        "a2a": ("A2AHistoryConverter",),
-        "a2a_gateway": ("GatewayHistoryConverter",),
-        "codex": ("CodexHistoryConverter",),
-        "acp_server": ("ACPServerHistoryConverter",),
-        "acp_client": ("ACPClientHistoryConverter",),
-        "agno": ("AgnoHistoryConverter", "AgnoMessages"),
-        "gemini": ("GeminiHistoryConverter", "GeminiMessages"),
-        "google_adk": ("GoogleADKHistoryConverter", "GoogleADKMessages"),
-        "opencode": ("OpencodeHistoryConverter",),
-    },
+    langchain=["LangChainHistoryConverter", "LangChainMessages"],
+    anthropic=["AnthropicHistoryConverter", "AnthropicMessages"],
+    pydantic_ai=["PydanticAIHistoryConverter", "PydanticAIMessages"],
+    claude_sdk=["ClaudeSDKHistoryConverter"],
+    copilot_sdk=["CopilotSDKHistoryConverter", "CopilotSDKSessionState"],
+    parlant=["ParlantHistoryConverter", "ParlantMessages"],
+    crewai=["CrewAIHistoryConverter", "CrewAIMessages"],
+    crewai_flow=["CrewAIFlowStateConverter", "CrewAIFlowSessionState"],
+    a2a=["A2AHistoryConverter"],
+    a2a_gateway=["GatewayHistoryConverter"],
+    codex=["CodexHistoryConverter"],
+    acp_server=["ACPServerHistoryConverter"],
+    acp_client=["ACPClientHistoryConverter"],
+    agno=["AgnoHistoryConverter", "AgnoMessages"],
+    gemini=["GeminiHistoryConverter", "GeminiMessages"],
+    google_adk=["GoogleADKHistoryConverter", "GoogleADKMessages"],
+    opencode=["OpencodeHistoryConverter"],
+    strands=["StrandsHistoryConverter", "StrandsMessages"],
 )
