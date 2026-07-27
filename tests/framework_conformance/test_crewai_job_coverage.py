@@ -77,23 +77,40 @@ def _tests_needing_crewai_venv() -> set[Path]:
     }
 
 
-def _crewai_job_paths() -> set[Path]:
-    """The pytest targets of ci.yml's crewai test step."""
+def _crewai_job_command() -> str:
+    """The pytest invocation of ci.yml's crewai test step."""
     workflow = yaml.safe_load(_CI_WORKFLOW.read_text(encoding="utf-8"))
     steps = workflow["jobs"]["test-crewai"]["steps"]
     command = next(
         step["run"] for step in steps if step.get("name") == "Run crewai tests"
     )
+    return command.replace("\\\n", " ")
+
+
+def _crewai_job_paths() -> set[Path]:
+    """The pytest targets of ci.yml's crewai test step."""
     return {
         Path(token)
-        for token in command.replace("\\\n", " ").split()
+        for token in _crewai_job_command().split()
         if token.startswith("tests/")
     }
 
 
 def _covered_by(target: Path, listed: set[Path]) -> bool:
-    """Whether ``target`` is named outright or sits under a listed directory."""
-    return any(parent in listed for parent in (target, *target.parents))
+    """Whether ``target`` is named outright or sits under a listed directory.
+
+    A directory target only covers what the step actually collects from it: the
+    job narrows its directory targets with ``-k``, so a file that sits under one
+    but does not match the filter runs nowhere despite looking listed.
+    """
+    if target in listed:
+        return True
+    return not _KEYWORD_FILTER.search(_crewai_job_command()) and any(
+        parent in listed for parent in target.parents
+    )
+
+
+_KEYWORD_FILTER = re.compile(r"(?:^|\s)-k(?:\s|=)")
 
 
 def test_crewai_job_runs_every_test_that_needs_its_venv() -> None:
