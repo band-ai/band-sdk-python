@@ -42,6 +42,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.pydantic_ai import (
@@ -746,9 +747,9 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "name": event.part.tool_name,
-                                            "args": event.part.args,
-                                            "tool_call_id": event.part.tool_call_id,
+                                            ToolEventKey.NAME: event.part.tool_name,
+                                            ToolEventKey.ARGS: event.part.args,
+                                            ToolEventKey.TOOL_CALL_ID: event.part.tool_call_id,
                                         }
                                     ),
                                     message_type="tool_call",
@@ -773,9 +774,11 @@ class PydanticAIAdapter(SimpleAdapter[PydanticAIMessages]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "name": event.part.tool_name,
-                                            "output": str(event.part.content),
-                                            "tool_call_id": event.tool_call_id,
+                                            ToolEventKey.NAME: event.part.tool_name,
+                                            ToolEventKey.OUTPUT: str(
+                                                event.part.content
+                                            ),
+                                            ToolEventKey.TOOL_CALL_ID: event.tool_call_id,
                                         }
                                     ),
                                     message_type="tool_result",

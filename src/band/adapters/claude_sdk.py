@@ -55,6 +55,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.claude_sdk import (
@@ -734,9 +735,9 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "name": tool_name,
-                                            "args": block.input,
-                                            "tool_call_id": block.id,
+                                            ToolEventKey.NAME: tool_name,
+                                            ToolEventKey.ARGS: block.input,
+                                            ToolEventKey.TOOL_CALL_ID: block.id,
                                         }
                                     ),
                                     message_type="tool_call",
@@ -756,8 +757,8 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
                                 await tools.send_event(
                                     content=json.dumps(
                                         {
-                                            "output": block.content,
-                                            "tool_call_id": block.tool_use_id,
+                                            ToolEventKey.OUTPUT: block.content,
+                                            ToolEventKey.TOOL_CALL_ID: block.tool_use_id,
                                         }
                                     ),
                                     message_type="tool_result",

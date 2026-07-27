@@ -26,6 +26,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.integrations.mcp.backends import (
@@ -1158,9 +1159,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             await room_state.tools.send_event(
                 json.dumps(
                     {
-                        "name": tool_name,
-                        "args": state.input,
-                        "tool_call_id": call_id,
+                        ToolEventKey.NAME: tool_name,
+                        ToolEventKey.ARGS: state.input,
+                        ToolEventKey.TOOL_CALL_ID: call_id,
                     }
                 ),
                 "tool_call",
@@ -1186,8 +1187,8 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             await room_state.tools.send_event(
                 json.dumps(
                     {
-                        "output": output,
-                        "tool_call_id": call_id,
+                        ToolEventKey.OUTPUT: output,
+                        ToolEventKey.TOOL_CALL_ID: call_id,
                     }
                 ),
                 "tool_result",

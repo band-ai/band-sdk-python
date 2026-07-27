@@ -18,6 +18,7 @@ from band.core.types import (
     Capability,
     Emit,
     PlatformMessage,
+    ToolEventKey,
     TurnUsage,
 )
 from band.converters.agno import AgnoHistoryConverter, AgnoMessages
@@ -730,9 +731,9 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 tools,
                 "tool_call",
                 {
-                    "name": ex.tool_name or "",
-                    "args": ex.tool_args or {},
-                    "tool_call_id": ex.tool_call_id or "",
+                    ToolEventKey.NAME: ex.tool_name or "",
+                    ToolEventKey.ARGS: ex.tool_args or {},
+                    ToolEventKey.TOOL_CALL_ID: ex.tool_call_id or "",
                 },
                 room_id=room_id,
                 msg_id=msg_id,
@@ -742,10 +743,10 @@ class AgnoAdapter(SimpleAdapter[AgnoMessages]):
                 tools,
                 "tool_result",
                 {
-                    "name": ex.tool_name or "",
-                    "output": str(ex.result or ""),
-                    "tool_call_id": ex.tool_call_id or "",
-                    "is_error": bool(ex.tool_call_error),
+                    ToolEventKey.NAME: ex.tool_name or "",
+                    ToolEventKey.OUTPUT: str(ex.result or ""),
+                    ToolEventKey.TOOL_CALL_ID: ex.tool_call_id or "",
+                    ToolEventKey.IS_ERROR: bool(ex.tool_call_error),
                 },
                 room_id=room_id,
                 msg_id=msg_id,
