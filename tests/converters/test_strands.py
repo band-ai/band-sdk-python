@@ -45,23 +45,24 @@ class TestToolEventFormat:
         converter = StrandsHistoryConverter()
 
         result = converter.convert(
-            [_tool_call("band_send_message", {"content": "hi"}, "call-1")]
+            [
+                _tool_call("band_send_message", {"content": "hi"}, "call-1"),
+                _tool_result("band_send_message", "sent", "call-1"),
+            ]
         )
 
-        assert result == [
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "toolUse": {
-                            "toolUseId": "call-1",
-                            "name": "band_send_message",
-                            "input": {"content": "hi"},
-                        }
+        assert result[0] == {
+            "role": "assistant",
+            "content": [
+                {
+                    "toolUse": {
+                        "toolUseId": "call-1",
+                        "name": "band_send_message",
+                        "input": {"content": "hi"},
                     }
-                ],
-            }
-        ]
+                }
+            ],
+        }
 
     def test_tool_result_becomes_user_tool_result_block(self):
         converter = StrandsHistoryConverter()
@@ -144,6 +145,102 @@ class TestBatching:
         assert len(result) == 2
         assert "toolUse" in result[0]["content"][0]
         assert "toolResult" in result[1]["content"][0]
+
+
+def _text(content: str, sender: str = "Alice", role: str = "user") -> dict:
+    return {
+        "role": role,
+        "content": content,
+        "sender_name": sender,
+        "message_type": "text",
+    }
+
+
+def _outline(messages: list[dict]) -> list[str]:
+    """Render each message as ``role: block(id)`` for readable assertions."""
+
+    def describe(block: dict) -> str:
+        if "toolUse" in block:
+            return f"toolUse({block['toolUse']['toolUseId']})"
+        if "toolResult" in block:
+            result = block["toolResult"]
+            return f"toolResult({result['toolUseId']}, {result['status']})"
+        return f"text({block['text']})"
+
+    return [
+        f"{message['role']}: {' '.join(describe(b) for b in message['content'])}"
+        for message in messages
+    ]
+
+
+class TestToolPairIntegrity:
+    """Converse rejects a toolUse that its toolResult does not immediately follow."""
+
+    def test_peer_message_mid_tool_call_is_held_until_the_pair_closes(self):
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert(
+            [
+                _tool_call("calc", {"expr": "2+2"}, "call-1"),
+                _text("also, hello"),
+                _tool_result("calc", "4", "call-1"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-1)",
+            "user: toolResult(call-1, success)",
+            "user: text([Alice]: also, hello)",
+        ]
+
+    def test_missing_tool_result_is_answered_with_a_synthetic_error(self):
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert(
+            [
+                _tool_call("calc", {}, "call-1"),
+                _text("still there?"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-1)",
+            "user: toolResult(call-1, error)",
+            "user: text([Alice]: still there?)",
+        ]
+
+    def test_partially_answered_parallel_calls_are_completed_in_place(self):
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert(
+            [
+                _tool_call("a", {}, "call-a"),
+                _tool_call("b", {}, "call-b"),
+                _tool_result("a", "ra", "call-a"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-a) toolUse(call-b)",
+            "user: toolResult(call-b, error) toolResult(call-a, success)",
+        ]
+
+    def test_own_text_after_the_pair_closes_is_preserved(self):
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert(
+            [
+                _tool_call("calc", {}, "call-1"),
+                _tool_result("calc", "4", "call-1"),
+                _text("the answer is 4", sender="Bot", role="assistant"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-1)",
+            "user: toolResult(call-1, success)",
+            "assistant: text(the answer is 4)",
+        ]
 
 
 class TestMalformedInput:

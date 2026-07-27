@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 try:
-    from strands.types.content import ContentBlock, Message
+    from strands.types.content import ContentBlock, Message, Role
 except ImportError as e:
     raise ImportError(
         "Strands Agents dependencies not installed. "
@@ -22,28 +22,161 @@ logger = logging.getLogger(__name__)
 
 StrandsMessages = list[Message]
 
-
-def _flush_pending_tool_calls(
-    messages: StrandsMessages, pending_tool_calls: list[ContentBlock]
-) -> None:
-    """Flush pending toolUse blocks into a single assistant message."""
-    if pending_tool_calls:
-        messages.append({"role": "assistant", "content": list(pending_tool_calls)})
-        pending_tool_calls.clear()
+INTERRUPTED_TOOL_TEXT = "Error: tool execution was interrupted"
 
 
-def _flush_pending_tool_results(
-    messages: StrandsMessages, pending_tool_results: list[ContentBlock]
-) -> None:
-    """Flush pending toolResult blocks into a single user message.
+def _tool_use_ids(message: Message) -> list[str]:
+    """Return the toolUse ids an assistant message asks to be answered."""
+    if message["role"] != "assistant":
+        return []
+    return [
+        block["toolUse"]["toolUseId"]
+        for block in message["content"]
+        if "toolUse" in block
+    ]
 
-    Converse requires every toolUse in an assistant message to be answered by
-    toolResult blocks in the following user message, so results are batched
-    together to support parallel tool use.
+
+def _answered_ids(message: Message | None) -> set[str]:
+    """Return the toolUse ids a user message answers with toolResult blocks."""
+    if message is None or message["role"] != "user":
+        return set()
+    return {
+        block["toolResult"]["toolUseId"]
+        for block in message["content"]
+        if "toolResult" in block
+    }
+
+
+def _synthetic_results(tool_use_ids: list[str]) -> list[ContentBlock]:
+    """Build error toolResults that close out unanswered toolUse blocks."""
+    return [
+        {
+            "toolResult": {
+                "toolUseId": tool_use_id,
+                "status": "error",
+                "content": [{"text": INTERRUPTED_TOOL_TEXT}],
+            }
+        }
+        for tool_use_id in tool_use_ids
+    ]
+
+
+def _patch_orphaned_tool_uses(messages: StrandsMessages) -> None:
+    """Answer every unanswered toolUse with a synthetic error toolResult.
+
+    Converse rejects an assistant toolUse whose toolResult does not follow it,
+    and the room transcript can be missing one: the platform ``tool_result``
+    event may have failed to send, or its payload may be unparseable. Without
+    this repair the broken pair is replayed on every later turn in the room, so
+    the whole room stops responding.
+
+    Synthetic results are merged into a following user message only when that
+    message already carries toolResults; a text turn must stay a turn of its
+    own, because providers order the tool answers after it.
+
+    Mutates ``messages`` in place.
     """
-    if pending_tool_results:
-        messages.append({"role": "user", "content": list(pending_tool_results)})
-        pending_tool_results.clear()
+    # Reverse order so inserting a repair never shifts an index still to visit.
+    for index in reversed(range(len(messages))):
+        pending = _tool_use_ids(messages[index])
+        if not pending:
+            continue
+
+        follower = messages[index + 1] if index + 1 < len(messages) else None
+        answered = _answered_ids(follower)
+        orphaned = [
+            tool_use_id for tool_use_id in pending if tool_use_id not in answered
+        ]
+        if not orphaned:
+            continue
+
+        logger.warning(
+            "Patching %d unanswered toolUse block(s): %s", len(orphaned), orphaned
+        )
+        if follower is not None and answered:
+            follower["content"] = _synthetic_results(orphaned) + list(
+                follower["content"]
+            )
+        else:
+            messages.insert(
+                index + 1, {"role": "user", "content": _synthetic_results(orphaned)}
+            )
+
+
+class ConverseTranscript:
+    """Build Converse messages, keeping each toolUse next to its toolResult.
+
+    Converse pairs an assistant toolUse message with the user toolResult
+    message that immediately follows it. Room history interleaves freely — a
+    peer can post while a tool is still running — so turns that arrive inside
+    an open tool exchange are held and replayed once the exchange closes.
+    """
+
+    def __init__(self) -> None:
+        self._messages: StrandsMessages = []
+        self._tool_uses: list[ContentBlock] = []
+        self._tool_results: list[ContentBlock] = []
+        self._held_turns: StrandsMessages = []
+        self._unanswered: set[str] = set()
+
+    @property
+    def in_tool_exchange(self) -> bool:
+        """Whether a toolUse is still waiting for its toolResult."""
+        return bool(self._unanswered)
+
+    def add_tool_use(self, tool_use_id: str, name: str, args: dict[str, Any]) -> None:
+        """Record a tool call, batching parallel calls into one assistant message."""
+        self._close_tool_exchange()
+        self._tool_uses.append(
+            {"toolUse": {"toolUseId": tool_use_id, "name": name, "input": args}}
+        )
+        self._unanswered.add(tool_use_id)
+
+    def add_tool_result(self, tool_use_id: str, output: str, *, is_error: bool) -> None:
+        """Record a tool result, batching parallel results into one user message."""
+        self._emit_tool_uses()
+        self._tool_results.append(
+            {
+                "toolResult": {
+                    "toolUseId": tool_use_id,
+                    "status": "error" if is_error else "success",
+                    "content": [{"text": output}],
+                }
+            }
+        )
+        self._unanswered.discard(tool_use_id)
+
+    def add_turn(self, role: Role, text: str) -> None:
+        """Append a text turn, holding it back while a tool exchange is open."""
+        turn: Message = {"role": role, "content": [{"text": text}]}
+        if self.in_tool_exchange:
+            self._held_turns.append(turn)
+            return
+        self._close_tool_exchange()
+        self._messages.append(turn)
+
+    def build(self) -> StrandsMessages:
+        """Return the finished transcript with every toolUse answered."""
+        self._emit_tool_uses()
+        self._close_tool_exchange()
+        _patch_orphaned_tool_uses(self._messages)
+        return self._messages
+
+    def _emit_tool_uses(self) -> None:
+        """Emit the batched tool calls as one assistant message."""
+        if self._tool_uses:
+            self._messages.append(
+                {"role": "assistant", "content": list(self._tool_uses)}
+            )
+            self._tool_uses.clear()
+
+    def _close_tool_exchange(self) -> None:
+        """Emit the batched tool results, then the turns held during the exchange."""
+        if self._tool_results:
+            self._messages.append({"role": "user", "content": list(self._tool_results)})
+            self._tool_results.clear()
+        self._messages.extend(self._held_turns)
+        self._held_turns.clear()
 
 
 class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
@@ -71,11 +204,7 @@ class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
 
     def convert(self, raw: list[dict[str, Any]]) -> StrandsMessages:
         """Convert platform history to Strands Converse format."""
-        messages: StrandsMessages = []
-        # Collect tool calls to batch them into a single assistant message
-        pending_tool_calls: list[ContentBlock] = []
-        # Collect tool results to batch them into a single user message
-        pending_tool_results: list[ContentBlock] = []
+        transcript = ConverseTranscript()
 
         for hist in raw:
             message_type = hist.get("message_type", "text")
@@ -83,21 +212,11 @@ class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
 
             match message_type:
                 case MessageType.TOOL_CALL:
-                    self._handle_tool_call(
-                        content, messages, pending_tool_calls, pending_tool_results
-                    )
+                    self._handle_tool_call(content, transcript)
                 case MessageType.TOOL_RESULT:
-                    self._handle_tool_result(
-                        content, messages, pending_tool_calls, pending_tool_results
-                    )
+                    self._handle_tool_result(content, transcript)
                 case MessageType.TEXT:
-                    self._handle_text(
-                        hist,
-                        content,
-                        messages,
-                        pending_tool_calls,
-                        pending_tool_results,
-                    )
+                    self._handle_text(hist, content, transcript)
                 case MessageType.THOUGHT | MessageType.ERROR | MessageType.TASK:
                     # Known platform-internal types intentionally excluded from
                     # LLM history.
@@ -105,65 +224,24 @@ class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
                 case _:
                     logger.warning("Unknown message_type in history: %s", message_type)
 
-        # Flush any remaining pending tool calls and results
-        _flush_pending_tool_calls(messages, pending_tool_calls)
-        _flush_pending_tool_results(messages, pending_tool_results)
+        return transcript.build()
 
-        return messages
-
-    def _handle_tool_call(
-        self,
-        content: str,
-        messages: StrandsMessages,
-        pending_tool_calls: list[ContentBlock],
-        pending_tool_results: list[ContentBlock],
-    ) -> None:
-        """Collect a tool call for batching, flushing any pending results first."""
-        _flush_pending_tool_results(messages, pending_tool_results)
-
+    def _handle_tool_call(self, content: str, transcript: ConverseTranscript) -> None:
+        """Record a tool call."""
         parsed = parse_tool_call(content)
         if parsed:
-            pending_tool_calls.append(
-                {
-                    "toolUse": {
-                        "toolUseId": parsed.tool_call_id,
-                        "name": parsed.name,
-                        "input": parsed.args,
-                    }
-                }
+            transcript.add_tool_use(parsed.tool_call_id, parsed.name, parsed.args)
+
+    def _handle_tool_result(self, content: str, transcript: ConverseTranscript) -> None:
+        """Record a tool result."""
+        parsed = parse_tool_result(content)
+        if parsed:
+            transcript.add_tool_result(
+                parsed.tool_call_id, parsed.output, is_error=parsed.is_error
             )
 
-    def _handle_tool_result(
-        self,
-        content: str,
-        messages: StrandsMessages,
-        pending_tool_calls: list[ContentBlock],
-        pending_tool_results: list[ContentBlock],
-    ) -> None:
-        """Collect a tool result for batching, flushing the calls it answers first."""
-        _flush_pending_tool_calls(messages, pending_tool_calls)
-
-        parsed = parse_tool_result(content)
-        if not parsed:
-            return
-
-        pending_tool_results.append(
-            {
-                "toolResult": {
-                    "toolUseId": parsed.tool_call_id,
-                    "status": "error" if parsed.is_error else "success",
-                    "content": [{"text": parsed.output}],
-                }
-            }
-        )
-
     def _handle_text(
-        self,
-        hist: dict[str, Any],
-        content: str,
-        messages: StrandsMessages,
-        pending_tool_calls: list[ContentBlock],
-        pending_tool_results: list[ContentBlock],
+        self, hist: dict[str, Any], content: str, transcript: ConverseTranscript
     ) -> None:
         """Append a text turn: own text as assistant, others as user."""
         role = hist.get("role", "user")
@@ -172,22 +250,17 @@ class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
             role == "assistant" and self._agent_name and sender_name == self._agent_name
         )
 
-        # Own platform text while a tool call is unresolved is usually the side
-        # effect of band_send_message. Replaying it here would split the toolUse
-        # from its toolResult, which Converse rejects.
-        if is_own and pending_tool_calls:
+        # Own platform text during an open tool exchange is usually the side
+        # effect of band_send_message; the tool call already records it, and an
+        # assistant turn here would split the toolUse from its toolResult.
+        if is_own and transcript.in_tool_exchange:
             return
-
-        # Flush pending tool calls and results first
-        _flush_pending_tool_calls(messages, pending_tool_calls)
-        _flush_pending_tool_results(messages, pending_tool_results)
 
         if is_own:
             # Preserve own text so restart rehydration knows the agent already replied.
-            messages.append({"role": "assistant", "content": [{"text": content}]})
+            transcript.add_turn("assistant", content)
         else:
             # User messages AND other agents' messages
-            formatted_content = (
-                f"[{sender_name}]: {content}" if sender_name else content
+            transcript.add_turn(
+                "user", f"[{sender_name}]: {content}" if sender_name else content
             )
-            messages.append({"role": "user", "content": [{"text": formatted_content}]})
