@@ -32,6 +32,7 @@ from band_rest.core.api_error import ApiError
 
 from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
+from band.core.tool_filter import filter_tool_schemas
 from band.core.types import (
     AdapterFeatures,
     Capability,
@@ -54,6 +55,7 @@ from band.runtime.tools import (
     ToolDefinition,
     ToolCallOutcome,
     band_tool_errored,
+    get_band_tool_category,
     is_terminal_success,
     iter_tool_definitions,
     missing_reply_error,
@@ -306,6 +308,9 @@ class BandTurnHooks(HookProvider):
                 ToolEventKey.NAME: name,
                 ToolEventKey.OUTPUT: output,
                 ToolEventKey.TOOL_CALL_ID: event.tool_use["toolUseId"],
+                # Without this the event replays as a success on the next
+                # bootstrap, telling the model a failed operation worked.
+                ToolEventKey.IS_ERROR: not succeeded,
             },
         )
 
@@ -392,14 +397,24 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         )
 
     def _build_platform_tools(self, tools: AgentToolsProtocol) -> list[AgentTool]:
-        """Adapt the central Band tool registry to Strands for this turn."""
-        return [
-            PlatformToolBridge(definition, tools)
-            for definition in iter_tool_definitions(
-                include_memory=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
-            )
-        ]
+        """Adapt the central Band tool registry to Strands for this turn.
+
+        The caller's include/exclude/category filters decide the surface: a tool
+        the features exclude must never reach the model, since reaching it is
+        enough to execute it.
+        """
+        definitions = filter_tool_schemas(
+            list(
+                iter_tool_definitions(
+                    include_memory=Capability.MEMORY in self.features.capabilities,
+                    include_contacts=Capability.CONTACTS in self.features.capabilities,
+                )
+            ),
+            self.features,
+            get_name=lambda definition: definition.name,
+            get_category=lambda definition: get_band_tool_category(definition.name),
+        )
+        return [PlatformToolBridge(definition, tools) for definition in definitions]
 
     def _history_for_turn(
         self,
@@ -416,17 +431,23 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         return self._message_history.setdefault(room_id, [])
 
     @staticmethod
-    def _append_system_context(
-        history: StrandsMessages,
+    def _with_system_context(
+        user_message: str,
         participants_msg: str | None,
         contacts_msg: str | None,
-    ) -> None:
-        """Append changed platform context to the transcript."""
-        for message in (participants_msg, contacts_msg):
-            if message:
-                history.append(
-                    {"role": "user", "content": [{"text": f"[System]: {message}"}]}
-                )
+    ) -> str:
+        """Lead the turn's prompt with any changed platform context.
+
+        Strands appends the prompt as its own user message, so context posted
+        as a separate message would leave two user turns in a row — which
+        Bedrock's Converse rejects.
+        """
+        notices = [
+            f"[System]: {message}"
+            for message in (participants_msg, contacts_msg)
+            if message
+        ]
+        return "\n\n".join([*notices, user_message])
 
     async def _run_turn(
         self,
@@ -460,8 +481,9 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         room_history = self._history_for_turn(
             room_id, history, is_session_bootstrap=is_session_bootstrap
         )
-        self._append_system_context(room_history, participants_msg, contacts_msg)
-        user_message = msg.format_for_llm()
+        user_message = self._with_system_context(
+            msg.format_for_llm(), participants_msg, contacts_msg
+        )
         logger.debug(
             "Room %s: Running Strands agent (history: %s msgs, prompt: %s...)",
             room_id,

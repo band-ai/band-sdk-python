@@ -22,6 +22,7 @@ from strands import tool as strands_tool  # noqa: E402
 from strands.types.exceptions import EventLoopException  # noqa: E402
 
 from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
+from band.converters.strands import StrandsHistoryConverter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
     AdapterFeatures,
@@ -117,6 +118,12 @@ def _tool_results(adapter: StrandsAdapter, room_id: str = ROOM) -> list[str]:
         for item in block["toolResult"]["content"]
         if "text" in item
     ]
+
+
+def _alternates(history: list) -> bool:
+    """Whether the transcript never puts two same-role turns in a row."""
+    roles = [message["role"] for message in history]
+    return all(first != second for first, second in zip(roles, roles[1:]))
 
 
 def _errors(tools: FakeAgentTools) -> list[str]:
@@ -241,6 +248,20 @@ class TestToolRegistration:
         ] == get_tool_description("band_send_message")
 
     @pytest.mark.asyncio
+    async def test_excluded_tools_never_reach_the_model(self):
+        """Reaching a tool is enough to execute it, so a filter must apply here."""
+        adapter = StrandsAdapter(
+            model="m",
+            features=AdapterFeatures(exclude_tools=["band_remove_participant"]),
+        )
+        await adapter.on_started("Bot", "A bot")
+
+        names = {t.tool_name for t in adapter._build_platform_tools(FakeAgentTools())}
+
+        assert "band_remove_participant" not in names
+        assert "band_send_message" in names
+
+    @pytest.mark.asyncio
     async def test_each_turns_tools_own_their_input_schema(self):
         """Strands normalizes a tool spec by writing into its nested schema.
 
@@ -331,9 +352,9 @@ class TestOnMessage:
         assert adapter._message_history[ROOM][: len(after_first)] == after_first
 
     @pytest.mark.asyncio
-    async def test_participants_and_contacts_injected_as_system_turns(
-        self, tools, scripted
-    ):
+    async def test_platform_context_rides_the_turn_it_belongs_to(self, tools, scripted):
+        """Strands appends the prompt itself, so context posted as its own
+        message would leave two user turns in a row — rejected by Converse."""
         adapter = await scripted(SEND_TURN)
 
         await _run_message(
@@ -343,14 +364,11 @@ class TestOnMessage:
             contacts_msg="Bob is now a contact",
         )
 
-        texts = [
-            block["text"]
-            for message in adapter._message_history[ROOM]
-            for block in message["content"]
-            if "text" in block
-        ]
-        assert "[System]: Alice joined" in texts
-        assert "[System]: Bob is now a contact" in texts
+        history = adapter._message_history[ROOM]
+        assert history[0]["content"][0]["text"].startswith(
+            "[System]: Alice joined\n\n[System]: Bob is now a contact\n\n"
+        )
+        assert _alternates(history), [message["role"] for message in history]
 
     @pytest.mark.asyncio
     async def test_narration_failure_does_not_cost_the_room_its_reply(self, scripted):
@@ -417,6 +435,37 @@ class TestTurnProductivity:
             text.startswith("Error executing band_send_message:")
             for text in _tool_results(adapter)
         )
+
+    @pytest.mark.asyncio
+    async def test_a_failure_replays_as_a_failure_after_a_restart(self, scripted):
+        """The persisted event is all a restart has; without is_error the
+        converter would tell the model the failed operation succeeded."""
+
+        class FailingTools(FakeAgentTools):
+            async def send_message(self, content, mentions=None):
+                raise RuntimeError("backend down")
+
+        tools = FailingTools(room_id=ROOM)
+        adapter = await scripted(
+            SEND_TURN, features=AdapterFeatures(emit={Emit.EXECUTION})
+        )
+
+        await _run_message(adapter, tools)
+
+        rehydrated = StrandsHistoryConverter(agent_name="Bot").convert(
+            [
+                {"role": "assistant", "content": event["content"], **event}
+                for event in tools.events_sent
+                if event["message_type"] in ("tool_call", "tool_result")
+            ]
+        )
+        results = [
+            block["toolResult"]
+            for message in rehydrated
+            for block in message["content"]
+            if "toolResult" in block
+        ]
+        assert [result["status"] for result in results] == ["error"]
 
     @pytest.mark.asyncio
     async def test_read_only_tool_alone_does_not_end_the_turn(self, tools, scripted):

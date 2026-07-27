@@ -71,9 +71,9 @@ def _patch_orphaned_tool_uses(messages: StrandsMessages) -> None:
     this repair the broken pair is replayed on every later turn in the room, so
     the whole room stops responding.
 
-    Synthetic results are merged into a following user message only when that
-    message already carries toolResults; a text turn must stay a turn of its
-    own, because providers order the tool answers after it.
+    Synthetic results join a following user message only when that message
+    already carries toolResults; otherwise they are inserted ahead of it, so
+    the tool answers stay first in the turn once same-role messages merge.
 
     Mutates ``messages`` in place.
     """
@@ -104,13 +104,35 @@ def _patch_orphaned_tool_uses(messages: StrandsMessages) -> None:
             )
 
 
+def _merge_consecutive_roles(messages: StrandsMessages) -> StrandsMessages:
+    """Combine neighbouring messages that share a role.
+
+    Bedrock's Converse rejects a conversation that does not alternate between
+    user and assistant, and room history routinely produces same-role
+    neighbours: two peers speaking in a row, or a peer's turn landing behind
+    the tool results it waited for.
+    """
+    merged: StrandsMessages = []
+    for message in messages:
+        if merged and merged[-1]["role"] == message["role"]:
+            merged[-1]["content"] = list(merged[-1]["content"]) + list(
+                message["content"]
+            )
+            continue
+        merged.append(message)
+    return merged
+
+
 class ConverseTranscript:
     """Build Converse messages, keeping each toolUse next to its toolResult.
 
     Converse pairs an assistant toolUse message with the user toolResult
-    message that immediately follows it. Room history interleaves freely — a
-    peer can post while a tool is still running — so turns that arrive inside
-    an open tool exchange are held and replayed once the exchange closes.
+    message that immediately follows it. Room history interleaves freely: a
+    peer can post while a tool is still running, and Strands runs a round's
+    tools concurrently, so a later call can be recorded after an earlier
+    result. An exchange therefore stays open until every call it made has been
+    answered — its calls, its results, and the turns that arrived during it are
+    buffered until then, and only then emitted as one paired sequence.
     """
 
     def __init__(self) -> None:
@@ -126,21 +148,14 @@ class ConverseTranscript:
         return bool(self._unanswered)
 
     def add_tool_use(self, tool_use_id: str, name: str, args: dict[str, Any]) -> None:
-        """Record a tool call, batching parallel calls into one assistant message."""
-        self._emit_tool_results()
-        # A second parallel call does not close the exchange, so turns held during
-        # it stay held — releasing them here would place them before the assistant
-        # message carrying the calls they actually arrived after.
-        if not self.in_tool_exchange:
-            self._release_held_turns()
+        """Record a tool call, batching a round's calls into one assistant message."""
         self._tool_uses.append(
             {"toolUse": {"toolUseId": tool_use_id, "name": name, "input": args}}
         )
         self._unanswered.add(tool_use_id)
 
     def add_tool_result(self, tool_use_id: str, output: str, *, is_error: bool) -> None:
-        """Record a tool result, batching parallel results into one user message."""
-        self._emit_tool_uses()
+        """Record a tool result, closing the exchange once nothing is outstanding."""
         self._tool_results.append(
             {
                 "toolResult": {
@@ -151,6 +166,8 @@ class ConverseTranscript:
             }
         )
         self._unanswered.discard(tool_use_id)
+        if not self.in_tool_exchange:
+            self._close_tool_exchange()
 
     def add_turn(self, role: Role, text: str) -> None:
         """Append a text turn, holding it back while a tool exchange is open."""
@@ -158,39 +175,27 @@ class ConverseTranscript:
         if self.in_tool_exchange:
             self._held_turns.append(turn)
             return
-        self._close_tool_exchange()
         self._messages.append(turn)
 
     def build(self) -> StrandsMessages:
-        """Return the finished transcript with every toolUse answered."""
-        self._emit_tool_uses()
+        """Return the finished transcript: every call answered, roles alternating."""
         self._close_tool_exchange()
         _patch_orphaned_tool_uses(self._messages)
-        return self._messages
+        return _merge_consecutive_roles(self._messages)
 
-    def _emit_tool_uses(self) -> None:
-        """Emit the batched tool calls as one assistant message."""
+    def _close_tool_exchange(self) -> None:
+        """Emit the exchange's calls, then its results, then the turns it held."""
         if self._tool_uses:
             self._messages.append(
                 {"role": "assistant", "content": list(self._tool_uses)}
             )
             self._tool_uses.clear()
-
-    def _close_tool_exchange(self) -> None:
-        """Emit the batched tool results, then the turns held during the exchange."""
-        self._emit_tool_results()
-        self._release_held_turns()
-
-    def _emit_tool_results(self) -> None:
-        """Emit the batched tool results as one user message."""
         if self._tool_results:
             self._messages.append({"role": "user", "content": list(self._tool_results)})
             self._tool_results.clear()
-
-    def _release_held_turns(self) -> None:
-        """Replay the text turns that arrived while the exchange was open."""
         self._messages.extend(self._held_turns)
         self._held_turns.clear()
+        self._unanswered.clear()
 
 
 class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):

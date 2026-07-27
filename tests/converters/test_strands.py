@@ -185,8 +185,7 @@ class TestToolPairIntegrity:
 
         assert _outline(result) == [
             "assistant: toolUse(call-1)",
-            "user: toolResult(call-1, success)",
-            "user: text([Alice]: also, hello)",
+            "user: toolResult(call-1, success) text([Alice]: also, hello)",
         ]
 
     def test_peer_message_between_parallel_calls_is_held_too(self):
@@ -209,8 +208,8 @@ class TestToolPairIntegrity:
 
         assert _outline(result) == [
             "assistant: toolUse(call-a) toolUse(call-b)",
-            "user: toolResult(call-a, success) toolResult(call-b, success)",
-            "user: text([Alice]: also, hello)",
+            "user: toolResult(call-a, success) toolResult(call-b, success) "
+            "text([Alice]: also, hello)",
         ]
 
     def test_missing_tool_result_is_answered_with_a_synthetic_error(self):
@@ -225,8 +224,33 @@ class TestToolPairIntegrity:
 
         assert _outline(result) == [
             "assistant: toolUse(call-1)",
-            "user: toolResult(call-1, error)",
-            "user: text([Alice]: still there?)",
+            "user: toolResult(call-1, error) text([Alice]: still there?)",
+        ]
+
+    def test_a_late_call_joins_the_round_it_interleaved_with(self):
+        """Strands runs a round's tools concurrently, so its hooks interleave.
+
+        Call C can be recorded after result A. Emitting A's result there would
+        strand B, and C's own result would then answer a toolUse no longer
+        immediately before it — which Converse rejects on the next rehydration.
+        """
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert(
+            [
+                _tool_call("a", {}, "call-a"),
+                _tool_call("b", {}, "call-b"),
+                _tool_result("a", "ra", "call-a"),
+                _tool_call("c", {}, "call-c"),
+                _tool_result("b", "rb", "call-b"),
+                _tool_result("c", "rc", "call-c"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-a) toolUse(call-b) toolUse(call-c)",
+            "user: toolResult(call-a, success) toolResult(call-b, success) "
+            "toolResult(call-c, success)",
         ]
 
     def test_partially_answered_parallel_calls_are_completed_in_place(self):
@@ -260,6 +284,39 @@ class TestToolPairIntegrity:
             "assistant: toolUse(call-1)",
             "user: toolResult(call-1, success)",
             "assistant: text(the answer is 4)",
+        ]
+
+
+class TestRoleAlternation:
+    """Bedrock's Converse rejects a conversation that does not alternate."""
+
+    def test_consecutive_speakers_become_one_turn(self):
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert([_text("one"), _text("two", sender="Bob")])
+
+        assert _outline(result) == ["user: text([Alice]: one) text([Bob]: two)"]
+
+    def test_every_transcript_alternates(self):
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert(
+            [
+                _text("one"),
+                _text("two", sender="Bob"),
+                _text("on it", sender="Bot", role="assistant"),
+                _tool_call("calc", {}, "call-1"),
+                _text("hurry up"),
+                _tool_result("calc", "4", "call-1"),
+                _text("done", sender="Bot", role="assistant"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "user: text([Alice]: one) text([Bob]: two)",
+            "assistant: text(on it) toolUse(call-1)",
+            "user: toolResult(call-1, success) text([Alice]: hurry up)",
+            "assistant: text(done)",
         ]
 
 
