@@ -12,11 +12,12 @@ WHY IT IS HONEST (not circular)
 The faked decision is installed at the **public** ``Agent(model=...)`` seam:
 ``strands.models.Model`` is the framework's documented provider ABC, and the
 adapter passes its ``model`` constructor argument straight through in
-``_build_agent``. Strands ships no dedicated test model, so the spike implements
-the minimal ``Model`` subclass; the scripted surface is still the stable public
-provider contract (``model_seam_kind=PUBLIC_TEST_MODEL``), though the
-``StreamEvent`` dict shapes it emits move with the framework's fast release
-cadence (``drift_risk=HIGH``, pinned ``strands-agents>=1.40,<2``).
+``_build_agent`` (the seam recorded in ``tests/baseline/registry.py``). Strands
+ships no dedicated test model, so the SDK provides the minimal ``Model``
+subclass — ``band.testing.ScriptedStrandsModel``, shared with the adapter unit
+tests; the scripted surface is still the stable public provider contract, though
+the ``StreamEvent`` dict shapes it emits move with the framework's fast release
+cadence (hence the ``strands-agents>=1.40,<2`` pin).
 
 OBSERVATION PATH (the load-bearing detail)
 ------------------------------------------
@@ -26,8 +27,8 @@ directly — ``band_send_message`` calls ``tools.send_message(...)`` — NOT
 (``observation_paths={TYPED_METHODS}``); a canary that only watched
 ``tool_calls`` would wrongly fail Strands.
 
-STEP-0 FINDINGS (verified against installed strands-agents 1.47.0)
-------------------------------------------------------------------
+FRAMEWORK FACTS (verified against strands-agents 1.50.1)
+--------------------------------------------------------
 1. Per-turn tool ownership: the adapter builds native tool closures for each
    ``Agent`` invocation, binding that turn's ``AgentToolsProtocol`` directly.
    This keeps a room capability out of Strands' untyped ``invocation_state``.
@@ -51,48 +52,34 @@ STEP-0 FINDINGS (verified against installed strands-agents 1.47.0)
 5. History handle: ``agent.messages`` is a public read/write list of Converse
    ``Message`` dicts; pre-seeding via ``Agent(messages=...)`` and reading back
    after a run both work, so Band owns per-room history.
-
-InjectionBinding for the Tier-1 injection registry (lands with the taxonomy
-branch; recorded here until ``injection_registry.py`` exists on this branch):
-
-    InjectionBinding(
-        adapter="strands",
-        family=Family.INJECTABLE_MODEL_OBJECT,
-        tier1_status=Tier1Status.HONEST_TODAY,
-        drift_risk=DriftRisk.HIGH,
-        observation_paths=frozenset({ObservationPath.TYPED_METHODS}),
-        seam="band.adapters.strands:StrandsAdapter._build_agent",
-        model_seam_kind=ModelSeamKind.PUBLIC_TEST_MODEL,
-        spike_test="tests/framework_conformance/test_strands_injection_spike.py",
-        version_pin="strands-agents>=1.40,<2",
-        required_modules=("strands",),
-        required_extra="dev",
-    )
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator, cast
+from typing import cast
 
 import pytest
 from pydantic import BaseModel
 
 pytest.importorskip("strands", reason="strands extra not installed")
 
-from strands.models import Model  # noqa: E402
-from strands.types.content import Messages  # noqa: E402
-from strands.types.streaming import StreamEvent  # noqa: E402
-from strands.types.tools import ToolSpec  # noqa: E402
-
 from band.adapters.strands import StrandsAdapter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import AdapterFeatures, Emit, PlatformMessage  # noqa: E402
-from band.testing.fake_tools import FakeAgentTools  # noqa: E402
+from band.testing import (  # noqa: E402
+    FakeAgentTools,
+    ScriptedStrandsModel,
+    TextTurn,
+    ToolTurn,
+)
 
 _SEND_CONTENT = "Injected reply: PINEAPPLE"
 _SEND_MENTIONS = ["@tester"]
+_SEND_TURN = ToolTurn(
+    "band_send_message", {"content": _SEND_CONTENT, "mentions": _SEND_MENTIONS}
+)
 
 
 def _make_msg(room_id: str) -> PlatformMessage:
@@ -107,64 +94,6 @@ def _make_msg(room_id: str) -> PlatformMessage:
         metadata=None,
         created_at=datetime.now(timezone.utc),
     )
-
-
-class _ScriptedStrandsModel(Model):
-    """A streaming Model that replays one scripted decision per invocation.
-
-    Each ``stream()`` call pops one decision and yields the Converse
-    ``StreamEvent`` sequence Strands' event loop parses (see module docstring):
-
-    * ``("tool", name, args_dict)`` -> a tool-use turn the agent dispatches;
-    * ``("text", body)`` -> a text turn that ends the run.
-    """
-
-    def __init__(self, turns: list[Any]):
-        self._turns = list(turns)
-        self._config: dict[str, Any] = {}
-
-    def update_config(self, **model_config: Any) -> None:
-        self._config.update(model_config)
-
-    def get_config(self) -> Any:
-        return self._config
-
-    async def structured_output(
-        self,
-        output_model: Any,
-        prompt: Messages,
-        system_prompt: str | None = None,
-        **kwargs: Any,
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        raise NotImplementedError("spike model does not do structured output")
-        yield {}  # pragma: no cover - makes this an async generator
-
-    async def stream(
-        self,
-        messages: Messages,
-        tool_specs: list[ToolSpec] | None = None,
-        system_prompt: str | None = None,
-        **kwargs: Any,
-    ) -> AsyncGenerator[StreamEvent, None]:
-        decision = self._turns.pop(0) if self._turns else ("text", "done")
-        yield {"messageStart": {"role": "assistant"}}
-        if decision[0] == "tool":
-            _, name, args = decision
-            yield {
-                "contentBlockStart": {
-                    "start": {"toolUse": {"toolUseId": f"call-{name}", "name": name}}
-                }
-            }
-            yield {
-                "contentBlockDelta": {"delta": {"toolUse": {"input": json.dumps(args)}}}
-            }
-            yield {"contentBlockStop": {}}
-            yield {"messageStop": {"stopReason": "tool_use"}}
-        else:
-            yield {"contentBlockStart": {"start": {}}}
-            yield {"contentBlockDelta": {"delta": {"text": decision[1]}}}
-            yield {"contentBlockStop": {}}
-            yield {"messageStop": {"stopReason": "end_turn"}}
 
 
 async def _run(adapter: StrandsAdapter, tools: FakeAgentTools, room_id: str) -> None:
@@ -189,18 +118,7 @@ async def test_scripted_model_routes_to_typed_send_message() -> None:
     """
     room_id = "strands-spike-room"
     tools = FakeAgentTools(room_id=room_id)
-    adapter = StrandsAdapter(
-        model=_ScriptedStrandsModel(
-            [
-                (
-                    "tool",
-                    "band_send_message",
-                    {"content": _SEND_CONTENT, "mentions": _SEND_MENTIONS},
-                ),
-                ("text", "done"),
-            ]
-        )
-    )
+    adapter = StrandsAdapter(model=ScriptedStrandsModel([_SEND_TURN]))
     await _run(adapter, tools, room_id)
 
     # Strands dispatches platform tools through typed AgentToolsProtocol
@@ -240,12 +158,7 @@ async def test_custom_tool_decision_dispatches_to_handler() -> None:
     room_id = "strands-spike-custom"
     tools = FakeAgentTools(room_id=room_id)
     adapter = StrandsAdapter(
-        model=_ScriptedStrandsModel(
-            [
-                ("tool", "echo", {"text": "MANGO"}),
-                ("text", "done"),
-            ]
-        ),
+        model=ScriptedStrandsModel([ToolTurn("echo", {"text": "MANGO"})]),
         additional_tools=[(EchoInput, echo_handler)],
     )
     await _run(adapter, tools, room_id)
@@ -262,16 +175,7 @@ async def test_l6_execution_events_ordered_paired_and_correlated() -> None:
     room_id = "strands-spike-l6"
     tools = FakeAgentTools(room_id=room_id)
     adapter = StrandsAdapter(
-        model=_ScriptedStrandsModel(
-            [
-                (
-                    "tool",
-                    "band_send_message",
-                    {"content": _SEND_CONTENT, "mentions": _SEND_MENTIONS},
-                ),
-                ("text", "done"),
-            ]
-        ),
+        model=ScriptedStrandsModel([_SEND_TURN]),
         features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
     await _run(adapter, tools, room_id)
@@ -299,7 +203,7 @@ async def test_negative_control_text_only_sends_no_message() -> None:
     room_id = "strands-spike-negative"
     tools = FakeAgentTools(room_id=room_id)
     adapter = StrandsAdapter(
-        model=_ScriptedStrandsModel([("text", "just a reply, no tools")])
+        model=ScriptedStrandsModel([TextTurn("just a reply, no tools")])
     )
     await _run(adapter, tools, room_id)
 
