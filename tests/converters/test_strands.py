@@ -193,6 +193,30 @@ class TestToolPairIntegrity:
             "user: text([Alice]: also, hello)",
         ]
 
+    def test_peer_message_between_parallel_calls_is_held_too(self):
+        """A second parallel call must not release the turns held by the first.
+
+        Releasing them there emits the peer turn before the assistant message
+        carrying the calls it actually arrived after, silently reordering history.
+        """
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert(
+            [
+                _tool_call("a", {}, "call-a"),
+                _text("also, hello"),
+                _tool_call("b", {}, "call-b"),
+                _tool_result("a", "ra", "call-a"),
+                _tool_result("b", "rb", "call-b"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "assistant: toolUse(call-a) toolUse(call-b)",
+            "user: toolResult(call-a, success) toolResult(call-b, success)",
+            "user: text([Alice]: also, hello)",
+        ]
+
     def test_missing_tool_result_is_answered_with_a_synthetic_error(self):
         converter = StrandsHistoryConverter(agent_name="Bot")
 

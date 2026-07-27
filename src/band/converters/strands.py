@@ -13,16 +13,17 @@ except ImportError as e:
         "Install with: uv add band-sdk[strands]"
     ) from e
 
+from band.converters.parsing import (
+    INTERRUPTED_TOOL_TEXT,
+    parse_tool_call,
+    parse_tool_result,
+)
 from band.core.protocols import HistoryConverter
 from band.core.types import MessageType
-
-from .parsing import parse_tool_call, parse_tool_result
 
 logger = logging.getLogger(__name__)
 
 StrandsMessages = list[Message]
-
-INTERRUPTED_TOOL_TEXT = "Error: tool execution was interrupted"
 
 
 def _tool_use_ids(message: Message) -> list[str]:
@@ -126,7 +127,12 @@ class ConverseTranscript:
 
     def add_tool_use(self, tool_use_id: str, name: str, args: dict[str, Any]) -> None:
         """Record a tool call, batching parallel calls into one assistant message."""
-        self._close_tool_exchange()
+        self._emit_tool_results()
+        # A second parallel call does not close the exchange, so turns held during
+        # it stay held — releasing them here would place them before the assistant
+        # message carrying the calls they actually arrived after.
+        if not self.in_tool_exchange:
+            self._release_held_turns()
         self._tool_uses.append(
             {"toolUse": {"toolUseId": tool_use_id, "name": name, "input": args}}
         )
@@ -172,9 +178,17 @@ class ConverseTranscript:
 
     def _close_tool_exchange(self) -> None:
         """Emit the batched tool results, then the turns held during the exchange."""
+        self._emit_tool_results()
+        self._release_held_turns()
+
+    def _emit_tool_results(self) -> None:
+        """Emit the batched tool results as one user message."""
         if self._tool_results:
             self._messages.append({"role": "user", "content": list(self._tool_results)})
             self._tool_results.clear()
+
+    def _release_held_turns(self) -> None:
+        """Replay the text turns that arrived while the exchange was open."""
         self._messages.extend(self._held_turns)
         self._held_turns.clear()
 
