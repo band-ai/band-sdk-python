@@ -40,7 +40,14 @@ class TextTurn:
     text: str
 
 
-ScriptedTurn = ToolTurn | TextTurn
+@dataclass(frozen=True)
+class ErrorTurn:
+    """A scripted turn where the provider call fails instead of answering."""
+
+    error: Exception
+
+
+ScriptedTurn = ToolTurn | TextTurn | ErrorTurn
 
 
 class ScriptedStrandsModel(Model):
@@ -48,9 +55,10 @@ class ScriptedStrandsModel(Model):
 
     Each ``stream()`` call pops the next turn and yields the Converse
     ``StreamEvent`` sequence Strands' event loop parses; once the script is
-    exhausted every further call ends the run with plain text. Non-zero token
-    counts add the optional trailing ``metadata`` event, so a test can exercise
-    usage accumulation across a turn's model calls.
+    exhausted every further call ends the run with plain text. An ``ErrorTurn``
+    fails the provider call instead, so a test can drive the adapter's failure
+    path. Non-zero token counts add the optional trailing ``metadata`` event, so
+    a test can exercise usage accumulation across a turn's model calls.
     """
 
     def __init__(
@@ -89,6 +97,8 @@ class ScriptedStrandsModel(Model):
         **kwargs: Any,
     ) -> AsyncGenerator[StreamEvent, None]:
         turn = self._turns.pop(0) if self._turns else TextTurn("done")
+        if isinstance(turn, ErrorTurn):
+            raise turn.error
         yield {"messageStart": {"role": "assistant"}}
         match turn:
             case ToolTurn(name=name, args=args):

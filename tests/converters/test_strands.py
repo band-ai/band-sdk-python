@@ -40,6 +40,32 @@ def _tool_result(name: str, output: str, call_id: str, is_error: bool = False) -
     }
 
 
+def _text(content: str, sender: str = "Alice", role: str = "user") -> dict:
+    return {
+        "role": role,
+        "content": content,
+        "sender_name": sender,
+        "message_type": "text",
+    }
+
+
+def _outline(messages: list[dict]) -> list[str]:
+    """Render each message as ``role: block(id)`` for readable assertions."""
+
+    def describe(block: dict) -> str:
+        if "toolUse" in block:
+            return f"toolUse({block['toolUse']['toolUseId']})"
+        if "toolResult" in block:
+            result = block["toolResult"]
+            return f"toolResult({result['toolUseId']}, {result['status']})"
+        return f"text({block['text']})"
+
+    return [
+        f"{message['role']}: {' '.join(describe(b) for b in message['content'])}"
+        for message in messages
+    ]
+
+
 class TestToolEventFormat:
     def test_tool_call_becomes_assistant_tool_use_block(self):
         converter = StrandsHistoryConverter()
@@ -125,56 +151,26 @@ class TestBatching:
             "call-b",
         ]
 
-    def test_own_text_mid_tool_call_is_dropped(self):
-        """Own text between a toolUse and its toolResult would split the pair."""
+
+class TestToolPairIntegrity:
+    """Converse rejects a toolUse that its toolResult does not immediately follow."""
+
+    def test_own_narration_mid_tool_call_is_dropped(self):
+        """The agent's own text is already implied by the pair, so it is not held."""
         converter = StrandsHistoryConverter(agent_name="Bot")
 
         result = converter.convert(
             [
                 _tool_call("band_send_message", {"content": "hi"}, "call-1"),
-                {
-                    "role": "assistant",
-                    "content": "hi",
-                    "sender_name": "Bot",
-                    "message_type": "text",
-                },
+                _text("hi", sender="Bot", role="assistant"),
                 _tool_result("band_send_message", "sent", "call-1"),
             ]
         )
 
-        assert len(result) == 2
-        assert "toolUse" in result[0]["content"][0]
-        assert "toolResult" in result[1]["content"][0]
-
-
-def _text(content: str, sender: str = "Alice", role: str = "user") -> dict:
-    return {
-        "role": role,
-        "content": content,
-        "sender_name": sender,
-        "message_type": "text",
-    }
-
-
-def _outline(messages: list[dict]) -> list[str]:
-    """Render each message as ``role: block(id)`` for readable assertions."""
-
-    def describe(block: dict) -> str:
-        if "toolUse" in block:
-            return f"toolUse({block['toolUse']['toolUseId']})"
-        if "toolResult" in block:
-            result = block["toolResult"]
-            return f"toolResult({result['toolUseId']}, {result['status']})"
-        return f"text({block['text']})"
-
-    return [
-        f"{message['role']}: {' '.join(describe(b) for b in message['content'])}"
-        for message in messages
-    ]
-
-
-class TestToolPairIntegrity:
-    """Converse rejects a toolUse that its toolResult does not immediately follow."""
+        assert _outline(result) == [
+            "assistant: toolUse(call-1)",
+            "user: toolResult(call-1, success)",
+        ]
 
     def test_peer_message_mid_tool_call_is_held_until_the_pair_closes(self):
         converter = StrandsHistoryConverter(agent_name="Bot")

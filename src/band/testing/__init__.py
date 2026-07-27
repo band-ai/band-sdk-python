@@ -14,7 +14,9 @@ from band.exports import lazy_exports
 if TYPE_CHECKING:
     from band.testing.fake_tools import FakeAgentTools as FakeAgentTools
     from band.testing.strands import (
+        ErrorTurn as ErrorTurn,
         ScriptedStrandsModel as ScriptedStrandsModel,
+        ScriptedTurn as ScriptedTurn,
         TextTurn as TextTurn,
         ToolTurn as ToolTurn,
     )
@@ -22,5 +24,11 @@ if TYPE_CHECKING:
 __all__, __getattr__ = lazy_exports(
     __name__,
     fake_tools=["FakeAgentTools"],
-    strands=["ScriptedStrandsModel", "TextTurn", "ToolTurn"],
+    strands=[
+        "ErrorTurn",
+        "ScriptedStrandsModel",
+        "ScriptedTurn",
+        "TextTurn",
+        "ToolTurn",
+    ],
 )

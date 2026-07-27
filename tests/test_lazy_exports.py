@@ -77,6 +77,21 @@ def test_type_checking_block_matches_lazy_exports(package: str) -> None:
     )
 
 
+def test_first_access_binds_the_name_into_the_package() -> None:
+    """PEP 562 consults ``__getattr__`` only for names the module does not have.
+
+    A resolved export that never lands in the namespace re-enters importlib on
+    every single read.
+    """
+    import band.testing
+
+    vars(band.testing).pop("FakeAgentTools", None)
+
+    resolved = band.testing.FakeAgentTools
+
+    assert vars(band.testing)["FakeAgentTools"] is resolved
+
+
 def test_unknown_attribute_raises_attribute_error() -> None:
     import band.adapters
 

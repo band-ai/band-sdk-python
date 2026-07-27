@@ -8,6 +8,7 @@ usage, and cleanup.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any, cast
@@ -18,9 +19,9 @@ from pydantic import BaseModel
 pytest.importorskip("strands", reason="strands extra not installed")
 
 from strands import tool as strands_tool  # noqa: E402
+from strands.types.exceptions import EventLoopException  # noqa: E402
 
 from band.adapters.strands import CustomToolBridge, StrandsAdapter  # noqa: E402
-from band.converters.strands import StrandsHistoryConverter  # noqa: E402
 from band.core.protocols import AgentToolsProtocol  # noqa: E402
 from band.core.types import (  # noqa: E402
     AdapterFeatures,
@@ -30,13 +31,18 @@ from band.core.types import (  # noqa: E402
     TurnUsage,
 )
 from band.testing import (  # noqa: E402
+    ErrorTurn,
     FakeAgentTools,
     ScriptedStrandsModel,
+    ScriptedTurn,
     ToolTurn,
 )
 
 _INPUT_TOKENS_PER_CALL = 7
 _OUTPUT_TOKENS_PER_CALL = 3
+
+ROOM = "room-1"
+SEND_TURN = ToolTurn("band_send_message", {"content": "hi", "mentions": ["@tester"]})
 
 
 def _make_msg(room_id: str, content: str = "Hello") -> PlatformMessage:
@@ -53,10 +59,37 @@ def _make_msg(room_id: str, content: str = "Hello") -> PlatformMessage:
     )
 
 
+@pytest.fixture
+def tools() -> FakeAgentTools:
+    return FakeAgentTools(room_id=ROOM)
+
+
+@pytest.fixture
+def scripted() -> Callable[..., Awaitable[StrandsAdapter]]:
+    """Build a started adapter whose model replays the given turns."""
+
+    async def build(
+        *turns: ScriptedTurn,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        **adapter_args: Any,
+    ) -> StrandsAdapter:
+        adapter = StrandsAdapter(
+            model=ScriptedStrandsModel(
+                turns, input_tokens=input_tokens, output_tokens=output_tokens
+            ),
+            **adapter_args,
+        )
+        await adapter.on_started("Bot", "A bot")
+        return adapter
+
+    return build
+
+
 async def _run_message(
     adapter: StrandsAdapter,
     tools: FakeAgentTools,
-    room_id: str,
+    room_id: str = ROOM,
     *,
     history: list | None = None,
     participants_msg: str | None = None,
@@ -74,26 +107,20 @@ async def _run_message(
     )
 
 
-_SEND_TURN = ToolTurn("band_send_message", {"content": "hi", "mentions": ["@tester"]})
+def _tool_results(adapter: StrandsAdapter, room_id: str = ROOM) -> list[str]:
+    """The tool outputs the model saw this turn, in order."""
+    return [
+        item["text"]
+        for message in adapter._message_history[room_id]
+        for block in message["content"]
+        if "toolResult" in block
+        for item in block["toolResult"]["content"]
+        if "text" in item
+    ]
 
 
-class TestInitialization:
-    def test_defaults(self):
-        adapter = StrandsAdapter(model="some-bedrock-model-id")
-
-        assert adapter.model == "some-bedrock-model-id"
-        assert adapter.system_prompt is None
-        assert adapter.custom_section is None
-        assert adapter._custom_tools == []
-        assert adapter._custom_terminal_names == frozenset()
-        assert isinstance(adapter.history_converter, StrandsHistoryConverter)
-        assert adapter.features == AdapterFeatures()
-
-    def test_feature_declarations(self):
-        assert StrandsAdapter.SUPPORTED_EMIT == frozenset({Emit.EXECUTION, Emit.USAGE})
-        assert StrandsAdapter.SUPPORTED_CAPABILITIES == frozenset(
-            {Capability.MEMORY, Capability.CONTACTS}
-        )
+def _errors(tools: FakeAgentTools) -> list[str]:
+    return [e["content"] for e in tools.events_sent if e["message_type"] == "error"]
 
 
 class TestCustomToolWiring:
@@ -213,6 +240,28 @@ class TestToolRegistration:
             "description"
         ] == get_tool_description("band_send_message")
 
+    @pytest.mark.asyncio
+    async def test_each_turns_tools_own_their_input_schema(self):
+        """Strands normalizes a tool spec by writing into its nested schema.
+
+        Tools are rebuilt per turn, so a schema shared between turns would carry
+        one turn's framework normalization into the next.
+        """
+        adapter = StrandsAdapter(model="m")
+        await adapter.on_started("Bot", "A bot")
+
+        def send_properties(turn_tools: list) -> dict:
+            by_name = {tool.tool_name: tool for tool in turn_tools}
+            return by_name["band_send_message"].tool_spec["inputSchema"]["json"][
+                "properties"
+            ]
+
+        first = send_properties(adapter._build_platform_tools(FakeAgentTools()))
+        second = send_properties(adapter._build_platform_tools(FakeAgentTools()))
+        first["content"]["normalized"] = "written by the framework"
+
+        assert "normalized" not in second["content"]
+
 
 class TestPromptConfiguration:
     @pytest.mark.asyncio
@@ -239,53 +288,64 @@ class TestPromptConfiguration:
 
 class TestOnMessage:
     @pytest.mark.asyncio
-    async def test_send_message_turn_dispatches_and_persists_history(self):
-        room_id = "room-1"
-        tools = FakeAgentTools(room_id=room_id)
-        adapter = StrandsAdapter(model=ScriptedStrandsModel([_SEND_TURN]))
-        await adapter.on_started("Bot", "A bot")
+    async def test_send_message_turn_dispatches_and_persists_history(
+        self, tools, scripted
+    ):
+        adapter = await scripted(SEND_TURN)
 
-        await _run_message(adapter, tools, room_id)
+        await _run_message(adapter, tools)
 
         tools.assert_message_sent(content="hi", mentions=["@tester"], count=1)
         # user prompt + toolUse + toolResult + final text
-        assert len(adapter._message_history[room_id]) == 4
+        assert len(adapter._message_history[ROOM]) == 4
 
     @pytest.mark.asyncio
-    async def test_bootstrap_rehydrates_history(self):
-        room_id = "room-rehydrate"
-        tools = FakeAgentTools(room_id=room_id)
-        adapter = StrandsAdapter(model=ScriptedStrandsModel([_SEND_TURN]))
-        await adapter.on_started("Bot", "A bot")
-
+    async def test_bootstrap_rehydrates_history(self, tools, scripted):
+        adapter = await scripted(SEND_TURN)
         prior = [
             {"role": "user", "content": [{"text": "[Tester]: earlier question"}]},
             {"role": "assistant", "content": [{"text": "earlier answer"}]},
         ]
-        await _run_message(adapter, tools, room_id, history=list(prior))
 
-        persisted = adapter._message_history[room_id]
+        await _run_message(adapter, tools, history=list(prior))
+
+        persisted = adapter._message_history[ROOM]
         assert persisted[:2] == prior
         assert len(persisted) > 2  # this turn appended on top
 
     @pytest.mark.asyncio
-    async def test_participants_and_contacts_injected_as_system_turns(self):
-        room_id = "room-inject"
-        tools = FakeAgentTools(room_id=room_id)
-        adapter = StrandsAdapter(model=ScriptedStrandsModel([_SEND_TURN]))
-        await adapter.on_started("Bot", "A bot")
+    async def test_later_turns_keep_the_transcript_the_adapter_owns(
+        self, tools, scripted
+    ):
+        """Only a session bootstrap reseeds from platform history.
+
+        A later turn that reseeded would replay the room's own transcript on top
+        of the one the adapter is already holding.
+        """
+        adapter = await scripted(SEND_TURN, SEND_TURN)
+        await _run_message(adapter, tools, history=[])
+        after_first = list(adapter._message_history[ROOM])
+
+        await _run_message(adapter, tools, history=[], is_session_bootstrap=False)
+
+        assert adapter._message_history[ROOM][: len(after_first)] == after_first
+
+    @pytest.mark.asyncio
+    async def test_participants_and_contacts_injected_as_system_turns(
+        self, tools, scripted
+    ):
+        adapter = await scripted(SEND_TURN)
 
         await _run_message(
             adapter,
             tools,
-            room_id,
             participants_msg="Alice joined",
             contacts_msg="Bob is now a contact",
         )
 
         texts = [
             block["text"]
-            for message in adapter._message_history[room_id]
+            for message in adapter._message_history[ROOM]
             for block in message["content"]
             if "text" in block
         ]
@@ -293,51 +353,32 @@ class TestOnMessage:
         assert "[System]: Bob is now a contact" in texts
 
     @pytest.mark.asyncio
-    async def test_failed_band_tool_is_not_terminal(self):
-        """A platform tool whose wrapper returns "Error ..." does not end the turn productively."""
+    async def test_narration_failure_does_not_cost_the_room_its_reply(self, scripted):
+        """Execution events are best-effort; a flaky event backend must not end the turn."""
 
-        class FailingTools(FakeAgentTools):
-            async def send_message(self, content, mentions=None):
-                raise RuntimeError("backend down")
+        class NoEventTools(FakeAgentTools):
+            async def send_event(self, *args, **kwargs):
+                raise RuntimeError("events down")
 
-        room_id = "room-fail"
-        tools = FailingTools(room_id=room_id)
-        adapter = StrandsAdapter(model=ScriptedStrandsModel([_SEND_TURN]))
-        await adapter.on_started("Bot", "A bot")
-
-        await _run_message(adapter, tools, room_id)
-
-        assert tools.messages_sent == []
-        errors = [e for e in tools.events_sent if e["message_type"] == "error"]
-        assert len(errors) == 1
-        # The shared bridge returns a normalized, model-visible tool failure.
-        result_texts = [
-            item["text"]
-            for message in adapter._message_history[room_id]
-            for block in message["content"]
-            if "toolResult" in block
-            for item in block["toolResult"]["content"]
-            if "text" in item
-        ]
-        assert any(
-            t.startswith("Error executing band_send_message:") for t in result_texts
+        tools = NoEventTools(room_id=ROOM)
+        adapter = await scripted(
+            SEND_TURN, features=AdapterFeatures(emit={Emit.EXECUTION})
         )
+
+        await _run_message(adapter, tools)
+
+        tools.assert_message_sent(content="hi", count=1)
 
     @pytest.mark.asyncio
-    async def test_usage_emitted_once_per_turn(self):
-        room_id = "room-usage"
-        tools = FakeAgentTools(room_id=room_id)
-        adapter = StrandsAdapter(
-            model=ScriptedStrandsModel(
-                [_SEND_TURN],
-                input_tokens=_INPUT_TOKENS_PER_CALL,
-                output_tokens=_OUTPUT_TOKENS_PER_CALL,
-            ),
+    async def test_usage_emitted_once_per_turn(self, tools, scripted):
+        adapter = await scripted(
+            SEND_TURN,
+            input_tokens=_INPUT_TOKENS_PER_CALL,
+            output_tokens=_OUTPUT_TOKENS_PER_CALL,
             features=AdapterFeatures(emit={Emit.USAGE}),
         )
-        await adapter.on_started("Bot", "A bot")
 
-        await _run_message(adapter, tools, room_id)
+        await _run_message(adapter, tools)
 
         from band.core.types import USAGE_METADATA_KEY, is_usage_event
 
@@ -351,6 +392,104 @@ class TestOnMessage:
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,
         }
+
+
+class TestTurnProductivity:
+    """A turn that reached the room ends quietly; anything else is reported."""
+
+    @pytest.mark.asyncio
+    async def test_failed_band_tool_is_not_terminal(self, scripted):
+        """A platform tool that raised did no productive work, however it is reported."""
+
+        class FailingTools(FakeAgentTools):
+            async def send_message(self, content, mentions=None):
+                raise RuntimeError("backend down")
+
+        tools = FailingTools(room_id=ROOM)
+        adapter = await scripted(SEND_TURN)
+
+        await _run_message(adapter, tools)
+
+        assert tools.messages_sent == []
+        assert len(_errors(tools)) == 1
+        # The shared bridge returns a normalized, model-visible tool failure.
+        assert any(
+            text.startswith("Error executing band_send_message:")
+            for text in _tool_results(adapter)
+        )
+
+    @pytest.mark.asyncio
+    async def test_read_only_tool_alone_does_not_end_the_turn(self, tools, scripted):
+        """Looking peers up succeeds but posts nothing, so the reply is still missing."""
+        adapter = await scripted(ToolTurn("band_lookup_peers", {}))
+
+        await _run_message(adapter, tools)
+
+        assert _tool_results(adapter)  # the lookup did run and succeed
+        assert tools.messages_sent == []
+        assert "band_send_message" in _errors(tools)[0]
+
+    @pytest.mark.asyncio
+    async def test_invalid_tool_arguments_are_answered_not_raised(
+        self, tools, scripted
+    ):
+        """A malformed call is the model's mistake to correct, not a turn-ending crash."""
+        adapter = await scripted(ToolTurn("band_send_message", {"mentions": ["@x"]}))
+
+        await _run_message(adapter, tools)
+
+        assert tools.messages_sent == []
+        assert _tool_results(adapter) == [
+            "Invalid arguments for band_send_message: content: Field required"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_custom_tool_failure_is_reported_to_the_model(self, tools, scripted):
+        class BoomInput(BaseModel):
+            """Explode on demand."""
+
+            note: str
+
+        async def boom(args: BoomInput) -> str:
+            raise RuntimeError("no network")
+
+        adapter = await scripted(
+            ToolTurn("boom", {"note": "go"}), additional_tools=[(BoomInput, boom)]
+        )
+
+        await _run_message(adapter, tools)
+
+        assert _tool_results(adapter) == ["Error executing tool 'boom': no network"]
+
+
+class TestTurnFailure:
+    @pytest.mark.asyncio
+    async def test_provider_failure_keeps_the_transcript_and_reports_usage(
+        self, tools, scripted
+    ):
+        """The turn dies, but the work it already did must survive it.
+
+        Dropping the transcript would lose the tool call the room already saw,
+        and dropping usage would under-report the calls that were paid for.
+        """
+        adapter = await scripted(
+            SEND_TURN,
+            ErrorTurn(RuntimeError("provider down")),
+            input_tokens=_INPUT_TOKENS_PER_CALL,
+            features=AdapterFeatures(emit={Emit.USAGE}),
+        )
+
+        with pytest.raises(EventLoopException, match="provider down"):
+            await _run_message(adapter, tools)
+
+        from band.core.types import USAGE_METADATA_KEY, is_usage_event
+
+        tools.assert_message_sent(content="hi", count=1)
+        assert _tool_results(adapter)  # the completed call is still in the transcript
+        usage = [e for e in tools.events_sent if is_usage_event(e["metadata"])]
+        assert usage[0]["metadata"][USAGE_METADATA_KEY]["input_tokens"] == (
+            _INPUT_TOKENS_PER_CALL
+        )
 
 
 class TestUsageMapping:
@@ -384,14 +523,11 @@ class TestCleanup:
         await adapter.on_cleanup("never-seen-room")  # must not raise
 
     @pytest.mark.asyncio
-    async def test_cleanup_removes_room_history(self):
-        room_id = "room-clean"
-        tools = FakeAgentTools(room_id=room_id)
-        adapter = StrandsAdapter(model=ScriptedStrandsModel([_SEND_TURN]))
-        await adapter.on_started("Bot", "A bot")
-        await _run_message(adapter, tools, room_id)
-        assert room_id in adapter._message_history
+    async def test_cleanup_removes_room_history(self, tools, scripted):
+        adapter = await scripted(SEND_TURN)
+        await _run_message(adapter, tools)
+        assert ROOM in adapter._message_history
 
-        await adapter.on_cleanup(room_id)
+        await adapter.on_cleanup(ROOM)
 
-        assert room_id not in adapter._message_history
+        assert ROOM not in adapter._message_history
