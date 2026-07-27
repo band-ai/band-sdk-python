@@ -506,9 +506,6 @@ def _build_strands_config() -> AdapterConfig:
             "system_prompt": "You are a helpful bot.",
             "custom_section": "Be concise.",
         },
-        # on_started only renders the prompt and builds tool wrappers — no
-        # client/agent construction happens until the first message turn.
-        skip_on_started_conformance=False,
     )
 
 

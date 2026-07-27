@@ -1,4 +1,13 @@
-"""Grid tests for adapters that expose memory or contacts capabilities."""
+"""Grid tests for adapters that expose memory or contacts capabilities.
+
+Every cell comes from a capability filter, never a hard-coded adapter list:
+``supports={Capability.MEMORY}`` selects the memory-capable adapters and
+``without={Capability.MEMORY}`` the exact complement, so flipping an adapter's
+``supports`` in the registry re-balances these tests automatically. Under
+fail-never-skip a cell whose backend or key is absent ERRORs with that reason
+(e.g. ``GOOGLE_API_KEY`` for gemini) — the honest "not wired up" signal, not a
+regression.
+"""
 
 from __future__ import annotations
 
@@ -67,7 +76,11 @@ async def test_recall_memory_across_memory_adapters(
     user_ops: UserOps,
     reply_capture: CaptureFactory,
 ) -> None:
-    """Store, list, and fetch a memory through each memory-capable adapter."""
+    """Store, list, and fetch a memory through each memory-capable adapter.
+
+    The fetch-by-id hop is what proves a real read-back: a list alone would also
+    pass on a mis-wired read that returns nothing.
+    """
     marker = unique_marker("rmem")
     room_id = await resource_manager.provision_room(
         title=f"e2e-cap-recall-{agent.adapter_id}", participants=[agent.id]

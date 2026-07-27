@@ -50,6 +50,7 @@ from band.runtime.custom_tools import (
 )
 from band.runtime.prompts import render_system_prompt
 from band.runtime.tools import (
+    ALL_TOOL_NAMES,
     ToolDefinition,
     ToolCallOutcome,
     band_tool_errored,
@@ -93,6 +94,19 @@ def _result_text(result: ToolResult) -> str:
     return "\n".join(parts)
 
 
+def _registered_name(tool: AgentTool | Callable[..., Any]) -> str:
+    """Return the name Strands registers this tool under."""
+    if isinstance(tool, AgentTool):
+        return tool.tool_name
+    name = getattr(tool, "__name__", "")
+    if not name:
+        raise ValueError(
+            f"Custom tool {tool!r} has no name. Pass a named function, a "
+            "@strands.tool-decorated tool, or a (InputModel, handler) pair."
+        )
+    return name
+
+
 def _build_custom_tools(
     additional_tools: list[Callable[..., Any] | CustomToolDef] | None,
 ) -> tuple[list[AgentTool | Callable[..., Any]], frozenset[str]]:
@@ -102,11 +116,16 @@ def _build_custom_tools(
         CustomToolBridge(tool_def) if isinstance(tool_def, tuple) else tool_def
         for tool_def in raw_tools
     ]
+    names = [_registered_name(tool) for tool in converted]
+    # Strands' registry is last-wins, so a collision would silently replace the
+    # platform tool the room depends on.
+    shadowed = sorted(set(names) & ALL_TOOL_NAMES)
+    if shadowed:
+        raise ValueError(f"Custom tools may not shadow Band platform tools: {shadowed}")
+
     terminal_names = frozenset(
-        tool.tool_name
-        if isinstance(tool, AgentTool)
-        else str(getattr(tool, "__name__", tool))
-        for raw, tool in zip(raw_tools, converted)
+        name
+        for raw, name in zip(raw_tools, names, strict=True)
         if is_marked_terminal(raw[1] if isinstance(raw, tuple) else raw)
     )
     return converted, terminal_names
@@ -341,7 +360,13 @@ class StrandsAdapter(SimpleAdapter[StrandsMessages]):
         tools: AgentToolsProtocol,
         hooks: BandTurnHooks,
     ) -> Agent:
-        """Create an isolated agent whose tools own one turn's capability."""
+        """Create an isolated agent whose tools own one turn's capability.
+
+        Strands' default conversation manager trims the oldest messages once the
+        transcript passes its window (40 messages) and again on context
+        overflow, keeping toolUse/toolResult pairs intact. The persisted room
+        transcript is therefore capped by the framework, not unbounded.
+        """
         framework_tools = self._build_platform_tools(tools) + self._custom_tools
         return Agent(
             model=self.model,
