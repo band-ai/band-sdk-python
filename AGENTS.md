@@ -4,7 +4,7 @@ This is a Python SDK that connects AI agents to the Band collaborative platform.
 
 ## Core Features
 
-1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno)
+1. Multi-framework support (LangGraph, Anthropic, CrewAI, Claude SDK, Copilot SDK, Codex, Pydantic AI, Parlant, Gemini, Letta, Google ADK, OpenCode, Agno, Strands Agents)
 2. A2A protocol support: Bridge to remote A2A agents and expose Band peers as A2A endpoints
 3. ACP integration: Editor-facing server and client adapters over stdio or TCP (Cursor, Codex, Claude Code, GitHub Copilot)
 4. Platform tools for chat, contacts, and memory management
