@@ -210,6 +210,40 @@ adapter = A2AGatewayAdapter(port=10000)
 | A2A Gateway | `src/band/adapters/a2a_gateway.py`, `src/band/integrations/a2a/gateway/` |
 | A2A Types | `src/band/integrations/a2a/types.py` |
 
+## OpenCode Integration
+
+`OpencodeAdapter` maps each Band room to an OpenCode session on a running
+`opencode serve`: room messages become prompts, and the server's SSE stream is
+relayed back as room messages, tool narration, and error events.
+
+| Purpose | Path |
+|---|---|
+| Adapter package | `src/band/adapters/opencode/{adapter,approvals,config}.py` |
+| Typed SSE events | `src/band/integrations/opencode/events.py` |
+| HTTP/SSE client | `src/band/integrations/opencode/client.py` |
+
+Four invariants are easy to break and expensive to rediscover:
+
+- **Band tools are never gated.** A `permission.asked` naming one of the
+  adapter's own registered tools is auto-approved with `always` in *every*
+  `approval_mode` (codex parity — it runs band tools with no gate). Only
+  non-tool asks, such as OpenCode's `doom_loop` heuristic, follow the mode, so a
+  headless room with no approver should run `approval_mode="auto_accept"`.
+- **OpenCode prefixes MCP tools with the server name** (`band_store_memory`
+  surfaces as `<server>_band_store_memory`). Reported `tool_call`/`tool_result`
+  names are canonicalized back, so consumers match one vocabulary.
+- **One `serve` is shared by every agent on the host**, and it keys MCP
+  registrations globally by name. Each agent registers under a name derived from
+  its Band identity, and every prompt scopes tool visibility to that
+  registration (deny the shared namespace, then re-allow its own — OpenCode
+  applies the last matching rule).
+- **The model is told its `room_id` every turn.** The band MCP tools' schemas
+  require it, so without the per-turn Room Context block the platform tools are
+  uncallable.
+
+`turn_timeout_s` bounds *compute*: time parked on a manual approval is excluded,
+since the ask carries its own `approval_wait_timeout_s` expiry.
+
 ## ACP (Agent Client Protocol) Integration
 
 ACP enables editors (Zed, Cursor, JetBrains, Neovim) to communicate with AI agents via JSON-RPC over stdio. The SDK provides both server and client sides.
@@ -392,8 +426,15 @@ tests/
 ├── integration/    # Real API tests (skipped in CI)
 ├── e2e/            # End-to-end tests (requires live platform + LLM keys)
 │   └── baseline/   # The only E2E suite: reusable toolkit + smokes (see baseline/README.md)
+├── skills/         # Tests for .claude/skills scripts (paths via tests/paths.py anchors)
 └── conftest.py     # Shared fixtures
 ```
+
+`testpaths = ["tests"]`, so **every** test lives here — including tests for code
+outside `src/band` (`band-bridge` -> `tests/bridge`, `docker/band_python_kit` ->
+`tests/docker`, `.claude/skills` -> `tests/skills`). A `test_*.py` placed next to
+non-package code is never collected by CI's bare `uv run pytest`; address the code
+under test through an anchor in `tests/paths.py` instead.
 
 Before writing a new E2E test or helper, read `tests/e2e/baseline/README.md`
 — it documents the reusable baseline toolkit (provisioning, user ops, reply
@@ -440,29 +481,24 @@ uv run pyrefly check
 
 ## Dependency Conflicts
 
-**crewai is resolved apart from** parlant and pydantic-ai: it carries the
-narrowest transitive pins of the three, and they have repeatedly collided.
+**crewai cannot coexist** with parlant or pydantic-ai in the same Python
+environment due to conflicting transitive dependencies:
 
-| Package | crewai 1.15.5 pins | Other package requires |
+| Conflict | crewai 1.14.3 requires | Other package requires |
 |---|---|---|
-| pydantic | `>=2.11.9,<2.13` | pydantic-ai-slim 2.x needs `>=2.12` |
-| opentelemetry-sdk | `~=1.42.0` (<1.43) | parlant >=3.1 needs `>=1.37` |
+| pydantic | `~=2.11.9` (<2.12) | pydantic-ai-slim >=1.61 needs `>=2.12` |
+| opentelemetry-sdk | `~=1.34.0` (<1.35) | parlant >=3.1 needs `>=1.37` |
 
-The current versions happen to overlap, but crewai's ceilings move with every
-release, so `pyproject.toml` declares the extras as `[tool.uv] conflicts` and
-`uv lock` resolves each in its own fork — no upgrade waits on crewai's slowest
-pin.
+This is declared in `pyproject.toml` via `[tool.uv] conflicts` so `uv lock`
+resolves each in a separate fork.
 
 **Extras layout:**
 - `dev` — includes all framework deps **except** crewai
 - `dev-crewai` — includes crewai + test tooling only (no parlant/pydantic-ai)
-- `crewai` is declared conflicting with the `parlant` and `pydantic-ai` runtime
-  extras, so one `uv sync` can install only one of them
+- `crewai` is mutually exclusive with `parlant` and `pydantic-ai` runtime extras
 
-**For CI:** the `test-crewai` job (`uv sync --extra dev-crewai`) runs only the
-tests that need the real package — every other crewai test fakes it through
-`sys.modules` and already runs in the default `test` job. The list is kept honest
-by `tests/framework_conformance/test_crewai_job_coverage.py`.
+**For CI:** crewai adapter tests require a separate job/step using
+`uv sync --extra dev-crewai`.
 
 ## Environment Variables
 
@@ -475,7 +511,7 @@ by `tests/framework_conformance/test_crewai_job_coverage.py`.
 - `GOOGLE_API_KEY`: Google API key for Gemini Developer API (for Gemini/Google ADK examples)
 - `GOOGLE_GENAI_USE_VERTEXAI`: Set to `true` to use Vertex AI instead of Gemini Developer API
 - `GOOGLE_CLOUD_PROJECT`: Google Cloud project ID (required when using Vertex AI)
-- `GITHUB_TOKEN`: A Copilot-entitled GitHub token for the `copilot_sdk` and `copilot_acp` adapters' runtime auth (BYOK inference reuses `ANTHROPIC_API_KEY`). Optional when a stored `copilot login` is present; used for headless/CI. Read by the baseline toolkit's `tests/e2e/baseline/settings.py`
+- `GITHUB_TOKEN`: A Copilot-entitled GitHub token for Copilot-hosted `copilot_sdk` examples and the `copilot_acp` adapter. Optional when a stored `copilot login` is present. The baseline `copilot_sdk` builder uses singular Anthropic BYOK and does not require GitHub auth. Read by `tests/e2e/baseline/settings.py`.
 - `E2E_TESTS_ENABLED`: Set to `true` to enable E2E tests (default: disabled)
 - `E2E_LLM_MODEL`: OpenAI model for E2E tests (default: `gpt-5.4-mini`)
 - `E2E_ANTHROPIC_MODEL`: Anthropic model for E2E tests (legacy E2E default: `claude-3-haiku-20240307`; baseline toolkit default: `claude-haiku-4-5` — the baseline judge uses structured outputs, which `claude-3-haiku-20240307` does not support)
@@ -485,7 +521,7 @@ by `tests/framework_conformance/test_crewai_job_coverage.py`.
 
 Baseline lane scoping (see `tests/e2e/baseline/README.md`):
 
-- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and authenticates via a stored `copilot login` or a Copilot-entitled `GITHUB_TOKEN`; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (the codex, opencode, and copilot_acp coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
+- `BAND_E2E_LANE`: The CI lane (a job: a `uv` extra + optional server/CLI setup) to scope the run to. Lane ids are content-based and decoupled from the `uv` extra — `core` (anthropic/openai-family adapters plus `copilot_sdk`, which self-downloads its CLI runtime and uses Anthropic BYOK without GitHub auth; `dev` extra), `crewai` (`dev-crewai` extra), `google` (gemini/google_adk, split out for rate-limit isolation), `backends` (codex + opencode coding agents), `letta` (self-hosted letta server). Resolves the lane's adapters from the registry (`ci_lanes()`, derived from each adapter's `requires`); out-of-lane adapters skip-with-reason (they're covered by their own lane) while in-lane adapters keep fail-loud (an unwired backend stays red). Unset (the local default) = full matrix, no scoping. CI never lists adapters — it derives lanes from the registry. A test's lane is derived from **all** the frameworks it touches (a matrix cell's adapter plus its `@per_adapter(peer=...)`, or a `@with_adapters` set); a test whose frameworks span more than one home lane fails collection (`assert_every_item_is_schedulable`) unless pinned with `@lane(Lane.X)` to a lane whose extra hosts them all. To add a lane, see `tests/e2e/baseline/README.md` ("Adding a CI lane").
 
 Baseline provisioning/cleanup policy (see `tests/e2e/baseline/README.md`):
 
@@ -927,4 +963,3 @@ The `event` field can be:
 - `"COMMENT"` - Submit general feedback without approval
 - `"APPROVE"` - Approve the PR
 - `"REQUEST_CHANGES"` - Request changes before merging
-

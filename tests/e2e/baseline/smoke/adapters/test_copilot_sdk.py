@@ -1,8 +1,8 @@
 """Copilot SDK showcase smokes — the toolkit driving the Copilot adapter live.
 
-Copilot SDK is a ``core``-lane matrix adapter (gated on the Anthropic BYOK key;
-its Copilot auth — a stored login or ``GITHUB_TOKEN`` — is out-of-band, see the
-builder in ``toolkit/builders.py``), so the generic matrix (``smoke/matrix/``)
+Copilot SDK is a ``core``-lane matrix adapter gated only on the Anthropic BYOK
+key (the singular provider replaces Copilot-hosted inference, so GitHub auth is
+not required; see ``toolkit/builders.py``). The generic matrix (``smoke/matrix/``)
 already runs the standard scenarios against it via the registry builder. These
 are Copilot-focused instead: ``ask_user`` routing (handler and room mode), recall
 when Copilot's *native* session resume misses, and one client shared across adapter
@@ -68,7 +68,7 @@ def _copilot_config(settings: BaselineSettings, **overrides: Any) -> Any:
             base_url="https://api.anthropic.com",
             api_key=settings.llm_credentials.anthropic_api_key,
         ),
-        github_token=settings.backends.github_token,
+        use_logged_in_user=False,
         custom_section=overrides.pop(
             "custom_section", "Keep responses short and concise."
         ),
@@ -360,7 +360,7 @@ async def test_copilot_shared_client_across_adapter_lifecycles(
         return CopilotSDKAdapter(_copilot_config(baseline_settings), client=client)
 
     # The test owns the client; adapters only borrow it.
-    client = CopilotClient(github_token=baseline_settings.backends.github_token)
+    client = CopilotClient(use_logged_in_user=False)
     try:
         async with running_agent(
             identity, make_shared_adapter(client), baseline_settings

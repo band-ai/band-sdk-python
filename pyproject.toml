@@ -41,6 +41,7 @@ codex = [
 ]
 opencode = [
     "httpx>=0.24.0",
+    "mcp>=1.25.0",
 ]
 letta = [
     "letta-client>=0.1.0",
@@ -280,6 +281,15 @@ markers = [
 ]
 
 [tool.uv]
+# google-adk pulls opentelemetry-resourcedetector-gcp transitively, whose 1.13.0 is
+# yanked and whose only newer release is a pre-release. Steering that resolution is
+# ours to do, but the package is not ours to depend on (nothing under src/band
+# imports it), so it is a constraint — resolution-only, no direct dependency and no
+# pre-release opt-in inherited by `band-sdk[google_adk]` consumers.
+constraint-dependencies = [
+    "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
+]
+
 # Ensure uv.lock stays installable on the platforms we use locally and in CI
 # when a dependency only publishes wheels and no source distribution.
 required-environments = [
@@ -324,6 +334,11 @@ conflicts = [
 [tool.pyrefly]
 project_includes = [
     "src/**/*.py",              # Only check source files
+    # Skill scripts are checked-in tooling with real process/subprocess logic and
+    # no other type gate. Narrow glob on purpose: a bare `.claude/**` would drag
+    # in `.claude/worktrees/` checkouts, which the excludes heuristic below no
+    # longer filters out.
+    ".claude/skills/**/*.py",
 ]
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing

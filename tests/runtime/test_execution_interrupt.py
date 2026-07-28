@@ -141,6 +141,45 @@ class TestStopInFlightCycle:
 
 
 class TestShutdownVsInterrupt:
+    async def test_swallowed_interrupt_does_not_leak_into_shutdown(self, mock_link):
+        """A handler swallowing cancellation must not leave the control kind set."""
+        first_started = asyncio.Event()
+
+        async def swallow_cancel(ctx, event):
+            first_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                return
+
+        ctx = ExecutionContext(
+            "room-123", mock_link, swallow_cancel, agent_id="agent-123"
+        )
+        first = asyncio.create_task(
+            ctx._run_cycle(make_message_event(msg_id="swallow"), "swallow")
+        )
+        await first_started.wait()
+
+        assert ctx.interrupt() is True
+        assert await first is True
+        assert ctx._interrupt_kind is None
+
+        second_started = asyncio.Event()
+
+        async def block(ctx, event):
+            second_started.set()
+            await asyncio.Event().wait()
+
+        ctx._on_execute = block
+        shutdown = asyncio.create_task(
+            ctx._run_cycle(make_message_event(msg_id="shutdown"), "shutdown")
+        )
+        await second_started.wait()
+        shutdown.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await shutdown
+
     async def test_shutdown_cancels_cycle_without_marking(self, mock_link):
         """stop() (shutdown) cancels an in-flight cycle, does NOT mark it
         processed, and leaves no orphaned child task."""

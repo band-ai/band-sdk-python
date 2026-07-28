@@ -29,6 +29,7 @@ class TestOpencodeHistoryConverter:
                 "message_type": "task",
                 "metadata": {
                     "opencode_session_id": "sess-new",
+                    "opencode_mcp_server_name": "band_agent",
                     "opencode_room_id": "room-2",
                     "opencode_created_at": "2026-03-02T12:34:56Z",
                 },
@@ -37,6 +38,7 @@ class TestOpencodeHistoryConverter:
 
         state = converter.convert(raw_history)
         assert state.session_id == "sess-new"
+        assert state.mcp_server_name == "band_agent"
         assert state.room_id == "room-2"
         assert state.created_at is not None
         assert state.created_at.year == 2026

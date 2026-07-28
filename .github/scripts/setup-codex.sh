@@ -11,11 +11,21 @@ set -euo pipefail
 # unset key — the login would just fail opaquely with no output.
 : "${OPENAI_API_KEY:?OPENAI_API_KEY is required for codex login}"
 
-# Codex picks a model from its own catalogue; gpt-4o-mini (the openai default) is
-# not one of them. Confirm/adjust on first dispatch if model selection errors.
-CODEX_MODEL="${CODEX_MODEL:-gpt-5-codex}"
+# Codex picks a model from its own catalogue (a plain openai default like
+# gpt-4o-mini is not one). Keep this current: the OpenAI API hard-deprecates old
+# codex models, and a deprecated pin makes every turn stream-error with no tokens
+# -- which surfaces as blanket usage/reply assertion failures, not an obvious
+# model error. gpt-5-codex is deprecated; gpt-5.3-codex is the current pin.
+CODEX_MODEL="${CODEX_MODEL:-gpt-5.3-codex}"
 
-npm install -g @openai/codex @agentclientprotocol/codex-acp
+# Pinned for the same reason as the model: an unpinned global install lets both
+# CLIs float between runs, so a CLI change lands as an unrelated-looking lane
+# failure. Bump deliberately.
+CODEX_CLI_VERSION="${CODEX_CLI_VERSION:-0.145.0}"
+CODEX_ACP_VERSION="${CODEX_ACP_VERSION:-1.1.7}"
+
+npm install -g "@openai/codex@${CODEX_CLI_VERSION}" \
+  "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}"
 printenv OPENAI_API_KEY | codex login --with-api-key
 codex login status
 

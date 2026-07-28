@@ -72,15 +72,15 @@ async def main() -> None:
                 "When a [Contacts] system message reports that a contact was added "
                 "or removed, treat it as fresh room context."
             ),
-            # BYOK: inference runs on the Anthropic key; GitHub auth still
-            # boots the Copilot runtime (base_url is required by the runtime).
+            # BYOK: inference runs on the Anthropic key without GitHub auth
+            # (base_url is required by the runtime).
             model="claude-haiku-4-5",
             provider=ProviderConfig(
                 type="anthropic",
                 base_url="https://api.anthropic.com",
                 api_key=anthropic_api_key,
             ),
-            github_token=os.getenv("GITHUB_TOKEN"),
+            use_logged_in_user=False,
             # Pin a unique per-example session prefix.
             session_id_prefix="band-copilot-contact-memory-",
         ),

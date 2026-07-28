@@ -98,6 +98,9 @@ conflicts = [[
     { package = "band-sdk", extra = "pydantic-ai" },
 ]]
 
+[manifest]
+constraints = [{ name = "opentelemetry-resourcedetector-gcp", specifier = ">=1.12.0a0,!=1.13.0" }]
+
 [[package]]
 name = "a2a-sdk"
 version = "0.3.26"
@@ -667,6 +670,7 @@ logging = [
 ]
 opencode = [
     { name = "httpx" },
+    { name = "mcp" },
 ]
 parlant = [
     { name = "openai" },
@@ -750,6 +754,7 @@ requires-dist = [
     { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.25.0" },
     { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.25.0" },
     { name = "mcp", marker = "extra == 'letta'", specifier = ">=1.25.0" },
+    { name = "mcp", marker = "extra == 'opencode'", specifier = ">=1.25.0" },
     { name = "nest-asyncio", marker = "extra == 'crewai'", specifier = ">=1.6.0" },
     { name = "nest-asyncio", marker = "extra == 'dev-crewai'", specifier = ">=1.6.0" },
     { name = "openai", marker = "extra == 'crewai'", specifier = ">=2.0.0" },

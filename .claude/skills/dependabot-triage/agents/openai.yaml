@@ -1,0 +1,4 @@
+interface:
+  display_name: "Dependabot Triage"
+  short_description: "Batch-test, approve, and file follow-ups for Dependabot PRs"
+  default_prompt: "Use $dependabot-triage to clear this repo's open Dependabot PRs in one test-gated batch."

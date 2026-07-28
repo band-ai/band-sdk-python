@@ -7,7 +7,11 @@ from typing import Any
 
 import pytest
 
-from band.adapters.copilot_sdk import CopilotSDKAdapter
+from band.adapters.copilot_sdk import (
+    _COPILOT_SDK_AVAILABLE,
+    CopilotSDKAdapter,
+    CopilotSDKAdapterConfig,
+)
 from band.core.exceptions import BandConfigError
 from tests.adapters.copilot_sdk.fakes import (
     FakeCopilotClient,
@@ -15,6 +19,9 @@ from tests.adapters.copilot_sdk.fakes import (
 )
 
 pytestmark = requires_copilot_sdk
+
+if _COPILOT_SDK_AVAILABLE:
+    from copilot import ProviderConfig
 
 
 class TestStartupFailure:
@@ -44,3 +51,25 @@ class TestStartupFailure:
             await adapter.on_started("Copilot Agent", "desc")
 
         assert not client.stopped  # its owner decides its lifecycle
+
+    @pytest.mark.asyncio
+    async def test_byok_does_not_require_github_auth(self):
+        client = self.UnauthenticatedClient()
+        adapter = CopilotSDKAdapter(
+            CopilotSDKAdapterConfig(
+                model="claude-haiku-4-5",
+                provider=ProviderConfig(
+                    type="anthropic",
+                    base_url="https://api.anthropic.com",
+                    api_key="test-provider-key",
+                ),
+            ),
+            client_factory=lambda: client,
+        )
+
+        await adapter.on_started("Copilot Agent", "desc")
+
+        assert client.started
+        assert not client.stopped
+        await adapter.cleanup_all()
+        assert client.stopped

@@ -11,6 +11,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+_EVENT_READ_TIMEOUT_S = 60.0
+
 
 class OpencodeClientProtocol(Protocol):
     """Interface used by the adapter for OpenCode transport calls."""
@@ -32,6 +34,7 @@ class OpencodeClientProtocol(Protocol):
         model: dict[str, str] | None = None,
         agent: str | None = None,
         variant: str | None = None,
+        tools: dict[str, bool] | None = None,
     ) -> None: ...
 
     async def reply_permission(
@@ -52,7 +55,7 @@ class OpencodeClientProtocol(Protocol):
 
     async def register_mcp_server(self, *, name: str, url: str) -> dict[str, Any]: ...
 
-    async def deregister_mcp_server(self, name: str) -> None: ...
+    async def disconnect_mcp_server(self, name: str) -> None: ...
 
     def iter_events(self) -> AsyncIterator[dict[str, Any]]: ...
 
@@ -69,6 +72,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         directory: str | None = None,
         workspace: str | None = None,
         timeout_s: float = 300.0,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         headers: dict[str, str] = {}
         if directory:
@@ -87,6 +91,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             base_url=base_url.rstrip("/"),
             headers=headers,
             timeout=httpx.Timeout(30.0, read=timeout_s),
+            transport=transport,
         )
 
     def _query_params(self) -> dict[str, str]:
@@ -131,6 +136,7 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         model: dict[str, str] | None = None,
         agent: str | None = None,
         variant: str | None = None,
+        tools: dict[str, bool] | None = None,
     ) -> None:
         payload: dict[str, Any] = {"parts": parts}
         if system:
@@ -141,6 +147,8 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             payload["agent"] = agent
         if variant:
             payload["variant"] = variant
+        if tools:
+            payload["tools"] = tools
 
         response = await self._client.post(
             f"/session/{session_id}/prompt_async",
@@ -199,9 +207,9 @@ class HttpOpencodeClient(OpencodeClientProtocol):
         response.raise_for_status()
         return response.json()
 
-    async def deregister_mcp_server(self, name: str) -> None:
-        response = await self._client.delete(
-            f"/mcp/{name}",
+    async def disconnect_mcp_server(self, name: str) -> None:
+        response = await self._client.post(
+            f"/mcp/{name}/disconnect",
             params=self._query_params(),
         )
         response.raise_for_status()
@@ -216,16 +224,28 @@ class HttpOpencodeClient(OpencodeClientProtocol):
             "/event",
             params=self._query_params(),
             headers=headers,
-            timeout=httpx.Timeout(None, read=60.0),
+            timeout=httpx.Timeout(
+                None,
+                connect=self._client.timeout.connect,
+                read=_EVENT_READ_TIMEOUT_S,
+            ),
         ) as response:
             response.raise_for_status()
 
             event_name: str | None = None
             event_id: str | None = None
+            event_id_seen = False
             data_lines: list[str] = []
 
             async for line in response.aiter_lines():
                 if line == "":
+                    # Commit the id on dispatch, before yielding: the SSE spec
+                    # sets the last-event-id buffer from the field itself, not
+                    # from whether the consumer handled the event. So a
+                    # reconnect resumes after this event even if handling it
+                    # raised -- replaying it forever would be worse.
+                    if event_id_seen:
+                        self._last_event_id = event_id or None
                     if data_lines:
                         payload = "\n".join(data_lines)
                         try:
@@ -244,10 +264,9 @@ class HttpOpencodeClient(OpencodeClientProtocol):
                                 event["type"] = event_name
                             if isinstance(event, dict):
                                 yield event
-                        if event_id is not None:
-                            self._last_event_id = event_id
                     event_name = None
                     event_id = None
+                    event_id_seen = False
                     data_lines = []
                     continue
 
@@ -256,11 +275,17 @@ class HttpOpencodeClient(OpencodeClientProtocol):
                     continue
 
                 if line.startswith("id:"):
-                    event_id = line[3:].strip() or None
+                    event_id_seen = True
+                    event_id = line[3:]
+                    if event_id.startswith(" "):
+                        event_id = event_id[1:]
                     continue
 
                 if line.startswith("data:"):
-                    data_lines.append(line[5:].lstrip())
+                    data = line[5:]
+                    if data.startswith(" "):
+                        data = data[1:]
+                    data_lines.append(data)
 
     async def close(self) -> None:
         await self._client.aclose()
