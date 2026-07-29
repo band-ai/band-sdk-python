@@ -10,6 +10,7 @@ import logging
 import warnings
 from dataclasses import dataclass
 from datetime import datetime
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, model_validator
@@ -45,6 +46,29 @@ if TYPE_CHECKING:
     from .execution import ExecutionContext
 
 logger = logging.getLogger(__name__)
+
+CHAT_PAGE_SIZE = 100
+# The walk below stops on the server's own page count, so it is capped too:
+# 5,000 rooms is far past any real agent, and a listing that never reports a
+# final page then degrades to a bounded read instead of looping forever.
+MAX_CHAT_PAGES = 50
+
+
+async def iter_chat_pages(
+    fetch: Callable[[int, int], Awaitable[Any]],
+) -> AsyncIterator[Any]:
+    """Yield each page of a chat listing, oldest page first."""
+    for page in range(1, MAX_CHAT_PAGES + 1):
+        response = await fetch(page, CHAT_PAGE_SIZE)
+        yield response
+        total_pages = getattr(response.metadata, "total_pages", None)
+        if not total_pages or page >= int(total_pages):
+            return
+    logger.warning(
+        "Stopped listing chats at the %d page cap; some rooms were not read",
+        MAX_CHAT_PAGES,
+    )
+
 
 # The Agent Events API enforces a hard cap on event content (see
 # thenvoi-platform's events_controller.ex `@content_max_length`) and rejects
@@ -1608,7 +1632,10 @@ class AgentTools(AgentToolsProtocol):
             request_options=DEFAULT_REQUEST_OPTIONS,
         )
         data = [context_item_to_dict(item) for item in (response.data or [])]
-        meta = getattr(response, "meta", None)
+        # The context response carries pagination twice: `metadata` is required,
+        # `meta` is optional and may be absent. Prefer the required one, or
+        # paging silently collapses to a single synthesized page.
+        meta = getattr(response, "metadata", None) or getattr(response, "meta", None)
         if meta is None:
             meta_dict: dict[str, Any] = {
                 "page": page,

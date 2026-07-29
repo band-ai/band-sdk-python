@@ -572,6 +572,9 @@ crewai = [
     { name = "openai" },
     { name = "pillow" },
 ]
+desktop = [
+    { name = "mcp" },
+]
 dev = [
     { name = "a2a-sdk" },
     { name = "agent-client-protocol" },
@@ -751,10 +754,11 @@ requires-dist = [
     { name = "langgraph", marker = "extra == 'langgraph'", specifier = ">=1.0.0" },
     { name = "letta-client", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "letta-client", marker = "extra == 'letta'", specifier = ">=0.1.0" },
-    { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.25.0" },
-    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.25.0" },
-    { name = "mcp", marker = "extra == 'letta'", specifier = ">=1.25.0" },
-    { name = "mcp", marker = "extra == 'opencode'", specifier = ">=1.25.0" },
+    { name = "mcp", marker = "extra == 'acp'", specifier = ">=1.25.0,<2" },
+    { name = "mcp", marker = "extra == 'desktop'", specifier = ">=1.25.0,<2" },
+    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.25.0,<2" },
+    { name = "mcp", marker = "extra == 'letta'", specifier = ">=1.25.0,<2" },
+    { name = "mcp", marker = "extra == 'opencode'", specifier = ">=1.25.0,<2" },
     { name = "nest-asyncio", marker = "extra == 'crewai'", specifier = ">=1.6.0" },
     { name = "nest-asyncio", marker = "extra == 'dev-crewai'", specifier = ">=1.6.0" },
     { name = "openai", marker = "extra == 'crewai'", specifier = ">=2.0.0" },
@@ -823,7 +827,7 @@ requires-dist = [
     { name = "werkzeug", marker = "extra == 'dev'", specifier = ">=3.1.6" },
     { name = "werkzeug", marker = "extra == 'parlant'", specifier = ">=3.1.6" },
 ]
-provides-extras = ["logging", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "copilot-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "dev", "dev-crewai"]
+provides-extras = ["logging", "desktop", "codex", "opencode", "letta", "pydantic-ai", "anthropic", "langgraph", "claude-sdk", "copilot-sdk", "parlant", "crewai", "gemini", "a2a", "a2a-gateway", "a2a-gateway-demo", "acp", "slack", "bridge", "bridge-agentcore", "agentcore-runtime", "google-adk", "agno", "dev", "dev-crewai"]
 
 [[package]]
 name = "band-testing-python"

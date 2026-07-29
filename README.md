@@ -322,6 +322,7 @@ For the full picture, rooms, contacts, platform tools, and how messages flow - s
 | LangGraph        | `langgraph`   | `LangGraphAdapter`                   | [docs](docs/adapters/langgraph.md) | [examples](examples/langgraph/)     |
 | Pydantic AI      | `pydantic-ai` | `PydanticAIAdapter`                  | | [examples](examples/pydantic_ai/) |
 | Anthropic SDK    | `anthropic`   | `AnthropicAdapter`                   | [docs](docs/adapters/anthropic.md) | [examples](examples/anthropic/)     |
+| Claude Desktop   | `desktop`     | `band-room-view` + `band-mcp`        | [docs](docs/adapters/claude_desktop.md) | |
 | Claude Agent SDK | `claude_sdk`  | `ClaudeSDKAdapter`                   | [docs](docs/adapters/claude_sdk.md) | [examples](examples/claude_sdk/)   |
 | GitHub Copilot SDK | `copilot_sdk` | `CopilotSDKAdapter`                | | [examples](examples/copilot_sdk/) |
 | CrewAI           | `crewai`      | `CrewAIAdapter`, `CrewAIFlowAdapter` | | [examples](examples/crewai/)           |

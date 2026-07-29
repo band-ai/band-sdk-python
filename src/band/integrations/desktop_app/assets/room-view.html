@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Band room</title>
+  <style>{css}</style>
+</head>
+<body>
+  <main>
+    <header id="topbar">
+      <div class="mark">B</div>
+      <div class="heading">
+        <h1>Band room</h1>
+        <div id="room">Connecting…</div>
+      </div>
+      <span id="badge" hidden>0</span>
+      <div id="status">Connecting</div>
+      <button id="toggle" title="Collapse to status line" aria-label="Collapse to status line" aria-expanded="true">▾</button>
+    </header>
+    <section id="messages"><div class="empty">Loading transcript…</div></section>
+    <footer>
+      <span><span id="count">0 messages</span> · <span id="updated">Not refreshed</span></span>
+      <span id="events" title="Live transport diagnostics">0 live events</span>
+      <button id="refresh">Refresh</button>
+    </footer>
+  </main>
+  <script>{js}</script>
+</body>
+</html>

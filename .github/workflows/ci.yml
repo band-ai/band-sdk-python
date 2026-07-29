@@ -13,19 +13,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: '3.12'
 
@@ -65,19 +65,19 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -113,19 +113,19 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
       with:
         enable-cache: true
         cache-dependency-glob: "**/pyproject.toml"
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: ${{ matrix.python-version }}
 
@@ -163,16 +163,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
     - name: Configure git to use HTTPS for GitHub
       run: git config --global url."https://github.com/".insteadOf "git@github.com:"
 
     - name: Install uv
-      uses: astral-sh/setup-uv@v7
+      uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
 
     - name: Set up Python
-      uses: actions/setup-python@v7
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: '3.12'
 
@@ -192,12 +192,45 @@ jobs:
         print('Core imports successful')
         "
 
-    - name: Install with all extras
+    - name: Start the Desktop room view from a fresh resolve
+      # The lockfile says nothing about what a user's `uv tool install` picks:
+      # a released mcp that broke our API resolved fine here and killed the
+      # server at startup. Resolve the declared range afresh and prove the
+      # console script still comes up.
+      run: |
+        WHEEL=$(ls dist/*.whl)
+        uv venv /tmp/desktop-install
+        uv pip install "${WHEEL}[desktop]" --python /tmp/desktop-install/bin/python
+        /tmp/desktop-install/bin/python -c "
+        from band.integrations.desktop_app.server import create_server, room_view_tools
+        from band.integrations.desktop_app.service import RoomTranscriptService
+        create_server(RoomTranscriptService(object()))
+        print(f'room view starts with {len(room_view_tools())} tools')
+        "
+
+    - name: Build the OpenCode Band-tools server from a fresh resolve
+      # Same lesson as the room view above, and the extra that learned it late:
+      # an unbounded mcp resolved to a major release whose lowlevel Server has
+      # no decorator registration, so this path died on any fresh install while
+      # the locked environment stayed green.
+      run: |
+        WHEEL=$(ls dist/*.whl)
+        uv venv /tmp/opencode-install
+        uv pip install "${WHEEL}[opencode]" --python /tmp/opencode-install/bin/python
+        /tmp/opencode-install/bin/python -c "
+        from band.runtime.mcp_server import LocalMCPServer
+        LocalMCPServer('smoke', [])._build_server()
+        print('opencode band tools server builds')
+        "
+
+    - name: Install the dev extra
+      # Every framework except crewai, which conflicts with parlant and
+      # pydantic-ai and has its own job.
       run: |
         WHEEL=$(ls dist/*.whl)
         uv pip install "${WHEEL}[dev]" --python /tmp/test-install/bin/python
 
-    - name: Verify all imports (with extras)
+    - name: Verify framework imports
       run: |
         /tmp/test-install/bin/python -c "
         from band import Agent, BandLink, AgentRuntime

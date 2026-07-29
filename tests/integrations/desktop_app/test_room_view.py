@@ -1,0 +1,94 @@
+"""What the mounted view does when its host answers out of order.
+
+These are the view's concurrency contracts — a room that changes under an
+in-flight watch, a refresh overtaken by an event — and no static inspection of
+the asset can reach them. ``roomview.mjs`` runs the shipped script against a
+fake host and reports what it did.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from importlib.resources import as_file, files
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+DRIVER = Path(__file__).parent / "roomview.mjs"
+
+
+@pytest.fixture(scope="module")
+def behaviour() -> dict[str, Any]:
+    """Every scenario's result, from one run of the real view."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not installed")
+    script = files("band.integrations.desktop_app.assets") / "room-view.js"
+    with as_file(script) as path:
+        run = subprocess.run(
+            [node, str(DRIVER), str(path)],
+            capture_output=True,
+            text=True,
+        )
+    assert run.returncode == 0, run.stderr
+    return json.loads(run.stdout)
+
+
+class TestRoomSwitch:
+    def test_a_watch_answered_after_the_room_changed_is_dropped(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """Absorbing it drags the display, and the model's context, back to the
+        room that was just left."""
+        result = behaviour["staleRoomResult"]
+
+        assert result["room"] == "room-b"
+        assert result["contextUpdatesAfterSwitch"] == 0, (
+            "the abandoned room's transcript reached the model's context"
+        )
+
+
+class TestCursor:
+    def test_an_overtaken_refresh_does_not_rewind_the_resume_cursor(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """A rewound cursor has the server re-read and redeliver what is shown."""
+        result = behaviour["cursorRewind"]
+
+        assert result["refreshAskedFrom"] < result["resumedFrom"]
+        assert result["resumedFrom"] == "2026-01-01T00:00:09Z"
+
+    def test_a_quiet_tick_still_advances_it(self, behaviour: dict[str, Any]) -> None:
+        """The server advances the cursor on a quiet tick precisely so the next
+        call differs; a view that ignored that would stall the loop."""
+        assert behaviour["quietTick"]["resumedFrom"] == "2026-01-01T00:00:20Z"
+
+
+class TestModelContext:
+    def test_pending_work_is_the_servers_answer_relayed(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """Recomputing it in the view disagrees with the tool result the model
+        is acting on — here the agent's own later message hides an open ask."""
+        assert behaviour["pendingIsTheServers"]["pending"] == ["ask"]
+
+    def test_the_view_authors_no_instruction_of_its_own(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        context = behaviour["pendingIsTheServers"]["text"]
+
+        assert context.startswith("briefing"), "the briefing is server-authored"
+        assert "pending" not in context, (
+            "what to do about pending work is prompts.py's to say"
+        )
+
+
+class TestWatchTiming:
+    def test_how_long_to_block_is_left_to_the_server(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """Otherwise BAND_ROOM_EVENT_TIMEOUT_S never reaches the app's loop."""
+        assert "timeout_seconds" not in behaviour["watchTiming"]["arguments"]
