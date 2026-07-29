@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import logging
-from typing import ClassVar
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
+from typing import ClassVar, cast
 
 import httpx
 from a2a.client import Client, ClientConfig, ClientFactory
 from a2a.helpers import get_message_text, new_text_message
-from a2a.types import SendMessageRequest
 from a2a.types import (
     Message as A2AMessage,
     Role,
+    SendMessageRequest,
     SubscribeToTaskRequest,
     StreamResponse,
     Task,
@@ -23,6 +25,7 @@ from band.core.protocols import AgentToolsProtocol
 from band.core.simple_adapter import SimpleAdapter
 from band.core.types import AdapterFeatures, Capability, Emit, PlatformMessage
 from band.integrations.a2a.protocol import (
+    TERMINAL_TASK_STATE_NAMES,
     TERMINAL_TASK_STATES,
     apply_task_stream_event,
     state_name,
@@ -283,7 +286,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
 
     def _get_status_text(self, task: Task) -> str | None:
         """Extract text from task status message."""
-        if task.status.message:
+        if task.status.HasField("message"):
             return get_message_text(task.status.message)
         return None
 
@@ -364,9 +367,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             )
 
         # Try to resume task if it was in a resumable state
-        if state.task_id and state.task_state not in {
-            state_name(value) for value in TERMINAL_TASK_STATES
-        }:
+        if state.task_id and state.task_state not in TERMINAL_TASK_STATE_NAMES:
             await self._try_resubscribe(room_id, state.task_id)
 
     async def _try_resubscribe(self, room_id: str, task_id: str) -> None:
@@ -383,27 +384,34 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
             return
 
         try:
-            async for event in self._client.subscribe(
-                SubscribeToTaskRequest(id=task_id)
-            ):
-                task = self._reduce_task_event(room_id, event)
-                if task is None:
-                    continue
+            # aclosing: only the first event is consumed, so close the
+            # subscription stream deterministically instead of leaving it
+            # to async-generator GC. The client returns an async generator,
+            # typed as the narrower AsyncIterator — hence the cast.
+            subscription = cast(
+                "AsyncGenerator[StreamResponse]",
+                self._client.subscribe(SubscribeToTaskRequest(id=task_id)),
+            )
+            async with aclosing(subscription) as events:
+                async for event in events:
+                    task = self._reduce_task_event(room_id, event)
+                    if task is None:
+                        continue
 
-                current_state = task.status.state
-                if current_state not in TERMINAL_TASK_STATES:
-                    self._remember_task(room_id, task)
-                    logger.info(
-                        "Resumed A2A task %s (state=%s)",
-                        task_id,
-                        state_name(current_state),
-                    )
-                else:
-                    logger.info(
-                        "A2A task %s already terminal (state=%s)",
-                        task_id,
-                        state_name(current_state),
-                    )
-                break  # Only need first event to get current state
+                    current_state = task.status.state
+                    if current_state not in TERMINAL_TASK_STATES:
+                        self._remember_task(room_id, task)
+                        logger.info(
+                            "Resumed A2A task %s (state=%s)",
+                            task_id,
+                            state_name(current_state),
+                        )
+                    else:
+                        logger.info(
+                            "A2A task %s already terminal (state=%s)",
+                            task_id,
+                            state_name(current_state),
+                        )
+                    break  # Only need first event to get current state
         except Exception as e:
             logger.warning("Could not resubscribe to A2A task %s: %s", task_id, e)

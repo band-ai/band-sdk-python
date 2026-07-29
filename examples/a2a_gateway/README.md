@@ -138,8 +138,8 @@ curl -X POST http://localhost:10000/agents/<peer-id> \
     "method": "SendMessage",
     "params": {
       "message": {
-        "role": "user",
-        "parts": [{"kind": "text", "text": "Hello from an A2A client"}],
+        "role": "ROLE_USER",
+        "parts": [{"text": "Hello from an A2A client"}],
         "messageId": "msg-1",
         "contextId": "ctx-1"
       }
@@ -147,16 +147,18 @@ curl -X POST http://localhost:10000/agents/<peer-id> \
   }'
 ```
 
-For the REST streaming binding, use the versioned route and wrap the message
-inside a `SendMessageRequest`:
+For the REST streaming binding, POST the message to the unversioned route
+with the same `A2A-Version: 1.0` header (the `/v1/...` routes are the v0.3
+compatibility binding, which uses the older payload shapes):
 
 ```bash
-curl -N -X POST http://localhost:10000/agents/<peer-id>/v1/message:stream \
+curl -N -X POST http://localhost:10000/agents/<peer-id>/message:stream \
   -H "Content-Type: application/json" \
+  -H "A2A-Version: 1.0" \
   -d '{
     "message": {
-      "role": "user",
-      "parts": [{"kind": "text", "text": "Hello from an A2A client"}],
+      "role": "ROLE_USER",
+      "parts": [{"text": "Hello from an A2A client"}],
       "messageId": "msg-1",
       "contextId": "ctx-1"
     }

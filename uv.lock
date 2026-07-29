@@ -703,10 +703,10 @@ slack = [
 
 [package.metadata]
 requires-dist = [
-    { name = "a2a-sdk", marker = "extra == 'a2a'", specifier = ">=1.1.2" },
-    { name = "a2a-sdk", marker = "extra == 'a2a-gateway'", specifier = ">=1.1.2" },
-    { name = "a2a-sdk", marker = "extra == 'a2a-gateway-demo'", specifier = ">=1.1.2" },
-    { name = "a2a-sdk", marker = "extra == 'dev'", specifier = ">=1.1.2" },
+    { name = "a2a-sdk", marker = "extra == 'a2a'", specifier = ">=1.1.2,<2" },
+    { name = "a2a-sdk", marker = "extra == 'a2a-gateway'", specifier = ">=1.1.2,<2" },
+    { name = "a2a-sdk", marker = "extra == 'a2a-gateway-demo'", specifier = ">=1.1.2,<2" },
+    { name = "a2a-sdk", marker = "extra == 'dev'", specifier = ">=1.1.2,<2" },
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.9.0" },
     { name = "agent-client-protocol", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "agno", marker = "extra == 'agno'", specifier = ">=2.6.0" },

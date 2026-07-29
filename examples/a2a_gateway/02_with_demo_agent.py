@@ -41,14 +41,15 @@ Test the demo:
     # Send a JSON-RPC message to the orchestrator (it will route to gateway peers)
     curl -X POST http://localhost:10001/ \\
         -H "Content-Type: application/json" \\
+        -H "A2A-Version: 1.0" \\
         -d '{
             "jsonrpc": "2.0",
             "id": "1",
             "method": "SendMessage",
             "params": {
                 "message": {
-                    "role": "user",
-                    "parts": [{"kind": "text", "text": "Ask the weather peer about NYC"}],
+                    "role": "ROLE_USER",
+                    "parts": [{"text": "Ask the weather peer about NYC"}],
                     "messageId": "msg-1",
                     "contextId": "ctx-1"
                 }

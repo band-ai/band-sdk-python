@@ -47,9 +47,18 @@ class GatewayClient:
             return []
 
     async def discover_peer(self, peer_id: str) -> bool:
+        # Probe with a throwaway transport: Client.close() also closes an
+        # injected httpx client, which would tear down the shared pool under
+        # any concurrent call_peer stream.
         try:
-            client = await self._create_client(peer_id)
-            await client.close()
+            async with httpx.AsyncClient(timeout=self.timeout) as http_client:
+                factory = ClientFactory(
+                    ClientConfig(streaming=True, httpx_client=http_client)
+                )
+                client = await factory.create_from_url(
+                    f"{self.gateway_url}/agents/{peer_id}"
+                )
+                await client.close()
             return True
         except Exception as exc:
             logger.debug("Peer %s not available: %s", peer_id, exc)

@@ -106,7 +106,7 @@ If you are creating these agents specifically for this example, the clearest pla
 From the repo root:
 
 ```bash
-uv sync --extra crewai --extra a2a
+uv sync --extra crewai --extra a2a_gateway
 ```
 
 ## Start everything

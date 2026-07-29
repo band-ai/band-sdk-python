@@ -248,6 +248,34 @@ async def test_task_rest_routes_are_not_exposed(
     )
 
 
+async def test_non_messaging_jsonrpc_methods_are_not_exposed(
+    gateway_client: httpx.AsyncClient,
+) -> None:
+    """With no auth layer every caller shares one task-store identity, so
+    enumeration and push-config methods must answer method-not-found."""
+    closed_methods = (
+        "ListTasks",
+        "GetExtendedAgentCard",
+        "tasks/pushNotificationConfig/list",
+        "tasks/pushNotificationConfig/set",
+    )
+    for method in closed_methods:
+        response = await gateway_client.post(
+            "/agents/weather-agent",
+            headers={"A2A-Version": "1.0"},
+            json={
+                "jsonrpc": "2.0",
+                "id": "request-1",
+                "method": method,
+                "params": {},
+            },
+        )
+        assert response.json()["error"]["code"] == -32601, (
+            f"{method} must stay closed — it would disclose or disrupt "
+            "other callers' conversations"
+        )
+
+
 async def test_task_started_on_slug_is_visible_via_uuid_alias(
     gateway_client: httpx.AsyncClient,
 ) -> None:

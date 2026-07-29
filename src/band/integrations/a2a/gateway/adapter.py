@@ -261,7 +261,10 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         logger.debug("Cleaned up gateway resources for room %s", room_id)
 
     async def cleanup_all(self) -> None:
-        """Stop the self-hosted HTTP server when the agent stops."""
+        """Fail in-flight requests and stop the self-hosted HTTP server."""
+        for room_id in list(self._pending_tasks):
+            pending = self._pending_tasks.pop(room_id)
+            await pending.fail("Gateway shut down before the Band response completed")
         if self._server:
             await self._server.stop()
             self._server = None
@@ -413,7 +416,12 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
     ) -> AsyncIterator[PendingA2ATask]:
         """Register one pending request and always release its room slot."""
         if room_id in self._pending_tasks:
-            raise RuntimeError(f"Room already has a pending A2A task: {room_id}")
+            # The message reaches the remote A2A client; keep the internal
+            # room id out of it.
+            logger.warning("Rejected concurrent A2A request: room=%s", room_id)
+            raise RuntimeError(
+                "The peer is still processing a previous request for this context"
+            )
         self._pending_tasks[room_id] = pending
         logger.debug(
             "Registered pending A2A task: room=%s task=%s", room_id, pending.task.id

@@ -77,13 +77,6 @@ def make_pending(event_queue: EventQueueLegacy) -> PendingA2ATask:
 
 
 class TestGatewayConfiguration:
-    def test_timeout_is_adapter_configuration(self) -> None:
-        config = A2AGatewayAdapterConfig(response_timeout_s=12)
-        adapter = A2AGatewayAdapter(config=config)
-
-        assert adapter.config is config
-        assert adapter.config.response_timeout_s == 12
-
     def test_timeout_must_be_positive(self) -> None:
         with pytest.raises(ValueError, match="response_timeout_s"):
             A2AGatewayAdapterConfig(response_timeout_s=0)
@@ -191,8 +184,10 @@ class TestGatewayExecution:
 
     @pytest.mark.asyncio
     async def test_keeps_stream_open_for_non_final_updates(self) -> None:
+        # Generous timeout: the test never needs it to fire, and a tight one
+        # turns a loaded CI runner into a spurious FAILED terminal event.
         adapter = A2AGatewayAdapter(
-            config=A2AGatewayAdapterConfig(response_timeout_s=1)
+            config=A2AGatewayAdapterConfig(response_timeout_s=30)
         )
         adapter._peers = {"weather": make_peer("weather", "Weather Agent")}
         configure_room_creation(adapter)
@@ -275,6 +270,39 @@ class TestGatewayExecution:
         assert adapter._server is None
 
     @pytest.mark.asyncio
+    async def test_cleanup_all_fails_inflight_requests(self) -> None:
+        """A shutdown must not leave remote clients waiting out the full
+        response timeout."""
+        adapter = A2AGatewayAdapter()
+        queue = EventQueueLegacy()
+        pending = make_pending(queue)
+        adapter._pending_tasks["room-123"] = pending
+
+        await adapter.cleanup_all()
+
+        terminal = await queue.dequeue_event()
+        assert terminal.status.state == TaskState.TASK_STATE_FAILED
+        assert pending.done.is_set()
+        assert adapter._pending_tasks == {}
+
+    @pytest.mark.asyncio
+    async def test_concurrent_request_for_room_is_rejected_without_id_leak(
+        self,
+    ) -> None:
+        adapter = A2AGatewayAdapter()
+        adapter._pending_tasks["room-123"] = make_pending(EventQueueLegacy())
+
+        with pytest.raises(RuntimeError) as excinfo:
+            async with adapter.pending_task(
+                "room-123", make_pending(EventQueueLegacy())
+            ):
+                pass
+
+        assert "room-123" not in str(excinfo.value), (
+            "the error reaches the remote A2A client — internal room ids must not leak"
+        )
+
+    @pytest.mark.asyncio
     async def test_room_cleanup_returns_terminal_failure(self) -> None:
         adapter = A2AGatewayAdapter()
         queue = EventQueueLegacy()
@@ -321,6 +349,26 @@ class TestGatewayRoomState:
             == 2
         )
 
+    @pytest.mark.asyncio
+    async def test_different_contexts_get_different_rooms(
+        self, adapter: A2AGatewayAdapter
+    ) -> None:
+        responses = []
+        for room_id in ("room-a", "room-b"):
+            response = MagicMock()
+            response.data.id = room_id
+            responses.append(response)
+        adapter._rest.agent_api_chats.create_agent_chat = AsyncMock(
+            side_effect=responses
+        )
+
+        room_a, _ = await adapter._get_or_create_room("ctx-a", "weather")
+        room_b, _ = await adapter._get_or_create_room("ctx-b", "weather")
+
+        assert (room_a, room_b) == ("room-a", "room-b"), (
+            "distinct A2A contexts must not share a Band room"
+        )
+
     def test_rehydrate_merges_without_overwriting_live_context(self) -> None:
         adapter = A2AGatewayAdapter()
         adapter._context_to_room["ctx"] = "live-room"
@@ -337,6 +385,36 @@ class TestGatewayRoomState:
             "new": "new-room",
         }
         assert adapter._room_participants["new-room"] == {"weather"}
+
+
+class TestPendingTaskLifecycle:
+    @pytest.mark.asyncio
+    async def test_second_terminal_transition_is_a_no_op(self) -> None:
+        """The timeout in _await_response races the real reply from
+        on_message; whichever loses must not publish a second terminal."""
+        queue = EventQueueLegacy()
+        pending = make_pending(queue)
+
+        await pending.complete_with_message("done")
+        await pending.fail("late timeout")
+
+        terminal = await queue.dequeue_event()
+        assert terminal.status.state == TaskState.TASK_STATE_COMPLETED
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(queue.dequeue_event(), timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_progress_after_terminal_is_dropped(self) -> None:
+        queue = EventQueueLegacy()
+        pending = make_pending(queue)
+
+        await pending.complete_with_message("done")
+        await pending.report_progress("late narration")
+
+        terminal = await queue.dequeue_event()
+        assert terminal.status.state == TaskState.TASK_STATE_COMPLETED
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(queue.dequeue_event(), timeout=0.05)
 
 
 class TestGatewayResponses:

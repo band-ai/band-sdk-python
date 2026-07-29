@@ -113,6 +113,6 @@ class OrchestratorAgentExecutor(AgentExecutor):
             event_queue: Event queue
 
         Raises:
-            ServerError: Cancellation not supported
+            UnsupportedOperationError: Cancellation not supported
         """
         raise UnsupportedOperationError()

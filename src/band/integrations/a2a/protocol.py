@@ -17,6 +17,14 @@ TERMINAL_TASK_STATES = frozenset(
     }
 )
 
+# Terminal states as persisted in task-event metadata. Includes the values
+# written by the pre-protobuf adapter (a2a-sdk 0.x string enums), so rooms
+# with history from before the migration still rehydrate as terminal.
+TERMINAL_TASK_STATE_NAMES = frozenset(
+    {TaskState.Name(state) for state in TERMINAL_TASK_STATES}
+    | {"completed", "failed", "canceled", "rejected", "auth-required"}
+)
+
 
 def snapshot_task(task: Task) -> Task:
     """Return an independent task snapshot for event queue publication."""
@@ -77,7 +85,7 @@ def task_response_text(task: Task | None) -> str:
         if text:
             return text
 
-    if task.status.message:
+    if task.status.HasField("message"):
         text = get_message_text(task.status.message)
         if text:
             return text

@@ -15,7 +15,7 @@ from a2a.server.routes.rest_routes import create_rest_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.compat.v0_3.conversions import to_compat_agent_card
-from a2a.utils.constants import PROTOCOL_VERSION_0_3
+from a2a.utils.constants import PROTOCOL_VERSION_0_3, PROTOCOL_VERSION_CURRENT
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -31,6 +31,27 @@ ExecutorFactory = Callable[[str], AgentExecutor]
 # the compat card. The upstream factory also returns task read/cancel/list
 # and push-config routes — an unauthenticated window into past conversations.
 MESSAGING_REST_SUFFIXES = ("/message:send", "/message:stream", "/card")
+
+# The JSON-RPC methods the gateway serves (1.0 names and their v0.3-compat
+# spellings). Sends create work; the per-task operations are gated by the
+# unguessable task UUID the server minted for the caller. Everything else
+# stays closed: with no auth layer every caller shares one identity, so
+# enumeration (ListTasks) and the push-config/extended-card methods would
+# disclose or disrupt other callers' conversations.
+ALLOWED_JSONRPC_METHODS = frozenset(
+    {
+        "SendMessage",
+        "SendStreamingMessage",
+        "GetTask",
+        "CancelTask",
+        "SubscribeToTask",
+        "message/send",
+        "message/stream",
+        "tasks/get",
+        "tasks/cancel",
+        "tasks/resubscribe",
+    }
+)
 
 
 class GatewayServer:
@@ -48,6 +69,7 @@ class GatewayServer:
         self.port = port
         self.executor_factory = executor_factory
         self._app: Starlette | None = None
+        self._uvicorn: Any | None = None
         self._server_task: asyncio.Task[Any] | None = None
 
     def _agent_card(self, slug: str, peer: Peer) -> AgentCard:
@@ -58,7 +80,7 @@ class GatewayServer:
             supported_interfaces=[
                 AgentInterface(
                     protocol_binding="JSONRPC",
-                    protocol_version="1.0",
+                    protocol_version=PROTOCOL_VERSION_CURRENT,
                     url=rpc_url,
                 ),
                 AgentInterface(
@@ -111,16 +133,50 @@ class GatewayServer:
                         methods=["GET"],
                     )
                 )
-                protocol_routes.extend(
-                    create_jsonrpc_routes(
-                        handler,
-                        rpc_url=f"/agents/{alias}",
-                        enable_v0_3_compat=True,
-                    )
-                )
+                protocol_routes.extend(self._guarded_jsonrpc_routes(handler, alias))
                 rest_routes.extend(self._messaging_rest_routes(handler, alias))
 
         return Starlette(routes=routes + protocol_routes + rest_routes)
+
+    @staticmethod
+    def _guarded_jsonrpc_routes(
+        handler: DefaultRequestHandler, alias: str
+    ) -> list[BaseRoute]:
+        """The JSON-RPC binding, with non-messaging methods closed off.
+
+        The upstream dispatcher serves the full method set, and with no auth
+        layer every caller shares one task-store identity — see
+        ``ALLOWED_JSONRPC_METHODS`` for what stays open and why.
+        """
+        (route,) = create_jsonrpc_routes(
+            handler,
+            rpc_url=f"/agents/{alias}",
+            enable_v0_3_compat=True,
+        )
+        dispatch = route.endpoint
+
+        async def endpoint(request: Request) -> Any:
+            try:
+                body = await request.json()
+            except Exception:
+                body = None
+            method = body.get("method") if isinstance(body, dict) else None
+            if method is not None and method not in ALLOWED_JSONRPC_METHODS:
+                request_id = body.get("id") if isinstance(body, dict) else None
+                if not isinstance(request_id, str | int):
+                    request_id = None
+                return JSONResponse(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32601, "message": "Method not found"},
+                    }
+                )
+            # The request body is cached on the Request, so the dispatcher
+            # can re-read it.
+            return await dispatch(request)
+
+        return [Route(f"/agents/{alias}", endpoint, methods=["POST"])]
 
     @staticmethod
     def _messaging_rest_routes(
@@ -176,12 +232,12 @@ class GatewayServer:
         import uvicorn
 
         self._app = self._build_app()
-        server = uvicorn.Server(
+        self._uvicorn = uvicorn.Server(
             uvicorn.Config(
                 self._app, host="0.0.0.0", port=self.port, log_level="warning"
             )
         )
-        self._server_task = asyncio.create_task(server.serve())
+        self._server_task = asyncio.create_task(self._uvicorn.serve())
         logger.info(
             "Starting A2A Gateway server on port %d with %d peers",
             self.port,
@@ -189,11 +245,17 @@ class GatewayServer:
         )
 
     async def stop(self) -> None:
-        if self._server_task:
-            self._server_task.cancel()
-            try:
-                await self._server_task
-            except asyncio.CancelledError:
-                pass
-            self._server_task = None
-            logger.info("A2A Gateway server stopped")
+        if self._uvicorn is None or self._server_task is None:
+            return
+        # Ask uvicorn to exit rather than cancelling serve(): cancellation
+        # skips its shutdown phase and leaks the listening socket.
+        self._uvicorn.should_exit = True
+        try:
+            await self._server_task
+        except asyncio.CancelledError:
+            raise
+        except BaseException:  # uvicorn raises SystemExit on startup failure
+            logger.exception("A2A Gateway server exited with error")
+        self._uvicorn = None
+        self._server_task = None
+        logger.info("A2A Gateway server stopped")
