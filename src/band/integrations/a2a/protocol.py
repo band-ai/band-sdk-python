@@ -91,11 +91,6 @@ def task_response_text(task: Task | None) -> str:
     return ""
 
 
-def is_terminal_state(state: int) -> bool:
-    """Return whether an A2A task state ends execution."""
-    return state in TERMINAL_TASK_STATES
-
-
 def state_name(state: int) -> str:
     """Return the stable enum name for a protobuf task state."""
     return TaskState.Name(state)

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.helpers import new_text_message
-from a2a.types import Task
+from a2a.types import Message, Task
 
 
 @dataclass
@@ -83,7 +83,7 @@ class PendingA2ATask:
             await self._updater.cancel()
             self.done.set()
 
-    def _message(self, content: str):
+    def _message(self, content: str) -> Message:
         return new_text_message(
             content,
             context_id=self.task.context_id,

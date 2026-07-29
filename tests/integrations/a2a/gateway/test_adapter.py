@@ -239,7 +239,9 @@ class TestGatewayExecution:
         ).status.state == TaskState.TASK_STATE_COMPLETED
 
     @pytest.mark.asyncio
-    async def test_timeout_returns_terminal_failure(self) -> None:
+    async def test_timeout_returns_terminal_failure(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         adapter = A2AGatewayAdapter(
             config=A2AGatewayAdapterConfig(response_timeout_s=0.01)
         )
@@ -247,12 +249,30 @@ class TestGatewayExecution:
         configure_room_creation(adapter)
         queue = EventQueueLegacy()
 
-        await BandAgentExecutor(adapter, "weather").execute(make_request(), queue)
+        with caplog.at_level("INFO", logger="band.integrations.a2a.gateway.adapter"):
+            await BandAgentExecutor(adapter, "weather").execute(make_request(), queue)
 
         await queue.dequeue_event()
         terminal = await queue.dequeue_event()
         assert terminal.status.state == TaskState.TASK_STATE_FAILED
         assert adapter._pending_tasks == {}
+        assert not any(
+            "A2A request completed" in record.message for record in caplog.records
+        ), "a timed-out request must not be logged as completed"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_all_stops_the_hosted_server(self) -> None:
+        """Agent.stop() reaches the adapter only via cleanup_all, so the
+        self-hosted HTTP server must be stopped there."""
+        adapter = A2AGatewayAdapter()
+        server = MagicMock()
+        server.stop = AsyncMock()
+        adapter._server = server
+
+        await adapter.cleanup_all()
+
+        server.stop.assert_awaited_once()
+        assert adapter._server is None
 
     @pytest.mark.asyncio
     async def test_room_cleanup_returns_terminal_failure(self) -> None:

@@ -176,7 +176,6 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         # Create and start HTTP server with peer routes
         self._server = GatewayServer(
             peers=self._peers,
-            peers_by_uuid=self._peers_by_uuid,
             gateway_url=self.gateway_url,
             port=self.port,
             executor_factory=partial(BandAgentExecutor, self),
@@ -261,8 +260,8 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             await pending.fail("Band room closed before the A2A response completed")
         logger.debug("Cleaned up gateway resources for room %s", room_id)
 
-    async def stop(self) -> None:
-        """Stop the HTTP server and clean up resources."""
+    async def cleanup_all(self) -> None:
+        """Stop the self-hosted HTTP server when the agent stops."""
         if self._server:
             await self._server.stop()
             self._server = None
@@ -295,7 +294,15 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
         self, peer_id: str, context: RequestContext, event_queue: EventQueue
     ) -> None:
         """Bridge one official A2A execution to a Band room."""
-        request = await self._establish_request(peer_id, context, event_queue)
+        try:
+            request = await self._establish_request(peer_id, context, event_queue)
+        except Exception:
+            logger.exception(
+                "A2A request setup failed: peer=%s context=%s",
+                peer_id,
+                context.context_id,
+            )
+            raise
         logger.info(
             "A2A request started: peer=%s room=%s context=%s task=%s",
             peer_id,
@@ -307,7 +314,7 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             async with self.pending_task(request.room_id, request.pending):
                 await self._announce_request(request)
                 await self._send_to_band(request, context)
-                await self._await_response(request)
+                completed = await self._await_response(request)
         except asyncio.CancelledError:
             logger.debug(
                 "A2A request cancelled: room=%s task=%s",
@@ -324,11 +331,12 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             )
             raise
         else:
-            logger.info(
-                "A2A request completed: room=%s task=%s",
-                request.room_id,
-                request.pending.task.id,
-            )
+            if completed:
+                logger.info(
+                    "A2A request completed: room=%s task=%s",
+                    request.room_id,
+                    request.pending.task.id,
+                )
 
     async def _establish_request(
         self, peer_id: str, context: RequestContext, event_queue: EventQueue
@@ -380,8 +388,8 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
             request.pending.task.id,
         )
 
-    async def _await_response(self, request: GatewayRequest) -> None:
-        """Wait for a terminal Band reply, publishing timeout failure if needed."""
+    async def _await_response(self, request: GatewayRequest) -> bool:
+        """Wait for a terminal Band reply; False when it timed out instead."""
         try:
             if self.config.response_timeout_s is None:
                 await request.pending.done.wait()
@@ -396,6 +404,8 @@ class A2AGatewayAdapter(SimpleAdapter[GatewaySessionState]):
                 self.config.response_timeout_s,
             )
             await request.pending.fail("Timed out waiting for a Band response")
+            return False
+        return True
 
     @asynccontextmanager
     async def pending_task(

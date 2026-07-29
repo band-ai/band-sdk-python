@@ -171,7 +171,7 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         sender_name: str | None,
     ) -> None:
         """Handle A2A event and forward to Band platform."""
-        if getattr(event, "HasField", lambda _name: False)("message"):
+        if event.HasField("message"):
             await self._deliver_message(event.message, tools, sender_id, sender_name)
             return
 
@@ -182,12 +182,17 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         self._remember_task(room_id, task)
         self._task_senders.setdefault(key, {"id": sender_id, "name": sender_name or ""})
 
-        await self._deliver_task_update(task, tools, self._task_senders[key])
-        if task.status.state == TaskState.TASK_STATE_INPUT_REQUIRED:
-            await self._emit_task_event(tools, task, task.status.state)
-        elif task.status.state in TERMINAL_TASK_STATES:
-            await self._emit_task_event(tools, task, task.status.state)
-            self._finalize_task(room_id, task.id)
+        state = task.status.state
+        try:
+            await self._deliver_task_update(task, tools, self._task_senders[key])
+            if state == TaskState.TASK_STATE_INPUT_REQUIRED:
+                await self._emit_task_event(tools, task, state)
+        finally:
+            # A terminal task must be persisted and released even when Band
+            # delivery fails, or the room keeps addressing a finished task.
+            if state in TERMINAL_TASK_STATES:
+                await self._emit_task_event(tools, task, state)
+                self._finalize_task(room_id, task.id)
 
     async def _deliver_message(
         self,
@@ -296,12 +301,26 @@ class A2AAdapter(SimpleAdapter[A2ASessionState]):
         """Clean up A2A context for room."""
         self._contexts.pop(room_id, None)
         self._tasks.pop(room_id, None)
-        # Clean up any task_senders entries for this room
-        keys_to_remove = [key for key in self._task_senders if key[0] == room_id]
-        for key in keys_to_remove:
+        # A resubscribed task may live in the cache without a sender entry,
+        # so sweep both key sets.
+        stale_keys = [
+            key
+            for key in self._task_senders.keys() | self._task_cache.keys()
+            if key[0] == room_id
+        ]
+        for key in stale_keys:
             self._task_senders.pop(key, None)
             self._task_cache.pop(key, None)
         logger.debug("Cleaned up A2A context for room %s", room_id)
+
+    async def cleanup_all(self) -> None:
+        """Close the owned A2A client and its HTTP transport."""
+        if self._client is not None:
+            await self._client.close()
+            self._client = None
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def _emit_task_event(
         self, tools: AgentToolsProtocol, task: Task, state: TaskState

@@ -6,6 +6,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from a2a.helpers import new_text_message
 from a2a.types import (
@@ -250,9 +251,15 @@ class TestA2AAdapterMessageFlow:
         assert adapter._tasks == {}
 
     @pytest.mark.asyncio
-    async def test_terminal_task_is_retained_when_band_delivery_fails(
+    async def test_terminal_task_is_finalized_even_when_band_delivery_fails(
         self, adapter: A2AAdapter
     ) -> None:
+        """A failed delivery must not leave the room pointing at a done task.
+
+        Nothing retries the delivery, so retaining the task would only make
+        every later turn address a completed task_id and lose the terminal
+        task event that rehydration depends on.
+        """
         tools = FakeAgentTools()
         tools.send_message = AsyncMock(side_effect=RuntimeError("Band unavailable"))
         task = make_task(artifact_text="Final response")
@@ -262,9 +269,12 @@ class TestA2AAdapterMessageFlow:
                 task_event(task), tools, "room-123", "user-456", "Test User"
             )
 
-        retained = adapter._task_cache[("room-123", task.id)]
-        assert retained.status.state == TaskState.TASK_STATE_COMPLETED
-        assert adapter._tasks["room-123"] == task.id
+        assert tools.events_sent[-1]["metadata"]["a2a_task_state"] == (
+            "TASK_STATE_COMPLETED"
+        ), "terminal task event must still be persisted for rehydration"
+        assert adapter._tasks == {}, "next turn must start a fresh task"
+        assert adapter._task_cache == {}
+        assert adapter._task_senders == {}
 
     @pytest.mark.asyncio
     async def test_input_required_is_forwarded_and_persisted(
@@ -307,6 +317,24 @@ class TestA2AAdapterMessageFlow:
         assert tools.messages_sent[-1]["content"] == "Hello"
 
 
+class TestA2AAdapterShutdown:
+    @pytest.mark.asyncio
+    async def test_cleanup_all_closes_owned_clients(self) -> None:
+        """Agent.stop() reaches the adapter only via cleanup_all, so the
+        owned httpx transport must be released there."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.close = AsyncMock()
+        adapter._http_client = httpx.AsyncClient()
+        http_client = adapter._http_client
+
+        await adapter.cleanup_all()
+
+        assert http_client.is_closed, "owned httpx client must be closed"
+        assert adapter._client is None
+        assert adapter._http_client is None
+
+
 class TestA2AAdapterSession:
     @pytest.mark.asyncio
     async def test_rehydrates_context_and_resubscribes_active_task(self) -> None:
@@ -327,6 +355,30 @@ class TestA2AAdapterSession:
 
         assert adapter._contexts["room-123"] == "ctx-123"
         assert adapter._tasks["room-123"] == "task-123"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_reclaims_tasks_cached_by_resubscribe(self) -> None:
+        """A resubscribed task has no sender entry, but must not outlive its room."""
+        adapter = A2AAdapter(remote_url="http://localhost:10000")
+        adapter._client = MagicMock()
+        adapter._client.subscribe = MagicMock(
+            return_value=stream(task_event(make_task(TaskState.TASK_STATE_WORKING)))
+        )
+        await adapter._rehydrate_from_history(
+            "room-123",
+            A2ASessionState(
+                context_id="ctx-123",
+                task_id="task-123",
+                task_state="TASK_STATE_WORKING",
+            ),
+        )
+        assert adapter._task_cache, "resubscribe should have cached the task"
+
+        await adapter.on_cleanup("room-123")
+
+        assert adapter._task_cache == {}, (
+            "room cleanup must reclaim cache entries that never got a sender"
+        )
 
     @pytest.mark.asyncio
     async def test_does_not_resubscribe_terminal_task(self) -> None:

@@ -17,6 +17,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.compat.v0_3.conversions import to_compat_agent_card
 from a2a.utils.constants import PROTOCOL_VERSION_0_3
 from starlette.applications import Starlette
+from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
 
@@ -26,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 ExecutorFactory = Callable[[str], AgentExecutor]
 
+# The REST endpoints the gateway serves per peer: the messaging binding and
+# the compat card. The upstream factory also returns task read/cancel/list
+# and push-config routes — an unauthenticated window into past conversations.
+MESSAGING_REST_SUFFIXES = ("/message:send", "/message:stream", "/card")
+
 
 class GatewayServer:
     """Expose each discovered Band peer through the official A2A server routes."""
@@ -33,13 +39,11 @@ class GatewayServer:
     def __init__(
         self,
         peers: dict[str, Peer],
-        peers_by_uuid: dict[str, Peer],
         gateway_url: str,
         port: int,
         executor_factory: ExecutorFactory,
     ) -> None:
         self.peers = peers
-        self.peers_by_uuid = peers_by_uuid
         self.gateway_url = gateway_url.rstrip("/")
         self.port = port
         self.executor_factory = executor_factory
@@ -85,29 +89,27 @@ class GatewayServer:
         rest_routes: list[BaseRoute] = []
 
         for slug, peer in self.peers.items():
-            aliases = dict.fromkeys((slug, peer.id))
-            for alias in aliases:
+            # One handler — and one task store — per peer, shared by all its
+            # aliases, so a task started on the slug stays visible on the UUID.
+            handler = DefaultRequestHandler(
+                agent_executor=self.executor_factory(slug),
+                task_store=InMemoryTaskStore(),
+                agent_card=self._agent_card(slug, peer),
+            )
+            for alias in dict.fromkeys((slug, peer.id)):
                 card = self._agent_card(alias, peer)
-                executor = self.executor_factory(slug)
-                handler = DefaultRequestHandler(
-                    agent_executor=executor,
-                    task_store=InMemoryTaskStore(),
-                    agent_card=card,
-                )
                 protocol_routes.extend(
                     create_agent_card_routes(
                         card,
                         card_url=f"/agents/{alias}/.well-known/agent-card.json",
                     )
                 )
-                protocol_routes.extend(
-                    [
-                        Route(
-                            f"/agents/{alias}/.well-known/agent.json",
-                            self._legacy_agent_card(card),
-                            methods=["GET"],
-                        )
-                    ]
+                protocol_routes.append(
+                    Route(
+                        f"/agents/{alias}/.well-known/agent.json",
+                        self._legacy_agent_card(card),
+                        methods=["GET"],
+                    )
                 )
                 protocol_routes.extend(
                     create_jsonrpc_routes(
@@ -116,15 +118,30 @@ class GatewayServer:
                         enable_v0_3_compat=True,
                     )
                 )
-                rest_routes.extend(
-                    create_rest_routes(
-                        handler,
-                        enable_v0_3_compat=True,
-                        path_prefix=f"/agents/{alias}",
-                    )
-                )
+                rest_routes.extend(self._messaging_rest_routes(handler, alias))
 
         return Starlette(routes=routes + protocol_routes + rest_routes)
+
+    @staticmethod
+    def _messaging_rest_routes(
+        handler: DefaultRequestHandler, alias: str
+    ) -> list[BaseRoute]:
+        """The REST binding, reduced to the endpoints this gateway serves.
+
+        Beyond the unauthenticated task routes, the upstream factory ends with
+        a multi-tenant catch-all ``Mount("/{tenant}")``; peers here are
+        namespaced by path, and the first alias's mount would shadow every
+        later alias's flat routes.
+        """
+        return [
+            route
+            for route in create_rest_routes(
+                handler,
+                enable_v0_3_compat=True,
+                path_prefix=f"/agents/{alias}",
+            )
+            if isinstance(route, Route) and route.path.endswith(MESSAGING_REST_SUFFIXES)
+        ]
 
     @staticmethod
     def _legacy_agent_card(
@@ -143,9 +160,7 @@ class GatewayServer:
 
         return response
 
-    async def _handle_list_peers(self, _request: Any) -> Any:
-        from starlette.responses import JSONResponse
-
+    async def _handle_list_peers(self, _request: Request) -> JSONResponse:
         peers = [
             {
                 "slug": slug,
