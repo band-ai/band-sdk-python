@@ -227,6 +227,29 @@ class TestToolPairIntegrity:
             "user: toolResult(call-1, error) text([Alice]: still there?)",
         ]
 
+    def test_orphaned_tool_result_gets_a_synthetic_tool_use(self):
+        """The tool_call event can be lost (failed send, unparseable payload).
+
+        Emitting the surviving result alone would leave a toolResult with no
+        preceding toolUse — which Converse rejects on every later turn in the
+        room — so the converter synthesizes the call it answers.
+        """
+        converter = StrandsHistoryConverter(agent_name="Bot")
+
+        result = converter.convert(
+            [
+                _text("please send it"),
+                _tool_result("band_send_message", "sent", "call-lost"),
+                _text("thanks"),
+            ]
+        )
+
+        assert _outline(result) == [
+            "user: text([Alice]: please send it)",
+            "assistant: toolUse(call-lost)",
+            "user: toolResult(call-lost, success) text([Alice]: thanks)",
+        ]
+
     def test_a_late_call_joins_the_round_it_interleaved_with(self):
         """Strands runs a round's tools concurrently, so its hooks interleave.
 

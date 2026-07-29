@@ -154,8 +154,20 @@ class ConverseTranscript:
         )
         self._unanswered.add(tool_use_id)
 
-    def add_tool_result(self, tool_use_id: str, output: str, *, is_error: bool) -> None:
+    def add_tool_result(
+        self, tool_use_id: str, name: str, output: str, *, is_error: bool
+    ) -> None:
         """Record a tool result, closing the exchange once nothing is outstanding."""
+        if tool_use_id not in self._unanswered:
+            # The matching tool_call event never reached history (failed send or
+            # unparseable payload). Converse rejects a toolResult with no
+            # preceding toolUse, so give the result a call to answer.
+            logger.warning(
+                "Synthesizing toolUse for orphaned toolResult %s (%s)",
+                tool_use_id,
+                name,
+            )
+            self.add_tool_use(tool_use_id, name, {})
         self._tool_results.append(
             {
                 "toolResult": {
@@ -256,7 +268,10 @@ class StrandsHistoryConverter(HistoryConverter[StrandsMessages]):
         parsed = parse_tool_result(content)
         if parsed:
             transcript.add_tool_result(
-                parsed.tool_call_id, parsed.output, is_error=parsed.is_error
+                parsed.tool_call_id,
+                parsed.name,
+                parsed.output,
+                is_error=parsed.is_error,
             )
 
     def _handle_text(
