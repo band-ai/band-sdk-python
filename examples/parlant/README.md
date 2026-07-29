@@ -30,15 +30,21 @@ uv sync --extra parlant
 
 The adapter uses the Parlant SDK directly - no separate HTTP server needed:
 
-> Running more than one Parlant agent on this machine? Pass reserved ports instead of
-> Parlant's fixed defaults — see [Running two agents locally](#running-two-agents-locally-tom-and-jerry).
+The reserved ports below are what lets a second agent start on this machine — see
+[Running two agents locally](#running-two-agents-locally-tom-and-jerry).
 
 ```python
 import parlant.sdk as p
 from band import Agent
 from band.adapters import ParlantAdapter
+from band.integrations.parlant import reserve_server_ports
 
-async with p.Server() as server:
+ports = reserve_server_ports()
+
+async with p.Server(
+    port=ports.port,
+    tool_service_port=ports.tool_service_port,
+) as server:
     # Create Parlant agent with guidelines
     parlant_agent = await server.create_agent(
         name="Assistant",
