@@ -48,6 +48,7 @@ from band.runtime.custom_tools import (
     find_custom_tool,
     format_validation_error,
 )
+from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import is_room_posting_tool
 from band.runtime.prompts import render_system_prompt
 
@@ -81,14 +82,6 @@ _LOCAL_COMMANDS: frozenset[str] = frozenset(
         "usage",
     }
 )
-
-# How many tokens from the start of the message to scan for a ``/command``.
-# The platform prepends mentions as ``@handle DisplayName`` pairs (two tokens
-# per participant).  20 tokens comfortably covers up to ~10 concurrent
-# mentions, which is the realistic upper bound for a room, while stopping
-# well short of the message body so a slash word used as prose
-# (e.g. "use /tmp as …") remains prose.
-_COMMAND_TOKEN_SEARCH_LIMIT = 20
 
 # Upper bound on cached task titles (room-lifecycle map used to preserve the
 # title between task_started and task_complete events).  500 covers bursty
@@ -3102,26 +3095,24 @@ class CodexAdapter(SimpleAdapter[CodexSessionState]):
     def _extract_local_command(content: str) -> tuple[str, str] | None:
         """Return ``(command, args)`` when ``content`` opens with a slash command.
 
-        Scans only the first ``_COMMAND_TOKEN_SEARCH_LIMIT`` tokens so the
-        platform's leading mention block (``@handle DisplayName`` per
-        participant, plus the occasional bare display name) can't bury a
-        legitimate ``/command``, while a slash word used as prose in the
-        body of a longer message still reads as prose.
+        A delivered room message always leads with the platform's ``@handle``
+        mention block (a message reaches an agent only by mentioning it), so
+        that block is stripped first -- otherwise the command never leads the
+        content and ``/approve``/``/decline`` silently miss. Only the token
+        that remains in front is considered, so prose merely *containing* a
+        slash word ("don't /approve it yet") stays prose instead of resolving
+        to the command it argues against.
         """
-        tokens = content.strip().split()
-        if not tokens:
+        stripped = strip_leading_mentions(content).lstrip()
+        if not stripped.startswith("/"):
             return None
-        search_limit = min(len(tokens), _COMMAND_TOKEN_SEARCH_LIMIT)
-        for idx in range(search_limit):
-            token = tokens[idx]
-            if not token.startswith("/") or len(token) == 1:
-                continue
-            command = token[1:].lower()
-            if command not in _LOCAL_COMMANDS:
-                continue
-            args = " ".join(tokens[idx + 1 :]).strip()
-            return command, args
-        return None
+        # Split on any whitespace, so a tab- or newline-separated argument still
+        # reaches the command it belongs to.
+        parts = stripped.removeprefix("/").split(maxsplit=1)
+        command = parts[0].lower() if parts else ""
+        if command not in _LOCAL_COMMANDS:
+            return None
+        return command, parts[1].strip() if len(parts) > 1 else ""
 
     @staticmethod
     def _approval_token(request_id: int | str, params: dict[str, Any]) -> str:

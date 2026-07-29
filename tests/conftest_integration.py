@@ -31,12 +31,12 @@ from typing import TYPE_CHECKING, Any
 import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
-from band_rest import AsyncRestClient, ChatRoomRequest
+from band_rest import AsyncRestClient, ChatMessageRequest, ChatRoomRequest
 from band_rest.core.api_error import ApiError
 from band_rest.human_api_chats.types.create_my_chat_room_request_chat import (
     CreateMyChatRoomRequestChat,
 )
-from band_rest.types import ParticipantRequest
+from band_rest.types import ChatMessageRequestMentionsItem, ParticipantRequest
 from thenvoi_testing.markers import skip_without_env, skip_without_envs
 from thenvoi_testing.settings import BaseTestSettings
 
@@ -385,6 +385,25 @@ async def is_room_alive(api_client: AsyncRestClient, chat_id: str) -> bool:
         return response.data is not None
     except (ApiError, ConnectionError):
         return False
+
+
+async def send_user_mention(
+    user_api_client: AsyncRestClient, chat_id: str, agent_id: str, text: str
+) -> str:
+    """Post a message from the user that @mentions the agent; return message id.
+
+    The mention is what makes the platform deliver the message to the agent
+    (and prepend its ``@handle`` token to the content), so control- and
+    approval-oriented integration tests share this one sender.
+    """
+    resp = await user_api_client.human_api_messages.send_my_chat_message(
+        chat_id,
+        message=ChatMessageRequest(
+            content=text,
+            mentions=[ChatMessageRequestMentionsItem(id=agent_id)],
+        ),
+    )
+    return resp.data.id
 
 
 async def wait_until(

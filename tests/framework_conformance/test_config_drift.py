@@ -22,14 +22,16 @@ from tests.framework_configs.converters import (
 
 
 def _discover_modules(package_dir: Path) -> set[str]:
-    """Return base names (no .py) of public modules in *package_dir*.
+    """Return base names of public modules in *package_dir*.
 
-    Skips ``__init__.py`` and any non-``.py`` files.
+    A module is either a ``.py`` file (skipping ``__init__.py``) or a package
+    directory with an ``__init__.py`` (e.g. ``adapters/opencode/``).
     """
     return {
         p.stem
         for p in package_dir.iterdir()
-        if p.suffix == ".py" and p.name != "__init__.py"
+        if (p.suffix == ".py" and p.name != "__init__.py")
+        or (p.is_dir() and (p / "__init__.py").exists())
     }
 
 
@@ -119,7 +121,9 @@ class TestCrewAIConformanceGuards:
     """Verify that CrewAI conformance instances guard runtime methods.
 
     If the guard loop in ``_crewai_factory`` is accidentally removed, these
-    tests will fail — preventing silent execution on MagicMock objects.
+    tests fail: a conformance instance would then either operate silently on
+    MagicMocks (no crewai installed) or build a Crew and call an LLM for real
+    (dev-crewai venv).
     """
 
     @staticmethod

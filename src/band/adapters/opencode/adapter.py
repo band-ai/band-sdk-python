@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import warnings
@@ -10,11 +11,12 @@ from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import ClassVar, Any, Literal
+from typing import ClassVar, Any
 
 import httpx
 
-from band.converters.helpers import optional_str
+from band.adapters.opencode.approvals import ApprovalPorts, RoomApprovals
+from band.adapters.opencode.config import OpencodeAdapterConfig
 from band.converters.opencode import OpencodeHistoryConverter
 from band.core.exceptions import BandConfigError
 from band.core.protocols import AgentToolsProtocol
@@ -32,18 +34,32 @@ from band.integrations.mcp.backends import (
 )
 from band.integrations.opencode import (
     HttpOpencodeClient,
+    MessagePartDeltaEvent,
+    MessagePartUpdatedEvent,
+    MessageUpdatedEvent,
     OpencodeClientProtocol,
+    OpencodeEvent,
+    OpencodeMessageInfo,
+    OpencodePart,
     OpencodeSessionState,
+    OpencodeToolState,
+    OpencodeToolStatus,
+    PermissionAskedEvent,
+    QuestionAskedEvent,
+    SessionErrorEvent,
+    SessionIdleEvent,
+    describe_error,
+    parse_opencode_event,
 )
-from band.runtime.custom_tools import CustomToolDef
+from band.runtime.custom_tools import CustomToolDef, get_custom_tool_name
 from band.runtime.prompts import render_system_prompt
-from band.runtime.tools import iter_tool_definitions
+from band.runtime.tools import (
+    ToolDefinition,
+    is_room_posting_tool,
+    iter_tool_definitions,
+)
 
 logger = logging.getLogger(__name__)
-
-ApprovalMode = Literal["manual", "auto_accept", "auto_decline"]
-QuestionMode = Literal["manual", "auto_reject"]
-ApprovalReply = Literal["once", "always", "reject"]
 
 _OPENCODE_SYSTEM_NOTE = """\
 Responses are relayed back into the Band room by the adapter.
@@ -51,20 +67,7 @@ Use the band_ prefixed tools (e.g. band_send_message) for Band platform actions 
 When you need approval or clarification, ask clearly and wait for the user's next room message.
 """
 
-
-@dataclass
-class _PendingPermission:
-    request_id: str
-    permission: str
-    patterns: list[str]
-    timeout_task: asyncio.Task[None] | None = None
-
-
-@dataclass
-class _PendingQuestion:
-    request_id: str
-    questions: list[dict[str, Any]]
-    timeout_task: asyncio.Task[None] | None = None
+_MCP_SERVER_ID_LENGTH = 8
 
 
 @dataclass
@@ -81,8 +84,11 @@ class _RoomState:
     assistant_part_types: dict[str, str] = field(default_factory=dict)
     reported_tool_calls: set[str] = field(default_factory=set)
     reported_tool_results: set[str] = field(default_factory=set)
-    pending_permission: _PendingPermission | None = None
-    pending_question: _PendingQuestion | None = None
+    # Set when a room-posting band tool (band_send_message) completed this turn,
+    # so the text fallback stays silent instead of double-posting the reply.
+    replied_via_room_tool: bool = False
+    # Bound in _get_or_create_room_state, immediately after construction.
+    approvals: RoomApprovals = field(init=False)
     last_error_message: str | None = None
     persisted_session_id: str | None = None
     # Per-assistant-message usage for the current turn (last-write-wins per id,
@@ -90,32 +96,73 @@ class _RoomState:
     # end — a tool loop produces several assistant messages.
     usage_by_message: dict[str, TurnUsage] = field(default_factory=dict)
 
+    def begin_turn(self, sender_id: str | None) -> None:
+        """Reset reply state and create the futures for one new turn."""
+        loop = asyncio.get_running_loop()
+        self.turn_future = loop.create_future()
+        self.turn_release_future = loop.create_future()
+        self.turn_task = None
+        self.pending_mentions = [{"id": sender_id}] if sender_id else []
+        self.text_parts.clear()
+        self.assistant_message_ids.clear()
+        self.assistant_part_types.clear()
+        self.reported_tool_calls.clear()
+        self.reported_tool_results.clear()
+        self.replied_via_room_tool = False
+        # A new dict preserves the prior turn's snapshot for its watch task.
+        self.usage_by_message = {}
+        self.last_error_message = None
 
-@dataclass
-class OpencodeAdapterConfig:
-    """Runtime configuration for OpenCode sessions."""
+    def record_message(
+        self, info: OpencodeMessageInfo | None, *, emit_usage: bool
+    ) -> None:
+        """Record the assistant message metadata relevant to the current turn."""
+        if info is None or info.role != "assistant":
+            return
+        if info.id:
+            self.assistant_message_ids.add(info.id)
+            if emit_usage and info.tokens is not None:
+                usage = info.tokens.to_turn_usage()
+                if not usage.is_empty:
+                    self.usage_by_message[info.id] = usage
+        if info.error is not None and not info.error.is_empty:
+            self.last_error_message = info.error.describe()
 
-    base_url: str = "http://127.0.0.1:4096"
-    directory: str | None = None
-    workspace: str | None = None
-    provider_id: str | None = None
-    model_id: str | None = None
-    agent: str | None = None
-    variant: str | None = None
-    custom_section: str = ""
-    include_base_instructions: bool = False
-    enable_task_events: bool = True
-    enable_execution_reporting: bool = False
-    enable_memory_tools: bool = False
-    fallback_send_agent_text: bool = True
-    turn_timeout_s: float = 300.0
-    approval_mode: ApprovalMode = "manual"
-    approval_wait_timeout_s: float = 300.0
-    approval_timeout_reply: ApprovalReply = "reject"
-    question_mode: QuestionMode = "manual"
-    question_wait_timeout_s: float = 300.0
-    session_title_prefix: str = "Band"
-    mcp_server_name: str = "band"
+    def track_assistant_part(self, part: OpencodePart) -> None:
+        """Remember text and reasoning parts belonging to the assistant reply."""
+        if not part.id or part.message_id not in self.assistant_message_ids:
+            return
+        self.assistant_part_types[part.id] = part.type
+        if part.type == "text":
+            self.text_parts[part.id] = part.text or ""
+
+    def append_text_delta(self, event: MessagePartDeltaEvent) -> None:
+        """Append a text delta only after its assistant text part is known."""
+        props = event.properties
+        if (
+            props.field != "text"
+            or not props.part_id
+            or props.message_id not in self.assistant_message_ids
+            or self.assistant_part_types.get(props.part_id) != "text"
+        ):
+            return
+        self.text_parts[props.part_id] = (
+            self.text_parts.get(props.part_id, "") + props.delta
+        )
+
+    def mark_tool_call(self, call_id: str) -> bool:
+        """Return whether this is the first report for a tool call."""
+        if call_id in self.reported_tool_calls:
+            return False
+        self.reported_tool_calls.add(call_id)
+        return True
+
+    def mark_tool_result(self, call_id: str) -> bool:
+        """Return whether this is the first report for a tool result."""
+        if call_id in self.reported_tool_results:
+            return False
+        self.reported_tool_results.add(call_id)
+        return True
 
 
 class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
@@ -123,9 +170,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
     Maps each Band room to an OpenCode session. Messages from the room
     are forwarded as prompts; SSE events from OpenCode are relayed back as
-    room messages, tool-call/result reports, and error events. Platform
-    tools come from band-mcp, while `additional_tools` are exposed through
-    a separate local MCP server.
+    room messages, tool-call/result reports, and error events. Band platform
+    tools and `additional_tools` are served together by one in-process MCP
+    server, registered with OpenCode over SSE.
 
     Approval lifecycle (``approval_mode``):
       * ``manual`` -- permission prompts are forwarded to the room; the user
@@ -133,6 +180,14 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         configurable timeout (``approval_wait_timeout_s``).
       * ``auto_accept`` -- every permission is approved with ``once``.
       * ``auto_decline`` -- every permission is rejected immediately.
+
+    Exception, in every mode: a permission ask naming one of the adapter's
+    OWN registered tools (band platform tools + ``additional_tools``) is
+    auto-approved with ``always`` -- platform plumbing must never stall on a
+    human approval, matching the codex adapter, which executes band tools
+    with no approval gate. Non-tool asks such as OpenCode's ``doom_loop``
+    heuristic still follow ``approval_mode``; headless deployments (no human
+    in the room) should run ``auto_accept``.
 
     Question lifecycle (``question_mode``):
       * ``manual`` -- questions are forwarded to the room; the user replies
@@ -200,6 +255,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             features=features,
         )
         self.config = self._config
+        # Set in ``on_started`` from the agent identity. OpenCode keys MCP
+        # registrations globally by name, so this must stay stable across an
+        # agent restart (to refresh the same registration) yet differ for
+        # concurrent agents sharing one serve.
+        self._mcp_server_name = self._config.mcp_server_name
         self._custom_tools: list[CustomToolDef] = list(additional_tools or [])
         self._client_factory = client_factory or self._default_client_factory
         self._client: OpencodeClientProtocol | None = None
@@ -209,9 +269,27 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         self._room_by_session: dict[str, str] = {}
         self._state_lock = asyncio.Lock()
         self._system_prompt: str = ""
+        # The tools this adapter registers with OpenCode (band platform tools +
+        # custom tools). Computed once at construction -- both inputs are known
+        # here -- and reused when the shared MCP backend is built. Deriving the
+        # names eagerly keeps the "is this our own band tool?" auto-approve
+        # check (and room-posting detection) independent of MCP-registration
+        # timing, so a second room's first turn can't race an empty set.
+        self._tool_definitions: list[ToolDefinition] = list(
+            iter_tool_definitions(
+                include_memory=Capability.MEMORY in self.features.capabilities,
+                include_contacts=Capability.CONTACTS in self.features.capabilities,
+            )
+        )
+        self._own_tool_names: frozenset[str] = frozenset(
+            {definition.name for definition in self._tool_definitions}
+            | {get_custom_tool_name(model) for model, _fn in self._custom_tools}
+        )
 
     async def on_started(self, agent_name: str, agent_description: str) -> None:
         await super().on_started(agent_name, agent_description)
+
+        self._mcp_server_name = self._agent_mcp_server_name(agent_name)
 
         self._system_prompt = render_system_prompt(
             agent_name=agent_name,
@@ -226,21 +304,56 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         self._log_startup_config(agent_name)
 
+    def _agent_mcp_server_name(self, agent_identity: str) -> str:
+        """Return a stable, serve-global MCP name for one Band identity."""
+        digest = hashlib.sha256(agent_identity.encode()).hexdigest()[
+            :_MCP_SERVER_ID_LENGTH
+        ]
+        return f"{self.config.mcp_server_name}_{digest}"
+
+    def _mcp_tool_visibility(self) -> dict[str, bool]:
+        """Expose this agent's MCP tools while hiding sibling registrations."""
+        namespace = f"{self.config.mcp_server_name}_*"
+        current_registration = f"{self._mcp_server_name}_*"
+        # OpenCode applies the last matching rule, so the narrow allow follows
+        # the namespace-wide deny.
+        return {namespace: False, current_registration: True}
+
+    def _build_turn_system(self, room_id: str, msg: PlatformMessage) -> str:
+        """Per-turn system prompt: the static base plus this room's context.
+
+        The band MCP tools' schemas require a ``room_id`` argument (the shared
+        backend dispatches tool calls by room), so the model must be told the
+        current room id every turn or the platform tools are uncallable —
+        the same per-turn room context the ACP client adapter injects.
+        """
+        requester_name = msg.sender_name or msg.sender_id or "Unknown"
+        requester_id = msg.sender_id or "unknown"
+        room_context = (
+            "## Room Context\n"
+            f"Current room_id: {room_id}\n"
+            f"Current requester name: {requester_name}\n"
+            f"Current requester id: {requester_id}\n"
+            "\n"
+            "Use each MCP tool's schema for its argument names. When a tool "
+            "needs the current room, use the Current room_id value above.\n"
+        )
+        return f"{self._system_prompt}\n\n{room_context}".strip()
+
     def _log_startup_config(self, agent_name: str) -> None:
         logger.info(
             "OpenCode adapter started: agent=%s, base_url=%s, "
             "provider=%s, model=%s, approval_mode=%s, "
             "question_mode=%s, execution_reporting=%s, "
-            "task_events=%s, mcp_server=%s, custom_tools=%d",
+            "task_events=%s, custom_tools=%d",
             agent_name,
             self.config.base_url,
             self.config.provider_id or "default",
             self.config.model_id or "default",
             self.config.approval_mode,
             self.config.question_mode,
-            self.config.enable_execution_reporting,
-            self.config.enable_task_events,
-            self.config.mcp_server_name,
+            Emit.EXECUTION in self.features.emit,
+            Emit.TASK_EVENTS in self.features.emit,
             len(self._custom_tools),
         )
 
@@ -258,7 +371,13 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         room_state = await self._get_or_create_room_state(room_id)
         room_state.tools = tools
 
-        if await self._handle_control_message(room_state, msg):
+        if self._client is None:
+            agent_id = getattr(tools, "agent_id", None)
+            self._mcp_server_name = self._agent_mcp_server_name(
+                agent_id or self.agent_name
+            )
+
+        if await room_state.approvals.try_handle_reply(msg.content, msg.sender_id):
             return
 
         if room_state.turn_future and not room_state.turn_future.done():
@@ -273,6 +392,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if client is None:
             raise RuntimeError("OpenCode client is not initialized")
 
+        turn_future: asyncio.Future[None] | None = None
         try:
             session_id, created = await self._ensure_session(room_state, history)
             if Emit.TASK_EVENTS in self.features.emit and (
@@ -293,6 +413,15 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             turn_future = room_state.turn_future
             usage_by_message = room_state.usage_by_message
             try:
+                # Turn-phase diagnostics (classify a stuck turn from CI logs):
+                # if 'returned' never follows 'start', prompt_async is blocking
+                # (submission/scheduling), which no watcher bounds -- see the
+                # note below on _watch_turn_completion owning the timeout.
+                logger.info(
+                    "OpenCode turn: prompt_async start room=%s session=%s",
+                    room_id,
+                    session_id,
+                )
                 await client.prompt_async(
                     session_id,
                     parts=self._build_prompt_parts(
@@ -310,10 +439,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                         # not replay and double it.
                         replay_messages=(history.replay_messages if created else None),
                     ),
-                    system=self._system_prompt,
+                    system=self._build_turn_system(room_id, msg),
                     model=self._build_model_payload(),
                     agent=self.config.agent,
                     variant=self.config.variant,
+                    tools=self._mcp_tool_visibility(),
+                )
+                logger.info(
+                    "OpenCode turn: prompt_async returned room=%s session=%s",
+                    room_id,
+                    session_id,
                 )
             except Exception:
                 self._clear_turn_state(room_state, expected_future=turn_future)
@@ -341,6 +476,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         # asyncio.wait_for), which aborts the session and emits the error event.
         # Nothing awaited here re-raises asyncio.TimeoutError, so on_message has no
         # timeout handler of its own.
+        except asyncio.CancelledError:
+            # The runtime interrupts a turn by cancelling this coroutine, but the
+            # watcher runs detached. Left alone it outlives the interrupt: it
+            # posts the very reply the user stopped, and holds the room's busy
+            # guard until turn_timeout_s. Drop the turn state first (that cancels
+            # the watcher), then ask OpenCode to stop working.
+            if turn_future is not None:
+                self._clear_turn_state(room_state, expected_future=turn_future)
+                await self._abort_session(room_state, "interrupted")
+            raise
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenCode request failed for room %s", room_id)
             await tools.send_event(
@@ -385,11 +530,57 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         state = self._rooms.get(room_id)
         return state.tools if state else None
 
+    def _canonical_tool_name(self, name: str) -> str:
+        """Strip OpenCode's ``{server}_`` MCP prefix off one of our own tools.
+
+        OpenCode registers a remote MCP server's tools under
+        ``{server}_{tool}`` (verified live: the band server's
+        ``band_store_memory`` surfaces as ``band_band_store_memory``). Room
+        ``tool_call``/``tool_result`` events must carry the canonical band
+        tool name like every other adapter's, so consumers match on one
+        vocabulary. Names that aren't ours pass through untouched.
+        """
+        stripped = name.removeprefix(f"{self._mcp_server_name}_")
+        return stripped if stripped in self._own_tool_names else name
+
+    def _is_own_band_tool(self, permission: str) -> bool:
+        """Whether a permission ask names a tool this adapter registered.
+
+        The ask's ``permission`` field is the flat registered tool name, which
+        for an MCP tool carries OpenCode's ``{server}_{tool}`` prefix (see
+        ``_canonical_tool_name``); a bare name is accepted too. Non-matches
+        are logged at debug so any OpenCode naming drift shows up in live
+        logs instead of silently regressing.
+        """
+        if (
+            permission in self._own_tool_names
+            or self._canonical_tool_name(permission) in self._own_tool_names
+        ):
+            return True
+        logger.debug(
+            "OpenCode permission %r does not name a registered band tool",
+            permission,
+        )
+        return False
+
     async def _get_or_create_room_state(self, room_id: str) -> _RoomState:
         async with self._state_lock:
             state = self._rooms.get(room_id)
             if state is None:
                 state = _RoomState(room_id=room_id)
+                state.approvals = RoomApprovals(
+                    self.config,
+                    ApprovalPorts(
+                        room_id=room_id,
+                        session_id=lambda: state.session_id,
+                        client=lambda: self._client,
+                        tools=lambda: state.tools,
+                        turn_mentions=lambda: state.pending_mentions,
+                        release_turn_wait=lambda: self._release_turn_wait(state),
+                        fail_turn=lambda message: self._fail_turn(state, message),
+                        is_own_band_tool=self._is_own_band_tool,
+                    ),
+                )
                 self._rooms[room_id] = state
             return state
 
@@ -400,24 +591,20 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 self._client = self._client_factory(self.config)
             if self._event_task is None or self._event_task.done():
                 self._event_task = asyncio.create_task(self._run_event_loop())
-
-        if was_new:
-            await self._register_mcp_backend()
+            if was_new:
+                # Registration is part of client startup. Keep concurrent room
+                # starts behind the same barrier so no first turn can run before
+                # this client's Band tools are visible to OpenCode.
+                await self._register_mcp_backend()
 
     async def _ensure_mcp_backend(self) -> BandMCPBackend:
         """Create the shared Band MCP backend (LocalMCPServer with SSE)."""
         if self._mcp_backend is not None:
             return self._mcp_backend
 
-        tool_definitions = list(
-            iter_tool_definitions(
-                include_memory=Capability.MEMORY in self.features.capabilities,
-                include_contacts=Capability.CONTACTS in self.features.capabilities,
-            )
-        )
         backend = await create_band_mcp_backend(
             kind="sse",
-            tool_definitions=tool_definitions,
+            tool_definitions=self._tool_definitions,
             get_tools=self._get_room_tools,
             additional_tools=self._custom_tools or None,
         )
@@ -451,22 +638,28 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
 
         try:
             await self._client.register_mcp_server(
-                name=self.config.mcp_server_name,
+                name=self._mcp_server_name,
                 url=local_server.sse_url,
             )
             logger.info(
                 "Registered MCP server %s at %s with OpenCode",
-                self.config.mcp_server_name,
+                self._mcp_server_name,
                 local_server.sse_url,
             )
         except Exception:
             logger.exception(
                 "Failed to register MCP server %s with OpenCode",
-                self.config.mcp_server_name,
+                self._mcp_server_name,
             )
 
     async def _shutdown_client(self) -> None:
         async with self._state_lock:
+            # ``on_cleanup`` decides to shut down after removing the last room,
+            # then releases the lock before stopping network resources. A new
+            # room may arrive in that gap; keep the shared client registered for
+            # it and let that room's eventual cleanup own shutdown instead.
+            if self._rooms:
+                return
             event_task = self._event_task
             client = self._client
             mcp_backend = self._mcp_backend
@@ -474,15 +667,23 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             self._client = None
             self._mcp_backend = None
 
-        if mcp_backend is not None:
-            if client is not None:
+            # OpenCode keys MCP registrations globally by name, so the
+            # disconnect stays under the lock that also guards registration.
+            # Released early, it could land after a successor room registered
+            # the same name and strip tools that nothing would re-register.
+            if mcp_backend is not None and client is not None:
                 try:
-                    await client.deregister_mcp_server(self.config.mcp_server_name)
+                    await client.disconnect_mcp_server(self._mcp_server_name)
                 except Exception:
                     logger.debug(
-                        "Failed to deregister MCP server %s (OpenCode may already be stopped)",
-                        self.config.mcp_server_name,
+                        "Failed to disconnect MCP server %s (OpenCode may already be stopped)",
+                        self._mcp_server_name,
                     )
+
+        # What follows acts only on objects already detached from ``self``, so
+        # no successor can be affected — and the lock must not be held across a
+        # stop that waits out OpenCode's open SSE read.
+        if mcp_backend is not None:
             await mcp_backend.stop()
 
         if event_task is not None:
@@ -507,9 +708,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 client = self._client
                 if client is None:
                     return
-                async for event in client.iter_events():
+                async for raw_event in client.iter_events():
                     retry_delay = 1.0  # reset on successful event
-                    await self._handle_event(event)
+                    await self._handle_event(parse_opencode_event(raw_event))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -521,77 +722,37 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             else:
                 await asyncio.sleep(0.25)
 
-    async def _handle_event(self, event: dict[str, Any]) -> None:
-        event_type = str(event.get("type") or "")
-        properties = event.get("properties") or {}
-        if not isinstance(properties, dict):
-            return
-
-        room_state = await self._room_state_for_event(event_type, properties)
+    async def _handle_event(self, event: OpencodeEvent) -> None:
+        room_state = await self._room_state_for_session(event.session_id)
         if room_state is None:
             return
 
-        if event_type == "message.updated":
-            info = properties.get("info") or {}
-            if isinstance(info, dict):
-                message_id = optional_str(info.get("id"))
-                if info.get("role") == "assistant":
-                    if message_id:
-                        room_state.assistant_message_ids.add(message_id)
-                        if Emit.USAGE in self.features.emit:
-                            usage = self._usage_from_info(info)
-                            if not usage.is_empty:
-                                room_state.usage_by_message[message_id] = usage
-                    error = info.get("error")
-                    if error:
-                        room_state.last_error_message = self._format_opencode_error(
-                            error
-                        )
-            return
+        match event:
+            case MessageUpdatedEvent():
+                self._apply_message_update(room_state, event.properties.info)
+            case MessagePartUpdatedEvent():
+                if event.properties.part is not None:
+                    await self._handle_part_update(room_state, event.properties.part)
+            case MessagePartDeltaEvent():
+                self._apply_part_delta(room_state, event)
+            case PermissionAskedEvent():
+                await room_state.approvals.on_permission_asked(event.properties)
+            case QuestionAskedEvent():
+                await room_state.approvals.on_question_asked(event.properties)
+            case SessionErrorEvent():
+                room_state.last_error_message = describe_error(event.properties.error)
+                self._finish_turn(room_state)
+            case SessionIdleEvent():
+                logger.info(
+                    "OpenCode turn: session.idle room=%s session=%s",
+                    room_state.room_id,
+                    event.session_id,
+                )
+                self._finish_turn(room_state)
 
-        if event_type == "message.part.updated":
-            part = properties.get("part") or {}
-            if isinstance(part, dict):
-                await self._handle_part_update(room_state, part)
-            return
-
-        if event_type == "message.part.delta":
-            await self._handle_part_delta(room_state, properties)
-            return
-
-        if event_type == "permission.asked":
-            await self._handle_permission_asked(room_state, properties)
-            return
-
-        if event_type == "question.asked":
-            await self._handle_question_asked(room_state, properties)
-            return
-
-        if event_type == "session.error":
-            room_state.last_error_message = self._format_opencode_error(
-                properties.get("error")
-            )
-            self._finish_turn(room_state)
-            return
-
-        if event_type == "session.idle":
-            self._finish_turn(room_state)
-
-    async def _room_state_for_event(
-        self, event_type: str, properties: dict[str, Any]
+    async def _room_state_for_session(
+        self, session_id: str | None
     ) -> _RoomState | None:
-        session_id: str | None = None
-        if "sessionID" in properties:
-            session_id = optional_str(properties.get("sessionID"))
-        elif event_type == "message.updated":
-            info = properties.get("info") or {}
-            if isinstance(info, dict):
-                session_id = optional_str(info.get("sessionID"))
-        elif event_type == "message.part.updated":
-            part = properties.get("part") or {}
-            if isinstance(part, dict):
-                session_id = optional_str(part.get("sessionID"))
-
         if not session_id:
             return None
 
@@ -601,266 +762,76 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 return None
             return self._rooms.get(room_id)
 
+    def _apply_message_update(
+        self, room_state: _RoomState, info: OpencodeMessageInfo | None
+    ) -> None:
+        room_state.record_message(info, emit_usage=Emit.USAGE in self.features.emit)
+
     async def _handle_part_update(
-        self, room_state: _RoomState, part: dict[str, Any]
+        self, room_state: _RoomState, part: OpencodePart
     ) -> None:
-        part_type = part.get("type")
-        part_id = optional_str(part.get("id"))
-        message_id = optional_str(part.get("messageID"))
-        if not part_id:
+        if not part.id:
             return
 
-        if part_type == "text":
-            if not message_id or message_id not in room_state.assistant_message_ids:
-                return
-            room_state.assistant_part_types[part_id] = "text"
-            room_state.text_parts[part_id] = str(part.get("text") or "")
-            return
+        match part.type:
+            case "text" | "reasoning":
+                room_state.track_assistant_part(part)
+            case "tool":
+                await self._report_tool_part(room_state, part)
 
-        if part_type == "reasoning":
-            if not message_id or message_id not in room_state.assistant_message_ids:
-                return
-            room_state.assistant_part_types[part_id] = "reasoning"
-            return
-
-        if part_type != "tool" or Emit.EXECUTION not in self.features.emit:
-            return
-
-        state = part.get("state") or {}
-        if not isinstance(state, dict):
-            return
-
-        tool_name = optional_str(part.get("tool")) or "unknown"
-        call_id = optional_str(part.get("callID")) or part_id
-        if state.get("status") in {"pending", "running"}:
-            if call_id not in room_state.reported_tool_calls:
-                room_state.reported_tool_calls.add(call_id)
-                await self._report_tool_call(room_state, tool_name, state, call_id)
-            return
-
-        if state.get("status") in {"completed", "error"}:
-            if call_id not in room_state.reported_tool_calls:
-                room_state.reported_tool_calls.add(call_id)
-                await self._report_tool_call(room_state, tool_name, state, call_id)
-            if call_id not in room_state.reported_tool_results:
-                room_state.reported_tool_results.add(call_id)
-                await self._report_tool_result(room_state, state, call_id)
-
-    async def _handle_part_delta(
-        self, room_state: _RoomState, properties: dict[str, Any]
+    async def _report_tool_part(
+        self, room_state: _RoomState, part: OpencodePart
     ) -> None:
-        if properties.get("field") != "text":
-            return
-        part_id = optional_str(properties.get("partID"))
-        message_id = optional_str(properties.get("messageID"))
-        if not part_id:
-            return
-        if not message_id or message_id not in room_state.assistant_message_ids:
-            return
-        if room_state.assistant_part_types.get(part_id) != "text":
-            return
-        delta = str(properties.get("delta") or "")
-        room_state.text_parts[part_id] = room_state.text_parts.get(part_id, "") + delta
+        """Note a room-posting reply and report the tool's call/result.
 
-    async def _handle_permission_asked(
-        self, room_state: _RoomState, properties: dict[str, Any]
-    ) -> None:
-        request_id = optional_str(properties.get("id"))
-        if not request_id:
+        Room-posting detection runs regardless of ``Emit.EXECUTION`` (which only
+        governs the tool_call/tool_result narration); the text-fallback
+        suppression must hold even when execution reporting is off.
+        """
+        if part.state is None:
             return
 
-        pending = _PendingPermission(
-            request_id=request_id,
-            permission=optional_str(properties.get("permission")) or "unknown",
-            patterns=[
-                str(pattern)
-                for pattern in properties.get("patterns") or []
-                if pattern is not None
-            ],
-        )
-        self._cancel_pending_timeout(room_state.pending_permission)
-        room_state.pending_permission = pending
+        state = part.state
+        tool_name = self._canonical_tool_name(part.tool or "unknown")
 
-        if self.config.approval_mode == "auto_accept":
-            await self._reply_permission(room_state, "once")
-            return
-
-        if self.config.approval_mode == "auto_decline":
-            await self._reply_permission(room_state, "reject")
-            return
-
-        pending.timeout_task = asyncio.create_task(
-            self._expire_permission(room_state, request_id)
-        )
-        if room_state.tools:
-            pattern_text = ", ".join(pending.patterns) if pending.patterns else "n/a"
-            await room_state.tools.send_message(
-                (
-                    f"OpenCode approval requested for `{pending.permission}` "
-                    f"({pattern_text}). Reply with `approve {request_id}`, "
-                    f"`always {request_id}`, or `reject {request_id}`."
-                )
-            )
-        self._release_turn_wait(room_state)
-
-    async def _handle_question_asked(
-        self, room_state: _RoomState, properties: dict[str, Any]
-    ) -> None:
-        request_id = optional_str(properties.get("id"))
-        questions = properties.get("questions") or []
-        if not request_id or not isinstance(questions, list):
-            return
-
-        pending = _PendingQuestion(
-            request_id=request_id,
-            questions=[q for q in questions if isinstance(q, dict)],
-        )
-        self._cancel_pending_timeout(room_state.pending_question)
-        room_state.pending_question = pending
-
-        if self.config.question_mode == "auto_reject":
-            await self._reject_question(room_state)
-            return
-
-        pending.timeout_task = asyncio.create_task(
-            self._expire_question(room_state, request_id)
-        )
-        if room_state.tools:
-            prompt = self._format_question_prompt(pending.questions, request_id)
-            await room_state.tools.send_message(prompt)
-        self._release_turn_wait(room_state)
-
-    async def _handle_control_message(
-        self, room_state: _RoomState, msg: PlatformMessage
-    ) -> bool:
-        content = msg.content.strip()
-        if not content:
-            return False
-
-        lowered = content.lower()
-
-        if room_state.pending_permission:
-            pending_request_id = room_state.pending_permission.request_id
-            reply = self._parse_permission_reply(lowered, room_state.pending_permission)
-            if reply:
-                await self._reply_permission(room_state, reply)
-                if room_state.tools:
-                    await room_state.tools.send_message(
-                        f"OpenCode approval `{pending_request_id}` handled with `{reply}`."
-                    )
-                return True
-
-        if room_state.pending_question:
-            pending_request_id = room_state.pending_question.request_id
-            if lowered in {"reject", "/reject"}:
-                await self._reject_question(room_state)
-                if room_state.tools:
-                    await room_state.tools.send_message(
-                        f"OpenCode question `{pending_request_id}` rejected."
-                    )
-                return True
-
-            answers = self._parse_question_answers(content, room_state.pending_question)
-            if answers is None:
-                if room_state.tools:
-                    await room_state.tools.send_message(
-                        (
-                            "OpenCode is waiting for answers. Reply with one line per "
-                            "question, or `reject` to reject the question."
-                        )
-                    )
-                return True
-
-            await self._reply_question(room_state, answers)
-            if room_state.tools:
-                await room_state.tools.send_message(
-                    f"OpenCode question `{pending_request_id}` answered."
-                )
-            return True
-
-        return False
-
-    async def _reply_permission(
-        self, room_state: _RoomState, reply: ApprovalReply
-    ) -> None:
-        pending = room_state.pending_permission
-        if pending is None or self._client is None:
-            return
-        if not room_state.session_id:
-            logger.warning(
-                "Cannot reply to permission %s: no session_id for room %s",
-                pending.request_id,
-                room_state.room_id,
-            )
-            return
-        self._cancel_pending_timeout(pending)
-        await self._client.reply_permission(
-            room_state.session_id,
-            pending.request_id,
-            response=reply,
-        )
-        room_state.pending_permission = None
-
-    async def _reply_question(
-        self, room_state: _RoomState, answers: list[list[str]]
-    ) -> None:
-        pending = room_state.pending_question
-        if pending is None or self._client is None:
-            return
-        self._cancel_pending_timeout(pending)
-        await self._client.reply_question(
-            pending.request_id,
-            answers=answers,
-        )
-        room_state.pending_question = None
-
-    async def _reject_question(self, room_state: _RoomState) -> None:
-        pending = room_state.pending_question
-        if pending is None or self._client is None:
-            return
-        self._cancel_pending_timeout(pending)
-        await self._client.reject_question(pending.request_id)
-        room_state.pending_question = None
-
-    async def _expire_permission(self, room_state: _RoomState, request_id: str) -> None:
-        try:
-            await asyncio.sleep(self.config.approval_wait_timeout_s)
-        except asyncio.CancelledError:
-            return
-
-        if (
-            room_state.pending_permission is not None
-            and room_state.pending_permission.request_id == request_id
+        # A completed room-posting band tool IS the turn's reply -- suppress the
+        # text fallback (codex/copilot_sdk/ACP parity). An errored call did not
+        # post, so it must not suppress. ``status`` is the raw wire string, so
+        # compare by value (the StrEnum member equals its string).
+        if state.status == OpencodeToolStatus.COMPLETED and is_room_posting_tool(
+            tool_name
         ):
-            await self._reply_permission(room_state, self.config.approval_timeout_reply)
-            if room_state.tools:
-                await room_state.tools.send_event(
-                    f"OpenCode approval `{request_id}` timed out and was handled with `{self.config.approval_timeout_reply}`.",
-                    "error",
-                )
+            room_state.replied_via_room_tool = True
 
-    async def _expire_question(self, room_state: _RoomState, request_id: str) -> None:
-        try:
-            await asyncio.sleep(self.config.question_wait_timeout_s)
-        except asyncio.CancelledError:
+        if Emit.EXECUTION not in self.features.emit:
             return
 
-        if (
-            room_state.pending_question is not None
-            and room_state.pending_question.request_id == request_id
-        ):
-            await self._reject_question(room_state)
-            if room_state.tools:
-                await room_state.tools.send_event(
-                    f"OpenCode question `{request_id}` timed out and was rejected.",
-                    "error",
-                )
+        match state.status:
+            case (
+                OpencodeToolStatus.PENDING
+                | OpencodeToolStatus.RUNNING
+                | OpencodeToolStatus.COMPLETED
+                | OpencodeToolStatus.ERROR
+            ):
+                pass
+            case _:
+                return
 
-    def _cancel_pending_timeout(
-        self, pending: _PendingPermission | _PendingQuestion | None
+        assert part.id is not None
+        call_id = part.call_id or part.id
+
+        if room_state.mark_tool_call(call_id):
+            await self._report_tool_call(room_state, tool_name, state, call_id)
+
+        match state.status:
+            case OpencodeToolStatus.COMPLETED | OpencodeToolStatus.ERROR:
+                if room_state.mark_tool_result(call_id):
+                    await self._report_tool_result(room_state, state, call_id)
+
+    def _apply_part_delta(
+        self, room_state: _RoomState, event: MessagePartDeltaEvent
     ) -> None:
-        if pending and pending.timeout_task:
-            pending.timeout_task.cancel()
+        room_state.append_text_delta(event)
 
     async def _ensure_session(
         self, room_state: _RoomState, history: OpencodeSessionState
@@ -868,7 +839,21 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if self._client is None:
             raise RuntimeError("OpenCode client is not initialized")
 
-        restored_session_id = room_state.session_id or history.session_id
+        restored_session_id = room_state.session_id
+        if restored_session_id is None and history.session_id:
+            # A session persisted before the adapter recorded its registration
+            # carries no name. Treating that as ours keeps the upgrade from
+            # discarding every existing room's server-side conversation.
+            if history.mcp_server_name in (None, self._mcp_server_name):
+                restored_session_id = history.session_id
+            else:
+                logger.info(
+                    "OpenCode session %s belongs to MCP registration %s; "
+                    "creating a new session for %s",
+                    history.session_id,
+                    history.mcp_server_name,
+                    self._mcp_server_name,
+                )
         created = False
 
         if restored_session_id:
@@ -902,22 +887,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         return session_id, created
 
     def _begin_turn(self, room_state: _RoomState, *, sender_id: str | None) -> None:
-        loop = asyncio.get_running_loop()
-        room_state.turn_future = loop.create_future()
-        room_state.turn_release_future = loop.create_future()
-        room_state.turn_task = None
-        room_state.pending_mentions = [{"id": sender_id}] if sender_id else []
-        room_state.text_parts.clear()
-        room_state.assistant_message_ids.clear()
-        room_state.assistant_part_types.clear()
-        room_state.reported_tool_calls.clear()
-        room_state.reported_tool_results.clear()
-        # A fresh dict, not .clear(): the previous turn's watch task drains the
-        # dict instance it captured, so a new turn must not empty it out from
-        # under a still-pending _emit_turn_usage (same snapshot idea as passing
-        # turn_future into _watch_turn_completion).
-        room_state.usage_by_message = {}
-        room_state.last_error_message = None
+        room_state.begin_turn(sender_id)
 
     async def _watch_turn_completion(
         self,
@@ -929,22 +899,24 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if turn_future is None:
             return
 
+        # 'watcher started' after 'prompt_async returned' but no later
+        # 'session.idle' points at a lost/late SSE terminal event, not a slow
+        # model -- distinct from the 'timed out' branch below firing at 300s.
+        logger.info(
+            "OpenCode turn: watcher started room=%s session=%s timeout=%ss",
+            room_id,
+            room_state.session_id,
+            self.config.turn_timeout_s,
+        )
         try:
-            await asyncio.wait_for(turn_future, self.config.turn_timeout_s)
+            await self._await_turn(room_state, turn_future)
         except asyncio.TimeoutError:
             logger.warning(
                 "OpenCode turn timed out for room %s (session=%s)",
                 room_id,
                 room_state.session_id,
             )
-            if self._client and room_state.session_id:
-                try:
-                    await self._client.abort_session(room_state.session_id)
-                except Exception:
-                    logger.exception(
-                        "Failed to abort timed-out OpenCode session %s",
-                        room_state.session_id,
-                    )
+            await self._abort_session(room_state, "timed-out")
             if room_state.tools:
                 await room_state.tools.send_event(
                     "OpenCode timed out before completing the turn.",
@@ -953,17 +925,95 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             # Tokens spent before the timeout were still spent — emit them, same
             # as the success path (best-effort; no-op if none captured).
             await self._emit_turn_usage(room_state, usage_by_message)
-            self._release_turn_wait(room_state)
         else:
-            await self._deliver_fallback_text(room_state)
-            await self._emit_turn_usage(room_state, usage_by_message)
-            self._release_turn_wait(room_state)
+            try:
+                await self._deliver_fallback_text(room_state)
+                await self._emit_turn_usage(room_state, usage_by_message)
+            except Exception:
+                logger.exception(
+                    "Failed to deliver the OpenCode turn result for room %s", room_id
+                )
+                await self._report_delivery_failure(room_state)
         finally:
+            # Release the on_message waiter even if delivering the reply or
+            # emitting usage raised (e.g. a sender-less turn has no one to
+            # @mention, which the platform rejects) — otherwise on_message
+            # waits on the captured release_future forever.
+            self._release_turn_wait(room_state)
             self._clear_turn_state(
                 room_state,
                 expected_future=turn_future,
                 expected_task=asyncio.current_task(),
             )
+
+    async def _abort_session(self, room_state: _RoomState, reason: str) -> None:
+        """Best-effort: tell OpenCode to stop working on this room's session."""
+        if not (self._client and room_state.session_id):
+            return
+        try:
+            await self._client.abort_session(room_state.session_id)
+        except Exception:
+            logger.exception(
+                "Failed to abort %s OpenCode session %s",
+                reason,
+                room_state.session_id,
+            )
+
+    async def _report_delivery_failure(self, room_state: _RoomState) -> None:
+        """Tell the room the turn finished but its result could not be posted.
+
+        An event needs no mentions, so it still lands when the reply itself was
+        rejected for having none.
+        """
+        if room_state.tools is None:
+            return
+        try:
+            await room_state.tools.send_event(
+                "OpenCode finished the turn but the result could not be posted "
+                "to the room.",
+                "error",
+            )
+        except Exception:
+            logger.exception(
+                "Failed to report the OpenCode delivery failure for room %s",
+                room_state.room_id,
+            )
+
+    async def _await_turn(
+        self, room_state: _RoomState, turn_future: asyncio.Future[None]
+    ) -> None:
+        """Await turn completion, but don't charge human-approval time to the
+        compute budget.
+
+        A manual permission/question parks the turn on a human reply, which is
+        bounded by the ask's own expiry timer -- not by ``turn_timeout_s``. So
+        the deadline is ``turn_timeout_s`` of *compute*: it moves out by however
+        long the turn sat on a human, which is why the budget is recomputed each
+        slice rather than fixed when the watcher started -- an approval that
+        arrives before the deadline still has to leave the resumed work its full
+        budget. ``shield`` keeps a timed-out slice from cancelling the
+        still-running turn.
+        """
+        loop = asyncio.get_running_loop()
+        approvals = room_state.approvals
+        started = loop.time()
+
+        def deadline() -> float:
+            return started + self.config.turn_timeout_s + approvals.human_wait_seconds
+
+        while True:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(turn_future), max(deadline() - loop.time(), 0.0)
+                )
+                return
+            except asyncio.TimeoutError:
+                # Genuinely out of compute budget with nobody deliberating.
+                if not approvals.awaiting_human() and deadline() <= loop.time():
+                    raise
+                # Otherwise wait out any parked ask (a no-op if none) and retry
+                # against the extended deadline.
+                await approvals.wait_until_idle()
 
     def _release_turn_wait(self, room_state: _RoomState) -> None:
         self._resolve_future(room_state.turn_release_future)
@@ -971,6 +1021,10 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     def _finish_turn(self, room_state: _RoomState) -> None:
         self._resolve_future(room_state.turn_future)
         self._resolve_future(room_state.turn_release_future)
+
+    def _fail_turn(self, room_state: _RoomState, message: str) -> None:
+        room_state.last_error_message = message
+        self._finish_turn(room_state)
 
     def _clear_turn_state(
         self,
@@ -989,10 +1043,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         if turn_task is not None and turn_task is not expected_task:
             turn_task.cancel()
 
-        self._cancel_pending_timeout(room_state.pending_permission)
-        self._cancel_pending_timeout(room_state.pending_question)
-        room_state.pending_permission = None
-        room_state.pending_question = None
+        room_state.approvals.cancel()
         room_state.turn_future = None
         room_state.turn_release_future = None
         room_state.turn_task = None
@@ -1009,15 +1060,27 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             return
 
         created_at = datetime.now(timezone.utc).isoformat()
-        await room_state.tools.send_event(
-            f"OpenCode session {status}: `{room_state.session_id}`",
-            "task",
-            metadata={
-                "opencode_session_id": room_state.session_id,
-                "opencode_room_id": room_state.room_id,
-                "opencode_created_at": created_at,
-            },
-        )
+        # Best-effort bookkeeping: a transient post failure must not abort the
+        # turn before the model runs (the outer on_message handler would catch
+        # it and drop the user's message). Leave persisted_session_id unset on
+        # failure so the next turn retries the event.
+        try:
+            await room_state.tools.send_event(
+                f"OpenCode session {status}: `{room_state.session_id}`",
+                "task",
+                metadata={
+                    "opencode_session_id": room_state.session_id,
+                    "opencode_mcp_server_name": self._mcp_server_name,
+                    "opencode_room_id": room_state.room_id,
+                    "opencode_created_at": created_at,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "Failed to emit OpenCode session task event for room %s",
+                room_state.room_id,
+            )
+            return
         room_state.persisted_session_id = room_state.session_id
 
     async def _deliver_fallback_text(self, room_state: _RoomState) -> None:
@@ -1030,24 +1093,37 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
             if part_text.strip()
         ).strip()
 
-        if text:
-            await room_state.tools.send_message(
-                text,
-                mentions=room_state.pending_mentions,
-            )
-            room_state.pending_mentions = []
-            return
-
-        if room_state.last_error_message:
-            await room_state.tools.send_event(room_state.last_error_message, "error")
-            room_state.pending_mentions = []
-            return
-
-        await room_state.tools.send_message(
-            "OpenCode completed the turn without a text reply.",
-            mentions=room_state.pending_mentions,
+        # If this logs but the room never sees a reply, the fallback REST post
+        # (or the test's observer WebSocket) is the fault, not model completion.
+        logger.info(
+            "OpenCode turn: delivering fallback room=%s "
+            "(text=%d chars, error=%s, replied_via_tool=%s)",
+            room_state.room_id,
+            len(text),
+            bool(room_state.last_error_message),
+            room_state.replied_via_room_tool,
         )
-        room_state.pending_mentions = []
+
+        # A room-posting band tool already delivered the reply; don't double-post
+        # its plain text or a "no reply" filler. An error is still surfaced --
+        # it is not a text reply.
+        replied = room_state.replied_via_room_tool
+        try:
+            if text and not replied:
+                await room_state.tools.send_message(
+                    text, mentions=room_state.pending_mentions
+                )
+            elif room_state.last_error_message:
+                await room_state.tools.send_event(
+                    room_state.last_error_message, "error"
+                )
+            elif not replied:
+                await room_state.tools.send_message(
+                    "OpenCode completed the turn without a text reply.",
+                    mentions=room_state.pending_mentions,
+                )
+        finally:
+            room_state.pending_mentions = []
 
     async def _emit_turn_usage(
         self,
@@ -1069,46 +1145,11 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         total = sum(usage_by_message.values(), TurnUsage())
         await self.emit_usage(room_state.tools, total)
 
-    @staticmethod
-    def _usage_from_info(info: dict[str, Any]) -> TurnUsage:
-        """Map an OpenCode assistant ``info.tokens`` onto TurnUsage.
-
-        Read defensively off the raw event dict (OpenCode's payloads are not
-        modeled in this integration): the server reports
-        ``tokens: {input, output, reasoning, cache: {read, write}}``. A missing
-        or malformed ``tokens`` yields empty usage.
-
-        OpenCode reports reasoning tokens *disjointly* from output (its own total
-        is ``input + output + reasoning + cache``), so fold reasoning into
-        ``output_tokens`` — otherwise reasoning-heavy turns undercount, and this
-        stays consistent with providers that already count reasoning inside output.
-        """
-        tokens = info.get("tokens")
-        if not isinstance(tokens, dict):
-            return TurnUsage()
-        cache = tokens.get("cache")
-        cache = cache if isinstance(cache, dict) else {}
-        flat = {
-            "input": tokens.get("input"),
-            "output": tokens.get("output"),
-            "reasoning": tokens.get("reasoning"),
-            "cache_read": cache.get("read"),
-            "cache_write": cache.get("write"),
-        }
-        return TurnUsage.from_mapping(
-            flat,
-            input="input",
-            output="output",
-            reasoning="reasoning",
-            cache_read="cache_read",
-            cache_write="cache_write",
-        )
-
     async def _report_tool_call(
         self,
         room_state: _RoomState,
         tool_name: str,
-        state: dict[str, Any],
+        state: OpencodeToolState,
         call_id: str,
     ) -> None:
         if room_state.tools is None:
@@ -1118,7 +1159,7 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
                 json.dumps(
                     {
                         "name": tool_name,
-                        "args": state.get("input") or {},
+                        "args": state.input,
                         "tool_call_id": call_id,
                     }
                 ),
@@ -1130,16 +1171,16 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
     async def _report_tool_result(
         self,
         room_state: _RoomState,
-        state: dict[str, Any],
+        state: OpencodeToolState,
         call_id: str,
     ) -> None:
         if room_state.tools is None:
             return
         output: Any
-        if state.get("status") == "error":
-            output = {"error": state.get("error") or "OpenCode tool failed"}
+        if state.status == OpencodeToolStatus.ERROR:
+            output = {"error": state.error or "OpenCode tool failed"}
         else:
-            output = state["output"] if "output" in state else ""
+            output = state.reported_output
 
         try:
             await room_state.tools.send_event(
@@ -1188,64 +1229,9 @@ class OpencodeAdapter(SimpleAdapter[OpencodeSessionState]):
         lines.append(f"[{sender_name}]: {msg.content}")
         return [{"type": "text", "text": "\n".join(lines)}]
 
-    def _parse_permission_reply(
-        self,
-        lowered_content: str,
-        pending: _PendingPermission,
-    ) -> ApprovalReply | None:
-        tokens = lowered_content.split()
-        if not tokens:
-            return None
-
-        command = tokens[0].lstrip("/")
-        request_id = tokens[1] if len(tokens) > 1 else pending.request_id
-        if request_id != pending.request_id:
-            return None
-
-        if command == "approve":
-            return "once"
-        if command == "always":
-            return "always"
-        if command == "reject":
-            return "reject"
-        return None
-
-    def _parse_question_answers(
-        self, content: str, pending: _PendingQuestion
-    ) -> list[list[str]] | None:
-        if len(pending.questions) == 1:
-            return [[content.strip()]]
-
-        lines = [line.strip() for line in content.splitlines() if line.strip()]
-        if len(lines) < len(pending.questions):
-            return None
-        return [[line] for line in lines[: len(pending.questions)]]
-
-    def _format_question_prompt(
-        self, questions: list[dict[str, Any]], request_id: str
-    ) -> str:
-        prompt_lines = [f"OpenCode asked question `{request_id}`:"]
-        for index, question in enumerate(questions, start=1):
-            question_text = str(question.get("question") or "Question")
-            prompt_lines.append(f"{index}. {question_text}")
-        prompt_lines.append("Reply with one line per question, or `reject`.")
-        return "\n".join(prompt_lines)
-
     def _format_http_error(self, exc: httpx.HTTPStatusError) -> str:
         try:
             payload = exc.response.json()
         except ValueError:
             payload = exc.response.text
         return f"OpenCode request failed ({exc.response.status_code}): {payload}"
-
-    def _format_opencode_error(self, error: Any) -> str:
-        if not isinstance(error, dict):
-            return "OpenCode reported an unknown error."
-
-        name = error.get("name") or "OpenCodeError"
-        data = error.get("data") or {}
-        if isinstance(data, dict):
-            message = data.get("message")
-            if message:
-                return f"{name}: {message}"
-        return f"{name}: OpenCode reported an error."

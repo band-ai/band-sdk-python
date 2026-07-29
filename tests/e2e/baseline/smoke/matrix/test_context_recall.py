@@ -11,12 +11,13 @@ prior context reaches the model:
   in-memory adapter state, so a correct recall can only have come from the
   platform rehydrating the room's history on bootstrap (``/context``).
 
-``test_recalls_after_rejoin`` excludes ``codex`` / ``opencode``: those adapters
-recover context on reboot by resuming their own backend session (a session id
-persisted via task events), not by consuming platform ``/context`` as history — a
-different mechanism, so a pass there would not validate the ``/context`` guarantee
-the rejoin case asserts. The in-session case keeps the full matrix: it exercises
-each framework's history conversion within one run, which every adapter does.
+``test_recalls_after_rejoin`` excludes ``codex``, ``opencode``, and
+``copilot_acp``: those adapters recover context on reboot by resuming their own
+backend session (a session id persisted via task events), not by consuming platform
+``/context`` as history — a different mechanism, so a pass there would not validate
+the ``/context`` guarantee the rejoin case asserts. The in-session case keeps the
+full matrix: it exercises each framework's history conversion within one run, which
+every adapter does.
 
 Replaces the now-removed legacy ``tests/e2e/scenarios/test_context_persistence.py``
 (the rejoin case), on the baseline toolkit; the in-session case is the simpler
@@ -102,6 +103,11 @@ async def test_recalls_within_session(
         ExcludedAdapter(
             Adapter.OPENCODE,
             "recovers context by resuming its own backend session, not via platform "
+            "/context — a pass would not validate this rehydration",
+        ),
+        ExcludedAdapter(
+            Adapter.COPILOT_ACP,
+            "recovers context by resuming its own ACP session, not via platform "
             "/context — a pass would not validate this rehydration",
         ),
         ExcludedAdapter(

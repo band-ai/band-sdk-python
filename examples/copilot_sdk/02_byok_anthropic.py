@@ -10,18 +10,15 @@
 Copilot SDK Agent with BYOK (bring your own key) — Anthropic provider.
 
 Runs the Copilot runtime while doing model inference against your own
-Anthropic API key instead of the Copilot subscription. The GitHub auth is
-still needed to boot the Copilot CLI runtime; the Anthropic key pays for
-the tokens.
+Anthropic API key instead of the Copilot subscription. BYOK does not require
+GitHub authentication; the Anthropic key pays for the tokens.
 
 Prerequisites:
-    1. GitHub Copilot access (GITHUB_TOKEN or logged-in GitHub user)
-    2. Add copilot_sdk_agent credentials to agent_config.yaml
-    3. Set environment variables in .env:
+    1. Add copilot_sdk_agent credentials to agent_config.yaml
+    2. Set environment variables in .env:
        - BAND_WS_URL
        - BAND_REST_URL
        - ANTHROPIC_API_KEY (BYOK inference)
-       - GITHUB_TOKEN (optional — omit to use the logged-in GitHub user)
 
 Run with:
     uv run examples/copilot_sdk/02_byok_anthropic.py
@@ -76,7 +73,7 @@ async def main() -> None:
                 api_key=anthropic_api_key,
             ),
             custom_section="You are a helpful assistant. Be concise and friendly.",
-            github_token=os.getenv("GITHUB_TOKEN"),
+            use_logged_in_user=False,
             # Pin a unique per-example session prefix.
             session_id_prefix="band-copilot-byok-",
         ),

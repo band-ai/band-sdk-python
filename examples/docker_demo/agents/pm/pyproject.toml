@@ -1,0 +1,6 @@
+[project]
+name = "band-demo-pm"
+version = "0.1.0"
+description = "PM / team-lead agent (Claude SDK) for the Band Docker demo."
+requires-python = ">=3.11"
+dependencies = ["band-sdk[claude-sdk]>=1.1.0", "pydantic-settings>=2.0.0"]

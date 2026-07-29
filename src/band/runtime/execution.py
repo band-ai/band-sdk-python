@@ -38,7 +38,7 @@ from band.platform.event import (
     ReconnectedEvent,
 )
 
-from .types import (
+from band.runtime.types import (
     ConversationContext,
     PlatformMessage,
     ParticipantAddedCallback,
@@ -1124,8 +1124,9 @@ class ExecutionContext:
         )
 
         try:
-            # Recover messages stuck in 'processing' state from a previous crash.
-            # The /next endpoint skips these, so we must handle them explicitly.
+            # Recover messages stuck in 'processing' from a previous crash. /next
+            # returns these too (it excludes only 'processed'); this sweep just
+            # drains all of them up front instead of one-per-/next-poll.
             if not await self._recover_stale_processing_messages():
                 return False
             while True:  # Cancellation handles exit
@@ -1207,9 +1208,9 @@ class ExecutionContext:
         Recover messages stuck in 'processing' state from a previous crash.
 
         When an agent crashes mid-processing, the message stays in 'processing'
-        state on the server. The /next endpoint skips these messages, so the
-        agent would never pick them up again. This method finds such messages
-        and re-processes them by calling mark_processing (creates a new attempt).
+        state on the server. The /next endpoint returns these messages one at a
+        time, while this sweep finds and re-processes all of them up front by
+        calling mark_processing (creates a new attempt).
 
         Skipped while stopped: the stop path deliberately leaves the interrupted
         message in 'processing', and a reconnect must not resurrect it through
@@ -1626,6 +1627,10 @@ class ExecutionContext:
         self._active_cycle_task = asyncio.create_task(self._invoke_handler(event))
         try:
             await self._active_cycle_task
+            # A handler may suppress CancelledError and return normally. In
+            # that case the control signal was consumed by this cycle and must
+            # not misclassify a later shutdown cancellation as an interrupt.
+            self._interrupt_kind = None
             return True
         except asyncio.CancelledError:
             # Read-and-clear is atomic here (no await between the two lines).
@@ -1683,7 +1688,8 @@ class ExecutionContext:
         # (Chat.get_next_actionable_message) excluding ONLY 'processed' — a
         # 'processing' message must still be returned. If the platform ever also
         # excludes 'processing', stopped messages are silently dropped on play.
-        # Covered by the stop->play replay test.
+        # Guarded live by the /next-actionable-semantics baseline E2E; the unit
+        # replay test mocks /next and so cannot cover this cross-system half.
         logger.info(
             "ExecutionContext %s: cycle %s (message %s) — nothing sent",
             self.room_id,

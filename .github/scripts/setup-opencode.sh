@@ -2,10 +2,15 @@
 # Install + start the OpenCode server for the `backends` e2e lane.
 #
 # Reads OPENCODE_ZEN_API_KEY (job env, the Zen provider key) and exports
-# OPENCODE_BASE_URL of the running server to later steps via $GITHUB_ENV.
+# OPENCODE_BASE_URL / E2E_OPENCODE_BASH_ASKS of the running server to later steps
+# via $GITHUB_ENV.
 set -euo pipefail
 
-npm install -g opencode-ai
+# Pinned: an unpinned global install lets the CLI float between runs, so a server
+# behaviour change lands as an unrelated-looking lane failure. Bump deliberately.
+OPENCODE_VERSION="${OPENCODE_VERSION:-1.18.4}"
+
+npm install -g "opencode-ai@${OPENCODE_VERSION}"
 
 # The unsecured localhost server reads the Zen key via the {env:...} substitution.
 # Free-tier account, so the config pins free models (incl. the small/title model)
@@ -16,6 +21,9 @@ read -r -d '' OPENCODE_CONFIG_JSON <<'JSON' || true
   "small_model": "opencode/mimo-v2.5-free",
   "provider": {
     "opencode": { "options": { "apiKey": "{env:OPENCODE_ZEN_API_KEY}" } }
+  },
+  "permission": {
+    "bash": "ask"
   }
 }
 JSON
@@ -45,4 +53,10 @@ if [ "$ready" != true ]; then
   cat /tmp/opencode-serve.log 2>/dev/null | tail -50 || true
   exit 1
 fi
-echo "OPENCODE_BASE_URL=http://127.0.0.1:4096" >> "$GITHUB_ENV"
+{
+  echo "OPENCODE_BASE_URL=http://127.0.0.1:4096"
+  # The `"bash": "ask"` rule above is what makes the server raise a real
+  # permission.asked; the manual-approval smoke requires that declared (Dep.
+  # OPENCODE_BASH_ASKS), so it fails naming the reason against any other serve.
+  echo "E2E_OPENCODE_BASH_ASKS=true"
+} >> "$GITHUB_ENV"

@@ -253,10 +253,17 @@ jetbrains_acp_agent:
 # Codex / OpenCode Examples
 # =============================================================================
 
-# 01_basic_agent.py (default AGENT_KEY for both codex and opencode)
+# codex/01_basic_agent.py, opencode/01_basic_agent.py,
+# opencode/02_workspace_agent.py, opencode/03_custom_tools_agent.py,
+# opencode/04_memory_secretary.py (default AGENT_KEY for both codex and opencode)
 darter:
   agent_id: ""
   api_key: ""
+
+# codex/02_tom_agent.py, opencode/05_tom_agent.py - see tom_agent in Shared
+# Agents section
+# codex/03_jerry_agent.py, opencode/06_jerry_agent.py - see jerry_agent in
+# Shared Agents section
 
 # =============================================================================
 # Slack Examples
@@ -297,13 +304,13 @@ arena_guesser_3:
 # =============================================================================
 
 # Tom the cat character agent
-# Used by: langgraph/07, claude_sdk/03, anthropic/03, pydantic_ai/03, parlant/04, crewai/05, agno/03
+# Used by: langgraph/07, claude_sdk/03, anthropic/03, pydantic_ai/03, parlant/04, crewai/05, agno/03, codex/02, opencode/05
 tom_agent:
   agent_id: ""
   api_key: ""
 
 # Jerry the mouse character agent
-# Used by: langgraph/08, claude_sdk/04, anthropic/04, pydantic_ai/04, parlant/05, crewai/06, agno/04
+# Used by: langgraph/08, claude_sdk/04, anthropic/04, pydantic_ai/04, parlant/05, crewai/06, agno/04, codex/03, opencode/06
 jerry_agent:
   agent_id: ""
   api_key: ""

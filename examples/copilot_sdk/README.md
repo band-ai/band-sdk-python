@@ -5,11 +5,11 @@ Examples of using the [GitHub Copilot SDK](https://github.com/github/copilot-sdk
 
 ## Prerequisites
 
-### 1. GitHub Copilot access
+### 1. GitHub Copilot access for Copilot-hosted inference
 
-The SDK manages the Copilot CLI runtime internally. It needs a GitHub
-account **with Copilot access** (an authenticated account without a Copilot
-subscription fails at model-call time, not at login):
+Examples `01`, `03`, `04`, and `06` use Copilot-hosted inference. They need a
+GitHub account **with Copilot access** (an authenticated account without a
+Copilot subscription fails at model-call time, not at login):
 
 ```bash
 # Either authenticate the GitHub CLI locally...
@@ -21,6 +21,10 @@ export GITHUB_TOKEN=ghp_...
 
 Auth resolves automatically: the token wins when set, otherwise the
 logged-in GitHub user is used — no adapter flags needed.
+
+Examples `02` and `05` configure Anthropic BYOK and need only
+`ANTHROPIC_API_KEY`; current Copilot SDKs do not require GitHub authentication
+when a singular `provider` replaces Copilot-hosted inference.
 
 ### 2. Pre-fetch the runtime (recommended)
 
@@ -138,8 +142,8 @@ on-disk Copilot sessions). Opt out with `AgentConfig(single_instance=False)`.
   your account can use with `await client.list_models()`.
 - With **BYOK** (`provider=...`) the `model` names the *provider's* model
   (e.g. `claude-haiku-4-5` for Anthropic) — not a Copilot model id, and `base_url` is required. BYOK moves
-  inference billing to your key; GitHub auth is still required to boot the
-  Copilot runtime.
+  inference billing and authentication to your provider key; GitHub auth is
+  not required.
 
 ## Notes
 

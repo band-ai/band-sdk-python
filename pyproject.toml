@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "band-sdk"
-version = "1.4.2"
+version = "1.5.0"
 description = "A Python SDK for Band API"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,13 +41,14 @@ codex = [
 ]
 opencode = [
     "httpx>=0.24.0",
+    "mcp>=1.25.0",
 ]
 letta = [
     "letta-client>=0.1.0",
     "mcp>=1.25.0",
 ]
 pydantic-ai = [
-    "pydantic-ai-slim[anthropic]>=1.56.0",
+    "pydantic-ai-slim[anthropic]>=2.18.0",
     "openai>=2.0.0",
 ]
 anthropic = [
@@ -143,8 +144,8 @@ agno = [
     "agno>=2.6.0",
 ]
 
-# dev extra includes ALL framework deps for testing EXCEPT crewai,
-# which conflicts with both parlant and pydantic-ai (see tool.uv.conflicts).
+# dev extra includes ALL framework deps for testing EXCEPT crewai, which is
+# declared conflicting with both parlant and pydantic-ai (see tool.uv.conflicts).
 # To run crewai tests, install with: uv sync --extra dev-crewai
 dev = [
     "pydantic-settings>=2.0.0",
@@ -159,7 +160,7 @@ dev = [
     "httpx>=0.24.0",  # Already in main deps, for mocking
     "pytest-httpx>=0.35.0",  # httpx_mock fixture: REST header-emission proof
     # Include pydantic-ai for testing
-    "pydantic-ai-slim>=1.56.0",
+    "pydantic-ai-slim>=2.18.0",
     # Include anthropic for testing
     "anthropic>=0.75.0",
     # Include claude_sdk for testing
@@ -216,8 +217,9 @@ dev = [
     "pytest-markdown-docs>=0.9.2",
 ]
 
-# CrewAI-only dev extra for testing crewai adapter in isolation.
-# Cannot be combined with dev/parlant/pydantic-ai due to pydantic + opentelemetry conflicts.
+# CrewAI-only dev extra for testing crewai adapter in isolation. Declared conflicting
+# with dev/parlant/pydantic-ai (pydantic + opentelemetry ceilings), so one uv sync
+# resolves either this extra or those, never both.
 dev-crewai = [
     "pydantic-settings>=2.0.0",
     "pytest>=7.0.0",
@@ -275,9 +277,19 @@ markers = [
     "flaky_reason: baseline flakiness taxonomy stamp (kind + reason); see tests/e2e/baseline/flaky.py",
     "docker_build: builds/runs a real Docker image via subprocess (requires a local Docker daemon; skipped unless DOCKER_TESTS_ENABLED=true, including in CI, which has Docker but shouldn't pay this cost by default)",
     "sandbox: drives a Docker Sandbox via the sbx CLI (needs sbx + a nested-virtualization-capable host + live Band; skipped unless SANDBOX_TESTS_ENABLED=true — CI has neither the CLI nor nested virt)",
+    "vscode_chat: drives a real signed-in VS Code window via the code chat CLI (GUI + interactive Copilot sign-in; skipped unless VSCODE_CHAT_TESTS_ENABLED=true — can never run in CI)",
 ]
 
 [tool.uv]
+# google-adk pulls opentelemetry-resourcedetector-gcp transitively, whose 1.13.0 is
+# yanked and whose only newer release is a pre-release. Steering that resolution is
+# ours to do, but the package is not ours to depend on (nothing under src/band
+# imports it), so it is a constraint — resolution-only, no direct dependency and no
+# pre-release opt-in inherited by `band-sdk[google_adk]` consumers.
+constraint-dependencies = [
+    "opentelemetry-resourcedetector-gcp>=1.12.0a0,!=1.13.0",
+]
+
 # Ensure uv.lock stays installable on the platforms we use locally and in CI
 # when a dependency only publishes wheels and no source distribution.
 required-environments = [
@@ -287,10 +299,11 @@ required-environments = [
     "sys_platform == 'win32' and platform_machine == 'AMD64'",
 ]
 
-# crewai 1.14.3 conflicts with BOTH parlant and pydantic-ai:
-#   - parlant >=3.1 requires opentelemetry-sdk >=1.37, crewai 1.14.3 pins ~=1.34.0
-#   - pydantic-ai-slim >=1.61 requires pydantic>=2.12, crewai 1.14.3 pins pydantic~=2.11.9
-# Declaring them as conflicting extras lets uv resolve each in a separate fork.
+# crewai is resolved apart from BOTH parlant and pydantic-ai. crewai pins a narrow
+# pydantic range (<2.13) and an exact opentelemetry-sdk minor (~=1.42.0), while
+# pydantic-ai-slim 2.x requires pydantic>=2.12 and parlant requires
+# opentelemetry-sdk>=1.37. Declaring the extras as conflicting lets uv resolve each
+# side in its own fork instead of forcing one shared pin that satisfies everyone.
 conflicts = [
     [
         { extra = "crewai" },
@@ -321,6 +334,11 @@ conflicts = [
 [tool.pyrefly]
 project_includes = [
     "src/**/*.py",              # Only check source files
+    # Skill scripts are checked-in tooling with real process/subprocess logic and
+    # no other type gate. Narrow glob on purpose: a bare `.claude/**` would drag
+    # in `.claude/worktrees/` checkouts, which the excludes heuristic below no
+    # longer filters out.
+    ".claude/skills/**/*.py",
 ]
 project_excludes = [
     "tests/**",                 # Tests use mocks with duck typing

@@ -134,6 +134,15 @@ class Backends(BaseSettings):
     # A current OpenCode Zen *free* model (the catalogue shifts; confirm against the
     # server's /config/providers). Overridable via OPENCODE_MODEL_ID.
     opencode_model_id: str = "mimo-v2.5-free"  # OPENCODE_MODEL_ID
+    # Whether the serve behind opencode_base_url gates its `bash` tool to `ask`.
+    # Only the server's own permission rules decide when it raises a
+    # `permission.asked`, so the manual-approval smoke has no way to provoke one
+    # unless the serve is configured for it (setup-opencode.sh does; an arbitrary
+    # local serve does not). Declared, not probed: a running serve exposes its
+    # effective permission rules nowhere, and requirement predicates are env-only.
+    opencode_bash_asks: bool = Field(
+        default=False, validation_alias="E2E_OPENCODE_BASH_ASKS"
+    )
 
     # Letta (Cloud or self-hosted). The Letta server executes platform tools by
     # calling a Band MCP server: by default the adapter self-hosts one in-process
@@ -150,8 +159,9 @@ class Backends(BaseSettings):
     letta_mcp_advertised_host: str = "host.docker.internal"  # LETTA_MCP_ADVERTISED_HOST
     mcp_server_url: str = ""  # MCP_SERVER_URL (external band-mcp SSE endpoint)
 
-    # Copilot SDK. BYOK inference reuses llm_credentials.anthropic_api_key; this is
-    # only the runtime-auth token, from a GitHub account with Copilot entitlement.
+    # Copilot-hosted SDK examples and Copilot ACP use this runtime-auth token.
+    # The baseline Copilot SDK builder uses singular Anthropic BYOK and needs no
+    # GitHub auth.
     github_token: str = ""  # GITHUB_TOKEN
 
     # Copilot CLI over ACP (copilot_acp adapter). Command defaults to `copilot --acp`;

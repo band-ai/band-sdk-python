@@ -141,6 +141,7 @@ class Dep(Enum):
     CODEX_CLI = "codex_cli"  # the `codex` CLI reachable on PATH
     CODEX_CWD = "codex_cwd"  # an explicit, disposable working dir outside the repo
     OPENCODE_SERVER = "opencode_server"  # OPENCODE_BASE_URL of a running server
+    OPENCODE_BASH_ASKS = "opencode_bash_asks"  # that serve gates `bash` to `ask`
     LETTA = "letta"  # a self-hosted LETTA_BASE_URL (or a Letta Cloud key)
     CREWAI = "crewai"  # the crewai package is importable (the dev-crewai lane)
     COPILOT_CLI = "copilot_cli"  # the `copilot` CLI reachable on PATH (ACP backend)
@@ -276,6 +277,16 @@ _DEPS: dict[Dep, DepSpec] = {
     Dep.OPENCODE_SERVER: DepSpec(
         lambda s: bool(s.backends.opencode_base_url),
         "OPENCODE_BASE_URL not set (a running OpenCode server is required)",
+        lane=Lane.BACKENDS,
+    ),
+    # The serve -- not the adapter's approval_mode -- decides when a permission is
+    # asked, so the manual-relay smoke needs a serve whose rules gate `bash` to
+    # `ask`. Unstated, that smoke stalls to its deadline instead of naming why.
+    Dep.OPENCODE_BASH_ASKS: DepSpec(
+        lambda s: s.backends.opencode_bash_asks,
+        "E2E_OPENCODE_BASH_ASKS=true must declare that OPENCODE_BASE_URL's serve "
+        'gates `bash` to `ask` (permission rule {"bash": "ask"}, as '
+        ".github/scripts/setup-opencode.sh configures)",
         lane=Lane.BACKENDS,
     ),
     Dep.LETTA: DepSpec(
