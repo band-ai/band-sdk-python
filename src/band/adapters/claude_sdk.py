@@ -72,6 +72,7 @@ from band.integrations.claude_sdk.dedup_tools import (
     DedupingAgentTools,
 )
 from band.runtime.custom_tools import CustomToolDef
+from band.runtime.formatters import strip_leading_mentions
 from band.runtime.tools import (
     ALL_TOOL_NAMES,
     BASE_TOOL_NAMES,
@@ -1035,10 +1036,13 @@ class ClaudeSDKAdapter(SimpleAdapter[ClaudeSDKSessionState]):
         """Check if *content* starts with a ``/command``.
 
         Only the first token is considered to avoid false positives from
-        natural language like ``"don't /decline it"``.
-        Returns ``(command, rest)`` or ``None``.
+        natural language like ``"don't /decline it"``. The platform prepends an
+        ``@handle`` mention block to a delivered room reply (a reply must mention
+        the agent to arrive), so that block is stripped first -- otherwise the
+        command never leads the content and ``/approve``/``/decline`` silently
+        miss. Returns ``(command, rest)`` or ``None``.
         """
-        stripped = content.lstrip()
+        stripped = strip_leading_mentions(content).lstrip()
         if not stripped.startswith("/"):
             return None
         token, _, rest = stripped.partition(" ")

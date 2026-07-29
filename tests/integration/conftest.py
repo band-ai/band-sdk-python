@@ -49,6 +49,7 @@ from tests.conftest_integration import (
     # Helpers
     fetch_all_context,
     is_room_alive,
+    send_user_mention,
     wait_until,
 )
 
@@ -109,5 +110,6 @@ __all__ = [
     # Helpers
     "fetch_all_context",
     "is_room_alive",
+    "send_user_mention",
     "wait_until",
 ]

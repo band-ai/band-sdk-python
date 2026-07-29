@@ -7,10 +7,11 @@ de-risking test for the ``Emit.USAGE`` / ``capture.usage()`` design across every
 usage-capable adapter.
 
 Coverage is registry-derived, not a hand-maintained list: the fan is the whole
-matrix minus the adapters that don't emit usage — ``CREWAI_FLOW`` (usage lives in
-user-supplied flow internals — N-A) and ``CREWAI`` (usage capture deferred: its
-result counter is cumulative-lifetime, not per-turn). Every other adapter runs,
-letta included (it emits via ``Emit.USAGE`` from the per-room
+matrix minus the adapters that cannot emit usage — ``CREWAI_FLOW`` (usage lives in
+user-supplied flow internals — N-A), ``CREWAI`` (usage capture deferred: its
+result counter is cumulative-lifetime, not per-turn), and ``COPILOT_ACP``
+(ACP exposes no per-turn token-usage updates). Every other adapter runs, letta
+included (it emits via ``Emit.USAGE`` from the per-room
 ``LettaResponse.usage``). Deriving from ``exclude=`` rather than an explicit
 include-list means a newly-registered usage-capable adapter is exercised
 automatically — and a new adapter that *cannot* emit usage fails loudly here
@@ -48,17 +49,19 @@ from tests.e2e.baseline.toolkit.provisioning import ProvisionedAgent, ResourceMa
 from tests.e2e.baseline.toolkit.user_ops import UserOps
 
 
-# Every registered adapter must emit usage (letta does, via Emit.USAGE from the
-# per-room LettaResponse.usage) except the crewai pair excluded below.
+# Adapters excluded from both usage smokes. Keep this registry-derived fan honest:
+# only adapters unable to observe per-turn usage belong here.
+USAGE_EXCLUSIONS = (
+    ExcludedAdapter(Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"),
+    ExcludedAdapter(
+        Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
+    ),
+    ExcludedAdapter(Adapter.COPILOT_ACP, "ACP exposes no per-turn token-usage updates"),
+)
+
+
 @per_adapter(
-    exclude=[
-        ExcludedAdapter(
-            Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"
-        ),
-        ExcludedAdapter(
-            Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
-        ),
-    ],
+    exclude=USAGE_EXCLUSIONS,
     **COST_AGENT,
 )
 @pytest.mark.asyncio(loop_scope="session")
@@ -138,14 +141,7 @@ async def test_usage_recorded_for_a_turn(
 # length so the test can drive one LONG turn then one TINY turn (see
 # COST_MULTI_TURN_AGENT).
 @per_adapter(
-    exclude=[
-        ExcludedAdapter(
-            Adapter.CREWAI_FLOW, "usage lives in user-supplied flow internals"
-        ),
-        ExcludedAdapter(
-            Adapter.CREWAI, "deferred: cumulative-lifetime counter, not per-turn"
-        ),
-    ],
+    exclude=USAGE_EXCLUSIONS,
     **COST_MULTI_TURN_AGENT,
 )
 # Two turns, and the first drives a long multi-paragraph generation — so this test

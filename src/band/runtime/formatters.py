@@ -2,6 +2,37 @@
 
 from __future__ import annotations
 
+import re
+
+# A room message is delivered to an agent only when it @mentions it, so the
+# platform prepends one normalized ``@[[uuid]]`` token per mention to the
+# content, which replace_uuid_mentions() rewrites to ``@handle``; a human may
+# type more inline. Matching on ``@\S+`` is safe because handles are slugified
+# (``owner/agent-name``) and so never contain whitespace, whatever the display
+# name is. These match that leading block so a terse control reply can be read
+# from the text after it. Whitespace after each token is consumed, so newlines
+# separating a multi-answer reply survive only past it.
+_LEADING_MENTIONS = re.compile(r"^\s*(?:@\S+(?:\s+|$))+")
+_LEADING_MENTION = re.compile(r"^\s*@\S+(?:\s+|$)")
+
+
+def strip_leading_mentions(content: str, *, only_first: bool = False) -> str:
+    """Drop the platform's leading ``@handle`` mention(s) from a reply.
+
+    A delivered room reply arrives with a mention block in front; parsing a
+    command off ``tokens[0]`` would otherwise read the mention, not the reply.
+    Content past the stripped span is left verbatim (including the newlines a
+    multi-question answer relies on).
+
+    ``only_first`` removes just the single leading delivery mention rather than
+    the whole run. Use it for free-text where a token after the delivery mention
+    may legitimately be an ``@handle`` (a question answer naming a person):
+    greedily eating the whole run would swallow that answer. Command/keyword
+    parsing wants the greedy default -- a command never *is* an ``@`` token, so
+    skipping the entire block only makes matching more robust."""
+    pattern = _LEADING_MENTION if only_first else _LEADING_MENTIONS
+    return pattern.sub("", content, count=1)
+
 
 def replace_uuid_mentions(content: str, participants: list[dict]) -> str:
     """

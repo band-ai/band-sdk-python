@@ -1,0 +1,24 @@
+schemaVersion: "1"
+
+# agent.id is a placeholder; the launcher overrides it per sandbox via
+# BAND_AGENT_ID (set by launch.sh from the provisioned agent).
+agent:
+  id: replace-with-agent-id
+  entrypoint: main.py
+
+band:
+  restUrl: https://app.band.ai
+  wsUrl: wss://app.band.ai/api/v1/socket/websocket
+
+project:
+  path: .
+
+# Real keys stay on the host (sbx secret); the VM sees only the sentinel.
+credentials:
+  source: proxy-managed
+
+runtime:
+  environmentPath: /home/agent/.local/share/band-kit/venv
+  statePath: /home/agent/.local/share/band-kit/state
+  cachePath: /home/agent/.local/share/band-kit/cache
+  logPath: /home/agent/.local/share/band-kit/logs

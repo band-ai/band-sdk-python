@@ -20,8 +20,12 @@ import pytest
 
 from band.client.streaming import AgentControlPayload
 
-from .conftest import FakeForwarder
-from .test_bridge import _build_runner, _make_message_event, _make_platform_message
+from tests.bridge.conftest import FakeForwarder
+from tests.bridge.test_bridge import (
+    _build_runner,
+    _make_message_event,
+    _make_platform_message,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -102,6 +106,27 @@ class TestControlWiring:
         await runner._connect_and_consume()
 
         assert link.on_control == runner._control.handle
+
+    async def test_connect_handles_control_signal_arriving_during_subscription(
+        self,
+    ) -> None:
+        runner, _, link = _build_runner()
+        handler = AsyncMock()
+        runner._control.handle = handler
+        control = _control("interrupt", scope="room", room_id="r1")
+
+        async def connect() -> None:
+            # connect() joins the control channel, so a push can land before it
+            # returns — the hook has to be installed by now, not after.
+            assert link.on_control == handler
+            await link.on_control(control)
+
+        link.connect.side_effect = connect
+        link.__anext__ = AsyncMock(side_effect=StopAsyncIteration())
+
+        await runner._connect_and_consume()
+
+        handler.assert_awaited_once_with(control)
 
 
 # ---------------------------------------------------------------------------

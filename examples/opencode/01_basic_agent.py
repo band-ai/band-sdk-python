@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.11"
-# dependencies = ["band-sdk[opencode]", "python-dotenv"]
+# dependencies = ["band-sdk[opencode]"]
 #
 # [tool.uv.sources]
 # band-sdk = { git = "https://github.com/band-ai/band-sdk-python.git" }
@@ -8,12 +8,15 @@
 """
 Basic OpenCode adapter agent example.
 
-Prerequisites:
+Prerequisites (see `examples/opencode/README.md` for the full setup):
 1. Install OpenCode: `npm install -g opencode-ai`
-2. Start the server: `opencode serve --hostname=127.0.0.1 --port=4096`
-3. Set `BAND_WS_URL` and `BAND_REST_URL`
-4. Add agent credentials to `agent_config.yaml`
-5. The example defaults to the locally available free model `opencode/minimax-m2.5-free`
+2. Give the server a provider key: the default provider is OpenCode Zen, whose
+   models are hosted and need a Zen API key
+3. Start the server from an empty throwaway directory, so a small model answers
+   instead of exploring a checkout:
+   `cd "$(mktemp -d)" && opencode serve --hostname=127.0.0.1 --port=4096`
+4. Set `BAND_WS_URL` and `BAND_REST_URL`
+5. Add agent credentials to `agent_config.yaml`
 
 Run with:
     uv run examples/opencode/01_basic_agent.py
@@ -26,11 +29,10 @@ import logging
 import os
 import sys
 
-from dotenv import load_dotenv
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from setup_logging import setup_logging  # pyrefly: ignore[missing-import]
+from setup_logging import setup_logging
+from settings import OpenCodeExampleSettings
 from band import Agent
 from band.adapters.opencode import OpencodeAdapter, OpencodeAdapterConfig
 from band.core.types import AdapterFeatures, Emit
@@ -40,36 +42,27 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    load_dotenv()
-
-    ws_url = os.getenv("BAND_WS_URL")
-    rest_url = os.getenv("BAND_REST_URL")
-    if not ws_url:
-        raise ValueError("BAND_WS_URL environment variable is required")
-    if not rest_url:
-        raise ValueError("BAND_REST_URL environment variable is required")
-
-    agent_key = os.getenv("AGENT_KEY", "darter")
+    settings = OpenCodeExampleSettings()
     adapter = OpencodeAdapter(
         config=OpencodeAdapterConfig(
-            base_url=os.getenv("OPENCODE_BASE_URL", "http://127.0.0.1:4096"),
-            provider_id=os.getenv("OPENCODE_PROVIDER_ID", "opencode"),
-            model_id=os.getenv("OPENCODE_MODEL_ID", "minimax-m2.5-free"),
-            agent=os.getenv("OPENCODE_AGENT") or None,
+            base_url=settings.opencode_base_url,
+            provider_id=settings.opencode_provider_id,
+            model_id=settings.opencode_model_id,
+            agent=settings.opencode_agent,
             custom_section="You are a helpful assistant. Keep replies concise.",
-            approval_mode=os.getenv("OPENCODE_APPROVAL_MODE", "manual"),  # type: ignore[arg-type]  # env var is str; invalid values fall through to manual mode
-            features=AdapterFeatures(emit={Emit.EXECUTION}),
-        )
+            approval_mode=settings.opencode_approval_mode,
+        ),
+        features=AdapterFeatures(emit={Emit.EXECUTION}),
     )
 
     agent = Agent.from_config(
-        agent_key,
+        settings.agent_key,
         adapter=adapter,
-        ws_url=ws_url,
-        rest_url=rest_url,
+        ws_url=settings.band_ws_url,
+        rest_url=settings.band_rest_url,
     )
 
-    logger.info("Starting OpenCode agent: %s", agent_key)
+    logger.info("Starting OpenCode agent: %s", settings.agent_key)
     await agent.run()
 
 
