@@ -19,6 +19,10 @@ def test_reserved_ports_are_free_for_the_caller_to_bind() -> None:
     """The reservation is released — Parlant itself re-binds the numbers."""
     ports = reserve_server_ports()
 
+    # Each bind is the assertion: it raises OSError if the port is still held.
+    # Racy in principle — a released ephemeral port can be taken before the
+    # rebind — which is the reservation's known, accepted trade-off, so a rare
+    # failure here is that race rather than a regression.
     with contextlib.ExitStack() as stack:
         for port in ports:
             bound = stack.enter_context(

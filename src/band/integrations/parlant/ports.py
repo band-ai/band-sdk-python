@@ -38,30 +38,35 @@ class ServerPorts(NamedTuple):
     tool_service_port: int
 
 
-def reserve_server_ports() -> ServerPorts:
-    """Reserve two distinct loopback ports and log them.
+def reserve_server_ports(host: str | None = None) -> ServerPorts:
+    """Reserve two distinct free ports and log them.
 
-    Both are reserved on ``127.0.0.1``, never on all interfaces: the tool service —
-    the port that actually collides — is bound by Parlant on ``127.0.0.1``
-    explicitly, so a loopback reservation is exactly the guarantee it needs. The API
-    server instead binds the ``host`` given to ``p.Server``, all interfaces by
-    default, for which a loopback reservation is very strong but not airtight: a
-    port free here could in principle be held by another process on some other
-    interface. Reserving that one on all interfaces to close the gap would mean
-    briefly opening a socket to the network for a port we only ever hand back as an
-    integer, which is not a trade worth making — and in an agent that stays inside
-    the ``async with`` body the API port is never bound at all.
+    Each port is reserved on the host that will later bind it, since a port free on
+    one host is not necessarily free on another — a wildcard bind loses to a port
+    already held on *any* single interface, which a loopback-only reservation would
+    never have seen.
+
+    * The tool service is always reserved on ``127.0.0.1``: Parlant hardcodes that
+      host for it.
+    * The API port is reserved on ``host`` — the ``host`` passed to ``p.Server``.
+      ``None`` means Parlant's own default, all interfaces.
+
+    Reserving on all interfaces costs nothing in exposure: the socket is never
+    ``listen()``ed, so it accepts no connections and a SYN gets an RST.
 
     Logged so that a refused connection or a stuck listener can be traced back to a
     known pair — with the ports varying per run, there is otherwise nothing to match
     against ``lsof`` output or a Parlant error.
     """
+    # Parlant's p.Server binds host="0.0.0.0" unless told otherwise.
+    api_host = "0.0.0.0" if host is None else host
+
     with (
         socket.socket(socket.AF_INET, socket.SOCK_STREAM) as api,
         socket.socket(socket.AF_INET, socket.SOCK_STREAM) as tool_service,
     ):
         # Both are held open at once so the OS cannot hand back the same port twice.
-        api.bind(("127.0.0.1", 0))
+        api.bind((api_host, 0))
         tool_service.bind(("127.0.0.1", 0))
         ports = ServerPorts(api.getsockname()[1], tool_service.getsockname()[1])
 

@@ -77,7 +77,9 @@ async def running_parlant_server(
     """
     server_kwargs.setdefault("nlp_service", p.NLPServices.openai)
     if "port" not in server_kwargs or "tool_service_port" not in server_kwargs:
-        ports = reserve_server_ports()
+        # Reserved on the host this server will bind, so the reservation covers the
+        # interfaces uvicorn actually needs at teardown.
+        ports = reserve_server_ports(server_kwargs.get("host"))
         server_kwargs.setdefault("port", ports.port)
         server_kwargs.setdefault("tool_service_port", ports.tool_service_port)
 
