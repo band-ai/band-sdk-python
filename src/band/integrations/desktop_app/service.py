@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient
+from band.client.rest import DEFAULT_REQUEST_OPTIONS, AsyncRestClient, ChatRoomRequest
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
 from band.integrations.desktop_app.room import (
     EPOCH,
@@ -52,6 +52,8 @@ def covers(tail: list[RoomMessage], *, after: datetime | None, limit: int) -> bo
 class TranscriptTools(Protocol):
     async def get_agent_profile(self) -> dict[str, Any]: ...
 
+    async def create_room(self, task_id: str | None = None) -> str: ...
+
     async def list_rooms(self) -> list[dict[str, Any]]: ...
 
     async def list_participants(self, chat_id: str) -> list[dict[str, Any]]: ...
@@ -83,6 +85,14 @@ class AgentTranscriptTools:
         )
         serialized = serialize_tool_result(response)
         return serialized.get("data") or serialized
+
+    async def create_room(self, task_id: str | None = None) -> str:
+        chat = ChatRoomRequest(task_id=task_id) if task_id else ChatRoomRequest()
+        response = await self._rest.agent_api_chats.create_agent_chat(
+            chat=chat,
+            request_options=DEFAULT_REQUEST_OPTIONS,
+        )
+        return str(response.data.id)
 
     async def list_rooms(self) -> list[dict[str, Any]]:
         async def fetch(page: int, page_size: int) -> Any:
@@ -158,10 +168,20 @@ class RoomTranscriptService:
     async def viewer(self) -> AgentIdentity:
         """The Band agent identity Claude Desktop operates as."""
         if self._viewer is None:
-            self._viewer = AgentIdentity.model_validate(
-                await self._tools.get_agent_profile()
-            )
+            await self.refresh_viewer()
+        assert self._viewer is not None
         return self._viewer
+
+    async def refresh_viewer(self) -> AgentIdentity:
+        """Refresh the connected agent identity from ``/api/v1/agent/me``."""
+        self._viewer = AgentIdentity.model_validate(
+            await self._tools.get_agent_profile()
+        )
+        return self._viewer
+
+    async def create_room(self, task_id: str | None = None) -> str:
+        """Create a room as the connected agent."""
+        return await self._tools.create_room(task_id)
 
     async def resolve_room(self, room: str) -> str:
         """The room ID a join argument names.

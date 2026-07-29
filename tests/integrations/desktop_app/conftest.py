@@ -102,9 +102,16 @@ class FakeTranscriptTools:
         self.reads = 0
         self.calls: list[dict[str, Any]] = []
         self.participant_calls = 0
+        self.created_task_ids: list[str | None] = []
+        self.profile_calls = 0
 
     async def get_agent_profile(self) -> dict[str, Any]:
+        self.profile_calls += 1
         return TOM
+
+    async def create_room(self, task_id: str | None = None) -> str:
+        self.created_task_ids.append(task_id)
+        return "created-room"
 
     async def list_rooms(self) -> list[dict[str, Any]]:
         return ROOMS
@@ -199,6 +206,9 @@ class Room:
 
     async def join(self, chat_id: str = ROOM_ID) -> dict[str, Any]:
         return await self.invoke(RoomTool.JOIN, chat_id=chat_id)
+
+    async def create(self, task_id: str | None = None) -> dict[str, Any]:
+        return await self.invoke(RoomTool.CREATE, task_id=task_id)
 
     async def monitor(
         self,

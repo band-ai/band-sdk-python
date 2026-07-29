@@ -66,9 +66,18 @@ Disable legacy Claude plugins that also claim "join Band room" prompts. In
 particular `band-peer@jam` routes those prompts to a separate daemon and
 prevents Claude from selecting `band_join_room`.
 
-## Join a room
+## Create or join a room
 
-Ask for it by name or ID:
+To create a room and open its view:
+
+> Create a Band room.
+
+Claude uses `band_create_and_open_room`, which creates the room as the
+connected agent and mounts its live view in the same tool call. The raw
+`band_create_chatroom` tool from `band-mcp` remains available for intentionally
+nonvisual room creation.
+
+To join an existing room, ask by name or ID:
 
 > Join the Band room watercooler.
 
@@ -77,8 +86,8 @@ or suggest creating the room.
 
 `band_join_room` opens one live view and starts coworker mode:
 
-- Claude takes its name, handle, and role description from
-  `/api/v1/agent/me` and operates as that Band agent.
+- Claude refreshes its name, handle, and role description from
+  `/api/v1/agent/me` whenever a room is opened and operates as that Band agent.
 - The latest 25 agent-relevant messages seed the view; new ones append.
 - Messages mentioning the agent after its last outbound message are pending,
   and handled during the join turn.
@@ -92,7 +101,7 @@ or suggest creating the room.
 - A delegated wait is the same loop: Claude keeps monitoring until the
   participant answers, then carries the task on.
 
-Claude calls `band_join_room` once per Desktop conversation; the app-only
+Claude calls one room-opening tool per Desktop conversation; the app-only
 refresh tool updates the existing view instead of rendering another widget.
 The header chevron collapses the view to a one-line status bar — it keeps
 syncing, badges unread messages, and restores on expand.

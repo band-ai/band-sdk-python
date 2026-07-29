@@ -155,6 +155,25 @@ class TestPendingRequests:
 
 
 class TestRestBoundary:
+    async def test_room_creation_omits_an_absent_task_id(self) -> None:
+        rest: Any = MagicMock()
+        rest.agent_api_chats.create_agent_chat = AsyncMock(
+            side_effect=[
+                SimpleNamespace(data=SimpleNamespace(id="room-without-task")),
+                SimpleNamespace(data=SimpleNamespace(id="room-with-task")),
+            ]
+        )
+        tools = AgentTranscriptTools(rest)
+
+        assert await tools.create_room() == "room-without-task"
+        assert await tools.create_room("task-1") == "room-with-task"
+
+        calls = rest.agent_api_chats.create_agent_chat.await_args_list
+        assert calls[0].kwargs["chat"].model_dump(exclude_unset=True) == {}
+        assert calls[1].kwargs["chat"].model_dump(exclude_unset=True) == {
+            "task_id": "task-1"
+        }
+
     async def test_reads_go_through_the_sdk_room_tools(self) -> None:
         """The view must not grow a second copy of the agent REST reads."""
         rest: Any = MagicMock()

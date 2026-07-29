@@ -34,11 +34,19 @@ class TestToolSurface:
     def test_each_tool_declares_who_may_call_it(self) -> None:
         tools = {tool.name: tool for tool in room_view_tools()}
 
-        assert set(tools) == {RoomTool.JOIN, RoomTool.REFRESH, RoomTool.MONITOR}
+        assert set(tools) == {
+            RoomTool.JOIN,
+            RoomTool.CREATE,
+            RoomTool.REFRESH,
+            RoomTool.MONITOR,
+        }
         join_meta = tools[RoomTool.JOIN].meta
         assert join_meta is not None
         assert join_meta["ui"]["resourceUri"] == ROOM_VIEW_URI
         assert join_meta["ui/resourceUri"] == ROOM_VIEW_URI
+        assert tools[RoomTool.CREATE].meta == join_meta, (
+            "every workflow ending in OPEN_ROOM must mount the same live view"
+        )
         assert tools[RoomTool.REFRESH].meta == {"ui": {"visibility": ["app"]}}, (
             "a host renders the result of any tool naming a resourceUri, so an "
             "app-only refresh must not name one or it remounts the view"

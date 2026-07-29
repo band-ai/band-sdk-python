@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from mcp.server.lowlevel import Server
@@ -17,6 +19,7 @@ from band.client.rest import AsyncRestClient
 from band.integrations.desktop_app.event_relay import DesktopRoomEventRelay
 from band.integrations.desktop_app.logs import configure as configure_logging
 from band.integrations.desktop_app.prompts import (
+    CREATE_TOOL_DESCRIPTION,
     JOIN_TOOL_DESCRIPTION,
     MONITOR_TOOL_DESCRIPTION,
     REFRESH_TOOL_DESCRIPTION,
@@ -34,6 +37,7 @@ from band.integrations.desktop_app.service import (
 )
 from band.integrations.desktop_app.settings import DesktopRoomViewSettings
 from band.integrations.desktop_app.tools import (
+    CreateAndOpenRoomInput,
     JoinRoomInput,
     RefreshRoomInput,
     RoomTool,
@@ -52,37 +56,77 @@ ROOM_VIEW_MIME_TYPE = "text/html;profile=mcp-app"
 UI_EXTENSION_ID = "io.modelcontextprotocol/ui"
 
 
+@dataclass
+class WorkflowResult:
+    """The shared state passed through a tool's ordered success operations."""
+
+    room_id: str
+    summary: str = ""
+    transcript: RoomTranscript | None = None
+    requested_room: str | None = None
+
+
 async def _join(
     service: RoomTranscriptService,
     arguments: dict[str, Any],
-) -> tuple[str, RoomTranscript]:
+) -> WorkflowResult:
     parsed = JoinRoomInput.model_validate(arguments)
     chat_id = await service.resolve_room(parsed.chat_id)
-    transcript = await service.read(chat_id)
-    service.wakes.suppress(chat_id, transcript.pending_requests)
+    return WorkflowResult(room_id=chat_id, requested_room=parsed.chat_id)
+
+
+async def _create(
+    service: RoomTranscriptService,
+    arguments: dict[str, Any],
+) -> WorkflowResult:
+    parsed = CreateAndOpenRoomInput.model_validate(arguments)
+    chat_id = await service.create_room(parsed.task_id)
+    return WorkflowResult(
+        room_id=chat_id,
+        summary=f"Created Band room {chat_id}.",
+    )
+
+
+async def _open_room(
+    service: RoomTranscriptService,
+    result: WorkflowResult,
+) -> WorkflowResult:
+    await service.refresh_viewer()
+    transcript = await service.read(result.room_id)
+    service.wakes.suppress(result.room_id, transcript.pending_requests)
     logger.info(
         "join chat=%s messages=%d pending=%d transport=%s",
-        chat_id,
+        result.room_id,
         len(transcript.messages),
         len(transcript.pending_requests),
         transcript.transport.role,
     )
-    return join_summary(transcript, requested=parsed.chat_id), transcript
+    opened = join_summary(
+        transcript,
+        requested=result.requested_room or result.room_id,
+    )
+    result.summary = "\n\n".join(filter(None, (result.summary, opened)))
+    result.transcript = transcript
+    return result
 
 
 async def _refresh(
     service: RoomTranscriptService,
     arguments: dict[str, Any],
-) -> tuple[str, RoomTranscript]:
+) -> WorkflowResult:
     parsed = RefreshRoomInput.model_validate(arguments)
     transcript = await service.read(parsed.chat_id, since=parsed.since)
-    return refresh_summary(transcript), transcript
+    return WorkflowResult(
+        room_id=parsed.chat_id,
+        summary=refresh_summary(transcript),
+        transcript=transcript,
+    )
 
 
 async def _monitor(
     service: RoomTranscriptService,
     arguments: dict[str, Any],
-) -> tuple[str, RoomTranscript]:
+) -> WorkflowResult:
     parsed = WaitForRoomEventInput.model_validate(arguments)
     service.release_wakes(parsed.chat_id, parsed.retry_wakes)
     event = await service.wait_for_room_event(
@@ -109,19 +153,90 @@ async def _monitor(
         elsewhere=service.unannounced_rooms(parsed.chat_id),
     )
     # A quiet tick repeats every few seconds, so it sheds what the caller holds.
-    return summary, (event if event.messages else event.tick())
+    return WorkflowResult(
+        room_id=parsed.chat_id,
+        summary=summary,
+        transcript=event if event.messages else event.tick(),
+    )
 
 
 ToolHandler = Callable[
     [RoomTranscriptService, dict[str, Any]],
-    Awaitable[tuple[str, RoomTranscript]],
+    Awaitable[WorkflowResult],
 ]
 
-TOOL_HANDLERS: dict[str, ToolHandler] = {
-    RoomTool.JOIN: _join,
-    RoomTool.REFRESH: _refresh,
-    RoomTool.MONITOR: _monitor,
+
+class WorkflowOperation(StrEnum):
+    """Reusable operations a successful desktop workflow may chain."""
+
+    OPEN_ROOM = "open_room"
+
+
+SuccessOperation = Callable[
+    [RoomTranscriptService, WorkflowResult],
+    Awaitable[WorkflowResult],
+]
+
+SUCCESS_OPERATIONS: dict[WorkflowOperation, SuccessOperation] = {
+    WorkflowOperation.OPEN_ROOM: _open_room,
 }
+
+
+@dataclass(frozen=True)
+class DesktopToolSpec:
+    """One source for a desktop tool's contract, dispatch, and UI behavior."""
+
+    name: RoomTool
+    description: str
+    input_model: type[BaseModel]
+    handler: ToolHandler
+    on_success: tuple[WorkflowOperation, ...] = ()
+    visibility: tuple[str, ...] | None = None
+
+
+TOOL_SPECS: tuple[DesktopToolSpec, ...] = (
+    DesktopToolSpec(
+        name=RoomTool.JOIN,
+        description=JOIN_TOOL_DESCRIPTION,
+        input_model=JoinRoomInput,
+        handler=_join,
+        on_success=(WorkflowOperation.OPEN_ROOM,),
+    ),
+    DesktopToolSpec(
+        name=RoomTool.CREATE,
+        description=CREATE_TOOL_DESCRIPTION,
+        input_model=CreateAndOpenRoomInput,
+        handler=_create,
+        on_success=(WorkflowOperation.OPEN_ROOM,),
+    ),
+    DesktopToolSpec(
+        name=RoomTool.REFRESH,
+        description=REFRESH_TOOL_DESCRIPTION,
+        input_model=RefreshRoomInput,
+        handler=_refresh,
+        visibility=("app",),
+    ),
+    DesktopToolSpec(
+        name=RoomTool.MONITOR,
+        description=MONITOR_TOOL_DESCRIPTION,
+        input_model=WaitForRoomEventInput,
+        handler=_monitor,
+        visibility=("model", "app"),
+    ),
+)
+
+
+async def _execute_workflow(
+    service: RoomTranscriptService,
+    spec: DesktopToolSpec,
+    arguments: dict[str, Any],
+) -> WorkflowResult:
+    result = await spec.handler(service, arguments)
+    for operation in spec.on_success:
+        result = await SUCCESS_OPERATIONS[operation](service, result)
+    if result.transcript is None:
+        raise RuntimeError(f"{spec.name} produced no room transcript.")
+    return result
 
 
 def _connected_host(server: Server[Any, Any]) -> Any:
@@ -143,36 +258,27 @@ def _schema(model: type[BaseModel]) -> dict[str, Any]:
 
 
 def room_view_tools() -> list[Tool]:
-    """The one-time join, nonvisual waiter, and app-only refresh."""
-    shared_meta = {
-        "ui": {"resourceUri": ROOM_VIEW_URI},
-        "ui/resourceUri": ROOM_VIEW_URI,
-    }
-    return [
-        Tool(
-            name=RoomTool.JOIN,
-            description=JOIN_TOOL_DESCRIPTION,
-            inputSchema=_schema(JoinRoomInput),
-            _meta=shared_meta,
-        ),
-        Tool(
-            name=RoomTool.REFRESH,
-            description=REFRESH_TOOL_DESCRIPTION,
-            inputSchema=_schema(RefreshRoomInput),
-            # No resourceUri: a host renders the results of any tool that names
-            # one, which would redeliver this app-initiated result as a second
-            # ui/notifications/tool-result and remount the room view.
-            _meta={"ui": {"visibility": ["app"]}},
-        ),
-        Tool(
-            name=RoomTool.MONITOR,
-            description=MONITOR_TOOL_DESCRIPTION,
-            inputSchema=_schema(WaitForRoomEventInput),
-            _meta={
-                "ui": {"visibility": ["model", "app"]},
-            },
-        ),
-    ]
+    """Generate the MCP surface from the desktop workflow registry."""
+    tools = []
+    for spec in TOOL_SPECS:
+        ui: dict[str, Any] = {}
+        opens_view = WorkflowOperation.OPEN_ROOM in spec.on_success
+        if opens_view:
+            ui["resourceUri"] = ROOM_VIEW_URI
+        if spec.visibility:
+            ui["visibility"] = list(spec.visibility)
+        meta: dict[str, Any] = {"ui": ui}
+        if opens_view:
+            meta["ui/resourceUri"] = ROOM_VIEW_URI
+        tools.append(
+            Tool(
+                name=spec.name,
+                description=spec.description,
+                inputSchema=_schema(spec.input_model),
+                _meta=meta,
+            )
+        )
+    return tools
 
 
 def create_server(service: RoomTranscriptService) -> Server[Any, Any]:
@@ -182,6 +288,7 @@ def create_server(service: RoomTranscriptService) -> Server[Any, Any]:
         instructions=SERVER_INSTRUCTIONS,
     )
     tools = {tool.name: tool for tool in room_view_tools()}
+    specs = {spec.name.value: spec for spec in TOOL_SPECS}
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
@@ -193,13 +300,14 @@ def create_server(service: RoomTranscriptService) -> Server[Any, Any]:
         arguments: dict[str, Any],
     ) -> tuple[list[TextContent], dict[str, Any]]:
         service.capture_host(_connected_host(server))
-        handler = TOOL_HANDLERS.get(tool_name)
-        if handler is None:
+        spec = specs.get(tool_name)
+        if spec is None:
             raise ValueError(f"Unknown tool: {tool_name}")
-        summary, transcript = await handler(service, arguments)
+        result = await _execute_workflow(service, spec, arguments)
+        assert result.transcript is not None
         return (
-            [TextContent(type="text", text=summary)],
-            transcript.model_dump(mode="json"),
+            [TextContent(type="text", text=result.summary)],
+            result.transcript.model_dump(mode="json"),
         )
 
     @server.list_resources()

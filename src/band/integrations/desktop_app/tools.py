@@ -18,8 +18,18 @@ class RoomTool(StrEnum):
     """The tools this server exposes, named once for every reader of them."""
 
     JOIN = "band_join_room"
+    CREATE = "band_create_and_open_room"
     REFRESH = "band_refresh_room_view"
     MONITOR = "band_wait_for_room_event"
+
+
+class CreateAndOpenRoomInput(BaseModel):
+    """Create a Band room and open its live collaboration view."""
+
+    task_id: str | None = Field(
+        default=None,
+        description="Optional Band task ID to associate with the new room.",
+    )
 
 
 class JoinRoomInput(BaseModel):

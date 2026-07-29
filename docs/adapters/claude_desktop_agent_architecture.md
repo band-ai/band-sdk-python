@@ -53,7 +53,8 @@ superseding one another on the platform, which allows one consumer per key.
 ## Identity and API scope
 
 The Desktop config uses `BAND_AGENT_KEY`, never a human user key. The agent
-resolves through `GET /api/v1/agent/me`. Transcript reads go through the SDK's
+resolves through `GET /api/v1/agent/me` at startup and refreshes that profile
+whenever a room-opening workflow runs. Transcript reads go through the SDK's
 room-bound `AgentTools.fetch_room_context()`; all room mutations go through
 `band-mcp`'s agent-scope tools. Reads, writes, subscriptions, presence, and the
 visible sender identity therefore stay aligned.
@@ -239,15 +240,21 @@ It also reports the boundaries the server cannot observe: `hostInfo` and
 Every host request is bounded by a timeout, so a frozen iframe cannot wedge the
 watch loop.
 
-Only `band_join_room` declares `_meta.ui.resourceUri`. A host renders the
-results of any tool naming a UI resource, so putting one on an app-only tool
-would redeliver its payload and remount the view.
+Every desktop workflow ending in `OPEN_ROOM` declares `_meta.ui.resourceUri`;
+currently those are join and create-and-open. A host renders the results of any
+tool naming a UI resource, so app-only refresh and monitoring tools do not
+declare one.
+
+Tool contracts, handlers, visibility, and ordered success operations live in
+one workflow registry. A workflow may chain reusable operations; execution
+stops at the first failure.
 
 ## MCP tool surface
 
 | Tool | Visibility | Purpose |
 |---|---|---|
 | `band_join_room` | Model and app | Resolve the room, establish coworker mode, render the one room view |
+| `band_create_and_open_room` | Model and app | Create a room, establish coworker mode, render the one room view |
 | `band_refresh_room_view` | App only | Manual REST refresh from the view's Refresh button |
 | `band_wait_for_room_event` | Model and app | Block until the room changes: Claude's monitoring loop and the view's display loop |
 
