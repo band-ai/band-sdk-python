@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 
 from band.integrations.desktop_app.room import RoomMessage
 
 logger = logging.getLogger(__name__)
+
+# How often one mention may come back for another wake. A refusal the host
+# decided is dropped by the view, so a re-offer means the ask never arrived —
+# and after a few of those it never will, while re-offering costs a failed
+# round trip on every tick for the rest of the conversation.
+MAX_REOFFERS = 3
 
 
 class WakeLedger:
@@ -20,6 +27,7 @@ class WakeLedger:
     def __init__(self) -> None:
         self._woken: dict[str, set[str]] = {}
         self._refused: dict[str, dict[str, RoomMessage]] = {}
+        self._reoffers: dict[str, Counter[str]] = {}
 
     def suppress(self, chat_id: str, pending: list[RoomMessage]) -> None:
         """Record mentions the Claude turn calling this tool already handles."""
@@ -45,17 +53,31 @@ class WakeLedger:
         message_ids: list[str],
         known: dict[str, RoomMessage],
     ) -> None:
-        """Re-offer mentions whose wake the host refused or lost.
+        """Re-offer mentions whose wake never reached the host.
 
-        Only a message this ledger actually woke, and the caller can still
-        name (``known``), goes back on offer.
+        Only a message this ledger actually woke, that the caller can still
+        name (``known``), and that has attempts left, goes back on offer.
         """
         woken = self._woken.setdefault(chat_id, set())
-        reoffered = []
+        attempts = self._reoffers.setdefault(chat_id, Counter())
+        reoffered, exhausted = [], []
         for identifier in message_ids:
-            if identifier in woken and identifier in known:
-                woken.discard(identifier)
-                self._refused.setdefault(chat_id, {})[identifier] = known[identifier]
-                reoffered.append(identifier)
+            if identifier not in woken or identifier not in known:
+                continue
+            attempts[identifier] += 1
+            if attempts[identifier] > MAX_REOFFERS:
+                exhausted.append(identifier)
+                continue
+            woken.discard(identifier)
+            self._refused.setdefault(chat_id, {})[identifier] = known[identifier]
+            reoffered.append(identifier)
         if reoffered:
             logger.info("wake re-offered chat=%s ids=%s", chat_id, reoffered)
+        if exhausted:
+            logger.warning(
+                "wake given up on chat=%s ids=%s after %d attempts; the monitor "
+                "loop is now the only way these are answered",
+                chat_id,
+                exhausted,
+                MAX_REOFFERS,
+            )

@@ -86,6 +86,19 @@ class TestModelContext:
         )
 
 
+class TestWake:
+    def test_a_wake_the_host_refused_is_not_offered_back(
+        self, behaviour: dict[str, Any]
+    ) -> None:
+        """Desktop refuses an unactivated `ui/message` as a JSON-RPC error, not
+        an `isError` result. Retrying that re-asks an answered question on every
+        tick for the rest of the conversation."""
+        result = behaviour["wakeRefusedByTheHost"]
+
+        assert result["shapesTried"] == 2, "both content shapes are still probed"
+        assert result["retryWakes"] == []
+
+
 class TestWatchTiming:
     def test_how_long_to_block_is_left_to_the_server(
         self, behaviour: dict[str, Any]

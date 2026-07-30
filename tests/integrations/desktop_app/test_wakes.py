@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from band.integrations.desktop_app.wakes import MAX_REOFFERS
 from tests.integrations.desktop_app.conftest import ids, mentioned_message, message
 
 
@@ -65,3 +66,18 @@ class TestWakeLedger:
         retried = await live.monitor(retry_wakes=["req-1"])
 
         assert ids(retried["wake_requests"]) == ["req-1"]
+
+    async def test_a_wake_that_keeps_being_lost_is_given_up_on(self, room: Any) -> None:
+        """Otherwise one mention costs a failed wake on every tick forever; the
+        monitor loop still answers it, which is what the ledger falls back on."""
+        request = mentioned_message("req-1", "2026-01-01T00:00:02Z")
+        live = room([message("m-1", "2026-01-01T00:00:01Z")], [request])
+        await live.join()
+        await live.monitor()
+
+        offered = [
+            ids((await live.monitor(retry_wakes=["req-1"]))["wake_requests"])
+            for _ in range(MAX_REOFFERS + 1)
+        ]
+
+        assert offered == [["req-1"]] * MAX_REOFFERS + [[]]

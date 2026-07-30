@@ -94,6 +94,11 @@ function mountView(source) {
     answered.add(message.id);
     deliver({ jsonrpc: "2.0", id: message.id, result });
   };
+  /** A host that answers by refusing — the shape Claude Desktop uses. */
+  const refuse = (message, error) => {
+    answered.add(message.id);
+    deliver({ jsonrpc: "2.0", id: message.id, error });
+  };
 
   /** Let the view's promises run, answering the calls a host always answers. */
   const settle = async () => {
@@ -109,7 +114,9 @@ function mountView(source) {
     sent,
     deliver,
     answer,
+    refuse,
     settle,
+    pending: method => waiting(method),
     room: () => byId("room").textContent,
     toolCall: name => waiting("tools/call", item => item.params.name === name),
     contextUpdates: () =>
@@ -280,6 +287,42 @@ const SCENARIOS = {
     return {
       pending: latest.structuredContent.band_room.pending_requests.map(item => item.id),
       text: latest.content[0].text
+    };
+  },
+
+  /** A wake the host refused must not come back: it repeats on every tick. */
+  async wakeRefusedByTheHost(source) {
+    const view = await open(
+      source,
+      "room-a",
+      transcript("room-a", [], "2026-01-01T00:00:01Z")
+    );
+    const mention = said("ask", "2026-01-01T00:00:02Z", { addressed_to_viewer: true });
+
+    view.answer(view.toolCall("band_wait_for_room_event"), {
+      structuredContent: {
+        ...transcript("room-a", [mention], "2026-01-01T00:00:02Z", [mention]),
+        wake_requests: [mention],
+        wake_prompt: "answer this in the room"
+      }
+    });
+    await flush();
+    view.answer(view.pending("ui/update-model-context"));
+    await flush();
+    const refusals = [];
+    for (let shape = 0; shape < 2; shape += 1) {
+      const ask = view.pending("ui/message");
+      if (!ask) break;
+      refusals.push(shape);
+      view.refuse(ask, { code: -32000, message: "ui/message requires user activation" });
+      await flush();
+    }
+    view.tick();
+    await view.settle();
+
+    return {
+      shapesTried: refusals.length,
+      retryWakes: view.toolCall("band_wait_for_room_event").params.arguments.retry_wakes
     };
   },
 

@@ -171,8 +171,11 @@ Consequences:
 
 - The monitor loop is the guarantee. The wake path is an accelerator only: the
   wake ledger hands each pending mention out exactly once (`wake_requests`),
-  the view attempts one `ui/message`, a rejection is dropped as deterministic,
-  and only transport failures are re-offered via `retry_wakes`.
+  the view attempts one `ui/message`, and any refusal the host answered with is
+  dropped as deterministic — whether it comes back as an `isError` result or,
+  as this host sends it, a JSON-RPC error. Only a call that never reached the
+  host is re-offered via `retry_wakes`, and the ledger gives up on a mention
+  after `MAX_REOFFERS` attempts rather than re-asking on every tick forever.
 - One conversation cannot both block-listen and accept typed input instantly.
   Short quanta shrink the window; only a second context — an always-on agent
   process with Desktop as its console — removes it.

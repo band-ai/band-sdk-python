@@ -108,6 +108,17 @@
   const send = message => window.parent.postMessage(message, "*");
 
   /**
+   * An error the host answered with, marked as such.
+   *
+   * A refusal and a call that never arrived are both a thrown Error once they
+   * reach the caller, and they deserve opposite treatment: one is a decision,
+   * the other is worth retrying. Only the answered one carries the mark.
+   * @param {string} detail
+   * @returns {Error}
+   */
+  const answeredError = detail => Object.assign(new Error(detail), { answered: true });
+
+  /**
    * Send a JSON-RPC request to the host. Every request is bounded: a host that
    * never answers (or an iframe the browser froze mid-flight) must not wedge
    * the watch loop forever.
@@ -458,8 +469,10 @@
    * Measured on this host: `ui/message` succeeds only with user activation (a
    * click), so an autonomous wake is expected to be rejected — Claude's own
    * monitor loop is the guarantee, and this is an accelerator that fires when
-   * activation happens to exist. A rejection is deterministic and is dropped;
-   * only a transport failure is re-offered to the server for retry.
+   * activation happens to exist. A refusal is deterministic and is dropped —
+   * whether the host spells it as an `isError` result or as a JSON-RPC error,
+   * since re-asking a question the host already answered repeats on every tick
+   * forever. Only a call that never reached the host is re-offered for retry.
    *
    * The message itself is authored server-side and arrives as `wake_prompt`:
    * the view relays model-facing text, it never writes any.
@@ -486,9 +499,15 @@
         lastWake = `rejected (${shape})`;
         log("info", { stage: "wake", shape, result });
       } catch (error) {
-        transportFailure = true;
-        lastWake = `failed (${shape})`;
-        log("error", { stage: "wake", shape, detail: String(error) });
+        const answered = Boolean(/** @type {any} */ (error)?.answered);
+        transportFailure = transportFailure || !answered;
+        lastWake = `${answered ? "rejected" : "failed"} (${shape})`;
+        log(answered ? "info" : "error", {
+          stage: "wake",
+          shape,
+          answered,
+          detail: String(error)
+        });
       }
     }
     if (transportFailure) {
@@ -638,7 +657,7 @@
       const waiter = pending.get(message.id);
       if (!waiter) return;
       pending.delete(message.id);
-      if (message.error) waiter.reject(new Error(message.error.message));
+      if (message.error) waiter.reject(answeredError(message.error.message));
       else waiter.resolve(message.result);
       return;
     }
