@@ -149,7 +149,13 @@ def execute(launch: ResolvedLaunch) -> None:
 
 
 def configure_logging(*, log_file: Path | None = None) -> None:
-    """Apply launcher logging: stderr now, optional file after path resolution."""
+    """Apply launcher logging: console now, optional file after path resolution.
+
+    The console stream is left to ``BAND_LOG_STREAM``. Nothing reads this
+    process's stdout — it logs and then execs the customer entrypoint — so
+    unlike band-acp and band-trigger, whose stdout carries JSON-RPC frames and
+    command output, there is no protocol here to protect from a log line.
+    """
     settings = LogSettings(
         log_file=log_file,
         log_console_style=LoggingStyle.STANDARD,
