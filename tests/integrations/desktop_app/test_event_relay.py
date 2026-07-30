@@ -53,6 +53,14 @@ class StalledFollower:
     async def drain(self) -> None:
         await asyncio.Event().wait()
 
+    def close(self) -> None:
+        pass
+
+
+class HealthyFollower(StalledFollower):
+    async def drain(self) -> None:
+        return None
+
 
 @dataclass
 class RelayHarness:
@@ -151,6 +159,46 @@ async def test_a_room_the_agent_joined_reaches_every_follower(
         assert leader.status.rooms_added == ["room-9"]
     finally:
         await asyncio.gather(late.stop(), early.stop(), leader.stop())
+
+
+async def test_failover_with_a_connected_follower_does_not_deadlock(
+    relays: RelayHarness,
+) -> None:
+    """server.wait_closed() waits for the accept handlers on Python 3.12+,
+    and a WebSocket failover never sets the relay-wide stop event they used
+    to park on — the leader hung in its own cleanup still holding the leader
+    lock, its followers wired to a dead socket indefinitely."""
+    leader, follower = relays.build(), relays.build()
+    await leader.start()
+    await follower.start()
+    try:
+        relays.links[0].supersede()
+        await relays.presences[0].on_disconnected()
+
+        await wait_until(lambda: len(relays.links) == 2)
+        await wait_until(lambda: leader.status.live)
+        await wait_until(lambda: follower.status.role == "follower")
+    finally:
+        await asyncio.gather(follower.stop(), leader.stop())
+
+
+async def test_wedged_followers_cost_one_fanout_timeout_not_one_each(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deliveries run concurrently: fanout runs on the leader's WebSocket
+    event path, so serial per-follower timeouts would let a few frozen
+    Desktop processes starve every healthy one of events for their sum."""
+    monkeypatch.setattr(event_relay.RELAY_TUNING, "band_relay_fanout_timeout_s", 0.2)
+    healthy = HealthyFollower()
+    clients = {StalledFollower(), StalledFollower(), healthy}
+
+    started = asyncio.get_running_loop().time()
+    await event_relay.fanout(clients, b"event room-1\n")
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert healthy.received == [b"event room-1\n"]
+    assert clients == {healthy}, "the wedged followers lost their place"
+    assert elapsed < 0.35, "two frozen followers were waited out one after the other"
 
 
 async def test_a_superseded_websocket_is_replaced_rather_than_held(

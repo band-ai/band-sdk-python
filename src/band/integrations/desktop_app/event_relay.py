@@ -87,6 +87,26 @@ async def deliver(writer: asyncio.StreamWriter, payload: bytes) -> bool:
         return False
 
 
+async def fanout(clients: set[asyncio.StreamWriter], payload: bytes) -> None:
+    """Hand one line to every follower at once, dropping any that wedged.
+
+    Deliveries run concurrently so a frozen follower costs itself its place,
+    not every healthy sibling a serial wait: however many are wedged, the
+    WebSocket event path calling this is parked for at most one fanout
+    timeout in total.
+    """
+    recipients = list(clients)
+    delivered = await asyncio.gather(
+        *(deliver(writer, payload) for writer in recipients)
+    )
+    for writer, reachable in zip(recipients, delivered):
+        if reachable:
+            continue
+        logger.warning("Dropping a follower that stopped reading events")
+        clients.discard(writer)
+        writer.close()
+
+
 class RelayStatus(BaseModel):
     """How this process is currently receiving Band room events."""
 
@@ -253,6 +273,12 @@ class DesktopRoomEventRelay:
     async def _lead(self) -> None:
         self._socket_path.unlink(missing_ok=True)
         clients: set[asyncio.StreamWriter] = set()
+        # Releases the accept handlers on any exit from *this* leadership.
+        # They must not park on the relay-wide stop event: a WebSocket
+        # failover never sets it, and server.wait_closed() waits for the
+        # handlers (Python 3.12+), so the relay would hang below still
+        # holding the leader lock, its followers wired to a dead leader.
+        closing = asyncio.Event()
 
         def line(kind: Fanout, room_id: str) -> bytes:
             return f"{kind} {room_id}\n".encode()
@@ -271,7 +297,7 @@ class DesktopRoomEventRelay:
                 for room_id in self.status.rooms_added:
                     writer.write(line(Fanout.JOINED, room_id))
                 await writer.drain()
-                await self._stopped.wait()
+                await closing.wait()
             finally:
                 clients.discard(writer)
                 writer.close()
@@ -287,22 +313,14 @@ class DesktopRoomEventRelay:
         )
         presence = self._presence_factory(link)
 
-        async def fanout(payload: bytes) -> None:
-            for writer in list(clients):
-                if await deliver(writer, payload):
-                    continue
-                logger.warning("Dropping a follower that stopped reading events")
-                clients.discard(writer)
-                writer.close()
-
         async def publish(room_id: str, _: PlatformEvent) -> None:
             self.status.events_received += 1
             await self.events.publish(room_id)
-            await fanout(line(Fanout.EVENT, room_id))
+            await fanout(clients, line(Fanout.EVENT, room_id))
 
         async def joined(room_id: str, _: dict) -> None:
             self._record_room_added(room_id)
-            await fanout(line(Fanout.JOINED, room_id))
+            await fanout(clients, line(Fanout.JOINED, room_id))
 
         presence.on_room_joined = joined
         lost = asyncio.Event()
@@ -327,14 +345,11 @@ class DesktopRoomEventRelay:
             self.status.websocket_connected = False
             await presence.stop()
             await link.disconnect()
+            # Released handlers close their own writers, so ending a follower
+            # takes nothing beyond letting its handler finish.
+            closing.set()
             server.close()
             await server.wait_closed()
-            for writer in clients:
-                writer.close()
-            await asyncio.gather(
-                *(writer.wait_closed() for writer in clients),
-                return_exceptions=True,
-            )
             self._socket_path.unlink(missing_ok=True)
 
     async def _hold_leadership(self, lost: asyncio.Event) -> None:
