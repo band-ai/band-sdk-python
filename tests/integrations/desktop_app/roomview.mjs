@@ -119,6 +119,7 @@ function mountView(source) {
     pending: method => waiting(method),
     room: () => byId("room").textContent,
     hidden: id => byId(id).hidden,
+    diagnostics: () => byId("events").textContent,
     toolCall: name => waiting("tools/call", item => item.params.name === name),
     contextUpdates: () =>
       sent.filter(item => item.method === "ui/update-model-context"),
@@ -372,6 +373,33 @@ const SCENARIOS = {
       shownWhileStale,
       wakeText,
       hiddenAfterRecovery: view.hidden("wake")
+    };
+  },
+
+  /** In on-demand attention the widget is the inbox and the button the
+   * standing way in: always offered, calm, relaying the server's check
+   * prompt — while the stopped-loop machinery stays silent. */
+  async onDemandCheckButton(source) {
+    const check = "The user clicked Check room. Call band_wait_for_room_event once.";
+    const view = await open(source, "room-a", {
+      ...transcript("room-a", [], "2026-01-01T00:00:01Z"),
+      attention: "user_first",
+      check_prompt: check,
+      pending_requests: [said("ask-1", "2026-01-01T00:00:01Z")]
+    });
+    const button = !view.hidden("wake");
+
+    view.click("wake");
+    await flush();
+    const ask = view.pending("ui/message");
+    const text = ask ? ask.params.content.text : "";
+    if (ask) view.answer(ask, {});
+    await view.settle();
+
+    return {
+      buttonOffered: button,
+      relayedText: text,
+      diagnostics: view.diagnostics()
     };
   },
 

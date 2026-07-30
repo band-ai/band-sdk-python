@@ -23,11 +23,13 @@ from band.integrations.desktop_app.room import (
 )
 from band.integrations.desktop_app.prompts import (
     ambiguous_room_guidance,
+    check_room_prompt,
     monitoring_notice,
     room_briefing,
     unknown_room_guidance,
 )
 from band.integrations.desktop_app.settings import RoomViewTuning
+from band.integrations.desktop_app.tools import AttentionMode
 from band.integrations.desktop_app.wakes import WakeLedger
 from band.runtime.tools import AgentTools, iter_chat_pages, serialize_tool_result
 
@@ -191,6 +193,7 @@ class RoomTranscriptService:
         self._participants: dict[str, list[RoomParticipant]] = {}
         self._announced_rooms: set[str] = set()
         self._pulses: dict[str, ReadPulse] = {}
+        self._modes: dict[str, AttentionMode] = {}
         self._model_ticks: dict[str, ModelTick] = {}
         self._reported_stale: set[str] = set()
         self.wakes = WakeLedger()
@@ -257,6 +260,15 @@ class RoomTranscriptService:
                 self._participants.setdefault(chat_id, [])
         return self._participants[chat_id]
 
+    def attention(self, chat_id: str) -> AttentionMode:
+        """Whose attention this room gets first."""
+        return self._modes.get(chat_id, AttentionMode.ROOM_FIRST)
+
+    def set_attention(self, chat_id: str, mode: AttentionMode) -> None:
+        if mode is not self.attention(chat_id):
+            logger.info("attention chat=%s mode=%s", chat_id, mode)
+        self._modes[chat_id] = mode
+
     def note_model_tick(self, chat_id: str, *, quantum: float) -> None:
         """Record that the agent's own monitor loop is still running."""
         self._model_ticks[chat_id] = ModelTick(self._now(), quantum)
@@ -267,8 +279,11 @@ class RoomTranscriptService:
 
         Unknown until the agent has monitored once: before that the join
         summary is already telling it to start, and repeating it would say
-        nothing new.
+        nothing new. In user-first attention, not monitoring is the intended
+        state, so the whole concept is disarmed rather than nagging.
         """
+        if self.attention(chat_id) is not AttentionMode.ROOM_FIRST:
+            return MonitoringStatus()
         tick = self._model_ticks.get(chat_id)
         if tick is None:
             return MonitoringStatus()
@@ -436,6 +451,9 @@ class RoomTranscriptService:
         transcript.transport = self._transport
         transcript.monitoring = self.monitoring(chat_id)
         transcript.monitoring_notice = monitoring_notice(transcript.monitoring)
+        transcript.attention = self.attention(chat_id)
+        if transcript.attention is AttentionMode.USER_FIRST:
+            transcript.check_prompt = check_room_prompt(chat_id)
         transcript.host = self.host
         transcript.role_briefing = room_briefing(transcript)
         return transcript

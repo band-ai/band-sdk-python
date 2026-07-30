@@ -60,6 +60,8 @@
  * @property {string} [role_briefing]
  * @property {string} [monitoring_notice]
  * @property {{idle_seconds?: number, stale?: boolean}} [monitoring]
+ * @property {"room_first"|"user_first"} [attention]
+ * @property {string} [check_prompt]
  * @property {string} [next_since]
  * @property {RelayStatus} [transport]
  * @property {object} [host]
@@ -195,6 +197,11 @@
   let monitoringNotice = "";
   /** @type {{idle_seconds?: number, stale?: boolean}} */
   let monitoring = {};
+  /** Whose attention the room gets first; the server owns the choice. */
+  let attention = "room_first";
+  /** Server-authored text the Check room button relays (user-first only). */
+  let checkPrompt = "";
+  let pendingCount = 0;
   /** @type {RelayStatus} */
   let transport = {};
   /** What the server saw Desktop declare at connect. @type {object} */
@@ -313,17 +320,27 @@
     }
     const live = transport.role === "follower" || transport.websocket_connected;
     const stale = Boolean(monitoring.stale);
+    const onDemand = attention === "user_first";
     // The room has two liveness axes — event delivery (transport) and agent
     // attention (the model's monitor loop) — and the user is the only actor
     // who can repair the second, so the display reports the weaker of the two.
-    element("wake").hidden = !(stale && monitoringNotice);
+    // In user-first attention not-watching is the point: the widget is the
+    // inbox, and the button is the standing way in rather than a repair.
+    const wake = element("wake");
+    wake.hidden = onDemand ? !checkPrompt : !(stale && monitoringNotice);
+    wake.textContent = onDemand ? "Check room" : "Wake agent";
+    wake.classList.toggle("calm", onDemand);
     const wakes = `${wakeCount} wakes${lastWake ? ` · ${lastWake}` : ""}`;
     const base = live
       ? `WebSocket · ${transport.role || "starting"} · ${eventCount} events · ${wakes}`
       : `WebSocket down · polling · ${wakes}`;
-    diagnostics.textContent = stale
-      ? `${base} · agent stopped ${Math.floor(monitoring.idle_seconds || 0)}s ago`
-      : base;
+    if (onDemand) {
+      diagnostics.textContent = `On demand · ${pendingCount} waiting · ${base}`;
+    } else {
+      diagnostics.textContent = stale
+        ? `${base} · agent stopped ${Math.floor(monitoring.idle_seconds || 0)}s ago`
+        : base;
+    }
     diagnostics.classList.toggle("warn", !live || stale);
     diagnostics.title = JSON.stringify({
       transport,
@@ -420,6 +437,9 @@
     roleBriefing = "";
     monitoringNotice = "";
     monitoring = {};
+    attention = "room_first";
+    checkPrompt = "";
+    pendingCount = 0;
     cursor = null;
     retryWakes = [];
     unseen = 0;
@@ -588,6 +608,9 @@
     // monitoring again, and keeping the old one would nag forever.
     monitoringNotice = payload.monitoring_notice || "";
     monitoring = payload.monitoring || {};
+    attention = payload.attention || attention;
+    checkPrompt = payload.check_prompt || "";
+    pendingCount = (payload.pending_requests || []).length;
     // The cursor only moves forward. A refresh started before an event can
     // answer after the watch that saw it, and rewinding to its older cursor
     // would have the server re-read and redeliver what is already displayed.
@@ -729,8 +752,9 @@
    * @returns {Promise<void>}
    */
   async function wakeAgent() {
-    if (!monitoringNotice) return;
-    await wake([], monitoringNotice);
+    const text = attention === "user_first" ? checkPrompt : monitoringNotice;
+    if (!text) return;
+    await wake([], text);
   }
 
   element("wake").addEventListener("click", wakeAgent);

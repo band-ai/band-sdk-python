@@ -38,6 +38,7 @@ from band.integrations.desktop_app.service import (
 )
 from band.integrations.desktop_app.settings import DesktopRoomViewSettings
 from band.integrations.desktop_app.tools import (
+    AttentionMode,
     CreateAndOpenRoomInput,
     JoinRoomInput,
     MonitorCaller,
@@ -74,6 +75,7 @@ async def _join(
 ) -> WorkflowResult:
     parsed = JoinRoomInput.model_validate(arguments)
     chat_id = await service.resolve_room(parsed.chat_id)
+    service.set_attention(chat_id, parsed.attention)
     return WorkflowResult(room_id=chat_id, requested_room=parsed.chat_id)
 
 
@@ -83,6 +85,7 @@ async def _create(
 ) -> WorkflowResult:
     parsed = CreateAndOpenRoomInput.model_validate(arguments)
     chat_id = await service.create_room(parsed.task_id)
+    service.set_attention(chat_id, parsed.attention)
     return WorkflowResult(
         room_id=chat_id,
         summary=f"Created Band room {chat_id}.",
@@ -131,6 +134,11 @@ async def _monitor(
 ) -> WorkflowResult:
     parsed = WaitForRoomEventInput.model_validate(arguments)
     quantum = parsed.timeout_seconds or service.tuning.band_room_event_timeout_s
+    # Only the agent may change whose attention the room gets: the view's
+    # display loop calls this same tool, and a mode is the user's choice
+    # relayed through the model, never the app's.
+    if parsed.attention is not None and parsed.caller is MonitorCaller.MODEL:
+        service.set_attention(parsed.chat_id, parsed.attention)
     # The call itself is the proof the agent's loop is still running, and the
     # quantum it chose is how long the next one may take to arrive.
     if parsed.caller is MonitorCaller.MODEL:
@@ -141,7 +149,13 @@ async def _monitor(
         since=parsed.since,
         timeout_seconds=quantum,
     )
-    event.wake_requests = service.wakes.claim(parsed.chat_id, event.pending_requests)
+    # Wakes are a room-first accelerator. In user-first attention the widget
+    # is the inbox: an autonomous ui/message would only be refused, and the
+    # mentions stay in pending_requests for the next turn's sweep.
+    if service.attention(parsed.chat_id) is AttentionMode.ROOM_FIRST:
+        event.wake_requests = service.wakes.claim(
+            parsed.chat_id, event.pending_requests
+        )
     if event.wake_requests:
         event.wake_prompt = wake_prompt(parsed.chat_id, event.wake_requests)
     if service.claim_stale_report(parsed.chat_id, event.monitoring):

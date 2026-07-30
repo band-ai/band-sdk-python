@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from band.integrations.desktop_app.event_relay import RelayStatus
+from band.integrations.desktop_app.tools import AttentionMode
 from band.runtime.formatters import replace_uuid_mentions
 
 EPOCH = datetime.fromtimestamp(0, tz=timezone.utc)
@@ -221,6 +222,9 @@ class RoomTranscript(BaseModel):
     pending_requests: list[RoomMessage] = Field(default_factory=list)
     role_briefing: str = ""
     monitoring_notice: str = ""
+    attention: AttentionMode = AttentionMode.ROOM_FIRST
+    # Authored server-side for the view's Check room button (user-first only).
+    check_prompt: str = ""
     next_since: datetime = EPOCH
     transport: RelayStatus = Field(default_factory=RelayStatus)
     monitoring: MonitoringStatus = Field(default_factory=MonitoringStatus)

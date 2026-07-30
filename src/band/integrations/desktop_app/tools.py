@@ -23,6 +23,29 @@ class RoomTool(StrEnum):
     MONITOR = "band_wait_for_room_event"
 
 
+class AttentionMode(StrEnum):
+    """Whose attention the joined room gets first.
+
+    ROOM_FIRST holds the turn open on the monitor loop, so the room is
+    answered in seconds and the user's typing waits one quantum. USER_FIRST
+    inverts it: no turn is held, the user is answered instantly, and the room
+    is swept once at the start of each turn — so a mention waits until the
+    user next speaks or clicks the view's Check room button.
+    """
+
+    ROOM_FIRST = "room_first"
+    USER_FIRST = "user_first"
+
+
+ATTENTION_CHOICE = (
+    "room_first (default): hold your turn open and keep monitoring; the room "
+    "is answered in seconds. user_first: the user leads; you sweep the room "
+    "once at the start of each turn and otherwise end turns normally. Choose "
+    "user_first only when the user asks to be answered first, for on-demand "
+    "or quiet room checking."
+)
+
+
 class MonitorCaller(StrEnum):
     """Who is driving a monitor call.
 
@@ -42,6 +65,10 @@ class CreateAndOpenRoomInput(BaseModel):
         default=None,
         description="Optional Band task ID to associate with the new room.",
     )
+    attention: AttentionMode = Field(
+        AttentionMode.ROOM_FIRST,
+        description=ATTENTION_CHOICE,
+    )
 
 
 class JoinRoomInput(BaseModel):
@@ -53,6 +80,10 @@ class JoinRoomInput(BaseModel):
             "whatever the user said; an unknown name errors with the real "
             "room list to offer back."
         )
+    )
+    attention: AttentionMode = Field(
+        AttentionMode.ROOM_FIRST,
+        description=ATTENTION_CHOICE,
     )
 
 
@@ -96,4 +127,11 @@ class WaitForRoomEventInput(BaseModel):
     caller: MonitorCaller = Field(
         MonitorCaller.MODEL,
         description="Leave unset. The room view sets this on its display loop.",
+    )
+    attention: AttentionMode | None = Field(
+        None,
+        description=(
+            "Pass only when the user asks to change how this room gets your "
+            f"attention. {ATTENTION_CHOICE}"
+        ),
     )

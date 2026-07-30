@@ -14,7 +14,11 @@ from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBrok
 from band.integrations.desktop_app.server import create_server
 from band.integrations.desktop_app.service import RoomTranscriptService
 from band.integrations.desktop_app.settings import RoomViewTuning
-from band.integrations.desktop_app.tools import MonitorCaller, RoomTool
+from band.integrations.desktop_app.tools import (
+    AttentionMode,
+    MonitorCaller,
+    RoomTool,
+)
 
 ROOM_ID = "room-1"
 TOM = {
@@ -223,8 +227,12 @@ class Room:
         assert isinstance(summary, types.TextContent)
         return {**result.structuredContent, "summary_text": summary.text}
 
-    async def join(self, chat_id: str = ROOM_ID) -> dict[str, Any]:
-        return await self.invoke(RoomTool.JOIN, chat_id=chat_id)
+    async def join(
+        self,
+        chat_id: str = ROOM_ID,
+        attention: AttentionMode = AttentionMode.ROOM_FIRST,
+    ) -> dict[str, Any]:
+        return await self.invoke(RoomTool.JOIN, chat_id=chat_id, attention=attention)
 
     async def create(self, task_id: str | None = None) -> dict[str, Any]:
         return await self.invoke(RoomTool.CREATE, task_id=task_id)
@@ -236,6 +244,7 @@ class Room:
         retry_wakes: list[str] | None = None,
         caller: MonitorCaller = MonitorCaller.MODEL,
         timeout_seconds: int = 1,
+        attention: AttentionMode | None = None,
     ) -> dict[str, Any]:
         return await self.invoke(
             RoomTool.MONITOR,
@@ -244,6 +253,7 @@ class Room:
             timeout_seconds=timeout_seconds,
             retry_wakes=retry_wakes or [],
             caller=caller,
+            attention=attention,
         )
 
 

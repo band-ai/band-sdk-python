@@ -217,6 +217,36 @@ it works for, the exact handles for the send tool's `mentions` argument, and
 the monitoring loop it owes. The join summary and `ui/update-model-context`
 relay that one string, so they cannot drift.
 
+### Attention modes
+
+Whose attention the room gets first is a per-room choice, made in chat and
+held server-side (`AttentionMode`, set at join or switched by passing
+`attention` on a monitor call — honored only from `caller=model`, so the
+view's display loop can never flip it).
+
+| | `room_first` (default) | `user_first` |
+|---|---|---|
+| Turn | perpetual, parked on the monitor | none held; ends normally |
+| User typing | waits ≤ one quantum | instant |
+| Mention latency | seconds | until the user next speaks or clicks |
+| Room sweep | continuous | once, at the start of each turn |
+| Stale/wake machinery | armed | disarmed — not-watching is the point |
+| Widget | live transcript | live inbox: `On demand · N waiting` |
+| Button | red **Wake agent**, only when stopped | calm **Check room**, always |
+| Token burn while idle | ~4-6 ticks/min | zero |
+
+The model only ever reads the active mode's contract
+(`attention_contract()` in `prompts.py`); the other mode appears solely as the
+one line naming the way into it, because a briefing describing both behaviours
+gets blended. A switch speaks its new contract in the same reply — the summary
+reads the mode off the event — and switching back to `room_first` re-arms
+staleness freshly, the switching call being its own first tick. Known trades,
+stated rather than hidden: in `user_first` the agent stays *online* in Band
+while possibly silent for hours, "once in a while" can only ever mean "when a
+turn runs" (nothing here can start one), and mentions wait unbounded on the
+user — the widget's waiting count and the Check room click (whose activation
+starts the sweep turn) are the softenings.
+
 ### Every tick reads, because the event stream is not complete
 
 ```mermaid
