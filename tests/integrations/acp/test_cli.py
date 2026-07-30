@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from band.integrations.acp.cli import main, parse_args
-from tests.logsupport import restored_logging
+from tests.logsupport import band_log_env, restored_logging
 
 
 @contextmanager
@@ -166,22 +165,25 @@ class TestMain:
 
     @pytest.mark.asyncio
     async def test_main_keeps_logs_off_the_stdio_transport(
-        self, monkeypatch: pytest.MonkeyPatch
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """BAND_LOG_STREAM must not be able to redirect logs onto stdout.
 
         stdout carries the JSON-RPC frames, so a log line written there corrupts
         the editor's ACP session — the stream is pinned rather than configurable.
         """
-        monkeypatch.setenv("BAND_LOG_STREAM", "stdout")
         args = parse_args(["--agent-id", "agent-123", "--api-key", "key-abc"])
 
-        with restored_logging(), stubbed_acp_server():
+        with (
+            restored_logging(),
+            band_log_env(monkeypatch, STREAM="stdout", FILE=None),
+            stubbed_acp_server(),
+        ):
             await main(args)
-            streams = [
-                handler.stream
-                for handler in logging.getLogger().handlers
-                if isinstance(handler, logging.StreamHandler)
-            ]
+            logging.getLogger("band.integrations.acp.cli").info("probe line")
+            captured = capsys.readouterr()
 
-        assert streams and all(stream is sys.stderr for stream in streams)
+        assert "probe line" in captured.err
+        assert "probe line" not in captured.out

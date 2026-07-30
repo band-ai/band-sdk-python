@@ -238,25 +238,6 @@ def test_build_logging_config_does_not_touch_filesystem(tmp_path: Path) -> None:
     assert not log_file.parent.exists()
 
 
-def test_rotation_settings_select_rotating_handler(tmp_path: Path) -> None:
-    config = build_logging_config(
-        log_file=tmp_path / "agent.log",
-        max_bytes=1_000_000,
-        backup_count=3,
-    )
-    handler = config["handlers"]["file"]
-
-    assert {
-        "class": handler["class"],
-        "maxBytes": handler["maxBytes"],
-        "backupCount": handler["backupCount"],
-    } == {
-        "class": "logging.handlers.RotatingFileHandler",
-        "maxBytes": 1_000_000,
-        "backupCount": 3,
-    }
-
-
 def test_size_cap_without_a_backup_is_rejected(tmp_path: Path) -> None:
     """A RotatingFileHandler with backupCount=0 reopens the file and grows forever.
 
@@ -269,16 +250,20 @@ def test_size_cap_without_a_backup_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_rotation_actually_rolls_the_file_over(tmp_path: Path) -> None:
-    """The default backup count rotates, rather than appending past the cap."""
+def test_rotation_rolls_over_and_keeps_the_requested_backups(tmp_path: Path) -> None:
+    """A size cap rotates, and keeps exactly the backups asked for — no more."""
     log_file = tmp_path / "agent.log"
 
     with restored_logging():
-        configure_logging(log_file=log_file, max_bytes=200)
+        configure_logging(log_file=log_file, max_bytes=200, backup_count=2)
         for _ in range(40):
             logging.getLogger("band.runtime").info("x" * 60)
 
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["agent.log", "agent.log.1"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "agent.log",
+        "agent.log.1",
+        "agent.log.2",
+    ]
     assert log_file.stat().st_size <= 200
 
 
