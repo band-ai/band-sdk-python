@@ -37,7 +37,7 @@ class TestReading:
 
         result = await live.read(since="2026-01-01T00:01:00Z")
 
-        assert ids(result.messages) == ["m-02", "m-03", "m-04", "m-05"]
+        assert ids(result.messages) == ["m-01", "m-02", "m-03", "m-04", "m-05"]
 
     async def test_a_read_gives_up_paging_back_rather_than_read_a_history(
         self, room: Any

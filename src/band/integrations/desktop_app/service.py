@@ -47,7 +47,9 @@ def covers(tail: list[RoomMessage], *, after: datetime | None, limit: int) -> bo
     """Whether the tail collected so far already holds all a read owes."""
     if after is None:
         return len(tail) >= limit
-    return bool(tail) and tail[0].at <= after
+    # A timestamp cursor is inclusive: messages committed with the cursor's
+    # timestamp may not have been visible on the preceding read.
+    return bool(tail) and tail[0].at < after
 
 
 class TranscriptTools(Protocol):
@@ -142,6 +144,14 @@ class ReadPulse:
     newest_message_at: datetime
 
 
+@dataclass
+class ResumeCursor:
+    """Messages already delivered at one timestamp cursor."""
+
+    timestamp: datetime
+    message_ids: set[str]
+
+
 class RoomTranscriptService:
     """Reads the agent-relevant room transcript."""
 
@@ -164,6 +174,7 @@ class RoomTranscriptService:
         self._participants: dict[str, list[RoomParticipant]] = {}
         self._announced_rooms: set[str] = set()
         self._pulses: dict[str, ReadPulse] = {}
+        self._resume_cursors: dict[tuple[str, str | None], ResumeCursor] = {}
         self.session = RoomSession(self._now)
         self.host = HostProfile()
 
@@ -269,7 +280,9 @@ class RoomTranscriptService:
 
         The context API pages oldest first, so the newest messages sit on the
         last page and this walks back from there, stopping as soon as the tail
-        reaches past the cursor. Reading only the newest page would silently
+        reaches past the cursor. The timestamp cursor is inclusive, so this
+        must reach strictly before it to collect every tied message. Reading
+        only the newest page would silently
         drop whatever a long absence buried behind it, while still advancing
         the cursor past it. With no cursor there is nothing to reach back to,
         so the newest ``limit`` messages are the whole read.
@@ -305,29 +318,54 @@ class RoomTranscriptService:
         *,
         since: str | None = None,
         refresh_participants: bool = False,
+        cursor_consumer: str | None = None,
     ) -> RoomTranscript:
         """The agent-visible room state, newest last, annotated for the agent."""
         viewer = await self.viewer()
         roster = await self.participants(chat_id, refresh=refresh_participants)
         after = parse_timestamp(since)
+        prior_cursor = self._resume_cursors.get((chat_id, cursor_consumer))
+        if prior_cursor is None and cursor_consumer is not None:
+            # Opening a room delivers its transcript to both the model and
+            # view. Each monitor loop begins from that shared receipt, then
+            # records independently so neither consumes the other's updates.
+            prior_cursor = self._resume_cursors.get((chat_id, None))
+        seen_at_cursor = (
+            prior_cursor.message_ids
+            if prior_cursor is not None and prior_cursor.timestamp == after
+            else set()
+        )
 
         seen: set[str] = set()
         messages: list[RoomMessage] = []
-        for message in await self._messages_since(
+        candidates = await self._messages_since(
             chat_id,
             after=after,
             limit=self.tuning.band_initial_transcript_messages,
-        ):
+        )
+        for message in candidates:
             if message.id and message.id in seen:
                 continue
             seen.add(message.id)
-            if after and message.at <= after:
+            if after and (
+                message.at < after
+                or (message.at == after and message.id in seen_at_cursor)
+            ):
                 continue
             message.truncate(self.tuning.band_max_message_chars)
             message.addressed_to_viewer = message.addresses(viewer)
             message.render_mentions(roster)
             messages.append(message)
         messages.sort(key=lambda message: (message.at, message.id))
+        next_since = messages[-1].at if messages else (after or EPOCH)
+        self._resume_cursors[(chat_id, cursor_consumer)] = ResumeCursor(
+            timestamp=next_since,
+            message_ids={
+                message.id
+                for message in candidates
+                if message.at == next_since and message.id
+            },
+        )
 
         # Only the opening read needs the heuristic that the agent's last
         # outbound message closes the asks before it. On a resumed read every
@@ -351,7 +389,7 @@ class RoomTranscriptService:
             # advance the cursor past messages still committing, and the
             # `<= after` filter above would then drop them on every later
             # read — an addressed message silently never displayed.
-            next_since=messages[-1].at if messages else (after or EPOCH),
+            next_since=next_since,
             messages=messages,
             pending_requests=[
                 message
@@ -376,6 +414,7 @@ class RoomTranscriptService:
         *,
         since: str | None,
         timeout_seconds: int,
+        cursor_consumer: str | None = None,
     ) -> RoomEvent:
         """Wait on the SDK WebSocket, then hydrate the new agent context.
 
@@ -398,7 +437,11 @@ class RoomTranscriptService:
         pulse = self._pulses.get(chat_id)
         behind = pulse is None or after is None or after < pulse.newest_message_at
         if behind:
-            transcript = await self._verified_read(chat_id, since=since)
+            transcript = await self._verified_read(
+                chat_id,
+                since=since,
+                cursor_consumer=cursor_consumer,
+            )
             if transcript.messages:
                 return RoomEvent(**dict(transcript), event_received=True)
 
@@ -411,6 +454,7 @@ class RoomTranscriptService:
             chat_id,
             since=since,
             refresh_participants=event_received,
+            cursor_consumer=cursor_consumer,
         )
         return RoomEvent(**dict(transcript), event_received=event_received)
 
@@ -420,12 +464,14 @@ class RoomTranscriptService:
         *,
         since: str | None,
         refresh_participants: bool = False,
+        cursor_consumer: str | None = None,
     ) -> RoomTranscript:
         """Read, and record the watermark of what was seen."""
         transcript = await self.read(
             chat_id,
             since=since,
             refresh_participants=refresh_participants,
+            cursor_consumer=cursor_consumer,
         )
         previous = self._pulses.get(chat_id)
         newest = max(

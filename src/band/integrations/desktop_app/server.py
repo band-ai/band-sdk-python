@@ -154,6 +154,11 @@ async def _monitor(
         parsed.chat_id,
         since=parsed.since,
         timeout_seconds=quantum,
+        cursor_consumer=(
+            parsed.caller.value
+            if parsed.caller is MonitorCaller.MODEL
+            else f"{parsed.caller.value}:{parsed.instance or 'default'}"
+        ),
     )
     event.superseded = not service.session.view_is_current(
         parsed.chat_id, parsed.instance
