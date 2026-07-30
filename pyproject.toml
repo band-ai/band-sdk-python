@@ -91,13 +91,13 @@ a2a = [
     "a2a-sdk>=1.1.2,<2",  # Official A2A Python SDK; brings protobuf transitively
 ]
 a2a_gateway = [
-    "a2a-sdk>=1.1.2,<2",  # Official A2A Python SDK; brings protobuf transitively
+    "a2a-sdk[http-server]>=1.1.2,<2",  # Route factories require sse-starlette
     "starlette>=0.40.0",  # HTTP server framework
     "uvicorn>=0.32.0",  # ASGI server
     "python-multipart>=0.0.22",
 ]
 a2a_gateway_demo = [
-    "a2a-sdk>=1.1.2,<2",      # A2A client for calling gateway peers
+    "a2a-sdk[http-server]>=1.1.2,<2",  # Demo builds gateway route factories
     "starlette>=0.40.0",    # HTTP server
     "uvicorn>=0.32.0",      # ASGI server
     "langgraph>=1.0.0",     # LangGraph for orchestrator agent

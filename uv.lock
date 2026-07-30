@@ -120,6 +120,12 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/33/d414a03d5ef5a7d6d09a20dc9f8094e7fb9edb488662ff99c535a2a62cf1/a2a_sdk-1.1.2-py3-none-any.whl", hash = "sha256:eb9a698f526dc45a9ea967d7804e7aa363ff273d2c44fbed699bc68c9399f9c9", size = 245981, upload-time = "2026-07-22T13:40:49.484Z" },
 ]
 
+[package.optional-dependencies]
+http-server = [
+    { name = "sse-starlette" },
+    { name = "starlette" },
+]
+
 [[package]]
 name = "absolufy-imports"
 version = "0.3.1"
@@ -534,13 +540,13 @@ a2a = [
     { name = "a2a-sdk" },
 ]
 a2a-gateway = [
-    { name = "a2a-sdk" },
+    { name = "a2a-sdk", extra = ["http-server"] },
     { name = "python-multipart" },
     { name = "starlette" },
     { name = "uvicorn" },
 ]
 a2a-gateway-demo = [
-    { name = "a2a-sdk" },
+    { name = "a2a-sdk", extra = ["http-server"] },
     { name = "click" },
     { name = "langchain-openai" },
     { name = "langgraph" },
@@ -708,9 +714,9 @@ slack = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", marker = "extra == 'a2a'", specifier = ">=1.1.2,<2" },
-    { name = "a2a-sdk", marker = "extra == 'a2a-gateway'", specifier = ">=1.1.2,<2" },
-    { name = "a2a-sdk", marker = "extra == 'a2a-gateway-demo'", specifier = ">=1.1.2,<2" },
     { name = "a2a-sdk", marker = "extra == 'dev'", specifier = ">=1.1.2,<2" },
+    { name = "a2a-sdk", extras = ["http-server"], marker = "extra == 'a2a-gateway'", specifier = ">=1.1.2,<2" },
+    { name = "a2a-sdk", extras = ["http-server"], marker = "extra == 'a2a-gateway-demo'", specifier = ">=1.1.2,<2" },
     { name = "agent-client-protocol", marker = "extra == 'acp'", specifier = ">=0.9.0" },
     { name = "agent-client-protocol", marker = "extra == 'dev'", specifier = ">=0.9.0" },
     { name = "agno", marker = "extra == 'agno'", specifier = ">=2.6.0" },
