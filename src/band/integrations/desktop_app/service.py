@@ -38,10 +38,14 @@ UUID_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# How many of the agent's own monitor ticks may be missed before its loop is
-# reported stopped rather than slow. One iteration costs a whole quantum plus
-# the model's own latency, so a smaller multiple would cry wolf on a busy room.
-STALE_AFTER_TICKS = 3
+# How long after its wait should have returned the agent may take to call
+# again before its loop is reported stopped rather than busy. An iteration
+# costs one whole quantum plus whatever the agent does with what it got, and
+# that work does not scale with the quantum — so this is added to the agent's
+# own wait, not multiplied by it. A multiple was both too slow on a long
+# quantum (90s unwatched) and too tight on a short one (15s, less than a
+# single answer in the room takes).
+STALE_GRACE_S = 30
 
 # How far back one read may page. A cursor buried deeper than this is a return
 # from an absence long enough that the room has moved on; the read says so in
@@ -269,7 +273,7 @@ class RoomTranscriptService:
         idle = (self._now() - tick.at).total_seconds()
         return MonitoringStatus(
             idle_seconds=idle,
-            stale=idle > tick.quantum * STALE_AFTER_TICKS,
+            stale=idle > tick.quantum + STALE_GRACE_S,
         )
 
     def claim_stale_report(self, chat_id: str, monitoring: MonitoringStatus) -> bool:

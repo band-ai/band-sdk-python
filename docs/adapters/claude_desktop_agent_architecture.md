@@ -181,7 +181,8 @@ Consequences:
   room unwatched while the view kept ticking and looking healthy. Nothing the
   agent sees distinguishes the two, so the server says it: monitor calls carry
   a `caller` (`model` by default, `app` from the view's display loop), and a
-  read whose last `model` tick is older than `STALE_AFTER_TICKS` quanta carries
+  read whose last `model` tick is older than that call's own quantum plus
+  `STALE_GRACE_S` — one wait, plus time to act on what it returned — carries
   a `monitoring_notice` naming the gap. The view relays it into model context
   beside the briefing, and it empties itself once the loop is running again.
 - One conversation cannot both block-listen and accept typed input instantly.

@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 from band.integrations.desktop_app.event_relay import RelayStatus, RoomEventBroker
-from band.integrations.desktop_app.service import STALE_AFTER_TICKS
+from band.integrations.desktop_app.service import STALE_GRACE_S
 from band.integrations.desktop_app.settings import MAX_ROOM_EVENT_TIMEOUT_S
 from band.integrations.desktop_app.tools import MonitorCaller, RoomTool
 from tests.integrations.desktop_app.conftest import (
@@ -30,7 +30,7 @@ class TestMonitoringHealth:
         await live.join()
         await live.monitor()
 
-        clock.advance(live.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS + 1)
+        clock.advance(live.tuning.band_room_event_timeout_s + STALE_GRACE_S + 1)
         seen_by_the_view = await live.monitor(caller=MonitorCaller.APP)
 
         assert seen_by_the_view["monitoring"]["stale"] is True
@@ -45,7 +45,7 @@ class TestMonitoringHealth:
         await live.join()
         await live.monitor()
 
-        for _ in range(4):
+        for _ in range(5):
             clock.advance(live.tuning.band_room_event_timeout_s)
             watched = await live.monitor(caller=MonitorCaller.APP)
 
@@ -64,7 +64,7 @@ class TestMonitoringHealth:
 
         clock.advance(MAX_ROOM_EVENT_TIMEOUT_S + 5)
         mid_wait = await live.monitor(caller=MonitorCaller.APP)
-        clock.advance(MAX_ROOM_EVENT_TIMEOUT_S * STALE_AFTER_TICKS)
+        clock.advance(STALE_GRACE_S)
         stopped = await live.monitor(caller=MonitorCaller.APP)
 
         assert mid_wait["monitoring"]["stale"] is False, (
@@ -79,7 +79,7 @@ class TestMonitoringHealth:
         live = room([message("m-1", "2026-01-01T00:00:01Z")], clock=clock)
         await live.join()
         await live.monitor()
-        clock.advance(live.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS + 1)
+        clock.advance(live.tuning.band_room_event_timeout_s + STALE_GRACE_S + 1)
 
         stale = live.service.monitoring(ROOM_ID)
         reports = [live.service.claim_stale_report(ROOM_ID, stale) for _ in range(3)]
@@ -107,7 +107,7 @@ class TestMonitoringHealth:
         first = await live.monitor()
         reads_after_first = live.rest_calls
 
-        clock.advance(live.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS + 1)
+        clock.advance(live.tuning.band_room_event_timeout_s + STALE_GRACE_S + 1)
         quiet = await live.monitor(since=first["next_since"], caller=MonitorCaller.APP)
 
         assert live.rest_calls == reads_after_first, "this tick must skip the read"
@@ -122,7 +122,7 @@ class TestMonitoringHealth:
         live = room([message("m-1", "2026-01-01T00:00:01Z")], clock=clock)
         await live.join()
         await live.monitor()
-        clock.advance(live.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS + 1)
+        clock.advance(live.tuning.band_room_event_timeout_s + STALE_GRACE_S + 1)
         assert (await live.monitor(caller=MonitorCaller.APP))["monitoring_notice"]
 
         await live.monitor()
