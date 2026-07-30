@@ -150,10 +150,14 @@ call (at most `BAND_ROOM_EVENT_TIMEOUT_S` seconds).
 >
 > *(an hour later)*
 >
-> **You:** I'm back — answer me first again
+> **You:** I'm back — answer me first again *(or: stop monitoring)*
 >
 > **Claude:** *(final sweep)* Back to on-demand. While you were out, Jerry
 > asked twice about staging — handled both.
+
+"Stop monitoring" switches to on-demand, it does not abandon the room: Claude
+still sweeps it at the start of every turn, so mentions wait at most until you
+next say anything.
 
 - A delegated wait uses the watching loop either way: ask Claude to get an
   answer from a participant and it keeps monitoring until they reply, then

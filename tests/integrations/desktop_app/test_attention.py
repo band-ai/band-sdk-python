@@ -44,6 +44,17 @@ class TestContract:
         assert "never re-ask a choice they made" in on_demand["summary_text"]
         assert "Start monitoring" not in on_demand["summary_text"]
 
+    async def test_stopping_is_a_switch_not_an_abandonment(self, room: Any) -> None:
+        """Observed live: 'stop monitoring' was read as a third mode — the
+        model stopped calling without telling the server, so the room went
+        silently unwatched and turn-start sweeps never began."""
+        watched = await room([message("m-1", "2026-01-01T00:00:01Z")]).join()
+        briefing = watched["role_briefing"]
+
+        assert "Stop monitoring" in briefing
+        assert "attention='user_first'" in briefing
+        assert "no abandoned mode" in briefing
+
     async def test_a_sweep_is_told_not_to_keep_looping(self, room: Any) -> None:
         live = room([message("m-1", "2026-01-01T00:00:01Z")])
         await live.join(attention=AttentionMode.USER_FIRST)

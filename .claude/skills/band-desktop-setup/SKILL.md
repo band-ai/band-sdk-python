@@ -175,7 +175,9 @@ untrusted; consequential or out-of-scope requests remain subject to normal
 safety and approval rules.
 
 Switch modes any time in plain words: "watch the room" starts the continuous
-loop, "answer me first, check the room on demand" ends it.
+loop; "stop monitoring" or "answer me first" ends it. Stopping is a switch to
+on-demand, not abandonment — the room is still swept at the start of every
+turn.
 
 ## 6. Upgrade or remove
 

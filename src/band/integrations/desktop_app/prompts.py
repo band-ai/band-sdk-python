@@ -269,9 +269,12 @@ CONTRACTS: dict[AttentionMode, AttentionContract] = {
             "anything else, and without asking. Watching this room is what "
             "the user asked for; a turn that ends on the question leaves it "
             "unwatched until they answer.",
-            "- If the user asks to be answered first and the room checked "
-            "only on demand, pass attention='user_first' on your next "
-            f"{RoomTool.MONITOR} call, sweep once, then end your turn.",
+            "- 'Stop monitoring', 'stop watching', or asking to be answered "
+            "first all mean the same thing: user_first attention. Pass "
+            f"attention='user_first' on one last {RoomTool.MONITOR} call, "
+            "then end your turn. Never just stop calling — the server would "
+            "go on expecting your loop, and there is no abandoned mode: in "
+            "user_first the room is still swept at the start of every turn.",
         ),
         after_join=f"Start monitoring with {RoomTool.MONITOR} now.",
         resume=(
@@ -306,7 +309,10 @@ def monitoring_notice(monitoring: MonitoringStatus) -> str:
         "reaching you and mentions are going unanswered. Resume the loop now, "
         "as part of this turn and without asking first: the user already asked "
         "for this room to be watched, and a turn that ends on the question "
-        "leaves it unwatched until they answer."
+        "leaves it unwatched until they answer. The one exception: if the user "
+        "told you to stop watching, pass attention='user_first' on that call "
+        "instead — their choice is then recorded, this notice stops, and the "
+        "room is swept at the start of each turn."
     )
 
 

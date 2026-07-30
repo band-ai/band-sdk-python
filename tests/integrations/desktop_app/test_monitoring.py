@@ -37,6 +37,10 @@ class TestMonitoringHealth:
 
         assert seen_by_the_view["monitoring"]["stale"] is True
         assert RoomTool.MONITOR in seen_by_the_view["monitoring_notice"]
+        assert "attention='user_first'" in seen_by_the_view["monitoring_notice"], (
+            "a user-requested stop must be recorded as the mode switch, "
+            "not fought by the resume order"
+        )
 
     async def test_the_views_own_ticks_do_not_stand_in_for_the_agents(
         self, room: Any
