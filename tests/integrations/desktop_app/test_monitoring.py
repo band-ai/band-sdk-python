@@ -50,6 +50,27 @@ class TestMonitoringHealth:
 
         assert watched["monitoring"]["stale"] is True
 
+    async def test_a_quiet_tick_reports_it_even_though_it_reads_nothing(
+        self, room: Any
+    ) -> None:
+        """On a live socket a quiet tick answers from the last read's snapshot,
+        which knows nothing of a loop that stopped after it — and quiet is
+        exactly when a stopped loop goes unnoticed."""
+        clock = Clock()
+        live = room(
+            [message("m-1", "2026-01-01T00:00:01Z")], transport=LIVE, clock=clock
+        )
+        await live.join()
+        first = await live.monitor()
+        reads_after_first = live.rest_calls
+
+        clock.advance(live.tuning.band_room_event_timeout_s * STALE_AFTER_TICKS + 1)
+        quiet = await live.monitor(since=first["next_since"], caller=MonitorCaller.APP)
+
+        assert live.rest_calls == reads_after_first, "this tick must skip the read"
+        assert quiet["monitoring"]["stale"] is True
+        assert RoomTool.MONITOR in quiet["monitoring_notice"]
+
     async def test_the_notice_clears_once_the_agent_monitors_again(
         self, room: Any
     ) -> None:

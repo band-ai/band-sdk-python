@@ -450,6 +450,11 @@ class RoomTranscriptService:
             )
             return RoomEvent(**dict(transcript), event_received=event_received)
 
+        # Everything here is as of the snapshot's read, which on a live socket
+        # may be many quiet ticks old. What has moved on since — the transport,
+        # the host, and how long the agent has gone without monitoring — is
+        # taken fresh, or a quiet room would report all three frozen.
+        monitoring = self.monitoring(chat_id)
         quiet = self._pulses[chat_id].snapshot.model_copy(
             update={
                 "messages": [],
@@ -458,6 +463,8 @@ class RoomTranscriptService:
                 "refreshed_at": self._now(),
                 "transport": self._transport,
                 "host": self.host,
+                "monitoring": monitoring,
+                "monitoring_notice": monitoring_notice(monitoring),
             }
         )
         return RoomEvent(**dict(quiet), event_received=False)
